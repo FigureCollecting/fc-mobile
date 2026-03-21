@@ -144,6 +144,19 @@ export function Profile() {
             </div>
           </button>
 
+          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/calendar')}>
+            <div class="profile__item-left">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              <span>Release Calendar</span>
+            </div>
+            <ChevronRight />
+          </button>
+
           <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/analytics')}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

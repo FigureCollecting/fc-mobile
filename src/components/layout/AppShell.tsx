@@ -15,6 +15,7 @@ import { Analytics } from '../../pages/Analytics';
 import { Import } from '../../pages/Import';
 import { Export } from '../../pages/Export';
 import { Notifications } from '../../pages/Notifications';
+import { ReleaseCalendar } from '../../pages/ReleaseCalendar';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
 const PriceDetail = lazy(() => import('../../pages/PriceDetail').then((m) => ({ default: m.PriceDetail })));
@@ -71,6 +72,7 @@ export function AppShell() {
             <Route path="/import" component={Import} />
             <Route path="/export" component={Export} />
             <Route path="/notifications" component={Notifications} />
+            <Route path="/calendar" component={ReleaseCalendar} />
             <Route path="/profile/security">
               {() => <Profile />}
             </Route>

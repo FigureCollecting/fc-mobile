@@ -1,4 +1,5 @@
 import { useLocation } from 'wouter';
+import { hapticLight } from '../../utils/haptics';
 
 interface NavItem {
   path: string;
@@ -63,7 +64,7 @@ export function BottomNav() {
           <button
             key={item.path}
             class={`bottom-nav__item ${active ? 'bottom-nav__item--active' : ''}`}
-            onClick={() => setLocation(item.path)}
+            onClick={() => { hapticLight(); setLocation(item.path); }}
             aria-current={active ? 'page' : undefined}
             aria-label={item.label}
           >

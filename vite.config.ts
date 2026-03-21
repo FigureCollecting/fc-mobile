@@ -12,6 +12,9 @@ export default defineConfig({
     // and ensures transitive deps (fc-shared -> zustand -> react) resolve correctly.
     preact({ reactAliasesEnabled: false }),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
       manifest: {
         name: 'FigureCollecting',
@@ -28,35 +31,8 @@ export default defineConfig({
           { src: '/icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        runtimeCaching: [
-          {
-            urlPattern: /\/api\/figures/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'figures-api',
-              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
-              networkTimeoutSeconds: 3,
-            },
-          },
-          {
-            urlPattern: /^https:\/\/figurecollecting\.com\/api\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: { maxEntries: 100, maxAgeSeconds: 300 },
-            },
-          },
-          {
-            urlPattern: /^https:\/\/static\.myfigurecollection\.net\//,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'mfc-images',
-              expiration: { maxEntries: 500, maxAgeSeconds: 2592000 },
-            },
-          },
-        ],
       },
     }),
   ],

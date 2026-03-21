@@ -6,6 +6,7 @@ import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
 import { Prices } from '../../pages/Prices';
 import { Profile } from '../../pages/Profile';
+import { Settings } from '../../pages/Settings';
 import { Sync } from '../../pages/Sync';
 import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
@@ -58,6 +59,7 @@ export function AppShell() {
           <Route path="/discover" component={Discover} />
           <Route path="/prices" component={Prices} />
           <Route path="/profile" component={Profile} />
+          <Route path="/settings" component={Settings} />
           <Route path="/sync" component={Sync} />
           <Route path="/profile/security">
             {() => <Profile />}

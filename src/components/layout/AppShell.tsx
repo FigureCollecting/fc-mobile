@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'preact/compat';
-import { Route, Switch } from 'wouter';
+import { Route, Switch, useLocation } from 'wouter';
 import { BottomNav } from './BottomNav';
 import { OfflineBanner } from '../ui/OfflineBanner';
 import { Collection } from '../../pages/Collection';
@@ -7,8 +7,12 @@ import { Discover } from '../../pages/Discover';
 import { Prices } from '../../pages/Prices';
 import { Profile } from '../../pages/Profile';
 import { Sync } from '../../pages/Sync';
+import { Login } from '../../pages/Login';
+import { Register } from '../../pages/Register';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
+
+const AUTH_ROUTES = ['/login', '/register'];
 
 function PageFallback() {
   return (
@@ -39,11 +43,16 @@ function PageFallback() {
 }
 
 export function AppShell() {
+  const [location] = useLocation();
+  const isAuthRoute = AUTH_ROUTES.includes(location);
+
   return (
     <div class="app-shell">
       <OfflineBanner />
-      <main class="app-content">
+      <main class={`app-content ${isAuthRoute ? 'app-content--auth' : ''}`}>
         <Switch>
+          <Route path="/login" component={Login} />
+          <Route path="/register" component={Register} />
           <Route path="/" component={Collection} />
           <Route path="/discover" component={Discover} />
           <Route path="/prices" component={Prices} />
@@ -59,7 +68,7 @@ export function AppShell() {
           </Route>
         </Switch>
       </main>
-      <BottomNav />
+      {!isAuthRoute && <BottomNav />}
 
       <style>{`
         .app-shell {
@@ -76,6 +85,10 @@ export function AppShell() {
           overflow-x: hidden;
           -webkit-overflow-scrolling: touch;
           padding-bottom: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
+        }
+
+        .app-content--auth {
+          padding-bottom: 0;
         }
       `}</style>
     </div>

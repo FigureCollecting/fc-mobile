@@ -4,10 +4,12 @@ import {
   configureAuthStore,
 } from '@figurecollecting/fc-shared';
 import type { AuthState } from '@figurecollecting/fc-shared';
+import { disconnectWebSocket } from '../services/websocket';
 
 // Configure for mobile (no cookie clearing needed, no theme sync)
 configureAuthStore({
   onLogout: () => {
+    disconnectWebSocket();
     console.log('Logged out — clearing mobile cache');
   },
 });

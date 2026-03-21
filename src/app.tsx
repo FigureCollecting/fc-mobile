@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
+import { ToastContainer } from './components/ui/Toast';
 import { useSyncOnReconnect } from './hooks/useSyncOnReconnect';
+import { useWebSocket } from './hooks/useWebSocket';
+import { useLiveCollection } from './hooks/useLiveCollection';
 import { useAuthStore } from './stores/auth';
 import { Onboarding } from './pages/Onboarding';
 
@@ -41,6 +44,8 @@ function AuthRedirect() {
 }
 
 function AppInner() {
+  useWebSocket();
+  useLiveCollection();
   useSyncOnReconnect();
 
   const [showOnboarding, setShowOnboarding] = useState(
@@ -85,6 +90,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppInner />
+      <ToastContainer />
     </QueryClientProvider>
   );
 }

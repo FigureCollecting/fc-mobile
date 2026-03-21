@@ -165,6 +165,7 @@ export function useSync() {
     progress,
     message,
     error,
+    sessionId: sessionIdRef.current,
     openCookieSetup,
     validateCookies,
     startSync,

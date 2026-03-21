@@ -1,6 +1,7 @@
 import { useRef, useCallback } from 'preact/hooks';
 import type { MfcCookies } from '@figurecollecting/fc-shared';
 import { useSync } from '../../hooks/useSync';
+import { useLiveSync } from '../../hooks/useLiveSync';
 import { CookieInput } from './CookieInput';
 import { SyncProgress } from './SyncProgress';
 
@@ -15,12 +16,16 @@ export function SyncDashboard({ onViewCollection }: SyncDashboardProps) {
     progress,
     message,
     error,
+    sessionId,
     openCookieSetup,
     validateCookies,
     startSync,
     cancelSync,
     reset,
   } = useSync();
+
+  // Subscribe to real-time sync events via WebSocket
+  const liveEvents = useLiveSync(uiPhase === 'syncing' ? sessionId : null);
 
   const cookiesRef = useRef<MfcCookies | null>(null);
 
@@ -76,16 +81,27 @@ export function SyncDashboard({ onViewCollection }: SyncDashboardProps) {
 
       {/* Syncing */}
       {uiPhase === 'syncing' && (
-        <SyncProgress
-          phase={syncPhase}
-          completed={progress.completed}
-          total={progress.total}
-          failed={progress.failed}
-          skipped={progress.skipped}
-          message={message}
-          byStatus={progress.byStatus}
-          onCancel={cancelSync}
-        />
+        <>
+          <SyncProgress
+            phase={syncPhase}
+            completed={progress.completed}
+            total={progress.total}
+            failed={progress.failed}
+            skipped={progress.skipped}
+            message={message}
+            byStatus={progress.byStatus}
+            onCancel={cancelSync}
+          />
+          {liveEvents.length > 0 && (
+            <div class="sync-dashboard__live-log">
+              {liveEvents.slice(-5).map((evt, i) => (
+                <div key={i} class="sync-dashboard__live-event">
+                  {evt.message ?? evt.type}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Complete */}
@@ -341,6 +357,31 @@ export function SyncDashboard({ onViewCollection }: SyncDashboardProps) {
           text-align: center;
           line-height: var(--line-height-normal);
           max-width: 280px;
+        }
+
+        /* Live event log */
+        .sync-dashboard__live-log {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          padding: var(--space-3);
+          background: var(--surface-primary);
+          border-radius: var(--radius-md);
+          max-height: 120px;
+          overflow-y: auto;
+        }
+
+        .sync-dashboard__live-event {
+          font-size: var(--font-xs);
+          color: var(--text-secondary);
+          line-height: var(--line-height-normal);
+          padding: 2px 0;
+          animation: live-event-in 200ms ease-out;
+        }
+
+        @keyframes live-event-in {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </div>

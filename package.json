@@ -15,6 +15,7 @@
     "framer-motion": "^12.38.0",
     "idb": "^8.0.3",
     "preact": "^10.29.0",
+    "socket.io-client": "^4.8.3",
     "wouter": "^3.9.0",
     "zustand": "^5.0.12"
   },

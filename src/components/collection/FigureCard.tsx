@@ -2,6 +2,7 @@ import { useCallback, useRef } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
+import { LazyImage } from '../ui/LazyImage';
 
 interface FigureCardProps {
   figure: Figure;
@@ -66,11 +67,10 @@ export function FigureCard({ figure, onClick, selectable, isSelected, onLongPres
     >
       <div class="figure-card__image-wrapper">
         {imageUrl ? (
-          <img
+          <LazyImage
             class="figure-card__image"
             src={imageUrl}
             alt={name}
-            loading="lazy"
           />
         ) : (
           <div class="figure-card__placeholder">

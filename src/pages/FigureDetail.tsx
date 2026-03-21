@@ -3,6 +3,7 @@ import { useRoute, useLocation } from 'wouter';
 import { useFigure } from '../hooks/useFigure';
 import { useUpdateFigure, useDeleteFigure } from '../hooks/useFigureMutations';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { ImageGallery } from '../components/ui/ImageGallery';
 import { EditFigureSheet } from '../components/collection/EditFigureSheet';
 import { StatusSheet } from '../components/collection/StatusSheet';
 import { DeleteSheet } from '../components/collection/DeleteSheet';
@@ -56,8 +57,6 @@ export function FigureDetail() {
   const { data: figure, isLoading, isError } = useFigure(params?.id);
   const updateMutation = useUpdateFigure();
   const deleteMutation = useDeleteFigure();
-  const [activeImage, setActiveImage] = useState(0);
-  const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -69,29 +68,6 @@ export function FigureDetail() {
       setLocation('/');
     }
   }, [setLocation]);
-
-  // Image gallery swipe handling
-  const handleImageTouchStart = useCallback((e: TouchEvent) => {
-    setTouchStartX(e.touches[0].clientX);
-  }, []);
-
-  const handleImageTouchEnd = useCallback(
-    (e: TouchEvent, imageCount: number) => {
-      if (touchStartX === null) return;
-      const endX = e.changedTouches[0].clientX;
-      const diff = touchStartX - endX;
-
-      if (Math.abs(diff) > 50) {
-        if (diff > 0 && activeImage < imageCount - 1) {
-          setActiveImage((prev) => prev + 1);
-        } else if (diff < 0 && activeImage > 0) {
-          setActiveImage((prev) => prev - 1);
-        }
-      }
-      setTouchStartX(null);
-    },
-    [touchStartX, activeImage],
-  );
 
   const handleEditSave = useCallback(
     (data: EditFormData) => {
@@ -192,27 +168,7 @@ export function FigureDetail() {
         </button>
 
         {images.length > 0 ? (
-          <div
-            class="figure-detail__gallery"
-            onTouchStart={handleImageTouchStart}
-            onTouchEnd={(e) => handleImageTouchEnd(e as unknown as TouchEvent, images.length)}
-          >
-            <img
-              class="figure-detail__hero-image"
-              src={images[activeImage]}
-              alt={figure.name}
-            />
-            {images.length > 1 && (
-              <div class="figure-detail__gallery-dots">
-                {images.map((_, i) => (
-                  <span
-                    key={i}
-                    class={`figure-detail__dot ${i === activeImage ? 'figure-detail__dot--active' : ''}`}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+          <ImageGallery images={images} alt={figure.name} />
         ) : (
           <div class="figure-detail__hero-placeholder">
             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5">
@@ -432,19 +388,6 @@ const styles = `
     animation: fd-pulse 1.5s ease-in-out infinite;
   }
 
-  .figure-detail__gallery {
-    width: 100%;
-    height: 100%;
-    position: relative;
-  }
-
-  .figure-detail__hero-image {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    background: var(--surface-tertiary);
-  }
-
   .figure-detail__hero-placeholder {
     width: 100%;
     height: 100%;
@@ -452,27 +395,6 @@ const styles = `
     align-items: center;
     justify-content: center;
     background: var(--surface-tertiary);
-  }
-
-  .figure-detail__gallery-dots {
-    position: absolute;
-    bottom: var(--space-4);
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 6px;
-  }
-
-  .figure-detail__dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.4);
-    transition: background var(--transition-fast);
-  }
-
-  .figure-detail__dot--active {
-    background: white;
   }
 
   /* Back button */

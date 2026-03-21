@@ -6,6 +6,7 @@ import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
 import { Prices } from '../../pages/Prices';
 import { Profile } from '../../pages/Profile';
+import { Sync } from '../../pages/Sync';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
 
@@ -47,6 +48,10 @@ export function AppShell() {
           <Route path="/discover" component={Discover} />
           <Route path="/prices" component={Prices} />
           <Route path="/profile" component={Profile} />
+          <Route path="/sync" component={Sync} />
+          <Route path="/profile/security">
+            {() => <Profile />}
+          </Route>
           <Route path="/figure/:id">
             <Suspense fallback={<PageFallback />}>
               <FigureDetail />

@@ -10,6 +10,7 @@ import { Settings } from '../../pages/Settings';
 import { Sync } from '../../pages/Sync';
 import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
+import { Analytics } from '../../pages/Analytics';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
 const PriceDetail = lazy(() => import('../../pages/PriceDetail').then((m) => ({ default: m.PriceDetail })));
@@ -61,6 +62,7 @@ export function AppShell() {
           <Route path="/profile" component={Profile} />
           <Route path="/settings" component={Settings} />
           <Route path="/sync" component={Sync} />
+          <Route path="/analytics" component={Analytics} />
           <Route path="/profile/security">
             {() => <Profile />}
           </Route>

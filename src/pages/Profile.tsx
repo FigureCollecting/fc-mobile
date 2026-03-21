@@ -128,6 +128,18 @@ export function Profile() {
         <div class="profile__section">
           <h3 class="profile__section-title">Quick Actions</h3>
 
+          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/analytics')}>
+            <div class="profile__item-left">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M18 20V10" />
+                <path d="M12 20V4" />
+                <path d="M6 20v-6" />
+              </svg>
+              <span>Analytics</span>
+            </div>
+            <ChevronRight />
+          </button>
+
           <button class="profile__item profile__item--action" type="button" onClick={() => setSyncSheetOpen(true)}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

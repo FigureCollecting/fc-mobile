@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'preact/hooks';
+import { useLocation } from 'wouter';
 import { Header } from '../components/layout/Header';
 import { CollectionGrid } from '../components/collection/CollectionGrid';
 import { FigureCard } from '../components/collection/FigureCard';
@@ -14,6 +15,41 @@ import { useAuthStore } from '../stores/auth';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useBulkUpdateStatus, useBulkDelete } from '../hooks/useFigureMutations';
 import { hapticMedium } from '../utils/haptics';
+
+function AnalyticsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      class="collection-analytics-btn"
+      onClick={onClick}
+      type="button"
+      aria-label="Analytics"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 20V10" />
+        <path d="M12 20V4" />
+        <path d="M6 20v-6" />
+      </svg>
+
+      <style>{`
+        .collection-analytics-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: var(--touch-min);
+          height: var(--touch-min);
+          color: var(--text-secondary);
+          border-radius: var(--radius-md);
+          transition: color var(--transition-fast);
+        }
+
+        .collection-analytics-btn:active {
+          color: var(--text-primary);
+          background: var(--surface-tertiary);
+        }
+      `}</style>
+    </button>
+  );
+}
 
 function FilterButton({ onClick, hasActiveFilters }: { onClick: () => void; hasActiveFilters: boolean }) {
   return (
@@ -62,6 +98,7 @@ function FilterButton({ onClick, hasActiveFilters }: { onClick: () => void; hasA
 
 export function Collection() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const [, setLocation] = useLocation();
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [filterOpen, setFilterOpen] = useState(false);
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
@@ -157,7 +194,12 @@ export function Collection() {
       <div class="page-collection">
         <Header
           title="Collection"
-          action={<FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />}
+          action={
+            <div class="collection-header-actions">
+              <AnalyticsButton onClick={() => setLocation('/analytics')} />
+              <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
+            </div>
+          }
         />
         <CollectionGrid>
           <SkeletonCard />
@@ -199,7 +241,12 @@ export function Collection() {
       <div class="page-collection">
         <Header
           title="Collection"
-          action={<FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />}
+          action={
+            <div class="collection-header-actions">
+              <AnalyticsButton onClick={() => setLocation('/analytics')} />
+              <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
+            </div>
+          }
         />
         <PullToRefresh onRefresh={handleRefresh}>
           <p class="page-collection__empty">
@@ -238,7 +285,10 @@ export function Collection() {
       </button>
     </div>
   ) : (
-    <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
+    <div class="collection-header-actions">
+      <AnalyticsButton onClick={() => setLocation('/analytics')} />
+      <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
+    </div>
   );
 
   // Collection with data
@@ -322,6 +372,12 @@ export function Collection() {
 }
 
 const styles = `
+  .collection-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
   .page-collection__empty {
     text-align: center;
     color: var(--text-secondary);

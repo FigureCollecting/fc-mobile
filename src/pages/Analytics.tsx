@@ -187,6 +187,32 @@ export function Analytics() {
             </div>
           </section>
 
+          {/* Collection DNA CTA */}
+          <section class="analytics__section">
+            <button
+              class="analytics__dna-cta"
+              type="button"
+              onClick={() => setLocation('/collection-dna')}
+            >
+              <div class="analytics__dna-cta-content">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2c-2.5 4-2.5 8 0 12s-2.5 8 0 12" />
+                  <path d="M12 2c2.5 4 2.5 8 0 12s2.5 8 0 12" />
+                  <line x1="8" y1="6" x2="16" y2="6" />
+                  <line x1="7" y1="12" x2="17" y2="12" />
+                  <line x1="8" y1="18" x2="16" y2="18" />
+                </svg>
+                <div class="analytics__dna-cta-text">
+                  <span class="analytics__dna-cta-title">Discover Your Collection DNA</span>
+                  <span class="analytics__dna-cta-desc">Your collector personality profile</span>
+                </div>
+              </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </section>
+
           {/* Price Tracking Summary */}
           <section class="analytics__section">
             <h2 class="analytics__section-title">Price Tracking</h2>
@@ -437,5 +463,48 @@ const styles = `
   @keyframes analytics-pulse {
     0%, 100% { opacity: 0.3; }
     50% { opacity: 0.7; }
+  }
+
+  /* DNA CTA */
+  .analytics__dna-cta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: var(--space-4);
+    background: linear-gradient(135deg, rgba(9, 103, 210, 0.15), rgba(139, 92, 246, 0.15));
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: var(--radius-lg);
+    min-height: var(--touch-recommended);
+    transition: background var(--transition-fast);
+    text-align: left;
+  }
+
+  .analytics__dna-cta:active {
+    background: linear-gradient(135deg, rgba(9, 103, 210, 0.25), rgba(139, 92, 246, 0.25));
+  }
+
+  .analytics__dna-cta-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    color: var(--brand-400);
+  }
+
+  .analytics__dna-cta-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .analytics__dna-cta-title {
+    font-size: var(--font-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+  }
+
+  .analytics__dna-cta-desc {
+    font-size: var(--font-xs);
+    color: var(--text-secondary);
   }
 `;

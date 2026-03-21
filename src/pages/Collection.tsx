@@ -8,6 +8,7 @@ import { PullToRefresh } from '../components/ui/PullToRefresh';
 import { FilterSheet, DEFAULT_FILTERS } from '../components/collection/FilterSheet';
 import { StatusSheet } from '../components/collection/StatusSheet';
 import { DeleteSheet } from '../components/collection/DeleteSheet';
+import { UpcomingReleases } from '../components/collection/UpcomingReleases';
 import { ViewModeToggle, getStoredViewMode } from '../components/collection/ViewModeToggle';
 import type { ViewMode } from '../components/collection/ViewModeToggle';
 import type { FilterState } from '../components/collection/FilterSheet';
@@ -556,6 +557,7 @@ export function Collection() {
         title={isSelecting ? `${selected.size} selected` : `Collection (${data?.total ?? 0})`}
         action={headerAction}
       />
+      <UpcomingReleases />
       <PullToRefresh onRefresh={handleRefresh}>
         <CollectionGrid viewMode={viewMode}>
           {figures.map((figure) => (

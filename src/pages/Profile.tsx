@@ -169,6 +169,20 @@ export function Profile() {
             <ChevronRight />
           </button>
 
+          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/collection-dna')}>
+            <div class="profile__item-left">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2c-2.5 4-2.5 8 0 12s-2.5 8 0 12" />
+                <path d="M12 2c2.5 4 2.5 8 0 12s2.5 8 0 12" />
+                <line x1="8" y1="6" x2="16" y2="6" />
+                <line x1="7" y1="12" x2="17" y2="12" />
+                <line x1="8" y1="18" x2="16" y2="18" />
+              </svg>
+              <span>Collection DNA</span>
+            </div>
+            <ChevronRight />
+          </button>
+
           <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/import')}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

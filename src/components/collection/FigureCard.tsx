@@ -1,4 +1,7 @@
+import { useCallback } from 'preact/hooks';
+import { useLocation } from 'wouter';
 import type { Figure } from '@figurecollecting/fc-shared';
+import { StatusBadge } from '../ui/StatusBadge';
 
 interface FigureCardProps {
   figure: Figure;
@@ -6,10 +9,19 @@ interface FigureCardProps {
 }
 
 export function FigureCard({ figure, onClick }: FigureCardProps) {
-  const { name, origin, imageUrl } = figure;
+  const { name, origin, imageUrl, collectionStatus } = figure;
+  const [, setLocation] = useLocation();
+
+  const handleClick = useCallback(() => {
+    if (onClick) {
+      onClick();
+    } else {
+      setLocation(`/figure/${figure._id}`);
+    }
+  }, [onClick, setLocation, figure._id]);
 
   return (
-    <button class="figure-card" onClick={onClick} type="button">
+    <button class="figure-card" onClick={handleClick} type="button">
       <div class="figure-card__image-wrapper">
         {imageUrl ? (
           <img
@@ -25,6 +37,11 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
               <circle cx="8.5" cy="8.5" r="1.5" />
               <path d="M21 15l-5-5L5 21" />
             </svg>
+          </div>
+        )}
+        {collectionStatus && (
+          <div class="figure-card__badge">
+            <StatusBadge status={collectionStatus} />
           </div>
         )}
       </div>
@@ -50,6 +67,7 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
         }
 
         .figure-card__image-wrapper {
+          position: relative;
           aspect-ratio: 1;
           overflow: hidden;
           background: var(--surface-tertiary);
@@ -67,6 +85,12 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
           display: flex;
           align-items: center;
           justify-content: center;
+        }
+
+        .figure-card__badge {
+          position: absolute;
+          top: var(--space-2);
+          left: var(--space-2);
         }
 
         .figure-card__info {

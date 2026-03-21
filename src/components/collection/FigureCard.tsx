@@ -1,4 +1,4 @@
-import { useCallback } from 'preact/hooks';
+import { useCallback, useRef } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
@@ -6,22 +6,64 @@ import { StatusBadge } from '../ui/StatusBadge';
 interface FigureCardProps {
   figure: Figure;
   onClick?: () => void;
+  selectable?: boolean;
+  isSelected?: boolean;
+  onLongPress?: () => void;
 }
 
-export function FigureCard({ figure, onClick }: FigureCardProps) {
+const LONG_PRESS_MS = 500;
+
+export function FigureCard({ figure, onClick, selectable, isSelected, onLongPress }: FigureCardProps) {
   const { name, origin, imageUrl, collectionStatus } = figure;
   const [, setLocation] = useLocation();
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPress = useRef(false);
 
   const handleClick = useCallback(() => {
+    if (didLongPress.current) {
+      didLongPress.current = false;
+      return;
+    }
     if (onClick) {
       onClick();
-    } else {
+    } else if (!selectable) {
       setLocation(`/figure/${figure._id}`);
     }
-  }, [onClick, setLocation, figure._id]);
+  }, [onClick, selectable, setLocation, figure._id]);
+
+  const handlePointerDown = useCallback(() => {
+    didLongPress.current = false;
+    longPressTimer.current = setTimeout(() => {
+      didLongPress.current = true;
+      onLongPress?.();
+    }, LONG_PRESS_MS);
+  }, [onLongPress]);
+
+  const handlePointerUp = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handlePointerCancel = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    didLongPress.current = false;
+  }, []);
 
   return (
-    <button class="figure-card" onClick={handleClick} type="button">
+    <button
+      class={`figure-card ${selectable ? 'figure-card--selectable' : ''} ${isSelected ? 'figure-card--selected' : ''}`}
+      onClick={handleClick}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      onPointerLeave={handlePointerCancel}
+      type="button"
+    >
       <div class="figure-card__image-wrapper">
         {imageUrl ? (
           <img
@@ -39,9 +81,23 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
             </svg>
           </div>
         )}
-        {collectionStatus && (
+        {collectionStatus && !selectable && (
           <div class="figure-card__badge">
             <StatusBadge status={collectionStatus} />
+          </div>
+        )}
+        {selectable && (
+          <div class="figure-card__checkbox">
+            {isSelected ? (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="var(--brand-500)" stroke="none">
+                <rect x="2" y="2" width="20" height="20" rx="4" />
+                <path d="M9 12l2 2 4-4" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            ) : (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="2">
+                <rect x="2" y="2" width="20" height="20" rx="4" />
+              </svg>
+            )}
           </div>
         )}
       </div>
@@ -60,10 +116,18 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
           text-align: left;
           transition: transform var(--transition-fast);
           min-height: var(--touch-min);
+          -webkit-user-select: none;
+          user-select: none;
+          -webkit-touch-callout: none;
         }
 
         .figure-card:active {
           transform: scale(0.97);
+        }
+
+        .figure-card--selected {
+          outline: 2px solid var(--brand-500);
+          outline-offset: -2px;
         }
 
         .figure-card__image-wrapper {
@@ -79,6 +143,10 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
           object-fit: cover;
         }
 
+        .figure-card--selected .figure-card__image {
+          opacity: 0.75;
+        }
+
         .figure-card__placeholder {
           width: 100%;
           height: 100%;
@@ -91,6 +159,18 @@ export function FigureCard({ figure, onClick }: FigureCardProps) {
           position: absolute;
           top: var(--space-2);
           left: var(--space-2);
+        }
+
+        .figure-card__checkbox {
+          position: absolute;
+          top: var(--space-2);
+          right: var(--space-2);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          height: 32px;
+          filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
         }
 
         .figure-card__info {

@@ -1,7 +1,13 @@
 import { useState, useCallback } from 'preact/hooks';
 import { useRoute, useLocation } from 'wouter';
 import { useFigure } from '../hooks/useFigure';
+import { useUpdateFigure, useDeleteFigure } from '../hooks/useFigureMutations';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { EditFigureSheet } from '../components/collection/EditFigureSheet';
+import { StatusSheet } from '../components/collection/StatusSheet';
+import { DeleteSheet } from '../components/collection/DeleteSheet';
+import type { EditFormData } from '../components/collection/EditFigureSheet';
+import type { CollectionStatus } from '@figurecollecting/fc-shared';
 
 function SkeletonDetail() {
   return (
@@ -48,8 +54,13 @@ export function FigureDetail() {
   const [, params] = useRoute('/figure/:id');
   const [, setLocation] = useLocation();
   const { data: figure, isLoading, isError } = useFigure(params?.id);
+  const updateMutation = useUpdateFigure();
+  const deleteMutation = useDeleteFigure();
   const [activeImage, setActiveImage] = useState(0);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const handleBack = useCallback(() => {
     if (window.history.length > 1) {
@@ -81,6 +92,42 @@ export function FigureDetail() {
     },
     [touchStartX, activeImage],
   );
+
+  const handleEditSave = useCallback(
+    (data: EditFormData) => {
+      if (!figure) return;
+      updateMutation.mutate(
+        { id: figure._id, data },
+        { onSuccess: () => setEditOpen(false) },
+      );
+    },
+    [figure, updateMutation],
+  );
+
+  const handleStatusChange = useCallback(
+    (status: CollectionStatus) => {
+      if (!figure) return;
+      updateMutation.mutate(
+        { id: figure._id, data: { collectionStatus: status } },
+        { onSuccess: () => setStatusOpen(false) },
+      );
+    },
+    [figure, updateMutation],
+  );
+
+  const handleDelete = useCallback(() => {
+    if (!figure) return;
+    deleteMutation.mutate(figure._id, {
+      onSuccess: () => {
+        setDeleteOpen(false);
+        if (window.history.length > 1) {
+          window.history.back();
+        } else {
+          setLocation('/');
+        }
+      },
+    });
+  }, [figure, deleteMutation, setLocation]);
 
   if (isLoading) return <SkeletonDetail />;
 
@@ -305,21 +352,21 @@ export function FigureDetail() {
 
       {/* Bottom action bar */}
       <div class="figure-detail__action-bar">
-        <button class="figure-detail__action-btn" type="button">
+        <button class="figure-detail__action-btn" type="button" onClick={() => setEditOpen(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
           </svg>
           <span>Edit</span>
         </button>
-        <button class="figure-detail__action-btn figure-detail__action-btn--status" type="button">
+        <button class="figure-detail__action-btn figure-detail__action-btn--status" type="button" onClick={() => setStatusOpen(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
             <path d="M12 6v6l4 2" />
           </svg>
           <span>Status</span>
         </button>
-        <button class="figure-detail__action-btn figure-detail__action-btn--danger" type="button">
+        <button class="figure-detail__action-btn figure-detail__action-btn--danger" type="button" onClick={() => setDeleteOpen(true)}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 6h18" />
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -327,6 +374,34 @@ export function FigureDetail() {
           <span>Delete</span>
         </button>
       </div>
+
+      {/* Edit sheet */}
+      <EditFigureSheet
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        figure={figure}
+        onSave={handleEditSave}
+        isSaving={updateMutation.isPending}
+      />
+
+      {/* Status sheet */}
+      <StatusSheet
+        open={statusOpen}
+        onClose={() => setStatusOpen(false)}
+        currentStatus={figure.collectionStatus}
+        onSelect={handleStatusChange}
+        isUpdating={updateMutation.isPending}
+      />
+
+      {/* Delete sheet */}
+      <DeleteSheet
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={handleDelete}
+        isDeleting={deleteMutation.isPending}
+        figureName={figure.name}
+        imageUrl={figure.imageUrl}
+      />
 
       <style>{styles}</style>
     </div>

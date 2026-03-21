@@ -96,6 +96,41 @@ function FilterButton({ onClick, hasActiveFilters }: { onClick: () => void; hasA
   );
 }
 
+function ImportButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      class="collection-import-btn"
+      onClick={onClick}
+      type="button"
+      aria-label="Import"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+      </svg>
+
+      <style>{`
+        .collection-import-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: var(--touch-min);
+          height: var(--touch-min);
+          color: var(--text-secondary);
+          border-radius: var(--radius-md);
+          transition: color var(--transition-fast);
+        }
+
+        .collection-import-btn:active {
+          color: var(--text-primary);
+          background: var(--surface-tertiary);
+        }
+      `}</style>
+    </button>
+  );
+}
+
 export function Collection() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [, setLocation] = useLocation();
@@ -196,6 +231,7 @@ export function Collection() {
           title="Collection"
           action={
             <div class="collection-header-actions">
+              <ImportButton onClick={() => setLocation('/import')} />
               <AnalyticsButton onClick={() => setLocation('/analytics')} />
               <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
             </div>
@@ -243,6 +279,7 @@ export function Collection() {
           title="Collection"
           action={
             <div class="collection-header-actions">
+              <ImportButton onClick={() => setLocation('/import')} />
               <AnalyticsButton onClick={() => setLocation('/analytics')} />
               <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
             </div>

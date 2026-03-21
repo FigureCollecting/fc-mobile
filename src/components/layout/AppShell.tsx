@@ -11,6 +11,7 @@ import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
+const PriceDetail = lazy(() => import('../../pages/PriceDetail').then((m) => ({ default: m.PriceDetail })));
 
 const AUTH_ROUTES = ['/login', '/register'];
 
@@ -60,6 +61,11 @@ export function AppShell() {
           <Route path="/sync" component={Sync} />
           <Route path="/profile/security">
             {() => <Profile />}
+          </Route>
+          <Route path="/prices/:figureId">
+            <Suspense fallback={<PageFallback />}>
+              <PriceDetail />
+            </Suspense>
           </Route>
           <Route path="/figure/:id">
             <Suspense fallback={<PageFallback />}>

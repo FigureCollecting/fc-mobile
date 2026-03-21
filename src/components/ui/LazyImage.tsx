@@ -112,11 +112,16 @@ const lazyImageStyles = `
     height: 100%;
     object-fit: cover;
     opacity: 0;
-    transition: opacity 0.3s ease;
+    filter: blur(8px);
+    transform: scale(1.05);
+    transition: opacity 0.4s ease, filter 0.4s ease, transform 0.4s ease;
+    will-change: opacity, filter, transform;
   }
 
   .lazy-image__img--loaded {
     opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
   }
 
   @keyframes lazy-image-pulse {

@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
+import { hapticMedium } from '../../utils/haptics';
 
 interface PullToRefreshProps {
   onRefresh: () => Promise<void>;
@@ -7,6 +8,17 @@ interface PullToRefreshProps {
 }
 
 const THRESHOLD = 80;
+const MAX_PULL = 140;
+
+/**
+ * Rubber-band damping: returns diminishing pull distance as you pull further.
+ * Gives the native iOS overscroll feel.
+ */
+function rubberBand(distance: number, max: number): number {
+  const ratio = distance / max;
+  // Rubber band formula: d * (1 - 0.55 * pow(ratio, 2))
+  return distance * (1 - 0.55 * Math.pow(Math.min(ratio, 1), 2));
+}
 
 export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -14,6 +26,7 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
   const [refreshing, setRefreshing] = useState(false);
   const startY = useRef(0);
   const pulling = useRef(false);
+  const hapticFired = useRef(false);
 
   const handleTouchStart = useCallback((e: TouchEvent) => {
     const container = containerRef.current;
@@ -21,14 +34,25 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
 
     startY.current = e.touches[0].clientY;
     pulling.current = true;
+    hapticFired.current = false;
   }, [refreshing]);
 
   const handleTouchMove = useCallback((e: TouchEvent) => {
     if (!pulling.current) return;
 
-    const deltaY = e.touches[0].clientY - startY.current;
-    if (deltaY > 0) {
-      setPullDistance(Math.min(deltaY * 0.5, 120));
+    const rawDelta = e.touches[0].clientY - startY.current;
+    if (rawDelta > 0) {
+      const dampened = rubberBand(rawDelta, MAX_PULL * 2);
+      const clamped = Math.min(dampened, MAX_PULL);
+      setPullDistance(clamped);
+
+      // Haptic at threshold crossing
+      if (clamped >= THRESHOLD && !hapticFired.current) {
+        hapticFired.current = true;
+        hapticMedium();
+      } else if (clamped < THRESHOLD) {
+        hapticFired.current = false;
+      }
     }
   }, []);
 
@@ -50,6 +74,10 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
     }
   }, [pullDistance, onRefresh]);
 
+  // Spinner rotation: 0-360 tied to pull distance
+  const spinnerRotation = refreshing ? undefined : `rotate(${(pullDistance / THRESHOLD) * 360}deg)`;
+  const progress = Math.min(pullDistance / THRESHOLD, 1);
+
   return (
     <div
       ref={containerRef}
@@ -62,12 +90,20 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
         class="pull-to-refresh__indicator"
         style={{
           height: `${pullDistance}px`,
-          opacity: Math.min(pullDistance / THRESHOLD, 1),
+          opacity: progress,
+          transition: pulling.current ? 'none' : 'height 300ms cubic-bezier(0.25, 1, 0.5, 1), opacity 200ms ease',
         }}
       >
-        <div class={`pull-to-refresh__spinner ${refreshing ? 'pull-to-refresh__spinner--active' : ''}`}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--brand-500)" stroke-width="2">
-            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        <div
+          class={`pull-to-refresh__spinner ${refreshing ? 'pull-to-refresh__spinner--active' : ''}`}
+          style={{ transform: spinnerRotation }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="2">
+            <path
+              d="M21 12a9 9 0 1 1-6.219-8.56"
+              stroke={pullDistance >= THRESHOLD ? 'var(--brand-500)' : 'var(--text-tertiary)'}
+              style={{ transition: 'stroke 150ms ease' }}
+            />
           </svg>
         </div>
       </div>
@@ -86,13 +122,13 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
           align-items: center;
           justify-content: center;
           overflow: hidden;
-          transition: height 200ms var(--spring-snappy);
         }
 
         .pull-to-refresh__spinner {
           display: flex;
           align-items: center;
           justify-content: center;
+          will-change: transform;
         }
 
         .pull-to-refresh__spinner--active svg {

@@ -8,13 +8,16 @@ import { PullToRefresh } from '../components/ui/PullToRefresh';
 import { FilterSheet, DEFAULT_FILTERS } from '../components/collection/FilterSheet';
 import { StatusSheet } from '../components/collection/StatusSheet';
 import { DeleteSheet } from '../components/collection/DeleteSheet';
+import { ViewModeToggle, getStoredViewMode } from '../components/collection/ViewModeToggle';
+import type { ViewMode } from '../components/collection/ViewModeToggle';
 import type { FilterState } from '../components/collection/FilterSheet';
 import type { CollectionStatus } from '@figurecollecting/fc-shared';
 import { useCollection } from '../hooks/useCollection';
 import { useAuthStore } from '../stores/auth';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useBulkUpdateStatus, useBulkDelete } from '../hooks/useFigureMutations';
-import { hapticMedium } from '../utils/haptics';
+import { useShakeDetect } from '../hooks/useShakeDetect';
+import { hapticMedium, hapticHeavy } from '../utils/haptics';
 import { useUnreadCount } from '../hooks/useNotifications';
 
 function AnalyticsButton({ onClick }: { onClick: () => void }) {
@@ -178,6 +181,121 @@ function NotificationButton({ onClick, unread }: { onClick: () => void; unread: 
   );
 }
 
+/** "Shake to Discover" overlay shown when a random figure is revealed */
+function ShakeOverlay({ figure, onClose }: { figure: { name: string; imageUrl?: string; _id: string }; onClose: () => void }) {
+  const [, setLocation] = useLocation();
+
+  const handleView = useCallback(() => {
+    onClose();
+    setLocation(`/figure/${figure._id}`);
+  }, [figure._id, setLocation, onClose]);
+
+  return (
+    <div class="shake-overlay" onClick={onClose}>
+      <div class="shake-overlay__card" onClick={(e: Event) => e.stopPropagation()}>
+        <p class="shake-overlay__title">Shake to Discover!</p>
+        {figure.imageUrl && (
+          <img class="shake-overlay__img" src={figure.imageUrl} alt={figure.name} />
+        )}
+        <p class="shake-overlay__name">{figure.name}</p>
+        <div class="shake-overlay__actions">
+          <button class="shake-overlay__btn shake-overlay__btn--view" type="button" onClick={handleView}>
+            View Details
+          </button>
+          <button class="shake-overlay__btn shake-overlay__btn--dismiss" type="button" onClick={onClose}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        .shake-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 200;
+          background: rgba(0, 0, 0, 0.7);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: var(--space-6);
+          animation: shake-fade-in 300ms ease both;
+          backdrop-filter: blur(4px);
+          -webkit-backdrop-filter: blur(4px);
+        }
+
+        .shake-overlay__card {
+          background: var(--surface-secondary);
+          border-radius: var(--radius-xl);
+          padding: var(--space-6);
+          max-width: 320px;
+          width: 100%;
+          text-align: center;
+          animation: shake-card-in 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+
+        .shake-overlay__title {
+          font-size: var(--font-xs);
+          font-weight: var(--font-weight-semibold);
+          color: var(--brand-400);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-bottom: var(--space-4);
+        }
+
+        .shake-overlay__img {
+          width: 160px;
+          height: 160px;
+          object-fit: cover;
+          border-radius: var(--radius-lg);
+          margin: 0 auto var(--space-4);
+          display: block;
+        }
+
+        .shake-overlay__name {
+          font-size: var(--font-base);
+          font-weight: var(--font-weight-bold);
+          color: var(--text-primary);
+          margin-bottom: var(--space-5);
+          line-height: var(--line-height-tight);
+        }
+
+        .shake-overlay__actions {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-2);
+        }
+
+        .shake-overlay__btn {
+          min-height: var(--touch-min);
+          border-radius: var(--radius-md);
+          font-size: var(--font-sm);
+          font-weight: var(--font-weight-semibold);
+          padding: var(--space-3);
+        }
+
+        .shake-overlay__btn--view {
+          background: var(--brand-500);
+          color: white;
+        }
+
+        .shake-overlay__btn--dismiss {
+          color: var(--text-secondary);
+        }
+
+        @keyframes shake-fade-in {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes shake-card-in {
+          from { transform: scale(0.8); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export function Collection() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [, setLocation] = useLocation();
@@ -185,6 +303,8 @@ export function Collection() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [bulkStatusOpen, setBulkStatusOpen] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(getStoredViewMode);
+  const [shakeTarget, setShakeTarget] = useState<{ name: string; imageUrl?: string; _id: string } | null>(null);
 
   const { isSelecting, selected, toggle, selectAll, enterSelectMode, exitSelectMode } = useMultiSelect();
   const bulkUpdateStatus = useBulkUpdateStatus();
@@ -203,6 +323,18 @@ export function Collection() {
     sortOrder: filters.sortOrder,
     status: filters.statuses.length === 1 ? filters.statuses[0] : undefined,
   });
+
+  const figures = data?.data ?? [];
+
+  // Shake to discover: pick a random figure
+  const handleShake = useCallback(() => {
+    if (figures.length === 0 || shakeTarget) return;
+    const random = figures[Math.floor(Math.random() * figures.length)];
+    hapticHeavy();
+    setShakeTarget({ name: random.name, imageUrl: random.imageUrl, _id: random._id });
+  }, [figures, shakeTarget]);
+
+  useShakeDetect(handleShake);
 
   const handleRefresh = useCallback(async () => {
     await refetch();
@@ -256,8 +388,6 @@ export function Collection() {
     });
   }, [selected, bulkDelete, exitSelectMode]);
 
-  const figures = data?.data ?? [];
-
   // Not logged in
   if (!isAuthenticated) {
     return (
@@ -286,7 +416,7 @@ export function Collection() {
             </div>
           }
         />
-        <CollectionGrid>
+        <CollectionGrid viewMode={viewMode}>
           <SkeletonCard />
           <SkeletonCard />
           <SkeletonCard />
@@ -373,6 +503,7 @@ export function Collection() {
     </div>
   ) : (
     <div class="collection-header-actions">
+      <ViewModeToggle mode={viewMode} onChange={setViewMode} />
       <NotificationButton onClick={() => setLocation('/notifications')} unread={unreadCount} />
       <AnalyticsButton onClick={() => setLocation('/analytics')} />
       <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
@@ -387,11 +518,12 @@ export function Collection() {
         action={headerAction}
       />
       <PullToRefresh onRefresh={handleRefresh}>
-        <CollectionGrid>
+        <CollectionGrid viewMode={viewMode}>
           {figures.map((figure) => (
             <FigureCard
               key={figure._id}
               figure={figure}
+              viewMode={viewMode}
               selectable={isSelecting}
               isSelected={selected.has(figure._id)}
               onLongPress={() => handleLongPress(figure._id)}
@@ -400,6 +532,14 @@ export function Collection() {
           ))}
         </CollectionGrid>
       </PullToRefresh>
+
+      {/* Shake to Discover overlay */}
+      {shakeTarget && (
+        <ShakeOverlay
+          figure={shakeTarget}
+          onClose={() => setShakeTarget(null)}
+        />
+      )}
 
       {/* Multi-select bottom action bar */}
       {isSelecting && selected.size > 0 && (
@@ -463,7 +603,7 @@ const styles = `
   .collection-header-actions {
     display: flex;
     align-items: center;
-    gap: 0;
+    gap: var(--space-1);
   }
 
   .page-collection__empty {

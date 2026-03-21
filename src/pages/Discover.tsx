@@ -1,9 +1,32 @@
-import { useState, useCallback, useRef } from 'preact/hooks';
+import { useState, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { Header } from '../components/layout/Header';
 import { CollectionGrid } from '../components/collection/CollectionGrid';
 import { SkeletonCard } from '../components/ui/SkeletonCard';
 import { useSearch } from '../hooks/useSearch';
+import { useCollection } from '../hooks/useCollection';
+import { useCollectionBreakdown } from '../hooks/useAnalytics';
+
+/** Highlight matching text within a string */
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return <>{text}</>;
+
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark class="suggestion-highlight">{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
+interface SuggestionGroup {
+  label: string;
+  items: { id: string; text: string; type: 'recent' | 'manufacturer' | 'collection' }[];
+}
 
 export function Discover() {
   const {
@@ -19,15 +42,70 @@ export function Discover() {
 
   const [, setLocation] = useLocation();
   const [recentSearches, setRecentSearches] = useState<string[]>(getRecentSearches);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch manufacturer breakdown for suggestions
+  const { data: manufacturers } = useCollectionBreakdown('manufacturer');
+
+  // Fetch user's cached collection for local matching
+  const { data: collectionData } = useCollection({ limit: 100 });
+  const collectionFigures = collectionData?.data ?? [];
+
+  // Build suggestions based on current query
+  const suggestions = useMemo((): SuggestionGroup[] => {
+    const groups: SuggestionGroup[] = [];
+    const q = query.toLowerCase().trim();
+
+    // Recent searches (always show if no query, or filter by query)
+    const recents = recentSearches
+      .filter((s) => !q || s.toLowerCase().includes(q))
+      .slice(0, 3)
+      .map((s) => ({ id: `recent-${s}`, text: s, type: 'recent' as const }));
+
+    if (recents.length > 0) {
+      groups.push({ label: 'Recent', items: recents });
+    }
+
+    // Popular manufacturers
+    if (manufacturers && manufacturers.length > 0) {
+      const mfrs = manufacturers
+        .filter((m) => !q || m._id.toLowerCase().includes(q))
+        .slice(0, 4)
+        .map((m) => ({ id: `mfr-${m._id}`, text: m._id, type: 'manufacturer' as const }));
+
+      if (mfrs.length > 0) {
+        groups.push({ label: 'Manufacturers', items: mfrs });
+      }
+    }
+
+    // Your collection matches (only if typing)
+    if (q.length >= 1 && collectionFigures.length > 0) {
+      const matches = collectionFigures
+        .filter((f) => f.name.toLowerCase().includes(q) || (f.origin && f.origin.toLowerCase().includes(q)))
+        .slice(0, 4)
+        .map((f) => ({ id: `col-${f._id}`, text: f.name, type: 'collection' as const }));
+
+      if (matches.length > 0) {
+        groups.push({ label: 'Your Collection', items: matches });
+      }
+    }
+
+    return groups;
+  }, [query, recentSearches, manufacturers, collectionFigures]);
 
   const handleInput = useCallback(
     (e: Event) => {
       const value = (e.target as HTMLInputElement).value;
       updateQuery(value);
+      setShowSuggestions(value.length > 0 || recentSearches.length > 0);
     },
-    [updateQuery],
+    [updateQuery, recentSearches],
   );
+
+  const handleFocus = useCallback(() => {
+    setShowSuggestions(true);
+  }, []);
 
   const handleSubmit = useCallback(
     (e: Event) => {
@@ -35,19 +113,31 @@ export function Discover() {
       if (query.trim()) {
         saveRecentSearch(query.trim());
         setRecentSearches(getRecentSearches());
+        setShowSuggestions(false);
       }
     },
     [query, saveRecentSearch, getRecentSearches],
   );
 
-  const handleRecentClick = useCallback(
-    (term: string) => {
-      updateQuery(term);
-      if (inputRef.current) {
-        inputRef.current.value = term;
+  const handleSuggestionClick = useCallback(
+    (text: string, type: string) => {
+      if (type === 'collection') {
+        // Find the figure and navigate
+        const fig = collectionFigures.find((f) => f.name === text);
+        if (fig) {
+          setLocation(`/figure/${fig._id}`);
+          return;
+        }
       }
+      updateQuery(text);
+      if (inputRef.current) {
+        inputRef.current.value = text;
+      }
+      saveRecentSearch(text);
+      setRecentSearches(getRecentSearches());
+      setShowSuggestions(false);
     },
-    [updateQuery],
+    [updateQuery, saveRecentSearch, getRecentSearches, collectionFigures, setLocation],
   );
 
   const handleClearRecent = useCallback(() => {
@@ -65,9 +155,9 @@ export function Discover() {
     [query, saveRecentSearch, setLocation],
   );
 
-  const showRecent = !hasSearched && recentSearches.length > 0;
   const showEmpty = hasSearched && !isLoading && results.length === 0;
   const showResults = hasSearched && results.length > 0;
+  const hasSuggestions = showSuggestions && suggestions.length > 0 && !showResults && !isLoading;
 
   return (
     <div class="page-discover">
@@ -87,12 +177,13 @@ export function Discover() {
             class="page-discover__input"
             value={query}
             onInput={handleInput}
+            onFocus={handleFocus}
           />
           {query && (
             <button
               class="page-discover__clear-btn"
               type="button"
-              onClick={() => { updateQuery(''); if (inputRef.current) inputRef.current.value = ''; }}
+              onClick={() => { updateQuery(''); if (inputRef.current) inputRef.current.value = ''; setShowSuggestions(false); }}
               aria-label="Clear search"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -106,35 +197,54 @@ export function Discover() {
       </form>
 
       <div class="page-discover__content">
-        {/* Recent searches */}
-        {showRecent && (
-          <div class="page-discover__recent">
-            <div class="page-discover__recent-header">
-              <h2 class="page-discover__recent-title">Recent</h2>
-              <button
-                class="page-discover__recent-clear"
-                onClick={handleClearRecent}
-                type="button"
-              >
-                Clear
-              </button>
-            </div>
-            <div class="page-discover__recent-list">
-              {recentSearches.map((term) => (
-                <button
-                  key={term}
-                  class="page-discover__recent-item"
-                  onClick={() => handleRecentClick(term)}
-                  type="button"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M12 6v6l4 2" />
-                  </svg>
-                  <span>{term}</span>
-                </button>
-              ))}
-            </div>
+        {/* Smart suggestions dropdown */}
+        {hasSuggestions && (
+          <div class="discover-suggestions">
+            {suggestions.map((group) => (
+              <div key={group.label} class="discover-suggestions__group">
+                <div class="discover-suggestions__header">
+                  <span class="discover-suggestions__label">{group.label}</span>
+                  {group.label === 'Recent' && (
+                    <button class="discover-suggestions__clear" type="button" onClick={handleClearRecent}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {group.items.map((item) => (
+                  <button
+                    key={item.id}
+                    class="discover-suggestions__item"
+                    type="button"
+                    onClick={() => handleSuggestionClick(item.text, item.type)}
+                  >
+                    <span class="discover-suggestions__icon">
+                      {item.type === 'recent' && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 6v6l4 2" />
+                        </svg>
+                      )}
+                      {item.type === 'manufacturer' && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        </svg>
+                      )}
+                      {item.type === 'collection' && (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="3" width="7" height="7" rx="1" />
+                          <rect x="14" y="3" width="7" height="7" rx="1" />
+                          <rect x="3" y="14" width="7" height="7" rx="1" />
+                          <rect x="14" y="14" width="7" height="7" rx="1" />
+                        </svg>
+                      )}
+                    </span>
+                    <span class="discover-suggestions__text">
+                      <HighlightMatch text={item.text} query={query} />
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ))}
           </div>
         )}
 
@@ -203,7 +313,7 @@ export function Discover() {
         )}
 
         {/* Default state */}
-        {!hasSearched && !showRecent && (
+        {!hasSearched && !hasSuggestions && (
           <div class="page-discover__default">
             <p class="page-discover__placeholder">Browse the catalog to discover new figures</p>
           </div>
@@ -266,49 +376,78 @@ export function Discover() {
           padding-bottom: var(--space-4);
         }
 
-        /* Recent searches */
-        .page-discover__recent {
+        /* Smart suggestions */
+        .discover-suggestions {
           padding: 0 var(--space-4);
+          animation: suggestions-in 200ms ease both;
         }
 
-        .page-discover__recent-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
+        @keyframes suggestions-in {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .discover-suggestions__group {
           margin-bottom: var(--space-3);
         }
 
-        .page-discover__recent-title {
-          font-size: var(--font-sm);
-          font-weight: var(--font-weight-semibold);
-          color: var(--text-secondary);
+        .discover-suggestions__header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: var(--space-1);
         }
 
-        .page-discover__recent-clear {
+        .discover-suggestions__label {
+          font-size: var(--font-xs);
+          font-weight: var(--font-weight-semibold);
+          color: var(--text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .discover-suggestions__clear {
           font-size: var(--font-xs);
           color: var(--brand-400);
           padding: var(--space-1) var(--space-2);
         }
 
-        .page-discover__recent-list {
-          display: flex;
-          flex-direction: column;
-        }
-
-        .page-discover__recent-item {
+        .discover-suggestions__item {
           display: flex;
           align-items: center;
           gap: var(--space-3);
-          min-height: var(--touch-min);
+          width: 100%;
+          min-height: 40px;
           padding: var(--space-2) var(--space-3);
           border-radius: var(--radius-md);
-          font-size: var(--font-sm);
-          color: var(--text-primary);
           text-align: left;
+          transition: background var(--transition-fast);
         }
 
-        .page-discover__recent-item:active {
+        .discover-suggestions__item:active {
           background: var(--surface-secondary);
+        }
+
+        .discover-suggestions__icon {
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          color: var(--text-tertiary);
+        }
+
+        .discover-suggestions__text {
+          font-size: var(--font-sm);
+          color: var(--text-primary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .suggestion-highlight {
+          background: rgba(9, 103, 210, 0.2);
+          color: var(--brand-400);
+          border-radius: 2px;
+          padding: 0 1px;
         }
 
         /* Results */

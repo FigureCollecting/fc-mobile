@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'preact/compat';
 import { Route, Switch, useLocation } from 'wouter';
 import { BottomNav } from './BottomNav';
 import { OfflineBanner } from '../ui/OfflineBanner';
+import { AnimatedRoutes } from '../ui/AnimatedRoutes';
 import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
 import { Prices } from '../../pages/Prices';
@@ -56,33 +57,35 @@ export function AppShell() {
     <div class="app-shell">
       <OfflineBanner />
       <main class={`app-content ${isAuthRoute ? 'app-content--auth' : ''}`}>
-        <Switch>
-          <Route path="/login" component={Login} />
-          <Route path="/register" component={Register} />
-          <Route path="/" component={Collection} />
-          <Route path="/discover" component={Discover} />
-          <Route path="/prices" component={Prices} />
-          <Route path="/profile" component={Profile} />
-          <Route path="/settings" component={Settings} />
-          <Route path="/sync" component={Sync} />
-          <Route path="/analytics" component={Analytics} />
-          <Route path="/import" component={Import} />
-          <Route path="/export" component={Export} />
-          <Route path="/notifications" component={Notifications} />
-          <Route path="/profile/security">
-            {() => <Profile />}
-          </Route>
-          <Route path="/prices/:figureId">
-            <Suspense fallback={<PageFallback />}>
-              <PriceDetail />
-            </Suspense>
-          </Route>
-          <Route path="/figure/:id">
-            <Suspense fallback={<PageFallback />}>
-              <FigureDetail />
-            </Suspense>
-          </Route>
-        </Switch>
+        <AnimatedRoutes>
+          <Switch>
+            <Route path="/login" component={Login} />
+            <Route path="/register" component={Register} />
+            <Route path="/" component={Collection} />
+            <Route path="/discover" component={Discover} />
+            <Route path="/prices" component={Prices} />
+            <Route path="/profile" component={Profile} />
+            <Route path="/settings" component={Settings} />
+            <Route path="/sync" component={Sync} />
+            <Route path="/analytics" component={Analytics} />
+            <Route path="/import" component={Import} />
+            <Route path="/export" component={Export} />
+            <Route path="/notifications" component={Notifications} />
+            <Route path="/profile/security">
+              {() => <Profile />}
+            </Route>
+            <Route path="/prices/:figureId">
+              <Suspense fallback={<PageFallback />}>
+                <PriceDetail />
+              </Suspense>
+            </Route>
+            <Route path="/figure/:id">
+              <Suspense fallback={<PageFallback />}>
+                <FigureDetail />
+              </Suspense>
+            </Route>
+          </Switch>
+        </AnimatedRoutes>
       </main>
       {!isAuthRoute && <BottomNav />}
 

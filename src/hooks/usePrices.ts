@@ -27,6 +27,8 @@ export interface WatchlistItem {
   cheapestSite: string;
   trend: PriceTrend;
   trendPercent?: number;
+  /** Last 30 days of price points for sparkline visualization */
+  priceHistory?: number[];
   addedAt: string;
 }
 

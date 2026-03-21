@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'preact/compat';
 import { Route, Switch } from 'wouter';
 import { BottomNav } from './BottomNav';
+import { OfflineBanner } from '../ui/OfflineBanner';
 import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
 import { Prices } from '../../pages/Prices';
@@ -39,6 +40,7 @@ function PageFallback() {
 export function AppShell() {
   return (
     <div class="app-shell">
+      <OfflineBanner />
       <main class="app-content">
         <Switch>
           <Route path="/" component={Collection} />

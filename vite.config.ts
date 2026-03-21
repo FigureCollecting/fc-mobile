@@ -32,6 +32,15 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
+            urlPattern: /\/api\/figures/,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'figures-api',
+              expiration: { maxEntries: 50, maxAgeSeconds: 300 },
+              networkTimeoutSeconds: 3,
+            },
+          },
+          {
             urlPattern: /^https:\/\/figurecollecting\.com\/api\//,
             handler: 'NetworkFirst',
             options: {

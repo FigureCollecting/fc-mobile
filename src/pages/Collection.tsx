@@ -15,6 +15,7 @@ import { useAuthStore } from '../stores/auth';
 import { useMultiSelect } from '../hooks/useMultiSelect';
 import { useBulkUpdateStatus, useBulkDelete } from '../hooks/useFigureMutations';
 import { hapticMedium } from '../utils/haptics';
+import { useUnreadCount } from '../hooks/useNotifications';
 
 function AnalyticsButton({ onClick }: { onClick: () => void }) {
   return (
@@ -131,6 +132,52 @@ function ImportButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function NotificationButton({ onClick, unread }: { onClick: () => void; unread: number }) {
+  return (
+    <button
+      class="collection-notif-btn"
+      onClick={onClick}
+      type="button"
+      aria-label="Notifications"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+      </svg>
+      {unread > 0 && <span class="collection-notif-btn__dot" />}
+
+      <style>{`
+        .collection-notif-btn {
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: var(--touch-min);
+          height: var(--touch-min);
+          color: var(--text-secondary);
+          border-radius: var(--radius-md);
+          transition: color var(--transition-fast);
+        }
+
+        .collection-notif-btn:active {
+          color: var(--text-primary);
+          background: var(--surface-tertiary);
+        }
+
+        .collection-notif-btn__dot {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          width: 8px;
+          height: 8px;
+          background: var(--accent-danger);
+          border-radius: 50%;
+        }
+      `}</style>
+    </button>
+  );
+}
+
 export function Collection() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [, setLocation] = useLocation();
@@ -142,6 +189,7 @@ export function Collection() {
   const { isSelecting, selected, toggle, selectAll, enterSelectMode, exitSelectMode } = useMultiSelect();
   const bulkUpdateStatus = useBulkUpdateStatus();
   const bulkDelete = useBulkDelete();
+  const { data: unreadCount = 0 } = useUnreadCount();
 
   const hasActiveFilters =
     filters.statuses.length > 0 ||
@@ -231,6 +279,7 @@ export function Collection() {
           title="Collection"
           action={
             <div class="collection-header-actions">
+              <NotificationButton onClick={() => setLocation('/notifications')} unread={unreadCount} />
               <ImportButton onClick={() => setLocation('/import')} />
               <AnalyticsButton onClick={() => setLocation('/analytics')} />
               <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
@@ -279,6 +328,7 @@ export function Collection() {
           title="Collection"
           action={
             <div class="collection-header-actions">
+              <NotificationButton onClick={() => setLocation('/notifications')} unread={unreadCount} />
               <ImportButton onClick={() => setLocation('/import')} />
               <AnalyticsButton onClick={() => setLocation('/analytics')} />
               <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
@@ -323,6 +373,7 @@ export function Collection() {
     </div>
   ) : (
     <div class="collection-header-actions">
+      <NotificationButton onClick={() => setLocation('/notifications')} unread={unreadCount} />
       <AnalyticsButton onClick={() => setLocation('/analytics')} />
       <FilterButton onClick={() => setFilterOpen(true)} hasActiveFilters={hasActiveFilters} />
     </div>

@@ -1,5 +1,7 @@
 import { useLocation } from 'wouter';
 import { hapticLight } from '../../utils/haptics';
+import { Badge } from '../ui/Badge';
+import { useUnreadCount } from '../../hooks/useNotifications';
 
 interface NavItem {
   path: string;
@@ -55,6 +57,7 @@ function NavIcon({ icon, active }: { icon: string; active: boolean }) {
 
 export function BottomNav() {
   const [location, setLocation] = useLocation();
+  const { data: unreadCount = 0 } = useUnreadCount();
 
   return (
     <nav class="bottom-nav" role="navigation" aria-label="Main navigation">
@@ -70,6 +73,7 @@ export function BottomNav() {
           >
             <span class="bottom-nav__icon">
               <NavIcon icon={item.icon} active={active} />
+              {item.icon === 'user' && <Badge count={unreadCount} />}
             </span>
             <span class="bottom-nav__label">{item.label}</span>
             {active && <span class="bottom-nav__indicator" />}
@@ -112,6 +116,7 @@ export function BottomNav() {
           justify-content: center;
           width: 24px;
           height: 24px;
+          position: relative;
         }
 
         .bottom-nav__label {

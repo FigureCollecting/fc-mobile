@@ -1,11 +1,13 @@
+import type { Figure } from '@figurecollecting/fc-shared';
+
 interface FigureCardProps {
-  name: string;
-  series?: string;
-  imageUrl?: string;
+  figure: Figure;
   onClick?: () => void;
 }
 
-export function FigureCard({ name, series, imageUrl, onClick }: FigureCardProps) {
+export function FigureCard({ figure, onClick }: FigureCardProps) {
+  const { name, origin, imageUrl } = figure;
+
   return (
     <button class="figure-card" onClick={onClick} type="button">
       <div class="figure-card__image-wrapper">
@@ -28,7 +30,7 @@ export function FigureCard({ name, series, imageUrl, onClick }: FigureCardProps)
       </div>
       <div class="figure-card__info">
         <span class="figure-card__name">{name}</span>
-        {series && <span class="figure-card__series">{series}</span>}
+        {origin && <span class="figure-card__series">{origin}</span>}
       </div>
 
       <style>{`

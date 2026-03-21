@@ -1,22 +1,16 @@
-import { create } from 'zustand';
+// Re-export the shared auth store, configured for mobile
+import {
+  useAuthStore as useSharedAuthStore,
+  configureAuthStore,
+} from '@figurecollecting/fc-shared';
+import type { AuthState } from '@figurecollecting/fc-shared';
 
-interface AuthState {
-  token: string | null;
-  user: { username: string; email: string } | null;
-  isAuthenticated: boolean;
-  setToken: (token: string) => void;
-  setUser: (user: { username: string; email: string }) => void;
-  logout: () => void;
-}
+// Configure for mobile (no cookie clearing needed, no theme sync)
+configureAuthStore({
+  onLogout: () => {
+    console.log('Logged out — clearing mobile cache');
+  },
+});
 
-export const useAuthStore = create<AuthState>((set) => ({
-  token: null,
-  user: null,
-  isAuthenticated: false,
-
-  setToken: (token: string) => set({ token, isAuthenticated: true }),
-
-  setUser: (user: { username: string; email: string }) => set({ user }),
-
-  logout: () => set({ token: null, user: null, isAuthenticated: false }),
-}));
+export { useSharedAuthStore as useAuthStore };
+export type { AuthState };

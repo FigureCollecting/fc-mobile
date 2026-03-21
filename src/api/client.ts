@@ -1,34 +1,29 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? 'https://figurecollecting.com/api';
+// Shared API client configured for mobile
+import { createApiClient, createSimpleApiClient } from '@figurecollecting/fc-shared';
+import type { AuthAccessor } from '@figurecollecting/fc-shared';
+import { useAuthStore } from '../stores/auth';
 
-interface RequestOptions {
-  method?: string;
-  body?: unknown;
-  token?: string | null;
-}
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://figurecollecting.com/api';
 
-export async function apiClient<T>(
-  endpoint: string,
-  options: RequestOptions = {},
-): Promise<T> {
-  const { method = 'GET', body, token } = options;
+// AuthAccessor wired to the shared auth store
+const auth: AuthAccessor = {
+  getToken: () => useAuthStore.getState().user?.token,
+  getRefreshToken: () => useAuthStore.getState().user?.refreshToken,
+  updateTokens: (token, refreshToken, tokenExpiresAt) =>
+    useAuthStore.getState().updateTokens(token, refreshToken, tokenExpiresAt),
+  recordActivity: () => useAuthStore.getState().recordActivity(),
+  logout: () => useAuthStore.getState().logout(),
+  onAuthFailure: () => {
+    // Mobile: navigate to login (handled by auth state reactivity)
+    console.log('Auth failure — redirecting to login');
+  },
+};
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+// Main API client with token refresh
+export const api = createApiClient({ baseUrl: API_BASE_URL, auth });
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!response.ok) {
-    throw new Error(`API Error: ${response.status} ${response.statusText}`);
-  }
-
-  return response.json() as Promise<T>;
-}
+// Simple client for scraper/sync endpoints (no token refresh)
+export const scraperApi = createSimpleApiClient({
+  baseUrl: API_BASE_URL,
+  auth: { getToken: auth.getToken },
+});

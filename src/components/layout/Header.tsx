@@ -1,11 +1,15 @@
 interface HeaderProps {
   title: string;
+  /** Content rendered before the title (e.g. back button) */
+  leading?: preact.ComponentChildren;
+  /** Content rendered after the title (e.g. gear icon, action buttons) */
   action?: preact.ComponentChildren;
 }
 
-export function Header({ title, action }: HeaderProps) {
+export function Header({ title, leading, action }: HeaderProps) {
   return (
     <header class="header">
+      {leading && <div class="header__leading">{leading}</div>}
       <h1 class="header__title">{title}</h1>
       {action && <div class="header__action">{action}</div>}
 
@@ -21,6 +25,13 @@ export function Header({ title, action }: HeaderProps) {
           position: sticky;
           top: 0;
           z-index: 10;
+          gap: var(--space-1);
+        }
+
+        .header__leading {
+          display: flex;
+          align-items: center;
+          flex-shrink: 0;
         }
 
         .header__title {
@@ -28,12 +39,15 @@ export function Header({ title, action }: HeaderProps) {
           font-weight: var(--font-weight-bold);
           color: var(--text-primary);
           line-height: var(--line-height-tight);
+          flex: 1;
+          min-width: 0;
         }
 
         .header__action {
           display: flex;
           align-items: center;
           gap: var(--space-2);
+          flex-shrink: 0;
         }
       `}</style>
     </header>

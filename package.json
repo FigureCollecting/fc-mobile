@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@figurecollecting/fc-shared": "file:../figure-collector-services/fc-shared",
+    "@figurecollecting/fc-shared": "^1.3.0",
     "@preact/signals": "^2.8.2",
     "@tanstack/react-query": "^5.91.3",
     "framer-motion": "^12.38.0",

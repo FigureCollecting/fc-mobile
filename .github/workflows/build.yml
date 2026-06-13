@@ -10,17 +10,13 @@ jobs:
   build:
     name: Build Application
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-
-      - name: Checkout fc-shared
-        uses: actions/checkout@v5
-        with:
-          repository: FigureCollecting/fc-shared
-          path: fc-shared
-          token: ${{ secrets.FC_SHARED_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -28,23 +24,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Build fc-shared dependency
-        run: |
-          cd fc-shared
-          npm ci
-          npm run build
-
-      - name: Patch fc-shared dependency path
-        run: |
-          # Rewrite the local file: reference to point to checked-out fc-shared
-          node -e "
-            const pkg = require('./package.json');
-            pkg.dependencies['@figurecollecting/fc-shared'] = 'file:./fc-shared';
-            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run linter
         run: npx tsc -b --noEmit || true

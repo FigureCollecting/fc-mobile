@@ -2,52 +2,11 @@ import { useState, useCallback } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { Header } from '../components/layout/Header';
 import { PullToRefresh } from '../components/ui/PullToRefresh';
+import { ErrorState } from '../components/ui/ErrorState';
 import { WatchlistItem } from '../components/prices/WatchlistItem';
 import { TrendIndicator } from '../components/prices/TrendIndicator';
 import { useWatchlist, useRemoveFromWatchlist } from '../hooks/usePrices';
 import { useAuthStore } from '../stores/auth';
-
-// --- Mock data for development (used when API is unavailable) ---
-const MOCK_WATCHLIST = {
-  items: [
-    {
-      figureId: 'mock-1',
-      figureName: 'Hatsune Miku: Magical Mirai 2024 Ver.',
-      manufacturer: 'Good Smile Company',
-      imageUrl: '',
-      lowestPrice: 15800,
-      currency: 'JPY',
-      cheapestSite: 'AmiAmi',
-      trend: 'down' as const,
-      trendPercent: 4.2,
-      addedAt: '2026-03-01T00:00:00Z',
-    },
-    {
-      figureId: 'mock-2',
-      figureName: 'Rem: Wedding Ver.',
-      manufacturer: 'Kadokawa',
-      imageUrl: '',
-      lowestPrice: 22000,
-      currency: 'JPY',
-      cheapestSite: 'Solaris Japan',
-      trend: 'up' as const,
-      trendPercent: 8.1,
-      addedAt: '2026-02-15T00:00:00Z',
-    },
-    {
-      figureId: 'mock-3',
-      figureName: 'Saber Alter: Dress Ver.',
-      manufacturer: 'Alter',
-      imageUrl: '',
-      lowestPrice: 195.99,
-      currency: 'USD',
-      cheapestSite: 'Tokyo Otaku Mode',
-      trend: 'stable' as const,
-      addedAt: '2026-03-10T00:00:00Z',
-    },
-  ],
-  summary: { totalItems: 3, avgTrend: 'down' as const, avgTrendPercent: 1.3 },
-};
 
 function SettingsButton() {
   return (
@@ -85,10 +44,10 @@ export function Prices() {
   const [, setLocation] = useLocation();
   const [fabExpanded] = useState(false);
 
-  // Use real data when available, fall back to mock
-  const watchlistData = data ?? MOCK_WATCHLIST;
-  const items = watchlistData.items;
-  const summary = watchlistData.summary;
+  // Only trust server data. An empty/absent payload means "show empty/error",
+  // never "pretend there's data".
+  const items = data?.items ?? [];
+  const summary = data?.summary ?? { totalItems: 0, avgTrend: 'stable' as const, avgTrendPercent: 0 };
 
   const handleRefresh = useCallback(async () => {
     await refetch();
@@ -137,9 +96,19 @@ export function Prices() {
     );
   }
 
-  // Error state (show mock data as fallback)
+  // Real error — show the user, don't fabricate data.
   if (isError && !data) {
-    // Fall through to use MOCK_WATCHLIST
+    return (
+      <div class="page-prices">
+        <Header title="Price Tracker" action={<SettingsButton />} />
+        <ErrorState
+          title="Couldn't load watchlist"
+          message="We couldn't reach the price tracker. Check your connection and try again."
+          onRetry={handleRefresh}
+        />
+        <style>{styles}</style>
+      </div>
+    );
   }
 
   // Empty watchlist

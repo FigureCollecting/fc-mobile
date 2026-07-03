@@ -23,13 +23,21 @@ dist-ssr
 *.sln
 *.sw?
 
-# Environment
+# Environment — commit build-time defaults but ignore local overrides / secrets
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
+!.env.development
+!.env.production
 
 # Coverage
 coverage
 
 # PWA dev artifacts
 dev-dist
+
+# Playwright
+test-results
+playwright-report
+playwright/.cache

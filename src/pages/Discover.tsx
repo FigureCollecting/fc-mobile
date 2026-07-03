@@ -3,9 +3,12 @@ import { useLocation } from 'wouter';
 import { Header } from '../components/layout/Header';
 import { CollectionGrid } from '../components/collection/CollectionGrid';
 import { SkeletonCard } from '../components/ui/SkeletonCard';
+import { ErrorState } from '../components/ui/ErrorState';
+import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
 import { useSearch } from '../hooks/useSearch';
 import { useCollection } from '../hooks/useCollection';
 import { useCollectionBreakdown } from '../hooks/useAnalytics';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 
 /** Highlight matching text within a string */
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -34,6 +37,8 @@ export function Discover() {
     updateQuery,
     results,
     isLoading,
+    isError,
+    refetch,
     hasSearched,
     saveRecentSearch,
     getRecentSearches,
@@ -44,12 +49,13 @@ export function Discover() {
   const [recentSearches, setRecentSearches] = useState<string[]>(getRecentSearches);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const online = useOnlineStatus();
 
   // Fetch manufacturer breakdown for suggestions
   const { data: manufacturers } = useCollectionBreakdown('manufacturer');
 
   // Fetch user's cached collection for local matching
-  const { data: collectionData } = useCollection({ limit: 100 });
+  const { data: collectionData, dataUpdatedAt: collectionUpdatedAt } = useCollection({ limit: 100 });
   const collectionFigures = collectionData?.data ?? [];
 
   // Build suggestions based on current query
@@ -155,9 +161,10 @@ export function Discover() {
     [query, saveRecentSearch, setLocation],
   );
 
-  const showEmpty = hasSearched && !isLoading && results.length === 0;
+  const showEmpty = hasSearched && !isLoading && !isError && results.length === 0;
   const showResults = hasSearched && results.length > 0;
-  const hasSuggestions = showSuggestions && suggestions.length > 0 && !showResults && !isLoading;
+  const showSearchError = hasSearched && !isLoading && isError && results.length === 0;
+  const hasSuggestions = showSuggestions && suggestions.length > 0 && !showResults && !isLoading && !showSearchError;
 
   return (
     <div class="page-discover">
@@ -197,6 +204,27 @@ export function Discover() {
       </form>
 
       <div class="page-discover__content">
+        {/* When offline and we're showing cached suggestions/collection, hint at staleness. */}
+        {!online.value && collectionFigures.length > 0 && (
+          <LastSyncedBadge timestamp={collectionUpdatedAt} />
+        )}
+
+        {/* Search failed */}
+        {showSearchError && (
+          !online.value ? (
+            <ErrorState
+              title="You're offline"
+              message="Search needs a connection. We'll retry when you're back online."
+            />
+          ) : (
+            <ErrorState
+              title="Search failed"
+              message="Something went wrong. Try again?"
+              onRetry={() => refetch()}
+            />
+          )
+        )}
+
         {/* Smart suggestions dropdown */}
         {hasSuggestions && (
           <div class="discover-suggestions">

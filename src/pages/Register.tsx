@@ -6,6 +6,8 @@ import { useAuthStore } from '../stores/auth';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { PasswordStrength } from '../components/auth/PasswordStrength';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function Register() {
   const [, setLocation] = useLocation();
   const setUser = useAuthStore((s) => s.setUser);
@@ -41,7 +43,7 @@ export function Register() {
     // Email
     if (!trimmedEmail) {
       errors.email = 'Email is required.';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    } else if (!EMAIL_RE.test(trimmedEmail)) {
       errors.email = 'Please enter a valid email address.';
     }
 
@@ -62,7 +64,16 @@ export function Register() {
     return Object.keys(errors).length > 0 ? errors : null;
   }, [username, email, password, confirmPassword]);
 
+  const handleEmailBlur = useCallback(() => {
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    if (!EMAIL_RE.test(trimmed)) {
+      setFieldErrors((prev) => ({ ...prev, email: 'Please enter a valid email address.' }));
+    }
+  }, [email]);
+
   const handleSubmit = useCallback(async () => {
+    if (loading) return; // guard against double-submits
     const errors = validate();
     if (errors) {
       setFieldErrors(errors);
@@ -96,7 +107,7 @@ export function Register() {
     } finally {
       setLoading(false);
     }
-  }, [username, email, password, confirmPassword, validate, setUser, setLocation]);
+  }, [loading, username, email, password, validate, setUser, setLocation]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -125,6 +136,8 @@ export function Register() {
           type="text"
           autocomplete="username"
           placeholder="Username"
+          aria-label="Username"
+          aria-invalid={fieldErrors.username ? 'true' : 'false'}
           value={username}
           onInput={(e) => {
             setUsername((e.target as HTMLInputElement).value);
@@ -148,11 +161,14 @@ export function Register() {
           inputMode="email"
           autocomplete="email"
           placeholder="Email address"
+          aria-invalid={fieldErrors.email ? 'true' : 'false'}
+          aria-label="Email address"
           value={email}
           onInput={(e) => {
             setEmail((e.target as HTMLInputElement).value);
             clearFieldError('email');
           }}
+          onBlur={handleEmailBlur}
           onKeyDown={(e) => {
             if (e.key === 'Enter') passwordRef.current?.focus();
           }}
@@ -171,6 +187,8 @@ export function Register() {
             type={showPassword ? 'text' : 'password'}
             autocomplete="new-password"
             placeholder="Password"
+            aria-label="Password"
+            aria-invalid={fieldErrors.password ? 'true' : 'false'}
             value={password}
             onInput={(e) => {
               setPassword((e.target as HTMLInputElement).value);
@@ -205,6 +223,8 @@ export function Register() {
             type={showConfirmPassword ? 'text' : 'password'}
             autocomplete="new-password"
             placeholder="Confirm password"
+            aria-label="Confirm password"
+            aria-invalid={fieldErrors.confirmPassword ? 'true' : 'false'}
             value={confirmPassword}
             onInput={(e) => {
               setConfirmPassword((e.target as HTMLInputElement).value);

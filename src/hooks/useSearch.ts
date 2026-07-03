@@ -76,6 +76,7 @@ export function useSearch() {
     results: searchResult.data ?? [],
     isLoading: searchResult.isLoading,
     isError: searchResult.isError,
+    refetch: searchResult.refetch,
     hasSearched: debouncedQuery.length >= 2,
     saveRecentSearch,
     getRecentSearches,

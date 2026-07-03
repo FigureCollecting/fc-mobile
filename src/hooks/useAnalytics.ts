@@ -36,59 +36,10 @@ export interface PriceSummary {
   activeAlerts: number;
 }
 
-// --- Mock data (fallback when API unavailable) ---
-
-const MOCK_COLLECTION: CollectionAnalytics = {
-  totalFigures: 47,
-  statusCounts: { owned: 32, ordered: 8, wished: 7 },
-  totalValue: 245_000,
-  uniqueManufacturers: 12,
-};
-
-const MOCK_BREAKDOWN_MANUFACTURER: BreakdownItem[] = [
-  { _id: 'Good Smile Company', count: 14 },
-  { _id: 'Alter', count: 8 },
-  { _id: 'Kotobukiya', count: 6 },
-  { _id: 'Max Factory', count: 5 },
-  { _id: 'Bandai Spirits', count: 4 },
-  { _id: 'FREEing', count: 3 },
-  { _id: 'Aniplex', count: 3 },
-  { _id: 'Phat Company', count: 2 },
-  { _id: 'Union Creative', count: 1 },
-  { _id: 'Myethos', count: 1 },
-];
-
-const MOCK_BREAKDOWN_ORIGIN: BreakdownItem[] = [
-  { _id: 'Fate Series', count: 11 },
-  { _id: 'Hatsune Miku', count: 7 },
-  { _id: 'Re:Zero', count: 5 },
-  { _id: 'Sword Art Online', count: 4 },
-  { _id: 'Demon Slayer', count: 3 },
-  { _id: 'My Hero Academia', count: 3 },
-  { _id: 'Genshin Impact', count: 3 },
-  { _id: 'Spy x Family', count: 2 },
-];
-
-function buildMockTimeline(): TimelineMonth[] {
-  const months: TimelineMonth[] = [];
-  const now = new Date();
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-    months.push({ month: label, count: Math.floor(Math.random() * 6) + 1 });
-  }
-  return months;
-}
-
-const MOCK_TIMELINE = buildMockTimeline();
-
-const MOCK_PRICE_SUMMARY: PriceSummary = {
-  trackedItems: 5,
-  trends: { up: 2, down: 1, stable: 2 },
-  activeAlerts: 3,
-};
-
 // --- Hooks ---
+// NOTE: These used to silently fall back to fabricated data on API errors,
+// which masked real backend failures. They now propagate errors so callers
+// can render honest empty / error states.
 
 export function useCollectionAnalytics() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -96,12 +47,8 @@ export function useCollectionAnalytics() {
   return useQuery<CollectionAnalytics>({
     queryKey: ['analytics', 'collection'],
     queryFn: async () => {
-      try {
-        const response = await api.get('/analytics/collection');
-        return (response as { data: { analytics: CollectionAnalytics } }).data.analytics;
-      } catch {
-        return MOCK_COLLECTION;
-      }
+      const response = await api.get('/analytics/collection');
+      return (response as { data: { analytics: CollectionAnalytics } }).data.analytics;
     },
     enabled: isAuthenticated,
     staleTime: 5 * 60_000, // 5 min cache
@@ -114,14 +61,8 @@ export function useCollectionBreakdown(groupBy: string) {
   return useQuery<BreakdownItem[]>({
     queryKey: ['analytics', 'breakdown', groupBy],
     queryFn: async () => {
-      try {
-        const response = await api.get(`/analytics/collection/breakdown?groupBy=${groupBy}`);
-        return (response as { data: { breakdown: BreakdownItem[] } }).data.breakdown;
-      } catch {
-        return groupBy === 'manufacturer'
-          ? MOCK_BREAKDOWN_MANUFACTURER
-          : MOCK_BREAKDOWN_ORIGIN;
-      }
+      const response = await api.get(`/analytics/collection/breakdown?groupBy=${groupBy}`);
+      return (response as { data: { breakdown: BreakdownItem[] } }).data.breakdown;
     },
     enabled: isAuthenticated,
     staleTime: 5 * 60_000,
@@ -134,12 +75,8 @@ export function useCollectionTimeline(months: number = 12) {
   return useQuery<TimelineMonth[]>({
     queryKey: ['analytics', 'timeline', months],
     queryFn: async () => {
-      try {
-        const response = await api.get(`/analytics/collection/timeline?months=${months}`);
-        return (response as { data: { timeline: TimelineMonth[] } }).data.timeline;
-      } catch {
-        return MOCK_TIMELINE;
-      }
+      const response = await api.get(`/analytics/collection/timeline?months=${months}`);
+      return (response as { data: { timeline: TimelineMonth[] } }).data.timeline;
     },
     enabled: isAuthenticated,
     staleTime: 5 * 60_000,
@@ -152,12 +89,8 @@ export function usePriceSummary() {
   return useQuery<PriceSummary>({
     queryKey: ['analytics', 'prices'],
     queryFn: async () => {
-      try {
-        const response = await api.get('/analytics/prices/summary');
-        return (response as { data: { summary: PriceSummary } }).data.summary;
-      } catch {
-        return MOCK_PRICE_SUMMARY;
-      }
+      const response = await api.get('/analytics/prices/summary');
+      return (response as { data: { summary: PriceSummary } }).data.summary;
     },
     enabled: isAuthenticated,
     staleTime: 5 * 60_000,

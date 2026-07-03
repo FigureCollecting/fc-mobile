@@ -24,7 +24,7 @@ const queryClient = new QueryClient({
   },
 });
 
-const PUBLIC_ROUTES = ['/login', '/register'];
+const PUBLIC_ROUTES = ['/login', '/register', '/2fa'];
 
 function AuthRedirect() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -35,8 +35,10 @@ function AuthRedirect() {
     if (!isAuthenticated && !PUBLIC_ROUTES.includes(location)) {
       setLocation('/login');
     }
-    // If authenticated and on an auth route, redirect to collection
-    if (isAuthenticated && PUBLIC_ROUTES.includes(location)) {
+    // If authenticated and on /login or /register, redirect home. /2fa is
+    // intentionally omitted: the user is mid-auth there and doesn't yet have
+    // a full token.
+    if (isAuthenticated && (location === '/login' || location === '/register')) {
       setLocation('/');
     }
   }, [isAuthenticated, location, setLocation]);
@@ -50,9 +52,20 @@ function AppInner() {
   useLiveNotifications();
   useSyncOnReconnect();
 
-  const [showOnboarding, setShowOnboarding] = useState(
-    () => !localStorage.getItem(ONBOARDING_KEY),
-  );
+  // Onboarding policy:
+  // - If the user already has a token, skip onboarding entirely and persist
+  //   the "done" flag so returning users don't see it on future launches.
+  // - Otherwise show it once (tracked via localStorage).
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    const hasToken = !!useAuthStore.getState().user?.token;
+    if (hasToken) {
+      if (!localStorage.getItem(ONBOARDING_KEY)) {
+        localStorage.setItem(ONBOARDING_KEY, '1');
+      }
+      return false;
+    }
+    return !localStorage.getItem(ONBOARDING_KEY);
+  });
   const [, setLocation] = useLocation();
 
   const handleOnboardingComplete = useCallback(

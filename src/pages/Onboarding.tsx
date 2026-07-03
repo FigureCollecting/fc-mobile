@@ -82,12 +82,11 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 
   return (
     <div class="onboarding" ref={constraintsRef}>
-      {/* Skip button */}
-      {!isLast && (
-        <button class="onboarding__skip" onClick={handleSkip} type="button">
-          Skip
-        </button>
-      )}
+      {/* Skip button — always available so users can bail out at any screen,
+          including the last one. */}
+      <button class="onboarding__skip" onClick={handleSkip} type="button">
+        Skip
+      </button>
 
       {/* Swipeable content area */}
       <div class="onboarding__viewport">

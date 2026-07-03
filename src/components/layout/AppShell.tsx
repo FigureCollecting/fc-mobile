@@ -11,6 +11,7 @@ import { Settings } from '../../pages/Settings';
 import { Sync } from '../../pages/Sync';
 import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
+import { TwoFactor } from '../../pages/TwoFactor';
 import { Analytics } from '../../pages/Analytics';
 import { Import } from '../../pages/Import';
 import { Export } from '../../pages/Export';
@@ -21,7 +22,7 @@ import { CollectionDna } from '../../pages/CollectionDna';
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
 const PriceDetail = lazy(() => import('../../pages/PriceDetail').then((m) => ({ default: m.PriceDetail })));
 
-const AUTH_ROUTES = ['/login', '/register'];
+const AUTH_ROUTES = ['/login', '/register', '/2fa'];
 
 function PageFallback() {
   return (
@@ -63,6 +64,7 @@ export function AppShell() {
           <Switch>
             <Route path="/login" component={Login} />
             <Route path="/register" component={Register} />
+            <Route path="/2fa" component={TwoFactor} />
             <Route path="/" component={Collection} />
             <Route path="/discover" component={Discover} />
             <Route path="/prices" component={Prices} />

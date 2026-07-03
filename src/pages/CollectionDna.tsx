@@ -1,11 +1,13 @@
 import { useCallback } from 'preact/hooks';
 import { Header } from '../components/layout/Header';
+import { ComingSoon, ErrorState } from '../components/ui/ErrorState';
 import { ScoreRing } from '../components/dna/ScoreRing';
 import { AffinityChips } from '../components/dna/AffinityChips';
 import { DonutChart } from '../components/dna/DonutChart';
 import { BarChart } from '../components/analytics/BarChart';
 import { useCollectionDna, buildDnaSummary } from '../hooks/useCollectionDna';
 import { useAuthStore } from '../stores/auth';
+import { useLocation } from 'wouter';
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -46,6 +48,13 @@ function formatYen(value: number): string {
   return `\u00a5${value.toLocaleString()}`;
 }
 
+/** Treats an axios-style error with status 404 as "endpoint not live yet". */
+function is404(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const maybe = err as { response?: { status?: number }; status?: number };
+  return maybe.response?.status === 404 || maybe.status === 404;
+}
+
 async function handleShare(summary: string) {
   if (navigator.share) {
     try {
@@ -70,7 +79,8 @@ async function handleShare(summary: string) {
 
 export function CollectionDna() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { data: dna, isLoading } = useCollectionDna();
+  const [, setLocation] = useLocation();
+  const { data: dna, isLoading, isError, error, refetch } = useCollectionDna();
 
   const onShare = useCallback(() => {
     if (dna) handleShare(buildDnaSummary(dna));
@@ -89,8 +99,8 @@ export function CollectionDna() {
     );
   }
 
-  // Loading
-  if (isLoading || !dna) {
+  // Loading (no data yet)
+  if (isLoading && !dna) {
     return (
       <div class="page-dna">
         <Header title="Collection DNA" leading={<BackButton onClick={() => history.back()} />} />
@@ -98,6 +108,35 @@ export function CollectionDna() {
           <div class="dna__loading-spinner" />
           <p class="dna__loading-text">Analyzing your collection...</p>
         </div>
+        <style>{styles}</style>
+      </div>
+    );
+  }
+
+  // 404 — backend endpoint isn't available yet. Tell the user honestly.
+  if (isError && is404(error)) {
+    return (
+      <div class="page-dna">
+        <Header title="Collection DNA" leading={<BackButton onClick={() => history.back()} />} />
+        <ComingSoon
+          feature="Collection DNA"
+          onBack={() => setLocation('/')}
+        />
+        <style>{styles}</style>
+      </div>
+    );
+  }
+
+  // Other errors (network, 500, etc.)
+  if (isError || !dna) {
+    return (
+      <div class="page-dna">
+        <Header title="Collection DNA" leading={<BackButton onClick={() => history.back()} />} />
+        <ErrorState
+          title="Couldn't analyze your collection"
+          message="We couldn't reach the analytics service. Try again in a moment."
+          onRetry={() => refetch()}
+        />
         <style>{styles}</style>
       </div>
     );

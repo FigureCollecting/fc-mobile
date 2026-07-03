@@ -6,15 +6,19 @@ import { useAuthStore } from '../stores/auth';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { ForgotPassword } from '../components/auth/ForgotPassword';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function Login() {
   const [, setLocation] = useLocation();
   const setUser = useAuthStore((s) => s.setUser);
+  const setTwoFactorPending = useAuthStore((s) => s.setTwoFactorPending);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [forgotOpen, setForgotOpen] = useState(false);
 
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -22,12 +26,22 @@ export function Login() {
   const validate = useCallback((): string | null => {
     const trimmedEmail = email.trim();
     if (!trimmedEmail) return 'Please enter your email address.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) return 'Please enter a valid email address.';
+    if (!EMAIL_RE.test(trimmedEmail)) return 'Please enter a valid email address.';
     if (!password) return 'Please enter your password.';
     return null;
   }, [email, password]);
 
+  const handleEmailBlur = useCallback(() => {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      setEmailError('');
+      return;
+    }
+    setEmailError(EMAIL_RE.test(trimmed) ? '' : 'Please enter a valid email address.');
+  }, [email]);
+
   const handleSubmit = useCallback(async () => {
+    if (loading) return; // guard against double-submits
     const validationError = validate();
     if (validationError) {
       setError(validationError);
@@ -36,15 +50,19 @@ export function Login() {
 
     setLoading(true);
     setError('');
+    setEmailError('');
 
     try {
       const result = await loginUser(api, email.trim(), password);
 
-      // Handle 2FA required
+      // Handle 2FA required — hand off to dedicated page.
       if (result && 'requiresTwoFactor' in result && result.requiresTwoFactor) {
-        // For now, show a message. 2FA flow can be added later.
-        setError('Two-factor authentication is not yet supported in the mobile app.');
+        setTwoFactorPending({
+          sessionId: result.sessionId,
+          methods: result.methods,
+        });
         setLoading(false);
+        setLocation('/2fa');
         return;
       }
 
@@ -61,7 +79,7 @@ export function Login() {
     } finally {
       setLoading(false);
     }
-  }, [email, password, validate, setUser, setLocation]);
+  }, [loading, email, password, validate, setUser, setTwoFactorPending, setLocation]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -79,20 +97,25 @@ export function Login() {
       {/* Email */}
       <div class="auth-field">
         <input
-          class={`auth-input ${error ? 'auth-input--error' : ''}`}
+          class={`auth-input ${emailError || error ? 'auth-input--error' : ''}`}
           type="email"
           inputMode="email"
           autocomplete="email"
           placeholder="Email address"
+          aria-invalid={emailError ? 'true' : 'false'}
+          aria-label="Email address"
           value={email}
           onInput={(e) => {
             setEmail((e.target as HTMLInputElement).value);
+            if (emailError) setEmailError('');
             if (error) setError('');
           }}
+          onBlur={handleEmailBlur}
           onKeyDown={(e) => {
             if (e.key === 'Enter') passwordRef.current?.focus();
           }}
         />
+        {emailError && <p class="auth-field-error">{emailError}</p>}
       </div>
 
       {/* Password */}
@@ -104,6 +127,7 @@ export function Login() {
             type={showPassword ? 'text' : 'password'}
             autocomplete="current-password"
             placeholder="Password"
+            aria-label="Password"
             value={password}
             onInput={(e) => {
               setPassword((e.target as HTMLInputElement).value);
@@ -203,6 +227,12 @@ const styles = `
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
+  }
+
+  .auth-field-error {
+    font-size: var(--font-xs);
+    color: var(--accent-danger);
+    padding-left: var(--space-1);
   }
 
   .auth-input {

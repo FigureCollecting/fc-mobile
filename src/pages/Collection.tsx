@@ -20,6 +20,9 @@ import { useBulkUpdateStatus, useBulkDelete } from '../hooks/useFigureMutations'
 import { useShakeDetect } from '../hooks/useShakeDetect';
 import { hapticMedium, hapticHeavy } from '../utils/haptics';
 import { useUnreadCount } from '../hooks/useNotifications';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { ErrorState } from '../components/ui/ErrorState';
+import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
 
 function CalendarButton({ onClick }: { onClick: () => void }) {
   return (
@@ -355,11 +358,12 @@ export function Collection() {
     filters.sortBy !== DEFAULT_FILTERS.sortBy ||
     filters.sortOrder !== DEFAULT_FILTERS.sortOrder;
 
-  const { data, isLoading, isError, refetch } = useCollection({
+  const { data, isLoading, isError, refetch, dataUpdatedAt } = useCollection({
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder,
     status: filters.statuses.length === 1 ? filters.statuses[0] : undefined,
   });
+  const online = useOnlineStatus();
 
   const figures = data?.data ?? [];
 
@@ -474,15 +478,29 @@ export function Collection() {
   }
 
   // Error
-  if (isError) {
+  if (isError && figures.length === 0) {
+    // Offline + no cached data: tell the user clearly and wait for reconnect.
+    if (!online.value) {
+      return (
+        <div class="page-collection">
+          <Header title="Collection" />
+          <ErrorState
+            title="You're offline"
+            message="No cached data yet. We'll refresh automatically once you're back online."
+          />
+          <style>{styles}</style>
+        </div>
+      );
+    }
+    // Online but the request failed: explicit retry.
     return (
       <div class="page-collection">
         <Header title="Collection" />
-        <PullToRefresh onRefresh={handleRefresh}>
-          <p class="page-collection__empty">
-            Failed to load collection. Pull down to retry.
-          </p>
-        </PullToRefresh>
+        <ErrorState
+          title="Couldn't load your collection"
+          message="Something went wrong fetching your figures. Try again?"
+          onRetry={handleRefresh}
+        />
         <style>{styles}</style>
       </div>
     );
@@ -557,6 +575,7 @@ export function Collection() {
         title={isSelecting ? `${selected.size} selected` : `Collection (${data?.total ?? 0})`}
         action={headerAction}
       />
+      {!online.value && <LastSyncedBadge timestamp={dataUpdatedAt} />}
       <UpcomingReleases />
       <PullToRefresh onRefresh={handleRefresh}>
         <CollectionGrid viewMode={viewMode}>

@@ -42,51 +42,10 @@ export interface CollectionDnaData {
   funFacts: FunFacts;
 }
 
-// --- Mock data ---
-
-const MOCK_DNA: CollectionDnaData = {
-  archetype: {
-    type: 'SCALE PURIST',
-    subtitle: 'You value precision and presentation. Your shelves are curated galleries, not clutter.',
-  },
-  scores: {
-    diversity: 72,
-    rarity: 58,
-    loyalty: 85,
-  },
-  topSeries: [
-    { label: 'Fate Series', count: 11 },
-    { label: 'Hatsune Miku', count: 7 },
-    { label: 'Re:Zero', count: 5 },
-    { label: 'Sword Art Online', count: 4 },
-    { label: 'Demon Slayer', count: 3 },
-    { label: 'Genshin Impact', count: 3 },
-    { label: 'Spy x Family', count: 2 },
-  ],
-  topManufacturers: [
-    { label: 'Good Smile Company', count: 14 },
-    { label: 'Alter', count: 8 },
-    { label: 'Kotobukiya', count: 6 },
-    { label: 'Max Factory', count: 5 },
-    { label: 'Bandai Spirits', count: 4 },
-    { label: 'FREEing', count: 3 },
-  ],
-  scaleDistribution: [
-    { label: '1/7', value: 18, color: 'var(--accent-success)' },
-    { label: '1/8', value: 10, color: 'var(--accent-info)' },
-    { label: '1/4', value: 5, color: 'var(--accent-warning)' },
-    { label: 'Nendoroid', value: 8, color: '#8b5cf6' },
-    { label: 'Other', value: 6, color: 'var(--text-tertiary)' },
-  ],
-  funFacts: {
-    favoriteCharacter: 'Saber (Artoria Pendragon)',
-    busiestMonth: 'March 2025',
-    averagePrice: 16_800,
-    estimatedValue: 789_600,
-  },
-};
-
 // --- Hook ---
+// Previously fell back to fabricated DNA when the endpoint 404'd. That hid
+// real backend failures; now the error propagates so the page can render an
+// honest state.
 
 export function useCollectionDna() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -94,13 +53,8 @@ export function useCollectionDna() {
   return useQuery<CollectionDnaData>({
     queryKey: ['collection-dna'],
     queryFn: async () => {
-      try {
-        const response = await api.get('/analytics/collection/dna');
-        return (response as { data: { dna: CollectionDnaData } }).data.dna;
-      } catch {
-        // API not available yet — serve mock data
-        return MOCK_DNA;
-      }
+      const response = await api.get('/analytics/collection/dna');
+      return (response as { data: { dna: CollectionDnaData } }).data.dna;
     },
     enabled: isAuthenticated,
     staleTime: 10 * 60_000, // 10 min cache

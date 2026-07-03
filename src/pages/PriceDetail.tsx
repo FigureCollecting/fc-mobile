@@ -3,6 +3,8 @@ import { useRoute, useLocation } from 'wouter';
 import { SitePrice } from '../components/prices/SitePrice';
 import { TrendIndicator } from '../components/prices/TrendIndicator';
 import { AlertSheet } from '../components/prices/AlertSheet';
+import { ErrorState } from '../components/ui/ErrorState';
+import { useFigure } from '../hooks/useFigure';
 import {
   usePriceHistory,
   useCurrentPrices,
@@ -11,46 +13,7 @@ import {
   useSaveAlert,
   useDeleteAlert,
 } from '../hooks/usePrices';
-import type { PriceAlert, PricePoint, SitePrice as SitePriceData } from '../hooks/usePrices';
-
-// --- Mock data for development ---
-const MOCK_FIGURE = {
-  name: 'Hatsune Miku: Magical Mirai 2024 Ver.',
-  manufacturer: 'Good Smile Company',
-  imageUrl: '',
-};
-
-const MOCK_PRICES: SitePriceData[] = [
-  { site: 'AmiAmi', price: 15800, currency: 'JPY', stockStatus: 'in_stock' as const, url: 'https://amiami.com', lastUpdated: '2026-03-20T10:00:00Z' },
-  { site: 'Solaris Japan', price: 17200, currency: 'JPY', stockStatus: 'in_stock' as const, url: 'https://solarisjapan.com', lastUpdated: '2026-03-20T08:30:00Z' },
-  { site: 'Tokyo Otaku Mode', price: 168.99, currency: 'USD', stockStatus: 'pre_order' as const, url: 'https://otakumode.com', lastUpdated: '2026-03-19T22:00:00Z' },
-  { site: 'Hobby Search', price: 16500, currency: 'JPY', stockStatus: 'sold_out' as const, url: 'https://1999.co.jp', lastUpdated: '2026-03-18T15:00:00Z' },
-];
-
-const MOCK_HISTORY: PricePoint[] = [
-  { site: 'AmiAmi', price: 17200, currency: 'JPY', date: '2026-02-15T00:00:00Z' },
-  { site: 'AmiAmi', price: 16800, currency: 'JPY', date: '2026-02-22T00:00:00Z' },
-  { site: 'AmiAmi', price: 16200, currency: 'JPY', date: '2026-03-01T00:00:00Z' },
-  { site: 'AmiAmi', price: 15800, currency: 'JPY', date: '2026-03-10T00:00:00Z' },
-  { site: 'Solaris Japan', price: 18500, currency: 'JPY', date: '2026-02-15T00:00:00Z' },
-  { site: 'Solaris Japan', price: 17800, currency: 'JPY', date: '2026-03-01T00:00:00Z' },
-  { site: 'Solaris Japan', price: 17200, currency: 'JPY', date: '2026-03-10T00:00:00Z' },
-];
-
-const MOCK_ALERTS: PriceAlert[] = [
-  {
-    _id: 'alert-1',
-    figureId: 'mock-1',
-    figureName: 'Hatsune Miku: Magical Mirai 2024 Ver.',
-    type: 'price_below',
-    targetPrice: 15000,
-    currency: 'JPY',
-    sites: ['AmiAmi', 'Solaris Japan'],
-    pushEnabled: true,
-    status: 'active',
-    createdAt: '2026-03-01T00:00:00Z',
-  },
-];
+import type { PriceAlert, PricePoint } from '../hooks/usePrices';
 
 // Site color mapping for price history
 const SITE_COLORS: Record<string, string> = {
@@ -101,9 +64,10 @@ export function PriceDetail() {
   const [, setLocation] = useLocation();
   const figureId = params?.figureId;
 
-  const { data: currentPrices } = useCurrentPrices(figureId);
-  const { data: priceHistory } = usePriceHistory(figureId);
-  const { data: alerts } = useAlerts(figureId);
+  const figureQuery = useFigure(figureId);
+  const pricesQuery = useCurrentPrices(figureId);
+  const historyQuery = usePriceHistory(figureId);
+  const alertsQuery = useAlerts(figureId);
   const removeFromWatchlist = useRemoveFromWatchlist();
   const saveAlert = useSaveAlert();
   const deleteAlert = useDeleteAlert();
@@ -111,11 +75,11 @@ export function PriceDetail() {
   const [alertSheetOpen, setAlertSheetOpen] = useState(false);
   const [editingAlert, setEditingAlert] = useState<PriceAlert | undefined>();
 
-  // Use real data when available, fall back to mock
-  const prices = currentPrices ?? MOCK_PRICES;
-  const history = priceHistory ?? MOCK_HISTORY;
-  const activeAlerts = alerts ?? MOCK_ALERTS;
-  const figure = MOCK_FIGURE; // TODO: fetch from figure detail API
+  // No mock fallbacks — render only what the API actually returned.
+  const prices = pricesQuery.data ?? [];
+  const history: PricePoint[] = historyQuery.data ?? [];
+  const activeAlerts = alertsQuery.data ?? [];
+  const figure = figureQuery.data;
 
   const handleBack = useCallback(() => {
     if (window.history.length > 1) {
@@ -151,6 +115,40 @@ export function PriceDetail() {
   }, [figureId, removeFromWatchlist, setLocation]);
 
   if (!figureId) return <SkeletonDetail />;
+
+  // Still loading the core figure record — show the skeleton.
+  if (figureQuery.isLoading && !figure) {
+    return <SkeletonDetail />;
+  }
+
+  // Couldn't load the figure at all (network down, 404, auth issue).
+  // Surface the failure instead of rendering a bogus card.
+  if (figureQuery.isError || !figure) {
+    return (
+      <div class="price-detail">
+        <div class="price-detail__header-bar">
+          <button
+            class="price-detail__back-btn"
+            onClick={handleBack}
+            aria-label="Go back"
+            type="button"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 12H5" />
+              <path d="M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h1 class="price-detail__title">Price Details</h1>
+        </div>
+        <ErrorState
+          title="Couldn't load figure"
+          message="We couldn't reach this figure's detail right now. Check your connection and try again."
+          onRetry={() => figureQuery.refetch()}
+        />
+        <style>{styles}</style>
+      </div>
+    );
+  }
 
   // Group history by site
   const historyBySite = history.reduce<Record<string, PricePoint[]>>((acc, point) => {

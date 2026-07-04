@@ -18,22 +18,29 @@
   --border-default: rgba(255, 255, 255, 0.12);
   --overlay: rgba(0, 0, 0, 0.6);
 
-  /* Typography */
+  /* ── Typography — fluid clamp() scale, markedly condensed ──────────────
+     Floors: 10px absolute (2xs), 11px xs. Fluid steps scale gently with
+     viewport width (360px → 674px reference range). Form inputs NEVER go
+     below 16px (--font-input) or iOS Safari auto-zooms on focus. */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-xs: 0.75rem;
-  --font-sm: 0.875rem;
-  --font-base: 1rem;
-  --font-lg: 1.125rem;
-  --font-xl: 1.375rem;
-  --font-2xl: 1.75rem;
+  --font-2xs: 0.625rem;                                     /* 10px static floor */
+  --font-xs: 0.6875rem;                                     /* 11px static */
+  --font-sm: clamp(0.75rem, 0.7rem + 0.22vw, 0.8125rem);    /* 12 → 13px */
+  --font-base: clamp(0.8125rem, 0.76rem + 0.24vw, 0.875rem);/* 13 → 14px */
+  --font-lg: clamp(0.9375rem, 0.88rem + 0.28vw, 1rem);      /* 15 → 16px */
+  --font-xl: clamp(1.0625rem, 1rem + 0.3vw, 1.125rem);      /* 17 → 18px */
+  --font-2xl: clamp(1.25rem, 1.16rem + 0.4vw, 1.375rem);    /* 20 → 22px, hero numbers only */
+  --font-input: 1rem;                                       /* 16px — iOS zoom guard */
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
   --line-height-tight: 1.2;
-  --line-height-normal: 1.5;
+  --line-height-ui: 1.35;      /* default for UI text */
+  --line-height-normal: 1.35;
+  --line-height-relaxed: 1.5;  /* long-form prose only */
 
-  /* Spacing */
+  /* ── Spacing — tight mobile scale; whitespace is a density axis ──────── */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -43,6 +50,9 @@
   --space-8: 2rem;
   --space-10: 2.5rem;
   --space-12: 3rem;
+  --space-page: 12px;   /* page horizontal padding */
+  --space-gap: 8px;     /* default gap between grid/list items */
+  --space-stack: 6px;   /* vertical rhythm between text blocks */
 
   /* Border Radius */
   --radius-sm: 6px;
@@ -63,9 +73,11 @@
   --transition-normal: 250ms var(--spring-snappy);
   --transition-slow: 400ms var(--ease-out);
 
-  /* Layout */
-  --bottom-nav-height: 64px;
-  --header-height: 56px;
+  /* ── Layout — chrome diet: slim header, slim tab bar, docked Add ─────── */
+  --bottom-nav-height: 56px;
+  --header-height: 48px;
+  --fab-size: 56px;
+  --filter-bar-height: 36px;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-left: env(safe-area-inset-left, 0px);
@@ -75,10 +87,45 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  /* ── Density — Compact is the default. data-density on a container
+     switches the whole display layer: card minimums (emergent grid
+     columns), virtual-case shelf height, justified-row height. ────────── */
+  --card-min: 112px;
+  --shelf-h: 168px;   /* virtual case: figure band height per shelf */
+  --row-h: 132px;     /* justified rows: base row height */
+}
+
+[data-density='comfortable'] {
+  --card-min: 148px;
+  --shelf-h: 216px;
+  --row-h: 172px;
+}
+
+[data-density='compact'] {
+  --card-min: 112px;
+  --shelf-h: 168px;
+  --row-h: 132px;
+}
+
+[data-density='gallery'] {
+  --card-min: 86px;
+  --shelf-h: 126px;
+  --row-h: 98px;
+}
+
+/* ── Container-query plumbing — layouts respond to their CONTAINER, not
+   the viewport (Fold-open dual-pane arrives in Phase 4 on this rail). ── */
+.cq {
+  container-type: inline-size;
+}
+
+.cq-grid {
+  container: fc-grid / inline-size;
 }
 
 /* ── Light Theme ──────────────────────────────────────────────────────── */
-[data-theme="light"] {
+[data-theme='light'] {
   --surface-primary: #ffffff;
   --surface-secondary: #f5f5f5;
   --surface-tertiary: #e8e8e8;

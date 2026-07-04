@@ -51,7 +51,8 @@ input,
 textarea,
 select {
   font-family: inherit;
-  font-size: var(--font-base);
+  /* 16px floor: iOS Safari auto-zooms on focus below 16px */
+  font-size: var(--font-input, 1rem);
   color: var(--text-primary);
   background-color: var(--surface-secondary);
   border: 1px solid var(--border-default);

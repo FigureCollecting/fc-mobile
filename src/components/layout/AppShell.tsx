@@ -1,26 +1,25 @@
 import { lazy, Suspense } from 'preact/compat';
+import { useMemo } from 'preact/hooks';
 import { Route, Switch, useLocation } from 'wouter';
-import { BottomNav } from './BottomNav';
+import { TabBar } from './TabBar';
+import { GatedScreen } from './GatedScreen';
 import { OfflineBanner } from '../ui/OfflineBanner';
 import { AnimatedRoutes } from '../ui/AnimatedRoutes';
+import { createScrollChromeHandler } from '../../stores/chrome';
 import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
-import { Prices } from '../../pages/Prices';
+import { Stats } from '../../pages/Stats';
 import { Profile } from '../../pages/Profile';
 import { Settings } from '../../pages/Settings';
 import { Sync } from '../../pages/Sync';
 import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
 import { TwoFactor } from '../../pages/TwoFactor';
-import { Analytics } from '../../pages/Analytics';
 import { Import } from '../../pages/Import';
 import { Export } from '../../pages/Export';
 import { Notifications } from '../../pages/Notifications';
-import { ReleaseCalendar } from '../../pages/ReleaseCalendar';
-import { CollectionDna } from '../../pages/CollectionDna';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
-const PriceDetail = lazy(() => import('../../pages/PriceDetail').then((m) => ({ default: m.PriceDetail })));
 
 const AUTH_ROUTES = ['/login', '/register', '/2fa'];
 
@@ -55,11 +54,18 @@ function PageFallback() {
 export function AppShell() {
   const [location] = useLocation();
   const isAuthRoute = AUTH_ROUTES.includes(location);
+  const onScroll = useMemo(() => {
+    const handler = createScrollChromeHandler();
+    return (e: Event) => handler((e.currentTarget as HTMLElement).scrollTop);
+  }, []);
 
   return (
     <div class="app-shell">
       <OfflineBanner />
-      <main class={`app-content ${isAuthRoute ? 'app-content--auth' : ''}`}>
+      <main
+        class={`app-content ${isAuthRoute ? 'app-content--auth' : ''}`}
+        onScroll={onScroll}
+      >
         <AnimatedRoutes>
           <Switch>
             <Route path="/login" component={Login} />
@@ -67,23 +73,21 @@ export function AppShell() {
             <Route path="/2fa" component={TwoFactor} />
             <Route path="/" component={Collection} />
             <Route path="/discover" component={Discover} />
-            <Route path="/prices" component={Prices} />
+            <Route path="/stats" component={Stats} />
             <Route path="/profile" component={Profile} />
             <Route path="/settings" component={Settings} />
             <Route path="/sync" component={Sync} />
-            <Route path="/analytics" component={Analytics} />
             <Route path="/import" component={Import} />
             <Route path="/export" component={Export} />
             <Route path="/notifications" component={Notifications} />
-            <Route path="/calendar" component={ReleaseCalendar} />
-            <Route path="/collection-dna" component={CollectionDna} />
+            {/* Gated until each feature gets its mobile condensation pass */}
+            <Route path="/prices">{() => <GatedScreen feature="Price Tracker" />}</Route>
+            <Route path="/prices/:figureId">{() => <GatedScreen feature="Price Tracker" />}</Route>
+            <Route path="/analytics">{() => <GatedScreen feature="Analytics" />}</Route>
+            <Route path="/calendar">{() => <GatedScreen feature="Release Calendar" />}</Route>
+            <Route path="/collection-dna">{() => <GatedScreen feature="Collection DNA" />}</Route>
             <Route path="/profile/security">
               {() => <Profile />}
-            </Route>
-            <Route path="/prices/:figureId">
-              <Suspense fallback={<PageFallback />}>
-                <PriceDetail />
-              </Suspense>
             </Route>
             <Route path="/figure/:id">
               <Suspense fallback={<PageFallback />}>
@@ -93,7 +97,7 @@ export function AppShell() {
           </Switch>
         </AnimatedRoutes>
       </main>
-      {!isAuthRoute && <BottomNav />}
+      {!isAuthRoute && <TabBar />}
 
       <style>{`
         .app-shell {

@@ -34,13 +34,17 @@ export function Header({ title, leading, action }: HeaderProps) {
           flex-shrink: 0;
         }
 
+        /* Chrome diet: headers carry context, not page titles — small and muted. */
         .header__title {
-          font-size: var(--font-xl);
-          font-weight: var(--font-weight-bold);
-          color: var(--text-primary);
-          line-height: var(--line-height-tight);
+          font-size: var(--font-sm);
+          font-weight: var(--font-weight-semibold);
+          color: var(--text-secondary);
+          line-height: var(--line-height-ui);
           flex: 1;
           min-width: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .header__action {

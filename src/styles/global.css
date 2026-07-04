@@ -51,8 +51,11 @@ input,
 textarea,
 select {
   font-family: inherit;
-  /* 16px floor: iOS Safari auto-zooms on focus below 16px */
-  font-size: var(--font-input, 1rem);
+  /* iOS Safari auto-zooms when a focused control renders below 16px. This
+     floor is inviolable, so !important wins over component-scoped font tokens
+     (e.g. .auth-input uses --font-base ≈ 14px). Controls that intentionally
+     render LARGER opt out with their own !important (see .two-factor__code). */
+  font-size: max(1rem, var(--font-input, 1rem)) !important;
   color: var(--text-primary);
   background-color: var(--surface-secondary);
   border: 1px solid var(--border-default);

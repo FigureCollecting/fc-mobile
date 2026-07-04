@@ -89,6 +89,18 @@ describe('FigureViewer (Display D)', () => {
     expect(screen.getByText('Distributor')).toBeInTheDocument();
   });
 
+  it('portals the pull-up sheet to document.body so it stacks over photoswipe', () => {
+    const { container } = renderWithProviders(
+      <FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />,
+    );
+    // PhotoSwipe appends its root to document.body; the sheet must share that
+    // stacking context, so it can't live inside the page's subtree.
+    expect(container.querySelector('.figure-viewer-sheet')).toBeNull();
+    const sheet = document.body.querySelector('.figure-viewer-sheet');
+    expect(sheet).not.toBeNull();
+    expect(sheet?.parentElement).toBe(document.body);
+  });
+
   it('reports close when photoswipe is dismissed', async () => {
     const onClose = vi.fn();
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);

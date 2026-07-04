@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
+import { createPortal } from 'preact/compat';
 import { motion, AnimatePresence, useDragControls } from 'framer-motion';
 
 type Detent = 'half' | 'full';
@@ -22,6 +23,11 @@ const POSITIONS: Record<Detent, string> = {
  * down snaps to half then closes. Distinct from the shared BottomSheet: the
  * footer slot stays pinned to the physical bottom of the sheet, which is what
  * the tabbed filter sheet needs (tabs at the bottom, under the thumb).
+ *
+ * Rendered through a portal to document.body: any ancestor with
+ * container-type (the collection grid is a `.cq-grid` inline-size container)
+ * becomes the containing block for `position: fixed` descendants, which would
+ * anchor the sheet to the page instead of the viewport. The portal escapes it.
  */
 export function DetentSheet({ open, onClose, children, footer }: DetentSheetProps) {
   const [detent, setDetent] = useState<Detent>('half');
@@ -44,7 +50,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
     [detent, onClose],
   );
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <>
@@ -149,6 +155,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
           `}</style>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }

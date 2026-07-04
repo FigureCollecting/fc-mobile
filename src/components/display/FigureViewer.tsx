@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type PhotoSwipe from 'photoswipe';
 import { StatusBadge } from '../ui/StatusBadge';
@@ -90,7 +91,11 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   const figure = figures[current];
   if (!figure) return null;
 
-  return (
+  // Portaled to document.body so it shares a stacking context with PhotoSwipe
+  // (which appends its own root to body). Left inside the page, the sheet's
+  // z-index is scoped to the page's stacking context and paints under the
+  // viewer no matter how high it is.
+  return createPortal(
     <div class={`figure-viewer-sheet ${expanded ? 'figure-viewer-sheet--expanded' : ''}`}>
       <button
         class="figure-viewer-sheet__handle"
@@ -248,6 +253,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           white-space: nowrap;
         }
       `}</style>
-    </div>
+    </div>,
+    document.body,
   );
 }

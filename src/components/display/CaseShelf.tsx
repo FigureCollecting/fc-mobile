@@ -307,7 +307,9 @@ const caseStyles = `
   }
 
   .shelf-figure__img--photo {
-    object-fit: cover;
+    /* never-crop applies to the framed-photo fallback too: letterbox inside
+       the frame rather than cropping the picture. */
+    object-fit: contain;
     object-position: center;
   }
 

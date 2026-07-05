@@ -182,14 +182,18 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
           text-overflow: ellipsis;
         }
 
+        /* Ross: explicit floor exemption for this decorative miniature
+           caption only (--font-plate / --font-plate-sub, see tokens.css) —
+           8px / 7px, same as CaseShelf's plate, so most real names render
+           fully instead of ellipsizing. */
         .jrows__caption-name {
-          font-size: var(--font-xs);
+          font-size: var(--font-plate);
           font-weight: 600;
           color: #fff;
         }
 
         .jrows__caption-mfr {
-          font-size: var(--font-2xs);
+          font-size: var(--font-plate-sub);
           color: rgba(255, 255, 255, 0.7);
         }
       `}</style>

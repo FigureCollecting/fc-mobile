@@ -64,7 +64,7 @@ function ShelfFigure({
   onSelect?: (figure: Figure, index: number) => void;
   labels?: boolean;
 }) {
-  const { figure, meta, w, h } = item;
+  const { figure, meta, w, h, slotWidth } = item;
 
   // Two-lobe contact shadow geometry from the two footprint scalars
   // (translated from shelf2.py contact_shadow): soft lobe spans 1.3x the
@@ -107,7 +107,10 @@ function ShelfFigure({
         <span class="shelf-figure__silhouette" aria-hidden="true" />
       )}
       {labels && (
-        <span class="shelf-figure__plate" aria-hidden="true">
+        // Widened to the item's slot (its own width plus its share of the
+        // surrounding gaps) — Ross: let plates nearly meet, not stay capped
+        // to the figure's own (often much narrower) width.
+        <span class="shelf-figure__plate" aria-hidden="true" style={{ maxWidth: `${Math.max(w, slotWidth - 4)}px` }}>
           <span class="shelf-figure__plate-name">{figure.name}</span>
           {figure.manufacturer && (
             <span class="shelf-figure__plate-mfr">{figure.manufacturer}</span>
@@ -369,14 +372,16 @@ const caseStyles = `
     background: linear-gradient(180deg, rgba(127, 138, 152, 0.28), rgba(127, 138, 152, 0.16));
   }
 
-  /* ── Nameplate: tiny museum plaque mounted at the shelf edge ─────────── */
+  /* ── Nameplate: tiny museum plaque mounted at the shelf edge ───────────
+     Width is set inline per-item (its packed slot, not its own — often much
+     narrower — figure width), so neighboring plates can grow to nearly meet
+     without ever colliding. */
   .shelf-figure__plate {
     position: absolute;
     left: 50%;
     bottom: -9px;
     transform: translateX(-50%);
     z-index: 6;
-    max-width: 96%;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -398,14 +403,16 @@ const caseStyles = `
     text-overflow: ellipsis;
   }
 
+  /* Ross: explicit floor exemption for this decorative miniature label only
+     (--font-plate / --font-plate-sub, see tokens.css) — 8px / 7px. */
   .shelf-figure__plate-name {
-    font-size: var(--font-xs);
+    font-size: var(--font-plate);
     font-weight: 600;
     color: #e3c489;
   }
 
   .shelf-figure__plate-mfr {
-    font-size: var(--font-2xs);
+    font-size: var(--font-plate-sub);
     color: rgba(227, 196, 137, 0.62);
   }
 

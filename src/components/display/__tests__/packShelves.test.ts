@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import type { Figure } from '@figurecollecting/fc-shared';
 import { packShelves } from '../packShelves';
 import { SHELF_BAND } from '../density';
+import { UNMATTED_META } from '../displayMeta';
 import { FIXTURE_FIGURES, FIXTURE_META } from '../../../dev-fixtures/fixtures';
 
 describe('packShelves', () => {
@@ -55,5 +57,51 @@ describe('packShelves', () => {
     expect(avg).toBeGreaterThanOrEqual(2.7);
     // Most shelves should hit 3-across, not just the average.
     expect(counts.filter((c) => c >= 3).length).toBeGreaterThan(counts.filter((c) => c < 3).length);
+  });
+
+  describe('slotWidth (nameplate footprint — Ross: widen plates to the slot, not the figure)', () => {
+    // Three identical unmatted figures give three equal-width items, so the
+    // row's leftover space (and hence the space-evenly gap) is exact and
+    // predictable to hand-verify.
+    const unmatted: Figure[] = ['a', 'b', 'c'].map(
+      (id) => ({ _id: id, name: id, manufacturer: '', scale: '', userId: '', createdAt: '', updatedAt: '' }) as Figure,
+    );
+
+    it('is always at least as wide as the figure itself', () => {
+      const rows = packShelves(FIXTURE_FIGURES, 340, 168);
+      for (const item of rows.flat()) {
+        expect(item.slotWidth).toBeGreaterThanOrEqual(item.w);
+      }
+    });
+
+    it('gives edge items half the gap and middle items the full gap either side, with zero leftover', () => {
+      const gap = 8;
+      const band = 168;
+      const w = Math.round(Math.round(UNMATTED_META.relHeight * band) * UNMATTED_META.aspect);
+      const usable = w * 3 + gap * 2; // exactly fills the row: no space-evenly slack
+
+      const rows = packShelves(unmatted, usable, band, gap);
+      expect(rows).toHaveLength(1);
+      const [first, middle, last] = rows[0];
+
+      expect(first.slotWidth).toBe(w + gap / 2);
+      expect(middle.slotWidth).toBe(w + gap);
+      expect(last.slotWidth).toBe(w + gap / 2);
+    });
+
+    it('grows every slot when the row has leftover space to distribute', () => {
+      const gap = 8;
+      const band = 168;
+      const w = Math.round(Math.round(UNMATTED_META.relHeight * band) * UNMATTED_META.aspect);
+      const tightUsable = w * 3 + gap * 2;
+      const roomyUsable = tightUsable + 60; // extra slack for space-evenly to distribute
+
+      const tight = packShelves(unmatted, tightUsable, band, gap)[0];
+      const roomy = packShelves(unmatted, roomyUsable, band, gap)[0];
+
+      for (let i = 0; i < 3; i++) {
+        expect(roomy[i].slotWidth).toBeGreaterThan(tight[i].slotWidth);
+      }
+    });
   });
 });

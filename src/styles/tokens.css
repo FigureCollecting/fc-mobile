@@ -31,6 +31,13 @@
   --font-xl: clamp(1.0625rem, 1rem + 0.3vw, 1.125rem);      /* 17 → 18px */
   --font-2xl: clamp(1.25rem, 1.16rem + 0.4vw, 1.375rem);    /* 20 → 22px, hero numbers only */
   --font-input: 1rem;                                       /* 16px — iOS zoom guard */
+  /* FLOOR-EXEMPT (Ross, explicit override, plates/captions ONLY — every
+     other consumer stays >= the 10px floor above): the on-display
+     nameplate is a decorative miniature label, not primary UI copy, and
+     needs to fit a museum-plaque footprint. Do not reuse these for
+     anything else. */
+  --font-plate: 0.5rem;                                     /* 8px, nameplate name line */
+  --font-plate-sub: 0.4375rem;                              /* 7px, nameplate maker line */
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;

@@ -76,6 +76,14 @@ function respondWith(figures: any[]) {
   });
 }
 
+/** Fake the Collection page's own measured width (useElementWidth reads
+ *  clientWidth), so the Fold dual-pane threshold can be exercised in jsdom. */
+function mockPageWidth(width: number) {
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('page-collection') ? width : 0;
+  });
+}
+
 beforeEach(() => {
   mockedGetFigures.mockReset();
   instances.length = 0;
@@ -161,5 +169,54 @@ describe('Collection page (rebuilt display layer)', () => {
       expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull();
     });
     expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
+  });
+
+  describe('Fold dual-pane (>= 640px container width)', () => {
+    it('opens the detail as a right-hand pane, not a full-screen viewer, at 700px', async () => {
+      mockPageWidth(700);
+      signIn();
+      respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
+      const user = userEvent.setup();
+      const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+      await screen.findByText('Figure 2');
+      await user.click(screen.getByRole('button', { name: 'Figure 2' }));
+
+      await waitFor(() => {
+        expect(container.querySelector('.detail-pane')).not.toBeNull();
+      });
+      expect(instances).toHaveLength(0); // no PhotoSwipe takeover
+      expect(container.querySelector('.page-collection__body--split')).not.toBeNull();
+      // the grid stays visible alongside the pane
+      expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
+      expect(screen.getByText('2 of 3')).toBeInTheDocument();
+    });
+
+    it('keeps the full-screen viewer below the 640px threshold', async () => {
+      mockPageWidth(400);
+      signIn();
+      respondWith([makeFigure('1'), makeFigure('2')]);
+      const user = userEvent.setup();
+      const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+      await screen.findByText('Figure 1');
+      await user.click(screen.getByRole('button', { name: 'Figure 1' }));
+
+      await waitFor(() => expect(instances).toHaveLength(1));
+      expect(container.querySelector('.detail-pane')).toBeNull();
+    });
+
+    it('closes the detail pane via its close button, leaving the grid intact', async () => {
+      mockPageWidth(700);
+      signIn();
+      respondWith([makeFigure('1'), makeFigure('2')]);
+      const user = userEvent.setup();
+      const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+      await screen.findByText('Figure 1');
+      await user.click(screen.getByRole('button', { name: 'Figure 1' }));
+      await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
+
+      await user.click(screen.getByRole('button', { name: /close detail/i }));
+      expect(container.querySelector('.detail-pane')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
+    });
   });
 });

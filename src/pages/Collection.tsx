@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'preact/hooks';
+import { useState, useCallback, useMemo, useRef } from 'preact/hooks';
 import { useQuery } from '@tanstack/react-query';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { SlimHeader } from '../components/layout/SlimHeader';
@@ -10,16 +10,23 @@ import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
 import { FigureViewer } from '../components/display/FigureViewer';
+import { DetailPane } from '../components/display/DetailPane';
 import { FilterBar } from '../components/collection/FilterBar';
 import { AppliedChips } from '../components/collection/AppliedChips';
 import { TabbedFilterSheet } from '../components/collection/TabbedFilterSheet';
 import { useCollection } from '../hooks/useCollection';
 import { useFigureListParams } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthStore } from '../stores/auth';
 import { applyFilters, countActiveFilters } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
 import { getFixtureFigures, isFixtureMode } from '../dev-fixtures/fixtures';
+
+/** Fold-open near-square threshold: at or above this container width, the
+ *  figure detail opens as a right-hand pane instead of a full-screen
+ *  takeover. A container query (measured width), never a device/UA check. */
+const DUAL_PANE_MIN_WIDTH = 640;
 
 /** Shelf-shaped loading skeleton. */
 function SkeletonShelves() {
@@ -83,6 +90,9 @@ export function Collection() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const online = useOnlineStatus();
+  const pageRef = useRef<HTMLDivElement>(null);
+  const pageWidth = useElementWidth(pageRef, 360);
+  const dualPane = pageWidth >= DUAL_PANE_MIN_WIDTH;
 
   // Fixture mode (dev default): the app runs fully offline against the
   // gitignored matted fixtures — still through the query layer. `?fx=N`
@@ -142,7 +152,7 @@ export function Collection() {
   // Signed out (and not running on fixtures)
   if (!isAuthenticated && !fixtureMode) {
     return (
-      <div class="page-collection" data-density={density}>
+      <div class="page-collection" data-density={density} ref={pageRef}>
         <SlimHeader context={<span>Collection</span>} />
         <p class="page-collection__empty">Sign in to see your collection</p>
         <style>{styles}</style>
@@ -153,7 +163,7 @@ export function Collection() {
   // Loading
   if (isLoading) {
     return (
-      <div class="page-collection" data-density={density}>
+      <div class="page-collection" data-density={density} ref={pageRef}>
         <SlimHeader context={<span>Collection</span>} actions={headerActions} />
         <SkeletonShelves />
         <style>{styles}</style>
@@ -165,7 +175,7 @@ export function Collection() {
   if (isError && figures.length === 0) {
     if (!online.value) {
       return (
-        <div class="page-collection" data-density={density}>
+        <div class="page-collection" data-density={density} ref={pageRef}>
           <SlimHeader context={<span>Collection</span>} />
           <ErrorState
             title="You're offline"
@@ -176,7 +186,7 @@ export function Collection() {
       );
     }
     return (
-      <div class="page-collection" data-density={density}>
+      <div class="page-collection" data-density={density} ref={pageRef}>
         <SlimHeader context={<span>Collection</span>} />
         <ErrorState
           title="Couldn't load your collection"
@@ -188,8 +198,10 @@ export function Collection() {
     );
   }
 
+  const showDetailPane = dualPane && viewerIndex !== null && !!visible[viewerIndex];
+
   return (
-    <div class="page-collection cq-grid" data-density={density}>
+    <div class="page-collection cq-grid" data-density={density} ref={pageRef}>
       <SlimHeader context={<span>Collection ({total})</span>} actions={headerActions} />
       {!online.value && !fixtureMode && (
         <LastSyncedBadge timestamp={collectionQuery.dataUpdatedAt} />
@@ -203,38 +215,51 @@ export function Collection() {
       />
       <AppliedChips filters={filters} onChange={setFilters} />
 
-      <PullToRefresh onRefresh={handleRefresh}>
-        {figures.length === 0 ? (
-          <p class="page-collection__empty">
-            {hasActiveFilters
-              ? 'No figures match your filters.'
-              : 'Your collection is empty. Add figures to get started!'}
-          </p>
-        ) : visible.length === 0 ? (
-          <p class="page-collection__empty">No figures match your filters.</p>
-        ) : layout === 'case' ? (
-          <div class="page-collection__display">
-            <CaseShelf
-              figures={visible}
-              motif={motif}
-              density={density}
-              onSelect={handleSelect}
-              labels={labels}
-              watermark={<BrandWatermark />}
-            />
-          </div>
-        ) : (
-          <div class="page-collection__display page-collection__display--flush">
-            <JustifiedRows
-              figures={visible}
-              density={density}
-              onSelect={handleSelect}
-              labels={labels}
-              watermark={<BrandWatermark />}
-            />
-          </div>
+      <div class={`page-collection__body ${showDetailPane ? 'page-collection__body--split' : ''}`}>
+        <div class="page-collection__grid-col">
+          <PullToRefresh onRefresh={handleRefresh}>
+            {figures.length === 0 ? (
+              <p class="page-collection__empty">
+                {hasActiveFilters
+                  ? 'No figures match your filters.'
+                  : 'Your collection is empty. Add figures to get started!'}
+              </p>
+            ) : visible.length === 0 ? (
+              <p class="page-collection__empty">No figures match your filters.</p>
+            ) : layout === 'case' ? (
+              <div class="page-collection__display">
+                <CaseShelf
+                  figures={visible}
+                  motif={motif}
+                  density={density}
+                  onSelect={handleSelect}
+                  labels={labels}
+                  watermark={<BrandWatermark />}
+                />
+              </div>
+            ) : (
+              <div class="page-collection__display page-collection__display--flush">
+                <JustifiedRows
+                  figures={visible}
+                  density={density}
+                  onSelect={handleSelect}
+                  labels={labels}
+                  watermark={<BrandWatermark />}
+                />
+              </div>
+            )}
+          </PullToRefresh>
+        </div>
+
+        {showDetailPane && (
+          <DetailPane
+            figure={visible[viewerIndex]}
+            index={viewerIndex}
+            total={visible.length}
+            onClose={() => setViewerIndex(null)}
+          />
         )}
-      </PullToRefresh>
+      </div>
 
       <TabbedFilterSheet
         open={filterOpen}
@@ -247,7 +272,7 @@ export function Collection() {
         onSort={setSort}
       />
 
-      {viewerIndex !== null && (
+      {!dualPane && viewerIndex !== null && (
         <FigureViewer
           figures={visible}
           index={viewerIndex}
@@ -275,5 +300,21 @@ const styles = `
   /* justified rows go edge-to-edge */
   .page-collection__display--flush {
     padding: 0 0 var(--space-4);
+  }
+
+  /* Fold dual-pane (>= 640px container width): grid condenses left, detail
+     opens as a right-hand pane instead of a full-screen viewer takeover. */
+  .page-collection__body {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .page-collection__grid-col {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .page-collection__body--split .page-collection__grid-col {
+    border-right: 1px solid var(--border-subtle);
   }
 `;

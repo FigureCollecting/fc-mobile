@@ -120,6 +120,10 @@ export function useFigureListParams() {
     return { sort, order };
   }, [params]);
 
+  // Nameplate overlay toggle. Absent (or anything but '1') means off — no
+  // localStorage persistence, the URL is the only source of truth.
+  const labels = useMemo((): boolean => params.get('labels') === '1', [params]);
+
   const update = useCallback(
     (updates: Record<string, string | null>) => {
       setParams(
@@ -193,6 +197,13 @@ export function useFigureListParams() {
     [update],
   );
 
+  const setLabels = useCallback(
+    (next: boolean) => {
+      update({ labels: next ? '1' : null });
+    },
+    [update],
+  );
+
   const clearFilters = useCallback(() => {
     update({
       status: null,
@@ -213,11 +224,13 @@ export function useFigureListParams() {
     filters,
     sort: sortState.sort,
     order: sortState.order,
+    labels,
     setLayout,
     setDensity,
     setMotif,
     setFilters,
     setSort,
+    setLabels,
     clearFilters,
   };
 }

@@ -22,6 +22,8 @@ interface CaseShelfProps {
   onSelect?: (figure: Figure, index: number) => void;
   /** Watermark rendered into the case background (SVG logo lands later). */
   watermark?: ComponentChildren;
+  /** Museum-plaque nameplate overlay under each figure. Defaults off. */
+  labels?: boolean;
 }
 
 /** Subtle wordmark placeholder until the bunny logo SVG is ready. */
@@ -50,7 +52,15 @@ function WatermarkPlaceholder() {
  * motifs, a floor reflection. Unmatted figures keep the metaphor by standing
  * on the shelf as small framed pictures.
  */
-function ShelfFigure({ item, onSelect }: { item: ShelfItem; onSelect?: (figure: Figure, index: number) => void }) {
+function ShelfFigure({
+  item,
+  onSelect,
+  labels,
+}: {
+  item: ShelfItem;
+  onSelect?: (figure: Figure, index: number) => void;
+  labels?: boolean;
+}) {
   const { figure, meta, w, h } = item;
 
   // Two-lobe contact shadow geometry from the two footprint scalars
@@ -93,6 +103,14 @@ function ShelfFigure({ item, onSelect }: { item: ShelfItem; onSelect?: (figure: 
       ) : (
         <span class="shelf-figure__silhouette" aria-hidden="true" />
       )}
+      {labels && (
+        <span class="shelf-figure__plate" aria-hidden="true">
+          <span class="shelf-figure__plate-name">{figure.name}</span>
+          {figure.manufacturer && (
+            <span class="shelf-figure__plate-mfr">{figure.manufacturer}</span>
+          )}
+        </span>
+      )}
       <span class="sr-only">{figure.name}</span>
     </button>
   );
@@ -106,7 +124,7 @@ function ShelfFigure({ item, onSelect }: { item: ShelfItem; onSelect?: (figure: 
  * proven shelf2.py compositor recipe. Rows are packed as self-contained
  * units, ready for row-level virtualization when collections grow.
  */
-export function CaseShelf({ figures, motif, density, onSelect, watermark }: CaseShelfProps) {
+export function CaseShelf({ figures, motif, density, onSelect, watermark, labels }: CaseShelfProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const band = SHELF_BAND[density];
@@ -121,7 +139,7 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark }: Case
             <div class="case__back" />
             <div class="case__row">
               {row.map((item) => (
-                <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} />
+                <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} labels={labels} />
               ))}
             </div>
             <div class="case__plane" />
@@ -306,6 +324,46 @@ const caseStyles = `
     z-index: 2;
     border-radius: 40% 40% 8% 8% / 24% 24% 4% 4%;
     background: linear-gradient(180deg, rgba(127, 138, 152, 0.28), rgba(127, 138, 152, 0.16));
+  }
+
+  /* ── Nameplate: tiny museum plaque mounted at the shelf edge ─────────── */
+  .shelf-figure__plate {
+    position: absolute;
+    left: 50%;
+    bottom: -9px;
+    transform: translateX(-50%);
+    z-index: 6;
+    max-width: 96%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(12, 10, 8, 0.85);
+    border: 1px solid rgba(201, 164, 100, 0.35);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    line-height: 1.15;
+  }
+
+  .shelf-figure__plate-name,
+  .shelf-figure__plate-mfr {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .shelf-figure__plate-name {
+    font-size: 9px;
+    font-weight: 600;
+    color: #e3c489;
+  }
+
+  .shelf-figure__plate-mfr {
+    font-size: 7px;
+    color: rgba(227, 196, 137, 0.62);
   }
 
   /* ── Motifs — pure-CSS themes via custom properties ─────────────────── */

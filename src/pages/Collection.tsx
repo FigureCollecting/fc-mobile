@@ -71,11 +71,13 @@ export function Collection() {
     filters,
     sort,
     order,
+    labels,
     setLayout,
     setDensity,
     setMotif,
     setFilters,
     setSort,
+    setLabels,
   } = useFigureListParams();
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -126,9 +128,11 @@ export function Collection() {
       layout={layout}
       density={density}
       motif={motif}
+      labels={labels}
       onLayout={setLayout}
       onDensity={setDensity}
       onMotif={setMotif}
+      onLabels={setLabels}
     />
   );
 
@@ -212,11 +216,12 @@ export function Collection() {
               motif={motif}
               density={density}
               onSelect={handleSelect}
+              labels={labels}
             />
           </div>
         ) : (
           <div class="page-collection__display page-collection__display--flush">
-            <JustifiedRows figures={visible} density={density} onSelect={handleSelect} />
+            <JustifiedRows figures={visible} density={density} onSelect={handleSelect} labels={labels} />
           </div>
         )}
       </PullToRefresh>

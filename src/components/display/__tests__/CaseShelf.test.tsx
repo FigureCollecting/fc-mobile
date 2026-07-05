@@ -91,4 +91,58 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     );
     expect(container.querySelectorAll('.case__bay').length).toBeGreaterThan(1);
   });
+
+  describe('nameplate labels (off by default)', () => {
+    it('renders no nameplates when labels is not set', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+      );
+      expect(container.querySelector('.shelf-figure__plate')).toBeNull();
+    });
+
+    it('renders no nameplates when labels is explicitly false', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" labels={false} />,
+      );
+      expect(container.querySelector('.shelf-figure__plate')).toBeNull();
+    });
+
+    it('shows a plaque under each figure with name + manufacturer when labels is on', () => {
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" labels />,
+      );
+      const plate = container.querySelector('.shelf-figure__plate')!;
+      expect(plate).not.toBeNull();
+      expect(plate.querySelector('.shelf-figure__plate-name')!.textContent).toBe(rem.name);
+      expect(plate.querySelector('.shelf-figure__plate-mfr')!.textContent).toBe(rem.manufacturer);
+    });
+
+    it('keeps the plaque out of the accessible name (aria-hidden, decorative)', () => {
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      renderWithProviders(
+        <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" labels />,
+      );
+      // Accessible name stays exactly the figure name — the plate doesn't
+      // pollute it via duplicated text content.
+      expect(screen.getByRole('button', { name: rem.name })).toBeInTheDocument();
+    });
+
+    it('omits the manufacturer line when the figure has none', () => {
+      const noMfr: Figure = {
+        _id: 'no-mfr',
+        name: 'Mystery Figure',
+        manufacturer: '',
+        scale: '1/7',
+        userId: 'u1',
+        createdAt: '',
+        updatedAt: '',
+      } as Figure;
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[noMfr]} motif="detolf-dark" density="compact" labels />,
+      );
+      expect(container.querySelector('.shelf-figure__plate-name')!.textContent).toBe('Mystery Figure');
+      expect(container.querySelector('.shelf-figure__plate-mfr')).toBeNull();
+    });
+  });
 });

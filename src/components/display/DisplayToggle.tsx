@@ -9,9 +9,12 @@ interface DisplayToggleProps {
   layout: LayoutMode;
   density: Density;
   motif: CaseMotif;
+  /** Nameplate overlay toggle — defaults off. */
+  labels?: boolean;
   onLayout: (layout: LayoutMode) => void;
   onDensity: (density: Density) => void;
   onMotif: (motif: CaseMotif) => void;
+  onLabels?: (labels: boolean) => void;
 }
 
 const DENSITY_LABEL: Record<Density, string> = {
@@ -24,7 +27,16 @@ const DENSITY_LABEL: Record<Density, string> = {
  * Header display controls: A/B layout toggle (virtual case vs justified
  * rows), density cycler, and — in case mode — the case motif cycler.
  */
-export function DisplayToggle({ layout, density, motif, onLayout, onDensity, onMotif }: DisplayToggleProps) {
+export function DisplayToggle({
+  layout,
+  density,
+  motif,
+  labels = false,
+  onLayout,
+  onDensity,
+  onMotif,
+  onLabels,
+}: DisplayToggleProps) {
   const cycleDensity = () => {
     const next = DENSITIES[(DENSITIES.indexOf(density) + 1) % DENSITIES.length];
     hapticLight();
@@ -106,6 +118,21 @@ export function DisplayToggle({ layout, density, motif, onLayout, onDensity, onM
         </button>
       )}
 
+      <button
+        class={`display-toggle__cycle ${labels ? 'display-toggle__cycle--active' : ''}`}
+        type="button"
+        aria-pressed={labels}
+        aria-label={`Labels: ${labels ? 'on' : 'off'}`}
+        title={`Labels: ${labels ? 'on' : 'off'}`}
+        onClick={() => { hapticLight(); onLabels?.(!labels); }}
+      >
+        {/* small museum nameplate glyph */}
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="6.5" width="12" height="6" rx="1" />
+          <path d="M5 9h6" opacity="0.7" />
+        </svg>
+      </button>
+
       <style>{`
         .display-toggle {
           display: flex;
@@ -152,6 +179,11 @@ export function DisplayToggle({ layout, density, motif, onLayout, onDensity, onM
         .display-toggle__cycle:active {
           background: var(--surface-tertiary);
           color: var(--text-primary);
+        }
+
+        .display-toggle__cycle--active {
+          background: var(--surface-tertiary);
+          color: var(--brand-400);
         }
       `}</style>
     </div>

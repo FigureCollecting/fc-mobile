@@ -18,11 +18,14 @@ function Probe() {
       <span data-testid="cat">{p.filters.cat.join(',')}</span>
       <span data-testid="type">{p.filters.type.join(',')}</span>
       <span data-testid="sort">{p.sort}:{p.order}</span>
+      <span data-testid="labels">{String(p.labels)}</span>
       <button type="button" onClick={() => p.setLayout('rows')}>set-rows</button>
       <button type="button" onClick={() => p.setDensity('gallery')}>set-gallery</button>
       <button type="button" onClick={() => p.setFilters({ ...p.filters, mfr: ['Good Smile Company', 'Max Factory'] })}>set-mfr</button>
       <button type="button" onClick={() => p.setFilters({ ...p.filters, cat: [] })}>clear-cat</button>
       <button type="button" onClick={() => p.setSort('name', 'desc')}>set-sort</button>
+      <button type="button" onClick={() => p.setLabels(true)}>set-labels-on</button>
+      <button type="button" onClick={() => p.setLabels(false)}>set-labels-off</button>
     </div>
   );
 }
@@ -81,5 +84,29 @@ describe('useFigureListParams', () => {
     renderWithProviders(<Probe />);
     await user.click(screen.getByText('set-sort'));
     expect(screen.getByTestId('sort').textContent).toBe('name:desc');
+  });
+
+  it('defaults labels to off when the URL is silent', () => {
+    renderWithProviders(<Probe />);
+    expect(screen.getByTestId('labels').textContent).toBe('false');
+  });
+
+  it('reads labels=1 from the URL as on', () => {
+    renderWithProviders(<Probe />, { initialPath: '/?labels=1' });
+    expect(screen.getByTestId('labels').textContent).toBe('true');
+  });
+
+  it('treats any non-"1" labels value as off', () => {
+    renderWithProviders(<Probe />, { initialPath: '/?labels=true' });
+    expect(screen.getByTestId('labels').textContent).toBe('false');
+  });
+
+  it('round-trips setLabels through the URL param', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Probe />);
+    await user.click(screen.getByText('set-labels-on'));
+    expect(screen.getByTestId('labels').textContent).toBe('true');
+    await user.click(screen.getByText('set-labels-off'));
+    expect(screen.getByTestId('labels').textContent).toBe('false');
   });
 });

@@ -34,4 +34,35 @@ describe('JustifiedRows (Display B)', () => {
     await user.click(screen.getByRole('button', { name: FIXTURE_FIGURES[4].name }));
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_FIGURES[4], 4);
   });
+
+  describe('nameplate labels (off by default)', () => {
+    it('renders no captions when labels is not set', () => {
+      const { container } = renderWithProviders(<JustifiedRows figures={FIXTURE_FIGURES} density="compact" />);
+      expect(container.querySelector('.jrows__caption')).toBeNull();
+    });
+
+    it('renders no captions when labels is explicitly false', () => {
+      const { container } = renderWithProviders(
+        <JustifiedRows figures={FIXTURE_FIGURES} density="compact" labels={false} />,
+      );
+      expect(container.querySelector('.jrows__caption')).toBeNull();
+    });
+
+    it('shows a bottom-gradient caption with name + manufacturer when labels is on', () => {
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      const { container } = renderWithProviders(
+        <JustifiedRows figures={[rem]} density="compact" labels />,
+      );
+      const caption = container.querySelector('.jrows__caption')!;
+      expect(caption).not.toBeNull();
+      expect(caption.querySelector('.jrows__caption-name')!.textContent).toBe(rem.name);
+      expect(caption.querySelector('.jrows__caption-mfr')!.textContent).toBe(rem.manufacturer);
+    });
+
+    it('keeps the caption out of the accessible name (aria-hidden, decorative)', () => {
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      renderWithProviders(<JustifiedRows figures={[rem]} density="compact" labels />);
+      expect(screen.getByRole('button', { name: rem.name })).toBeInTheDocument();
+    });
+  });
 });

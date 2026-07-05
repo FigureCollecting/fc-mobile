@@ -9,13 +9,15 @@ interface JustifiedRowsProps {
   figures: Figure[];
   density: Density;
   onSelect?: (figure: Figure, index: number) => void;
+  /** Bottom-gradient nameplate caption over each item. Defaults off. */
+  labels?: boolean;
 }
 
 /**
  * Display B — justified rows: fixed row height, native-aspect widths,
  * edge-to-edge, always uncropped.
  */
-export function JustifiedRows({ figures, density, onSelect }: JustifiedRowsProps) {
+export function JustifiedRows({ figures, density, onSelect, labels }: JustifiedRowsProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const rows = packJustified(figures, width, ROW_HEIGHT[density]);
@@ -36,6 +38,14 @@ export function JustifiedRows({ figures, density, onSelect }: JustifiedRowsProps
                 <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" />
               ) : (
                 <span class="jrows__placeholder" aria-hidden="true" />
+              )}
+              {labels && (
+                <span class="jrows__caption" aria-hidden="true">
+                  <span class="jrows__caption-name">{item.figure.name}</span>
+                  {item.figure.manufacturer && (
+                    <span class="jrows__caption-mfr">{item.figure.manufacturer}</span>
+                  )}
+                </span>
               )}
               <span class="sr-only">{item.figure.name}</span>
             </button>
@@ -83,6 +93,39 @@ export function JustifiedRows({ figures, density, onSelect }: JustifiedRowsProps
           position: absolute;
           inset: 0;
           background: linear-gradient(180deg, var(--surface-tertiary), var(--surface-secondary));
+        }
+
+        /* ── Nameplate: bottom-gradient caption over the image ────────────── */
+        .jrows__caption {
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 1;
+          display: flex;
+          flex-direction: column;
+          padding: 10px 6px 4px;
+          background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.78) 70%);
+          pointer-events: none;
+        }
+
+        .jrows__caption-name,
+        .jrows__caption-mfr {
+          max-width: 100%;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .jrows__caption-name {
+          font-size: 10px;
+          font-weight: 600;
+          color: #fff;
+        }
+
+        .jrows__caption-mfr {
+          font-size: 8px;
+          color: rgba(255, 255, 255, 0.7);
         }
       `}</style>
     </div>

@@ -183,13 +183,13 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
         }
 
         .jrows__caption-name {
-          font-size: 10px;
+          font-size: var(--font-xs);
           font-weight: 600;
           color: #fff;
         }
 
         .jrows__caption-mfr {
-          font-size: 8px;
+          font-size: var(--font-2xs);
           color: rgba(255, 255, 255, 0.7);
         }
       `}</style>

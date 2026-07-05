@@ -399,13 +399,13 @@ const caseStyles = `
   }
 
   .shelf-figure__plate-name {
-    font-size: 9px;
+    font-size: var(--font-xs);
     font-weight: 600;
     color: #e3c489;
   }
 
   .shelf-figure__plate-mfr {
-    font-size: 7px;
+    font-size: var(--font-2xs);
     color: rgba(227, 196, 137, 0.62);
   }
 

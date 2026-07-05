@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 
-import { CaseShelf } from '../CaseShelf';
+import { CaseShelf, PLATE_ZONE_PX } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
 
@@ -155,6 +155,79 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       );
       expect(container.querySelector('.shelf-figure__plate-name')!.textContent).toBe('Mystery Figure');
       expect(container.querySelector('.shelf-figure__plate-mfr')).toBeNull();
+    });
+
+    describe('shelf-edge mounting (Ross: plates must never climb over the figure base)', () => {
+      it('mounts the plate bottom offset to exactly -PLATE_ZONE_PX, growing down from the figure edge', () => {
+        const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+        const { container } = renderWithProviders(
+          <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" labels />,
+        );
+        const plate = container.querySelector('.shelf-figure__plate') as HTMLElement;
+        expect(plate.style.bottom).toBe(`-${PLATE_ZONE_PX}px`);
+      });
+
+      it('grows the bay height by exactly PLATE_ZONE_PX when labels are on, vs. off', () => {
+        const { container: withLabels } = renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" labels />,
+        );
+        const { container: withoutLabels } = renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+        );
+        const heightWith = parseFloat((withLabels.querySelector('.case__bay') as HTMLElement).style.height);
+        const heightWithout = parseFloat((withoutLabels.querySelector('.case__bay') as HTMLElement).style.height);
+        expect(heightWith - heightWithout).toBe(PLATE_ZONE_PX);
+      });
+
+      it('lifts the row padding-bottom (the figure baseline) by the same PLATE_ZONE_PX', () => {
+        const { container } = renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" labels />,
+        );
+        const row = container.querySelector('.case__row') as HTMLElement;
+        expect(row.style.paddingBottom).toBe(`${13 + PLATE_ZONE_PX}px`);
+      });
+
+      it('keeps the shelf plane/lip anchored to the figure (unchanged) when labels are off', () => {
+        const { container } = renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+        );
+        const row = container.querySelector('.case__row') as HTMLElement;
+        const plane = container.querySelector('.case__plane') as HTMLElement;
+        const lip = container.querySelector('.case__lip') as HTMLElement;
+        expect(row.style.paddingBottom).toBe('13px');
+        expect(plane.style.bottom).toBe('8px');
+        expect(lip.style.bottom).toBe('0px');
+      });
+
+      it('keeps the full, untruncated name in the DOM even when it will visually wrap/ellipsize', () => {
+        // Truncation here is a CSS (line-clamp) concern, not a data one — the
+        // text node itself must carry the complete name.
+        const longest = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-deepsea')!;
+        const { container } = renderWithProviders(
+          <CaseShelf figures={[longest]} motif="detolf-dark" density="compact" labels />,
+        );
+        expect(container.querySelector('.shelf-figure__plate-name')!.textContent).toBe(longest.name);
+      });
+    });
+  });
+
+  describe('case depth cues (side walls + back-wall vignette)', () => {
+    it('renders a depth overlay per case, decorative and non-interactive', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+      );
+      const depth = container.querySelector('.case__depth');
+      expect(depth).not.toBeNull();
+      expect(depth!.getAttribute('aria-hidden')).toBe('true');
+    });
+
+    it('renders the depth overlay for every motif', () => {
+      for (const motif of ['detolf-dark', 'glass-clear', 'bookcase-wood'] as const) {
+        const { container } = renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif={motif} density="compact" />,
+        );
+        expect(container.querySelector(`.case[data-motif="${motif}"] .case__depth`)).not.toBeNull();
+      }
     });
   });
 

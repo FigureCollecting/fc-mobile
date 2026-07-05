@@ -12,6 +12,16 @@ import { useScrollParent } from '../../hooks/useScrollParent';
 
 export type CaseMotif = 'detolf-dark' | 'glass-clear' | 'bookcase-wood';
 
+/**
+ * Extra vertical room reserved below each figure's feet for its nameplate
+ * (Ross: plates mount to the shelf edge — lip/below-shelf zone — and must
+ * never climb back up over the figure's base). Sized for the plate's worst
+ * case: a 2-line wrapped name + 1-line maker at --font-plate/-sub, plus its
+ * own padding/border. Only reserved when labels are actually on, so the
+ * shelf stays at its normal (denser) height with labels off.
+ */
+export const PLATE_ZONE_PX = 34;
+
 export const CASE_MOTIFS: { value: CaseMotif; label: string }[] = [
   { value: 'detolf-dark', label: 'Dark glass' },
   { value: 'glass-clear', label: 'Clear glass' },
@@ -59,10 +69,12 @@ function ShelfFigure({
   item,
   onSelect,
   labels,
+  plateZone,
 }: {
   item: ShelfItem;
   onSelect?: (figure: Figure, index: number) => void;
   labels?: boolean;
+  plateZone: number;
 }) {
   const { figure, meta, w, h, slotWidth } = item;
 
@@ -109,8 +121,15 @@ function ShelfFigure({
       {labels && (
         // Widened to the item's slot (its own width plus its share of the
         // surrounding gaps) — Ross: let plates nearly meet, not stay capped
-        // to the figure's own (often much narrower) width.
-        <span class="shelf-figure__plate" aria-hidden="true" style={{ maxWidth: `${Math.max(w, slotWidth - 4)}px` }}>
+        // to the figure's own (often much narrower) width. Mounted at the
+        // shelf edge: top of the plate sits flush with the figure's own
+        // bottom (never climbing over the base), growing down through the
+        // enlarged shelf-lip zone (plateZone).
+        <span
+          class="shelf-figure__plate"
+          aria-hidden="true"
+          style={{ width: `${Math.max(w, slotWidth - 4)}px`, bottom: `${-plateZone}px` }}
+        >
           <span class="shelf-figure__plate-name">{figure.name}</span>
           {figure.manufacturer && (
             <span class="shelf-figure__plate-mfr">{figure.manufacturer}</span>
@@ -134,7 +153,8 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark, labels
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const band = SHELF_BAND[density];
-  const bayHeight = band + 30;
+  const plateZone = labels ? PLATE_ZONE_PX : 0;
+  const bayHeight = band + 30 + plateZone;
   // Frame pillars eat ~12px a side; row padding eats a bit more.
   const rows = packShelves(figures, Math.max(160, width - 48), band);
 
@@ -176,17 +196,25 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark, labels
               style={{ height: `${bayHeight}px`, transform: `translateY(${vBay.start}px)` }}
             >
               <div class="case__back" />
-              <div class="case__row">
+              {/* Row padding-bottom / plane / lip offsets grow by plateZone
+                  so the figure's feet lift clear of the enlarged shelf-edge
+                  zone the nameplate now occupies — see PLATE_ZONE_PX. */}
+              <div class="case__row" style={{ paddingBottom: `${13 + plateZone}px` }}>
                 {row.map((item) => (
-                  <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} labels={labels} />
+                  <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} labels={labels} plateZone={plateZone} />
                 ))}
               </div>
-              <div class="case__plane" />
-              <div class="case__lip" />
+              <div class="case__plane" style={{ bottom: `${8 + plateZone}px` }} />
+              <div class="case__lip" style={{ bottom: `${plateZone}px` }} />
               <div class="case__wash" />
             </section>
           );
         })}
+        {/* Depth cues: side walls + back-wall vignette so the case reads as
+            a box, not a flat backdrop. Painted above the (opaque) bays —
+            they'd otherwise tile over and hide anything placed behind them
+            — but below the watermark. Pure tint/vignette, no streaks. */}
+        <div class="case__depth" aria-hidden="true" />
         <div class="case__watermark" style={{ height: `${watermarkHeightPx}px` }}>
           {watermark ?? <WatermarkPlaceholder />}
         </div>
@@ -283,6 +311,26 @@ const caseStyles = `
     background: var(--bay-wash);
   }
 
+  /* ── Depth cues: side walls + back-wall vignette ─────────────────────
+     Painted ABOVE the bays (which are opaque and tile the full case, so a
+     layer placed behind them would never show) but below the watermark —
+     z-index:1 puts it in the same stacking layer as the watermark, and DOM
+     order (this comes first) keeps the watermark on top of it. Tint/vignette
+     only — no diagonal "streak" cues, by design (see the removed glints). */
+  .case__depth {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background-repeat: no-repeat;
+    background-image:
+      linear-gradient(90deg, var(--wall-tint) 0%, var(--wall-tint) 55%, var(--wall-edge-line) 88%, transparent 100%),
+      linear-gradient(270deg, var(--wall-tint) 0%, var(--wall-tint) 55%, var(--wall-edge-line) 88%, transparent 100%),
+      radial-gradient(ellipse 82% 65% at 50% 42%, transparent 50%, var(--backwall-edge) 100%);
+    background-position: left top, right top, center;
+    background-size: 20px 100%, 20px 100%, 100% 100%;
+  }
+
   /* ── Watermark slot (logo SVG lands later) ─────────────────────────── */
   .case__watermark {
     position: absolute;
@@ -375,11 +423,13 @@ const caseStyles = `
   /* ── Nameplate: tiny museum plaque mounted at the shelf edge ───────────
      Width is set inline per-item (its packed slot, not its own — often much
      narrower — figure width), so neighboring plates can grow to nearly meet
-     without ever colliding. */
+     without ever colliding. bottom is also set inline (-plateZone): the
+     plate's TOP edge lands flush with the figure's own bottom edge and
+     grows DOWN into the enlarged shelf-lip zone — never back up over the
+     figure's base. */
   .shelf-figure__plate {
     position: absolute;
     left: 50%;
-    bottom: -9px;
     transform: translateX(-50%);
     z-index: 6;
     display: flex;
@@ -392,28 +442,41 @@ const caseStyles = `
     border: 1px solid rgba(201, 164, 100, 0.35);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     pointer-events: none;
-    line-height: 1.15;
+    line-height: 1.2;
   }
 
   .shelf-figure__plate-name,
   .shelf-figure__plate-mfr {
-    max-width: 100%;
-    white-space: nowrap;
+    width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-align: center;
   }
 
   /* Ross: explicit floor exemption for this decorative miniature label only
-     (--font-plate / --font-plate-sub, see tokens.css) — 7px / 6px. */
+     (--font-plate / --font-plate-sub, see tokens.css) — 7px / 6px. Long
+     names wrap to 2 lines (approved) rather than lose the whole tail to an
+     ellipsis; the maker line stays single-line. */
   .shelf-figure__plate-name {
     font-size: var(--font-plate);
     font-weight: 600;
     color: #e3c489;
+    white-space: normal;
+    word-break: break-word;
+    /* Plain 2-line wrap + height cap, deliberately NOT -webkit-line-clamp:
+       that legacy mechanism (needs display:-webkit-box) rendered blank or
+       dropped the first line entirely as a flex-column child in testing —
+       verified in a real browser, not assumed. This is simpler and correct:
+       at 7px across a 90px+ slot, 2 lines comfortably fits every fixture
+       name; anything longer just clips flush at the height cap. */
+    max-height: calc(var(--font-plate) * 2.4);
+    flex-shrink: 0;
   }
 
   .shelf-figure__plate-mfr {
     font-size: var(--font-plate-sub);
     color: rgba(227, 196, 137, 0.62);
+    white-space: nowrap;
   }
 
   /* ── Motifs — pure-CSS themes via custom properties ─────────────────── */
@@ -438,6 +501,10 @@ const caseStyles = `
     --watermark-color: #cfe0ff;
     --watermark-opacity: 0.07;
     --photo-frame: #3a3e45;
+    /* depth cues: cool glass-tinted side walls, dark vignetted back wall */
+    --wall-tint: rgba(140, 175, 215, 0.09);
+    --wall-edge-line: rgba(210, 230, 255, 0.16);
+    --backwall-edge: rgba(0, 0, 0, 0.24);
   }
 
   /* Clear glass: pale ground, brighter shelf plane, stronger refraction cues */
@@ -460,6 +527,10 @@ const caseStyles = `
     --watermark-color: #3c4652;
     --watermark-opacity: 0.08;
     --photo-frame: #8a9099;
+    /* depth cues: lighter overall case, so walls/vignette stay pale too */
+    --wall-tint: rgba(120, 150, 180, 0.08);
+    --wall-edge-line: rgba(255, 255, 255, 0.4);
+    --backwall-edge: rgba(60, 70, 80, 0.12);
   }
 
   /* Bookcase: warm wood back + shelf lips, no glass effects */
@@ -486,5 +557,9 @@ const caseStyles = `
     --watermark-color: #ffe2b8;
     --watermark-opacity: 0.06;
     --photo-frame: #2e2018;
+    /* depth cues: warm wood-toned side walls, dark vignetted back wall */
+    --wall-tint: rgba(70, 42, 22, 0.16);
+    --wall-edge-line: rgba(200, 150, 95, 0.22);
+    --backwall-edge: rgba(0, 0, 0, 0.26);
   }
 `;

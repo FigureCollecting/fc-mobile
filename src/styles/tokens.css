@@ -38,15 +38,6 @@
      anything else. */
   --font-plate: 0.4375rem;                                  /* 7px, nameplate name line */
   --font-plate-sub: 0.375rem;                               /* 6px, nameplate maker line */
-  /* Narrower glyphs (not just smaller) buy the plate more characters before
-     ellipsizing. Roboto Condensed/Arial Narrow are real fonts on their
-     native platforms (Android / Windows); elsewhere the stack degrades to
-     whatever condensed-capable face is actually installed (verified via
-     fc-match against this repo's own CI/dev containers: Arial Narrow
-     resolves to the metric-compatible Nimbus Sans Narrow on Linux; Ubuntu's
-     variable font honors font-stretch for its "wdth" axis) before falling
-     back to the app's normal --font-family. */
-  --font-family-plate: 'Roboto Condensed', 'Arial Narrow', 'Nimbus Sans Narrow', 'Ubuntu', var(--font-family);
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;

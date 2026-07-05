@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { packShelves } from '../packShelves';
+import { SHELF_BAND } from '../density';
 import { FIXTURE_FIGURES, FIXTURE_META } from '../../../dev-fixtures/fixtures';
 
 describe('packShelves', () => {
@@ -40,5 +41,19 @@ describe('packShelves', () => {
   it('puts a wider-than-container figure alone on its row', () => {
     const rows = packShelves(FIXTURE_FIGURES, 130, 168);
     for (const row of rows) expect(row.length).toBe(1);
+  });
+
+  it('Compact density packs ~3 figures per shelf at a 360px phone viewport', () => {
+    // Mirrors CaseShelf's usable-width formula: Math.max(160, width - 48).
+    // A realistic-size collection (4x the fixture set) avoids edge effects
+    // from a partial trailing shelf skewing the average.
+    const usable = Math.max(160, 360 - 48);
+    const collection = [...FIXTURE_FIGURES, ...FIXTURE_FIGURES, ...FIXTURE_FIGURES, ...FIXTURE_FIGURES];
+    const rows = packShelves(collection, usable, SHELF_BAND.compact);
+    const counts = rows.map((r) => r.length);
+    const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+    expect(avg).toBeGreaterThanOrEqual(2.7);
+    // Most shelves should hit 3-across, not just the average.
+    expect(counts.filter((c) => c >= 3).length).toBeGreaterThan(counts.filter((c) => c < 3).length);
   });
 });

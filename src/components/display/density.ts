@@ -9,10 +9,14 @@ export const DENSITIES: Density[] = ['comfortable', 'compact', 'gallery'];
 
 export const DEFAULT_DENSITY: Density = 'compact';
 
-/** Virtual case: figure band height (px) per shelf. */
+/**
+ * Virtual case: figure band height (px) per shelf. Compact is tuned so a
+ * 360px phone viewport packs ~3 figures per shelf (was ~2 at the old 168px
+ * band) — verified against the dev-fixture aspect/relHeight distribution.
+ */
 export const SHELF_BAND: Record<Density, number> = {
   comfortable: 216,
-  compact: 168,
+  compact: 115,
   gallery: 126,
 };
 

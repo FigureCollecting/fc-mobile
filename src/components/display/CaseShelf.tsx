@@ -129,7 +129,6 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark }: Case
             <div class="case__wash" />
           </section>
         ))}
-        <div class="case__glints" aria-hidden="true" />
         <div class="case__watermark">{watermark ?? <WatermarkPlaceholder />}</div>
       </div>
 
@@ -218,19 +217,6 @@ const caseStyles = `
     z-index: 4;
     pointer-events: none;
     background: var(--bay-wash);
-  }
-
-  /* ── Front-glass glints across the whole case (glass motifs only) ───── */
-  .case__glints {
-    position: absolute;
-    inset: 10px 12px 14px;
-    z-index: 5;
-    pointer-events: none;
-    background:
-      linear-gradient(90deg, transparent 0%, var(--glint-soft) 28%, var(--glint-soft) 32%, transparent 38%),
-      linear-gradient(90deg, transparent 32%, var(--glint-sharp) 34%, transparent 36%),
-      linear-gradient(90deg, transparent 76%, var(--glint-faint) 79%, transparent 82%),
-      linear-gradient(90deg, var(--glint-edge) 0%, transparent 1.6%, transparent 98.4%, var(--glint-edge) 100%);
   }
 
   /* ── Watermark slot (logo SVG lands later) ─────────────────────────── */
@@ -341,10 +327,6 @@ const caseStyles = `
     --shadow-core: 0.5;
     --reflect-a: 0.16;
     --reflect-display: block;
-    --glint-soft: rgba(235, 240, 248, 0.05);
-    --glint-sharp: rgba(235, 240, 248, 0.09);
-    --glint-faint: rgba(235, 240, 248, 0.04);
-    --glint-edge: rgba(235, 240, 248, 0.12);
     --watermark-color: #cfe0ff;
     --watermark-opacity: 0.07;
     --photo-frame: #3a3e45;
@@ -367,10 +349,6 @@ const caseStyles = `
     --shadow-core: 0.38;
     --reflect-a: 0.22;
     --reflect-display: block;
-    --glint-soft: rgba(255, 255, 255, 0.16);
-    --glint-sharp: rgba(255, 255, 255, 0.3);
-    --glint-faint: rgba(255, 255, 255, 0.13);
-    --glint-edge: rgba(255, 255, 255, 0.4);
     --watermark-color: #3c4652;
     --watermark-opacity: 0.08;
     --photo-frame: #8a9099;
@@ -397,10 +375,6 @@ const caseStyles = `
     --shadow-core: 0.46;
     --reflect-a: 0;
     --reflect-display: none;
-    --glint-soft: transparent;
-    --glint-sharp: transparent;
-    --glint-faint: transparent;
-    --glint-edge: rgba(0, 0, 0, 0.16);
     --watermark-color: #ffe2b8;
     --watermark-opacity: 0.06;
     --photo-frame: #2e2018;

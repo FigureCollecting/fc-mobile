@@ -91,8 +91,8 @@
   /* ── Density — Compact is the default. data-density on a container
      switches the whole display layer: card minimums (emergent grid
      columns), virtual-case shelf height, justified-row height. ────────── */
-  --card-min: 112px;
-  --shelf-h: 168px;   /* virtual case: figure band height per shelf */
+  --card-min: 80px;
+  --shelf-h: 115px;   /* virtual case: figure band height per shelf */
   --row-h: 132px;     /* justified rows: base row height */
 }
 
@@ -103,8 +103,8 @@
 }
 
 [data-density='compact'] {
-  --card-min: 112px;
-  --shelf-h: 168px;
+  --card-min: 80px;
+  --shelf-h: 115px;
   --row-h: 132px;
 }
 

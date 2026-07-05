@@ -8,8 +8,9 @@ import { fileURLToPath } from 'node:url';
  * directly against the token source, so a future token addition can't
  * quietly slip under it. `--font-plate` / `--font-plate-sub` are the one
  * deliberate exception (Ross, nameplate/caption only) — this test makes
- * that exemption explicit and keeps it fenced to its two consumers instead
- * of letting it become a loophole for anything else.
+ * that exemption explicit and keeps it (plus the companion condensed
+ * `--font-family-plate` stack) fenced to its two consumers instead of
+ * letting it become a loophole for anything else.
  */
 const tokensPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../tokens.css');
 const tokensCss = fs.readFileSync(tokensPath, 'utf-8');
@@ -56,12 +57,12 @@ describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
     expect(pxOf(getDeclaredValue('--font-input'))).toBe(16);
   });
 
-  it('pins the exempted plate tokens to their intended 8px / 7px values, not smaller', () => {
-    expect(pxOf(getDeclaredValue('--font-plate'))).toBe(8);
-    expect(pxOf(getDeclaredValue('--font-plate-sub'))).toBe(7);
+  it('pins the exempted plate tokens to their intended 7px / 6px values, not smaller', () => {
+    expect(pxOf(getDeclaredValue('--font-plate'))).toBe(7);
+    expect(pxOf(getDeclaredValue('--font-plate-sub'))).toBe(6);
   });
 
-  it('fences --font-plate / --font-plate-sub to the nameplate and caption components only', () => {
+  it('fences --font-plate / --font-plate-sub / --font-family-plate to the nameplate and caption components only', () => {
     const srcRoot = path.resolve(path.dirname(tokensPath), '..');
     const allowedFiles = new Set(['CaseShelf.tsx', 'JustifiedRows.tsx']);
 
@@ -74,7 +75,7 @@ describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
           walk(full);
         } else if (/\.(tsx?|css)$/.test(entry.name) && full !== tokensPath) {
           const content = fs.readFileSync(full, 'utf-8');
-          if (/--font-plate(-sub)?\b/.test(content) && !allowedFiles.has(entry.name)) {
+          if (/--font-(family-)?plate(-sub)?\b/.test(content) && !allowedFiles.has(entry.name)) {
             offenders.push(path.relative(srcRoot, full));
           }
         }

@@ -180,11 +180,17 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+          /* Ross: narrower glyphs, not just smaller — see
+             --font-family-plate in tokens.css for what this resolves to
+             per platform. */
+          font-family: var(--font-family-plate);
+          font-stretch: semi-condensed;
+          letter-spacing: -0.015em;
         }
 
         /* Ross: explicit floor exemption for this decorative miniature
            caption only (--font-plate / --font-plate-sub, see tokens.css) —
-           8px / 7px, same as CaseShelf's plate, so most real names render
+           7px / 6px, same as CaseShelf's plate, so most real names render
            fully instead of ellipsizing. */
         .jrows__caption-name {
           font-size: var(--font-plate);

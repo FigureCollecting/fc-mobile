@@ -401,10 +401,16 @@ const caseStyles = `
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    /* Ross: narrower glyphs, not just smaller — buys more characters
+       before ellipsizing. See --font-family-plate in tokens.css for what
+       this actually resolves to per platform. */
+    font-family: var(--font-family-plate);
+    font-stretch: semi-condensed;
+    letter-spacing: -0.015em;
   }
 
   /* Ross: explicit floor exemption for this decorative miniature label only
-     (--font-plate / --font-plate-sub, see tokens.css) — 8px / 7px. */
+     (--font-plate / --font-plate-sub, see tokens.css) — 7px / 6px. */
   .shelf-figure__plate-name {
     font-size: var(--font-plate);
     font-weight: 600;

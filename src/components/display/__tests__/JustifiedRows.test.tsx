@@ -1,10 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { JustifiedRows } from '../JustifiedRows';
 import { renderWithProviders } from '../../../test/testUtils';
-import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
+import { FIXTURE_FIGURES, getFixtureFigures } from '../../../dev-fixtures/fixtures';
+
+/** Fake a real, bounded scroll viewport so the virtualizer measures a
+ *  non-zero rect (@tanstack/virtual-core reads offsetWidth/offsetHeight,
+ *  which jsdom always reports as 0 without real layout). */
+function mockScrollViewport(heightPx: number) {
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('app-content') ? heightPx : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('app-content') ? 360 : 0;
+  });
+}
 
 describe('JustifiedRows (Display B)', () => {
   it('renders every figure with an accessible name', () => {
@@ -63,6 +75,29 @@ describe('JustifiedRows (Display B)', () => {
       const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
       renderWithProviders(<JustifiedRows figures={[rem]} density="compact" labels />);
       expect(screen.getByRole('button', { name: rem.name })).toBeInTheDocument();
+    });
+  });
+
+  describe('row-level virtualization (large collections)', () => {
+    it('renders only a windowed subset of rows for a large collection with a real scroll container', async () => {
+      mockScrollViewport(780);
+      const many = getFixtureFigures(60);
+      const { container } = renderWithProviders(
+        <div class="app-content" style={{ height: '780px', overflow: 'auto' }}>
+          <JustifiedRows figures={many} density="compact" />
+        </div>,
+      );
+      await waitFor(() => {
+        const rows = container.querySelectorAll('.jrows__row');
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.length).toBeLessThan(40);
+      });
+    });
+
+    it('renders every figure when no .app-content scroll ancestor is present (fallback)', () => {
+      const many = getFixtureFigures(20);
+      const { container } = renderWithProviders(<JustifiedRows figures={many} density="compact" />);
+      expect(container.querySelectorAll('.jrows__item')).toHaveLength(many.length);
     });
   });
 });

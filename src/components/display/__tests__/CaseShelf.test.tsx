@@ -1,11 +1,23 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 
 import { CaseShelf } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
-import { FIXTURE_FIGURES, FIXTURE_META } from '../../../dev-fixtures/fixtures';
+import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
+
+/** Fake a real, bounded scroll viewport so the virtualizer measures a
+ *  non-zero rect (@tanstack/virtual-core reads offsetWidth/offsetHeight,
+ *  which jsdom always reports as 0 without real layout). */
+function mockScrollViewport(heightPx: number) {
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('app-content') ? heightPx : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('app-content') ? 360 : 0;
+  });
+}
 
 describe('CaseShelf (Display A — virtual cases)', () => {
   it('stands every figure on a shelf with an accessible name', () => {
@@ -143,6 +155,31 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       );
       expect(container.querySelector('.shelf-figure__plate-name')!.textContent).toBe('Mystery Figure');
       expect(container.querySelector('.shelf-figure__plate-mfr')).toBeNull();
+    });
+  });
+
+  describe('shelf-level virtualization (large collections)', () => {
+    it('renders only a windowed subset of bays for a large collection with a real scroll container', async () => {
+      mockScrollViewport(780);
+      const many = getFixtureFigures(60);
+      const { container } = renderWithProviders(
+        <div class="app-content" style={{ height: '780px', overflow: 'auto' }}>
+          <CaseShelf figures={many} motif="detolf-dark" density="compact" />
+        </div>,
+      );
+      await waitFor(() => {
+        const bays = container.querySelectorAll('.case__bay');
+        expect(bays.length).toBeGreaterThan(0);
+        expect(bays.length).toBeLessThan(40);
+      });
+    });
+
+    it('renders every figure when no .app-content scroll ancestor is present (fallback)', () => {
+      const many = getFixtureFigures(20);
+      const { container } = renderWithProviders(
+        <CaseShelf figures={many} motif="detolf-dark" density="compact" />,
+      );
+      expect(container.querySelectorAll('.shelf-figure')).toHaveLength(many.length);
     });
   });
 });

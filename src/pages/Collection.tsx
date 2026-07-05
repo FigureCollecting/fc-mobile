@@ -19,7 +19,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useAuthStore } from '../stores/auth';
 import { applyFilters, countActiveFilters } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
-import { FIXTURE_FIGURES, isFixtureMode } from '../dev-fixtures/fixtures';
+import { getFixtureFigures, isFixtureMode } from '../dev-fixtures/fixtures';
 
 /** Shelf-shaped loading skeleton. */
 function SkeletonShelves() {
@@ -85,11 +85,13 @@ export function Collection() {
   const online = useOnlineStatus();
 
   // Fixture mode (dev default): the app runs fully offline against the
-  // gitignored matted fixtures — still through the query layer.
+  // gitignored matted fixtures — still through the query layer. `?fx=N`
+  // multiplies the set to stress-test virtualization at real scale.
   const fixtureMode = useMemo(() => isFixtureMode(), []);
+  const fixtureFigures = useMemo(() => getFixtureFigures(), []);
   const fixturesQuery = useQuery<Figure[]>({
-    queryKey: ['dev-fixtures'],
-    queryFn: () => Promise.resolve(FIXTURE_FIGURES),
+    queryKey: ['dev-fixtures', fixtureFigures.length],
+    queryFn: () => Promise.resolve(fixtureFigures),
     enabled: fixtureMode,
     staleTime: Infinity,
   });

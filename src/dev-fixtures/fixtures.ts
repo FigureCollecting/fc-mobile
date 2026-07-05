@@ -198,3 +198,38 @@ export function setFixtureMode(on: boolean): void {
     /* localStorage unavailable */
   }
 }
+
+const FIXTURE_MULTIPLIER_PARAM = 'fx';
+
+/**
+ * Dev-only stress-test multiplier: `?fx=N` repeats the 7-figure manifest N
+ * times so the display layer can be exercised at real-collection scale
+ * (virtualization) without committing hundreds of fixture images. 1 (off)
+ * for anything absent, non-numeric, or <= 1.
+ */
+export function getFixtureMultiplier(): number {
+  try {
+    const raw = new URLSearchParams(location.search).get(FIXTURE_MULTIPLIER_PARAM);
+    const n = Math.floor(Number(raw));
+    return Number.isFinite(n) && n > 1 ? n : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/**
+ * The fixture figures, repeated per the `?fx=N` multiplier with unique ids
+ * (`fx-rem-x1`, `fx-rem-x2`, ...). getDisplayMeta strips the `-xN` suffix to
+ * resolve the original matte metadata, so every repeated copy still renders
+ * matted (not a generic framed-photo fallback).
+ */
+export function getFixtureFigures(multiplier = getFixtureMultiplier()): Figure[] {
+  if (multiplier <= 1) return FIXTURE_FIGURES;
+  const out: Figure[] = [];
+  for (let copy = 1; copy <= multiplier; copy++) {
+    for (const base of FIXTURE_FIGURES) {
+      out.push(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` });
+    }
+  }
+  return out;
+}

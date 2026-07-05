@@ -1,10 +1,13 @@
 import { useRef } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
+import type { VirtualItem } from '@tanstack/virtual-core';
 import { packJustified } from './packJustified';
 import { ROW_HEIGHT } from './density';
 import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
+import { useVirtualizer } from '../../hooks/useVirtualizer';
+import { useScrollParent } from '../../hooks/useScrollParent';
 
 const ROW_GAP_PX = 2;
 
@@ -26,40 +29,75 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const rows = packJustified(figures, width, ROW_HEIGHT[density]);
-  const totalHeightPx =
-    rows.reduce((sum, r) => sum + r.height, 0) + Math.max(0, rows.length - 1) * ROW_GAP_PX;
+
+  // Virtualize by ROW against the app's own page scroll container — not a
+  // nested scrollbox — so collections of 1000+ figures stay smooth. Falls
+  // back to rendering every row when no `.app-content` ancestor is found
+  // (e.g. the component mounted in isolation in tests). Row heights are
+  // already known exactly from packJustified, so estimateSize is exact,
+  // not an estimate.
+  const scrollParent = useScrollParent(hostRef);
+  const fallbackRowHeight = ROW_HEIGHT[density];
+  const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>({
+    count: rows.length,
+    getScrollElement: () => scrollParent,
+    estimateSize: (index) => rows[index]?.height ?? fallbackRowHeight,
+    gap: ROW_GAP_PX,
+    overscan: 3,
+  });
+  const virtualRows: VirtualItem[] = scrollParent
+    ? rowVirtualizer.getVirtualItems()
+    : (() => {
+        let offset = 0;
+        return rows.map((row, index) => {
+          const item = { key: index, index, start: offset, end: offset + row.height, size: row.height, lane: 0 };
+          offset += row.height + ROW_GAP_PX;
+          return item;
+        });
+      })();
+  const totalHeightPx = scrollParent
+    ? rowVirtualizer.getTotalSize()
+    : rows.reduce((sum, r) => sum + r.height, 0) + Math.max(0, rows.length - 1) * ROW_GAP_PX;
   const watermarkHeightPx = Math.min(Math.round(totalHeightPx * 0.21), 120);
 
   return (
-    <div class="jrows" ref={hostRef}>
-      {rows.map((row, i) => (
-        <div key={i} class="jrows__row" style={{ height: `${row.height}px` }}>
-          {row.items.map((item) => (
-            <button
-              key={item.figure._id}
-              class="jrows__item"
-              style={{ width: `${item.w}px` }}
-              type="button"
-              onClick={onSelect ? () => onSelect(item.figure, item.index) : undefined}
-            >
-              {item.figure.imageUrl ? (
-                <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" />
-              ) : (
-                <span class="jrows__placeholder" aria-hidden="true" />
-              )}
-              {labels && (
-                <span class="jrows__caption" aria-hidden="true">
-                  <span class="jrows__caption-name">{item.figure.name}</span>
-                  {item.figure.manufacturer && (
-                    <span class="jrows__caption-mfr">{item.figure.manufacturer}</span>
-                  )}
-                </span>
-              )}
-              <span class="sr-only">{item.figure.name}</span>
-            </button>
-          ))}
-        </div>
-      ))}
+    <div class="jrows" ref={hostRef} style={{ height: `${totalHeightPx}px` }}>
+      {virtualRows.map((vRow) => {
+        const row = rows[vRow.index];
+        if (!row) return null;
+        return (
+          <div
+            key={vRow.key}
+            class="jrows__row"
+            style={{ height: `${row.height}px`, transform: `translateY(${vRow.start}px)` }}
+          >
+            {row.items.map((item) => (
+              <button
+                key={item.figure._id}
+                class="jrows__item"
+                style={{ width: `${item.w}px` }}
+                type="button"
+                onClick={onSelect ? () => onSelect(item.figure, item.index) : undefined}
+              >
+                {item.figure.imageUrl ? (
+                  <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" />
+                ) : (
+                  <span class="jrows__placeholder" aria-hidden="true" />
+                )}
+                {labels && (
+                  <span class="jrows__caption" aria-hidden="true">
+                    <span class="jrows__caption-name">{item.figure.name}</span>
+                    {item.figure.manufacturer && (
+                      <span class="jrows__caption-mfr">{item.figure.manufacturer}</span>
+                    )}
+                  </span>
+                )}
+                <span class="sr-only">{item.figure.name}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })}
 
       {watermark && (
         <div class="jrows__watermark" style={{ height: `${watermarkHeightPx}px` }}>
@@ -68,11 +106,11 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
       )}
 
       <style>{`
+        /* Height is set explicitly (inline style) to the packed/virtualized
+           content size — rows below are virtualized-list items, positioned
+           by transform, not stacked in normal flow. */
         .jrows {
           position: relative;
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
           width: 100%;
         }
 
@@ -83,7 +121,12 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
           z-index: 1;
         }
 
+        /* Virtualized list item: absolutely positioned, placed via translateY. */
         .jrows__row {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
           display: flex;
           gap: 2px;
           overflow: hidden;

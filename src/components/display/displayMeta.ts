@@ -21,7 +21,13 @@ export const UNMATTED_META: FigureDisplayMeta = {
   baseRecovered: false,
 };
 
-/** Resolve display meta for a figure: manifest data, else unmatted fallback. */
+/**
+ * Resolve display meta for a figure: manifest data, else unmatted fallback.
+ * The `?fx=N` stress-test multiplier suffixes repeated copies as
+ * `<id>-xN` — strip that to resolve the original copy's matte metadata.
+ */
 export function getDisplayMeta(figure: Figure): FigureDisplayMeta {
-  return FIXTURE_META[figure._id] ?? UNMATTED_META;
+  if (FIXTURE_META[figure._id]) return FIXTURE_META[figure._id];
+  const baseId = figure._id.replace(/-x\d+$/, '');
+  return FIXTURE_META[baseId] ?? UNMATTED_META;
 }

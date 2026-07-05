@@ -1,11 +1,14 @@
 import { useRef } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
+import type { VirtualItem } from '@tanstack/virtual-core';
 import { packShelves } from './packShelves';
 import type { ShelfItem } from './packShelves';
 import { SHELF_BAND } from './density';
 import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
+import { useVirtualizer } from '../../hooks/useVirtualizer';
+import { useScrollParent } from '../../hooks/useScrollParent';
 
 export type CaseMotif = 'detolf-dark' | 'glass-clear' | 'bookcase-wood';
 
@@ -128,29 +131,59 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark, labels
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const band = SHELF_BAND[density];
+  const bayHeight = band + 30;
   // Frame pillars eat ~12px a side; row padding eats a bit more.
   const rows = packShelves(figures, Math.max(160, width - 48), band);
-  // Case padding (10px top + 14px bottom) plus each bay's own height —
+
+  // Virtualize by SHELF against the app's own page scroll container — not a
+  // nested scrollbox — so collections of 1000+ figures stay smooth. Falls
+  // back to rendering every bay when no `.app-content` ancestor is found
+  // (e.g. the component mounted in isolation in tests).
+  const scrollParent = useScrollParent(hostRef);
+  const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>({
+    count: rows.length,
+    getScrollElement: () => scrollParent,
+    estimateSize: () => bayHeight,
+    overscan: 3,
+  });
+  const virtualBays: VirtualItem[] = scrollParent
+    ? rowVirtualizer.getVirtualItems()
+    : rows.map((_, index) => ({ key: index, index, start: index * bayHeight, end: (index + 1) * bayHeight, size: bayHeight, lane: 0 }));
+  const totalBaysHeight = scrollParent ? rowVirtualizer.getTotalSize() : rows.length * bayHeight;
+
+  // Case padding (10px top + 14px bottom) plus the packed bay content —
   // the watermark slot sizes itself off this, not the viewport.
-  const caseHeightPx = 24 + rows.length * (band + 30);
+  const caseHeightPx = 24 + totalBaysHeight;
   const watermarkHeightPx = Math.min(Math.round(caseHeightPx * 0.21), 120);
 
   return (
     <div class="case-host" ref={hostRef}>
-      <div class={`case ${motif === 'glass-clear' ? 'case--light' : ''}`} data-motif={motif}>
-        {rows.map((row, i) => (
-          <section key={i} class="case__bay" style={{ height: `${band + 30}px` }}>
-            <div class="case__back" />
-            <div class="case__row">
-              {row.map((item) => (
-                <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} labels={labels} />
-              ))}
-            </div>
-            <div class="case__plane" />
-            <div class="case__lip" />
-            <div class="case__wash" />
-          </section>
-        ))}
+      <div
+        class={`case ${motif === 'glass-clear' ? 'case--light' : ''}`}
+        data-motif={motif}
+        style={{ height: `${caseHeightPx}px` }}
+      >
+        {virtualBays.map((vBay) => {
+          const row = rows[vBay.index];
+          if (!row) return null;
+          return (
+            <section
+              key={vBay.key}
+              class="case__bay"
+              style={{ height: `${bayHeight}px`, transform: `translateY(${vBay.start}px)` }}
+            >
+              <div class="case__back" />
+              <div class="case__row">
+                {row.map((item) => (
+                  <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} labels={labels} />
+                ))}
+              </div>
+              <div class="case__plane" />
+              <div class="case__lip" />
+              <div class="case__wash" />
+            </section>
+          );
+        })}
         <div class="case__watermark" style={{ height: `${watermarkHeightPx}px` }}>
           {watermark ?? <WatermarkPlaceholder />}
         </div>
@@ -167,21 +200,25 @@ const caseStyles = `
   }
 
   /* ── Case frame ─────────────────────────────────────────────────────── */
+  /* Height is set explicitly (inline style) to the packed/virtualized
+     content size — bays below are virtualized-list items, positioned by
+     transform, not stacked in normal flow. */
   .case {
     position: relative;
     padding: 10px 12px 14px;
     background: var(--case-frame);
     box-shadow: inset 0 1px 0 var(--case-frame-hi), inset 1px 0 0 var(--case-frame-hi),
       inset -1px 0 0 var(--case-frame-hi);
-    display: flex;
-    flex-direction: column;
-    gap: 0;
     overflow: hidden;
   }
 
   /* ── Shelf bay: back panel, figures, shelf plane, front lip ────────── */
+  /* Virtualized list item: absolutely positioned, placed via translateY. */
   .case__bay {
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
     overflow: hidden;
   }
 

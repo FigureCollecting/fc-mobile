@@ -7,6 +7,7 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
 import { CaseShelf } from '../components/display/CaseShelf';
 import { JustifiedRows } from '../components/display/JustifiedRows';
+import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
 import { FigureViewer } from '../components/display/FigureViewer';
 import { FilterBar } from '../components/collection/FilterBar';
@@ -217,11 +218,18 @@ export function Collection() {
               density={density}
               onSelect={handleSelect}
               labels={labels}
+              watermark={<BrandWatermark />}
             />
           </div>
         ) : (
           <div class="page-collection__display page-collection__display--flush">
-            <JustifiedRows figures={visible} density={density} onSelect={handleSelect} labels={labels} />
+            <JustifiedRows
+              figures={visible}
+              density={density}
+              onSelect={handleSelect}
+              labels={labels}
+              watermark={<BrandWatermark />}
+            />
           </div>
         )}
       </PullToRefresh>

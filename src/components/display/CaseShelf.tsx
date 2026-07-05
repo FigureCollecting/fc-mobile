@@ -130,6 +130,10 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark, labels
   const band = SHELF_BAND[density];
   // Frame pillars eat ~12px a side; row padding eats a bit more.
   const rows = packShelves(figures, Math.max(160, width - 48), band);
+  // Case padding (10px top + 14px bottom) plus each bay's own height —
+  // the watermark slot sizes itself off this, not the viewport.
+  const caseHeightPx = 24 + rows.length * (band + 30);
+  const watermarkHeightPx = Math.min(Math.round(caseHeightPx * 0.21), 120);
 
   return (
     <div class="case-host" ref={hostRef}>
@@ -147,7 +151,9 @@ export function CaseShelf({ figures, motif, density, onSelect, watermark, labels
             <div class="case__wash" />
           </section>
         ))}
-        <div class="case__watermark">{watermark ?? <WatermarkPlaceholder />}</div>
+        <div class="case__watermark" style={{ height: `${watermarkHeightPx}px` }}>
+          {watermark ?? <WatermarkPlaceholder />}
+        </div>
       </div>
 
       <style>{caseStyles}</style>

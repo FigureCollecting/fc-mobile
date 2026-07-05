@@ -1,9 +1,12 @@
 import { useRef } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { packJustified } from './packJustified';
 import { ROW_HEIGHT } from './density';
 import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
+
+const ROW_GAP_PX = 2;
 
 interface JustifiedRowsProps {
   figures: Figure[];
@@ -11,16 +14,21 @@ interface JustifiedRowsProps {
   onSelect?: (figure: Figure, index: number) => void;
   /** Bottom-gradient nameplate caption over each item. Defaults off. */
   labels?: boolean;
+  /** Watermark pinned to the bottom-right of the whole rows container. */
+  watermark?: ComponentChildren;
 }
 
 /**
  * Display B — justified rows: fixed row height, native-aspect widths,
  * edge-to-edge, always uncropped.
  */
-export function JustifiedRows({ figures, density, onSelect, labels }: JustifiedRowsProps) {
+export function JustifiedRows({ figures, density, onSelect, labels, watermark }: JustifiedRowsProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const rows = packJustified(figures, width, ROW_HEIGHT[density]);
+  const totalHeightPx =
+    rows.reduce((sum, r) => sum + r.height, 0) + Math.max(0, rows.length - 1) * ROW_GAP_PX;
+  const watermarkHeightPx = Math.min(Math.round(totalHeightPx * 0.21), 120);
 
   return (
     <div class="jrows" ref={hostRef}>
@@ -53,12 +61,26 @@ export function JustifiedRows({ figures, density, onSelect, labels }: JustifiedR
         </div>
       ))}
 
+      {watermark && (
+        <div class="jrows__watermark" style={{ height: `${watermarkHeightPx}px` }}>
+          {watermark}
+        </div>
+      )}
+
       <style>{`
         .jrows {
+          position: relative;
           display: flex;
           flex-direction: column;
           gap: 2px;
           width: 100%;
+        }
+
+        .jrows__watermark {
+          position: absolute;
+          right: 10px;
+          bottom: 10px;
+          z-index: 1;
         }
 
         .jrows__row {

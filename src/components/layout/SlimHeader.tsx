@@ -1,5 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useChromeStore } from '../../stores/chrome';
+import { HeaderMark } from '../brand/HeaderMark';
 
 interface SlimHeaderProps {
   /** Contextual info (result count, breadcrumb chip) — NOT a page title. */
@@ -18,7 +19,10 @@ export function SlimHeader({ context, actions }: SlimHeaderProps) {
 
   return (
     <header class={`slim-header ${hidden ? 'slim-header--hidden' : ''}`}>
-      <div class="slim-header__context">{context}</div>
+      <div class="slim-header__leading">
+        <HeaderMark />
+        <div class="slim-header__context">{context}</div>
+      </div>
       {actions && <div class="slim-header__actions">{actions}</div>}
 
       <style>{`
@@ -41,6 +45,13 @@ export function SlimHeader({ context, actions }: SlimHeaderProps) {
 
         .slim-header--hidden {
           transform: translateY(calc(-100% - 1px));
+        }
+
+        .slim-header__leading {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          min-width: 0;
         }
 
         .slim-header__context {

@@ -5,13 +5,17 @@ import type { VirtualItem } from '@tanstack/virtual-core';
 import { packShelves } from './packShelves';
 import type { ShelfItem, ShelfRow } from './packShelves';
 import { getDisplayMeta } from './displayMeta';
-import { resolveRelHeights } from './sizeResolution';
+import { resolveRelHeights, resolveMaxHeightMm, resolveHeightMm, resolveDepthMm } from './sizeResolution';
+import { computeFigureZPlacement } from './figureDepthPlacement';
+import type { PlacementStrategy, FigureZPlacement } from './figureDepthPlacement';
 import { useBottomMarginFrac } from './alphaMargin';
 import { SHELF_BAND } from './density';
 import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
+
+export type { PlacementStrategy };
 
 export type CaseMotif = 'detolf-dark' | 'glass-clear' | 'bookcase-wood';
 
@@ -29,6 +33,23 @@ export const PLATE_ZONE_PX = 34;
  *  chrome below it — the same "+30" a fixed band already implied, kept as a
  *  constant now that row height is per-row instead of one shared constant. */
 const BAY_MARGIN_PX = 30;
+
+/** Small uniform offset (px) every figure/footprint sits forward of the
+ *  true z=0 front-glass plane — see figureDepthPlacement's module doc. */
+const FRONT_MARGIN_PX = 6;
+
+/** .case__row's own left/right padding (px) — the floor's local 3D
+ *  coordinate space has no such padding (it's a sibling subtree, not
+ *  nested inside .case__row), so floor-space shadow X positions need this
+ *  offset to land under the actual (padded) flex-rendered figure. Kept as
+ *  a named constant cross-referenced with the CSS `padding: 0 6px 13px`
+ *  below rather than a silently-duplicated magic number. */
+const ROW_PADDING_X_PX = 6;
+
+/** Shared perspective (px) for a bay's 3D interior AND its figures — one
+ *  camera for the whole scene, so a figure's translateZ and the floor's
+ *  own rotateX(-90) fold are viewed through the identical projection. */
+const BAY_PERSPECTIVE_PX = 480;
 
 export const CASE_MOTIFS: { value: CaseMotif; label: string }[] = [
   { value: 'detolf-dark', label: 'Dark glass' },
@@ -72,6 +93,15 @@ interface CaseShelfProps {
   caseMode?: CaseMode;
   /** Required once caseMode is 'fixed'; ignored in dynamic mode. */
   caseProfile?: CaseProfile;
+  /** Height-truth (default): billboards stay close to the shelf front
+   *  regardless of footprint depth, so proportional-height sizing is never
+   *  distorted by perspective shrink — depth instead reads through the
+   *  floor-space footprint/shadow. True-depth: billboards physically
+   *  recede their full footprint depth (stronger parallax, but a tall
+   *  figure placed deep CAN render smaller than a short one up front —
+   *  see figureDepthPlacement's module doc). Kept as a knob for later, not
+   *  because either is expected to change per-render in the app today. */
+  placementStrategy?: PlacementStrategy;
 }
 
 /** Subtle wordmark placeholder until the bunny logo SVG is ready. */
@@ -95,19 +125,23 @@ function WatermarkPlaceholder() {
 }
 
 /**
- * One figure standing on a shelf. Matted figures get a two-lobe contact
- * shadow (positioned by the manifest's footprint scalars) and are grounded
- * by their real VISIBLE feet, not the image's own (often padded) bottom
- * edge — see useBottomMarginFrac. Unmatted figures keep the metaphor by
- * standing on the shelf as small framed pictures.
+ * One figure standing on a shelf, seated at its own real 3D depth (see
+ * figureDepthPlacement). Grounded by its real VISIBLE feet, not the
+ * image's own (often padded) bottom edge — see useBottomMarginFrac.
+ * Unmatted figures keep the metaphor by standing on the shelf as small
+ * framed pictures. The contact shadow/footprint is NOT rendered here — it
+ * lives in the floor's own local 3D coordinate space so it recedes
+ * correctly with the floor's rotateX fold; see FloorShadow.
  */
 function ShelfFigure({
   item,
+  zPlacement,
   onSelect,
   labels,
   plateZone,
 }: {
   item: ShelfItem;
+  zPlacement: FigureZPlacement;
   onSelect?: (figure: Figure, index: number) => void;
   labels?: boolean;
   plateZone: number;
@@ -123,32 +157,14 @@ function ShelfFigure({
   const bottomMarginFrac = useBottomMarginFrac(meta.matted ? figure.imageUrl : undefined);
   const groundingShiftPx = Math.round(bottomMarginFrac * h);
 
-  // Two-lobe contact shadow geometry from the two footprint scalars
-  // (translated from shelf2.py contact_shadow): soft lobe spans 1.3x the
-  // footprint; unrecovered bases get a stronger, wider synthetic grounding.
-  const spread = meta.baseRecovered ? 1.3 : 1.55;
-  const shadowW = meta.footprintWidth * spread;
-  const shadowLeft = meta.footprintCenterX - shadowW / 2;
-  const shadowH = Math.max(8, Math.round(meta.footprintWidth * w * 0.17));
-
   return (
     <button
       class={`shelf-figure ${meta.matted ? '' : 'shelf-figure--framed'}`}
-      style={{ width: `${w}px`, height: `${h}px` }}
+      style={{ width: `${w}px`, height: `${h}px`, '--fig-z': `${zPlacement.billboardZPx}px` } as Record<string, string>}
       type="button"
       onClick={onSelect ? () => onSelect(figure, item.index) : undefined}
       data-synthetic-base={meta.matted && !meta.baseRecovered ? 'true' : undefined}
     >
-      <span
-        class="shelf-figure__shadow"
-        style={{
-          left: `${(shadowLeft * 100).toFixed(1)}%`,
-          width: `${(shadowW * 100).toFixed(1)}%`,
-          height: `${shadowH}px`,
-          bottom: `${-Math.round(shadowH / 2)}px`,
-          opacity: meta.baseRecovered ? undefined : 1,
-        }}
-      />
       {figure.imageUrl ? (
         meta.matted ? (
           <img
@@ -189,6 +205,45 @@ function ShelfFigure({
   );
 }
 
+/**
+ * A figure's contact shadow/footprint, rendered in the FLOOR's own local
+ * pre-rotation coordinate space (a child of .case__floor3d) rather than
+ * relative to the figure's own button — so it inherits the floor's
+ * rotateX(-90) fold and correctly recedes toward the back wall, "for
+ * free," the same technique the case-depth-study proved. Local top/height
+ * span from the front margin back to the figure's own resolved footprint
+ * depth (Ross: "stretches from z≈0 back to z=-d_fig"); local left is
+ * item.left (packShelves' analytic X position) plus the row's own padding
+ * offset, since this subtree isn't nested inside the padded flex row.
+ */
+function FloorShadow({ item, zPlacement }: { item: ShelfItem; zPlacement: FigureZPlacement }) {
+  const { meta, w } = item;
+  if (!meta.matted) return null;
+
+  // Two-lobe contact shadow geometry from the two footprint scalars
+  // (translated from shelf2.py contact_shadow): soft lobe spans 1.3x the
+  // footprint; unrecovered bases get a stronger, wider synthetic grounding.
+  const spread = meta.baseRecovered ? 1.3 : 1.55;
+  const shadowW = Math.round(meta.footprintWidth * spread * w);
+  const centerX = ROW_PADDING_X_PX + item.left + meta.footprintCenterX * w;
+  const shadowLeft = Math.round(centerX - shadowW / 2);
+  const shadowDepth = Math.max(8, Math.round(zPlacement.footprintDepthPx));
+
+  return (
+    <div
+      class="case__floor-shadow"
+      aria-hidden="true"
+      style={{
+        left: `${shadowLeft}px`,
+        width: `${shadowW}px`,
+        top: `${FRONT_MARGIN_PX}px`,
+        height: `${shadowDepth}px`,
+        opacity: meta.baseRecovered ? undefined : 1,
+      }}
+    />
+  );
+}
+
 /** Compartment height for one packed row: tallest figure on it, plus fixed
  *  chrome margin (shelf plane/lip/wash) and the nameplate zone if labels
  *  are on. This is what makes DYNAMIC mode dynamic — every row can be a
@@ -224,6 +279,7 @@ export function CaseShelf({
   labels,
   caseMode = 'dynamic',
   caseProfile,
+  placementStrategy = 'height-truth',
 }: CaseShelfProps) {
   void caseMode;
   void caseProfile; // future-stub seam — see CaseProfile doc comment
@@ -237,18 +293,47 @@ export function CaseShelf({
   // ONE shared physical-height scale across the whole displayed set (not
   // renormalized per row) — a given figure always renders at the same
   // relative size regardless of which shelf it lands on. Recomputed only
-  // when the figure set itself changes.
+  // when the figure set itself changes. maxHeightMm doubles as the
+  // anchor for the depth (mm -> px) scale below — "one shared mm->px scale
+  // across figures AND case" (case coherence principle).
   const relHeights = useMemo(() => resolveRelHeights(figures, getDisplayMeta), [figures]);
   const getRelHeight = useMemo(
     () => (figure: Figure, meta: ReturnType<typeof getDisplayMeta>) => relHeights.get(figure._id) ?? meta.relHeight,
     [relHeights],
   );
+  const maxHeightMm = useMemo(() => resolveMaxHeightMm(figures), [figures]);
+  const pxPerMm = maxHeightMm > 0 ? band / maxHeightMm : 0;
 
   // Frame pillars eat ~12px a side; row padding eats a bit more.
   const rows = useMemo(
     () => packShelves(figures, Math.max(160, width - 48), band, 8, getRelHeight),
     [figures, width, band, getRelHeight],
   );
+
+  // Each figure's real 3D depth placement (billboard Z + footprint depth
+  // for its floor-space shadow) — see figureDepthPlacement's module doc
+  // for why billboards stay close to the front regardless of footprint
+  // depth (protects the proportional-height truth above from perspective
+  // shrink). depthMm/heightSource are exposed per figure alongside the
+  // placement itself as the seam a fixed-mode fit-check ("too deep for the
+  // shelf", next to "too tall") would read from later — not wired to
+  // anything yet, same as caseMode/caseProfile.
+  const zPlacements = useMemo(() => {
+    const map = new Map<string, FigureZPlacement & { depthMm: number }>();
+    for (const figure of figures) {
+      const meta = getDisplayMeta(figure);
+      const resolvedHeight = resolveHeightMm(figure);
+      const resolvedDepth = resolveDepthMm(figure, meta, resolvedHeight?.heightMm ?? null);
+      const placement = computeFigureZPlacement(resolvedDepth.depthMm, pxPerMm, {
+        strategy: placementStrategy,
+        caseDepthPx: caseD,
+        frontMarginPx: FRONT_MARGIN_PX,
+      });
+      map.set(figure._id, { ...placement, depthMm: resolvedDepth.depthMm });
+    }
+    return map;
+  }, [figures, pxPerMm, placementStrategy, caseD]);
+  const ZERO_PLACEMENT: FigureZPlacement = { billboardZPx: 0, footprintDepthPx: 0 };
 
   // Virtualize by SHELF against the app's own page scroll container — not a
   // nested scrollbox — so collections of 1000+ figures stay smooth. Falls
@@ -295,24 +380,44 @@ export function CaseShelf({
             <section
               key={vBay.key}
               class="case__bay"
-              style={{ height: `${bayHeightPx}px`, transform: `translateY(${vBay.start}px)` }}
+              style={{
+                height: `${bayHeightPx}px`,
+                transform: `translateY(${vBay.start}px)`,
+                '--bay-perspective': `${BAY_PERSPECTIVE_PX}px`,
+              } as Record<string, string>}
             >
-              {/* ── Genuine CSS 3D interior — see the module doc comment. ── */}
+              {/* ── Genuine CSS 3D interior — see the module doc comment.
+                  perspective lives on .case__bay (this element's parent),
+                  shared with .case__row below, so figures' own translateZ
+                  and the floor/walls' fold are one consistent 3D scene. ── */}
               <div class="case__bay3d" aria-hidden="true">
                 <div class="case__interior3d">
                   <div class="case__back3d" />
                   <div class="case__wall-left3d" />
                   <div class="case__wall-right3d" />
-                  <div class="case__floor3d" style={{ top: `${bayHeightPx}px` }} />
+                  <div class="case__floor3d" style={{ top: `${bayHeightPx}px` }}>
+                    {row.map((item) => (
+                      <FloorShadow key={item.figure._id} item={item} zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT} />
+                    ))}
+                  </div>
                   <div class="case__plinth3d" />
                 </div>
               </div>
               {/* Row padding-bottom grows by plateZone so the figure's feet
                   lift clear of the enlarged shelf-edge zone the nameplate
-                  now occupies — see PLATE_ZONE_PX. */}
+                  now occupies — see PLATE_ZONE_PX. preserve-3d so the
+                  shared perspective above reaches each figure's own
+                  translateZ (--fig-z, set per item on .shelf-figure). */}
               <div class="case__row" style={{ paddingBottom: `${13 + plateZone}px` }}>
                 {row.map((item) => (
-                  <ShelfFigure key={item.figure._id} item={item} onSelect={onSelect} labels={labels} plateZone={plateZone} />
+                  <ShelfFigure
+                    key={item.figure._id}
+                    item={item}
+                    zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
+                    onSelect={onSelect}
+                    labels={labels}
+                    plateZone={plateZone}
+                  />
                 ))}
               </div>
               <div class="case__wash" />
@@ -351,25 +456,27 @@ const caseStyles = `
   /* Virtualized list item: absolutely positioned, placed via translateY.
      Height varies per row in DYNAMIC mode (tallest occupant + margin), so
      this is NOT a fixed-size item — tanstack/virtual-core's variable-size
-     estimateSize/measure path handles that. */
+     estimateSize/measure path handles that.
+     perspective lives HERE (not on .case__bay3d below) so it's shared by
+     BOTH the 3D interior AND .case__row's figures — one camera for the
+     whole scene, not two disconnected 3D contexts that happen to overlap.
+     Still scoped to this ONE bay (not the whole virtualized case), so every
+     compartment looks like a consistent shelf regardless of where it sits
+     in a (potentially huge) scroll list — a shared perspective across all
+     bays would make far-scrolled ones look increasingly skewed. */
   .case__bay {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     overflow: hidden;
+    perspective: var(--bay-perspective, 480px);
+    perspective-origin: 50% 20%;
   }
 
-  /* Each bay gets its OWN perspective, scoped to its own height, so every
-     compartment looks like a consistent shelf regardless of where it sits
-     in a (potentially huge, virtualized) scroll list — a shared perspective
-     on the whole case would make bays look increasingly skewed the further
-     they scroll from the "camera", which reads as broken, not deep. */
   .case__bay3d {
     position: absolute;
     inset: 0;
-    perspective: 480px;
-    perspective-origin: 50% 20%;
   }
 
   .case__interior3d {
@@ -449,9 +556,10 @@ const caseStyles = `
   }
 
   /* figures sit on the floor: baseline = lip + lift above the bay bottom.
-     Plain flexbox layer, NOT nested in the preserve-3d interior — figures
-     stay flat/upright billboards at the front of the shelf regardless of
-     the floor's own tilt, matching the case-depth-study's approach. */
+     A flexbox layer for X layout (unchanged), but NOW also preserve-3d so
+     each figure's own --fig-z translateZ (below) is projected through the
+     shared perspective on .case__bay above — real depth placement, not
+     just a flat overlay pretending to be in front of the 3D interior. */
   .case__row {
     position: absolute;
     inset: 0;
@@ -461,6 +569,7 @@ const caseStyles = `
     justify-content: space-evenly;
     gap: 8px;
     z-index: 2;
+    transform-style: preserve-3d;
   }
 
   /* post-figure light wash (LED heads-catch-the-light pass / warm key) */
@@ -484,6 +593,12 @@ const caseStyles = `
   }
 
   /* ── Figures ────────────────────────────────────────────────────────── */
+  /* --fig-z (set per item, see ShelfFigure) is the billboard's own real 3D
+     depth placement — a gentle recession under the height-truth strategy,
+     the full footprint depth under true-depth. :active repeats it so the
+     tap-scale doesn't reset the figure back to z=0 while pressed (a plain
+     transform on :active would otherwise REPLACE, not add to, the base
+     transform). */
   .shelf-figure {
     position: relative;
     flex-shrink: 0;
@@ -491,10 +606,11 @@ const caseStyles = `
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
+    transform: translateZ(var(--fig-z, 0px));
   }
 
   .shelf-figure:active {
-    transform: scale(0.985);
+    transform: translateZ(var(--fig-z, 0px)) scale(0.985);
   }
 
   .shelf-figure__img {
@@ -506,10 +622,13 @@ const caseStyles = `
     z-index: 2;
   }
 
-  /* two-lobe contact shadow: wide soft ellipse + tight dark AO core */
-  .shelf-figure__shadow {
+  /* Contact shadow/footprint: two-lobe wide soft ellipse + tight dark AO
+     core, same visual recipe as before — but this is now .case__floor-
+     shadow, a child of .case__floor3d (the floor's own local 3D space),
+     not a child of .shelf-figure. See FloorShadow's doc comment for why. */
+  .case__floor-shadow {
     position: absolute;
-    z-index: 1;
+    border-radius: 50%;
     background:
       radial-gradient(ellipse 38% 30% at 50% 50%, rgba(0, 0, 0, var(--shadow-core)) 0%, transparent 95%),
       radial-gradient(ellipse 50% 50% at 50% 50%, rgba(0, 0, 0, var(--shadow-soft)) 0%, transparent 76%);

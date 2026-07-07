@@ -10,6 +10,20 @@ import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { useBottomMarginFrac } from '../alphaMargin';
 import { SHELF_BAND } from '../density';
+import { packShelves } from '../packShelves';
+import { resolveRelHeights } from '../sizeResolution';
+import { getDisplayMeta } from '../displayMeta';
+
+/** Mirrors CaseShelf's own packing call exactly (same fallback width, same
+ *  relHeight resolution) so tests can assert against packShelves' REAL
+ *  output (item.left/item.w) instead of hand-copying its internal math —
+ *  robust to formula tweaks, not a duplicated (and driftable) constant. */
+function packLikeCaseShelf(figures: Figure[], density: 'compact' = 'compact') {
+  const band = SHELF_BAND[density];
+  const relHeights = resolveRelHeights(figures, getDisplayMeta);
+  const getRelHeight = (figure: Figure, meta: ReturnType<typeof getDisplayMeta>) => relHeights.get(figure._id) ?? meta.relHeight;
+  return packShelves(figures, Math.max(160, 360 - 48), band, 8, getRelHeight)[0];
+}
 
 const mockedUseBottomMarginFrac = vi.mocked(useBottomMarginFrac);
 
@@ -42,16 +56,20 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     expect(container.querySelector('.case')?.getAttribute('data-motif')).toBe('glass-clear');
   });
 
-  it('positions each contact shadow from the manifest footprint scalars', () => {
+  it('positions the floor-space contact shadow from the manifest footprint scalars and the real packed X position', () => {
+    const rem = FIXTURE_FIGURES[0];
     const { container } = renderWithProviders(
-      <CaseShelf figures={[FIXTURE_FIGURES[0]]} motif="detolf-dark" density="compact" />,
+      <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
     );
     const meta = FIXTURE_META['fx-rem'];
-    const shadow = container.querySelector('.shelf-figure__shadow') as HTMLElement;
-    const expectedWidth = meta.footprintWidth * 1.3 * 100;
-    const expectedLeft = (meta.footprintCenterX - (meta.footprintWidth * 1.3) / 2) * 100;
-    expect(parseFloat(shadow.style.width)).toBeCloseTo(expectedWidth, 1);
-    expect(parseFloat(shadow.style.left)).toBeCloseTo(expectedLeft, 1);
+    const item = packLikeCaseShelf([rem])[0];
+    const shadow = container.querySelector('.case__floor-shadow') as HTMLElement;
+    const expectedWidth = Math.round(meta.footprintWidth * 1.3 * item.w);
+    // ROW_PADDING_X_PX (6) — the floor's local space isn't nested inside
+    // .case__row's own padding, so the shadow needs that offset too.
+    const expectedLeft = Math.round(6 + item.left + meta.footprintCenterX * item.w - expectedWidth / 2);
+    expect(parseFloat(shadow.style.width)).toBe(expectedWidth);
+    expect(parseFloat(shadow.style.left)).toBe(expectedLeft);
   });
 
   it('widens the shadow into a synthetic base when the matte lost the real one', () => {
@@ -62,8 +80,9 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     const btn = container.querySelector('.shelf-figure') as HTMLElement;
     expect(btn.getAttribute('data-synthetic-base')).toBe('true');
     const meta = FIXTURE_META['fx-spike'];
-    const shadow = container.querySelector('.shelf-figure__shadow') as HTMLElement;
-    expect(parseFloat(shadow.style.width)).toBeCloseTo(meta.footprintWidth * 1.55 * 100, 1);
+    const item = packLikeCaseShelf([spike])[0];
+    const shadow = container.querySelector('.case__floor-shadow') as HTMLElement;
+    expect(parseFloat(shadow.style.width)).toBe(Math.round(meta.footprintWidth * 1.55 * item.w));
   });
 
   it('renders unmatted figures as framed pictures standing on the shelf', () => {
@@ -378,6 +397,103 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       } as Figure;
       renderWithProviders(<CaseShelf figures={[photo]} motif="detolf-dark" density="compact" />);
       expect(mockedUseBottomMarginFrac).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('per-figure Z-depth (real 3D placement, height-truth preserved)', () => {
+    function figZ(el: Element | null): number {
+      const btn = el as HTMLElement;
+      return parseFloat(btn.style.getPropertyValue('--fig-z'));
+    }
+
+    it('gives figures with different resolved footprint depth different billboard Z placements', () => {
+      // dark-angel (aspect 0.813, 260mm) and miku-nendo (aspect 0.951,
+      // 100mm) derive meaningfully different footprint depths from the
+      // width-ratio fallback (no labeled width/depth on either fixture).
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!;
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[darkAngel, nendo]} motif="detolf-dark" density="compact" />,
+      );
+      const buttons = container.querySelectorAll('.shelf-figure');
+      const z0 = figZ(buttons[0]);
+      const z1 = figZ(buttons[1]);
+      expect(Number.isFinite(z0)).toBe(true);
+      expect(Number.isFinite(z1)).toBe(true);
+      expect(z0).not.toBe(z1);
+      // Both recede (or sit at the front margin) — never toward the viewer.
+      expect(z0).toBeLessThanOrEqual(0);
+      expect(z1).toBeLessThanOrEqual(0);
+    });
+
+    it("never places a billboard's Z beyond the case's own depth (no poking through the back wall)", () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+      );
+      const caseD = parseFloat(
+        (container.querySelector('.case') as HTMLElement).style.getPropertyValue('--case-d'),
+      );
+      for (const btn of container.querySelectorAll('.shelf-figure')) {
+        const z = figZ(btn);
+        expect(Math.abs(z)).toBeLessThanOrEqual(caseD);
+      }
+    });
+
+    it('renders a floor-space shadow for every matted figure, in .case__floor3d (not the figure button)', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+      );
+      const matted = FIXTURE_FIGURES.filter((f) => FIXTURE_META[f._id]?.matted);
+      expect(container.querySelectorAll('.case__floor3d .case__floor-shadow')).toHaveLength(matted.length);
+      expect(container.querySelectorAll('.shelf-figure .case__floor-shadow')).toHaveLength(0);
+    });
+
+    it('renders no floor shadow for an unmatted (framed-photo) figure', () => {
+      const photo: Figure = {
+        _id: 'real-1',
+        name: 'Un-matted figure',
+        manufacturer: 'Kotobukiya',
+        scale: '1/7',
+        userId: 'u1',
+        createdAt: '',
+        updatedAt: '',
+      } as Figure;
+      const { container } = renderWithProviders(<CaseShelf figures={[photo]} motif="detolf-dark" density="compact" />);
+      expect(container.querySelector('.case__floor-shadow')).toBeNull();
+    });
+
+    it('true-depth strategy recedes a figure\'s billboard further than the default height-truth strategy', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const { container: heightTruth } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: trueDepth } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" placementStrategy="true-depth" />,
+      );
+      const zHeightTruth = figZ(heightTruth.querySelector('.shelf-figure'));
+      const zTrueDepth = figZ(trueDepth.querySelector('.shelf-figure'));
+      expect(zTrueDepth).toBeLessThan(zHeightTruth); // more negative = further back
+    });
+
+    it("height-truth guard, end to end: a tall figure's apparent height (rendered CSS height x its real perspective scale at its own --fig-z) still exceeds a short figure's, even though the tall one sits deeper", () => {
+      // dark-angel: 260mm, tallest fixture -> relHeight 1.0, deepest
+      // resolvable footprint in the set. miku-nendo: 100mm, shortest ->
+      // floored relHeight, shallow footprint near the front.
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!;
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[darkAngel, nendo]} motif="detolf-dark" density="compact" />,
+      );
+      const buttons = Array.from(container.querySelectorAll('.shelf-figure')) as HTMLElement[];
+      const perspective = parseFloat(
+        (container.querySelector('.case__bay') as HTMLElement).style.getPropertyValue('--bay-perspective'),
+      );
+      const apparentHeight = (btn: HTMLElement) => {
+        const h = parseFloat(btn.style.height);
+        const z = parseFloat(btn.style.getPropertyValue('--fig-z'));
+        return h * (perspective / (perspective - z));
+      };
+      expect(apparentHeight(buttons[0])).toBeGreaterThan(apparentHeight(buttons[1]));
     });
   });
 

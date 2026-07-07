@@ -19,12 +19,24 @@ export interface ShelfItem {
    * neighbor. Always >= w.
    */
   slotWidth: number;
+  /**
+   * The item's X offset (px) from the row's own usable-width origin,
+   * analytically mirroring where `justify-content: space-evenly` actually
+   * renders it. The floor's contact-shadow layer lives OUTSIDE the flex
+   * layout (in its own 3D local coordinate space, per CaseShelf's
+   * per-figure Z-depth placement), so it needs to know each figure's real X
+   * position without measuring the DOM.
+   */
+  left: number;
 }
 
 export type ShelfRow = ShelfItem[];
 
-/** Assigns each item's slotWidth once a row's full composition is known. */
-function assignSlotWidths(row: Array<Omit<ShelfItem, 'slotWidth'>>, usable: number, gap: number): ShelfRow {
+/** Assigns each item's slotWidth and left (X) position once a row's full
+ *  composition is known — both derived from the identical space-evenly gap
+ *  math, so they always agree with each other and with the real flex
+ *  layout. */
+function assignSlotWidths(row: Array<Omit<ShelfItem, 'slotWidth' | 'left'>>, usable: number, gap: number): ShelfRow {
   const n = row.length;
   const sumW = row.reduce((sum, item) => sum + item.w, 0);
   const naturalWidth = sumW + (n - 1) * gap;
@@ -33,10 +45,13 @@ function assignSlotWidths(row: Array<Omit<ShelfItem, 'slotWidth'>>, usable: numb
   // (before the first item, between each pair, after the last).
   const extra = leftover / (n + 1);
 
+  let cursor = extra; // the leading gap, i.e. the first item's left edge
   return row.map((item, i) => {
     const gapBefore = (i === 0 ? 0 : gap) + extra;
     const gapAfter = (i === n - 1 ? 0 : gap) + extra;
-    return { ...item, slotWidth: Math.round(item.w + gapBefore / 2 + gapAfter / 2) };
+    const left = Math.round(cursor);
+    cursor += item.w + gap + extra;
+    return { ...item, left, slotWidth: Math.round(item.w + gapBefore / 2 + gapAfter / 2) };
   });
 }
 
@@ -63,7 +78,7 @@ export function packShelves(
 ): ShelfRow[] {
   const usable = Math.max(120, containerWidth);
   const rows: ShelfRow[] = [];
-  let row: Array<Omit<ShelfItem, 'slotWidth'>> = [];
+  let row: Array<Omit<ShelfItem, 'slotWidth' | 'left'>> = [];
   let rowWidth = 0;
 
   figures.forEach((figure, index) => {

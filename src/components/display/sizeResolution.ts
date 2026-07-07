@@ -55,6 +55,22 @@ export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
 }
 
 /**
+ * The tallest resolvable physical height (mm) across a figure set — the
+ * anchor for the ONE shared mm->px scale used across figures AND the case
+ * (figure_sizing_and_case_dimension_model's "case coherence" principle).
+ * Both resolveRelHeights (height) and resolveDepthMm's caller (depth) key
+ * off this same anchor, so a figure's rendered footprint depth and its
+ * rendered height come from the identical scale, not two independent ones.
+ * 0 when nothing in the set has a resolvable height.
+ */
+export function resolveMaxHeightMm(figures: Figure[]): number {
+  return figures.reduce((max, figure) => {
+    const resolved = resolveHeightMm(figure);
+    return resolved ? Math.max(max, resolved.heightMm) : max;
+  }, 0);
+}
+
+/**
  * Compute each figure's relHeight (0..1) proportional to its resolved
  * physical height, relative to the tallest figure in the passed-in set —
  * ONE shared scale across the whole collection being displayed (not
@@ -72,11 +88,11 @@ export function resolveRelHeights(
   figures: Figure[],
   getMeta: (figure: Figure) => FigureDisplayMeta,
 ): Map<string, number> {
-  const resolved = figures.map((figure) => ({ figure, height: resolveHeightMm(figure) }));
-  const maxMm = resolved.reduce((max, r) => (r.height ? Math.max(max, r.height.heightMm) : max), 0);
+  const maxMm = resolveMaxHeightMm(figures);
 
   const out = new Map<string, number>();
-  for (const { figure, height } of resolved) {
+  for (const figure of figures) {
+    const height = resolveHeightMm(figure);
     if (height && maxMm > 0) {
       const rel = height.heightMm / maxMm;
       out.set(figure._id, Math.max(MIN_REL_HEIGHT, Math.min(1, rel)));
@@ -85,4 +101,65 @@ export function resolveRelHeights(
     }
   }
   return out;
+}
+
+/** Typical depth-to-width ratio for a figure's footprint — Ross's estimate
+ *  for a "normal" figure stance, used when a real depth measurement isn't
+ *  available (figure_sizing_and_case_dimension_model). */
+const DEPTH_WIDTH_RATIO = 0.65;
+
+/** Absolute last-resort width (mm) if literally nothing — no labeled width,
+ *  no resolvable height to derive one from — is available. Should be
+ *  unreachable for any real Figure/FigureDisplayMeta pair (aspect always
+ *  exists), kept only so resolveDepthMm is total and never returns 0. */
+const FALLBACK_WIDTH_MM = 120;
+
+export type DepthSource = 'labeled' | 'width-ratio' | 'square-fallback';
+
+export interface ResolvedDepth {
+  /** Footprint depth in mm, resolved via the fallback tree. */
+  depthMm: number;
+  source: DepthSource;
+}
+
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/**
+ * Resolve a figure's best-guess footprint depth in mm — how far back it
+ * occupies on a shelf, not its height. Same fault-tolerance requirement as
+ * resolveHeightMm (MFC dimension data is unreliable by design): every rung
+ * degrades gracefully instead of assuming a field is present, and the
+ * function is total — it always returns a positive, finite depthMm.
+ *   1. labeled depthMm (MFC "L"/"D"), if present and sane.
+ *   2. ~0.65x a resolvable widthMm — labeled widthMm if present, else
+ *      width derived from the figure's own pixel aspect x its resolved
+ *      render height (the same resolvedHeightMm resolveRelHeights already
+ *      computed for this figure — passed in rather than re-derived here,
+ *      so height and depth share one resolution pass).
+ *   3. square-footprint fallback (depth = the resolved width, uncorrected)
+ *      when the 0.65 ratio can't be applied to a trustworthy width — e.g.
+ *      no resolvedHeightMm was available to derive one from AND no width
+ *      is labeled either. Falls back to FALLBACK_WIDTH_MM in the
+ *      (practically unreachable) case that even that's unavailable.
+ */
+export function resolveDepthMm(
+  figure: Figure,
+  meta: FigureDisplayMeta,
+  resolvedHeightMm: number | null,
+): ResolvedDepth {
+  const labeledDepth = figure.dimensions?.depthMm;
+  if (isPositiveFinite(labeledDepth)) {
+    return { depthMm: labeledDepth, source: 'labeled' };
+  }
+
+  const labeledWidth = figure.dimensions?.widthMm;
+  const derivedWidth = isPositiveFinite(resolvedHeightMm) ? meta.aspect * resolvedHeightMm : null;
+  const widthMm = isPositiveFinite(labeledWidth) ? labeledWidth : derivedWidth;
+
+  if (isPositiveFinite(widthMm)) {
+    return { depthMm: widthMm * DEPTH_WIDTH_RATIO, source: 'width-ratio' };
+  }
+  return { depthMm: FALLBACK_WIDTH_MM, source: 'square-fallback' };
 }

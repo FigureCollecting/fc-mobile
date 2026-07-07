@@ -105,6 +105,52 @@ describe('packShelves', () => {
     });
   });
 
+  describe('left (analytical X position — mirrors flexbox justify-content:space-evenly, for placing floor-space shadows outside the flex layout)', () => {
+    const unmatted: Figure[] = ['a', 'b', 'c'].map(
+      (id) => ({ _id: id, name: id, manufacturer: '', scale: '', userId: '', createdAt: '', updatedAt: '' }) as Figure,
+    );
+
+    it('is 0 for the first item and increasing thereafter, with zero leftover (flush-left row)', () => {
+      const gap = 8;
+      const band = 168;
+      const w = Math.round(Math.round(UNMATTED_META.relHeight * band) * UNMATTED_META.aspect);
+      const usable = w * 3 + gap * 2; // no space-evenly slack
+
+      const [first, middle, last] = packShelves(unmatted, usable, band, gap)[0];
+      expect(first.left).toBe(0);
+      expect(middle.left).toBe(w + gap);
+      expect(last.left).toBe((w + gap) * 2);
+    });
+
+    it('offsets every item by the leading space-evenly gap when the row has leftover space', () => {
+      const gap = 8;
+      const band = 168;
+      const w = Math.round(Math.round(UNMATTED_META.relHeight * band) * UNMATTED_META.aspect);
+      const tightUsable = w * 3 + gap * 2;
+      const roomyUsable = tightUsable + 60;
+
+      const roomy = packShelves(unmatted, roomyUsable, band, gap)[0];
+      const extra = 60 / 4; // leftover(60) split into n+1(4) equal gaps
+      expect(roomy[0].left).toBeCloseTo(extra, 0);
+    });
+
+    it("an item's left plus its own width never exceeds the next item's left (no overlap)", () => {
+      const rows = packShelves(FIXTURE_FIGURES, 340, 168);
+      for (const row of rows) {
+        for (let i = 0; i < row.length - 1; i++) {
+          expect(row[i].left + row[i].w).toBeLessThanOrEqual(row[i + 1].left);
+        }
+      }
+    });
+
+    it('is always non-negative', () => {
+      const rows = packShelves(FIXTURE_FIGURES, 2000, 168);
+      for (const item of rows.flat()) {
+        expect(item.left).toBeGreaterThanOrEqual(0);
+      }
+    });
+  });
+
   describe('getRelHeight override (proportional physical-height sizing)', () => {
     it('defaults to the meta relHeight when no override is passed (unchanged behavior)', () => {
       const withOverride = packShelves(FIXTURE_FIGURES, 2000, 168);

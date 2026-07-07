@@ -3,9 +3,15 @@ import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 
+vi.mock('../alphaMargin', () => ({ useBottomMarginFrac: vi.fn(() => 0) }));
+
 import { CaseShelf, PLATE_ZONE_PX } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
+import { useBottomMarginFrac } from '../alphaMargin';
+import { SHELF_BAND } from '../density';
+
+const mockedUseBottomMarginFrac = vi.mocked(useBottomMarginFrac);
 
 /** Fake a real, bounded scroll viewport so the virtualizer measures a
  *  non-zero rect (@tanstack/virtual-core reads offsetWidth/offsetHeight,
@@ -187,16 +193,17 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         expect(row.style.paddingBottom).toBe(`${13 + PLATE_ZONE_PX}px`);
       });
 
-      it('keeps the shelf plane/lip anchored to the figure (unchanged) when labels are off', () => {
+      it('keeps the row baseline at its unlabeled padding, and the floor top pinned to the bay height, when labels are off', () => {
         const { container } = renderWithProviders(
           <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
         );
         const row = container.querySelector('.case__row') as HTMLElement;
-        const plane = container.querySelector('.case__plane') as HTMLElement;
-        const lip = container.querySelector('.case__lip') as HTMLElement;
+        const bay = container.querySelector('.case__bay') as HTMLElement;
+        const floor = container.querySelector('.case__floor3d') as HTMLElement;
         expect(row.style.paddingBottom).toBe('13px');
-        expect(plane.style.bottom).toBe('8px');
-        expect(lip.style.bottom).toBe('0px');
+        // The floor's hinge-fold sits at the bay's own bottom edge — its
+        // inline `top` should exactly match the bay's own height.
+        expect(floor.style.top).toBe(bay.style.height);
       });
 
       it('keeps the full, untruncated name in the DOM even when it will visually wrap/ellipsize', () => {
@@ -211,23 +218,43 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     });
   });
 
-  describe('case depth cues (side walls + back-wall vignette)', () => {
-    it('renders a depth overlay per case, decorative and non-interactive', () => {
+  describe('case depth cues (genuine CSS 3D interior — perspective + preserve-3d)', () => {
+    it('renders a full 3D interior per bay: back wall, both side walls, floor, and plinth', () => {
       const { container } = renderWithProviders(
         <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
       );
-      const depth = container.querySelector('.case__depth');
-      expect(depth).not.toBeNull();
-      expect(depth!.getAttribute('aria-hidden')).toBe('true');
+      const bay3d = container.querySelector('.case__bay3d');
+      expect(bay3d).not.toBeNull();
+      expect(bay3d!.getAttribute('aria-hidden')).toBe('true');
+      expect(container.querySelector('.case__back3d')).not.toBeNull();
+      expect(container.querySelector('.case__wall-left3d')).not.toBeNull();
+      expect(container.querySelector('.case__wall-right3d')).not.toBeNull();
+      expect(container.querySelector('.case__floor3d')).not.toBeNull();
+      expect(container.querySelector('.case__plinth3d')).not.toBeNull();
     });
 
-    it('renders the depth overlay for every motif', () => {
+    it('renders the 3D interior for every motif', () => {
       for (const motif of ['detolf-dark', 'glass-clear', 'bookcase-wood'] as const) {
         const { container } = renderWithProviders(
           <CaseShelf figures={FIXTURE_FIGURES} motif={motif} density="compact" />,
         );
-        expect(container.querySelector(`.case[data-motif="${motif}"] .case__depth`)).not.toBeNull();
+        expect(container.querySelector(`.case[data-motif="${motif}"] .case__floor3d`)).not.toBeNull();
       }
+    });
+
+    it('gives the preserve-3d interior real depth via the shared --case-d custom property', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+      );
+      const caseEl = container.querySelector('.case') as HTMLElement;
+      expect(caseEl.style.getPropertyValue('--case-d')).toMatch(/^\d+px$/);
+    });
+
+    it('never reintroduces per-figure reflections (frosted glass diffuses, it does not mirror)', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="glass-clear" density="compact" />,
+      );
+      expect(container.querySelector('.shelf-figure__reflection')).toBeNull();
     });
   });
 
@@ -253,6 +280,122 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         <CaseShelf figures={many} motif="detolf-dark" density="compact" />,
       );
       expect(container.querySelectorAll('.shelf-figure')).toHaveLength(many.length);
+    });
+
+    it('gives a bay whose tallest occupant is short a shorter bay than one whose tallest occupant is tall (dynamic per-row height)', async () => {
+      // A narrow, controlled container width so two copies of the tall
+      // figure exactly fill row 1 (forcing the short figure onto row 2
+      // alone) — both figures are in the SAME displayed set throughout, so
+      // the shared scale genuinely differentiates their heights (unlike
+      // comparing two isolated single-figure renders, where each figure
+      // would trivially be "the tallest" of its own singleton set).
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('case-host') ? 248 : 0;
+      });
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm, tallest fixture
+      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!; // 100mm, shortest fixture
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[darkAngel, { ...darkAngel, _id: 'fx-dark-angel-2' }, nendo]} motif="detolf-dark" density="compact" />,
+      );
+      await waitFor(() => {
+        const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+        expect(bays.length).toBe(2);
+      });
+      const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+      const [row1Height, row2Height] = bays.map((b) => parseFloat(b.style.height));
+      // Not a shared constant anymore — a bay's height depends on what's
+      // actually packed onto it, and the two rows here have different
+      // tallest occupants.
+      expect(row2Height).toBeLessThan(row1Height);
+    });
+  });
+
+  describe('proportional physical-height sizing (relative to the displayed set, not a fixed per-figure default)', () => {
+    it('fills the band for the tallest labeled figure in the set, and scales a shorter one down proportionally', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm — tallest fixture
+      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!; // 100mm — shortest fixture
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[darkAngel, nendo]} motif="detolf-dark" density="compact" />,
+      );
+      const buttons = Array.from(container.querySelectorAll('.shelf-figure')) as HTMLElement[];
+      expect(parseFloat(buttons[0].style.height)).toBe(SHELF_BAND.compact);
+      expect(parseFloat(buttons[1].style.height)).toBe(Math.round((100 / 260) * SHELF_BAND.compact));
+    });
+
+    it('recomputes the scale when the displayed set changes ("rolling", not frozen forever)', () => {
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!; // 230mm
+      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!; // 100mm
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm
+      const { container: pairOnly } = renderWithProviders(
+        <CaseShelf figures={[rem, nendo]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: withTaller } = renderWithProviders(
+        <CaseShelf figures={[rem, nendo, darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const nendoAlone = parseFloat((pairOnly.querySelectorAll('.shelf-figure')[1] as HTMLElement).style.height);
+      const nendoWithTaller = parseFloat((withTaller.querySelectorAll('.shelf-figure')[1] as HTMLElement).style.height);
+      // Same physical figure, smaller RELATIVE size once a taller figure
+      // joins the displayed set — proof the scale isn't per-figure-fixed.
+      expect(nendoWithTaller).toBeLessThan(nendoAlone);
+    });
+  });
+
+  describe('per-figure alpha grounding (real measured feet, not the image edge)', () => {
+    it('shifts the image down by its measured bottom-margin fraction of its own rendered height', () => {
+      mockedUseBottomMarginFrac.mockReturnValue(0.1);
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
+      );
+      const btn = container.querySelector('.shelf-figure') as HTMLElement;
+      const img = container.querySelector('.shelf-figure__img') as HTMLImageElement;
+      const h = parseFloat(btn.style.height);
+      expect(img.style.transform).toBe(`translateY(${Math.round(0.1 * h)}px)`);
+    });
+
+    it('applies no transform when the measured margin is 0 — nothing to correct for', () => {
+      mockedUseBottomMarginFrac.mockReturnValue(0);
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
+      );
+      const img = container.querySelector('.shelf-figure__img') as HTMLImageElement;
+      expect(img.style.transform).toBeFalsy();
+    });
+
+    it('never measures alpha for unmatted (framed-photo) figures — nothing to measure', () => {
+      mockedUseBottomMarginFrac.mockReturnValue(0);
+      mockedUseBottomMarginFrac.mockClear();
+      const photo: Figure = {
+        _id: 'real-1',
+        name: 'Un-matted figure',
+        manufacturer: 'Kotobukiya',
+        scale: '1/7',
+        imageUrl: 'https://example.com/photo.jpg',
+        userId: 'u1',
+        createdAt: '',
+        updatedAt: '',
+      } as Figure;
+      renderWithProviders(<CaseShelf figures={[photo]} motif="detolf-dark" density="compact" />);
+      expect(mockedUseBottomMarginFrac).toHaveBeenCalledWith(undefined);
+    });
+  });
+
+  describe('caseMode / caseProfile (future-stub seam for the fixed-case fit-check feature)', () => {
+    it('defaults to dynamic mode and renders normally with no caseMode prop', () => {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+      );
+      expect(container.querySelectorAll('.shelf-figure')).toHaveLength(FIXTURE_FIGURES.length);
+    });
+
+    it('accepts caseMode="fixed" and a caseProfile without crashing (not fully wired yet)', () => {
+      const profile = { name: 'IKEA Detolf', innerWidthMm: 340, innerDepthMm: 320, innerHeightMm: 330 };
+      expect(() =>
+        renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={profile} />,
+        ),
+      ).not.toThrow();
     });
   });
 });

@@ -46,12 +46,20 @@ function assignSlotWidths(row: Array<Omit<ShelfItem, 'slotWidth'>>, usable: numb
  * natural width variance from their aspect ratio, and fill each shelf until
  * the next figure would overflow. Rows are self-contained units so the list
  * can later be virtualized row-by-row.
+ *
+ * @param getRelHeight Overrides where each item's relHeight (0..1 within
+ *   bandHeight) comes from. Defaults to the figure's own FigureDisplayMeta
+ *   relHeight (today's behavior). CaseShelf passes a lookup into
+ *   resolveRelHeights' collection-wide, physical-height-proportional map
+ *   instead, so a figure renders at a size relative to the rest of the
+ *   displayed set rather than a fixed per-figure guess.
  */
 export function packShelves(
   figures: Figure[],
   containerWidth: number,
   bandHeight: number,
   gap = 8,
+  getRelHeight: (figure: Figure, meta: FigureDisplayMeta) => number = (_figure, meta) => meta.relHeight,
 ): ShelfRow[] {
   const usable = Math.max(120, containerWidth);
   const rows: ShelfRow[] = [];
@@ -60,7 +68,7 @@ export function packShelves(
 
   figures.forEach((figure, index) => {
     const meta = getDisplayMeta(figure);
-    const h = Math.round(meta.relHeight * bandHeight);
+    const h = Math.round(getRelHeight(figure, meta) * bandHeight);
     const w = Math.round(h * meta.aspect);
     const needed = rowWidth === 0 ? w : rowWidth + gap + w;
 

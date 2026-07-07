@@ -104,4 +104,30 @@ describe('packShelves', () => {
       }
     });
   });
+
+  describe('getRelHeight override (proportional physical-height sizing)', () => {
+    it('defaults to the meta relHeight when no override is passed (unchanged behavior)', () => {
+      const withOverride = packShelves(FIXTURE_FIGURES, 2000, 168);
+      const withIdentityOverride = packShelves(FIXTURE_FIGURES, 2000, 168, 8, (_f, meta) => meta.relHeight);
+      expect(withOverride.flat().map((i) => i.h)).toEqual(withIdentityOverride.flat().map((i) => i.h));
+    });
+
+    it('sizes items from the override instead of the meta relHeight when provided', () => {
+      const band = 168;
+      const rows = packShelves(FIXTURE_FIGURES, 2000, band, 8, () => 0.5);
+      for (const item of rows.flat()) {
+        expect(item.h).toBe(Math.round(0.5 * band));
+      }
+    });
+
+    it('passes the figure and its resolved meta through to the override', () => {
+      const seen: Array<{ id: string; aspect: number }> = [];
+      packShelves(FIXTURE_FIGURES, 2000, 168, 8, (figure, meta) => {
+        seen.push({ id: figure._id, aspect: meta.aspect });
+        return meta.relHeight;
+      });
+      expect(seen.map((s) => s.id)).toEqual(FIXTURE_FIGURES.map((f) => f._id));
+      expect(seen.find((s) => s.id === 'fx-rem')!.aspect).toBe(FIXTURE_META['fx-rem'].aspect);
+    });
+  });
 });

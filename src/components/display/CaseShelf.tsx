@@ -93,14 +93,14 @@ interface CaseShelfProps {
   caseMode?: CaseMode;
   /** Required once caseMode is 'fixed'; ignored in dynamic mode. */
   caseProfile?: CaseProfile;
-  /** Height-truth (default): billboards stay close to the shelf front
-   *  regardless of footprint depth, so proportional-height sizing is never
-   *  distorted by perspective shrink — depth instead reads through the
-   *  floor-space footprint/shadow. True-depth: billboards physically
-   *  recede their full footprint depth (stronger parallax, but a tall
-   *  figure placed deep CAN render smaller than a short one up front —
-   *  see figureDepthPlacement's module doc). Kept as a knob for later, not
-   *  because either is expected to change per-render in the app today. */
+  /** True-depth (default, Ross): billboards physically recede their full
+   *  footprint depth — honest perspective shrink included by design (a
+   *  taller figure seated deep CAN project smaller than a shorter one up
+   *  front; that's real-vision-consistent, not a bug — see
+   *  figureDepthPlacement's module doc). Height-truth: a gentler,
+   *  front-anchored alternate that suppresses most of the shrink. Kept as
+   *  a knob for later, not because either is expected to change per-render
+   *  in the app today. */
   placementStrategy?: PlacementStrategy;
 }
 
@@ -279,7 +279,7 @@ export function CaseShelf({
   labels,
   caseMode = 'dynamic',
   caseProfile,
-  placementStrategy = 'height-truth',
+  placementStrategy = 'true-depth',
 }: CaseShelfProps) {
   void caseMode;
   void caseProfile; // future-stub seam — see CaseProfile doc comment
@@ -311,13 +311,17 @@ export function CaseShelf({
   );
 
   // Each figure's real 3D depth placement (billboard Z + footprint depth
-  // for its floor-space shadow) — see figureDepthPlacement's module doc
-  // for why billboards stay close to the front regardless of footprint
-  // depth (protects the proportional-height truth above from perspective
-  // shrink). depthMm/heightSource are exposed per figure alongside the
-  // placement itself as the seam a fixed-mode fit-check ("too deep for the
-  // shelf", next to "too tall") would read from later — not wired to
-  // anything yet, same as caseMode/caseProfile.
+  // for its floor-space shadow) — DEFAULT strategy seats billboards at
+  // their full resolved footprint depth, honest perspective shrink
+  // included by design (see figureDepthPlacement's module doc for why
+  // that's intentional, not a bug to guard against). depthMm is exposed
+  // per figure alongside the placement itself, UNCLAMPED, as the seam a
+  // fixed-mode fit-check ("too deep for the shelf", next to "too tall")
+  // would read from later — not wired to anything yet, same as
+  // caseMode/caseProfile. The clamped px value actually used for
+  // placement (footprintDepthPx, inside `placement`) is FOV hygiene only,
+  // not a height guard — it keeps a garbage depthMm from flinging a
+  // figure past the back wall.
   const zPlacements = useMemo(() => {
     const map = new Map<string, FigureZPlacement & { depthMm: number }>();
     for (const figure of figures) {

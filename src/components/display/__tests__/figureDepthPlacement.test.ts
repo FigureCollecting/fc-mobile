@@ -19,7 +19,7 @@ describe('apparentScale (CSS perspective projection math)', () => {
   });
 });
 
-describe('computeFigureZPlacement (height-truth-preserving default placement)', () => {
+describe('computeFigureZPlacement (both placement strategies)', () => {
   it('recedes deeper for a figure with more footprint depth', () => {
     const shallow = computeFigureZPlacement(60, 0.5, { strategy: 'height-truth', ...OPTS });
     const deep = computeFigureZPlacement(160, 0.5, { strategy: 'height-truth', ...OPTS });
@@ -59,41 +59,51 @@ describe('computeFigureZPlacement (height-truth-preserving default placement)', 
   });
 });
 
-describe('height-truth guard: a tall figure at max depth never renders shorter than a short figure near the front', () => {
+describe('honest perspective (Ross, final): depth genuinely affects apparent size — no height-ordering guard', () => {
   // Real configured values CaseShelf actually uses (not arbitrary test
-  // numbers) — the perspective, and each density's caseD (band * 0.85).
+  // numbers) — the default 'true-depth' strategy, the perspective, and
+  // each density's caseD (band * 0.85).
   const PERSPECTIVE_PX = 480;
   const FRONT_MARGIN_PX = 6;
-  const MIN_REL_HEIGHT = 0.25; // sizeResolution's floor
+
+  function apparentHeightPx(depthMm: number, pxPerMm: number, renderedHeightPx: number, caseDepthPx: number): number {
+    const placement = computeFigureZPlacement(depthMm, pxPerMm, {
+      strategy: 'true-depth',
+      caseDepthPx,
+      frontMarginPx: FRONT_MARGIN_PX,
+    });
+    return renderedHeightPx * apparentScale(placement.billboardZPx, PERSPECTIVE_PX);
+  }
 
   for (const density of ['comfortable', 'compact', 'gallery'] as const) {
-    it(`holds at ${density} density`, () => {
+    it(`a figure seated deeper projects SMALLER than the identical figure seated near the front, at ${density} density`, () => {
       const band = SHELF_BAND[density];
       const caseDepthPx = Math.round(band * 0.85);
+      const sameRenderedHeightPx = band; // identical pre-perspective size
 
-      // Tallest figure (relHeight 1.0), worst-case deepest footprint —
-      // clamp does the heavy lifting, so feed an intentionally absurd mm
-      // value to prove the CLAMP (not luck with "reasonable" test inputs)
-      // is what protects the guarantee.
-      const tall = computeFigureZPlacement(10000, 1, {
-        strategy: 'height-truth',
-        caseDepthPx,
-        frontMarginPx: FRONT_MARGIN_PX,
-      });
-      const tallRenderedHeightPx = 1.0 * band;
-      const tallApparentHeightPx = tallRenderedHeightPx * apparentScale(tall.billboardZPx, PERSPECTIVE_PX);
+      const nearFront = apparentHeightPx(5, 1, sameRenderedHeightPx, caseDepthPx);
+      const seatedDeep = apparentHeightPx(caseDepthPx * 2, 1, sameRenderedHeightPx, caseDepthPx); // clamps to max depth
 
-      // Shortest figure (the MIN_REL_HEIGHT floor), minimal footprint (near
-      // the front, negligible recession).
-      const short = computeFigureZPlacement(1, 1, {
-        strategy: 'height-truth',
-        caseDepthPx,
-        frontMarginPx: FRONT_MARGIN_PX,
-      });
-      const shortRenderedHeightPx = MIN_REL_HEIGHT * band;
-      const shortApparentHeightPx = shortRenderedHeightPx * apparentScale(short.billboardZPx, PERSPECTIVE_PX);
-
-      expect(tallApparentHeightPx).toBeGreaterThan(shortApparentHeightPx);
+      // This is the point: perspective is NOT suppressed. The same figure,
+      // seated deeper, genuinely reads smaller — that honest shrink is
+      // what sells the illusion, not something to guard against.
+      expect(seatedDeep).toBeLessThan(nearFront);
     });
   }
+
+  it('a materially taller figure can still project smaller than a materially shorter one if seated deep enough — this is intended, not a bug to catch', () => {
+    // Explicitly the case the OLD height-ordering guard used to protect
+    // against. No longer guarded — documenting the real behavior instead.
+    const caseDepthPx = 100;
+    const tallDeep = apparentHeightPx(caseDepthPx * 2, 1, 1.0 * 115, caseDepthPx); // tallest figure, max depth
+    const shortFront = apparentHeightPx(1, 1, 0.25 * 115, caseDepthPx); // shortest figure, front
+    // Not asserting a direction here on purpose — the real-world outcome
+    // depends on how extreme the depth range is. What matters is that
+    // BOTH values come out sane (finite, positive) with no artificial
+    // correction forcing one particular ordering.
+    expect(Number.isFinite(tallDeep)).toBe(true);
+    expect(Number.isFinite(shortFront)).toBe(true);
+    expect(tallDeep).toBeGreaterThan(0);
+    expect(shortFront).toBeGreaterThan(0);
+  });
 });

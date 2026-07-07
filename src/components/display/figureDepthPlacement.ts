@@ -3,16 +3,29 @@
  * placement (px) within a shelf bay — where its billboard sits in Z, and
  * how deep a footprint/shadow to draw on the floor plane.
  *
- * THE CONSTRAINT THIS EXISTS TO PROTECT (Ross): translateZ makes the
- * perspective engine shrink an element. If height-sizing AND depth-
- * recession both scale a figure, a tall figure placed deep could render
- * SMALLER than a short figure up front — which breaks the proportional-
- * height truth already validated. The DEFAULT strategy below avoids that
- * by keeping billboards close to the front (a gentle parallax, not full
- * physical recession) while expressing the real depth difference through
- * the floor-space footprint/shadow instead. 'true-depth' is the escape
- * hatch if stronger parallax is ever wanted over height precision — see
- * PlacementStrategy.
+ * THE MODEL (Ross, final): proportional physical height sets each figure's
+ * TRUE pre-perspective size (resolveRelHeights, unchanged). The perspective
+ * transform then applies HONESTLY based on where the figure's footprint
+ * actually places it in Z — nothing on top, no post-hoc correction. A
+ * taller figure seated further back projecting visually smaller than a
+ * shorter one up front is CORRECT, not a bug: real vision reconstructs
+ * "tall but far away" from exactly that kind of 2D projection, and
+ * apparent-height sensitivity naturally scaling with depth (a small
+ * difference near the front reads far larger than the same difference deep
+ * in the case) is what SELLS the illusion as real. Artificially clamping
+ * or compressing depth to preserve flat on-screen height ordering would
+ * break that consistency, so this deliberately does NOT guard against it.
+ * DEFAULT strategy ('true-depth') seats each billboard at its FULL
+ * resolved footprint depth. 'height-truth' — a gentler, front-anchored
+ * placement that suppresses most of the perspective shrink — is kept as
+ * the alternate, not because height ordering needs protecting, but as a
+ * knob in case stronger height precision is ever wanted over parallax.
+ *
+ * The only clamps that remain are data/FOV hygiene, not height guards: a
+ * garbage/huge resolved depthMm can't fling a figure infinitely far back
+ * (footprint depth is capped to fit the bay's own depth), and the bay's
+ * perspective distance is chosen so even a figure right at the front
+ * doesn't balloon. Neither one touches height ordering.
  */
 
 export type PlacementStrategy = 'height-truth' | 'true-depth';
@@ -20,7 +33,11 @@ export type PlacementStrategy = 'height-truth' | 'true-depth';
 export interface FigureZPlacementOptions {
   strategy: PlacementStrategy;
   /** The bay's own 3D depth (px) — how far back the floor/back-wall
-   *  actually recede. Footprint depth is clamped to fit inside it. */
+   *  actually recede. Footprint depth used for PLACEMENT is clamped to fit
+   *  inside it (FOV hygiene — see the module doc); the RAW resolved
+   *  depthMm a caller separately holds onto (CaseShelf's zPlacements map)
+   *  is left unclamped, since that's what a fixed-mode fit-check needs to
+   *  flag "too deep for the shelf" rather than silently swallowing it. */
   caseDepthPx: number;
   /** Small uniform offset (px) all figures/footprints sit forward of the
    *  true z=0 front-glass plane, so nothing looks pressed against it. */
@@ -29,9 +46,10 @@ export interface FigureZPlacementOptions {
 
 export interface FigureZPlacement {
   /** The billboard's own translateZ (px, <= 0 — negative recedes from the
-   *  viewer). Under 'height-truth' this stays close to 0 regardless of
-   *  footprint depth (gentle parallax); under 'true-depth' it recedes the
-   *  figure's FULL footprint depth. */
+   *  viewer). Under 'true-depth' (the default) this recedes the figure's
+   *  FULL footprint depth — honest perspective shrink included, by
+   *  design. Under 'height-truth' it stays close to the front regardless
+   *  of footprint depth (gentle parallax, suppressed shrink). */
   billboardZPx: number;
   /** Footprint depth (px), clamped to fit within the bay — how deep a
    *  shadow/footprint to draw on the floor plane, from the front margin
@@ -44,8 +62,9 @@ export interface FigureZPlacement {
  * the given translateZ. Mirrors the browser's own projection math exactly
  * (CSS Transforms: scale = perspective / (perspective - z), z negative for
  * "away from the viewer") — used both to compute placements here and, in
- * tests, to verify the height-truth guarantee against the real formula
- * rather than an approximation.
+ * tests, to verify that a deeper-seated figure genuinely projects smaller
+ * (perspective doing its job) against the real formula, not an
+ * approximation.
  */
 export function apparentScale(translateZPx: number, perspectivePx: number): number {
   if (!(perspectivePx > 0)) return 1;

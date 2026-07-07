@@ -400,7 +400,7 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     });
   });
 
-  describe('per-figure Z-depth (real 3D placement, height-truth preserved)', () => {
+  describe('per-figure Z-depth (real 3D placement, honest perspective by default)', () => {
     function figZ(el: Element | null): number {
       const btn = el as HTMLElement;
       return parseFloat(btn.style.getPropertyValue('--fig-z'));
@@ -462,38 +462,64 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       expect(container.querySelector('.case__floor-shadow')).toBeNull();
     });
 
-    it('true-depth strategy recedes a figure\'s billboard further than the default height-truth strategy', () => {
+    it('defaults to the true-depth strategy (no placementStrategy prop matches an explicit "true-depth")', () => {
       const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
-      const { container: heightTruth } = renderWithProviders(
+      const { container: defaulted } = renderWithProviders(
         <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
       );
-      const { container: trueDepth } = renderWithProviders(
+      const { container: explicitTrueDepth } = renderWithProviders(
         <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" placementStrategy="true-depth" />,
       );
-      const zHeightTruth = figZ(heightTruth.querySelector('.shelf-figure'));
+      expect(figZ(defaulted.querySelector('.shelf-figure'))).toBe(figZ(explicitTrueDepth.querySelector('.shelf-figure')));
+    });
+
+    it('height-truth strategy (the alternate) seats a figure closer to the front than the true-depth default', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const { container: trueDepth } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: heightTruth } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" placementStrategy="height-truth" />,
+      );
       const zTrueDepth = figZ(trueDepth.querySelector('.shelf-figure'));
+      const zHeightTruth = figZ(heightTruth.querySelector('.shelf-figure'));
       expect(zTrueDepth).toBeLessThan(zHeightTruth); // more negative = further back
     });
 
-    it("height-truth guard, end to end: a tall figure's apparent height (rendered CSS height x its real perspective scale at its own --fig-z) still exceeds a short figure's, even though the tall one sits deeper", () => {
-      // dark-angel: 260mm, tallest fixture -> relHeight 1.0, deepest
-      // resolvable footprint in the set. miku-nendo: 100mm, shortest ->
-      // floored relHeight, shallow footprint near the front.
+    it('honest perspective, end to end (Ross, final — no height-ordering guard): the SAME figure seated deeper via the default strategy projects smaller than the identical figure seated near the front', () => {
+      // Same figure twice — deep footprint (dark-angel's own resolved
+      // depth) vs an artificially shallow one, isolated by rendering two
+      // single-figure sets so each one is its own set's "tallest" (same
+      // relHeight=1.0, same rendered CSS height) and only the depthMm
+      // differs, via a synthetic dimensions override.
       const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
-      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!;
-      const { container } = renderWithProviders(
-        <CaseShelf figures={[darkAngel, nendo]} motif="detolf-dark" density="compact" />,
+      const shallowClone = { ...darkAngel, _id: 'fx-dark-angel-shallow', dimensions: { heightMm: 260, depthMm: 1 } };
+      const deepClone = { ...darkAngel, _id: 'fx-dark-angel-deep', dimensions: { heightMm: 260, depthMm: 5000 } };
+
+      const { container: shallowContainer } = renderWithProviders(
+        <CaseShelf figures={[shallowClone]} motif="detolf-dark" density="compact" />,
       );
-      const buttons = Array.from(container.querySelectorAll('.shelf-figure')) as HTMLElement[];
-      const perspective = parseFloat(
-        (container.querySelector('.case__bay') as HTMLElement).style.getPropertyValue('--bay-perspective'),
+      const { container: deepContainer } = renderWithProviders(
+        <CaseShelf figures={[deepClone]} motif="detolf-dark" density="compact" />,
       );
-      const apparentHeight = (btn: HTMLElement) => {
+
+      const apparentHeight = (container: HTMLElement) => {
+        const btn = container.querySelector('.shelf-figure') as HTMLElement;
+        const perspective = parseFloat(
+          (container.querySelector('.case__bay') as HTMLElement).style.getPropertyValue('--bay-perspective'),
+        );
         const h = parseFloat(btn.style.height);
         const z = parseFloat(btn.style.getPropertyValue('--fig-z'));
         return h * (perspective / (perspective - z));
       };
-      expect(apparentHeight(buttons[0])).toBeGreaterThan(apparentHeight(buttons[1]));
+
+      // Both have the SAME rendered CSS height (identical relHeight) — the
+      // deep one projecting smaller is purely the honest perspective
+      // shrink from its own real Z, not a height-sizing difference.
+      const shallowBtn = shallowContainer.querySelector('.shelf-figure') as HTMLElement;
+      const deepBtn = deepContainer.querySelector('.shelf-figure') as HTMLElement;
+      expect(parseFloat(shallowBtn.style.height)).toBe(parseFloat(deepBtn.style.height));
+      expect(apparentHeight(deepContainer)).toBeLessThan(apparentHeight(shallowContainer));
     });
   });
 

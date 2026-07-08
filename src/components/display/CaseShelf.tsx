@@ -200,16 +200,35 @@ function WatermarkPlaceholder() {
  * framed pictures. The contact shadow/footprint is NOT rendered here — it
  * lives in the floor's own local 3D coordinate space so it recedes
  * correctly with the floor's rotateX fold; see FloorShadow.
+ *
+ * Positioned ANALYTICALLY (translate3d), not by flexbox (Ross: figures and
+ * their own shadows had drifted apart — the shadow already lived in the
+ * floor's real 3D coordinate space and climbed the tilted floor correctly
+ * with depth, but the figure was flexbox-positioned with only a translateZ
+ * push, so its X came from justify-content:space-evenly instead of the
+ * shadow's analytic item.left, and its grounding Y was pinned to a flat
+ * flex baseline instead of the floor's actual point at that depth). Fixed
+ * by using the SAME X the shadow uses (ROW_PADDING_X_PX + item.left — see
+ * FloorShadow) and grounding the button's bottom edge at bayHeightPx, the
+ * exact world-Y the floor's own front edge sits at (.case__floor3d's
+ * `top: bayHeightPx`, before its rotateX fold pivots around that point) —
+ * so feet and shadow are genuinely coincident points in the SAME shared 3D
+ * world, not just visually close. The "climbing the floor with depth"
+ * effect then falls out of the shared perspective for free: feet and
+ * shadow project through the identical camera because they're the same
+ * (x, bayHeightPx, z) point.
  */
 function ShelfFigure({
   item,
   zPlacement,
+  bayHeightPx,
   onSelect,
   labels,
   plateZone,
 }: {
   item: ShelfItem;
   zPlacement: FigureZPlacement;
+  bayHeightPx: number;
   onSelect?: (figure: Figure, index: number) => void;
   labels?: boolean;
   plateZone: number;
@@ -220,15 +239,24 @@ function ShelfFigure({
   // amount of transparent padding below the figure's actual feet. Ungrounded
   // figures with a large margin visibly hover above the shelf line; this
   // shifts the IMAGE ONLY (not the button, shadow, or nameplate — all three
-  // are already correctly anchored to the row baseline / shelf line) down
-  // by that margin so the real feet meet it instead.
+  // are already correctly anchored to the shelf line) down by that margin
+  // so the real feet meet it instead.
   const bottomMarginFrac = useBottomMarginFrac(meta.matted ? figure.imageUrl : undefined);
   const groundingShiftPx = Math.round(bottomMarginFrac * h);
+
+  const figX = ROW_PADDING_X_PX + item.left;
+  const figY = bayHeightPx - h; // bottom edge (feet) lands at bayHeightPx
 
   return (
     <button
       class={`shelf-figure ${meta.matted ? '' : 'shelf-figure--framed'}`}
-      style={{ width: `${w}px`, height: `${h}px`, '--fig-z': `${zPlacement.billboardZPx}px` } as Record<string, string>}
+      style={{
+        width: `${w}px`,
+        height: `${h}px`,
+        '--fig-x': `${figX}px`,
+        '--fig-y': `${figY}px`,
+        '--fig-z': `${zPlacement.billboardZPx}px`,
+      } as Record<string, string>}
       type="button"
       onClick={onSelect ? () => onSelect(figure, item.index) : undefined}
       data-synthetic-base={meta.matted && !meta.baseRecovered ? 'true' : undefined}
@@ -527,17 +555,18 @@ export function CaseShelf({
                   <div class="case__plinth3d" />
                 </div>
               </div>
-              {/* Row padding-bottom grows by plateZone so the figure's feet
-                  lift clear of the enlarged shelf-edge zone the nameplate
-                  now occupies — see PLATE_ZONE_PX. preserve-3d so the
-                  shared perspective above reaches each figure's own
-                  translateZ (--fig-z, set per item on .shelf-figure). */}
-              <div class="case__row" style={{ paddingBottom: `${13 + plateZone}px` }}>
+              {/* Analytically positioned (translate3d), not flexbox — each
+                  figure's X/Y/Z is set per item on .shelf-figure so its
+                  feet land exactly where its own shadow sits (see
+                  ShelfFigure's doc comment). preserve-3d so the shared
+                  perspective above reaches each figure's transform. */}
+              <div class="case__row">
                 {row.map((item) => (
                   <ShelfFigure
                     key={item.figure._id}
                     item={item}
                     zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
+                    bayHeightPx={bayHeightPx}
                     onSelect={onSelect}
                     labels={labels}
                     plateZone={plateZone}
@@ -725,19 +754,16 @@ const caseStyles = `
     background: var(--plinth3d-gradient);
   }
 
-  /* figures sit on the floor: baseline = lip + lift above the bay bottom.
-     A flexbox layer for X layout (unchanged), but NOW also preserve-3d so
-     each figure's own --fig-z translateZ (below) is projected through the
-     shared camera on .case__world — real depth placement, not just a flat
-     overlay pretending to be in front of the 3D interior. */
+  /* Figures are positioned ANALYTICALLY per item (--fig-x/--fig-y/--fig-z
+     on .shelf-figure below), not by flexbox — see ShelfFigure's doc
+     comment for why (feet must land on the same point as the figure's own
+     shadow, which flexbox + a lone translateZ push couldn't guarantee).
+     preserve-3d so each figure's translate3d is projected through the
+     shared camera on .case__world alongside the floor/shadow it shares
+     coordinates with. */
   .case__row {
     position: absolute;
     inset: 0;
-    padding: 0 6px 13px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-evenly;
-    gap: 8px;
     z-index: 2;
     transform-style: preserve-3d;
   }
@@ -763,24 +789,29 @@ const caseStyles = `
   }
 
   /* ── Figures ────────────────────────────────────────────────────────── */
-  /* --fig-z (set per item, see ShelfFigure) is the billboard's own real 3D
-     depth placement — a gentle recession under the height-truth strategy,
-     the full footprint depth under true-depth. :active repeats it so the
-     tap-scale doesn't reset the figure back to z=0 while pressed (a plain
-     transform on :active would otherwise REPLACE, not add to, the base
-     transform). */
+  /* --fig-x/--fig-y/--fig-z (set per item, see ShelfFigure) are the
+     billboard's full analytic 3D placement — X/Y match the shadow's own
+     point on the floor exactly, Z is the real depth placement (a gentle
+     recession under the height-truth strategy, the full footprint depth
+     under true-depth). No longer a flexbox child (position:absolute, not
+     relative) — translate3d is now the ONLY thing positioning this
+     element, not flex layout plus a lone Z push. :active repeats the full
+     translate3d so the tap-scale doesn't reset the figure to (0,0,0) while
+     pressed (a plain transform on :active would otherwise REPLACE, not add
+     to, the base transform). */
   .shelf-figure {
-    position: relative;
-    flex-shrink: 0;
+    position: absolute;
+    top: 0;
+    left: 0;
     padding: 0;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
-    transform: translateZ(var(--fig-z, 0px));
+    transform: translate3d(var(--fig-x, 0px), var(--fig-y, 0px), var(--fig-z, 0px));
   }
 
   .shelf-figure:active {
-    transform: translateZ(var(--fig-z, 0px)) scale(0.985);
+    transform: translate3d(var(--fig-x, 0px), var(--fig-y, 0px), var(--fig-z, 0px)) scale(0.985);
   }
 
   .shelf-figure__img {

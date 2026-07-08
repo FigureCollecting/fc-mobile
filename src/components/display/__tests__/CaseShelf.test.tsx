@@ -72,6 +72,29 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     expect(parseFloat(shadow.style.left)).toBe(expectedLeft);
   });
 
+  it('positions the figure itself (--fig-x) on the exact same X the shadow is centered on (Ross: feet must land on the shadow, not just near it)', () => {
+    // The regression this guards: figures used to be flexbox-positioned
+    // (justify-content: space-evenly), which does NOT generally agree with
+    // item.left, the analytic X the shadow already uses. --fig-x must be
+    // the figure's own left edge in that SAME coordinate space, so that
+    // --fig-x + footprintCenterX*w (the point within the figure's own
+    // bounding box where its feet visually are) lands exactly on the
+    // shadow's own centerX — not merely close to it.
+    const rem = FIXTURE_FIGURES[0];
+    const { container } = renderWithProviders(
+      <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
+    );
+    const meta = FIXTURE_META['fx-rem'];
+    const item = packLikeCaseShelf([rem])[0];
+    const fig = container.querySelector('.shelf-figure') as HTMLElement;
+    const shadow = container.querySelector('.case__floor-shadow') as HTMLElement;
+    const figX = parseFloat(fig.style.getPropertyValue('--fig-x'));
+    // ROW_PADDING_X_PX (6) — see the shadow-position test above.
+    expect(figX).toBe(6 + item.left);
+    const shadowCenterX = parseFloat(shadow.style.left) + parseFloat(shadow.style.width) / 2;
+    expect(Math.round(figX + meta.footprintCenterX * item.w)).toBe(Math.round(shadowCenterX));
+  });
+
   it('widens the shadow into a synthetic base when the matte lost the real one', () => {
     const spike = FIXTURE_FIGURES.find((f) => f._id === 'fx-spike')!;
     const { container } = renderWithProviders(
@@ -204,25 +227,54 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         expect(heightWith - heightWithout).toBe(PLATE_ZONE_PX);
       });
 
-      it('lifts the row padding-bottom (the figure baseline) by the same PLATE_ZONE_PX', () => {
-        const { container } = renderWithProviders(
+      it('lifts every figure baseline (--fig-y) by the same PLATE_ZONE_PX the bay itself grows by', () => {
+        // Figures ground analytically now (--fig-y = bayHeightPx - h, see
+        // ShelfFigure), not via a shared row padding-bottom — labels
+        // growing the bay (computeBayHeight adds + plateZone) must still
+        // push every figure's own baseline down by the identical amount,
+        // so the floor (top: bayHeightPx) and every figure's feet stay
+        // coincident with labels on OR off.
+        const { container: withLabels } = renderWithProviders(
           <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" labels />,
         );
-        const row = container.querySelector('.case__row') as HTMLElement;
-        expect(row.style.paddingBottom).toBe(`${13 + PLATE_ZONE_PX}px`);
+        const { container: withoutLabels } = renderWithProviders(
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
+        );
+        const figsWith = Array.from(withLabels.querySelectorAll('.shelf-figure')) as HTMLElement[];
+        const figsWithout = Array.from(withoutLabels.querySelectorAll('.shelf-figure')) as HTMLElement[];
+        expect(figsWith.length).toBe(figsWithout.length);
+        figsWith.forEach((fig, i) => {
+          const yWith = parseFloat(fig.style.getPropertyValue('--fig-y'));
+          const yWithout = parseFloat(figsWithout[i].style.getPropertyValue('--fig-y'));
+          expect(yWith - yWithout).toBe(PLATE_ZONE_PX);
+        });
       });
 
-      it('keeps the row baseline at its unlabeled padding, and the floor top pinned to the bay height, when labels are off', () => {
+      it('keeps the floor top pinned to the bay height, and every figure feet coincident with it, when labels are off', () => {
         const { container } = renderWithProviders(
           <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
         );
-        const row = container.querySelector('.case__row') as HTMLElement;
-        const bay = container.querySelector('.case__bay') as HTMLElement;
-        const floor = container.querySelector('.case__floor3d') as HTMLElement;
-        expect(row.style.paddingBottom).toBe('13px');
-        // The floor's hinge-fold sits at the bay's own bottom edge — its
-        // inline `top` should exactly match the bay's own height.
-        expect(floor.style.top).toBe(bay.style.height);
+        const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+        expect(bays.length).toBeGreaterThan(1); // multiple rows, each its OWN height
+        for (const bay of bays) {
+          const floor = bay.querySelector('.case__floor3d') as HTMLElement;
+          // The floor's hinge-fold sits at the bay's own bottom edge — its
+          // inline `top` should exactly match the bay's own height. That
+          // point is also the shadow's own world-Y (FloorShadow lives
+          // inside this same fold), so it doubles as "where the shadow is."
+          expect(floor.style.top).toBe(bay.style.height);
+          const bayHeightPx = parseFloat(bay.style.height);
+          const figs = Array.from(bay.querySelectorAll('.shelf-figure')) as HTMLElement[];
+          expect(figs.length).toBeGreaterThan(0);
+          for (const fig of figs) {
+            const figY = parseFloat(fig.style.getPropertyValue('--fig-y'));
+            const h = parseFloat(fig.style.height);
+            // feet = figY + h — must land exactly on THIS bay's own
+            // floor/shadow world-Y (bayHeightPx), the literal "feet on
+            // shadow" acceptance criterion, as the formula that produces it.
+            expect(figY + h).toBe(bayHeightPx);
+          }
+        }
       });
 
       it('keeps the full, untruncated name in the DOM even when it will visually wrap/ellipsize', () => {

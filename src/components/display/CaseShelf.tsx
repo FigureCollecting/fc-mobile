@@ -46,10 +46,41 @@ const FRONT_MARGIN_PX = 6;
  *  below rather than a silently-duplicated magic number. */
 const ROW_PADDING_X_PX = 6;
 
-/** Shared perspective (px) for a bay's 3D interior AND its figures — one
- *  camera for the whole scene, so a figure's translateZ and the floor's
- *  own rotateX(-90) fold are viewed through the identical projection. */
-const BAY_PERSPECTIVE_PX = 480;
+/**
+ * ONE shared camera for the whole visible case (Ross, correcting a
+ * regression): the case-depth-study's proven look comes from a SINGLE
+ * perspective + perspective-origin applied to ALL shelves at once, so
+ * each shelf's tilt varies with its own distance from the eye-line —
+ * near-eye shelves read nearly edge-on, shelves far above or below show
+ * progressively more of their top/underside. Applying perspective PER
+ * BAY (the regression) resets that to an identical head-on camera for
+ * every shelf — flat, no tilt variation, the exact bug this restores.
+ *
+ * Reconciled with virtualization: the camera can't be anchored to the
+ * FULL (potentially huge, mostly-unmounted) virtual list — that would
+ * either put the eye-line somewhere absurd for a big collection, or (if
+ * pinned near the top) make far-scrolled bays skew grotesquely. Instead
+ * it's anchored to the MOUNTED WINDOW (see .case__world / windowStart
+ * below): only near-eye bays are ever mounted by design (virtualization),
+ * so the window is inherently small and bounded — the camera moves with
+ * it as the user scrolls (a shelf's tilt genuinely updates as it scrolls
+ * through view), and skew stays bounded because the window itself does.
+ *
+ * Perspective distance and origin are tuned to the case-depth-study's own
+ * ratio, calibrated against ITS CONTENT height, not its outer viewport: the
+ * study's .interior (the analog of windowHeightPx here — the stacked
+ * shelves themselves, no frame padding) is shelf-h(148) * count(5) = 740px
+ * tall, driven by a 640px perspective. Its outer .viewport (860px) added
+ * ~60-90px of flex-centered breathing room on top/bottom that is NOT part
+ * of the content being projected, so 640/860 would understate the camera's
+ * closeness — 640/740 is the ratio that actually reproduces the study's
+ * feel. Re-validated against the width-ratio fingerprint from the
+ * commissioned geometry model (w_back/w_front ≈ 0.6-0.8 for a realistic
+ * close-viewing distance; much closer to 1.0 reads as "camera too
+ * far/flat" — exactly Ross's complaint).
+ */
+const WORLD_PERSPECTIVE_RATIO = 640 / 740;
+const WORLD_ORIGIN_Y_PCT = 16.5;
 
 export const CASE_MOTIFS: { value: CaseMotif; label: string }[] = [
   { value: 'detolf-dark', label: 'Dark glass' },
@@ -77,6 +108,23 @@ export interface CaseProfile {
   /** Per-shelf-compartment clear height. */
   innerHeightMm: number;
 }
+
+/**
+ * A real IKEA Detolf, computed from the commissioned geometry model
+ * (cabinet_perspective_reference.md) rather than a rough estimate — the
+ * first concrete CaseProfile, still voided/unconsumed like caseMode above,
+ * but now grounded in real numbers instead of being purely structural.
+ * Exterior 16.93 x 14.57 x 64.17in per IKEA's own listing; interior usable
+ * width/depth and per-shelf clear opening height are collector-measured
+ * (IKEA doesn't publish them) — see the doc's §12 sources and its
+ * "Geometry ground truth — IKEA Detolf" table for the full derivation.
+ */
+export const DETOLF_PROFILE: CaseProfile = {
+  name: 'IKEA Detolf',
+  innerWidthMm: 385, // usable width 15.16in
+  innerDepthMm: 330, // usable depth ~13in (330mm, collector-measured)
+  innerHeightMm: 370, // clear opening ~14.57-14.76in per shelf level
+};
 
 interface CaseShelfProps {
   figures: Figure[];
@@ -369,6 +417,25 @@ export function CaseShelf({
   const caseHeightPx = 24 + totalBaysHeight;
   const watermarkHeightPx = Math.min(Math.round(caseHeightPx * 0.21), 120);
 
+  // ONE shared camera for the currently-mounted window of bays — see the
+  // WORLD_PERSPECTIVE_RATIO doc comment for why this is anchored to the
+  // mounted window (small, bounded) rather than the full virtual list
+  // (potentially huge). Bays are positioned RELATIVE to windowStart, not
+  // to the list's absolute top, so the world wrapper's own perspective-
+  // origin percentage lands at a sane, always-nearby point regardless of
+  // how far the user has scrolled or how large the collection is.
+  const windowStart = virtualBays.length ? virtualBays[0].start : 0;
+  const windowEnd = virtualBays.length ? virtualBays[virtualBays.length - 1].end : 0;
+  const windowHeightPx = Math.max(1, windowEnd - windowStart);
+  const worldPerspectivePx = Math.round(windowHeightPx * WORLD_PERSPECTIVE_RATIO);
+  // .case__world gets an explicit height (not just its children's absolute
+  // offsets) — without one, a position:absolute box with only
+  // absolutely-positioned children never gains an auto height, so
+  // perspective-origin's Y percentage silently resolves against a
+  // zero-height box and collapses to the top edge regardless of
+  // WORLD_ORIGIN_Y_PCT. Caught by measuring the live rendered box, not by
+  // any test — jsdom doesn't lay out real CSS box heights this way.
+
   return (
     <div class="case-host" ref={hostRef}>
       <div
@@ -376,6 +443,15 @@ export function CaseShelf({
         data-motif={motif}
         style={{ height: `${caseHeightPx}px`, '--case-d': `${caseD}px` } as Record<string, string>}
       >
+        <div
+          class="case__world"
+          style={{
+            height: `${windowHeightPx}px`,
+            transform: `translateY(${windowStart}px)`,
+            '--world-perspective': `${worldPerspectivePx}px`,
+            '--world-origin-y': `${WORLD_ORIGIN_Y_PCT}%`,
+          } as Record<string, string>}
+        >
         {virtualBays.map((vBay) => {
           const row = rows[vBay.index];
           if (!row) return null;
@@ -386,19 +462,25 @@ export function CaseShelf({
               class="case__bay"
               style={{
                 height: `${bayHeightPx}px`,
-                transform: `translateY(${vBay.start}px)`,
-                '--bay-perspective': `${BAY_PERSPECTIVE_PX}px`,
-              } as Record<string, string>}
+                transform: `translateY(${vBay.start - windowStart}px)`,
+              }}
             >
               {/* ── Genuine CSS 3D interior — see the module doc comment.
-                  perspective lives on .case__bay (this element's parent),
-                  shared with .case__row below, so figures' own translateZ
-                  and the floor/walls' fold are one consistent 3D scene. ── */}
+                  perspective lives on .case__world (this bay's ancestor,
+                  shared across the whole mounted window), so figures'
+                  translateZ and the floor/walls' fold — and each bay's
+                  own tilt relative to the others — are one consistent 3D
+                  scene, not N disconnected head-on cameras. ── */}
               <div class="case__bay3d" aria-hidden="true">
                 <div class="case__interior3d">
                   <div class="case__back3d" />
                   <div class="case__wall-left3d" />
                   <div class="case__wall-right3d" />
+                  {/* Short hinge-folded lip, same fold+origin as the floor
+                      below it, so it tapers in perspective agreement
+                      instead of reading as a flat bar bolted to the front
+                      (the case-depth-study's plinth-top technique). */}
+                  <div class="case__plinth-lip3d" style={{ top: `${bayHeightPx}px` }} />
                   <div class="case__floor3d" style={{ top: `${bayHeightPx}px` }}>
                     {row.map((item) => (
                       <FloorShadow key={item.figure._id} item={item} zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT} />
@@ -428,6 +510,7 @@ export function CaseShelf({
             </section>
           );
         })}
+        </div>
         <div class="case__watermark" style={{ height: `${watermarkHeightPx}px` }}>
           {watermark ?? <WatermarkPlaceholder />}
         </div>
@@ -456,31 +539,51 @@ const caseStyles = `
     overflow: hidden;
   }
 
+  /* ── Shared camera for the mounted window — see the
+     WORLD_PERSPECTIVE_RATIO doc comment for the full reasoning. ONE
+     perspective for every currently-mounted bay (not one per bay), so a
+     bay's tilt genuinely depends on its distance from the eye-line
+     instead of every bay getting an identical head-on camera. Positioned
+     via translateY(windowStart) — bays inside are positioned RELATIVE to
+     that, not to the list's absolute top. */
+  .case__world {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    transform-style: preserve-3d;
+    perspective: var(--world-perspective, 900px);
+    perspective-origin: 50% var(--world-origin-y, 16.5%);
+  }
+
   /* ── Shelf bay: 3D interior + figures ──────────────────────────────── */
-  /* Virtualized list item: absolutely positioned, placed via translateY.
+  /* Virtualized list item, positioned by translateY RELATIVE to the
+     shared world above (not the list's absolute top — see .case__world).
      Height varies per row in DYNAMIC mode (tallest occupant + margin), so
      this is NOT a fixed-size item — tanstack/virtual-core's variable-size
-     estimateSize/measure path handles that.
-     perspective lives HERE (not on .case__bay3d below) so it's shared by
-     BOTH the 3D interior AND .case__row's figures — one camera for the
-     whole scene, not two disconnected 3D contexts that happen to overlap.
-     Still scoped to this ONE bay (not the whole virtualized case), so every
-     compartment looks like a consistent shelf regardless of where it sits
-     in a (potentially huge) scroll list — a shared perspective across all
-     bays would make far-scrolled ones look increasingly skewed. */
+     estimateSize/measure path handles that. preserve-3d so the shared
+     perspective on .case__world passes through to this bay's own 3D
+     content instead of being flattened at this level.
+     Deliberately NOT overflow:hidden here — the CSS Transforms spec forces
+     a computed transform-style of flat on any element whose overflow isn't
+     visible, silently collapsing preserve-3d. That's not a hypothetical:
+     it's exactly what broke this rebuild's first pass — the fold geometry
+     computed correct bounding boxes but never actually painted, because
+     this rule had both overflow:hidden AND preserve-3d, and overflow won.
+     2D content that still needs clipping (figure row, wash) gets its own
+     overflow rather than relying on this ancestor. */
   .case__bay {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    overflow: hidden;
-    perspective: var(--bay-perspective, 480px);
-    perspective-origin: 50% 20%;
+    transform-style: preserve-3d;
   }
 
   .case__bay3d {
     position: absolute;
     inset: 0;
+    transform-style: preserve-3d;
   }
 
   .case__interior3d {
@@ -544,12 +647,30 @@ const caseStyles = `
     background: var(--floor3d-gradient);
   }
 
-  /* Plinth: flat, unrotated cap that closes the seam where the floor's
-     front edge meets the case's own bottom trim — a receding (Z-varying)
-     plane and a flat trim strip project to very slightly different
-     screen-Y under perspective at this distance from the vanishing point,
-     which leaves a hairline gap if they only just touch. Overlaps that
-     seam on purpose; not a design choice you'd notice on its own. */
+  /* Plinth lip: SAME hinge-fold as .case__floor3d (identical
+     transform-origin and rotateX) so it tapers in perspective agreement
+     with the floor instead of reading as a flat bar bolted onto the front
+     — the case-depth-study's plinth-top technique, ported. Opaque
+     frame-colored gradient (not the floor's translucent glass tint) so it
+     reads as the base's own solid top edge. This is what actually closes
+     the shelf-to-frame transition; .case__plinth3d below is just the flat
+     cap face. */
+  .case__plinth-lip3d {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 10px;
+    transform-origin: 0% 0%;
+    transform: rotateX(-90deg);
+    background: var(--plinth-lip-gradient);
+  }
+
+  /* Plinth cap: flat, unrotated, closes the seam where the plinth lip
+     above meets the case's own bottom trim — a receding (Z-varying) plane
+     and a flat trim strip project to very slightly different screen-Y
+     under perspective at this distance from the vanishing point, which
+     leaves a hairline gap if they only just touch. Overlaps that seam on
+     purpose; not a design choice you'd notice on its own. */
   .case__plinth3d {
     position: absolute;
     left: 0;
@@ -562,8 +683,8 @@ const caseStyles = `
   /* figures sit on the floor: baseline = lip + lift above the bay bottom.
      A flexbox layer for X layout (unchanged), but NOW also preserve-3d so
      each figure's own --fig-z translateZ (below) is projected through the
-     shared perspective on .case__bay above — real depth placement, not
-     just a flat overlay pretending to be in front of the 3D interior. */
+     shared camera on .case__world — real depth placement, not just a flat
+     overlay pretending to be in front of the 3D interior. */
   .case__row {
     position: absolute;
     inset: 0;
@@ -742,6 +863,7 @@ const caseStyles = `
     --floor3d-gradient: linear-gradient(180deg,
       rgba(215, 230, 240, 0.85) 0%, rgba(150, 180, 185, 0.4) 10%,
       rgba(80, 100, 105, 0.3) 35%, rgba(45, 55, 60, 0.26) 100%);
+    --plinth-lip-gradient: linear-gradient(180deg, #6a6f77 0%, #363940 55%, #1a1c20 100%);
     --plinth3d-gradient: linear-gradient(180deg, #454951 0%, #24262a 55%, #121316 100%);
     --shadow-soft: 0.34;
     --shadow-core: 0.5;
@@ -750,19 +872,25 @@ const caseStyles = `
     --photo-frame: #3a3e45;
   }
 
-  /* Clear glass: pale ground, brighter shelf plane, lighter walls */
+  /* Clear glass: FROSTED mid-tone, not a white lightbox (Ross regression —
+     the old --back3d-ambient white hotspot on a near-white --case-back-bg
+     with weak corner AO blew the interior out flat). Retuned to match the
+     study's frosted-glass character: milky translucent walls/floor, no
+     central hotspot, strong corner AO for real depth even at this lighter
+     value range. */
   .case[data-motif='glass-clear'] {
     --case-frame: linear-gradient(180deg, #ccd2d9 0%, #aab1b9 100%);
     --case-frame-hi: rgba(255, 255, 255, 0.75);
-    --case-back-bg: linear-gradient(180deg, #dde3e9 0%, #c3cad2 100%);
-    --corner-ao: rgba(60, 70, 80, 0.28);
-    --back3d-ambient: rgba(255, 255, 255, 0.35);
-    --bay-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, transparent 40%);
-    --wall3d-gradient: linear-gradient(90deg, rgba(180, 200, 215, 0.55) 0%, rgba(140, 155, 165, 0.4) 100%);
-    --wall3d-gradient-r: linear-gradient(270deg, rgba(180, 200, 215, 0.55) 0%, rgba(140, 155, 165, 0.4) 100%);
+    --case-back-bg: linear-gradient(180deg, #b6c0c9 0%, #8d99a3 100%);
+    --corner-ao: rgba(35, 45, 55, 0.48);
+    --back3d-ambient: rgba(215, 225, 232, 0.14);
+    --bay-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, transparent 40%);
+    --wall3d-gradient: linear-gradient(90deg, rgba(170, 190, 205, 0.5) 0%, rgba(90, 102, 112, 0.55) 100%);
+    --wall3d-gradient-r: linear-gradient(270deg, rgba(170, 190, 205, 0.5) 0%, rgba(90, 102, 112, 0.55) 100%);
     --floor3d-gradient: linear-gradient(180deg,
-      rgba(255, 255, 255, 0.95) 0%, rgba(225, 235, 238, 0.55) 10%,
-      rgba(196, 210, 214, 0.42) 35%, rgba(170, 182, 186, 0.36) 100%);
+      rgba(240, 246, 248, 0.9) 0%, rgba(200, 214, 218, 0.5) 10%,
+      rgba(150, 168, 174, 0.4) 35%, rgba(110, 126, 132, 0.34) 100%);
+    --plinth-lip-gradient: linear-gradient(180deg, #dbe1e6 0%, #aab3ba 55%, #7c868d 100%);
     --plinth3d-gradient: linear-gradient(180deg, #c4ccd3 0%, #9aa3ab 55%, #757e86 100%);
     --shadow-soft: 0.22;
     --shadow-core: 0.38;
@@ -786,6 +914,7 @@ const caseStyles = `
     --floor3d-gradient:
       repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.04) 0 3px, transparent 3px 11px),
       linear-gradient(180deg, rgb(158, 118, 76) 0%, rgb(120, 84, 50) 35%, rgb(90, 60, 34) 100%);
+    --plinth-lip-gradient: linear-gradient(180deg, #8a6038 0%, #5a3c24 55%, #2e1c10 100%);
     --plinth3d-gradient: linear-gradient(180deg, #5a3c24 0%, #3a2616 55%, #241408 100%);
     --shadow-soft: 0.32;
     --shadow-core: 0.46;

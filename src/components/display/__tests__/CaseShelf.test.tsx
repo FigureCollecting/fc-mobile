@@ -506,7 +506,7 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       const apparentHeight = (container: HTMLElement) => {
         const btn = container.querySelector('.shelf-figure') as HTMLElement;
         const perspective = parseFloat(
-          (container.querySelector('.case__bay') as HTMLElement).style.getPropertyValue('--bay-perspective'),
+          (container.querySelector('.case__world') as HTMLElement).style.getPropertyValue('--world-perspective'),
         );
         const h = parseFloat(btn.style.height);
         const z = parseFloat(btn.style.getPropertyValue('--fig-z'));

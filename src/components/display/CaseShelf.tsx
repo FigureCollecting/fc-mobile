@@ -98,6 +98,19 @@ const ROW_PADDING_X_PX = 6;
  * (monotonic growth away from the eye-line, near-zero at it) to Scenario
  * D's table, not by trying to reproduce Detolf's exact shelf pitch (this
  * component's shelf spacing is data-driven from packShelves, not fixed).
+ *
+ * IMPLEMENTATION NOTE (third pass — see .case__bay/.case__world doc
+ * comments for the full reasoning): these two parameters are computed
+ * ONCE here (worldPerspectivePx, eyeYWorldPx), but the actual `perspective`
+ * / `perspective-origin` CSS lives on EACH `.case__bay`, not on one shared
+ * ancestor — a self-contained PER-BAY camera using the SAME standoff and a
+ * per-bay-recomputed origin (eyeYWorldPx re-expressed in that bay's own
+ * local frame) is mathematically identical to a single shared camera for
+ * every point in that bay, while letting each bay clip its own content
+ * again (overflow:hidden safely reintroduced — a deeply-seated figure can
+ * no longer visually bleed into an adjacent bay). "Shared camera" here
+ * describes the PROJECTION MATH, not the literal DOM element it's
+ * declared on.
  */
 const FIXED_STANDOFF_MM = 762; // 30in — commissioned Scenario D (Detolf)
 const WORLD_EYE_FOCUS_FRACTION = 0.165;
@@ -209,31 +222,29 @@ function WatermarkPlaceholder() {
  * shadow's analytic item.left, and its grounding Y was pinned to a flat
  * flex baseline instead of the floor's actual point at that depth). Fixed
  * by using the SAME X the shadow uses (ROW_PADDING_X_PX + item.left — see
- * FloorShadow) and grounding the button's bottom edge at bayHeightPx, the
+ * FloorShadow) and grounding the button's bottom edge at shelfLineY, the
  * exact world-Y the floor's own front edge sits at (.case__floor3d's
- * `top: bayHeightPx`, before its rotateX fold pivots around that point) —
+ * `top: shelfLineY`, before its rotateX fold pivots around that point) —
  * so feet and shadow are genuinely coincident points in the SAME shared 3D
  * world, not just visually close. The "climbing the floor with depth"
  * effect then falls out of the shared perspective for free: feet and
  * shadow project through the identical camera because they're the same
- * (x, bayHeightPx, z) point.
+ * (x, shelfLineY, z) point. shelfLineY is NOT the bay's own full height
+ * (bayHeightPx) — see the component body's shelfLineY comment for why
+ * those differ when labels are on.
  */
 function ShelfFigure({
   item,
   zPlacement,
-  bayHeightPx,
+  shelfLineY,
   onSelect,
-  labels,
-  plateZone,
 }: {
   item: ShelfItem;
   zPlacement: FigureZPlacement;
-  bayHeightPx: number;
+  shelfLineY: number;
   onSelect?: (figure: Figure, index: number) => void;
-  labels?: boolean;
-  plateZone: number;
 }) {
-  const { figure, meta, w, h, slotWidth } = item;
+  const { figure, meta, w, h } = item;
 
   // Real per-image alpha measurement: every matted PNG has a different
   // amount of transparent padding below the figure's actual feet. Ungrounded
@@ -245,7 +256,7 @@ function ShelfFigure({
   const groundingShiftPx = Math.round(bottomMarginFrac * h);
 
   const figX = ROW_PADDING_X_PX + item.left;
-  const figY = bayHeightPx - h; // bottom edge (feet) lands at bayHeightPx
+  const figY = shelfLineY - h; // bottom edge (feet) lands at shelfLineY
 
   return (
     <button
@@ -278,26 +289,57 @@ function ShelfFigure({
       ) : (
         <span class="shelf-figure__silhouette" aria-hidden="true" />
       )}
-      {labels && (
-        // Widened to the item's slot (its own width plus its share of the
-        // surrounding gaps) — Ross: let plates nearly meet, not stay capped
-        // to the figure's own (often much narrower) width. Mounted at the
-        // shelf edge: top of the plate sits flush with the figure's own
-        // bottom (never climbing over the base), growing down through the
-        // enlarged shelf-lip zone (plateZone).
-        <span
-          class="shelf-figure__plate"
-          aria-hidden="true"
-          style={{ width: `${Math.max(w, slotWidth - 4)}px`, bottom: `${-plateZone}px` }}
-        >
-          <span class="shelf-figure__plate-name">{figure.name}</span>
-          {figure.manufacturer && (
-            <span class="shelf-figure__plate-mfr">{figure.manufacturer}</span>
-          )}
-        </span>
-      )}
       <span class="sr-only">{figure.name}</span>
     </button>
+  );
+}
+
+/**
+ * A figure's nameplate — pinned to the shelf FRONT EDGE at z=0 (Ross: the
+ * plate must NOT ride the figure's own translateZ back into the case).
+ * Rendered as its OWN standalone element with an independent translate3d,
+ * not a DOM child of the button — the button's --fig-z recession is the
+ * whole reason the old plate (a child, inheriting that transform) receded
+ * and foreshortened right along with a deeply-seated figure, the same
+ * mechanism that made per-figure plate-to-foot screen distance vary. This
+ * one sits at the SAME X column as its figure (figX + half its width, the
+ * figure's own horizontal center) and the SAME Y the shelf's front lip and
+ * every figure's own feet already share (shelfLineY — see ShelfFigure's
+ * doc comment), but Z=0: the true front-glass plane, not receded at all.
+ * Every plate therefore renders at one consistent size on one clean front
+ * rail, regardless of how deep its own figure is seated — exactly Ross's
+ * "shelf edge — lip/below-shelf zone" description, now literally true in
+ * 3D rather than simulated via a flat CSS position on a receded parent.
+ * Grows DOWN from shelfLineY into the room .case__bay reserves below it
+ * (bayHeightPx - shelfLineY == PLATE_ZONE_PX) — NOT bayHeightPx itself,
+ * which is the bay's own full (clipped) box; anchoring here instead of
+ * there is what keeps the plate inside that box instead of being clipped
+ * away by .case__bay's overflow:hidden (see the component body's
+ * shelfLineY comment for the full reasoning).
+ */
+function ShelfPlate({ item, shelfLineY }: { item: ShelfItem; shelfLineY: number }) {
+  const { figure, w, slotWidth } = item;
+  // Widened to the item's slot (its own width plus its share of the
+  // surrounding gaps) — Ross: let plates nearly meet, not stay capped to
+  // the figure's own (often much narrower) width.
+  const plateWidth = Math.max(w, slotWidth - 4);
+  const figX = ROW_PADDING_X_PX + item.left;
+  const plateLeft = Math.round(figX + w / 2 - plateWidth / 2);
+
+  return (
+    <div
+      class="shelf-figure__plate"
+      aria-hidden="true"
+      style={{
+        width: `${plateWidth}px`,
+        transform: `translate3d(${plateLeft}px, ${shelfLineY}px, 0px)`,
+      }}
+    >
+      <span class="shelf-figure__plate-name">{figure.name}</span>
+      {figure.manufacturer && (
+        <span class="shelf-figure__plate-mfr">{figure.manufacturer}</span>
+      )}
+    </div>
   );
 }
 
@@ -534,29 +576,54 @@ export function CaseShelf({
           style={{
             height: `${windowHeightPx}px`,
             transform: `translateY(${windowStart}px)`,
-            '--world-perspective': `${worldPerspectivePx}px`,
-            '--world-origin-y': `${eyeYWorldPx}px`,
           } as Record<string, string>}
         >
         {virtualBays.map((vBay) => {
           const row = rows[vBay.index];
           if (!row) return null;
           const bayHeightPx = computeBayHeight(row, plateZone);
+          // The shelf's own surface Y — where the floor, every figure's
+          // feet, and (when labels are on) the plate's own anchor all
+          // land — is NOT bayHeightPx itself when labels are on.
+          // bayHeightPx grows by plateZone to reserve room for the plate
+          // (computeBayHeight), but that reserved room has to live BELOW
+          // the actual shelf surface, inside .case__bay's own box (it has
+          // overflow:hidden — see the bay-bleed fix — so anything
+          // positioned past the bay's own bottom edge gets silently
+          // clipped, which is exactly what happened to the plate before
+          // this). Subtracting plateZone back off gives the shelf's real
+          // surface Y, identical whether labels are on or off — only the
+          // bay's own total height (and the reserved room below the
+          // shelf) changes.
+          const shelfLineY = bayHeightPx - plateZone;
+          const bayWorldOffset = vBay.start - windowStart;
+          // Per-bay perspective-origin, mathematically equivalent to the
+          // single shared camera (see the module doc comment above
+          // FIXED_STANDOFF_MM / the bay-bleed fix note) — bayOriginY is
+          // the global eye-line re-expressed in THIS bay's own local
+          // frame. Same worldPerspectivePx (standoff) for every bay.
+          const bayOriginY = eyeYWorldPx - bayWorldOffset;
           return (
             <section
               key={vBay.key}
               class="case__bay"
               style={{
                 height: `${bayHeightPx}px`,
-                transform: `translateY(${vBay.start - windowStart}px)`,
-              }}
+                transform: `translateY(${bayWorldOffset}px)`,
+                '--bay-perspective': `${worldPerspectivePx}px`,
+                '--bay-origin-y': `${bayOriginY}px`,
+              } as Record<string, string>}
             >
               {/* ── Genuine CSS 3D interior — see the module doc comment.
-                  perspective lives on .case__world (this bay's ancestor,
-                  shared across the whole mounted window), so figures'
-                  translateZ and the floor/walls' fold — and each bay's
-                  own tilt relative to the others — are one consistent 3D
-                  scene, not N disconnected head-on cameras. ── */}
+                  perspective lives on THIS bay itself (--bay-perspective/
+                  --bay-origin-y above), self-contained rather than
+                  inherited from an ancestor — mathematically equivalent to
+                  one shared camera across the whole mounted window (see
+                  the FIXED_STANDOFF_MM IMPLEMENTATION NOTE), so figures'
+                  translateZ and the floor/walls' fold — and each bay's own
+                  tilt relative to the others — still compose as one
+                  consistent scene, not N disconnected head-on cameras,
+                  while letting overflow:hidden clip each bay safely. ── */}
               <div class="case__bay3d" aria-hidden="true">
                 <div class="case__interior3d">
                   <div class="case__back3d" />
@@ -566,8 +633,8 @@ export function CaseShelf({
                       below it, so it tapers in perspective agreement
                       instead of reading as a flat bar bolted to the front
                       (the case-depth-study's plinth-top technique). */}
-                  <div class="case__plinth-lip3d" style={{ top: `${bayHeightPx}px` }} />
-                  <div class="case__floor3d" style={{ top: `${bayHeightPx}px` }}>
+                  <div class="case__plinth-lip3d" style={{ top: `${shelfLineY}px` }} />
+                  <div class="case__floor3d" style={{ top: `${shelfLineY}px` }}>
                     {row.map((item) => (
                       <FloorShadow key={item.figure._id} item={item} zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT} />
                     ))}
@@ -579,19 +646,23 @@ export function CaseShelf({
                   figure's X/Y/Z is set per item on .shelf-figure so its
                   feet land exactly where its own shadow sits (see
                   ShelfFigure's doc comment). preserve-3d so the shared
-                  perspective above reaches each figure's transform. */}
+                  perspective above reaches each figure's transform.
+                  Nameplates (labels on) render as SEPARATE sibling elements
+                  (ShelfPlate), not children of the figure button — they
+                  pin to the shelf's own front edge at z=0, independent of
+                  how far back their figure recedes (see ShelfPlate's doc
+                  comment). */}
               <div class="case__row">
-                {row.map((item) => (
+                {row.map((item) => [
                   <ShelfFigure
                     key={item.figure._id}
                     item={item}
                     zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
-                    bayHeightPx={bayHeightPx}
+                    shelfLineY={shelfLineY}
                     onSelect={onSelect}
-                    labels={labels}
-                    plateZone={plateZone}
-                  />
-                ))}
+                  />,
+                  labels && <ShelfPlate key={`plate-${item.figure._id}`} item={item} shelfLineY={shelfLineY} />,
+                ])}
               </div>
               <div class="case__wash" />
             </section>
@@ -626,52 +697,54 @@ const caseStyles = `
     overflow: hidden;
   }
 
-  /* ── Shared camera for the mounted window — see the FIXED_STANDOFF_MM
-     doc comment for the full reasoning. ONE perspective for every
-     currently-mounted bay (not one per bay), so a bay's tilt genuinely
-     depends on its distance from the eye-line instead of every bay
-     getting an identical head-on camera. Positioned via
-     translateY(windowStart) — bays inside are positioned RELATIVE to
-     that, not to the list's absolute top.
-     --world-origin-y is PX, not %, deliberately — it's computed live from
-     real scroll geometry (eyeYWorldPx), and px sidesteps any dependency on
-     this element's own box height resolving correctly (which caused a
-     real bug earlier: an absolute-positioned box with only
-     absolute-positioned children doesn't gain an auto height, so a
-     percentage origin silently resolved against 0 and collapsed to the
-     top edge). */
+  /* ── Window anchor — NOT a 3D camera anymore ────────────────────────
+     Used to be the single shared perspective for every mounted bay; moved
+     back to a PER-BAY perspective below (see .case__bay) to fix a real
+     visual bug the shared version caused: with overflow:hidden removed
+     from .case__bay (needed at the time to stop the CSS Transforms spec's
+     overflow-forces-flat rule from silently killing the shared preserve-3d
+     chain), a deeply-seated figure's own projected screen position could
+     shift far enough to visually paint INTO an adjacent bay's territory —
+     nothing clipped it anymore. Per-bay perspective (self-contained,
+     one-level, no ancestor preserve-3d chain to protect) lets overflow:
+     hidden come back safely, closing that hole. This element is now just
+     the translateY(windowStart) positioning anchor bays sit relative to,
+     unrelated to the camera. */
   .case__world {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    transform-style: preserve-3d;
-    perspective: var(--world-perspective, 900px);
-    perspective-origin: 50% var(--world-origin-y, 100px);
   }
 
   /* ── Shelf bay: 3D interior + figures ──────────────────────────────── */
-  /* Virtualized list item, positioned by translateY RELATIVE to the
-     shared world above (not the list's absolute top — see .case__world).
-     Height varies per row in DYNAMIC mode (tallest occupant + margin), so
-     this is NOT a fixed-size item — tanstack/virtual-core's variable-size
-     estimateSize/measure path handles that. preserve-3d so the shared
-     perspective on .case__world passes through to this bay's own 3D
-     content instead of being flattened at this level.
-     Deliberately NOT overflow:hidden here — the CSS Transforms spec forces
-     a computed transform-style of flat on any element whose overflow isn't
-     visible, silently collapsing preserve-3d. That's not a hypothetical:
-     it's exactly what broke this rebuild's first pass — the fold geometry
-     computed correct bounding boxes but never actually painted, because
-     this rule had both overflow:hidden AND preserve-3d, and overflow won.
-     2D content that still needs clipping (figure row, wash) gets its own
-     overflow rather than relying on this ancestor. */
+  /* Virtualized list item, positioned by translateY relative to
+     .case__world (not the list's absolute top). Height varies per row in
+     DYNAMIC mode (tallest occupant + margin), so this is NOT a fixed-size
+     item — tanstack/virtual-core's variable-size estimateSize/measure
+     path handles that.
+     PER-BAY perspective + perspective-origin (--bay-perspective /
+     --bay-origin-y, set inline per bay from the SAME worldPerspectivePx
+     standoff and a per-bay-computed origin — see the component body's
+     bayOriginY comment) — mathematically equivalent to a single shared
+     camera for every point in this bay (derived, not approximated: same
+     perspective distance in both, and re-expressing the global eye-line
+     in this bay's own local frame exactly cancels the difference between
+     "one shared projection" and "N independent ones" — verify empirically
+     if this is ever touched, the same way the overflow bug was caught).
+     Self-contained (no preserve-3d needed from an ancestor), so
+     overflow:hidden is safe again — no adjacent-bay bleed, and no risk of
+     the overflow-forces-flat trap this rebuild hit earlier, because
+     nothing here depends on a preserve-3d chain reaching through this
+     element from outside it. */
   .case__bay {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    transform-style: preserve-3d;
+    overflow: hidden;
+    perspective: var(--bay-perspective, 900px);
+    perspective-origin: 50% var(--bay-origin-y, 100px);
   }
 
   .case__bay3d {
@@ -778,9 +851,9 @@ const caseStyles = `
      on .shelf-figure below), not by flexbox — see ShelfFigure's doc
      comment for why (feet must land on the same point as the figure's own
      shadow, which flexbox + a lone translateZ push couldn't guarantee).
-     preserve-3d so each figure's translate3d is projected through the
-     shared camera on .case__world alongside the floor/shadow it shares
-     coordinates with. */
+     preserve-3d so each figure's translate3d is projected through this
+     bay's own perspective (see .case__bay) alongside the floor/shadow it
+     shares coordinates with. */
   .case__row {
     position: absolute;
     inset: 0;
@@ -885,17 +958,26 @@ const caseStyles = `
     background: linear-gradient(180deg, rgba(127, 138, 152, 0.28), rgba(127, 138, 152, 0.16));
   }
 
-  /* ── Nameplate: tiny museum plaque mounted at the shelf edge ───────────
-     Width is set inline per-item (its packed slot, not its own — often much
-     narrower — figure width), so neighboring plates can grow to nearly meet
-     without ever colliding. bottom is also set inline (-plateZone): the
-     plate's TOP edge lands flush with the figure's own bottom edge and
-     grows DOWN into the enlarged shelf-lip zone — never back up over the
+  /* ── Nameplate: tiny museum plaque mounted at the shelf FRONT EDGE ──────
+     A standalone element (see ShelfPlate), not a child of the figure
+     button — position is driven ENTIRELY by its own inline
+     transform:translate3d(x, bayHeightPx, 0), computed once in JS to land
+     at the figure's own X column and the shelf's own front-lip Y, at Z=0
+     (not receded). top/left:0 here are just the reference the translate3d
+     offset is relative to, matching .shelf-figure's own pattern — no
+     left:50%/-50% centering trick anymore, since ShelfPlate already
+     computes the plate's own centered left edge directly. Width is set
+     inline per-item (its packed slot, not its own — often much narrower —
+     figure width), so neighboring plates can grow to nearly meet without
+     ever colliding. The plate's own top edge (this element's local origin)
+     lands flush with bayHeightPx — the same Y every figure's feet and the
+     shadow's own contact point already share — and grows DOWN into the
+     shelf-lip zone via its own content/padding, never back up over a
      figure's base. */
   .shelf-figure__plate {
     position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 0;
+    left: 0;
     z-index: 6;
     display: flex;
     flex-direction: column;

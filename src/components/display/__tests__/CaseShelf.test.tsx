@@ -238,13 +238,45 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     });
 
     describe('shelf-edge mounting (Ross: plates must never climb over the figure base)', () => {
-      it('mounts the plate bottom offset to exactly -PLATE_ZONE_PX, growing down from the figure edge', () => {
+      it('pins the plate to the shelf front edge at z=0 and shelfLineY — the SAME Y every figure\'s feet and the shadow\'s contact point already share — NOT riding the figure\'s own --fig-z back into the case', () => {
+        // The regression this guards: the plate used to be a DOM child of
+        // the figure button, so it inherited the button's own
+        // translate3d(..., --fig-z) and receded/foreshortened right along
+        // with a deeply-seated figure (the "plate bottom-offset varies
+        // 26-35px per figure" symptom flagged earlier). It's now a
+        // standalone sibling (ShelfPlate) with its own translate3d, pinned
+        // to z=0 regardless of how deep its figure actually sits.
+        // Note: plateY is shelfLineY (bayHeightPx - PLATE_ZONE_PX), NOT
+        // bayHeightPx itself — see the "anchors the plate at shelfLineY"
+        // test below for why those two differ once labels reserve room.
         const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
         const { container } = renderWithProviders(
           <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" labels />,
         );
+        const bay = container.querySelector('.case__bay') as HTMLElement;
         const plate = container.querySelector('.shelf-figure__plate') as HTMLElement;
-        expect(plate.style.bottom).toBe(`-${PLATE_ZONE_PX}px`);
+        const bayHeightPx = parseFloat(bay.style.height);
+        const match = plate.style.transform.match(/translate3d\(([-.\d]+)px,\s*([-.\d]+)px,\s*([-.\d]+)px\)/);
+        expect(match).not.toBeNull();
+        const [, , plateY, plateZ] = match!;
+        expect(parseFloat(plateY)).toBe(bayHeightPx - PLATE_ZONE_PX);
+        expect(parseFloat(plateZ)).toBe(0);
+      });
+
+      it('centers the plate on the SAME X column as its own figure (figX + half its width), not the flex-centering trick', () => {
+        const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+        const { container } = renderWithProviders(
+          <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" labels />,
+        );
+        const item = packLikeCaseShelf([rem])[0];
+        const plate = container.querySelector('.shelf-figure__plate') as HTMLElement;
+        const plateWidth = parseFloat(plate.style.width);
+        const match = plate.style.transform.match(/translate3d\(([-.\d]+)px,\s*([-.\d]+)px,\s*([-.\d]+)px\)/);
+        expect(match).not.toBeNull();
+        const plateLeft = parseFloat(match![1]);
+        // ROW_PADDING_X_PX (6) — same as the shadow/figure X tests above.
+        const figX = 6 + item.left;
+        expect(Math.round(plateLeft + plateWidth / 2)).toBe(Math.round(figX + item.w / 2));
       });
 
       it('grows the bay height by exactly PLATE_ZONE_PX when labels are on, vs. off', () => {
@@ -259,13 +291,16 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         expect(heightWith - heightWithout).toBe(PLATE_ZONE_PX);
       });
 
-      it('lifts every figure baseline (--fig-y) by the same PLATE_ZONE_PX the bay itself grows by', () => {
-        // Figures ground analytically now (--fig-y = bayHeightPx - h, see
-        // ShelfFigure), not via a shared row padding-bottom — labels
-        // growing the bay (computeBayHeight adds + plateZone) must still
-        // push every figure's own baseline down by the identical amount,
-        // so the floor (top: bayHeightPx) and every figure's feet stay
-        // coincident with labels on OR off.
+      it('keeps every figure baseline (--fig-y) IDENTICAL whether labels are on or off — the reserved plate room grows the bay, not the shelf position', () => {
+        // Figures ground analytically at shelfLineY = bayHeightPx -
+        // plateZone (see the component body's shelfLineY comment) — NOT
+        // bayHeightPx itself. .case__bay has overflow:hidden (the
+        // bay-bleed fix), so content positioned past the bay's own bottom
+        // edge gets silently clipped; shelfLineY keeps the shelf surface,
+        // every figure's feet, and the plate's own anchor all INSIDE the
+        // bay's box, with the plate occupying the reserved room below the
+        // (unmoved) shelf line rather than the shelf line itself shifting
+        // down to make room. So toggling labels must NOT move any figure.
         const { container: withLabels } = renderWithProviders(
           <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" labels />,
         );
@@ -278,8 +313,28 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         figsWith.forEach((fig, i) => {
           const yWith = parseFloat(fig.style.getPropertyValue('--fig-y'));
           const yWithout = parseFloat(figsWithout[i].style.getPropertyValue('--fig-y'));
-          expect(yWith - yWithout).toBe(PLATE_ZONE_PX);
+          expect(yWith).toBe(yWithout);
         });
+      });
+
+      it('anchors the plate at shelfLineY (bayHeightPx - PLATE_ZONE_PX), inside the bay\'s own clipped box, not at bayHeightPx itself', () => {
+        // The regression this guards: the plate used to anchor at
+        // bayHeightPx (the bay's own full, post-plateZone height) and grow
+        // DOWN from there — but .case__bay's own box only extends TO
+        // bayHeightPx, so a plate starting exactly there and growing
+        // further down rendered almost entirely past the bay's own
+        // overflow:hidden boundary and got silently clipped to invisible.
+        const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+        const { container } = renderWithProviders(
+          <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" labels />,
+        );
+        const bay = container.querySelector('.case__bay') as HTMLElement;
+        const plate = container.querySelector('.shelf-figure__plate') as HTMLElement;
+        const bayHeightPx = parseFloat(bay.style.height);
+        const match = plate.style.transform.match(/translate3d\(([-.\d]+)px,\s*([-.\d]+)px,\s*([-.\d]+)px\)/);
+        expect(match).not.toBeNull();
+        const plateY = parseFloat(match![2]);
+        expect(bayHeightPx - plateY).toBe(PLATE_ZONE_PX);
       });
 
       it('keeps the floor top pinned to the bay height, and every figure feet coincident with it, when labels are off', () => {
@@ -589,8 +644,10 @@ describe('CaseShelf (Display A — virtual cases)', () => {
 
       const apparentHeight = (container: HTMLElement) => {
         const btn = container.querySelector('.shelf-figure') as HTMLElement;
+        // Perspective now lives per-bay (--bay-perspective on .case__bay),
+        // not on .case__world — see the bay-bleed fix's doc comment.
         const perspective = parseFloat(
-          (container.querySelector('.case__world') as HTMLElement).style.getPropertyValue('--world-perspective'),
+          (container.querySelector('.case__bay') as HTMLElement).style.getPropertyValue('--bay-perspective'),
         );
         const h = parseFloat(btn.style.height);
         const z = parseFloat(btn.style.getPropertyValue('--fig-z'));

@@ -307,10 +307,13 @@ function ShelfFigure({
  * relative to the figure's own button — so it inherits the floor's
  * rotateX(-90) fold and correctly recedes toward the back wall, "for
  * free," the same technique the case-depth-study proved. Local top/height
- * span from the front margin back to the figure's own resolved footprint
- * depth (Ross: "stretches from z≈0 back to z=-d_fig"); local left is
- * item.left (packShelves' analytic X position) plus the row's own padding
- * offset, since this subtree isn't nested inside the padded flex row.
+ * are CENTERED on the figure's own contact Z (zPlacement.billboardZPx —
+ * the SAME Z the billboard sits at, not independently anchored to the
+ * front margin; see the shadowTop/contactLocalY comment below for why
+ * that was a real bug), spanning the figure's resolved footprint depth
+ * around that point; local left is item.left (packShelves' analytic X
+ * position) plus the row's own padding offset, since this subtree isn't
+ * nested inside the padded flex row.
  */
 function FloorShadow({ item, zPlacement }: { item: ShelfItem; zPlacement: FigureZPlacement }) {
   const { meta, w } = item;
@@ -325,6 +328,23 @@ function FloorShadow({ item, zPlacement }: { item: ShelfItem; zPlacement: Figure
   const shadowLeft = Math.round(centerX - shadowW / 2);
   const shadowDepth = Math.max(8, Math.round(zPlacement.footprintDepthPx));
 
+  // Contact Z: the billboard's own translateZ (zPlacement.billboardZPx),
+  // NOT independently anchored to FRONT_MARGIN_PX (Ross's bug — the
+  // shadow used to always start at the front glass regardless of how deep
+  // the figure was actually seated, so the billboard sat at the shadow's
+  // BACK edge instead of its contact point; under the shared camera that
+  // Z mismatch reads as a vertical offset that's zero only at the
+  // eye-line shelf and grows with distance from it — "all but one shelf
+  // too high or too low"). The floor's rotateX fold maps local-Y (this
+  // element's own pre-fold top/height) to world -Z, so a world-Z of `z`
+  // is local-Y `-z`; CENTERING the shadow's span on that point (not
+  // anchoring either edge to it) matches the shadow's own symmetric
+  // radial-gradient shape (see .case__floor-shadow — centered at 50% 50%,
+  // no directional near/far bias) and keeps figure feet + shadow
+  // coincident at every depth, not just one.
+  const contactLocalY = -zPlacement.billboardZPx;
+  const shadowTop = Math.round(contactLocalY - shadowDepth / 2);
+
   return (
     <div
       class="case__floor-shadow"
@@ -332,7 +352,7 @@ function FloorShadow({ item, zPlacement }: { item: ShelfItem; zPlacement: Figure
       style={{
         left: `${shadowLeft}px`,
         width: `${shadowW}px`,
-        top: `${FRONT_MARGIN_PX}px`,
+        top: `${shadowTop}px`,
         height: `${shadowDepth}px`,
         opacity: meta.baseRecovered ? undefined : 1,
       }}

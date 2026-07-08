@@ -72,6 +72,38 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     expect(parseFloat(shadow.style.left)).toBe(expectedLeft);
   });
 
+  it('centers the shadow Z-span on the SAME contact point the billboard sits at, not an independent front-margin anchor (Ross: the billboard was landing on the shadow\'s BACK edge, not its contact point — correct at exactly one shelf, wrong everywhere else)', () => {
+    // The regression this guards: the shadow's top used to be hardcoded to
+    // FRONT_MARGIN_PX regardless of the figure's own depth, while the
+    // billboard's translateZ (--fig-z) recedes by the FULL footprint depth
+    // under the default true-depth strategy — so the billboard landed at
+    // the shadow's BACK edge (FRONT_MARGIN_PX + footprintDepthPx), not its
+    // contact point. Under the shared camera that Z mismatch reads as a
+    // vertical screen offset that's only zero at the one shelf nearest the
+    // eye-line. The fix centers the shadow's span on the billboard's own
+    // contact Z instead of anchoring independently, so they can't diverge
+    // at any depth.
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(
+      <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
+    );
+    const shadow = container.querySelector('.case__floor-shadow') as HTMLElement;
+    const fig = container.querySelector('.shelf-figure') as HTMLElement;
+    const figZ = parseFloat(fig.style.getPropertyValue('--fig-z'));
+    const shadowTop = parseFloat(shadow.style.top);
+    const shadowHeight = parseFloat(shadow.style.height);
+    // The shadow's own local-Y center, converted to world-Z (the floor's
+    // rotateX fold maps local-Y -> world -Z), must match the billboard's
+    // own Z — within 1px for the two independent Math.round() calls that
+    // produce each value.
+    const shadowCenterAsWorldZ = -(shadowTop + shadowHeight / 2);
+    expect(Math.abs(shadowCenterAsWorldZ - figZ)).toBeLessThanOrEqual(1);
+    // Guard against a vacuous pass: this figure must actually have real
+    // footprint depth, or the test can't distinguish "fixed" from "the bug
+    // just never mattered because depth was 0."
+    expect(shadowHeight).toBeGreaterThan(8);
+  });
+
   it('positions the figure itself (--fig-x) on the exact same X the shadow is centered on (Ross: feet must land on the shadow, not just near it)', () => {
     // The regression this guards: figures used to be flexbox-positioned
     // (justify-content: space-evenly), which does NOT generally agree with

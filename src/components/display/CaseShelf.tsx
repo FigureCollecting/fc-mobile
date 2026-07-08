@@ -56,31 +56,51 @@ const ROW_PADDING_X_PX = 6;
  * BAY (the regression) resets that to an identical head-on camera for
  * every shelf — flat, no tilt variation, the exact bug this restores.
  *
- * Reconciled with virtualization: the camera can't be anchored to the
- * FULL (potentially huge, mostly-unmounted) virtual list — that would
- * either put the eye-line somewhere absurd for a big collection, or (if
- * pinned near the top) make far-scrolled bays skew grotesquely. Instead
- * it's anchored to the MOUNTED WINDOW (see .case__world / windowStart
- * below): only near-eye bays are ever mounted by design (virtualization),
- * so the window is inherently small and bounded — the camera moves with
- * it as the user scrolls (a shelf's tilt genuinely updates as it scrolls
- * through view), and skew stays bounded because the window itself does.
+ * The camera is a GEOMETRY COMPUTATION, not a runtime layout artifact
+ * (Ross, second pass — the first pass derived perspective distance from
+ * the mounted virtualization window's height, which drifted 943-1543px
+ * across scroll as overscan/bay-count changed; a real camera's distance
+ * from the shelf doesn't change because the browser happened to mount a
+ * different number of DOM nodes). The two camera parameters are handled
+ * separately, matching how they actually behave physically:
  *
- * Perspective distance and origin are tuned to the case-depth-study's own
- * ratio, calibrated against ITS CONTENT height, not its outer viewport: the
- * study's .interior (the analog of windowHeightPx here — the stacked
- * shelves themselves, no frame padding) is shelf-h(148) * count(5) = 740px
- * tall, driven by a 640px perspective. Its outer .viewport (860px) added
- * ~60-90px of flex-centered breathing room on top/bottom that is NOT part
- * of the content being projected, so 640/860 would understate the camera's
- * closeness — 640/740 is the ratio that actually reproduces the study's
- * feel. Re-validated against the width-ratio fingerprint from the
- * commissioned geometry model (w_back/w_front ≈ 0.6-0.8 for a realistic
- * close-viewing distance; much closer to 1.0 reads as "camera too
- * far/flat" — exactly Ross's complaint).
+ * - STANDOFF (viewer-to-front-plane distance): FIXED. Real display cases
+ *   don't get closer/farther as you scroll a page. Anchored to the
+ *   commissioned geometry model's Scenario D (cabinet_perspective_reference
+ *   .md, an IKEA Detolf at eye height 60in / standoff 30in, width-ratio
+ *   fingerprint w_back/w_front = 0.7032 — squarely in the "realistic
+ *   close viewing" 0.6-0.8 band, §10). FIXED_STANDOFF_MM converts to px
+ *   via pxPerMm, the SAME mm->px scale already anchoring figure heights
+ *   and footprint depths (case coherence — one scale for camera, cabinet,
+ *   and figures, not three independent ones).
+ *
+ * - EYE HEIGHT (perspective-origin Y): the ONE parameter that legitimately
+ *   varies — not with mounted-DOM state, but with which part of the case
+ *   the viewport is currently showing (computed live in the component body
+ *   as eyeYWorldPx, from the scroll container's real scrollTop/clientHeight
+ *   — see there for the formula). WORLD_EYE_FOCUS_FRACTION is the eye's
+ *   position as a fraction of what's currently visible, kept at the
+ *   case-depth-study's own calibration (16.5% down) so an unscrolled case
+ *   that fits entirely on screen reproduces the study's exact feel — the
+ *   fraction just gets applied to "the currently visible span" instead of
+ *   always "the whole case," so a scrolled case re-anchors smoothly and a
+ *   shelf's tilt genuinely updates (including flipping top/underside as it
+ *   crosses the eye-line) as it scrolls through view, per the geometry
+ *   model's surface-visibility rule (§3): eye above a shelf's top -> top
+ *   visible; eye below its bottom -> underside; in between -> edge-on.
+ *
+ * CSS's own `perspective`/`perspective-origin` ARE a pinhole-camera
+ * projection (perspective(d) is literally 1/(1 - z/d), the standard
+ * perspective-divide) — feeding them real, physically-grounded values
+ * accomplishes the commissioned model's projection math without a parallel
+ * hand-rolled JS projector; validated against the model by comparing this
+ * component's live width-ratio fingerprint and per-shelf tilt PATTERN
+ * (monotonic growth away from the eye-line, near-zero at it) to Scenario
+ * D's table, not by trying to reproduce Detolf's exact shelf pitch (this
+ * component's shelf spacing is data-driven from packShelves, not fixed).
  */
-const WORLD_PERSPECTIVE_RATIO = 640 / 740;
-const WORLD_ORIGIN_Y_PCT = 16.5;
+const FIXED_STANDOFF_MM = 762; // 30in — commissioned Scenario D (Detolf)
+const WORLD_EYE_FOCUS_FRACTION = 0.165;
 
 export const CASE_MOTIFS: { value: CaseMotif; label: string }[] = [
   { value: 'detolf-dark', label: 'Dark glass' },
@@ -417,24 +437,42 @@ export function CaseShelf({
   const caseHeightPx = 24 + totalBaysHeight;
   const watermarkHeightPx = Math.min(Math.round(caseHeightPx * 0.21), 120);
 
-  // ONE shared camera for the currently-mounted window of bays — see the
-  // WORLD_PERSPECTIVE_RATIO doc comment for why this is anchored to the
-  // mounted window (small, bounded) rather than the full virtual list
-  // (potentially huge). Bays are positioned RELATIVE to windowStart, not
-  // to the list's absolute top, so the world wrapper's own perspective-
-  // origin percentage lands at a sane, always-nearby point regardless of
-  // how far the user has scrolled or how large the collection is.
+  // Bays are positioned RELATIVE to windowStart (the first mounted bay's
+  // absolute offset), not to the list's absolute top, so translateY values
+  // stay small/bounded no matter how far the user has scrolled or how huge
+  // the collection is. windowHeightPx also becomes .case__world's explicit
+  // height below — a position:absolute box with only absolutely-positioned
+  // children never gains an auto height on its own, and this component
+  // used to rely on a (since-removed) percentage perspective-origin that
+  // silently broke against that zero-height box; keeping an explicit
+  // height is just good practice now that origin is px-based (see below).
   const windowStart = virtualBays.length ? virtualBays[0].start : 0;
   const windowEnd = virtualBays.length ? virtualBays[virtualBays.length - 1].end : 0;
   const windowHeightPx = Math.max(1, windowEnd - windowStart);
-  const worldPerspectivePx = Math.round(windowHeightPx * WORLD_PERSPECTIVE_RATIO);
-  // .case__world gets an explicit height (not just its children's absolute
-  // offsets) — without one, a position:absolute box with only
-  // absolutely-positioned children never gains an auto height, so
-  // perspective-origin's Y percentage silently resolves against a
-  // zero-height box and collapses to the top edge regardless of
-  // WORLD_ORIGIN_Y_PCT. Caught by measuring the live rendered box, not by
-  // any test — jsdom doesn't lay out real CSS box heights this way.
+
+  // Camera standoff: FIXED, computed from real geometry — see the
+  // FIXED_STANDOFF_MM doc comment. NOT derived from windowHeightPx/any
+  // mounted-DOM measurement, so it can't drift with scroll/overscan.
+  const worldPerspectivePx = pxPerMm > 0 ? Math.round(FIXED_STANDOFF_MM * pxPerMm) : 900;
+
+  // Eye height: the one parameter that DOES vary, tracking which part of
+  // the case the viewport is currently showing — not the mounted DOM
+  // window (which includes invisible overscan and would reintroduce the
+  // same drift as the standoff bug), but the scroll container's own real,
+  // stable scrollTop/clientHeight. visibleSpanPx is how much of the case
+  // is visible from the top of the viewport downward (clamped to what's
+  // actually left below the current scroll position, and to the whole
+  // case when it's shorter than the viewport — the "fits on screen, eye
+  // is effectively fixed like the study" case). eyeYAbsolutePx is in the
+  // list's absolute coordinate space (same space as vBay.start); subtract
+  // windowStart to land in .case__world's own local space, where the
+  // element actually lives — and express it in PX, not %, so it doesn't
+  // depend on .case__world's box height resolving correctly at all.
+  const scrollTopPx = rowVirtualizer.scrollOffset ?? 0;
+  const viewportHeightPx = scrollParent ? scrollParent.clientHeight : totalBaysHeight;
+  const visibleSpanPx = Math.max(1, Math.min(viewportHeightPx, totalBaysHeight - scrollTopPx));
+  const eyeYAbsolutePx = scrollTopPx + WORLD_EYE_FOCUS_FRACTION * visibleSpanPx;
+  const eyeYWorldPx = eyeYAbsolutePx - windowStart;
 
   return (
     <div class="case-host" ref={hostRef}>
@@ -449,7 +487,7 @@ export function CaseShelf({
             height: `${windowHeightPx}px`,
             transform: `translateY(${windowStart}px)`,
             '--world-perspective': `${worldPerspectivePx}px`,
-            '--world-origin-y': `${WORLD_ORIGIN_Y_PCT}%`,
+            '--world-origin-y': `${eyeYWorldPx}px`,
           } as Record<string, string>}
         >
         {virtualBays.map((vBay) => {
@@ -539,13 +577,20 @@ const caseStyles = `
     overflow: hidden;
   }
 
-  /* ── Shared camera for the mounted window — see the
-     WORLD_PERSPECTIVE_RATIO doc comment for the full reasoning. ONE
-     perspective for every currently-mounted bay (not one per bay), so a
-     bay's tilt genuinely depends on its distance from the eye-line
-     instead of every bay getting an identical head-on camera. Positioned
-     via translateY(windowStart) — bays inside are positioned RELATIVE to
-     that, not to the list's absolute top. */
+  /* ── Shared camera for the mounted window — see the FIXED_STANDOFF_MM
+     doc comment for the full reasoning. ONE perspective for every
+     currently-mounted bay (not one per bay), so a bay's tilt genuinely
+     depends on its distance from the eye-line instead of every bay
+     getting an identical head-on camera. Positioned via
+     translateY(windowStart) — bays inside are positioned RELATIVE to
+     that, not to the list's absolute top.
+     --world-origin-y is PX, not %, deliberately — it's computed live from
+     real scroll geometry (eyeYWorldPx), and px sidesteps any dependency on
+     this element's own box height resolving correctly (which caused a
+     real bug earlier: an absolute-positioned box with only
+     absolute-positioned children doesn't gain an auto height, so a
+     percentage origin silently resolved against 0 and collapsed to the
+     top edge). */
   .case__world {
     position: absolute;
     top: 0;
@@ -553,7 +598,7 @@ const caseStyles = `
     right: 0;
     transform-style: preserve-3d;
     perspective: var(--world-perspective, 900px);
-    perspective-origin: 50% var(--world-origin-y, 16.5%);
+    perspective-origin: 50% var(--world-origin-y, 100px);
   }
 
   /* ── Shelf bay: 3D interior + figures ──────────────────────────────── */

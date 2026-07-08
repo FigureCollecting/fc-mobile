@@ -8,7 +8,7 @@ import { getDisplayMeta } from './displayMeta';
 import { resolveRelHeights, resolveMaxHeightMm, resolveHeightMm, resolveDepthMm } from './sizeResolution';
 import { computeFigureZPlacement } from './figureDepthPlacement';
 import type { PlacementStrategy, FigureZPlacement } from './figureDepthPlacement';
-import { useBottomMarginFrac } from './alphaMargin';
+import { useBottomMarginFrac, useContactBand } from './alphaMargin';
 import { SHELF_BAND } from './density';
 import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
@@ -353,20 +353,27 @@ function ShelfPlate({ item, shelfLineY }: { item: ShelfItem; shelfLineY: number 
  * the SAME Z the billboard sits at, not independently anchored to the
  * front margin; see the shadowTop/contactLocalY comment below for why
  * that was a real bug), spanning the figure's resolved footprint depth
- * around that point; local left is item.left (packShelves' analytic X
- * position) plus the row's own padding offset, since this subtree isn't
- * nested inside the padded flex row.
+ * around that point; local left uses the MEASURED horizontal contact
+ * centroid (useContactBand — real alpha-channel measurement, see
+ * alphaMargin.ts) rather than the hand-set meta.footprintCenterX, since a
+ * figure's actual base is frequently NOT centered under its own image
+ * (Ross: Ryuko's ice base contacts the left half of her image; a
+ * 0.5-centered shadow landed under empty space beside her) — falls back to
+ * the hand-set meta field only until the async measurement resolves.
  */
 function FloorShadow({ item, zPlacement }: { item: ShelfItem; zPlacement: FigureZPlacement }) {
   const { meta, w } = item;
+  const contactBand = useContactBand(meta.matted ? item.figure.imageUrl : undefined);
   if (!meta.matted) return null;
 
   // Two-lobe contact shadow geometry from the two footprint scalars
   // (translated from shelf2.py contact_shadow): soft lobe spans 1.3x the
   // footprint; unrecovered bases get a stronger, wider synthetic grounding.
   const spread = meta.baseRecovered ? 1.3 : 1.55;
-  const shadowW = Math.round(meta.footprintWidth * spread * w);
-  const centerX = ROW_PADDING_X_PX + item.left + meta.footprintCenterX * w;
+  const footprintWidth = contactBand?.widthFrac ?? meta.footprintWidth;
+  const footprintCenterX = contactBand?.centerXFrac ?? meta.footprintCenterX;
+  const shadowW = Math.round(footprintWidth * spread * w);
+  const centerX = ROW_PADDING_X_PX + item.left + footprintCenterX * w;
   const shadowLeft = Math.round(centerX - shadowW / 2);
   const shadowDepth = Math.max(8, Math.round(zPlacement.footprintDepthPx));
 
@@ -623,46 +630,69 @@ export function CaseShelf({
                   translateZ and the floor/walls' fold — and each bay's own
                   tilt relative to the others — still compose as one
                   consistent scene, not N disconnected head-on cameras,
-                  while letting overflow:hidden clip each bay safely. ── */}
-              <div class="case__bay3d" aria-hidden="true">
-                <div class="case__interior3d">
-                  <div class="case__back3d" />
-                  <div class="case__wall-left3d" />
-                  <div class="case__wall-right3d" />
-                  {/* Short hinge-folded lip, same fold+origin as the floor
-                      below it, so it tapers in perspective agreement
-                      instead of reading as a flat bar bolted to the front
-                      (the case-depth-study's plinth-top technique). */}
-                  <div class="case__plinth-lip3d" style={{ top: `${shelfLineY}px` }} />
-                  <div class="case__floor3d" style={{ top: `${shelfLineY}px` }}>
-                    {row.map((item) => (
-                      <FloorShadow key={item.figure._id} item={item} zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT} />
-                    ))}
-                  </div>
-                  <div class="case__plinth3d" />
+                  while letting overflow:hidden clip each bay safely.
+
+                  .case__interior3d is now the ONE shared preserve-3d
+                  subtree for BOTH the shelf shell (back/walls/floor/
+                  plinth) AND the figures/plates — they used to be TWO
+                  separate preserve-3d subtrees (.case__bay3d and
+                  .case__row, siblings under this same flat .case__bay),
+                  which meant neither could occlude the other: a "flat"
+                  parent renders each preserve-3d child as an independently
+                  flattened layer and just composites them in DOM order,
+                  never truly Z-sorting content from one against the other
+                  (Ross: a figure's own base should be hidden behind the
+                  shelf's front lip/floor when the shelf is viewed from an
+                  angle that would physically block that sightline — opaque
+                  motifs hard-occlude, the translucent glass motif's own
+                  floor tint shows the figure dimmed through it — and
+                  neither could happen while they were separate subtrees).
+                  Nesting the figures INSIDE this same subtree instead lets
+                  the browser's real 3D depth-sort do that for free — no
+                  per-shelf clip math, the boundary falls out of the
+                  perspective. aria-hidden moved from the old wrapper onto
+                  each individual decorative element instead, since
+                  .case__row's interactive figure buttons are now its
+                  siblings, not descendants of an aria-hidden ancestor. ── */}
+              <div class="case__interior3d">
+                <div class="case__back3d" aria-hidden="true" />
+                <div class="case__wall-left3d" aria-hidden="true" />
+                <div class="case__wall-right3d" aria-hidden="true" />
+                {/* Short hinge-folded lip, same fold+origin as the floor
+                    below it, so it tapers in perspective agreement
+                    instead of reading as a flat bar bolted to the front
+                    (the case-depth-study's plinth-top technique). */}
+                <div class="case__plinth-lip3d" aria-hidden="true" style={{ top: `${shelfLineY}px` }} />
+                <div class="case__floor3d" aria-hidden="true" style={{ top: `${shelfLineY}px` }}>
+                  {row.map((item) => (
+                    <FloorShadow key={item.figure._id} item={item} zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT} />
+                  ))}
                 </div>
-              </div>
-              {/* Analytically positioned (translate3d), not flexbox — each
-                  figure's X/Y/Z is set per item on .shelf-figure so its
-                  feet land exactly where its own shadow sits (see
-                  ShelfFigure's doc comment). preserve-3d so the shared
-                  perspective above reaches each figure's transform.
-                  Nameplates (labels on) render as SEPARATE sibling elements
-                  (ShelfPlate), not children of the figure button — they
-                  pin to the shelf's own front edge at z=0, independent of
-                  how far back their figure recedes (see ShelfPlate's doc
-                  comment). */}
-              <div class="case__row">
-                {row.map((item) => [
-                  <ShelfFigure
-                    key={item.figure._id}
-                    item={item}
-                    zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
-                    shelfLineY={shelfLineY}
-                    onSelect={onSelect}
-                  />,
-                  labels && <ShelfPlate key={`plate-${item.figure._id}`} item={item} shelfLineY={shelfLineY} />,
-                ])}
+                <div class="case__plinth3d" aria-hidden="true" />
+                {/* Analytically positioned (translate3d), not flexbox — each
+                    figure's X/Y/Z is set per item on .shelf-figure so its
+                    feet land exactly where its own shadow sits (see
+                    ShelfFigure's doc comment). Nameplates (labels on)
+                    render as SEPARATE sibling elements (ShelfPlate), not
+                    children of the figure button — they pin to the
+                    shelf's own front edge at z=0, independent of how far
+                    back their figure recedes (see ShelfPlate's doc
+                    comment) — and at z=0 they're the closest thing to the
+                    camera in this whole bay, so the real 3D sort above
+                    keeps them in front of the occluder rather than behind
+                    it. */}
+                <div class="case__row">
+                  {row.map((item) => [
+                    <ShelfFigure
+                      key={item.figure._id}
+                      item={item}
+                      zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
+                      shelfLineY={shelfLineY}
+                      onSelect={onSelect}
+                    />,
+                    labels && <ShelfPlate key={`plate-${item.figure._id}`} item={item} shelfLineY={shelfLineY} />,
+                  ])}
+                </div>
               </div>
               <div class="case__wash" />
             </section>
@@ -747,12 +777,9 @@ const caseStyles = `
     perspective-origin: 50% var(--bay-origin-y, 100px);
   }
 
-  .case__bay3d {
-    position: absolute;
-    inset: 0;
-    transform-style: preserve-3d;
-  }
-
+  /* The ONE shared preserve-3d subtree for this bay's shelf shell AND its
+     figures/plates (see the JSX comment above for why they used to be two
+     separate subtrees and why that broke occlusion). */
   .case__interior3d {
     position: absolute;
     inset: 0;
@@ -851,13 +878,15 @@ const caseStyles = `
      on .shelf-figure below), not by flexbox — see ShelfFigure's doc
      comment for why (feet must land on the same point as the figure's own
      shadow, which flexbox + a lone translateZ push couldn't guarantee).
-     preserve-3d so each figure's translate3d is projected through this
-     bay's own perspective (see .case__bay) alongside the floor/shadow it
-     shares coordinates with. */
+     preserve-3d so each figure's translate3d composes in the SAME 3D
+     space as .case__interior3d's other children (the shelf shell) — this
+     is nested INSIDE .case__interior3d now, not a separate sibling
+     subtree, specifically so real 3D depth-sorting can occlude a figure
+     against the shelf (see the JSX comment above .case__interior3d).
+     No z-index — genuine 3D depth order governs here, not paint order. */
   .case__row {
     position: absolute;
     inset: 0;
-    z-index: 2;
     transform-style: preserve-3d;
   }
 

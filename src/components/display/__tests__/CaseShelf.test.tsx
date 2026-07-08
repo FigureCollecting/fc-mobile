@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 
-vi.mock('../alphaMargin', () => ({ useBottomMarginFrac: vi.fn(() => 0) }));
+vi.mock('../alphaMargin', () => ({ useBottomMarginFrac: vi.fn(() => 0), useContactBand: vi.fn(() => null) }));
 
 import { CaseShelf, PLATE_ZONE_PX } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
@@ -377,18 +377,31 @@ describe('CaseShelf (Display A — virtual cases)', () => {
   });
 
   describe('case depth cues (genuine CSS 3D interior — perspective + preserve-3d)', () => {
-    it('renders a full 3D interior per bay: back wall, both side walls, floor, and plinth', () => {
+    it('renders a full 3D interior per bay: back wall, both side walls, floor, and plinth — each decorative piece aria-hidden individually, not via a wrapper', () => {
+      // .case__bay3d (a separate aria-hidden wrapper) is gone — the shelf
+      // shell and the figures now share ONE preserve-3d subtree
+      // (.case__interior3d) so real 3D depth-sorting can occlude a figure
+      // against the shelf (see the JSX comment in CaseShelf.tsx). Since
+      // interactive figure buttons are now SIBLINGS of the decorative
+      // pieces (not descendants of an aria-hidden ancestor), each
+      // decorative element carries aria-hidden itself instead.
       const { container } = renderWithProviders(
         <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
       );
-      const bay3d = container.querySelector('.case__bay3d');
-      expect(bay3d).not.toBeNull();
-      expect(bay3d!.getAttribute('aria-hidden')).toBe('true');
-      expect(container.querySelector('.case__back3d')).not.toBeNull();
-      expect(container.querySelector('.case__wall-left3d')).not.toBeNull();
-      expect(container.querySelector('.case__wall-right3d')).not.toBeNull();
-      expect(container.querySelector('.case__floor3d')).not.toBeNull();
-      expect(container.querySelector('.case__plinth3d')).not.toBeNull();
+      expect(container.querySelector('.case__bay3d')).toBeNull();
+      const interior3d = container.querySelector('.case__interior3d');
+      expect(interior3d).not.toBeNull();
+      for (const selector of ['.case__back3d', '.case__wall-left3d', '.case__wall-right3d', '.case__floor3d', '.case__plinth3d']) {
+        const el = container.querySelector(selector);
+        expect(el).not.toBeNull();
+        expect(el!.getAttribute('aria-hidden')).toBe('true');
+      }
+      // The figure buttons must NOT be hidden — they're siblings of the
+      // decorative pieces now, sharing interior3d as their common parent,
+      // not descendants of an aria-hidden ancestor.
+      const figureButton = container.querySelector('.shelf-figure');
+      expect(figureButton).not.toBeNull();
+      expect(figureButton!.closest('[aria-hidden="true"]')).toBeNull();
     });
 
     it('renders the 3D interior for every motif', () => {

@@ -5,7 +5,7 @@ import type { VirtualItem } from '@tanstack/virtual-core';
 import { packShelves } from './packShelves';
 import type { ShelfItem, ShelfRow } from './packShelves';
 import { getDisplayMeta } from './displayMeta';
-import { resolveRelHeights, resolveMaxHeightMm, resolveHeightMm, resolveDepthMm } from './sizeResolution';
+import { resolveRelHeights, resolveHeightMm, resolveDepthMm } from './sizeResolution';
 import { computeFigureZPlacement } from './figureDepthPlacement';
 import type { PlacementStrategy, FigureZPlacement } from './figureDepthPlacement';
 import { useBottomMarginFrac, useContactBand } from './alphaMargin';
@@ -126,13 +126,14 @@ export type CaseMode = 'dynamic' | 'fixed';
 /**
  * Real cabinet inner dimensions for FIXED mode — locks the case to a real
  * profile (e.g. an IKEA Detolf's true inner shelf W x D x H) so figures
- * render at true physical scale and violators (too tall for the
- * compartment) can be flagged. NOT wired up yet — this is the structural
+ * render at true physical scale. innerHeightMm now DOES drive sizing (the
+ * mm->px scale anchor, see compartmentMm below) — a figure taller than the
+ * compartment overflows its shelf band rather than being silently resized
+ * to fit. What's still NOT wired up: actually FLAGGING a violator (a
+ * dedicated "won't fit" UI treatment) — that's the remaining structural
  * seam for the "will this figure fit my Detolf?" feature
- * (figure_sizing_and_case_dimension_model); caseMode/caseProfile are
- * accepted and threaded through so that feature can land without another
- * prop-plumbing pass, but fixed mode currently renders identically to
- * dynamic mode.
+ * (figure_sizing_and_case_dimension_model); today an oversized figure just
+ * renders larger than its neighbors, with no separate warning affordance.
  */
 export interface CaseProfile {
   name: string;
@@ -145,12 +146,13 @@ export interface CaseProfile {
 /**
  * A real IKEA Detolf, computed from the commissioned geometry model
  * (cabinet_perspective_reference.md) rather than a rough estimate — the
- * first concrete CaseProfile, still voided/unconsumed like caseMode above,
- * but now grounded in real numbers instead of being purely structural.
- * Exterior 16.93 x 14.57 x 64.17in per IKEA's own listing; interior usable
- * width/depth and per-shelf clear opening height are collector-measured
- * (IKEA doesn't publish them) — see the doc's §12 sources and its
- * "Geometry ground truth — IKEA Detolf" table for the full derivation.
+ * first concrete CaseProfile, now consumed by FIXED mode as the sizing
+ * anchor (see compartmentMm), grounded in real numbers rather than a rough
+ * estimate. Exterior 16.93 x 14.57 x 64.17in per IKEA's own listing;
+ * interior usable width/depth and per-shelf clear opening height are
+ * collector-measured (IKEA doesn't publish them) — see the doc's §12
+ * sources and its "Geometry ground truth — IKEA Detolf" table for the full
+ * derivation.
  */
 export const DETOLF_PROFILE: CaseProfile = {
   name: 'IKEA Detolf',
@@ -158,6 +160,21 @@ export const DETOLF_PROFILE: CaseProfile = {
   innerDepthMm: 330, // usable depth ~13in (330mm, collector-measured)
   innerHeightMm: 370, // clear opening ~14.57-14.76in per shelf level
 };
+
+/**
+ * DYNAMIC mode's virtual compartment height (mm) — the sizing anchor when
+ * there's no real caseProfile to lock to. Deliberately more generous than
+ * DETOLF_PROFILE's real 370mm shelf (dynamic mode isn't modeling any one
+ * real cabinet, so it shouldn't inherit a specific cabinet's cramped
+ * headroom) while still landing typical figures at roughly the sizes they
+ * rendered at under the old figure-anchored scale: a labeled ~470mm figure
+ * (a large but ordinary statue-scale piece) lands at relHeight 1.0, filling
+ * the band, same as it would have as "the tallest figure" under the old
+ * model — chosen so this rearchitecture (case-anchored, not figure-
+ * anchored — see sizeResolution's resolveRelHeights doc) isn't also a
+ * jarring across-the-board resize for typical collections.
+ */
+export const DEFAULT_DYNAMIC_COMPARTMENT_MM = 470;
 
 interface CaseShelfProps {
   figures: Figure[];
@@ -446,28 +463,36 @@ export function CaseShelf({
   caseProfile,
   placementStrategy = 'true-depth',
 }: CaseShelfProps) {
-  void caseMode;
-  void caseProfile; // future-stub seam — see CaseProfile doc comment
-
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const band = SHELF_BAND[density];
   const caseD = Math.round(band * 0.85);
   const plateZone = labels ? PLATE_ZONE_PX : 0;
 
+  // The mm->px scale anchor is the COMPARTMENT, not the figures displayed
+  // in it (Ross's correction — the earlier design anchored to the tallest
+  // figure in the current set, so one scraper-corrupted heightMm became
+  // the anchor and silently shrank every other figure toward 0px). Fixed
+  // mode locks to the real caseProfile's own shelf height; dynamic mode
+  // uses a documented generous default (DEFAULT_DYNAMIC_COMPARTMENT_MM).
+  // Falls back to the dynamic default if 'fixed' is requested without a
+  // profile — degrade gracefully, never crash on a missing prop.
+  const compartmentMm = caseMode === 'fixed' && caseProfile ? caseProfile.innerHeightMm : DEFAULT_DYNAMIC_COMPARTMENT_MM;
+  const pxPerMm = band / compartmentMm;
+
   // ONE shared physical-height scale across the whole displayed set (not
   // renormalized per row) — a given figure always renders at the same
-  // relative size regardless of which shelf it lands on. Recomputed only
-  // when the figure set itself changes. maxHeightMm doubles as the
-  // anchor for the depth (mm -> px) scale below — "one shared mm->px scale
-  // across figures AND case" (case coherence principle).
-  const relHeights = useMemo(() => resolveRelHeights(figures, getDisplayMeta), [figures]);
+  // absolute physical size regardless of which shelf it lands on or what
+  // else is in the collection (case-anchored, see resolveRelHeights doc).
+  // Recomputed only when the figure set or the anchor itself changes.
+  // compartmentMm doubles as the anchor for the depth (mm -> px) scale
+  // below — "one shared mm->px scale across figures AND case" (case
+  // coherence principle).
+  const relHeights = useMemo(() => resolveRelHeights(figures, getDisplayMeta, compartmentMm), [figures, compartmentMm]);
   const getRelHeight = useMemo(
     () => (figure: Figure, meta: ReturnType<typeof getDisplayMeta>) => relHeights.get(figure._id) ?? meta.relHeight,
     [relHeights],
   );
-  const maxHeightMm = useMemo(() => resolveMaxHeightMm(figures), [figures]);
-  const pxPerMm = maxHeightMm > 0 ? band / maxHeightMm : 0;
 
   // Frame pillars eat ~12px a side; row padding eats a bit more.
   const rows = useMemo(

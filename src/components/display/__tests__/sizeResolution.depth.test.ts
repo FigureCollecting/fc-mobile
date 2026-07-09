@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { resolveDepthMm, resolveMaxHeightMm } from '../sizeResolution';
+import { resolveDepthMm } from '../sizeResolution';
 import type { FigureDisplayMeta } from '../displayMeta';
 
 function fig(overrides: Partial<Figure> & { _id: string }): Figure {
@@ -84,23 +84,5 @@ describe('resolveDepthMm (footprint-depth resolution tree)', () => {
   it('prefers labeled depthMm over a labeled widthMm-derived estimate', () => {
     const f = fig({ _id: 'a', dimensions: { depthMm: 90, widthMm: 500 } });
     expect(resolveDepthMm(f, META, 300).depthMm).toBe(90);
-  });
-});
-
-describe('resolveMaxHeightMm (shared mm->px scale anchor)', () => {
-  it('returns the tallest resolvable heightMm across the set', () => {
-    const a = fig({ _id: 'a', dimensions: { heightMm: 470 } });
-    const b = fig({ _id: 'b', dimensions: { heightMm: 130 } });
-    expect(resolveMaxHeightMm([a, b])).toBe(470);
-  });
-
-  it('returns 0 when nothing in the set has a resolvable height', () => {
-    const figures = [fig({ _id: 'a' }), fig({ _id: 'b' })];
-    expect(resolveMaxHeightMm(figures)).toBe(0);
-  });
-
-  it('never throws on an empty figure list', () => {
-    expect(() => resolveMaxHeightMm([])).not.toThrow();
-    expect(resolveMaxHeightMm([])).toBe(0);
   });
 });

@@ -5,7 +5,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 
 vi.mock('../alphaMargin', () => ({ useBottomMarginFrac: vi.fn(() => 0), useContactBand: vi.fn(() => null) }));
 
-import { CaseShelf, PLATE_ZONE_PX } from '../CaseShelf';
+import { CaseShelf, PLATE_ZONE_PX, DEFAULT_DYNAMIC_COMPARTMENT_MM, DETOLF_PROFILE } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { useBottomMarginFrac } from '../alphaMargin';
@@ -20,7 +20,7 @@ import { getDisplayMeta } from '../displayMeta';
  *  robust to formula tweaks, not a duplicated (and driftable) constant. */
 function packLikeCaseShelf(figures: Figure[], density: 'compact' = 'compact') {
   const band = SHELF_BAND[density];
-  const relHeights = resolveRelHeights(figures, getDisplayMeta);
+  const relHeights = resolveRelHeights(figures, getDisplayMeta, DEFAULT_DYNAMIC_COMPARTMENT_MM);
   const getRelHeight = (figure: Figure, meta: ReturnType<typeof getDisplayMeta>) => relHeights.get(figure._id) ?? meta.relHeight;
   return packShelves(figures, Math.max(160, 360 - 48), band, 8, getRelHeight)[0];
 }
@@ -454,19 +454,23 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     });
 
     it('gives a bay whose tallest occupant is short a shorter bay than one whose tallest occupant is tall (dynamic per-row height)', async () => {
-      // A narrow, controlled container width so two copies of the tall
-      // figure exactly fill row 1 (forcing the short figure onto row 2
-      // alone) — both figures are in the SAME displayed set throughout, so
-      // the shared scale genuinely differentiates their heights (unlike
-      // comparing two isolated single-figure renders, where each figure
-      // would trivially be "the tallest" of its own singleton set).
+      // packShelves' usable width is floored at 160px regardless of
+      // container width (Math.max(160, width - 48)), so under
+      // case-anchored sizing (470mm anchor) two normal fixtures are too
+      // small to reliably straddle that floor. Use one synthetic figure
+      // taller than the anchor instead — it OVERFLOWS to h=220/w=179 (see
+      // the overflow test above), alone exceeding the 160px floor, so it
+      // occupies row 1 by itself (the first item in a row is always
+      // placed) and pushes nendo (100mm, floored to MIN_REL_HEIGHT,
+      // h=29/w=28) onto row 2 alone: 179+8+28=215 > 160.
       vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
-        return this.classList.contains('case-host') ? 248 : 0;
+        return this.classList.contains('case-host') ? 200 : 0;
       });
-      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm, tallest fixture
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const oversized: Figure = { ...darkAngel, _id: 'fx-oversized', dimensions: { heightMm: 900 } };
       const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!; // 100mm, shortest fixture
       const { container } = renderWithProviders(
-        <CaseShelf figures={[darkAngel, { ...darkAngel, _id: 'fx-dark-angel-2' }, nendo]} motif="detolf-dark" density="compact" />,
+        <CaseShelf figures={[oversized, nendo]} motif="detolf-dark" density="compact" />,
       );
       await waitFor(() => {
         const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
@@ -481,19 +485,21 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     });
   });
 
-  describe('proportional physical-height sizing (relative to the displayed set, not a fixed per-figure default)', () => {
-    it('fills the band for the tallest labeled figure in the set, and scales a shorter one down proportionally', () => {
-      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm — tallest fixture
-      const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!; // 100mm — shortest fixture
+  describe('proportional physical-height sizing (CASE-anchored — Ross\'s correction, not anchored to the tallest figure in the displayed set)', () => {
+    it("renders each figure's height from its OWN real mm against the case's compartment anchor, independent of other figures in the set", () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm
+      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!; // 230mm
       const { container } = renderWithProviders(
-        <CaseShelf figures={[darkAngel, nendo]} motif="detolf-dark" density="compact" />,
+        <CaseShelf figures={[darkAngel, rem]} motif="detolf-dark" density="compact" />,
       );
       const buttons = Array.from(container.querySelectorAll('.shelf-figure')) as HTMLElement[];
-      expect(parseFloat(buttons[0].style.height)).toBe(SHELF_BAND.compact);
-      expect(parseFloat(buttons[1].style.height)).toBe(Math.round((100 / 260) * SHELF_BAND.compact));
+      // DEFAULT_DYNAMIC_COMPARTMENT_MM (470mm), NOT darkAngel's own 260mm —
+      // neither figure fills the band, both scale off the fixed anchor.
+      expect(parseFloat(buttons[0].style.height)).toBe(Math.round((260 / DEFAULT_DYNAMIC_COMPARTMENT_MM) * SHELF_BAND.compact));
+      expect(parseFloat(buttons[1].style.height)).toBe(Math.round((230 / DEFAULT_DYNAMIC_COMPARTMENT_MM) * SHELF_BAND.compact));
     });
 
-    it('recomputes the scale when the displayed set changes ("rolling", not frozen forever)', () => {
+    it('does NOT recompute a figure\'s size when the displayed set changes — case-anchored, not figure-anchored ("rolling" is gone by design)', () => {
       const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!; // 230mm
       const nendo = FIXTURE_FIGURES.find((f) => f._id === 'fx-miku-nendo')!; // 100mm
       const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm
@@ -505,9 +511,21 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       );
       const nendoAlone = parseFloat((pairOnly.querySelectorAll('.shelf-figure')[1] as HTMLElement).style.height);
       const nendoWithTaller = parseFloat((withTaller.querySelectorAll('.shelf-figure')[1] as HTMLElement).style.height);
-      // Same physical figure, smaller RELATIVE size once a taller figure
-      // joins the displayed set — proof the scale isn't per-figure-fixed.
-      expect(nendoWithTaller).toBeLessThan(nendoAlone);
+      // Same physical figure, SAME rendered size regardless of a taller
+      // figure joining the set — the old figure-anchored design (and the
+      // bug it enabled: one garbage heightMm shrinking everyone else) is
+      // gone; the anchor comes from the case, not the set.
+      expect(nendoWithTaller).toBe(nendoAlone);
+    });
+
+    it('a figure taller than the compartment anchor overflows its shelf band rather than being clamped to fit', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const oversized: Figure = { ...darkAngel, _id: 'fx-oversized', dimensions: { heightMm: 700 } }; // > 470mm anchor
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[oversized]} motif="detolf-dark" density="compact" />,
+      );
+      const btn = container.querySelector('.shelf-figure') as HTMLElement;
+      expect(parseFloat(btn.style.height)).toBeGreaterThan(SHELF_BAND.compact);
     });
   });
 
@@ -677,7 +695,7 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     });
   });
 
-  describe('caseMode / caseProfile (future-stub seam for the fixed-case fit-check feature)', () => {
+  describe('caseMode / caseProfile (sizing anchor is wired; violator-flagging UI remains a future seam)', () => {
     it('defaults to dynamic mode and renders normally with no caseMode prop', () => {
       const { container } = renderWithProviders(
         <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />,
@@ -685,13 +703,43 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       expect(container.querySelectorAll('.shelf-figure')).toHaveLength(FIXTURE_FIGURES.length);
     });
 
-    it('accepts caseMode="fixed" and a caseProfile without crashing (not fully wired yet)', () => {
-      const profile = { name: 'IKEA Detolf', innerWidthMm: 340, innerDepthMm: 320, innerHeightMm: 330 };
+    it('accepts caseMode="fixed" and a caseProfile without crashing', () => {
       expect(() =>
         renderWithProviders(
-          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={profile} />,
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={DETOLF_PROFILE} />,
         ),
       ).not.toThrow();
+    });
+
+    it("fixed mode anchors sizing to the real caseProfile's innerHeightMm, not the dynamic default — genuinely wired, not a stub", () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm
+      const { container: dynamic } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: fixed } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={DETOLF_PROFILE} />,
+      );
+      const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
+      const fixedHeight = parseFloat((fixed.querySelector('.shelf-figure') as HTMLElement).style.height);
+      // DETOLF_PROFILE.innerHeightMm (370) != DEFAULT_DYNAMIC_COMPARTMENT_MM
+      // (470) — same figure, different anchor, must render at a different
+      // (larger, since 370 < 470) size in fixed mode.
+      expect(fixedHeight).toBeGreaterThan(dynamicHeight);
+      expect(dynamicHeight).toBe(Math.round((260 / DEFAULT_DYNAMIC_COMPARTMENT_MM) * SHELF_BAND.compact));
+      expect(fixedHeight).toBe(Math.round((260 / DETOLF_PROFILE.innerHeightMm) * SHELF_BAND.compact));
+    });
+
+    it('falls back to the dynamic anchor if caseMode="fixed" is passed without a caseProfile — degrades gracefully, never crashes', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const { container: dynamic } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: fixedNoProfile } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseMode="fixed" />,
+      );
+      const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
+      const fixedNoProfileHeight = parseFloat((fixedNoProfile.querySelector('.shelf-figure') as HTMLElement).style.height);
+      expect(fixedNoProfileHeight).toBe(dynamicHeight);
     });
   });
 });

@@ -15,11 +15,12 @@ const MIN_REL_HEIGHT = 0.25;
 
 /**
  * No real figure exceeds roughly 2000mm (a large 1/1 life-size statue tops
- * out around ~1700mm) — this ceiling protects the shared scale anchor
- * (resolveMaxHeightMm) from scraper-corrupted dimension data, notably the
- * pre-fix Cheerio concat bug that produced values like "660580570" from
- * concatenated H/W/D strings. One poisoned heightMm must never become the
- * anchor that scales every other figure in the set down to ~0px.
+ * out around ~1700mm) — a SECONDARY safety net, not the primary defense
+ * (that's case-anchoring itself, below): a resolvable heightMm above this
+ * is scraper-corrupted data (notably the pre-fix Cheerio concat bug that
+ * produced values like "660580570" from concatenated H/W/D strings), and
+ * gets capped here so it renders merely gargantuan rather than blowing the
+ * row/virtualizer layout math up with an effectively-infinite px height.
  */
 const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
 
@@ -65,63 +66,43 @@ export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
 }
 
 /**
- * The tallest resolvable physical height (mm) across a figure set — the
- * anchor for the ONE shared mm->px scale used across figures AND the case
- * (figure_sizing_and_case_dimension_model's "case coherence" principle).
- * Both resolveRelHeights (height) and resolveDepthMm's caller (depth) key
- * off this same anchor, so a figure's rendered footprint depth and its
- * rendered height come from the identical scale, not two independent ones.
- * 0 when nothing in the set has a resolvable height.
+ * Compute each figure's relHeight — its resolved physical height as a
+ * fraction of `anchorMm` (1.0 == exactly fills the compartment) — CASE-
+ * anchored, not figure-anchored (Ross's correction, replacing an earlier
+ * design that anchored to the tallest figure IN THE DISPLAYED SET, which
+ * meant one scraper-corrupted heightMm became the anchor and silently
+ * shrank every other figure toward 0). `anchorMm` is the case/compartment's
+ * own real or assumed physical height in mm — the CALLER's job (CaseShelf
+ * resolves it from caseMode/caseProfile: DETOLF_PROFILE.innerHeightMm in
+ * fixed mode, a documented default virtual-compartment height in dynamic
+ * mode) — this module only relates a figure's own mm to whatever anchor
+ * it's given, it has no opinion on cabinets.
  *
- * A resolvable height above MAX_PLAUSIBLE_HEIGHT_MM is treated as missing
- * for anchor purposes (MFC dimension data is unreliable by design — see
- * module doc): it's excluded from the max, not just capped, so a single
- * corrupted figure can't drag the shared scale toward a value no real
- * figure in the set actually has. The corrupted figure's own relHeight is
- * still computed against the resulting (sane) anchor and clamped in
- * resolveRelHeights, so it renders at the max band size rather than
- * breaking the whole set's scale.
- */
-export function resolveMaxHeightMm(figures: Figure[]): number {
-  return figures.reduce((max, figure) => {
-    const resolved = resolveHeightMm(figure);
-    if (!resolved || resolved.heightMm > MAX_PLAUSIBLE_HEIGHT_MM) return max;
-    return Math.max(max, resolved.heightMm);
-  }, 0);
-}
-
-/**
- * Compute each figure's relHeight (0..1) proportional to its resolved
- * physical height, relative to the tallest figure in the passed-in set —
- * ONE shared scale across the whole collection being displayed (not
- * renormalized per shelf row), so a figure always renders at the same
- * relative size regardless of which row it lands on. Recomputed whenever
- * the displayed set changes (it's a pure function of `figures`, memoize at
- * the call site), which is what makes it "rolling" rather than frozen.
+ * relHeight is intentionally NOT clamped to <= 1: a figure genuinely taller
+ * than the compartment is supposed to overflow it (render taller than the
+ * shelf band — in fixed mode that's a "won't fit" violator, in dynamic
+ * mode it just visibly dominates its row) rather than being quietly capped
+ * to look like it fits. MAX_PLAUSIBLE_HEIGHT_MM is the only ceiling
+ * applied, and only to reject scraper-corrupted values (see its own doc) —
+ * it still lets a real, plausible oversized figure overflow freely.
  *
  * Figures with no resolvable heightMm keep their existing FigureDisplayMeta
  * relHeight — a per-figure default, not forced onto the mm-relative scale,
  * since there's no physical data to relate it to anything else by. This is
  * the tree's final "isolated figure, default band" rung.
- *
- * The `Math.min(1, rel)` clamp below is what makes a single figure's own
- * corrupted heightMm safe even though resolveMaxHeightMm already excludes
- * it from the anchor: its ratio against the (sane) anchor is still > 1, so
- * it renders pinned to the max band size rather than oversized — the same
- * clamp that already protects the low end via MIN_REL_HEIGHT.
  */
 export function resolveRelHeights(
   figures: Figure[],
   getMeta: (figure: Figure) => FigureDisplayMeta,
+  anchorMm: number,
 ): Map<string, number> {
-  const maxMm = resolveMaxHeightMm(figures);
-
   const out = new Map<string, number>();
   for (const figure of figures) {
     const height = resolveHeightMm(figure);
-    if (height && maxMm > 0) {
-      const rel = height.heightMm / maxMm;
-      out.set(figure._id, Math.max(MIN_REL_HEIGHT, Math.min(1, rel)));
+    if (height && anchorMm > 0) {
+      const sanitizedMm = Math.min(height.heightMm, MAX_PLAUSIBLE_HEIGHT_MM);
+      const rel = sanitizedMm / anchorMm;
+      out.set(figure._id, Math.max(MIN_REL_HEIGHT, rel));
     } else {
       out.set(figure._id, getMeta(figure).relHeight);
     }

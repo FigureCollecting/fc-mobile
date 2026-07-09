@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { resolveHeightMm, resolveRelHeights } from '../sizeResolution';
+import { resolveHeightMm, resolveMaxHeightMm, resolveRelHeights } from '../sizeResolution';
 import type { FigureDisplayMeta } from '../displayMeta';
 
 function fig(overrides: Partial<Figure> & { _id: string }): Figure {
@@ -130,5 +130,33 @@ describe('resolveRelHeights (proportional physical-height sizing)', () => {
     const figures = [fig({ _id: 'a', dimensions: { heightMm: 100 } }), fig({ _id: 'b', dimensions: { heightMm: 200 } })];
     const out = resolveRelHeights(figures, getMeta);
     expect(out.size).toBe(2);
+  });
+
+  it('a scraper-corrupted concatenated heightMm does not become the anchor and shrink the rest of the set (real bug: Mahina heightMm=660580570)', () => {
+    const poisoned = fig({ _id: 'poisoned', dimensions: { heightMm: 660580570 } });
+    const normals = [
+      fig({ _id: 'n1', dimensions: { heightMm: 200 } }),
+      fig({ _id: 'n2', dimensions: { heightMm: 320 } }),
+      fig({ _id: 'n3', dimensions: { heightMm: 470 } }),
+    ];
+    const out = resolveRelHeights([poisoned, ...normals], getMeta);
+
+    // The anchor must exclude the garbage value — resolveMaxHeightMm's max
+    // across this set should be 470 (the tallest SANE figure), not the
+    // poisoned one.
+    expect(resolveMaxHeightMm([poisoned, ...normals])).toBe(470);
+
+    // Normal figures keep sane, proportional relHeights (~0.4-1.0), not
+    // crushed toward 0 by a garbage anchor.
+    for (const f of normals) {
+      const rel = out.get(f._id)!;
+      expect(rel).toBeGreaterThanOrEqual(0.4);
+      expect(rel).toBeLessThanOrEqual(1.0);
+    }
+    expect(out.get('n3')).toBe(1); // the real tallest, at the top of the band
+
+    // The poisoned figure itself renders pinned to the max band, not
+    // enormous and not near-zero.
+    expect(out.get('poisoned')).toBe(1);
   });
 });

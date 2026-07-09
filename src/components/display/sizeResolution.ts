@@ -13,6 +13,16 @@ const NOMINAL_CHARACTER_HEIGHT_MM = 1600;
  *  outlier — floor it so tap targets and visibility stay reasonable. */
 const MIN_REL_HEIGHT = 0.25;
 
+/**
+ * No real figure exceeds roughly 2000mm (a large 1/1 life-size statue tops
+ * out around ~1700mm) — this ceiling protects the shared scale anchor
+ * (resolveMaxHeightMm) from scraper-corrupted dimension data, notably the
+ * pre-fix Cheerio concat bug that produced values like "660580570" from
+ * concatenated H/W/D strings. One poisoned heightMm must never become the
+ * anchor that scales every other figure in the set down to ~0px.
+ */
+const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
+
 export type HeightSource = 'labeled' | 'scale-estimate';
 
 export interface ResolvedHeight {
@@ -62,11 +72,21 @@ export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
  * off this same anchor, so a figure's rendered footprint depth and its
  * rendered height come from the identical scale, not two independent ones.
  * 0 when nothing in the set has a resolvable height.
+ *
+ * A resolvable height above MAX_PLAUSIBLE_HEIGHT_MM is treated as missing
+ * for anchor purposes (MFC dimension data is unreliable by design — see
+ * module doc): it's excluded from the max, not just capped, so a single
+ * corrupted figure can't drag the shared scale toward a value no real
+ * figure in the set actually has. The corrupted figure's own relHeight is
+ * still computed against the resulting (sane) anchor and clamped in
+ * resolveRelHeights, so it renders at the max band size rather than
+ * breaking the whole set's scale.
  */
 export function resolveMaxHeightMm(figures: Figure[]): number {
   return figures.reduce((max, figure) => {
     const resolved = resolveHeightMm(figure);
-    return resolved ? Math.max(max, resolved.heightMm) : max;
+    if (!resolved || resolved.heightMm > MAX_PLAUSIBLE_HEIGHT_MM) return max;
+    return Math.max(max, resolved.heightMm);
   }, 0);
 }
 
@@ -83,6 +103,12 @@ export function resolveMaxHeightMm(figures: Figure[]): number {
  * relHeight — a per-figure default, not forced onto the mm-relative scale,
  * since there's no physical data to relate it to anything else by. This is
  * the tree's final "isolated figure, default band" rung.
+ *
+ * The `Math.min(1, rel)` clamp below is what makes a single figure's own
+ * corrupted heightMm safe even though resolveMaxHeightMm already excludes
+ * it from the anchor: its ratio against the (sane) anchor is still > 1, so
+ * it renders pinned to the max band size rather than oversized — the same
+ * clamp that already protects the low end via MIN_REL_HEIGHT.
  */
 export function resolveRelHeights(
   figures: Figure[],

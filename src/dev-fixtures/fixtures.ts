@@ -12,8 +12,18 @@
  */
 import type { Figure } from '@figurecollecting/fc-shared';
 
-/** Display-layer metadata for a figure image (matted or not). */
-export interface FigureDisplayMeta {
+/**
+ * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
+ * Named FixtureDisplayMeta (not FigureDisplayMeta) so it doesn't shadow
+ * fc-shared's FigureDisplayMeta API contract (src/types/figureDisplayMeta.ts)
+ * — the two are different shapes serving different purposes: this one is
+ * hand-authored per dev fixture, that one is produced by image-manager for
+ * real synced figures. displayMeta.ts's getDisplayMeta() maps the latter
+ * into the former's shape (the local render meta CaseShelf/packShelves/
+ * packJustified/sizeResolution/FigureViewer all consume) when a real
+ * figure's displayMeta is present.
+ */
+export interface FixtureDisplayMeta {
   /** Native image width in px. */
   width: number;
   /** Native image height in px. */
@@ -66,7 +76,7 @@ interface FixtureDef {
    *  these actual commercial figure lines — drives proportional sizing the
    *  same way a real synced figure's scraped dimensions would. */
   heightMm: number;
-  meta: FigureDisplayMeta;
+  meta: FixtureDisplayMeta;
 }
 
 const DEFS: FixtureDef[] = [
@@ -184,7 +194,7 @@ function toFigure(def: FixtureDef): Figure {
 export const FIXTURE_FIGURES: Figure[] = DEFS.map(toFigure);
 
 /** Display metadata keyed by figure id. */
-export const FIXTURE_META: Record<string, FigureDisplayMeta> = Object.fromEntries(
+export const FIXTURE_META: Record<string, FixtureDisplayMeta> = Object.fromEntries(
   DEFS.map((d) => [d.id, d.meta]),
 );
 

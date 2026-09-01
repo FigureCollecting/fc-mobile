@@ -63,20 +63,27 @@ Mocks:
 ## CI on forks (shift-left)
 
 Development happens on personal forks; pull requests go to `FigureCollecting/*`.
-CI on a fork follows one rule (the gate expression sits at the top of each
-workflow in `.github/workflows/`):
+CI on a fork follows one rule. The push gate (its four cases are documented in
+a comment block) sits at the top of every workflow here (`build.yml`,
+`security-scan.yml`, `codeql.yml`); this repo publishes nothing from CI.
 
-- **Feature branches on your fork run the core CI** (build + lint, dependency
-  and npm-audit scans) on every push, so problems surface before the PR is
-  opened.
+- **Feature branches on your fork run the core CI on every push**: build + lint,
+  dependency and npm-audit scans, and CodeQL, so problems surface before the PR
+  is opened.
 - **Set a fork secret `NODE_AUTH_TOKEN`** (repo Settings > Secrets and variables >
   Actions) to a classic GitHub PAT with **only** the `read:packages` scope, so
   `npm ci` can read the private `@figurecollecting/*` packages. Without it the
   install falls back to the fork's `GITHUB_TOKEN` and fails with `npm error 403`.
-  Upstream needs no such secret.
-- **`develop` and `main` on your fork are mirrors of upstream and run nothing.**
-- **Publishing (GHCR images, npm packages, GitHub releases) happens only from
-  the org**; those jobs are skipped on forks.
+  Upstream needs no such secret. The secret reaches your own pushes and PRs from
+  branches of your fork, never a PR opened from someone else's fork.
+- **`develop` and `main` on your fork are mirrors of upstream: pushes to them
+  run no jobs.** The workflows still trigger, so each sync leaves grey
+  `skipped` runs in the Actions tab; that is the gate working, not a failure.
+  Manual `workflow_dispatch` runs of `security-scan.yml` are not gated and still
+  run there, and so do scheduled runs if you enable schedules on the fork.
+  The gate compares branch names case-insensitively, so do not name a feature
+  branch `Develop` or `MAIN`.
+- **Nothing is published from this repo's CI**, on the org or on forks.
 
 ## Project conventions
 

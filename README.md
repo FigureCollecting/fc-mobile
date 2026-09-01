@@ -60,6 +60,24 @@ Mocks:
 - `src/test/setup.ts` — resets the DOM, zustand stores, localStorage, and
   fake-indexeddb between tests.
 
+## CI on forks (shift-left)
+
+Development happens on personal forks; pull requests go to `FigureCollecting/*`.
+CI on a fork follows one rule (the gate expression sits at the top of each
+workflow in `.github/workflows/`):
+
+- **Feature branches on your fork run the core CI** (build + lint, dependency
+  and npm-audit scans) on every push, so problems surface before the PR is
+  opened.
+- **Set a fork secret `NODE_AUTH_TOKEN`** (repo Settings > Secrets and variables >
+  Actions) to a classic GitHub PAT with **only** the `read:packages` scope, so
+  `npm ci` can read the private `@figurecollecting/*` packages. Without it the
+  install falls back to the fork's `GITHUB_TOKEN` and fails with `npm error 403`.
+  Upstream needs no such secret.
+- **`develop` and `main` on your fork are mirrors of upstream and run nothing.**
+- **Publishing (GHCR images, npm packages, GitHub releases) happens only from
+  the org**; those jobs are skipped on forks.
+
 ## Project conventions
 
 - Preact with `preact/compat` aliases (do not introduce React).

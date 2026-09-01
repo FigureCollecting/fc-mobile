@@ -2,7 +2,7 @@ name: CodeQL Security Analysis
 
 on:
   push:
-    branches: [main, develop]
+    branches: ['**']  # every branch; the job-level gate below decides what runs
   pull_request:
     branches: [main, develop]
   schedule:
@@ -23,8 +23,9 @@ on:
 # read:packages only) and fall back to GITHUB_TOKEN on the org; publishing
 # (GHCR push, npm publish, releases) is org-only.
 # ---------------------------------------------------------------------------
-# Trigger stays [main, develop]: CodeQL for feature branches runs on the
-# upstream PR; the gate only silences the fork develop/main mirrors.
+# The push trigger is widened like build.yml so fork feature branches get
+# CodeQL too (forks are public: code scanning is free and SARIF upload works);
+# the gate skips the fork mirrors and upstream feature branches as elsewhere.
 
 jobs:
   analyze:

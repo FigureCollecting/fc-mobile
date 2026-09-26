@@ -144,45 +144,6 @@ export function Profile() {
             </div>
           </button>
 
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/calendar')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-              </svg>
-              <span>Release Calendar</span>
-            </div>
-            <ChevronRight />
-          </button>
-
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/analytics')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 20V10" />
-                <path d="M12 20V4" />
-                <path d="M6 20v-6" />
-              </svg>
-              <span>Analytics</span>
-            </div>
-            <ChevronRight />
-          </button>
-
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/collection-dna')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2c-2.5 4-2.5 8 0 12s-2.5 8 0 12" />
-                <path d="M12 2c2.5 4 2.5 8 0 12s2.5 8 0 12" />
-                <line x1="8" y1="6" x2="16" y2="6" />
-                <line x1="7" y1="12" x2="17" y2="12" />
-                <line x1="8" y1="18" x2="16" y2="18" />
-              </svg>
-              <span>Collection DNA</span>
-            </div>
-            <ChevronRight />
-          </button>
-
           <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/import')}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -274,6 +235,23 @@ export function Profile() {
               </span>
             </button>
           )}
+        </div>
+
+        {/* Features gated until their mobile condensation pass */}
+        <div class="profile__section">
+          <h3 class="profile__section-title">Coming to Mobile</h3>
+          {['Price Tracker', 'Analytics', 'Release Calendar', 'Collection DNA'].map((feature) => (
+            <div key={feature} class="profile__item profile__item--gated" aria-disabled="true">
+              <div class="profile__item-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                <span>{feature}</span>
+              </div>
+              <span class="profile__soon-pill">after redesign</span>
+            </div>
+          ))}
         </div>
 
         {/* Account */}
@@ -519,6 +497,19 @@ const styles = `
     align-items: center;
     gap: var(--space-3);
     min-width: 0;
+  }
+
+  .profile__item--gated {
+    opacity: 0.55;
+  }
+
+  .profile__soon-pill {
+    font-size: var(--font-2xs);
+    color: var(--text-tertiary);
+    background: var(--surface-tertiary);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    white-space: nowrap;
   }
 
   .profile__item-value {

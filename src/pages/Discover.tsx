@@ -1,8 +1,10 @@
 import { useState, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useLocation } from 'wouter';
-import { Header } from '../components/layout/Header';
-import { CollectionGrid } from '../components/collection/CollectionGrid';
-import { SkeletonCard } from '../components/ui/SkeletonCard';
+import type { Figure } from '@figurecollecting/fc-shared';
+import type { SearchResult } from '@figurecollecting/fc-shared';
+import { SlimHeader } from '../components/layout/SlimHeader';
+import { JustifiedRows } from '../components/display/JustifiedRows';
+import { FigureViewer } from '../components/display/FigureViewer';
 import { ErrorState } from '../components/ui/ErrorState';
 import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
 import { useSearch } from '../hooks/useSearch';
@@ -31,6 +33,46 @@ interface SuggestionGroup {
   items: { id: string; text: string; type: 'recent' | 'manufacturer' | 'collection' }[];
 }
 
+/** Search results are catalog rows, not owned figures — adapt the shape for
+ *  the display-layer components (JustifiedRows / FigureViewer), which only
+ *  read name/imageUrl/scale/manufacturer/origin/category/companyRoles. */
+function toDisplayFigure(result: SearchResult): Figure {
+  return {
+    _id: result.id,
+    name: result.name,
+    manufacturer: result.manufacturer,
+    scale: result.scale,
+    origin: result.origin,
+    category: result.category,
+    tags: result.tags,
+    companyRoles: result.companyRoles?.map((r, i) => ({
+      companyId: `${result.id}-co-${i}`,
+      companyName: r.companyName,
+      roleId: `${result.id}-role-${i}`,
+      roleName: r.roleName,
+    })),
+    imageUrl: result.imageUrl,
+    userId: '',
+    createdAt: '',
+    updatedAt: '',
+  } as Figure;
+}
+
+/** Loading placeholder: a few pulse rows shaped like the justified layout. */
+function SkeletonRows() {
+  return (
+    <div class="discover-skeleton" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div key={i} class="discover-skeleton__row">
+          <div class="discover-skeleton__tile" style={{ width: '30%' }} />
+          <div class="discover-skeleton__tile" style={{ width: '42%' }} />
+          <div class="discover-skeleton__tile" style={{ width: '24%' }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Discover() {
   const {
     query,
@@ -48,6 +90,7 @@ export function Discover() {
   const [, setLocation] = useLocation();
   const [recentSearches, setRecentSearches] = useState<string[]>(getRecentSearches);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const online = useOnlineStatus();
 
@@ -151,29 +194,30 @@ export function Discover() {
     setRecentSearches([]);
   }, [clearRecentSearches]);
 
-  const handleResultClick = useCallback(
-    (id: string) => {
-      if (query.trim()) {
-        saveRecentSearch(query.trim());
-      }
-      setLocation(`/figure/${id}`);
+  // Tap a search result: same in-place full-screen viewer flow as the
+  // Collection page, over the current result set (not a navigation).
+  const handleResultTap = useCallback(
+    (_figure: Figure, index: number) => {
+      if (query.trim()) saveRecentSearch(query.trim());
+      setViewerIndex(index);
     },
-    [query, saveRecentSearch, setLocation],
+    [query, saveRecentSearch],
   );
 
   const showEmpty = hasSearched && !isLoading && !isError && results.length === 0;
   const showResults = hasSearched && results.length > 0;
   const showSearchError = hasSearched && !isLoading && isError && results.length === 0;
   const hasSuggestions = showSuggestions && suggestions.length > 0 && !showResults && !isLoading && !showSearchError;
+  const displayResults = useMemo(() => results.map(toDisplayFigure), [results]);
 
   return (
     <div class="page-discover">
-      <Header title="Discover" />
+      <SlimHeader context={<span>{showResults ? `Discover (${results.length})` : 'Discover'}</span>} />
 
       {/* Search bar */}
       <form class="page-discover__search" onSubmit={handleSubmit}>
         <div class="page-discover__search-input">
-          <svg class="page-discover__search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg class="page-discover__search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4.35-4.35" />
           </svg>
@@ -193,7 +237,7 @@ export function Discover() {
               onClick={() => { updateQuery(''); if (inputRef.current) inputRef.current.value = ''; setShowSuggestions(false); }}
               aria-label="Clear search"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <path d="M15 9l-6 6" />
                 <path d="M9 9l6 6" />
@@ -277,61 +321,19 @@ export function Discover() {
         )}
 
         {/* Loading skeleton */}
-        {isLoading && (
-          <CollectionGrid>
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-            <SkeletonCard />
-          </CollectionGrid>
-        )}
+        {isLoading && <SkeletonRows />}
 
-        {/* Results */}
+        {/* Results — condensed justified-rows, same tap-to-viewer flow as Collection */}
         {showResults && (
           <div class="page-discover__results">
-            <p class="page-discover__results-count">
-              {results.length} result{results.length !== 1 ? 's' : ''}
-            </p>
-            <CollectionGrid>
-              {results.map((result) => (
-                <button
-                  key={result.id}
-                  class="figure-card"
-                  onClick={() => handleResultClick(result.id)}
-                  type="button"
-                >
-                  <div class="figure-card__image-wrapper">
-                    {result.imageUrl ? (
-                      <img
-                        class="figure-card__image"
-                        src={result.imageUrl}
-                        alt={result.name}
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div class="figure-card__placeholder">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5">
-                          <rect x="3" y="3" width="18" height="18" rx="2" />
-                          <circle cx="8.5" cy="8.5" r="1.5" />
-                          <path d="M21 15l-5-5L5 21" />
-                        </svg>
-                      </div>
-                    )}
-                  </div>
-                  <div class="figure-card__info">
-                    <span class="figure-card__name">{result.name}</span>
-                    {result.origin && <span class="figure-card__series">{result.origin}</span>}
-                  </div>
-                </button>
-              ))}
-            </CollectionGrid>
+            <JustifiedRows figures={displayResults} density="compact" onSelect={handleResultTap} />
           </div>
         )}
 
         {/* Empty state */}
         {showEmpty && (
           <div class="page-discover__empty">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="7" />
               <path d="M21 21l-4.35-4.35" />
             </svg>
@@ -348,19 +350,27 @@ export function Discover() {
         )}
       </div>
 
+      {viewerIndex !== null && (
+        <FigureViewer
+          figures={displayResults}
+          index={viewerIndex}
+          onClose={() => setViewerIndex(null)}
+        />
+      )}
+
       <style>{`
         .page-discover__search {
-          padding: 0 var(--space-4) var(--space-4);
+          padding: 0 var(--space-page) var(--space-2);
         }
 
         .page-discover__search-input {
           display: flex;
           align-items: center;
-          gap: var(--space-3);
+          gap: var(--space-2);
           background: var(--surface-secondary);
           border: 1px solid var(--border-subtle);
           border-radius: var(--radius-lg);
-          padding: 0 var(--space-4);
+          padding: 0 var(--space-3);
           min-height: var(--touch-min);
           transition: border-color var(--transition-fast);
         }
@@ -377,9 +387,9 @@ export function Discover() {
           flex: 1;
           background: none;
           border: none;
-          padding: var(--space-3) 0;
+          padding: var(--space-2) 0;
           color: var(--text-primary);
-          font-size: var(--font-sm);
+          font-size: var(--font-input);
         }
 
         .page-discover__input::placeholder {
@@ -395,18 +405,18 @@ export function Discover() {
           display: flex;
           align-items: center;
           justify-content: center;
-          width: 32px;
-          height: 32px;
+          width: 28px;
+          height: 28px;
           flex-shrink: 0;
         }
 
         .page-discover__content {
-          padding-bottom: var(--space-4);
+          padding-bottom: var(--space-3);
         }
 
         /* Smart suggestions */
         .discover-suggestions {
-          padding: 0 var(--space-4);
+          padding: 0 var(--space-page);
           animation: suggestions-in 200ms ease both;
         }
 
@@ -416,7 +426,7 @@ export function Discover() {
         }
 
         .discover-suggestions__group {
-          margin-bottom: var(--space-3);
+          margin-bottom: var(--space-2);
         }
 
         .discover-suggestions__header {
@@ -427,7 +437,7 @@ export function Discover() {
         }
 
         .discover-suggestions__label {
-          font-size: var(--font-xs);
+          font-size: var(--font-2xs);
           font-weight: var(--font-weight-semibold);
           color: var(--text-tertiary);
           text-transform: uppercase;
@@ -435,7 +445,7 @@ export function Discover() {
         }
 
         .discover-suggestions__clear {
-          font-size: var(--font-xs);
+          font-size: var(--font-2xs);
           color: var(--brand-400);
           padding: var(--space-1) var(--space-2);
         }
@@ -443,10 +453,10 @@ export function Discover() {
         .discover-suggestions__item {
           display: flex;
           align-items: center;
-          gap: var(--space-3);
+          gap: var(--space-2);
           width: 100%;
-          min-height: 40px;
-          padding: var(--space-2) var(--space-3);
+          min-height: 36px;
+          padding: var(--space-1) var(--space-2);
           border-radius: var(--radius-md);
           text-align: left;
           transition: background var(--transition-fast);
@@ -478,12 +488,35 @@ export function Discover() {
           padding: 0 1px;
         }
 
-        /* Results */
-        .page-discover__results-count {
-          padding: 0 var(--space-4);
-          font-size: var(--font-xs);
-          color: var(--text-tertiary);
-          margin-bottom: var(--space-1);
+        /* Results — flush edge-to-edge like Collection's Display B */
+        .page-discover__results {
+          padding: 0 0 var(--space-2);
+        }
+
+        /* Loading skeleton */
+        .discover-skeleton {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          padding: 0 var(--space-page);
+        }
+
+        .discover-skeleton__row {
+          display: flex;
+          gap: 2px;
+          height: 96px;
+        }
+
+        .discover-skeleton__tile {
+          height: 100%;
+          border-radius: var(--radius-sm);
+          background: var(--surface-tertiary);
+          animation: discover-skeleton-pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes discover-skeleton-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.55; }
         }
 
         /* Empty state */
@@ -491,8 +524,8 @@ export function Discover() {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: var(--space-3);
-          padding: var(--space-12) var(--space-4);
+          gap: var(--space-2);
+          padding: var(--space-8) var(--space-page);
           color: var(--text-secondary);
           font-size: var(--font-sm);
         }
@@ -504,7 +537,7 @@ export function Discover() {
 
         /* Default */
         .page-discover__default {
-          padding: var(--space-8) var(--space-4);
+          padding: var(--space-6) var(--space-page);
         }
 
         .page-discover__placeholder {

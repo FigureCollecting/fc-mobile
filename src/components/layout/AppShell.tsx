@@ -16,6 +16,7 @@ import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
 import { TwoFactor } from '../../pages/TwoFactor';
 import { Import } from '../../pages/Import';
+import { Style } from '../../styles/Style';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
 // No backend anywhere (src/config/features.ts) — lazy so a default build,
@@ -32,7 +33,7 @@ function PageFallback() {
   return (
     <div class="page-fallback">
       <div class="page-fallback__spinner" />
-      <style>{`
+      <Style css={`
         .page-fallback {
           display: flex;
           align-items: center;
@@ -51,7 +52,7 @@ function PageFallback() {
         @keyframes pf-spin {
           to { transform: rotate(360deg); }
         }
-      `}</style>
+      `} />
     </div>
   );
 }
@@ -126,7 +127,7 @@ export function AppShell() {
       </main>
       {!isAuthRoute && <TabBar />}
 
-      <style>{`
+      <Style css={`
         .app-shell {
           display: flex;
           flex-direction: column;
@@ -146,7 +147,7 @@ export function AppShell() {
         .app-content--auth {
           padding-bottom: 0;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

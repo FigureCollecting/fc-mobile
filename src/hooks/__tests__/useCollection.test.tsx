@@ -14,6 +14,9 @@ import { useCollection } from '../useCollection';
 import { useAuthStore } from '../../stores/auth';
 import { cacheFigures } from '../../storage/figureCache';
 
+const pwaStorage = vi.hoisted(() => ({ markHydrated: vi.fn(async () => undefined) }));
+vi.mock('../../pwa/storage', () => ({ markHydrated: pwaStorage.markHydrated }));
+
 const mockedGetFigures = getFigures as unknown as ReturnType<typeof vi.fn>;
 
 function signIn() {
@@ -51,7 +54,26 @@ function makeFigure(id: string) {
 }
 
 describe('useCollection', () => {
-  beforeEach(() => mockedGetFigures.mockReset());
+  beforeEach(() => {
+    mockedGetFigures.mockReset();
+    pwaStorage.markHydrated.mockClear();
+  });
+
+  it('requests persistent storage once the collection has hydrated into IndexedDB', async () => {
+    signIn();
+    mockedGetFigures.mockResolvedValueOnce({ success: true, data: [makeFigure('p1')], count: 1, page: 1, pages: 1, total: 1 });
+    const { result } = renderHook(() => useCollection(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(pwaStorage.markHydrated).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not request it when the fetch failed and nothing new was stored', async () => {
+    signIn();
+    mockedGetFigures.mockRejectedValueOnce(new Error('offline'));
+    const { result } = renderHook(() => useCollection({ status: 'ordered' as any }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isFetching).toBe(false));
+    expect(pwaStorage.markHydrated).not.toHaveBeenCalled();
+  });
 
   it('returns API data and caches it to IndexedDB', async () => {
     signIn();

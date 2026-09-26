@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'preact/hooks';
 import { Lightbox } from './Lightbox';
+import { Style } from '../../styles/Style';
 
 interface ImageGalleryProps {
   images: string[];
@@ -83,7 +84,7 @@ export function ImageGallery({ images, alt }: ImageGalleryProps) {
         onClose={handleLightboxClose}
       />
 
-      <style>{galleryStyles}</style>
+      <Style css={galleryStyles} />
     </div>
   );
 }

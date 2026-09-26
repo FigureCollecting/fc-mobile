@@ -1,4 +1,5 @@
 import type { ListFilters } from '../../hooks/useFigureListParams';
+import { Style } from '../../styles/Style';
 
 interface AppliedChipsProps {
   filters: ListFilters;
@@ -61,7 +62,7 @@ export function AppliedChips({ filters, onChange }: AppliedChipsProps) {
         </button>
       ))}
 
-      <style>{`
+      <Style css={`
         .applied-chips {
           display: flex;
           gap: var(--space-1);
@@ -89,7 +90,7 @@ export function AppliedChips({ filters, onChange }: AppliedChipsProps) {
         .applied-chips__chip:active {
           opacity: 0.7;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

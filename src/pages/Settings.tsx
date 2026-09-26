@@ -9,7 +9,9 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
 import { getCacheStats, clearAllCaches } from '../storage/cacheManager';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
 import type { CacheStats } from '../storage/cacheManager';
+import { readStorageStatus, type StorageStatus } from '../pwa/storage';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
+import { Style } from '../styles/Style';
 
 const APP_VERSION = '0.1.0';
 
@@ -127,6 +129,12 @@ export function Settings() {
     getCacheStats().then(setCacheStats).catch(() => {});
   }, []);
 
+  // The browser's own figures: usage, quota and whether it will keep the data.
+  const [storage, setStorage] = useState<StorageStatus | null>(null);
+  useEffect(() => {
+    readStorageStatus().then(setStorage).catch(() => {});
+  }, []);
+
   // Persist notification preferences
   const handlePriceAlerts = useCallback((v: boolean) => {
     setPriceAlerts(v);
@@ -184,6 +192,12 @@ export function Settings() {
     setDeleteConfirmOpen(false);
   }, []);
 
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+    return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  };
+
   const formatSize = (kb: number) => {
     if (kb < 1024) return `${kb} KB`;
     return `${(kb / 1024).toFixed(1)} MB`;
@@ -218,11 +232,24 @@ export function Settings() {
             </div>
           )}
 
-          {cacheStats && (
-            <div class="settings__row">
-              <span class="settings__label">Storage Used</span>
-              <span class="settings__value">{formatSize(cacheStats.estimatedSizeKb)}</span>
-            </div>
+          {storage ? (
+            <>
+              <div class="settings__row">
+                <span class="settings__label">Storage Used</span>
+                <span class="settings__value">{formatBytes(storage.usage)} of {formatBytes(storage.quota)}</span>
+              </div>
+              <div class="settings__row">
+                <span class="settings__label">Offline Data</span>
+                <span class="settings__value">{storage.persisted ? 'Kept' : 'May be cleared by the browser'}</span>
+              </div>
+            </>
+          ) : (
+            cacheStats && (
+              <div class="settings__row">
+                <span class="settings__label">Storage Used</span>
+                <span class="settings__value">{formatSize(cacheStats.estimatedSizeKb)}</span>
+              </div>
+            )
           )}
 
           <button
@@ -306,7 +333,7 @@ export function Settings() {
 
           <div class="settings__row">
             <span class="settings__label">Version</span>
-            <span class="settings__value">{APP_VERSION}</span>
+            <span class="settings__value">{`${APP_VERSION} (${import.meta.env.VITE_BUILD_ID})`}</span>
           </div>
 
           <a
@@ -426,7 +453,7 @@ export function Settings() {
         </div>
       </BottomSheet>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

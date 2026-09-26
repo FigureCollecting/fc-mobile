@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'preact/hooks';
 import type { FacetValue } from '../../utils/facets';
+import { Style } from '../../styles/Style';
 
 interface FacetControlProps {
   label: string;
@@ -99,7 +100,7 @@ export function FacetControl({ label, values, selected, onToggle, hint }: FacetC
         </div>
       )}
 
-      <style>{`
+      <Style css={`
         .facet-control {
           margin-bottom: var(--space-4);
         }
@@ -204,7 +205,7 @@ export function FacetControl({ label, values, selected, onToggle, hint }: FacetC
         .facet-control__match:active {
           background: var(--surface-tertiary);
         }
-      `}</style>
+      `} />
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'preact/hooks';
 import type { MfcCookies } from '@figurecollecting/fc-shared';
+import { Style } from '../../styles/Style';
 
 interface CookieInputProps {
   onSubmit: (cookies: MfcCookies) => void;
@@ -168,7 +169,7 @@ export function CookieInput({ onSubmit, isValidating = false, error }: CookieInp
         </div>
       )}
 
-      <style>{`
+      <Style css={`
         .cookie-input {
           display: flex;
           flex-direction: column;
@@ -340,7 +341,7 @@ export function CookieInput({ onSubmit, isValidating = false, error }: CookieInp
         .cookie-input__help-steps strong {
           color: var(--text-primary);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

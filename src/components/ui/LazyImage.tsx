@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'preact/hooks';
+import { Style } from '../../styles/Style';
 
 interface LazyImageProps {
   src: string;
@@ -79,7 +80,7 @@ export function LazyImage({ src, alt, class: className, width, height, placehold
         />
       )}
 
-      <style>{lazyImageStyles}</style>
+      <Style css={lazyImageStyles} />
     </div>
   );
 }

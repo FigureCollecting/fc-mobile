@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface BarChartItem {
   label: string;
   value: number;
@@ -25,7 +27,7 @@ export function BarChart({ items, limit = 10, barColor, onItemTap, loading }: Ba
             <div class="bar-chart__skeleton-bar" style={{ width: `${80 - i * 12}%` }} />
           </div>
         ))}
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -37,7 +39,7 @@ export function BarChart({ items, limit = 10, barColor, onItemTap, loading }: Ba
     return (
       <div class="bar-chart">
         <p class="bar-chart__empty">No data available</p>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -67,7 +69,7 @@ export function BarChart({ items, limit = 10, barColor, onItemTap, loading }: Ba
           </Tag>
         );
       })}
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

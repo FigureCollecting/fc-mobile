@@ -9,6 +9,7 @@ import { StatusSheet } from '../components/collection/StatusSheet';
 import { DeleteSheet } from '../components/collection/DeleteSheet';
 import type { EditFormData } from '../components/collection/EditFigureSheet';
 import type { CollectionStatus } from '@figurecollecting/fc-shared';
+import { Style } from '../styles/Style';
 
 function SkeletonDetail() {
   return (
@@ -129,7 +130,7 @@ export function FigureDetail() {
             Retry
           </button>
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -359,7 +360,7 @@ export function FigureDetail() {
         imageUrl={figure.imageUrl}
       />
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useMemo } from 'preact/hooks';
+import { Style } from '../../styles/Style';
 
 interface CalendarGridProps {
   year: number;
@@ -90,7 +91,7 @@ export function CalendarGrid({
         })}
       </div>
 
-      <style>{calendarGridStyles}</style>
+      <Style css={calendarGridStyles} />
     </div>
   );
 }

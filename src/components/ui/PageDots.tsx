@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { Style } from '../../styles/Style';
 
 interface PageDotsProps {
   total: number;
@@ -28,7 +29,7 @@ export function PageDots({ total, active, onDotClick }: PageDotsProps) {
         />
       ))}
 
-      <style>{`
+      <Style css={`
         .page-dots {
           display: flex;
           align-items: center;
@@ -45,7 +46,7 @@ export function PageDots({ total, active, onDotClick }: PageDotsProps) {
           cursor: pointer;
           -webkit-tap-highlight-color: transparent;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

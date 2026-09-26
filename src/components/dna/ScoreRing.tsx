@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
+import { Style } from '../../styles/Style';
 
 interface ScoreRingProps {
   /** Score from 0-100 */
@@ -86,7 +87,7 @@ export function ScoreRing({ score, label, size = 96 }: ScoreRingProps) {
       </span>
       <span class="score-ring__label">{label}</span>
 
-      <style>{`
+      <Style css={`
         .score-ring {
           display: flex;
           flex-direction: column;
@@ -116,7 +117,7 @@ export function ScoreRing({ score, label, size = 96 }: ScoreRingProps) {
           text-transform: uppercase;
           letter-spacing: 0.04em;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

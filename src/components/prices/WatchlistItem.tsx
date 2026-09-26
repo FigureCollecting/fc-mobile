@@ -4,6 +4,7 @@ import { SwipeAction } from '../ui/SwipeAction';
 import { TrendIndicator } from './TrendIndicator';
 import { Sparkline } from './Sparkline';
 import type { WatchlistItem as WatchlistItemData } from '../../hooks/usePrices';
+import { Style } from '../../styles/Style';
 
 interface WatchlistItemProps {
   item: WatchlistItemData;
@@ -71,7 +72,7 @@ export function WatchlistItem({ item, onRemove }: WatchlistItemProps) {
         </svg>
       </button>
 
-      <style>{`
+      <Style css={`
         .watchlist-item {
           display: flex;
           align-items: center;
@@ -162,7 +163,7 @@ export function WatchlistItem({ item, onRemove }: WatchlistItemProps) {
           font-weight: var(--font-weight-semibold);
           color: white;
         }
-      `}</style>
+      `} />
     </SwipeAction>
   );
 }

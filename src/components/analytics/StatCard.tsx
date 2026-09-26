@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface StatCardProps {
   value: number | string;
   label: string;
@@ -47,7 +49,7 @@ export function StatCard({ value, label, color, trend, loading }: StatCardProps)
       )}
       <span class="stat-card__label">{label}</span>
 
-      <style>{`
+      <Style css={`
         .stat-card {
           display: flex;
           flex-direction: column;
@@ -111,7 +113,7 @@ export function StatCard({ value, label, color, trend, loading }: StatCardProps)
           0%, 100% { opacity: 0.4; }
           50% { opacity: 0.8; }
         }
-      `}</style>
+      `} />
     </div>
   );
 }

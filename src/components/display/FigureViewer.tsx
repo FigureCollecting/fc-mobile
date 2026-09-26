@@ -4,6 +4,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import type PhotoSwipe from 'photoswipe';
 import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent } from './FigureDetailContent';
+import { Style } from '../../styles/Style';
 
 interface FigureViewerProps {
   /** The CURRENT RESULT SET — swiping left/right moves through it. */
@@ -40,7 +41,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         const meta = getDisplayMeta(f);
         if (!f.imageUrl) {
           return {
-            html: '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#889;font-size:13px">No image</div>',
+            // A class, not a style attribute: the CSP blocks inline styles in injected HTML.
+            html: '<div class="figure-viewer__no-image">No image</div>',
           };
         }
         return {
@@ -98,7 +100,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
     <div class="figure-viewer-sheet">
       <FigureDetailContent figure={figure} index={current} total={figures.length} />
 
-      <style>{`
+      <Style css={`
         .figure-viewer-sheet {
           position: fixed;
           left: 0;
@@ -112,7 +114,16 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           padding: 0 var(--space-page) calc(var(--space-3) + var(--safe-area-bottom));
           box-shadow: var(--shadow-lg);
         }
-      `}</style>
+
+        .figure-viewer__no-image {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: #889;
+          font-size: 13px;
+        }
+      `} />
     </div>,
     document.body,
   );

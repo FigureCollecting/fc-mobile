@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import type { Figure, CollectionStatus } from '@figurecollecting/fc-shared';
 import { hapticLight } from '../../utils/haptics';
+import { Style } from '../../styles/Style';
 
 interface EditFigureSheetProps {
   open: boolean;
@@ -163,7 +164,7 @@ export function EditFigureSheet({ open, onClose, figure, onSave, isSaving }: Edi
         </div>
       </div>
 
-      <style>{`
+      <Style css={`
         .edit-sheet {
           padding-bottom: var(--space-4);
         }
@@ -347,7 +348,7 @@ export function EditFigureSheet({ open, onClose, figure, onSave, isSaving }: Edi
         .edit-sheet__btn--save:active:not(:disabled) {
           background: var(--brand-600);
         }
-      `}</style>
+      `} />
     </BottomSheet>
   );
 }

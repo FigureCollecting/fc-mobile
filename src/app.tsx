@@ -7,6 +7,9 @@ import { useSyncOnReconnect } from './hooks/useSyncOnReconnect';
 import { useAuthStore } from './stores/auth';
 import { Onboarding } from './pages/Onboarding';
 import { isFixtureMode } from './dev-fixtures/fixtures';
+import { UpdatePrompt } from './pwa/UpdatePrompt';
+import { InstallBanner } from './pwa/InstallBanner';
+import { getPendingOpsCount } from './storage/pendingOps';
 
 const ONBOARDING_KEY = 'onboarding_complete';
 
@@ -106,6 +109,12 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <AppInner />
       <ToastContainer />
+      {/* Outside AppInner so they show on onboarding and sign-in too. The
+          running outbox is the legacy one until WK-15 switches the app over. */}
+      <div class="pwa-notices">
+        <UpdatePrompt />
+        <InstallBanner unsyncedCount={getPendingOpsCount} />
+      </div>
     </QueryClientProvider>
   );
 }

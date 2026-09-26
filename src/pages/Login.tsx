@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { ForgotPassword } from '../components/auth/ForgotPassword';
+import { Style } from '../styles/Style';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -190,7 +191,7 @@ export function Login() {
       {/* Forgot password sheet */}
       <ForgotPassword open={forgotOpen} onClose={() => setForgotOpen(false)} />
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </AuthLayout>
   );
 }

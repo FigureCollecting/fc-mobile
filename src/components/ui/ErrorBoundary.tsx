@@ -1,6 +1,7 @@
 import { Component } from 'preact';
 import type { ComponentChildren } from 'preact';
 import { clearAllCaches, getCacheStats } from '../../storage/cacheManager';
+import { Style } from '../../styles/Style';
 
 interface Props {
   children: ComponentChildren;
@@ -120,7 +121,7 @@ export class ErrorBoundary extends Component<Props, State> {
             )}
           </div>
 
-          <style>{styles}</style>
+          <Style css={styles} />
         </div>
       );
     }

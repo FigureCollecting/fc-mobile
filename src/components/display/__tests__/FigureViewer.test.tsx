@@ -63,6 +63,16 @@ describe('FigureViewer (Display D)', () => {
     expect(pswp.options.initialZoomLevel).toBe('fit');
   });
 
+  it('builds the no-image slide without a style attribute, which a strict CSP blocks', async () => {
+    const noImage = FIXTURE_FIGURES.map((f) => ({ ...f, imageUrl: undefined }));
+    renderWithProviders(<FigureViewer figures={noImage} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const slide = instances[0].options.dataSource[0];
+    expect(slide.html).toContain('No image');
+    expect(slide.html).not.toMatch(/style=/);
+    expect(slide.html).toContain('class="figure-viewer__no-image"');
+  });
+
   it('shows the tapped figure data in the pull-up sheet', async () => {
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
     expect(screen.getByText('Rem')).toBeInTheDocument();

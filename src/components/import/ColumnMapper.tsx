@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'preact/hooks';
+import { Style } from '../../styles/Style';
 
 /** Target fields that CSV columns can be mapped to. */
 export type MappableField =
@@ -168,7 +169,7 @@ export function ColumnMapper({ headers, sampleRows, onConfirm }: ColumnMapperPro
         {hasNameMapping ? 'Apply Mapping' : 'Map a Name column to continue'}
       </button>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

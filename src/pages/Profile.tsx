@@ -10,6 +10,7 @@ import { clearCache } from '../storage/figureCache';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useUnreadCount } from '../hooks/useNotifications';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { Style } from '../styles/Style';
 
 const APP_VERSION = '0.1.0';
 
@@ -88,7 +89,7 @@ export function Profile() {
             </div>
           </div>
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -341,7 +342,7 @@ export function Profile() {
         </div>
       </BottomSheet>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

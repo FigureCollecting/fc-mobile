@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface BadgeProps {
   count: number;
 }
@@ -11,7 +13,7 @@ export function Badge({ count }: BadgeProps) {
     <span class="badge" aria-label={`${count} unread notifications`}>
       {display}
 
-      <style>{`
+      <Style css={`
         .badge {
           position: absolute;
           top: 2px;
@@ -29,7 +31,7 @@ export function Badge({ count }: BadgeProps) {
           pointer-events: none;
           z-index: 1;
         }
-      `}</style>
+      `} />
     </span>
   );
 }

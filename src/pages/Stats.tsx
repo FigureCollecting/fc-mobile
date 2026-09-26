@@ -3,6 +3,7 @@ import { useCollectionStats } from '../hooks/useCollectionStats';
 import { useCollectionBreakdown } from '../hooks/useAnalytics';
 import { useAuthStore } from '../stores/auth';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { Style } from '../styles/Style';
 
 /**
  * Stats tab — compact at-a-glance numbers. The full Analytics experience is
@@ -19,7 +20,7 @@ export function Stats() {
     return (
       <div class="page-stats">
         <p class="page-stats__empty">Sign in to see your stats</p>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -69,7 +70,7 @@ export function Stats() {
         Deeper analytics arrive after their mobile redesign pass.
       </p>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
   useDeleteAlert,
 } from '../hooks/usePrices';
 import type { PriceAlert, PricePoint } from '../hooks/usePrices';
+import { Style } from '../styles/Style';
 
 // Site color mapping for price history
 const SITE_COLORS: Record<string, string> = {
@@ -54,7 +55,7 @@ function SkeletonDetail() {
       <div class="price-detail__skeleton-card" />
       <div class="price-detail__skeleton-card" style={{ height: '200px' }} />
       <div class="price-detail__skeleton-card" />
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }
@@ -145,7 +146,7 @@ export function PriceDetail() {
           message="We couldn't reach this figure's detail right now. Check your connection and try again."
           onRetry={() => figureQuery.refetch()}
         />
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -331,7 +332,7 @@ export function PriceDetail() {
         onDelete={handleDeleteAlert}
       />
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

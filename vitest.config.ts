@@ -15,6 +15,7 @@ export default defineConfig({
       // wouter / zustand pull in use-sync-external-store's CJS shim which
       // `require("react")` at runtime — bypass it and read the hook straight
       // from preact/compat instead.
+      { find: 'virtual:pwa-register', replacement: path.join(__dirname, 'src/test/pwaRegisterStub.ts') },
       {
         find: /^use-sync-external-store\/shim.*$/,
         replacement: path.join(__dirname, 'src/test/useSyncExternalStoreShim.ts'),
@@ -30,7 +31,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'deploy/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
     // Force Vitest to run zustand, framer-motion, fc-shared, and wouter through
     // the Vite transform pipeline so our "react -> preact/compat" aliases apply
@@ -56,7 +57,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      include: ['src/**/*.{ts,tsx}'],
+      include: ['src/**/*.{ts,tsx}', 'deploy/**/*.ts'],
       exclude: [
         '**/__tests__/**',
         '**/*.test.{ts,tsx}',

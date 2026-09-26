@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface PasswordStrengthProps {
   password: string;
 }
@@ -62,7 +64,7 @@ export function PasswordStrength({ password }: PasswordStrengthProps) {
         ))}
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

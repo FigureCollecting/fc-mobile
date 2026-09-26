@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
+import { Style } from '../../styles/Style';
 
 interface FigureDetailContentProps {
   figure: Figure;
@@ -67,7 +68,7 @@ export function FigureDetailContent({ figure, index, total }: FigureDetailConten
         </div>
       )}
 
-      <style>{`
+      <Style css={`
         .figure-viewer-sheet__handle {
           display: flex;
           justify-content: center;
@@ -160,7 +161,7 @@ export function FigureDetailContent({ figure, index, total }: FigureDetailConten
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-      `}</style>
+      `} />
     </>
   );
 }

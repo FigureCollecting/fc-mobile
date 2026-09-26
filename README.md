@@ -21,6 +21,38 @@ npm run build
 Produces a production bundle in `dist/`. `.env.production` supplies the
 production API URL.
 
+## Web image (fc-mobile-web)
+
+`Dockerfile` builds the production bundle and serves it from
+`nginxinc/nginx-unprivileged` (uid 101, port 8080, read-only root with a
+writable `/tmp`). `deploy/nginx/default.conf` is the one source of the
+response headers: CSP without `unsafe-inline`/`unsafe-eval`, HSTS, nosniff,
+Referrer-Policy; `index.html`, `sw.js` and the manifest `no-cache`,
+`/assets/*` immutable; `/api` always 404; the SPA fallback for navigations only.
+
+```bash
+docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t fc-mobile-web .
+docker run --rm --read-only --tmpfs /tmp -p 8080:8080 fc-mobile-web
+```
+
+`vite preview` sends the same headers, so the e2e suite runs under the CSP and
+fails on any `securitypolicyviolation`. Component CSS therefore goes through
+`<Style css={...} />` (constructed stylesheets), never a `<style>` element or
+a style attribute; `src/__tests__/cspSource.test.ts` guards this.
+
+PWA acceptance against the image, behind the local stack (`e2e/stack`):
+
+```bash
+docker build ... --build-arg VITE_BUILD_ID=n  -t fc-mobile-web:n .
+docker build ... --build-arg VITE_BUILD_ID=n1 -t fc-mobile-web:n1 .
+FC_WEB_IMAGE=fc-mobile-web:n FC_WEB_IMAGE_NEXT=fc-mobile-web:n1 FC_STACK_WEB_IMAGE=fc-mobile-web:n \
+  npx playwright test -c playwright.pwa.config.ts
+```
+
+`npm run dev` proxies `/api` to a coordinator on `http://127.0.0.1:5052`
+(`FC_COORDINATOR_URL` overrides) with the path and Host unchanged; start it with
+`COORDINATOR_PUBLIC_ORIGIN=http://localhost:5173 COORDINATOR_ROUTE_PREFIX=/api`.
+
 ## API URL configuration
 
 `src/api/client.ts` resolves its base URL with the following precedence:
@@ -65,7 +97,7 @@ Mocks:
 Development happens on personal forks; pull requests go to `FigureCollecting/*`.
 CI on a fork follows one rule. The push gate (its four cases are documented in
 a comment block) sits at the top of every workflow here (`build.yml`,
-`security-scan.yml`, `codeql.yml`); this repo publishes nothing from CI.
+`security-scan.yml`, `codeql.yml`, `stack.yml`, `web-image.yml`).
 
 - **Feature branches on your fork run the core CI on every push**: build + lint,
   dependency and npm-audit scans, and CodeQL, so problems surface before the PR
@@ -83,12 +115,14 @@ a comment block) sits at the top of every workflow here (`build.yml`,
   run there, and so do scheduled runs if you enable schedules on the fork.
   The gate compares branch names case-insensitively, so do not name a feature
   branch `Develop` or `MAIN`.
-- **Nothing is published from this repo's CI**, on the org or on forks.
+- **Only `web-image.yml` publishes**, and only on org pushes to `develop`/`main`:
+  `ghcr.io/figurecollecting/fc-mobile-web:sha-<short>`. Nothing is published from forks.
 
 ## Project conventions
 
 - Preact with `preact/compat` aliases (do not introduce React).
-- Styling: scoped `<style>` blocks + CSS custom properties from
-  `src/styles/tokens.css`. No external UI frameworks.
+- Styling: per-component `<Style css={...} />` blocks (not `<style>`; see
+  above) + CSS custom properties from `src/styles/tokens.css`. No external UI
+  frameworks.
 - State: `@tanstack/react-query` for server state, `zustand` for auth,
   `@preact/signals` for lightweight global values (online status, toast).

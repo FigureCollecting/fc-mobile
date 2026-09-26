@@ -1,4 +1,5 @@
 import type { PriceTrend } from '../../hooks/usePrices';
+import { Style } from '../../styles/Style';
 
 interface TrendIndicatorProps {
   trend: PriceTrend;
@@ -34,7 +35,7 @@ export function TrendIndicator({ trend, percent, size = 'sm' }: TrendIndicatorPr
         </span>
       )}
 
-      <style>{`
+      <Style css={`
         .trend-indicator {
           display: inline-flex;
           align-items: center;
@@ -66,7 +67,7 @@ export function TrendIndicator({ trend, percent, size = 'sm' }: TrendIndicatorPr
         .trend-indicator__percent {
           margin-left: 1px;
         }
-      `}</style>
+      `} />
     </span>
   );
 }

@@ -1,4 +1,5 @@
 import finalE from '../../assets/brand/final-E.svg?raw';
+import { Style } from '../../styles/Style';
 
 // Traced from the brand mark; the source fill is baked black, swap for
 // currentColor so the mark follows the header's text color in both themes.
@@ -13,7 +14,7 @@ export function HeaderMark() {
   return (
     <>
       <span class="brand-header-mark" aria-hidden="true" dangerouslySetInnerHTML={{ __html: MARK_SVG }} />
-      <style>{`
+      <Style css={`
         .brand-header-mark {
           display: flex;
           align-items: center;
@@ -27,7 +28,7 @@ export function HeaderMark() {
           height: 100%;
           width: auto;
         }
-      `}</style>
+      `} />
     </>
   );
 }

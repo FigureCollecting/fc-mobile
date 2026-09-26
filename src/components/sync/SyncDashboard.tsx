@@ -3,6 +3,7 @@ import type { MfcCookies } from '@figurecollecting/fc-shared';
 import { useSync } from '../../hooks/useSync';
 import { CookieInput } from './CookieInput';
 import { SyncProgress } from './SyncProgress';
+import { Style } from '../../styles/Style';
 
 interface SyncDashboardProps {
   onViewCollection?: () => void;
@@ -167,7 +168,7 @@ export function SyncDashboard({ onViewCollection }: SyncDashboardProps) {
         </div>
       )}
 
-      <style>{`
+      <Style css={`
         .sync-dashboard {
           display: flex;
           flex-direction: column;
@@ -343,7 +344,7 @@ export function SyncDashboard({ onViewCollection }: SyncDashboardProps) {
           max-width: 280px;
         }
 
-      `}</style>
+      `} />
     </div>
   );
 }

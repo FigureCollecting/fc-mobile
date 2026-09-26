@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'preact/hooks';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageDots } from '../components/ui/PageDots';
+import { Style } from '../styles/Style';
 
 interface OnboardingProps {
   onComplete: (action: 'register' | 'login' | 'guest') => void;
@@ -90,7 +91,9 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 
       {/* Swipeable content area */}
       <div class="onboarding__viewport">
-        <AnimatePresence initial={false} custom={direction} mode="popLayout">
+        {/* Slides are absolutely positioned, so the default mode overlaps them;
+            popLayout would inject a style element, which the CSP blocks. */}
+        <AnimatePresence initial={false} custom={direction}>
           <motion.div
             key={page}
             class="onboarding__slide"
@@ -149,7 +152,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         <PageDots total={SCREENS.length} active={page} onDotClick={goTo} />
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

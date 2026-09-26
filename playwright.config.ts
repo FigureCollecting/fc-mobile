@@ -9,6 +9,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // Image-level PWA acceptance has its own config (playwright.pwa.config.ts).
+  testIgnore: ['pwa/**'],
   timeout: 30_000,
   retries: 0,
   fullyParallel: false,
@@ -39,7 +41,7 @@ export default defineConfig({
       // NOT .env.production's real https://figurecollecting.com/api. Without
       // this, a production build talks to the live backend for real — the
       // network mocks below are anchored to :5080 and silently never match it.
-      command: 'npm run build -- --mode test && npm run preview -- --port 5173 --strictPort',
+      command: 'npm run build -- --mode test && npm run preview -- --mode test --port 5173 --strictPort',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

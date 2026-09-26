@@ -2,6 +2,7 @@ import { useCallback } from 'preact/hooks';
 import { SwipeAction } from '../ui/SwipeAction';
 import { relativeTime } from '../../utils/time';
 import type { Notification } from '../../hooks/useNotifications';
+import { Style } from '../../styles/Style';
 
 interface NotificationItemProps {
   notification: Notification;
@@ -67,7 +68,7 @@ function DeleteAction() {
       </svg>
       <span>Delete</span>
 
-      <style>{`
+      <Style css={`
         .notif-item__delete-action {
           display: flex;
           flex-direction: column;
@@ -77,7 +78,7 @@ function DeleteAction() {
           font-size: var(--font-xs);
           font-weight: var(--font-weight-semibold);
         }
-      `}</style>
+      `} />
     </div>
   );
 }
@@ -113,7 +114,7 @@ export function NotificationItem({ notification, onTap, onDelete }: Notification
         {!notification.read && <span class="notif-item__dot" />}
       </button>
 
-      <style>{`
+      <Style css={`
         .notif-item {
           display: flex;
           align-items: flex-start;
@@ -227,7 +228,7 @@ export function NotificationItem({ notification, onTap, onDelete }: Notification
           background: var(--brand-500);
           flex-shrink: 0;
         }
-      `}</style>
+      `} />
     </SwipeAction>
   );
 }

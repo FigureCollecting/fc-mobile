@@ -1,5 +1,4 @@
-import type { Figure } from '@figurecollecting/fc-shared';
-import type { FigureDisplayMeta } from '../../types/figureDisplayMeta';
+import type { Figure, FigureDisplayMeta } from '@figurecollecting/fc-shared';
 
 const RUNTIME_IMAGE_MANAGER_URL_KEY = 'fc.imageManagerUrl';
 const PRODUCTION_IMAGE_MANAGER_URL = 'https://images.figurecollecting.com';

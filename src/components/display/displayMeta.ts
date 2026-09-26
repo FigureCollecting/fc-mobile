@@ -1,7 +1,6 @@
-import type { Figure } from '@figurecollecting/fc-shared';
+import type { Figure, FigureDisplayMeta as ApiFigureDisplayMeta, FigureContactBand } from '@figurecollecting/fc-shared';
 import type { FixtureDisplayMeta } from '../../dev-fixtures/fixtures';
 import { FIXTURE_META } from '../../dev-fixtures/fixtures';
-import type { FigureDisplayMeta as ApiFigureDisplayMeta, FigureContactBand } from '../../types/figureDisplayMeta';
 
 /**
  * The local render meta CaseShelf/packShelves/packJustified/sizeResolution/

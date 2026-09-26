@@ -15,7 +15,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 /**
  * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
  * Named FixtureDisplayMeta (not FigureDisplayMeta) so it doesn't shadow
- * fc-shared's FigureDisplayMeta API contract (src/types/figureDisplayMeta.ts)
+ * fc-shared's FigureDisplayMeta API contract (@figurecollecting/fc-shared)
  * — the two are different shapes serving different purposes: this one is
  * hand-authored per dev fixture, that one is produced by image-manager for
  * real synced figures. displayMeta.ts's getDisplayMeta() maps the latter

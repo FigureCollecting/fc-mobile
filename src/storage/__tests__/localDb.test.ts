@@ -83,6 +83,25 @@ describe('openLocalDb', () => {
     db.close();
   });
 
+  it('keeps the v1 keys of pendingOps when earlier drains left gaps', async () => {
+    const factory = new IDBFactory();
+    const v1 = await openV1(factory);
+    await new Promise<void>((resolve, reject) => {
+      const ops = v1.transaction('pendingOps', 'readwrite').objectStore('pendingOps');
+      for (let i = 1; i <= 9; i++) ops.add({ type: 'update', figureId: `f-${i}`, createdAt: i });
+      for (const k of [1, 3, 4, 6, 7, 8]) ops.delete(k);
+      ops.transaction.oncomplete = () => resolve();
+      ops.transaction.onerror = () => reject(ops.transaction.error);
+    });
+    v1.close();
+
+    const db = await openLocalDb({ factory });
+
+    expect(await db.getAllKeys('legacy_pending')).toEqual([2, 5, 9]);
+    expect(await db.getAll('legacy_pending')).toEqual([2, 5, 9].map((i) => ({ type: 'update', figureId: `f-${i}`, createdAt: i })));
+    db.close();
+  });
+
   it('keeps legacy_pending across a later reopen', async () => {
     const factory = new IDBFactory();
     await seedV1(factory);

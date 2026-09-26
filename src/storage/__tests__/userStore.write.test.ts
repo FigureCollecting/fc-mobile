@@ -4,6 +4,7 @@ import { ProductCardSchema, compareVersion, parseVersion } from '@figurecollecti
 import { LocalWriteError, UnsyncedEditsError, UserStore } from '../userStore';
 import { PayloadInvalidError } from '../../sync/payload';
 import {
+  DAY,
   DEVICE,
   FakeClock,
   HEAD,
@@ -17,6 +18,7 @@ import {
   key,
   openStore,
   result,
+  status,
   token,
 } from '../../sync/__tests__/harness';
 
@@ -119,6 +121,17 @@ describe('writeFacet', () => {
     const next = await reloaded.writeFacet(HEAD[1], 'status', 'wished');
 
     expect(compareVersion(next.version, first.version)).toBe(1);
+  });
+
+  it('keeps a remote version seen only through apply() across a reload with the clock an hour behind', async () => {
+    const { db } = await freshDb();
+    const remote = token(T0 + HOUR, 5, OTHER_DEVICE);
+    await (await openStore(db)).apply([ev(key(0, 'note'), remote)]);
+
+    const reloaded = await openStore(db, { clock: new FakeClock(T0 - HOUR) });
+    const next = await reloaded.writeFacet(HEAD[2], 'score', 4);
+
+    expect(compareVersion(next.version, remote)).toBe(1);
   });
 
   it('aborts the whole write on QuotaExceededError and leaves no optimistic overlay', async () => {
@@ -289,6 +302,36 @@ describe('per-user partitioning', () => {
     // A's edit is still queued under A.
     expect((await a.listOutbox()).map((e) => e.state)).toEqual(['PENDING']);
     expect((await a.getMeta()).cursor).toBe('a-1');
+  });
+
+  it("never marks user B's pending edit superseded when user A's facet takes a newer remote value", async () => {
+    const { db } = await freshDb();
+    const a = await openStore(db, { sub: 'user-a' });
+    const b = await openStore(db, { sub: 'user-b' });
+    const bEdit = await b.writeFacet(HEAD[0], 'note', 'b-mine');
+    await a.writeFacet(HEAD[0], 'note', 'a-mine');
+
+    await a.apply([ev(key(0, 'note'), token(T0 + HOUR, 0, OTHER_DEVICE), 'upsert', '{"note":"a-remote"}')]);
+
+    expect((await a.listOutbox())[0]).toMatchObject({ state: 'STALE', superseded: true });
+    const [bEntry] = await b.listOutbox();
+    expect(bEntry).toMatchObject({ state: 'PENDING', edit_version: bEdit.version });
+    expect(bEntry.superseded).toBeUndefined();
+    expect((await b.getFacet(key(0, 'note')))!.value!.version).toBe(bEdit.version);
+  });
+
+  it("never re-mints user B's edits in user A's first-Status rebase", async () => {
+    const { db } = await freshDb();
+    const bEdit = await (await openStore(db, { sub: 'user-b', clock: new FakeClock(T0 + DAY) })).writeFacet(HEAD[0], 'note', 'b-ahead');
+    const aEdit = await (await openStore(db, { sub: 'user-a', clock: new FakeClock(T0 + DAY) })).writeFacet(HEAD[1], 'note', 'a-ahead');
+    const a = await openStore(db, { sub: 'user-a', clock: new FakeClock(T0 + 1_000) });
+
+    expect(await a.onStatus(status(T0 + 1_000), 0)).toEqual({ rebased: true, reminted: 1 });
+
+    expect((await a.listOutbox())[0].edit_version).not.toBe(aEdit.version);
+    const b = await openStore(db, { sub: 'user-b', clock: new FakeClock(T0 + 1_000) });
+    expect((await b.listOutbox())[0].edit_version).toBe(bEdit.version);
+    expect((await b.getFacet(key(0, 'note')))!.value!.version).toBe(bEdit.version);
   });
 });
 

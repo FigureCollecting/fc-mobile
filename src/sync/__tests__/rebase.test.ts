@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { compareVersion } from '@figurecollecting/fc-api-contract';
 import type { UserStore } from '../../storage/userStore';
 import {
   DAY,
@@ -26,6 +27,24 @@ async function send(store: UserStore) {
 async function byId(store: UserStore, id: number) {
   return (await store.listOutbox()).find((e) => e.id === id)!;
 }
+
+afterEach(() => vi.restoreAllMocks());
+
+// The next put on `storeName` throws QuotaExceededError, aborting its transaction.
+function quotaOnce(storeName: string) {
+  const realPut = IDBObjectStore.prototype.put;
+  let fired = false;
+  vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args) {
+    if (!fired && this.name === storeName) {
+      fired = true;
+      throw new DOMException('quota', 'QuotaExceededError');
+    }
+    return realPut.apply(this, args as Parameters<typeof realPut>);
+  });
+}
+
+/** Below server_now + MAX_FUTURE_SKEW_MS (5 min): the server would accept it. */
+const withinBound = (version: string, serverMs: number) => compareVersion(version, token(serverMs + 300_000, 0)) < 0;
 
 describe("rebase after each session's first Status", () => {
   it('re-mints unpushed edits past the new present on their server versions, chaining per facet', async () => {
@@ -99,6 +118,23 @@ describe("rebase after each session's first Status", () => {
     expect((await byId(store, e.outbox_id)).edit_version).toBe(e.version);
   });
 
+  it('does not rebase or re-mint again on a later Status after the first one rebased', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(T0);
+    const s1 = await openStore(db, { clock });
+    await s1.onStatus(status(T0), 0);
+    clock.wall += DAY;
+    await s1.writeFacet(HEAD[0], 'status', 'owned');
+    const clock2 = new FakeClock(T0 + 1_000, 50);
+    const s2 = await openStore(db, { clock: clock2 });
+    expect((await s2.onStatus(status(T0 + 1_000), 0)).rebased).toBe(true);
+    const stored = (await s2.getMeta()).hlc;
+    clock2.advance(2_000);
+
+    expect(await s2.onStatus(status(T0 + 3_000), 0)).toEqual({ rebased: false, reminted: 0 });
+    expect((await s2.getMeta()).hlc).toEqual(stored);
+  });
+
   it('keeps the measured offset and the last Status for the next session', async () => {
     const { db } = await freshDb();
     const s1 = await openStore(db, { clock: new FakeClock(T0) });
@@ -109,6 +145,46 @@ describe("rebase after each session's first Status", () => {
     const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000) });
     const e = await s2.writeFacet(HEAD[0], 'status', 'owned');
     expect(e.version).toBe(token(T0 + 601_000, 0));
+  });
+
+  it('stores the lowered clock, so a reload before the next Status mints at the present', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(T0);
+    const s1 = await openStore(db, { clock });
+    await s1.onStatus(status(T0), 0);
+    clock.wall += DAY;
+    await s1.writeFacet(HEAD[0], 'status', 'owned');
+    const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000, 5) });
+    await s2.onStatus(status(T0 + 1_000), 0);
+
+    const s3 = await openStore(db, { clock: new FakeClock(T0 + 2_000, 5) });
+    const next = await s3.writeFacet(HEAD[1], 'note', 'x');
+
+    expect(next.version).toBe(token(T0 + 2_000, 0));
+  });
+
+  it('still re-mints on the retry when the first Status transaction aborts after the rebase', async () => {
+    const { db } = await freshDb();
+    const clock = new FakeClock(T0);
+    const s1 = await openStore(db, { clock });
+    await s1.onStatus(status(T0), 0);
+    clock.wall += DAY;
+    const ahead = await s1.writeFacet(HEAD[0], 'note', 'ahead');
+    const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000, 50) });
+    quotaOnce('sync_meta');
+    await expect(s2.onStatus(status(T0 + 1_000), 0)).rejects.toMatchObject({ name: 'LocalWriteError', quota: true });
+    vi.restoreAllMocks();
+    expect((await byId(s2, ahead.outbox_id)).edit_version).toBe(ahead.version);
+
+    const report = await s2.onStatus(status(T0 + 1_000), 0);
+
+    expect(report).toEqual({ rebased: true, reminted: 1 });
+    const reminted = (await byId(s2, ahead.outbox_id)).edit_version;
+    expect(withinBound(reminted, T0 + 1_000)).toBe(true);
+    expect((await s2.getFacet(key(0, 'note')))!.value!.version).toBe(reminted);
+    expect(BigInt((await s2.getMeta()).hlc.micros) < BigInt(T0 + DAY) * 1000n).toBe(true);
+    const next = await send(s2);
+    expect(next.request.events.map((e) => e.version)).toEqual([reminted]);
   });
 });
 
@@ -157,6 +233,28 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     expect((await store.getMeta()).rejected_past).toBeNull();
     const next = await send(store);
     expect(next.entryIds).toEqual([later.outbox_id, offline.outbox_id]);
+  });
+
+  it('still rebases and re-mints on the retry when that fresh Status transaction aborts', async () => {
+    const { store, edit, batch, later, known } = await aheadAndSent();
+    await store.recordPush(batch.clientId, {
+      results: [
+        result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+        result(key(0, 'note'), PushOutcome.REJECTED, ev(key(0, 'note'), known, 'upsert', '{"note":"server"}'), 'payload_invalid: bad'),
+      ],
+    });
+    quotaOnce('sync_meta');
+    await expect(store.onStatus(status(T0 + 5_000), 0)).rejects.toMatchObject({ name: 'LocalWriteError', quota: true });
+    vi.restoreAllMocks();
+    expect((await store.getMeta()).rejected_past).toBe(edit.version);
+
+    const report = await store.onStatus(status(T0 + 5_000), 0);
+
+    expect(report).toEqual({ rebased: true, reminted: 1 });
+    const reminted = (await byId(store, later.outbox_id)).edit_version;
+    expect(withinBound(reminted, T0 + 5_000)).toBe(true);
+    expect((await store.getFacet(key(1, 'status')))!.value!.version).toBe(reminted);
+    expect((await store.getMeta()).rejected_past).toBeNull();
   });
 
   it('leaves an edit minted before the jump alone', async () => {
@@ -293,6 +391,19 @@ describe('rebase edge cases', () => {
     expect(report).toEqual({ rebased: true, reminted: 1 });
     expect((await byId(reloaded, early.outbox_id)).edit_version).toBe(early.version);
     expect((await byId(reloaded, ahead.outbox_id)).edit_version).toBe(token(T0 + 1_000, 1));
+  });
+
+  it("leaves another tab's edit that is not past the present alone when the rebase moves nothing", async () => {
+    const { db } = await freshDb();
+    const tabA = await openStore(db, { clock: new FakeClock(T0) });
+    const fromB = await (await openStore(db, { clock: new FakeClock(T0 + 60_000) })).writeFacet(HEAD[1], 'status', 'wished');
+    const stored = (await tabA.getMeta()).hlc;
+
+    const report = await tabA.onStatus(status(T0 + 120_000), 0);
+
+    expect(report).toEqual({ rebased: false, reminted: 0 });
+    expect((await byId(tabA, fromB.outbox_id)).edit_version).toBe(fromB.version);
+    expect((await tabA.getMeta()).hlc).toEqual(stored);
   });
 
   it('re-mints a version_future edit the server held nothing for on no base', async () => {

@@ -117,6 +117,9 @@ export class UserStore {
   private readonly timeZone?: () => string | undefined;
   private readonly newClientId: () => string;
   private statusSeen = false;
+  // rebase() lowers the in-memory clock at once. Until a Status transaction that
+  // carries it commits, its re-mint and exact save stay owed, so an abort cannot drop them.
+  private rebaseUnsaved = false;
 
   private constructor(db: LocalDb, opts: UserStoreOptions, meta: SyncMeta) {
     this.db = db;
@@ -267,7 +270,8 @@ export class UserStore {
     const report = await runTx(this.db, ['facets', 'outbox', 'sync_meta'], async (tx) => {
       const meta = await this.readMeta(tx);
       const rejectedPast = meta.rejected_past !== null && compareVersion(meta.rejected_past, status.serverNowIso) > 0;
-      const rebased = (!this.statusSeen || rejectedPast) && this.hlc.rebase();
+      this.rebaseUnsaved = ((!this.statusSeen || rejectedPast) && this.hlc.rebase()) || this.rebaseUnsaved;
+      const rebased = this.rebaseUnsaved;
       const reminted = await this.remint(tx, rebased);
       Object.assign(meta, {
         rejected_past: null,
@@ -278,6 +282,7 @@ export class UserStore {
       await this.saveClock(tx, meta, rebased);
       return { rebased, reminted };
     });
+    this.rebaseUnsaved = false;
     this.statusSeen = true;
     return report;
   }

@@ -1,0 +1,93 @@
+// The control API a test process uses to steer a running stack: outages,
+// edge faults, issuer state, and what the fakes saw. Loopback only.
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type { CoordinatorProcess } from './coordinator.js';
+import type { Edge, FaultRule } from './edge.js';
+import { readBody, sendJson } from './http.js';
+import type { IssuerSettings, MockIssuer } from './issuer.js';
+import type { FakeOpenFga, Tuple } from './openfga.js';
+import type { FakeSpine } from './spine.js';
+import type { StackWeb } from './web.js';
+
+export interface ControlTarget {
+  state: unknown;
+  edge: Pick<Edge, 'log' | 'running' | 'stop' | 'start' | 'addFault' | 'clearFaults' | 'faults' | 'releaseHung'>;
+  coordinator: Pick<CoordinatorProcess, 'running' | 'stop' | 'start' | 'restart'>;
+  web: Pick<StackWeb, 'stop'>;
+  startWeb(): Promise<void>;
+  issuer: Pick<MockIssuer, 'log' | 'loginAs' | 'revokeUser' | 'configure' | 'settings'>;
+  spine: Pick<FakeSpine, 'calls'>;
+  openfga: Pick<FakeOpenFga, 'calls' | 'tuples' | 'write' | 'remove'>;
+  stop(): Promise<void>;
+}
+
+export interface Control {
+  url: string;
+  close(): Promise<void>;
+}
+
+type Handler = (body: unknown) => unknown;
+
+export async function startControl(target: ControlTarget, port: number, host = '127.0.0.1'): Promise<Control> {
+  const ok = { ok: true };
+  const routes: Record<string, Handler> = {
+    'GET /state': () => target.state,
+    'GET /health': () => ({ edge: target.edge.running(), coordinator: target.coordinator.running() }),
+    'POST /edge/stop': async () => (await target.edge.stop(), ok),
+    'POST /edge/start': async () => (await target.edge.start(), ok),
+    'GET /edge/log': () => target.edge.log,
+    'GET /edge/faults': () => target.edge.faults(),
+    'POST /edge/faults': (body) => (target.edge.addFault(body as FaultRule), ok),
+    'DELETE /edge/faults': () => (target.edge.clearFaults(), ok),
+    'POST /edge/release': () => (target.edge.releaseHung(), ok),
+    'POST /coordinator/stop': async () => (await target.coordinator.stop(), ok),
+    'POST /coordinator/start': async () => (await target.coordinator.start(), ok),
+    'POST /coordinator/restart': async () => (await target.coordinator.restart(), ok),
+    'POST /web/stop': async () => (await target.web.stop(), ok),
+    'POST /web/start': async () => (await target.startWeb(), ok),
+    'GET /issuer/log': () => target.issuer.log,
+    'POST /issuer/login-as': (body) => (target.issuer.loginAs((body as { sub: string }).sub), ok),
+    'POST /issuer/revoke-user': (body) => ({ revoked: target.issuer.revokeUser((body as { sub: string }).sub) }),
+    'POST /issuer/configure': (body) => (target.issuer.configure(body as Partial<IssuerSettings>), target.issuer.settings()),
+    'GET /spine/calls': () => target.spine.calls,
+    'DELETE /spine/calls': () => ((target.spine.calls.length = 0), ok),
+    'GET /openfga/tuples': () => target.openfga.tuples(),
+    'POST /openfga/tuples': (body) => (target.openfga.write(body as Tuple), ok),
+    'DELETE /openfga/tuples': (body) => (target.openfga.remove(body as Tuple), ok),
+    'GET /openfga/calls': () => target.openfga.calls,
+  };
+
+  const server = http.createServer((req, res) => {
+    void (async () => {
+      const key = `${req.method as string} ${new URL(req.url as string, 'http://control').pathname}`;
+      if (key === 'POST /shutdown') {
+        sendJson(res, 202, ok);
+        // Answer first: stopping closes this server too.
+        setImmediate(() => void target.stop());
+        return;
+      }
+      const handler = routes[key];
+      if (handler === undefined) return sendJson(res, 404, { error: `no route ${key}` });
+      try {
+        const raw = await readBody(req);
+        const body: unknown = raw === '' ? undefined : JSON.parse(raw);
+        sendJson(res, 200, await handler(body));
+      } catch (err) {
+        sendJson(res, 400, { error: (err as Error).message });
+      }
+    })();
+  });
+  const bound = await new Promise<number>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => resolve((server.address() as AddressInfo).port));
+  });
+  return {
+    url: `http://${host}:${bound}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}

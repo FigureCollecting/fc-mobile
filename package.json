@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "stack:up": "npm --prefix e2e/stack run up --",
+    "stack:down": "npm --prefix e2e/stack run down"
   },
   "dependencies": {
     "@figurecollecting/fc-shared": "^1.6.0",

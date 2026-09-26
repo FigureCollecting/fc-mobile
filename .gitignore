@@ -41,3 +41,7 @@ dev-dist
 test-results
 playwright-report
 playwright/.cache
+
+# Dev fixtures: product-photo derivatives must NEVER be committed
+src/dev-fixtures/*.png
+src/dev-fixtures/*.webp

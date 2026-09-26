@@ -220,7 +220,9 @@ const styles = `
 
   .two-factor__code {
     text-align: center;
-    font-size: var(--font-xl);
+    /* Larger than the 16px input floor by design; !important + the class
+       selector opts out of the global guard while staying above 16px. */
+    font-size: max(1rem, var(--font-xl)) !important;
     letter-spacing: 0.5em;
     font-variant-numeric: tabular-nums;
     padding-left: calc(var(--space-4) + 0.5em);

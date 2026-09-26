@@ -63,13 +63,14 @@ export default defineConfig({
         '**/*.spec.{ts,tsx}',
         'src/test/**',
       ],
-      // Per-glob thresholds only, not a global floor: src/storage/** is
-      // pre-existing code well under 85% today and is deferred to the unit
-      // that rewrites it. src/sync/** and src/auth/** don't exist yet — the
-      // threshold is future-proofing for the units that add them, and is a
-      // no-op (no matching files) until then.
+      // Per-glob thresholds only, not a global floor. The v2 local store and
+      // sync layer are held to 90%. The four v1 REST-cache modules left in
+      // src/storage (db, figureCache, pendingOps, cacheManager) stay outside
+      // the gate until the hooks move to the v2 store and they are deleted.
+      // src/auth/** is a no-op until the unit that adds it.
       thresholds: {
-        'src/sync/**': { lines: 85, branches: 85 },
+        'src/storage/**/!(db|figureCache|pendingOps|cacheManager).ts': { lines: 90, branches: 90 },
+        'src/sync/**': { lines: 90, branches: 90 },
         'src/auth/**': { lines: 85, branches: 85 },
       },
     },

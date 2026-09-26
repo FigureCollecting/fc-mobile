@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { SignJWT } from 'jose';
 import { AuthRequiredError, LoginError, NetworkError } from '../errors';
 import { sha256Base64url } from '../pkce';
 import { TokenError } from '../oidc';
 import type { LocalDb } from '../../storage/localDb';
-import { APP_ORIGIN, IDP_ORIGIN, SUB_A, SUB_B } from './fakes';
+import { APP_ORIGIN, IDP_ORIGIN, SUB_A, SUB_B, T0 } from './fakes';
 import { World, compareInit, compareUrl } from './world';
 
 const TEN_MIN = 600_000;
+const TWENTY_MIN = 1_200_000;
 
 async function authRows(db: LocalDb): Promise<Record<string, unknown>> {
   const keys = await db.getAllKeys('auth');
@@ -79,7 +81,7 @@ describe('sign-in', () => {
     await tab.signIn();
     const late = world.idp.authorize(world.navigations[1]!);
     world.t += TEN_MIN + 1;
-    await expect(tab.completeSignIn(late)).rejects.toMatchObject({ code: 'expired_state' });
+    await expect(tab.completeSignIn(late)).rejects.toMatchObject({ code: 'expired_state', returnTo: '/' });
 
     await tab.signIn();
     const state = new URL(world.navigations[2]!).searchParams.get('state')!;
@@ -88,6 +90,69 @@ describe('sign-in', () => {
     });
     const rows = await authRows(await world.inspect());
     expect(Object.keys(rows).filter((k) => k.startsWith('pending:'))).toEqual([]);
+  });
+
+  it('carries the IdP error description and the way back only for a login this device started', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await tab.signIn('/figure/7');
+    const state = new URL(world.navigations[0]!).searchParams.get('state')!;
+    const cancelled = await tab
+      .completeSignIn(`${APP_ORIGIN}/callback?error=access_denied&error_description=User+cancelled&state=${state}`)
+      .catch((e: unknown) => e);
+    expect(cancelled).toBeInstanceOf(LoginError);
+    expect(cancelled).toMatchObject({ code: 'access_denied', message: 'access_denied: User cancelled', returnTo: '/figure/7' });
+
+    // A crafted link with no pending login: nothing from it is repeated back.
+    const crafted = await tab
+      .completeSignIn(`${APP_ORIGIN}/callback?error=account_locked&error_description=Call+support+on+555-0100`)
+      .catch((e: unknown) => e);
+    expect(crafted).toMatchObject({ code: 'unknown_state', message: 'unknown_state', returnTo: undefined });
+    const forged = await tab
+      .completeSignIn(`${APP_ORIGIN}/callback?error=account_locked&error_description=Call+555-0100&state=guessed`)
+      .catch((e: unknown) => e);
+    expect(forged).toMatchObject({ code: 'unknown_state', message: 'unknown_state' });
+
+    await tab.signIn('/figure/9');
+    const bare = new URL(world.navigations[1]!).searchParams.get('state')!;
+    await expect(tab.completeSignIn(`${APP_ORIGIN}/callback?state=${bare}`)).rejects.toMatchObject({
+      code: 'invalid_request',
+      returnTo: '/figure/9',
+    });
+  });
+
+  it('keeps the way back when the code exchange fails', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await tab.signIn('/figure/7');
+    const callback = world.idp.authorize(world.navigations[0]!);
+    world.net.offline = true;
+    const offline = await tab.completeSignIn(callback).catch((e: unknown) => e);
+    expect(offline).toBeInstanceOf(LoginError);
+    expect(offline).toMatchObject({ code: 'network', returnTo: '/figure/7' });
+    expect((offline as Error).cause).toBeInstanceOf(NetworkError);
+    world.net.offline = false;
+
+    await tab.signIn('/figure/8');
+    const refused = world.idp.authorize(world.navigations[1]!).replace(/code=[^&]+/, 'code=wrong');
+    const grant = await tab.completeSignIn(refused).catch((e: unknown) => e);
+    expect(grant).toMatchObject({ code: 'invalid_grant', returnTo: '/figure/8' });
+    expect((grant as Error).cause).toBeInstanceOf(TokenError);
+  });
+
+  it('refuses a code exchange that returns no ID token', async () => {
+    const world = await World.create();
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      const res = await idp(req);
+      const { id_token: _dropped, ...rest } = (await res.json()) as Record<string, unknown>;
+      return Response.json(rest, { status: res.status });
+    });
+    const tab = world.tab();
+    await tab.signIn();
+    await expect(tab.completeSignIn(world.idp.authorize(world.navigations[0]!))).rejects.toMatchObject({
+      code: 'invalid_id_token',
+    });
   });
 
   it('refuses tokens whose ID token was minted for another login', async () => {
@@ -346,6 +411,72 @@ describe('edges', () => {
   });
 });
 
+describe('a device clock far off', () => {
+  it('signs in with the clock 20 min fast, before any coordinator reply has set it', async () => {
+    const world = await World.create();
+    const tab = world.tab({ skewMs: TWENTY_MIN });
+    expect(await world.signIn(tab)).toMatchObject({ sub: SUB_A });
+    expect(tab.status.value).toBe('signed-in');
+    expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+  });
+
+  it('keeps the rotated refresh token on a cold start with the clock 20 min fast', async () => {
+    const world = await World.create();
+    await world.signIn(world.tab());
+    const db = await world.inspect();
+    const before = (await authRows(db))[`tokens:${SUB_A}`] as { refreshToken: string };
+    const cold = world.tab({ skewMs: TWENTY_MIN });
+    expect((await cold.fetch(compareUrl, compareInit())).status).toBe(200);
+    expect(world.idp.refreshCount()).toBe(1);
+    const after = (await authRows(db))[`tokens:${SUB_A}`] as { refreshToken?: string; reauth?: boolean };
+    expect(after.refreshToken).toMatch(/^rt-/);
+    expect(after.refreshToken).not.toBe(before.refreshToken);
+    expect(after.reauth).toBeUndefined();
+    expect(cold.status.value).toBe('signed-in');
+  });
+
+  it('never judges a refreshed ID token by its expiry, even once the clock is known', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    expect(tab.clock.known).toBe(true);
+    const cfg = world.idp.config;
+    world.idp.idTokenOverride = await new SignJWT({})
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuer(cfg.issuer)
+      .setAudience(cfg.clientId)
+      .setSubject(SUB_A)
+      .setExpirationTime(Math.floor(T0 / 1000) - 3600)
+      .sign(new Uint8Array(32));
+    world.t += TEN_MIN;
+    expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+    expect(tab.status.value).toBe('signed-in');
+  });
+
+  it('still refuses a sign-in whose ID token expired by the coordinator clock', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    world.idp.now = () => world.t - 30 * 60_000;
+    await tab.signIn();
+    const callback = world.idp.authorize(world.navigations.at(-1)!);
+    await expect(tab.completeSignIn(callback)).rejects.toMatchObject({ code: 'invalid_id_token' });
+  });
+});
+
+describe('the local store closed under the session', () => {
+  it('reopens after another page deletes the store, and is then signed out', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+    await world.deleteStore();
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(tab.status.value).toBe('signed-out');
+    expect(await world.tab().start()).toBe('signed-out');
+  });
+});
+
 describe('timeouts', () => {
   it('a token endpoint that never answers is offline, and releases the refresh lock', async () => {
     const world = await World.create();
@@ -375,7 +506,9 @@ describe('timeouts', () => {
     await tab.signIn();
     const callback = world.idp.authorize(world.navigations[0]!);
     world.net.hanging.add(IDP_ORIGIN);
-    await expect(tab.completeSignIn(callback)).rejects.toBeInstanceOf(NetworkError);
+    const err = await tab.completeSignIn(callback).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'network' });
+    expect((err as Error).cause).toBeInstanceOf(NetworkError);
   });
 });
 

@@ -112,15 +112,16 @@ export function refreshGrant(
   return tokenRequest(cfg, fetchFn, { grant_type: 'refresh_token', refresh_token: refreshToken }, timeoutMs);
 }
 
-/** Five minutes: the token just came from the token endpoint over TLS, so exp only guards a wild clock. */
+/** Clock skew allowed between the IdP and the server-corrected clock. */
 const EXP_LEEWAY_SECONDS = 300;
 
 // OIDC Core 3.1.3.7, token received directly from the token endpoint: TLS stands in for
-// the signature check; issuer, audience, expiry and nonce are still checked.
+// the signature check. exp is judged only when the caller has a server-corrected clock
+// (nowSeconds): a raw device clock can be hours off and would refuse every sign-in.
 export function idTokenClaims(
   cfg: OidcConfig,
   idToken: string,
-  p: { nowSeconds: number; nonce?: string },
+  p: { nowSeconds?: number; nonce?: string },
 ): { sub: string } {
   let claims: ReturnType<typeof decodeJwt>;
   try {
@@ -131,8 +132,18 @@ export function idTokenClaims(
   if (claims.iss !== cfg.issuer) throw new IdTokenError('issuer');
   const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
   if (!aud.includes(cfg.clientId)) throw new IdTokenError('audience');
-  if (typeof claims.exp !== 'number' || claims.exp + EXP_LEEWAY_SECONDS < p.nowSeconds) throw new IdTokenError('expired');
+  if (typeof claims.exp !== 'number') throw new IdTokenError('no expiry');
+  if (p.nowSeconds !== undefined && claims.exp + EXP_LEEWAY_SECONDS < p.nowSeconds) throw new IdTokenError('expired');
   if (p.nonce !== undefined && claims['nonce'] !== p.nonce) throw new IdTokenError('nonce');
   if (typeof claims.sub !== 'string' || claims.sub === '') throw new IdTokenError('subject');
   return { sub: claims.sub };
+}
+
+/** OIDC Core 12.2: a refreshed ID token must name the same issuer, audience and subject. Its expiry is not checked. */
+export function sameIdentity(cfg: OidcConfig, idToken: string, sub: string): boolean {
+  try {
+    return idTokenClaims(cfg, idToken, {}).sub === sub;
+  } catch {
+    return false;
+  }
 }

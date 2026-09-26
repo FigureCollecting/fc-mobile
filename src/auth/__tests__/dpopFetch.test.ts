@@ -100,6 +100,15 @@ describe('DPoP transport fetch', () => {
     expect(tab.status.value).toBe('signed-in');
   });
 
+  it('binds htu to the origin and path, never the query (RFC 9449 4.2)', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const from = world.coord.log.length;
+    expect((await tab.fetch(`${APP_ORIGIN}/api/auth/session?a=b#frag`)).status).toBe(200);
+    expect(world.statuses(from)).toEqual([200]);
+  });
+
   it('passes other replies through untouched', async () => {
     const world = await World.create();
     const tab = world.tab();

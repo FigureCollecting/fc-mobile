@@ -3,6 +3,7 @@ import { Code, ConnectError, createClient } from '@connectrpc/connect';
 import { CompareService } from '@figurecollecting/fc-api-contract';
 import { COORDINATOR_BASE_URL, createCoordinatorTransport } from '../transport';
 import { World } from '../../auth/__tests__/world';
+import { APP_ORIGIN } from '../../auth/__tests__/fakes';
 
 const compare = (world: World, tab = world.tab()) => {
   const client = createClient(CompareService, createCoordinatorTransport(tab.fetch));
@@ -44,6 +45,22 @@ describe('coordinator transport', () => {
     world.idp.isValidAccess = () => false;
     await expect(call()).rejects.toMatchObject({ code: Code.Unauthenticated });
     expect(tab.status.value).toBe('reauth-required');
+  });
+
+  it('maps an enrolment the coordinator could not answer (5xx) to Unavailable', async () => {
+    const world = await World.create();
+    const handler = world.coord.handler;
+    let enrolStatus = 502;
+    world.net.route(APP_ORIGIN, async (req) =>
+      new URL(req.url).pathname === '/api/auth/devices' ? new Response('Bad Gateway', { status: enrolStatus }) : handler(req),
+    );
+    const { tab, call } = compare(world);
+    await world.signIn(tab);
+    await expect(call()).rejects.toMatchObject({ code: Code.Unavailable });
+    enrolStatus = 403;
+    await expect(call()).rejects.toMatchObject({ code: Code.Unknown });
+    world.net.route(APP_ORIGIN, handler);
+    await expect(call()).resolves.toMatchObject({ coverage: { redacted: [] } });
   });
 
   it('keeps a cancellation a cancellation', async () => {

@@ -5,6 +5,8 @@ import { createBrowserSession, getAuthSession } from '../index';
 import { configuredOidc } from '../config';
 import { defaultLocks, InTabLocks } from '../locks';
 import { NetworkError } from '../errors';
+import { AuthStore } from '../store';
+import { openLocalDb } from '../../storage/localDb';
 import { World } from './world';
 import { APP_ORIGIN, SUB_A } from './fakes';
 
@@ -63,8 +65,32 @@ describe('browser wiring', () => {
     const authorize = new URL(assign.mock.calls[0]![0] as string);
     expect(authorize.searchParams.get('redirect_uri')).toBe(`${APP_ORIGIN}/callback`);
     const state = authorize.searchParams.get('state')!;
-    await expect(session.completeSignIn(`${APP_ORIGIN}/callback?code=c&state=${state}`)).rejects.toBeInstanceOf(NetworkError);
+    const err = await session.completeSignIn(`${APP_ORIGIN}/callback?code=c&state=${state}`).catch((e: unknown) => e);
+    expect((err as Error).cause).toBeInstanceOf(NetworkError);
     expect(fetchFn).toHaveBeenCalledWith(configuredOidc().tokenEndpoint, expect.objectContaining({ method: 'POST' }));
+  });
+});
+
+describe('browser wiring: the store closed by another page', () => {
+  it('createBrowserSession reopens it on the next call instead of failing on the closed connection', async () => {
+    const factory = new IDBFactory();
+    const seed = await openLocalDb({ factory });
+    const store = new AuthStore(seed);
+    await store.putTokens({ sub: SUB_A, accessToken: 'at', refreshToken: 'rt', expiresAt: Date.now() + 600_000, scope: 'openid' });
+    await store.setCurrentSub(SUB_A);
+    seed.close();
+    const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
+    const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
+    expect(await session.start()).toBe('signed-in');
+    await new Promise<void>((resolve, reject) => {
+      const req = factory.deleteDatabase('fc-mobile');
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('blocked'));
+    });
+    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(session.status.value).toBe('signed-out');
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
 

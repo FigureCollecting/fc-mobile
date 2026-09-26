@@ -13,7 +13,8 @@ export interface BrowserLike {
 export function createBrowserSession(win: BrowserLike): AuthSession {
   let db: Promise<LocalDb> | undefined;
   return new AuthSession({
-    // Another page upgrading the store closes this connection; reopen on next use.
+    // Another page deleting or upgrading the store closes this connection. The session
+    // asks for the store on every use, so the next call opens a fresh one.
     db: () => (db ??= openLocalDb({ factory: win.indexedDB, onVersionChange: () => (db = undefined) })),
     config: configuredOidc(),
     origin: win.location.origin,

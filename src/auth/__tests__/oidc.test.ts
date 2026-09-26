@@ -7,11 +7,12 @@ import {
   IdTokenError,
   idTokenClaims,
   refreshGrant,
+  sameIdentity,
   TokenError,
 } from '../oidc';
 import { NetworkError } from '../errors';
 import { oidcConfig } from '../config';
-import { FakeIdp, FakeNet, IDP_ORIGIN, SUB_A, T0 } from './fakes';
+import { FakeIdp, FakeNet, IDP_ORIGIN, SUB_A, SUB_B, T0 } from './fakes';
 
 const cfg = oidcConfig(IDP_ORIGIN);
 
@@ -142,6 +143,23 @@ describe('ID token claims', () => {
     expect(() => idTokenClaims(cfg, '', { nowSeconds })).toThrow(IdTokenError);
     const token = await sign({ ...good, ...patch });
     expect(() => idTokenClaims(cfg, token, { nonce: 'n', nowSeconds })).toThrow(IdTokenError);
+  });
+
+  it('judges expiry only against a server-corrected clock, but always wants one', async () => {
+    const stale = await sign({ ...good, exp: nowSeconds - 3600 });
+    expect(idTokenClaims(cfg, stale, { nonce: 'n' }).sub).toBe(SUB_A);
+    expect(() => idTokenClaims(cfg, stale, { nonce: 'n', nowSeconds })).toThrow(IdTokenError);
+    const { exp: _exp, ...noExp } = good;
+    const unbounded = await sign(noExp);
+    expect(() => idTokenClaims(cfg, unbounded, { nonce: 'n' })).toThrow(IdTokenError);
+  });
+
+  it('checks only who a token names, never its expiry, for sameIdentity', async () => {
+    expect(sameIdentity(cfg, await sign({ ...good, exp: nowSeconds - 3600 }), SUB_A)).toBe(true);
+    expect(sameIdentity(cfg, await sign(good), SUB_B)).toBe(false);
+    expect(sameIdentity(cfg, await sign({ ...good, iss: 'https://evil.test/' }), SUB_A)).toBe(false);
+    expect(sameIdentity(cfg, await sign({ ...good, aud: 'other' }), SUB_A)).toBe(false);
+    expect(sameIdentity(cfg, 'not-a-jwt', SUB_A)).toBe(false);
   });
 
   it('tolerates a device clock within five minutes of the IdP', async () => {

@@ -17,14 +17,19 @@ export class NetworkError extends Error {
   }
 }
 
-/** The /callback leg failed; `code` is the OAuth error or one of ours. */
+/**
+ * The /callback leg failed; `code` is the OAuth error or one of ours. `returnTo` is set only
+ * when the reply matched a login this device started (a safe same-origin path).
+ */
 export class LoginError extends Error {
   readonly code: string;
+  readonly returnTo: string | undefined;
 
-  constructor(code: string, detail?: string) {
-    super(detail === undefined ? code : `${code}: ${detail}`);
+  constructor(code: string, detail?: string, returnTo?: string, options?: ErrorOptions) {
+    super(detail === undefined ? code : `${code}: ${detail}`, options);
     this.name = 'LoginError';
     this.code = code;
+    this.returnTo = returnTo;
   }
 }
 

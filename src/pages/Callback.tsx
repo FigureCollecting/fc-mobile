@@ -12,11 +12,23 @@ export interface CallbackProps {
   url?: string;
 }
 
-// The OIDC redirect target. Replaces itself in history so the code never
-// lingers; a failure stays here with a retry rather than bouncing anywhere.
+interface Failure {
+  detail: string;
+  returnTo: string;
+}
+
+function failureOf(err: unknown): Failure {
+  if (!(err instanceof LoginError)) return { detail: (err as Error).message, returnTo: '/' };
+  // A spent or crafted link: say nothing it said.
+  if (err.code === 'unknown_state') return { detail: 'This sign-in link has expired or was already used.', returnTo: '/' };
+  return { detail: err.message, returnTo: err.returnTo ?? '/' };
+}
+
+// The OIDC redirect target. Replaces itself in history so the code never lingers.
+// A failure stays here with a retry and a way back that needs no network.
 export function Callback({ session, url = window.location.href }: CallbackProps) {
   const [, setLocation] = useLocation();
-  const [failure, setFailure] = useState<string>();
+  const [failure, setFailure] = useState<Failure>();
 
   useEffect(() => {
     let live = true;
@@ -30,7 +42,7 @@ export function Callback({ session, url = window.location.href }: CallbackProps)
           if (live) setLocation('/', { replace: true });
           return;
         }
-        if (live) setFailure((err as Error).message);
+        if (live) setFailure(failureOf(err));
       }
     })();
     return () => {
@@ -45,9 +57,12 @@ export function Callback({ session, url = window.location.href }: CallbackProps)
       ) : (
         <>
           <p>Sign-in did not finish.</p>
-          <p class="callback-page__detail">{failure}</p>
-          <button type="button" onClick={() => void session.signIn('/')}>
+          <p class="callback-page__detail">{failure.detail}</p>
+          <button type="button" onClick={() => void session.signIn(failure.returnTo)}>
             Try again
+          </button>
+          <button type="button" onClick={() => setLocation(failure.returnTo, { replace: true })}>
+            Back to your collection
           </button>
         </>
       )}

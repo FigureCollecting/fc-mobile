@@ -46,13 +46,39 @@ describe('Callback', () => {
     expect(s.signIn).toHaveBeenCalledWith('/');
   });
 
+  it('offers a way back to where the user started, replacing /callback in history', async () => {
+    const s = session(async () => {
+      throw new LoginError('access_denied', 'User cancelled', '/figure/7');
+    });
+    const view = renderWithProviders(<Callback session={s} url={URL_IN} />, { initialPath: '/callback' });
+    await screen.findByText(/sign-in did not finish/i);
+    expect(screen.getByText('access_denied: User cancelled')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }));
+    expect(s.signIn).toHaveBeenCalledWith('/figure/7');
+    fireEvent.click(screen.getByRole('button', { name: /back to your collection/i }));
+    expect(view.history).toEqual(['/figure/7']);
+  });
+
+  it('goes back home from a failure that has no pending login, saying nothing the link said', async () => {
+    const s = session(async () => {
+      throw new LoginError('unknown_state');
+    });
+    const view = renderWithProviders(<Callback session={s} url={URL_IN} />, { initialPath: '/callback' });
+    await screen.findByText(/sign-in did not finish/i);
+    expect(screen.getByText(/link has expired or was already used/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /back to your collection/i }));
+    expect(view.history).toEqual(['/']);
+  });
+
   it('names a network failure plainly', async () => {
     const s = session(async () => {
       throw new TypeError('Failed to fetch');
     });
-    renderWithProviders(<Callback session={s} url={URL_IN} />, { initialPath: '/callback' });
+    const view = renderWithProviders(<Callback session={s} url={URL_IN} />, { initialPath: '/callback' });
     await screen.findByText(/sign-in did not finish/i);
     expect(screen.getByText(/Failed to fetch/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /back to your collection/i }));
+    expect(view.history).toEqual(['/']);
   });
 
   it('does nothing once the page has gone away', async () => {

@@ -15,6 +15,7 @@ import {
   exchangeCode,
   idTokenClaims,
   refreshGrant,
+  sameIdentity,
   TOKEN_TIMEOUT_MS,
   TokenError,
   type TokenResponse,
@@ -25,6 +26,7 @@ import { AuthStore, type TokenRecord } from './store';
 export type AuthStatus = 'loading' | 'signed-out' | 'signed-in' | 'offline' | 'reauth-required';
 
 export interface AuthSessionDeps {
+  /** The open local store, asked for on every use: its owner reopens it after another page closes it. */
   db: () => Promise<LocalDb>;
   config: OidcConfig;
   /** The page origin: redirect_uri, post-logout URI and every DPoP htu derive from it. */
@@ -58,7 +60,6 @@ export class AuthSession implements DpopCredentials {
   private readonly timeoutMs: number;
   private currentSub: string | undefined;
   private started: Promise<AuthStatus> | undefined;
-  private storeReady: Promise<AuthStore> | undefined;
   private readonly enrolling = new Map<string, Promise<DeviceKeyRecord>>();
 
   constructor(deps: AuthSessionDeps) {
@@ -106,23 +107,33 @@ export class AuthSession implements DpopCredentials {
     const store = await this.store();
     const state = params.get('state');
     const pending = state === null ? undefined : await store.takePending(state);
+    // No login of ours: a spent or crafted link, so nothing it says is repeated on screen.
+    if (pending === undefined) throw new LoginError('unknown_state');
+    const back = pending.returnTo;
     const error = params.get('error');
-    if (error !== null) throw new LoginError(error, params.get('error_description') ?? undefined);
+    if (error !== null) throw new LoginError(error, params.get('error_description') ?? undefined, back);
     const code = params.get('code');
-    if (pending === undefined || code === null) throw new LoginError('unknown_state');
-    if (this.now() - pending.createdAt > PENDING_TTL_MS) throw new LoginError('expired_state');
+    if (code === null) throw new LoginError('invalid_request', 'the reply carried no code', back);
+    if (this.now() - pending.createdAt > PENDING_TTL_MS) throw new LoginError('expired_state', undefined, back);
 
-    const tokens = await exchangeCode(
-      this.config,
-      this.deps.fetch,
-      { code, verifier: pending.verifier, redirectUri: pending.redirectUri },
-      this.timeoutMs,
-    );
+    let tokens: TokenResponse;
+    try {
+      tokens = await exchangeCode(
+        this.config,
+        this.deps.fetch,
+        { code, verifier: pending.verifier, redirectUri: pending.redirectUri },
+        this.timeoutMs,
+      );
+    } catch (err) {
+      if (err instanceof TokenError) throw new LoginError(err.error, `token endpoint answered ${err.status}`, back, { cause: err });
+      throw new LoginError('network', 'the sign-in service could not be reached', back, { cause: err });
+    }
     let sub: string;
     try {
-      sub = idTokenClaims(this.config, tokens.id_token ?? '', { nonce: pending.nonce, nowSeconds: this.nowSeconds() }).sub;
+      const clock = this.clock.known ? { nowSeconds: this.nowSeconds() } : {};
+      sub = idTokenClaims(this.config, tokens.id_token ?? '', { nonce: pending.nonce, ...clock }).sub;
     } catch (err) {
-      throw new LoginError('invalid_id_token', (err as Error).message);
+      throw new LoginError('invalid_id_token', (err as Error).message, back);
     }
     await store.putTokens(this.record(sub, tokens));
     await store.setCurrentSub(sub);
@@ -182,8 +193,9 @@ export class AuthSession implements DpopCredentials {
         if (err instanceof NetworkError) this.set('offline');
         throw err;
       }
-      if (answer.id_token !== undefined && !this.idTokenIsFor(answer.id_token, sub)) return this.reauth(store, tokens);
+      // Stored first: the IdP has already retired the old refresh token.
       await store.putTokens(this.record(sub, answer, tokens));
+      if (answer.id_token !== undefined && !sameIdentity(this.config, answer.id_token, sub)) return this.reauth(store, tokens);
       this.set('signed-in');
       return answer.access_token;
     });
@@ -236,14 +248,6 @@ export class AuthSession implements DpopCredentials {
     throw new AuthRequiredError('reauth');
   }
 
-  private idTokenIsFor(idToken: string, sub: string): boolean {
-    try {
-      return idTokenClaims(this.config, idToken, { nowSeconds: this.nowSeconds() }).sub === sub;
-    } catch {
-      return false;
-    }
-  }
-
   private record(sub: string, t: TokenResponse, previous?: TokenRecord): TokenRecord {
     const expiresIn = typeof t.expires_in === 'number' ? t.expires_in : DEFAULT_EXPIRES_IN_S;
     const refreshToken = t.refresh_token ?? previous?.refreshToken;
@@ -290,9 +294,8 @@ export class AuthSession implements DpopCredentials {
     return `fc-auth-refresh:${sub}`;
   }
 
-  private store(): Promise<AuthStore> {
-    this.storeReady ??= this.deps.db().then((db) => new AuthStore(db));
-    return this.storeReady;
+  private async store(): Promise<AuthStore> {
+    return new AuthStore(await this.deps.db());
   }
 
   private set(status: AuthStatus): AuthStatus {

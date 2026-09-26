@@ -41,9 +41,10 @@ export class World {
   }
 
   tab(options: TabOptions = {}): AuthSession {
+    // As index.ts does: another page deleting or upgrading the store closes this connection.
     let db: Promise<LocalDb> | undefined;
     return new AuthSession({
-      db: () => (db ??= openLocalDb({ factory: this.factory })),
+      db: () => (db ??= openLocalDb({ factory: this.factory, onVersionChange: () => (db = undefined) })),
       config: this.idp.config,
       origin: APP_ORIGIN,
       fetch: this.net.fetch,
@@ -64,6 +65,16 @@ export class World {
   /** A second connection for looking at what the store holds. */
   inspect(): Promise<LocalDb> {
     return openLocalDb({ factory: this.factory });
+  }
+
+  /** Another page deletes the whole store, as a 'remove data from this device' action would. */
+  deleteStore(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const req = this.factory.deleteDatabase('fc-mobile');
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('delete blocked by an open connection'));
+    });
   }
 
   statuses(from = 0): number[] {

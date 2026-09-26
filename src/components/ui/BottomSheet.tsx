@@ -1,6 +1,7 @@
 import { useRef, useCallback } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
 import { motion, AnimatePresence, useDragControls } from 'framer-motion';
+import { Style } from '../../styles/Style';
 
 type SnapPoint = 'closed' | 'half' | 'full';
 
@@ -70,7 +71,7 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
             </div>
           </motion.div>
 
-          <style>{`
+          <Style css={`
             .bottom-sheet__backdrop {
               position: fixed;
               inset: 0;
@@ -117,7 +118,7 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
               -webkit-overflow-scrolling: touch;
               padding: 0 var(--space-4) var(--space-4);
             }
-          `}</style>
+          `} />
         </>
       )}
     </AnimatePresence>

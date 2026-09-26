@@ -1,11 +1,26 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import preact from '@preact/preset-vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { NGINX_CONF, previewHeaders } from './deploy/securityHeaders.ts';
+import { WEB_MANIFEST } from './deploy/webManifest.ts';
 
-const nm = path.resolve(__dirname, 'node_modules');
+const nm = path.resolve(import.meta.dirname, 'node_modules');
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  // `npm run dev` against a local coordinator started with
+  // COORDINATOR_PUBLIC_ORIGIN=http://localhost:5173 and COORDINATOR_ROUTE_PREFIX=/api:
+  // the path and Host pass through unchanged, so every DPoP htu matches.
+  server: {
+    proxy: {
+      '/api': { target: process.env.FC_COORDINATOR_URL ?? 'http://127.0.0.1:5052', changeOrigin: false },
+    },
+  },
+  // `vite preview` serves the e2e suite under the headers nginx ships.
+  preview: {
+    headers: previewHeaders(readFileSync(NGINX_CONF, 'utf8'), loadEnv(mode, import.meta.dirname, 'VITE_')),
+  },
   plugins: [
     // Disable preset's react aliases so we can set absolute-path ones below.
     // This prevents "rewrote react to preact/compat but was not an absolute path"
@@ -15,23 +30,12 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      registerType: 'autoUpdate',
-      manifest: {
-        name: 'FigureCollecting',
-        short_name: 'FC',
-        description: 'Your collectibles, anywhere',
-        start_url: '/',
-        display: 'standalone',
-        orientation: 'portrait',
-        theme_color: '#0967d2',
-        background_color: '#0a0a0a',
-        // Branded (graphite bg, warm-white mark), maskable-safe — one file
-        // per size covers both the "any" and "maskable" display contexts.
-        icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-        ],
-      },
+      // The user takes a new build from the prompt (src/pwa/updates.ts registers).
+      registerType: 'prompt',
+      injectRegister: false,
+      // Behind Cloudflare Access the manifest fetch needs the session cookie.
+      useCredentials: true,
+      manifest: WEB_MANIFEST,
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
       },
@@ -49,4 +53,4 @@ export default defineConfig({
     // Force shared deps to resolve from fc-mobile's node_modules (single copy)
     dedupe: ['preact', 'zustand'],
   },
-});
+}));

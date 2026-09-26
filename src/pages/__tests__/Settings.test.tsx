@@ -9,6 +9,9 @@ vi.mock('../../storage/cacheManager', () => ({
   clearAllCaches: vi.fn().mockResolvedValue(undefined),
 }));
 
+const pwaStorage = vi.hoisted(() => ({ readStorageStatus: vi.fn() }));
+vi.mock('../../pwa/storage', () => ({ readStorageStatus: pwaStorage.readStorageStatus }));
+
 import { getCacheStats } from '../../storage/cacheManager';
 import { Settings } from '../Settings';
 import { renderWithProviders } from '../../test/testUtils';
@@ -29,8 +32,43 @@ function signIn() {
 }
 
 beforeEach(() => {
+  pwaStorage.readStorageStatus.mockReset();
+  pwaStorage.readStorageStatus.mockResolvedValue(null);
   mockedGetCacheStats.mockReset();
   mockedGetCacheStats.mockResolvedValue({ figureCount: 0, pendingOpsCount: 0, estimatedSizeKb: 0 });
+});
+
+describe('Settings about', () => {
+  it('shows the build next to the version, so a user can tell which build is running', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.getByText(`0.1.0 (${import.meta.env.VITE_BUILD_ID})`)).toBeInTheDocument();
+  });
+});
+
+describe('Settings storage', () => {
+  it("shows the browser's estimate: usage against quota", async () => {
+    pwaStorage.readStorageStatus.mockResolvedValue({ usage: 5 * 1024 * 1024, quota: 2 * 1024 * 1024 * 1024, persisted: false });
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(await screen.findByText('5.0 MB of 2.0 GB')).toBeInTheDocument();
+  });
+
+  it('says whether offline data is kept (persisted) or may be cleared', async () => {
+    pwaStorage.readStorageStatus.mockResolvedValueOnce({ usage: 1024, quota: 1024 * 1024, persisted: true });
+    const kept = renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(await screen.findByText('Kept')).toBeInTheDocument();
+    expect(screen.getByText('1 KB of 1.0 MB')).toBeInTheDocument();
+    kept.unmount();
+
+    pwaStorage.readStorageStatus.mockResolvedValueOnce({ usage: 0, quota: 0, persisted: false });
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(await screen.findByText('May be cleared by the browser')).toBeInTheDocument();
+  });
+
+  it('omits the rows when the browser gives no estimate', async () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    await waitFor(() => expect(pwaStorage.readStorageStatus).toHaveBeenCalled());
+    expect(screen.queryByText('Offline Data')).toBeNull();
+  });
 });
 
 describe('Settings page', () => {

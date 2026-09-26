@@ -1,4 +1,5 @@
 import type { ComponentChildren } from 'preact';
+import { Style } from '../../styles/Style';
 
 interface ErrorStateProps {
   title?: string;
@@ -41,7 +42,7 @@ export function ErrorState({
       )}
       {children}
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }
@@ -78,7 +79,7 @@ export function ComingSoon({ feature = 'This feature', onBack }: ComingSoonProps
         </button>
       )}
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

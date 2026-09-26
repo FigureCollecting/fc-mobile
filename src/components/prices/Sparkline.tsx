@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface SparklineProps {
   points: number[];
   width?: number;
@@ -59,13 +61,13 @@ export function Sparkline({ points, width = 60, height = 20, color }: SparklineP
         stroke-linejoin="round"
       />
 
-      <style>{`
+      <Style css={`
         .sparkline {
           display: inline-block;
           vertical-align: middle;
           flex-shrink: 0;
         }
-      `}</style>
+      `} />
     </svg>
   );
 }

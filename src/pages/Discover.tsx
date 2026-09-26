@@ -12,6 +12,7 @@ import { useCollection } from '../hooks/useCollection';
 import { useCollectionBreakdown } from '../hooks/useAnalytics';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { Style } from '../styles/Style';
 
 /** Highlight matching text within a string */
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -360,7 +361,7 @@ export function Discover() {
         />
       )}
 
-      <style>{`
+      <Style css={`
         .page-discover__search {
           padding: 0 var(--space-page) var(--space-2);
         }
@@ -547,7 +548,7 @@ export function Discover() {
           color: var(--text-secondary);
           font-size: var(--font-sm);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

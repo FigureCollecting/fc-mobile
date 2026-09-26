@@ -1,4 +1,5 @@
 import type { CollectionStatus } from '@figurecollecting/fc-shared';
+import { Style } from '../../styles/Style';
 
 interface StatusBadgeProps {
   status?: CollectionStatus;
@@ -21,7 +22,7 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
     <span class={`status-badge status-badge--${size} ${config.cssClass}`}>
       {config.label}
 
-      <style>{`
+      <Style css={`
         .status-badge {
           display: inline-flex;
           align-items: center;
@@ -55,7 +56,7 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
           background: rgba(59, 130, 246, 0.15);
           color: var(--accent-info);
         }
-      `}</style>
+      `} />
     </span>
   );
 }

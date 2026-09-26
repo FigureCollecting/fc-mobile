@@ -4,6 +4,7 @@ import type { Figure, PaginatedResponse, CollectionStatus } from '@figurecollect
 import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { cacheFigures, getCachedFigures, setMetadata } from '../storage/figureCache';
+import { markHydrated } from '../pwa/storage';
 
 interface UseCollectionOptions {
   page?: number;
@@ -25,6 +26,8 @@ export function useCollection(options: UseCollectionOptions = {}) {
         // Cache figures to IndexedDB on successful fetch
         await cacheFigures(response.data);
         await setMetadata('lastFetch', Date.now());
+        // First local data: ask the browser not to evict it (WK-13 moves this to its hydrate).
+        void markHydrated();
         return response;
       } catch (error) {
         // If the fetch fails, try serving from IndexedDB cache

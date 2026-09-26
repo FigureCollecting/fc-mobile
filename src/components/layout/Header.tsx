@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface HeaderProps {
   title: string;
   /** Content rendered before the title (e.g. back button) */
@@ -13,7 +15,7 @@ export function Header({ title, leading, action }: HeaderProps) {
       <h1 class="header__title">{title}</h1>
       {action && <div class="header__action">{action}</div>}
 
-      <style>{`
+      <Style css={`
         .header {
           display: flex;
           align-items: center;
@@ -53,7 +55,7 @@ export function Header({ title, leading, action }: HeaderProps) {
           gap: var(--space-2);
           flex-shrink: 0;
         }
-      `}</style>
+      `} />
     </header>
   );
 }

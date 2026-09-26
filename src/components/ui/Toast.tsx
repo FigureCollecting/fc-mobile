@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { toasts, dismissToast } from '../../stores/toast';
 import type { ToastMessage } from '../../stores/toast';
+import { Style } from '../../styles/Style';
 
 function ToastItem({ toast }: { toast: ToastMessage }) {
   const bgColor =
@@ -36,7 +37,7 @@ export function ToastContainer() {
         ))}
       </AnimatePresence>
 
-      <style>{`
+      <Style css={`
         .toast-container {
           position: fixed;
           bottom: calc(var(--bottom-nav-height, 64px) + var(--safe-area-bottom, 0px) + var(--space-3, 12px));
@@ -62,7 +63,7 @@ export function ToastContainer() {
           user-select: none;
           -webkit-tap-highlight-color: transparent;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

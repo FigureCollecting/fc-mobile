@@ -5,6 +5,7 @@ import type { User } from '@figurecollecting/fc-shared';
 import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { AuthLayout } from '../components/auth/AuthLayout';
+import { Style } from '../styles/Style';
 
 const CODE_LENGTH = 6;
 const CODE_RE = /^\d{6}$/;
@@ -171,7 +172,7 @@ export function TwoFactor() {
         Cancel
       </button>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </AuthLayout>
   );
 }

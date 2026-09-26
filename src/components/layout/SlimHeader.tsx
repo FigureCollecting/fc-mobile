@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useChromeStore } from '../../stores/chrome';
 import { HeaderMark } from '../brand/HeaderMark';
+import { Style } from '../../styles/Style';
 
 interface SlimHeaderProps {
   /** Contextual info (result count, breadcrumb chip) — NOT a page title. */
@@ -25,7 +26,7 @@ export function SlimHeader({ context, actions }: SlimHeaderProps) {
       </div>
       {actions && <div class="slim-header__actions">{actions}</div>}
 
-      <style>{`
+      <Style css={`
         .slim-header {
           display: flex;
           align-items: center;
@@ -74,7 +75,7 @@ export function SlimHeader({ context, actions }: SlimHeaderProps) {
           gap: var(--space-1);
           flex-shrink: 0;
         }
-      `}</style>
+      `} />
     </header>
   );
 }

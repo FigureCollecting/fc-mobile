@@ -1,4 +1,5 @@
 import type { SyncPhase } from '@figurecollecting/fc-shared';
+import { Style } from '../../styles/Style';
 
 interface SyncProgressProps {
   phase: SyncPhase | null;
@@ -113,7 +114,7 @@ export function SyncProgress({
         </button>
       )}
 
-      <style>{`
+      <Style css={`
         .sync-progress {
           display: flex;
           flex-direction: column;
@@ -289,7 +290,7 @@ export function SyncProgress({
           color: var(--accent-danger);
           border-color: var(--accent-danger);
         }
-      `}</style>
+      `} />
     </div>
   );
 }
@@ -322,7 +323,7 @@ function StatusMiniBar({
         />
       </div>
 
-      <style>{`
+      <Style css={`
         .status-mini-bar {
           display: flex;
           flex-direction: column;
@@ -357,7 +358,7 @@ function StatusMiniBar({
           border-radius: var(--radius-full);
           transition: width 300ms var(--spring-snappy);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

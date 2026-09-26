@@ -8,6 +8,7 @@ import { BarChart } from '../components/analytics/BarChart';
 import { useCollectionDna, buildDnaSummary } from '../hooks/useCollectionDna';
 import { useAuthStore } from '../stores/auth';
 import { useLocation } from 'wouter';
+import { Style } from '../styles/Style';
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -22,7 +23,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
         <path d="M12 19l-7-7 7-7" />
       </svg>
 
-      <style>{`
+      <Style css={`
         .dna-back-btn {
           display: flex;
           align-items: center;
@@ -39,7 +40,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
           color: var(--text-primary);
           background: var(--surface-tertiary);
         }
-      `}</style>
+      `} />
     </button>
   );
 }
@@ -94,7 +95,7 @@ export function CollectionDna() {
         <div class="dna__empty">
           <p>Sign in to discover your Collection DNA</p>
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -108,7 +109,7 @@ export function CollectionDna() {
           <div class="dna__loading-spinner" />
           <p class="dna__loading-text">Analyzing your collection...</p>
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -122,7 +123,7 @@ export function CollectionDna() {
           feature="Collection DNA"
           onBack={() => setLocation('/')}
         />
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -137,7 +138,7 @@ export function CollectionDna() {
           message="We couldn't reach the analytics service. Try again in a moment."
           onRetry={() => refetch()}
         />
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -270,7 +271,7 @@ export function CollectionDna() {
 
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

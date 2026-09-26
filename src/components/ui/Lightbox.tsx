@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'preact/hooks';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Style } from '../../styles/Style';
 
 interface LightboxProps {
   images: string[];
@@ -215,7 +216,9 @@ export function Lightbox({ images, initialIndex = 0, isOpen, onClose }: Lightbox
             class="lightbox__image-area"
             onTouchStart={handleDoubleTap}
           >
-            <AnimatePresence mode="popLayout">
+            {/* Wrappers are absolutely positioned, so the default mode overlaps
+                them; popLayout would inject a style element, which the CSP blocks. */}
+            <AnimatePresence>
               <motion.div
                 key={currentIndex}
                 class="lightbox__image-wrapper"
@@ -248,7 +251,7 @@ export function Lightbox({ images, initialIndex = 0, isOpen, onClose }: Lightbox
             </AnimatePresence>
           </div>
 
-          <style>{lightboxStyles}</style>
+          <Style css={lightboxStyles} />
         </motion.div>
       )}
     </AnimatePresence>
@@ -315,6 +318,8 @@ const lightboxStyles = `
   }
 
   .lightbox__image-wrapper {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;

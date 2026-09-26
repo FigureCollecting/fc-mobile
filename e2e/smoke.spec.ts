@@ -1,4 +1,8 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
+
+// The backend is mocked with page.route, which WebKit bypasses for requests a
+// controlling service worker passes through; this spec is not about the worker.
+test.use({ serviceWorkers: 'block' });
 
 // Single-test smoke: boot the dev server, land on /, confirm the first-run
 // experience, drive the register form, and confirm a successful redirect.
@@ -53,16 +57,6 @@ test('fresh visitor can fill the register form and land on home', async ({ page 
       localStorage.removeItem('auth-storage');
     } catch {
       // ignore
-    }
-  });
-
-  // Unregister any service workers cached from previous runs so /login
-  // actually hits the dev server HTML.
-  await page.goto('/');
-  await page.evaluate(async () => {
-    if ('serviceWorker' in navigator) {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((r) => r.unregister()));
     }
   });
 

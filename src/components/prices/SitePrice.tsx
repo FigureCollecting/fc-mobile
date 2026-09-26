@@ -1,4 +1,5 @@
 import type { SitePrice as SitePriceData, StockStatus } from '../../hooks/usePrices';
+import { Style } from '../../styles/Style';
 
 interface SitePriceProps {
   data: SitePriceData;
@@ -57,7 +58,7 @@ export function SitePrice({ data }: SitePriceProps) {
         <span class="site-price__updated">Updated {formatDate(data.lastUpdated)}</span>
       </div>
 
-      <style>{`
+      <Style css={`
         .site-price {
           background: var(--surface-secondary);
           border-radius: var(--radius-md);
@@ -157,7 +158,7 @@ export function SitePrice({ data }: SitePriceProps) {
           font-size: var(--font-xs);
           color: var(--text-tertiary);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

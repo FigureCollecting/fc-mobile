@@ -2,6 +2,7 @@ import { useState, useCallback } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { forgotPasswordRequest } from '@figurecollecting/fc-shared';
 import { api } from '../../api/client';
+import { Style } from '../../styles/Style';
 
 interface ForgotPasswordProps {
   open: boolean;
@@ -108,7 +109,7 @@ export function ForgotPassword({ open, onClose }: ForgotPasswordProps) {
         )}
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </BottomSheet>
   );
 }

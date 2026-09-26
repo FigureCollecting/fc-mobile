@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface DonutSegment {
   label: string;
   value: number;
@@ -61,7 +63,7 @@ export function DonutChart({ title, segments, size = 160 }: DonutChartProps) {
         </div>
       </div>
 
-      <style>{`
+      <Style css={`
         .donut-chart {
           display: flex;
           flex-direction: column;
@@ -154,7 +156,7 @@ export function DonutChart({ title, segments, size = 160 }: DonutChartProps) {
           white-space: nowrap;
           flex-shrink: 0;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 /**
  * These tests exist because jsdom (the unit-test environment) cannot see

@@ -4,6 +4,8 @@ import { Redirect, Route, Switch, useLocation } from 'wouter';
 import { TabBar } from './TabBar';
 import { GatedScreen } from './GatedScreen';
 import { OfflineBanner } from '../ui/OfflineBanner';
+import { InstallBanner } from '../../pwa/InstallBanner';
+import { getPendingOpsCount } from '../../storage/pendingOps';
 import { AnimatedRoutes } from '../ui/AnimatedRoutes';
 import { createScrollChromeHandler } from '../../stores/chrome';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
@@ -16,6 +18,7 @@ import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
 import { TwoFactor } from '../../pages/TwoFactor';
 import { Import } from '../../pages/Import';
+import { Style } from '../../styles/Style';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
 // No backend anywhere (src/config/features.ts) — lazy so a default build,
@@ -32,7 +35,7 @@ function PageFallback() {
   return (
     <div class="page-fallback">
       <div class="page-fallback__spinner" />
-      <style>{`
+      <Style css={`
         .page-fallback {
           display: flex;
           align-items: center;
@@ -51,7 +54,7 @@ function PageFallback() {
         @keyframes pf-spin {
           to { transform: rotate(360deg); }
         }
-      `}</style>
+      `} />
     </div>
   );
 }
@@ -67,6 +70,9 @@ export function AppShell() {
   return (
     <div class="app-shell">
       <OfflineBanner />
+      {/* In the layout, above the screen, so it never covers a control. The
+          running outbox is the legacy one until WK-15 switches the app over. */}
+      <InstallBanner unsyncedCount={getPendingOpsCount} />
       <main
         class={`app-content ${isAuthRoute ? 'app-content--auth' : ''}`}
         onScroll={onScroll}
@@ -126,7 +132,7 @@ export function AppShell() {
       </main>
       {!isAuthRoute && <TabBar />}
 
-      <style>{`
+      <Style css={`
         .app-shell {
           display: flex;
           flex-direction: column;
@@ -146,7 +152,7 @@ export function AppShell() {
         .app-content--auth {
           padding-bottom: 0;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   useDeleteNotification,
 } from '../hooks/useNotifications';
 import type { Notification } from '../hooks/useNotifications';
+import { Style } from '../styles/Style';
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -23,7 +24,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
         <polyline points="15 18 9 12 15 6" />
       </svg>
 
-      <style>{`
+      <Style css={`
         .notif-back-btn {
           display: flex;
           align-items: center;
@@ -38,7 +39,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
         .notif-back-btn:active {
           background: var(--surface-tertiary);
         }
-      `}</style>
+      `} />
     </button>
   );
 }
@@ -57,7 +58,7 @@ function MarkAllReadButton({ onClick, disabled }: { onClick: () => void; disable
         <polyline points="22 4 12 14.01 9 11.01" />
       </svg>
 
-      <style>{`
+      <Style css={`
         .notif-mark-all-btn {
           display: flex;
           align-items: center;
@@ -77,7 +78,7 @@ function MarkAllReadButton({ onClick, disabled }: { onClick: () => void; disable
           color: var(--text-tertiary);
           opacity: 0.5;
         }
-      `}</style>
+      `} />
     </button>
   );
 }
@@ -142,7 +143,7 @@ export function Notifications() {
             </div>
           ))}
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -158,7 +159,7 @@ export function Notifications() {
         <PullToRefresh onRefresh={handleRefresh}>
           <p class="notif-empty">Failed to load notifications. Pull down to retry.</p>
         </PullToRefresh>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -180,7 +181,7 @@ export function Notifications() {
             <p class="notif-empty-state__text">No notifications yet</p>
           </div>
         </PullToRefresh>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -205,7 +206,7 @@ export function Notifications() {
           ))}
         </div>
       </PullToRefresh>
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

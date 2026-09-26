@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { exportCollectionCsv, exportCollectionJson } from '../utils/export';
 import { shareCollectionSummary } from '../utils/share';
 import { hapticLight } from '../utils/haptics';
+import { Style } from '../styles/Style';
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -175,7 +176,7 @@ export function Export() {
         </div>
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

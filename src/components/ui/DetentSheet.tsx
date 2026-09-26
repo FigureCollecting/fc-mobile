@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
 import { createPortal } from 'preact/compat';
 import { motion, AnimatePresence, useDragControls } from 'framer-motion';
+import { Style } from '../../styles/Style';
 
 type Detent = 'half' | 'full';
 
@@ -88,7 +89,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
             {footer && <div class="detent-sheet__footer">{footer}</div>}
           </motion.div>
 
-          <style>{`
+          <Style css={`
             .detent-sheet__backdrop {
               position: fixed;
               inset: 0;
@@ -152,7 +153,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               position: sticky;
               top: 0;
             }
-          `}</style>
+          `} />
         </>
       )}
     </AnimatePresence>,

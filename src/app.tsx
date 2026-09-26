@@ -7,6 +7,7 @@ import { useSyncOnReconnect } from './hooks/useSyncOnReconnect';
 import { useAuthStore } from './stores/auth';
 import { Onboarding } from './pages/Onboarding';
 import { isFixtureMode } from './dev-fixtures/fixtures';
+import { UpdatePrompt } from './pwa/UpdatePrompt';
 
 const ONBOARDING_KEY = 'onboarding_complete';
 
@@ -106,6 +107,11 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <AppInner />
       <ToastContainer />
+      {/* Outside AppInner so it shows over onboarding too. The iOS install
+          banner sits in AppShell's layout instead. */}
+      <div class="pwa-notices">
+        <UpdatePrompt />
+      </div>
     </QueryClientProvider>
   );
 }

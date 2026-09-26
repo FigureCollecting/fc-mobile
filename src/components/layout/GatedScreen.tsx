@@ -1,4 +1,5 @@
 import { useLocation } from 'wouter';
+import { Style } from '../../styles/Style';
 
 interface GatedScreenProps {
   /** Display name of the gated feature (e.g. "Price Tracker"). */
@@ -27,7 +28,7 @@ export function GatedScreen({ feature }: GatedScreenProps) {
         Back to Collection
       </button>
 
-      <style>{`
+      <Style css={`
         .gated-screen {
           display: flex;
           flex-direction: column;
@@ -67,7 +68,7 @@ export function GatedScreen({ feature }: GatedScreenProps) {
         .gated-screen__back:active {
           background: var(--brand-600);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

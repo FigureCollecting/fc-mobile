@@ -7,6 +7,7 @@ import { WatchlistItem } from '../components/prices/WatchlistItem';
 import { TrendIndicator } from '../components/prices/TrendIndicator';
 import { useWatchlist, useRemoveFromWatchlist } from '../hooks/usePrices';
 import { useAuthStore } from '../stores/auth';
+import { Style } from '../styles/Style';
 
 function SettingsButton() {
   return (
@@ -16,7 +17,7 @@ function SettingsButton() {
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </svg>
 
-      <style>{`
+      <Style css={`
         .prices-settings-btn {
           display: flex;
           align-items: center;
@@ -32,7 +33,7 @@ function SettingsButton() {
           color: var(--text-primary);
           background: var(--surface-tertiary);
         }
-      `}</style>
+      `} />
     </button>
   );
 }
@@ -75,7 +76,7 @@ export function Prices() {
           </div>
           <p class="page-prices__empty-text">Sign in to track prices</p>
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -91,7 +92,7 @@ export function Prices() {
           <div class="page-prices__skeleton-item" />
           <div class="page-prices__skeleton-item" />
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -106,7 +107,7 @@ export function Prices() {
           message="We couldn't reach the price tracker. Check your connection and try again."
           onRetry={handleRefresh}
         />
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -135,7 +136,7 @@ export function Prices() {
             </button>
           </div>
         </PullToRefresh>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -189,7 +190,7 @@ export function Prices() {
         </svg>
       </button>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { type ComponentChildren } from 'preact';
+import { Style } from '../../styles/Style';
 
 interface AuthLayoutProps {
   children: ComponentChildren;
@@ -27,7 +28,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
         </div>
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

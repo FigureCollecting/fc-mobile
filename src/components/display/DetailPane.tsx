@@ -1,5 +1,6 @@
 import type { Figure } from '@figurecollecting/fc-shared';
 import { FigureDetailContent } from './FigureDetailContent';
+import { Style } from '../../styles/Style';
 
 interface DetailPaneProps {
   figure: Figure;
@@ -35,7 +36,7 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
         <FigureDetailContent figure={figure} index={index} total={total} />
       </div>
 
-      <style>{`
+      <Style css={`
         .detail-pane {
           position: relative;
           flex: 0 0 40%;
@@ -80,7 +81,7 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
         .detail-pane__content {
           padding: var(--space-2) var(--space-page) calc(var(--space-3) + var(--safe-area-bottom));
         }
-      `}</style>
+      `} />
     </aside>
   );
 }

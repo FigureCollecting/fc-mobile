@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import type { AlertType, PriceAlert } from '../../hooks/usePrices';
+import { Style } from '../../styles/Style';
 
 interface AlertSheetProps {
   open: boolean;
@@ -221,7 +222,7 @@ export function AlertSheet({
         </div>
       </div>
 
-      <style>{`
+      <Style css={`
         .alert-sheet {
           padding-bottom: var(--space-4);
         }
@@ -456,7 +457,7 @@ export function AlertSheet({
           opacity: 0.5;
           pointer-events: none;
         }
-      `}</style>
+      `} />
     </BottomSheet>
   );
 }

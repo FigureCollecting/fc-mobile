@@ -1,6 +1,7 @@
 import type { ListFilters } from '../../hooks/useFigureListParams';
 import { countActiveFilters } from '../../utils/facets';
 import { hapticLight } from '../../utils/haptics';
+import { Style } from '../../styles/Style';
 
 interface FilterBarProps {
   filters: ListFilters;
@@ -41,7 +42,7 @@ export function FilterBar({ filters, sort, order, resultCount, onOpen }: FilterB
       </button>
       <span class="filter-bar__count">{resultCount}</span>
 
-      <style>{`
+      <Style css={`
         .filter-bar {
           display: flex;
           align-items: center;
@@ -94,7 +95,7 @@ export function FilterBar({ filters, sort, order, resultCount, onOpen }: FilterB
           color: var(--text-tertiary);
           font-variant-numeric: tabular-nums;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

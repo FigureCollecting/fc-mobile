@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
+import { Style } from '../../styles/Style';
 
 interface SplashScreenProps {
   /** How long to show the splash after marking ready (ms) */
@@ -50,7 +51,7 @@ export function SplashScreen({ fadeDuration = 400, onDone }: SplashScreenProps) 
         <span class="splash-screen__name">FigureCollecting</span>
       </div>
 
-      <style>{`
+      <Style css={`
         .splash-screen {
           position: fixed;
           inset: 0;
@@ -84,7 +85,7 @@ export function SplashScreen({ fadeDuration = 400, onDone }: SplashScreenProps) 
           0%, 100% { opacity: 0.7; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.05); }
         }
-      `}</style>
+      `} />
     </div>
   );
 }

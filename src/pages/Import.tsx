@@ -11,6 +11,7 @@ import type { ColumnMapping, MappableField } from '../components/import/ColumnMa
 import { readFileAsText, parseCsv, parseJson, detectFormat } from '../utils/fileReader';
 import { api } from '../api/client';
 import { hapticMedium, hapticHeavy } from '../utils/haptics';
+import { Style } from '../styles/Style';
 
 type Step = 'select' | 'mapping' | 'preview' | 'importing' | 'complete';
 
@@ -532,7 +533,7 @@ export function Import() {
         )}
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

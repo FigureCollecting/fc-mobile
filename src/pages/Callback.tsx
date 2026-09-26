@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { LoginError } from '../auth/errors';
 import type { AuthStatus } from '../auth/session';
+import { Style } from '../styles/Style';
 
 export interface CallbackProps {
   session: {
@@ -66,7 +67,7 @@ export function Callback({ session, url = window.location.href }: CallbackProps)
           </button>
         </>
       )}
-      <style>{`
+      <Style css={`
         .callback-page {
           display: flex;
           flex-direction: column;
@@ -79,7 +80,7 @@ export function Callback({ session, url = window.location.href }: CallbackProps)
           color: var(--text-secondary, #888);
           font-size: 13px;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

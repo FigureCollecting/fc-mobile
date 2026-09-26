@@ -1,6 +1,7 @@
 import type { ReadonlySignal } from '@preact/signals';
 import { useLocation } from 'wouter';
 import type { AuthStatus } from '../../auth/session';
+import { Style } from '../../styles/Style';
 
 export interface SyncAuthBannerProps {
   session: { status: ReadonlySignal<AuthStatus>; signIn(returnTo?: string): Promise<void> };
@@ -23,7 +24,7 @@ export function SyncAuthBanner({ session }: SyncAuthBannerProps) {
         Sign in
       </button>
 
-      <style>{`
+      <Style css={`
         .sync-auth-banner {
           display: flex;
           align-items: center;
@@ -44,7 +45,7 @@ export function SyncAuthBanner({ session }: SyncAuthBannerProps) {
           color: inherit;
           font: inherit;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

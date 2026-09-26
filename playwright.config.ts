@@ -9,6 +9,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // e2e/auth needs the local full stack; it runs from playwright.stack.config.ts.
+  testIgnore: ['auth/**'],
   timeout: 30_000,
   retries: 0,
   fullyParallel: false,

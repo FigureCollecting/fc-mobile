@@ -6,16 +6,20 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:stack": "tsc -b && vite build --mode stack --outDir dist-stack",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:e2e:stack": "playwright test -c playwright.stack.config.ts",
     "stack:up": "npm --prefix e2e/stack run up --",
     "stack:down": "npm --prefix e2e/stack run down"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.15.0",
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-web": "^2.2.0",
     "@figurecollecting/fc-api-contract": "^0.2.0",
     "@figurecollecting/fc-shared": "^1.6.0",
     "@preact/signals": "^2.8.2",
@@ -23,6 +27,7 @@
     "@tanstack/virtual-core": "^3.17.3",
     "framer-motion": "^12.38.0",
     "idb": "^8.0.3",
+    "jose": "^6.2.12",
     "photoswipe": "^5.4.4",
     "preact": "^10.29.8",
     "wouter": "^3.9.0",

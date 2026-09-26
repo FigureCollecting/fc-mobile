@@ -40,6 +40,11 @@ export async function getDb(): Promise<IDBPDatabase<FcMobileDB>> {
 
         database.createObjectStore('pendingOps', { autoIncrement: true });
       },
+      // Yield to the v2 upgrade (storage/localDb.ts): a v1 handle left open blocks it forever.
+      blocking() {
+        db?.close();
+        db = null;
+      },
     });
   }
   return db;

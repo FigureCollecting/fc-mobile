@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 dist-prod-e2e
+dist-stack
 *.local
 
 # Editor directories and files

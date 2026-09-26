@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/preact';
 
 // Exercises the LEGACY_SCREENS_ENABLED=true escape hatch (src/config/features.ts) —
 // the dev-only path that still wires up the no-backend screens.
-vi.mock('../../../config/features', () => ({ LEGACY_SCREENS_ENABLED: true }));
+vi.mock('../../../config/features', () => ({ LEGACY_SCREENS_ENABLED: true, OIDC_AUTH_ENABLED: false }));
 
 vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
 

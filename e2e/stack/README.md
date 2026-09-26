@@ -105,6 +105,9 @@ await stack.issuer.revokeUser(state.users[0].sub);         // next refresh is in
 `src/device.ts` signs a Node-side device in, enrols it and makes DPoP calls, for
 seeding or for a second device in a sync test.
 
+The browser auth suite (`e2e/auth`) needs the OIDC build, whose issuer is the
+mock on the default ports: `npm run build:stack && npm run test:e2e:stack`.
+
 Edge faults: `drop-response` forwards the request and cuts the reply after the
 upstream has answered; `hang` holds it until `releaseHung`; `status` answers at
 the edge. Each applies once unless `times` says otherwise (`0` = until cleared).

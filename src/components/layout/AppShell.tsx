@@ -6,7 +6,7 @@ import { GatedScreen } from './GatedScreen';
 import { OfflineBanner } from '../ui/OfflineBanner';
 import { AnimatedRoutes } from '../ui/AnimatedRoutes';
 import { createScrollChromeHandler } from '../../stores/chrome';
-import { LEGACY_SCREENS_ENABLED } from '../../config/features';
+import { LEGACY_SCREENS_ENABLED, OIDC_AUTH_ENABLED } from '../../config/features';
 import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
 import { Stats } from '../../pages/Stats';
@@ -25,8 +25,10 @@ const Export = lazy(() => import('../../pages/Export').then((m) => ({ default: m
 const Notifications = lazy(() =>
   import('../../pages/Notifications').then((m) => ({ default: m.Notifications })),
 );
+// Only the OIDC build registers /callback; a legacy build must never open the v2 store.
+const OidcCallbackRoute = lazy(() => import('../auth/OidcCallbackRoute'));
 
-const AUTH_ROUTES = ['/login', '/register', '/2fa'];
+const AUTH_ROUTES = ['/login', '/register', '/2fa', '/callback'];
 
 function PageFallback() {
   return (
@@ -76,6 +78,11 @@ export function AppShell() {
             <Route path="/login" component={Login} />
             <Route path="/register" component={Register} />
             <Route path="/2fa" component={TwoFactor} />
+            {OIDC_AUTH_ENABLED && (
+              <Route path="/callback">
+                <Suspense fallback={<PageFallback />}><OidcCallbackRoute /></Suspense>
+              </Route>
+            )}
             <Route path="/" component={Collection} />
             <Route path="/discover" component={Discover} />
             <Route path="/stats" component={Stats} />

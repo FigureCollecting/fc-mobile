@@ -16,6 +16,7 @@ import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
 import { useFillHeight } from '../../hooks/useFillHeight';
 import { emptyShelfFill } from './shelfFill';
+import { tapTarget } from './figureHitTest';
 import { Style } from '../../styles/Style';
 
 export type { PlacementStrategy };
@@ -263,12 +264,10 @@ function ShelfFigure({
   item,
   zPlacement,
   shelfLineY,
-  onSelect,
 }: {
   item: ShelfItem;
   zPlacement: FigureZPlacement;
   shelfLineY: number;
-  onSelect?: (figure: Figure, index: number) => void;
 }) {
   const { figure, meta, w, h } = item;
 
@@ -295,7 +294,7 @@ function ShelfFigure({
         '--fig-z': `${zPlacement.billboardZPx}px`,
       } as Record<string, string>}
       type="button"
-      onClick={onSelect ? () => onSelect(figure, item.index) : undefined}
+      data-index={item.index}
       data-synthetic-base={meta.matted && !meta.baseRecovered ? 'true' : undefined}
     >
       {figure.imageUrl ? (
@@ -628,12 +627,25 @@ export function CaseShelf({
   const eyeYAbsolutePx = scrollTopPx + WORLD_EYE_FOCUS_FRACTION * visibleSpanPx;
   const eyeYWorldPx = eyeYAbsolutePx - windowStart;
 
+  // One tap handler for the whole case: a tap selects the figure DRAWN under
+  // the finger, not always the one whose box the browser hit (figureHitTest).
+  const handleTap = onSelect
+    ? (event: MouseEvent) => {
+        const own = (event.target as Element).closest<HTMLElement>('.shelf-figure');
+        const chosen = own && tapTarget(own, event);
+        if (!chosen) return;
+        const index = Number(chosen.dataset.index);
+        onSelect(figures[index], index);
+      }
+    : undefined;
+
   return (
     <div class="case-host" ref={hostRef}>
       <div
         class={`case ${motif === 'glass-clear' ? 'case--light' : ''}`}
         data-motif={motif}
         style={{ height: `${caseHeightPx}px`, '--case-d': `${caseD}px` } as Record<string, string>}
+        onClick={handleTap}
       >
         <div
           class="case__world"
@@ -745,7 +757,6 @@ export function CaseShelf({
                       item={item}
                       zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
                       shelfLineY={shelfLineY}
-                      onSelect={onSelect}
                     />,
                     labels && <ShelfPlate key={`plate-${item.figure._id}`} item={item} shelfLineY={shelfLineY} />,
                   ])}
@@ -840,7 +851,7 @@ const caseStyles = `
      pointer-events: none (inherited by the whole subtree) because the
      full-bay boxes here (.case__row, this element) sit at z=0, in front of
      every figure pushed back with a negative translateZ, and 3D hit-testing
-     gave them every tap. Only .shelf-figure opts back in. */
+     gave them every tap. Only a figure's drawn part opts back in. */
   .case__interior3d {
     position: absolute;
     inset: 0;
@@ -982,13 +993,16 @@ const caseStyles = `
      element, not flex layout plus a lone Z push. :active repeats the full
      translate3d so the tap-scale doesn't reset the figure to (0,0,0) while
      pressed (a plain transform on :active would otherwise REPLACE, not add
-     to, the base transform). */
+     to, the base transform). The box itself takes no taps; its drawn part
+     does (the image, the frame, or the silhouette inside its rounded
+     outline), and the case's tap handler passes a matted image's
+     transparent pixels on to whatever is drawn behind (figureHitTest). */
   .shelf-figure {
     position: absolute;
     top: 0;
     left: 0;
     padding: 0;
-    pointer-events: auto;
+    pointer-events: none;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -1006,6 +1020,12 @@ const caseStyles = `
     object-position: bottom;
     position: relative;
     z-index: 2;
+  }
+
+  .shelf-figure__img,
+  .shelf-figure__frame,
+  .shelf-figure__silhouette {
+    pointer-events: auto;
   }
 
   /* Contact shadow/footprint: two-lobe wide soft ellipse + tight dark AO

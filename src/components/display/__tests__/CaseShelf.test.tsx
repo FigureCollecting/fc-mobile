@@ -1,14 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { screen, waitFor, fireEvent } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 
-vi.mock('../alphaMargin', () => ({ useBottomMarginFrac: vi.fn(() => 0), useContactBand: vi.fn(() => null) }));
+vi.mock('../alphaMargin', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../alphaMargin')>()),
+  useBottomMarginFrac: vi.fn(() => 0),
+  useContactBand: vi.fn(() => null),
+  getAlphaMask: vi.fn(() => undefined),
+}));
 
 import { CaseShelf, PLATE_ZONE_PX, DEFAULT_DYNAMIC_COMPARTMENT_MM, DETOLF_PROFILE } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
-import { useBottomMarginFrac } from '../alphaMargin';
+import { useBottomMarginFrac, getAlphaMask, computeAlphaMask } from '../alphaMargin';
 import { SHELF_BAND } from '../density';
 import { packShelves } from '../packShelves';
 import { resolveRelHeights } from '../sizeResolution';
@@ -164,8 +169,88 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     renderWithProviders(
       <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" onSelect={onSelect} />,
     );
-    await user.click(screen.getByRole('button', { name: FIXTURE_FIGURES[2].name }));
+    // A finger lands on the figure's drawn part; its box takes no taps.
+    await user.click(screen.getByRole('button', { name: FIXTURE_FIGURES[2].name }).firstElementChild!);
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_FIGURES[2], 2);
+  });
+
+  describe('taps follow the drawn pixels, not the figure boxes', () => {
+    const mockedGetAlphaMask = vi.mocked(getAlphaMask);
+    const clear = computeAlphaMask({ width: 1, height: 1, data: [0, 0, 0, 0] })!;
+    const drawn = computeAlphaMask({ width: 1, height: 1, data: [0, 0, 0, 255] })!;
+    const box = { left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    const front = { ...FIXTURE_FIGURES[0], imageUrl: 'front.png' };
+    const back = { ...FIXTURE_FIGURES[1], imageUrl: 'back.png' };
+
+    /** Renders two matted figures whose images overlap at (50, 50), front first in hit order. */
+    function renderOverlap(onSelect: (figure: Figure, index: number) => void) {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[front, back]} motif="detolf-dark" density="compact" onSelect={onSelect} />,
+      );
+      const imgs = Array.from(container.querySelectorAll('img.shelf-figure__img')) as HTMLImageElement[];
+      for (const img of imgs) {
+        img.getBoundingClientRect = () => box;
+        Object.defineProperty(img, 'naturalWidth', { value: 100, configurable: true });
+        Object.defineProperty(img, 'naturalHeight', { value: 100, configurable: true });
+      }
+      const [frontImg, backImg] = imgs;
+      Object.defineProperty(document, 'elementsFromPoint', { value: () => [frontImg, backImg], configurable: true });
+      return { frontImg, backImg };
+    }
+
+    afterEach(() => {
+      delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+      mockedGetAlphaMask.mockReset();
+      mockedGetAlphaMask.mockReturnValue(undefined);
+    });
+
+    it('a tap on a transparent pixel of the nearer figure selects the figure drawn behind it', () => {
+      mockedGetAlphaMask.mockImplementation((src) => (src === 'front.png' ? clear : drawn));
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(back, 1);
+    });
+
+    it('a tap where no figure is drawn selects nothing', () => {
+      mockedGetAlphaMask.mockReturnValue(clear);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('keyboard activation still selects the focused figure', () => {
+      mockedGetAlphaMask.mockReturnValue(clear);
+      const onSelect = vi.fn();
+      renderOverlap(onSelect);
+      fireEvent.click(screen.getByRole('button', { name: front.name }), { detail: 0 });
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('a click off the figures (the shelf itself) selects nothing', () => {
+      const onSelect = vi.fn();
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" onSelect={onSelect} />,
+      );
+      fireEvent.click(container.querySelector('.case__bay')!, { detail: 1, clientX: 5, clientY: 5 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('the figure box takes no taps; only its drawn part does', () => {
+      const photo = { ...FIXTURE_FIGURES[2], _id: 'unmatted-photo', imageUrl: 'photo.jpg' };
+      const bare = { ...FIXTURE_FIGURES[3], _id: 'no-image', imageUrl: undefined };
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[front, photo, bare]} motif="detolf-dark" density="compact" />,
+      );
+      for (const button of container.querySelectorAll('button.shelf-figure')) {
+        expect(getComputedStyle(button).pointerEvents).toBe('none');
+      }
+      for (const part of ['.shelf-figure__img', '.shelf-figure__frame', '.shelf-figure__silhouette']) {
+        expect(getComputedStyle(container.querySelector(part)!).pointerEvents, part).toBe('auto');
+      }
+    });
   });
 
   it('carries the watermark slot with a placeholder wordmark by default', () => {

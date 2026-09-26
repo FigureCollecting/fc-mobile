@@ -91,6 +91,11 @@ beforeEach(() => {
 
 afterEach(() => localStorage.clear());
 
+/** Where a finger lands on a case figure: its drawn part (its box takes no taps). */
+function drawnPart(name: string): Element {
+  return screen.getByRole('button', { name }).firstElementChild!;
+}
+
 describe('Collection page (rebuilt display layer)', () => {
   it('renders the virtual case by default with figures standing on shelves', async () => {
     signIn();
@@ -127,7 +132,7 @@ describe('Collection page (rebuilt display layer)', () => {
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByText('Figure 2');
-    await user.click(screen.getByRole('button', { name: 'Figure 2' }));
+    await user.click(drawnPart('Figure 2'));
     await waitFor(() => expect(instances).toHaveLength(1));
     expect(instances[0].options.index).toBe(1);
     expect(instances[0].options.dataSource).toHaveLength(3);
@@ -179,7 +184,7 @@ describe('Collection page (rebuilt display layer)', () => {
       const user = userEvent.setup();
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
       await screen.findByText('Figure 2');
-      await user.click(screen.getByRole('button', { name: 'Figure 2' }));
+      await user.click(drawnPart('Figure 2'));
 
       await waitFor(() => {
         expect(container.querySelector('.detail-pane')).not.toBeNull();
@@ -198,7 +203,7 @@ describe('Collection page (rebuilt display layer)', () => {
       const user = userEvent.setup();
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
       await screen.findByText('Figure 1');
-      await user.click(screen.getByRole('button', { name: 'Figure 1' }));
+      await user.click(drawnPart('Figure 1'));
 
       await waitFor(() => expect(instances).toHaveLength(1));
       expect(container.querySelector('.detail-pane')).toBeNull();
@@ -211,7 +216,7 @@ describe('Collection page (rebuilt display layer)', () => {
       const user = userEvent.setup();
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
       await screen.findByText('Figure 1');
-      await user.click(screen.getByRole('button', { name: 'Figure 1' }));
+      await user.click(drawnPart('Figure 1'));
       await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
 
       await user.click(screen.getByRole('button', { name: /close detail/i }));

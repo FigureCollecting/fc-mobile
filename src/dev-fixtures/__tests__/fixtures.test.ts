@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
   FIXTURE_FIGURES,
   FIXTURE_META,
@@ -6,7 +8,10 @@ import {
   setFixtureMode,
   getFixtureMultiplier,
   getFixtureFigures,
+  getFixtureBranch,
+  resolveFixtureArt,
 } from '../fixtures';
+import { getDisplayMeta } from '../../components/display/displayMeta';
 
 afterEach(() => localStorage.clear());
 
@@ -122,5 +127,79 @@ describe('fixture stress-test multiplier (?fx=N)', () => {
     // At least one repeated copy of "rem" should resolve the same matted meta.
     const remCopies = figures.filter((f) => f._id.startsWith('fx-rem'));
     expect(remCopies).toHaveLength(3);
+  });
+});
+
+describe('fixture art: committed synthetic stand-ins, real cut-outs only for local sign-off', () => {
+  const SYNTHETIC_DIR = path.resolve(import.meta.dirname, '../synthetic');
+
+  it('gives every fixture an image in tests, always the committed synthetic art (never a git-ignored cut-out)', () => {
+    expect(import.meta.env.VITE_FIXTURE_ART).toBe('synthetic');
+    for (const f of FIXTURE_FIGURES) {
+      expect(f.imageUrl, f._id).toMatch(new RegExp(`/synthetic/${f._id.replace(/^fx-/, '')}\\.png$`));
+    }
+  });
+
+  it('draws each synthetic figure as an RGBA PNG at its fixture\'s native size', () => {
+    for (const f of FIXTURE_FIGURES) {
+      const png = readFileSync(path.join(SYNTHETIC_DIR, `${f._id.replace(/^fx-/, '')}.png`));
+      expect(png.subarray(1, 4).toString('ascii')).toBe('PNG');
+      expect(png.subarray(12, 16).toString('ascii')).toBe('IHDR');
+      expect(png.readUInt32BE(16)).toBe(FIXTURE_META[f._id].width);
+      expect(png.readUInt32BE(20)).toBe(FIXTURE_META[f._id].height);
+      expect(png[25], 'colour type 6 = RGBA').toBe(6);
+    }
+  });
+
+  it('prefers a real cut-out when present, unless synthetic-only, and falls back to the synthetic art', () => {
+    const real = { './rem.png': '/real/rem.png' };
+    const synthetic = { './synthetic/rem.png': '/synthetic/rem.png', './synthetic/spike.png': '/synthetic/spike.png' };
+    expect(resolveFixtureArt('rem', { real, synthetic, syntheticOnly: false })).toBe('/real/rem.png');
+    expect(resolveFixtureArt('rem', { real, synthetic, syntheticOnly: true })).toBe('/synthetic/rem.png');
+    expect(resolveFixtureArt('spike', { real, synthetic, syntheticOnly: false })).toBe('/synthetic/spike.png');
+    expect(resolveFixtureArt('madoka', { real, synthetic, syntheticOnly: false })).toBeUndefined();
+  });
+});
+
+describe('fixture render branch (?fxbranch=framed|silhouette)', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('defaults to the matted branch: the fixture set itself', () => {
+    for (const query of ['/', '/?fxbranch=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureBranch()).toBe('matted');
+      expect(getFixtureFigures()).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('framed: the same figures and images, but unmatted like a real figure, so the case frames the photo', () => {
+    window.history.pushState({}, '', '/?fxbranch=framed');
+    expect(getFixtureBranch()).toBe('framed');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    figures.forEach((f, i) => {
+      expect(f.name).toBe(FIXTURE_FIGURES[i].name);
+      expect(f.imageUrl).toBe(FIXTURE_FIGURES[i].imageUrl);
+      expect(f._id).not.toBe(FIXTURE_FIGURES[i]._id);
+      expect(getDisplayMeta(f).matted).toBe(false);
+    });
+  });
+
+  it('silhouette: the same figures without images', () => {
+    window.history.pushState({}, '', '/?fxbranch=silhouette');
+    expect(getFixtureBranch()).toBe('silhouette');
+    const figures = getFixtureFigures();
+    expect(figures.map((f) => f._id)).toEqual(FIXTURE_FIGURES.map((f) => f._id));
+    for (const f of figures) expect(f.imageUrl).toBeUndefined();
+  });
+
+  it('combines with the ?fx=N multiplier, keeping ids unique', () => {
+    window.history.pushState({}, '', '/?fx=2&fxbranch=framed');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
+    expect(new Set(figures.map((f) => f._id)).size).toBe(figures.length);
+    for (const f of figures) expect(getDisplayMeta(f).matted).toBe(false);
   });
 });

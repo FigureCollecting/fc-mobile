@@ -24,6 +24,9 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Node's built-in Web Storage globals shadow jsdom's; jsdom only installs
+    // globals not already defined, so disable Node's.
+    execArgv: ['--no-experimental-webstorage'],
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
@@ -53,17 +56,22 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      include: ['src/pages/**/*.{ts,tsx}', 'src/hooks/**/*.{ts,tsx}'],
+      include: ['src/**/*.{ts,tsx}'],
       exclude: [
         '**/__tests__/**',
         '**/*.test.{ts,tsx}',
         '**/*.spec.{ts,tsx}',
+        'src/test/**',
       ],
-      // The hooks layer is the system's load-bearing logic — enforce a high
-      // bar there. Pages are mostly JSX/CSS and their interactive branches
-      // (sheet open/close, filter dropdowns, selection mode) are lower ROI
-      // to unit-test, so we don't force a threshold there; the routing +
-      // smoke tests guard the render paths.
+      // Per-glob thresholds only, not a global floor: src/storage/** is
+      // pre-existing code well under 85% today and is deferred to the unit
+      // that rewrites it. src/sync/** and src/auth/** don't exist yet — the
+      // threshold is future-proofing for the units that add them, and is a
+      // no-op (no matching files) until then.
+      thresholds: {
+        'src/sync/**': { lines: 85, branches: 85 },
+        'src/auth/**': { lines: 85, branches: 85 },
+      },
     },
   },
 });

@@ -26,7 +26,7 @@ on:
 
 jobs:
   build:
-    name: Build Application
+    name: Build Application (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     # Push gate: the single CI-policy expression (four cases documented above).
     if: >-
@@ -36,6 +36,10 @@ jobs:
     permissions:
       contents: read
       packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['24', '26']
 
     steps:
       - name: Checkout code
@@ -44,7 +48,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
       - name: Install dependencies
@@ -53,7 +57,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Run linter
-        run: npx tsc -b --noEmit || true
+        run: npx tsc -b --noEmit
+
+      - name: Run unit tests
+        run: npx vitest run --coverage
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run e2e tests
+        run: npx playwright test --project=chromium
 
       - name: Build application
         run: npm run build
@@ -78,6 +91,28 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: dist
+          name: dist-node${{ matrix.node-version }}
           path: dist/
           retention-days: 7
+
+  # Branch protection requires a check literally named "Build Application";
+  # the matrix legs are named per-version, so aggregate their result here.
+  # Carries the SAME push gate as `build` above, so this job is SKIPPED (not a
+  # false SUCCESS) on the same pushes where the matrix itself doesn't run.
+  build-application:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: build
+    if: >-
+      always() && (
+        github.event_name != 'push'
+        || (github.repository_owner == 'FigureCollecting' && (github.ref_name == 'develop' || github.ref_name == 'main'))
+        || (github.repository_owner != 'FigureCollecting' && github.ref_name != 'develop' && github.ref_name != 'main')
+      )
+    steps:
+      - name: Require all matrix legs green
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "build matrix result: ${{ needs.build.result }}"
+            exit 1
+          fi

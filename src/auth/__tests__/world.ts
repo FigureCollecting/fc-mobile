@@ -3,6 +3,7 @@
 // AuthSessions built here behave like two tabs of the same origin.
 import { IDBFactory } from 'fake-indexeddb';
 import { openLocalDb, type LocalDb } from '../../storage/localDb';
+import { localDbOwner } from '../index';
 import { AuthSession } from '../session';
 import { APP_ORIGIN, FakeCoordinator, FakeIdp, FakeNet, IDP_ORIGIN, MemoryLocks, SUB_A, T0 } from './fakes';
 
@@ -43,14 +44,8 @@ export class World {
   }
 
   tab(options: TabOptions = {}): AuthSession {
-    // As index.ts does: another page deleting or upgrading the store closes this connection,
-    // and a failed open is retried on the next call.
-    let db: Promise<LocalDb> | undefined;
-    const open = () =>
-      (db ??= openLocalDb({ factory: this.factory, onVersionChange: () => (db = undefined) }).catch((err: unknown) => {
-        db = undefined;
-        throw err;
-      }));
+    // The page's own store owner, so every tab here loses and reopens its store as a page does.
+    const open = localDbOwner(this.factory);
     return new AuthSession({
       db: options.db === undefined ? open : () => options.db!(open),
       config: this.idp.config,

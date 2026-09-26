@@ -10,17 +10,27 @@ export interface BrowserLike {
   indexedDB: IDBFactory;
 }
 
-export function createBrowserSession(win: BrowserLike): AuthSession {
+/**
+ * The local store, opened on first use and kept while its connection lives. Another page
+ * deleting or upgrading the store, or the browser clearing site data, closes the connection;
+ * the next call opens a fresh one. A store a newer build upgraded cannot be opened by this
+ * code: that open fails, and the next call retries it.
+ */
+export function localDbOwner(factory: IDBFactory): () => Promise<LocalDb> {
   let db: Promise<LocalDb> | undefined;
+  const drop = () => {
+    db = undefined;
+  };
+  return () =>
+    (db ??= openLocalDb({ factory, onVersionChange: drop, onClose: drop }).catch((err: unknown) => {
+      drop();
+      throw err;
+    }));
+}
+
+export function createBrowserSession(win: BrowserLike): AuthSession {
   return new AuthSession({
-    // Another page deleting or upgrading the store closes this connection; the session asks
-    // for the store on every use, so the next call opens a fresh one. A store a newer build
-    // upgraded cannot be opened by this code: that open fails, and the next call retries it.
-    db: () =>
-      (db ??= openLocalDb({ factory: win.indexedDB, onVersionChange: () => (db = undefined) }).catch((err: unknown) => {
-        db = undefined;
-        throw err;
-      })),
+    db: localDbOwner(win.indexedDB),
     config: configuredOidc(),
     origin: win.location.origin,
     fetch: (input, init) => win.fetch(input, init),

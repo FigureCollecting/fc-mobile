@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { IDBFactory } from 'fake-indexeddb';
+import { forceCloseDatabase, IDBFactory } from 'fake-indexeddb';
 import { createE2eHooks, installE2eHooks } from '../e2eHooks';
 import { createBrowserSession, getAuthSession } from '../index';
 import { configuredOidc } from '../config';
@@ -77,6 +77,26 @@ const settle = <T>(req: IDBRequest<T>) =>
     req.onerror = () => reject(req.error);
   });
 
+async function seedSignedIn(factory: IDBFactory): Promise<void> {
+  const seed = await openLocalDb({ factory });
+  const store = new AuthStore(seed);
+  await store.putTokens({ sub: SUB_A, accessToken: 'at', refreshToken: 'rt', expiresAt: Date.now() + 600_000, scope: 'openid' });
+  await store.setCurrentSub(SUB_A);
+  seed.close();
+}
+
+/** Every connection the factory opens from here on, in order. */
+function recordOpens(factory: IDBFactory): IDBDatabase[] {
+  const opened: IDBDatabase[] = [];
+  const open = factory.open.bind(factory);
+  factory.open = (name: string, version?: number) => {
+    const req = open(name, version);
+    req.addEventListener('success', () => opened.push(req.result));
+    return req;
+  };
+  return opened;
+}
+
 describe('browser wiring: the store closed by another page', () => {
   it('createBrowserSession reopens it on the next call instead of failing on the closed connection', async () => {
     const factory = new IDBFactory();
@@ -129,6 +149,37 @@ describe('browser wiring: the store closed by another page', () => {
     await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
     expect(await session.start()).toBe('signed-out');
     expect(session.status.value).toBe('signed-out');
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('createBrowserSession keeps one connection while the store stays open', async () => {
+    const factory = new IDBFactory();
+    await seedSignedIn(factory);
+    const opened = recordOpens(factory);
+    const assign = vi.fn();
+    const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign }, fetch: vi.fn(async () => new Response(null)), indexedDB: factory });
+    expect(await session.start()).toBe('signed-in');
+    await session.signIn('/');
+    await session.signIn('/');
+    expect(assign).toHaveBeenCalledTimes(2);
+    expect(opened).toHaveLength(1);
+  });
+
+  it('createBrowserSession reopens after the browser force-closes the store, and is then signed out', async () => {
+    const factory = new IDBFactory();
+    await seedSignedIn(factory);
+    const opened = recordOpens(factory);
+    const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
+    const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
+    expect(await session.start()).toBe('signed-in');
+    // Site data cleared while the page is open: the browser closes the connection and deletes the store.
+    const closed = new Promise<void>((resolve) => opened[0]!.addEventListener('close', () => resolve()));
+    forceCloseDatabase(opened[0] as never);
+    await closed;
+    await settle(factory.deleteDatabase('fc-mobile'));
+    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(session.status.value).toBe('signed-out');
+    expect(opened).toHaveLength(2);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 });

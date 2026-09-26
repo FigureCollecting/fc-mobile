@@ -26,7 +26,7 @@ import { AuthStore, type TokenRecord } from './store';
 export type AuthStatus = 'loading' | 'signed-out' | 'signed-in' | 'offline' | 'reauth-required';
 
 export interface AuthSessionDeps {
-  /** The open local store, asked for on every use: its owner reopens it after another page closes it. */
+  /** The open local store, asked for on every use: its owner reopens it once its connection is lost. */
   db: () => Promise<LocalDb>;
   config: OidcConfig;
   /** The page origin: redirect_uri, post-logout URI and every DPoP htu derive from it. */

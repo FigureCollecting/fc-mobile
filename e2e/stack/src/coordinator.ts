@@ -3,20 +3,25 @@
 // default is a pinned develop sha so the stack is reproducible.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readFileSync, closeSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, closeSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { STACK_ROOT } from './paths.js';
+import { CACHE_DIR, REPO_ROOT } from './paths.js';
 import {
+  cmdlineIncludes,
   describePid,
+  groupMembers,
   identifyProcess,
-  isSameProcess,
+  isZombie,
+  killSignaller,
   portFree,
   portHolders,
   processCwd,
   processGroup,
+  processStartTime,
   signalGroup,
   waitGroupGone,
   type ProcessIdentity,
+  type Signaller,
 } from './procs.js';
 
 export const DEFAULT_COORDINATOR_REF = 'c0db861c7cc7d775f5f05a9e1acc8e41201c6a43';
@@ -132,6 +137,8 @@ export interface CoordinatorProcessOptions {
   /** Records the running coordinator's process group, so `stack:down` can stop it after a crash. */
   pidFile?: string;
   healthTimeoutMs?: number;
+  procRoot?: string;
+  log?: (line: string) => void;
 }
 
 export interface CoordinatorProcess {
@@ -163,22 +170,36 @@ function holders(port: number): string {
   return ` by ${pids.map((pid) => describePid(pid)).join(', ')}`;
 }
 
+// A ref coordinator runs from <harness checkout>/e2e/stack/node_modules/.cache/fc-mobile-stack/<ref>.
+const CACHE_LAYOUT = path.join(path.sep, path.relative(REPO_ROOT, CACHE_DIR), path.sep);
+// /proc reports a resolved cwd, so compare against the resolved checkout.
+const THIS_CHECKOUT = realpathSync(REPO_ROOT);
+
+/** Where a holder with this cwd was started from, for the advice; undefined when that is this checkout. */
+function origin(cwd: string): string | undefined {
+  const at = `${cwd}${path.sep}`.indexOf(CACHE_LAYOUT);
+  const dir = at === -1 ? cwd : cwd.slice(0, at);
+  if (dir === THIS_CHECKOUT || dir.startsWith(`${THIS_CHECKOUT}${path.sep}`)) return undefined;
+  return at === -1 ? `the coordinator runs from ${cwd}` : `that checkout is ${dir}`;
+}
+
 /**
- * The stack:down advice for a held port: names the OTHER checkout to run it
- * in when a holder's cwd is outside this one, since `stack:down` only stops
- * what its own checkout started.
+ * The stack:down advice for a held port. `stack:down` stops only what its own
+ * checkout started, so name the other checkout when the holder's cwd reveals
+ * it, else only the directory the holder runs from (FC_COORDINATOR_DIR).
  */
 function stopOrphanAdvice(port: number): string {
   const base = 'run `npm run stack:down` in the checkout that started it';
-  const elsewhere = (portHolders(port) ?? [])
+  const note = (portHolders(port) ?? [])
     .map((pid) => processCwd(pid))
-    .find((cwd): cwd is string => cwd !== undefined && cwd !== STACK_ROOT && !cwd.startsWith(`${STACK_ROOT}${path.sep}`));
-  return elsewhere === undefined ? base : `${base} (that checkout is ${elsewhere})`;
+    .map((cwd) => (cwd === undefined ? undefined : origin(cwd)))
+    .find((text) => text !== undefined);
+  return note === undefined ? base : `${base} (${note})`;
 }
 
 /** Whether the port's listener belongs to the group; undefined when that cannot be read. */
-function listenerInGroup(port: number, pgid: number): boolean | undefined {
-  return portHolders(port)?.some((pid) => processGroup(pid) === pgid);
+function listenerInGroup(port: number, pgid: number, procRoot: string): boolean | undefined {
+  return portHolders(port, procRoot)?.some((pid) => processGroup(pid, procRoot) === pgid);
 }
 
 /** Throws a `stack:down`-pointing error naming the holder when port is occupied; a no-op otherwise. */
@@ -196,13 +217,14 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
   const cli = path.join(options.dir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
   if (!existsSync(cli)) throw new Error(`no tsx in ${options.dir}; run npm ci there first`);
   const url = `http://127.0.0.1:${options.port}`;
+  const procRoot = options.procRoot ?? '/proc';
+  const log = options.log ?? ((line: string) => console.warn(`[stack] ${line}`));
   let child: ChildProcess | undefined;
 
   const clearPidFile = (pid: number): void => {
     const file = options.pidFile;
     if (file === undefined || !existsSync(file)) return;
-    const recorded = readPidFileIdentity(file);
-    if (recorded !== undefined && recorded.pid === pid) rmSync(file, { force: true });
+    if (readPidFile(file)?.pid === pid) rmSync(file, { force: true });
   };
 
   const start = async (): Promise<void> => {
@@ -222,10 +244,12 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
     const pid = proc.pid as number;
     child = proc;
     if (options.pidFile !== undefined) {
-      // cli embeds this checkout's directory, so a later reapCoordinator can
-      // tell "this stack's coordinator" from a pid reused by anything else.
-      const identity = identifyProcess(pid);
-      if (identity !== undefined) writeFileSync(options.pidFile, JSON.stringify({ ...identity, needle: cli }));
+      // Every process in the group (the leader through cli, tsx's fork through
+      // its preflight path) names the checkout directory: the needle that
+      // tells this stack's coordinator from a pid reused by anything else.
+      const identity = identifyProcess(pid, procRoot);
+      if (identity !== undefined) writeFileSync(options.pidFile, JSON.stringify({ ...identity, needle: path.join(options.dir, path.sep) }));
+      else log(`cannot record coordinator pid ${pid} (no /proc: process identity is Linux-only); stack:down will not stop it if this stack dies`);
     }
     let exitCode: number | null = null;
     proc.once('exit', (code) => {
@@ -240,7 +264,7 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
         throw new Error(`coordinator exited with code ${String(exitCode)} before it was healthy:\n${tail(options.logFile)}`);
       }
       if (await healthy(url)) {
-        if (exitCode === null && listenerInGroup(options.port, pid) !== false) return;
+        if (exitCode === null && listenerInGroup(options.port, pid, procRoot) !== false) return;
         signalGroup(pid, 'SIGKILL');
         throw new Error(
           `${url}/healthz answered, but the listener is not the coordinator this stack started (pid ${pid}): ` +
@@ -287,14 +311,23 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
 export type ReapOutcome = 'gone' | 'stopped' | 'killed' | 'stuck';
 
 interface PidFileIdentity extends ProcessIdentity {
+  /** The coordinator's checkout directory, with a trailing separator. */
   needle: string;
 }
 
-/** Parses a pid file's identity; undefined for missing fields or invalid JSON. */
-function readPidFileIdentity(pidFile: string): PidFileIdentity | undefined {
+const readText = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+};
+
+/** Parses a pid file's identity; undefined for a missing field, invalid JSON or an unreadable file. */
+function readPidFile(pidFile: string): PidFileIdentity | undefined {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(pidFile, 'utf8'));
+    parsed = JSON.parse(readText(pidFile) ?? '');
   } catch {
     return undefined;
   }
@@ -304,38 +337,81 @@ function readPidFileIdentity(pidFile: string): PidFileIdentity | undefined {
   return { pid, startTime, needle };
 }
 
+/** A recorded group to check before signalling: legacy files carry no start time. */
+interface PidRecord {
+  pid: number;
+  startTime?: number;
+  needles: string[];
+}
+
+function readPidRecord(pidFile: string, legacyNeedles: string[]): PidRecord | undefined {
+  // Before identities were recorded the file held only the pid.
+  const legacy = /^(\d+)\s*$/.exec(readText(pidFile) ?? '');
+  if (legacy !== null) {
+    const pid = Number(legacy[1]);
+    return pid > 1 ? { pid, needles: legacyNeedles } : undefined;
+  }
+  const identity = readPidFile(pidFile);
+  return identity === undefined ? undefined : { pid: identity.pid, startTime: identity.startTime, needles: [identity.needle] };
+}
+
+/**
+ * Whether the recorded group is still this checkout's coordinator. A live
+ * leader must keep its start time (when recorded) and a cmdline naming the
+ * checkout. A dead one (gone, or a zombie) leaves it to the members: Linux
+ * never reuses a pid while a group with that id exists, so a member naming
+ * the checkout is the orphan tsx forked.
+ */
+function stillOurs(record: PidRecord, procRoot: string): boolean {
+  const names = (pid: number): boolean => record.needles.some((needle) => cmdlineIncludes(pid, needle, procRoot));
+  const startTime = processStartTime(record.pid, procRoot);
+  if (startTime !== undefined && !isZombie(record.pid, procRoot)) {
+    return (record.startTime === undefined || startTime === record.startTime) && names(record.pid);
+  }
+  return groupMembers(record.pid, procRoot).some(names);
+}
+
+/** Where this checkout's coordinators run from: its ref cache, and FC_COORDINATOR_DIR when set. */
+export function coordinatorDirs(env: Env): string[] {
+  const dir = env['FC_COORDINATOR_DIR'];
+  return [CACHE_DIR, ...(dir === undefined || dir === '' ? [] : [dir])].map((d) => path.join(d, path.sep));
+}
+
+export interface ReapOptions {
+  graceMs?: number;
+  /** How long to wait for the group after SIGKILL. */
+  killWaitMs?: number;
+  procRoot?: string;
+  /** Sends every signal and liveness probe. */
+  kill?: Signaller;
+  /** Directories a legacy plain-integer pid file's coordinator may run from (coordinatorDirs). */
+  legacyNeedles?: string[];
+}
+
 /**
  * Stop the coordinator group a pid file names, for a stack that died without
- * its teardown. SIGTERM first so it drains, then SIGKILL after the grace.
- *
- * The pid alone is not enough after a reboot or pid-max wraparound: the
- * number can point at an unrelated process by the time this runs. The start
- * time recorded alongside it (and a piece of its cmdline unique to this
- * checkout) must still match before anything is signalled; a mismatch is
- * treated exactly like the group already having exited.
+ * its teardown. SIGTERM first so it drains, then SIGKILL after the grace. A
+ * group that is no longer provably this checkout's is reported gone and never
+ * signalled; the pid file stays until the group is gone.
  */
 export async function reapCoordinator(
   pidFile: string,
-  graceMs = 12_000,
-  procRoot = '/proc',
+  options: ReapOptions = {},
 ): Promise<{ pid: number; outcome: ReapOutcome } | undefined> {
+  const { graceMs = 12_000, killWaitMs = 5_000, procRoot = '/proc', kill = killSignaller, legacyNeedles = [] } = options;
   if (!existsSync(pidFile)) return undefined;
-  const identity = readPidFileIdentity(pidFile);
-  if (identity === undefined) {
+  const record = readPidRecord(pidFile, legacyNeedles);
+  if (record === undefined) {
     rmSync(pidFile, { force: true });
     return undefined;
   }
-  const { pid, needle } = identity;
-  if (!isSameProcess(identity, needle, procRoot)) {
-    rmSync(pidFile, { force: true });
-    return { pid, outcome: 'gone' };
-  }
+  const { pid } = record;
   let outcome: ReapOutcome = 'gone';
-  if (signalGroup(pid, 'SIGTERM')) {
+  if (stillOurs(record, procRoot) && signalGroup(pid, 'SIGTERM', kill)) {
     outcome = 'stopped';
-    if (!(await waitGroupGone(pid, graceMs))) {
-      signalGroup(pid, 'SIGKILL');
-      outcome = (await waitGroupGone(pid, 5_000)) ? 'killed' : 'stuck';
+    if (!(await waitGroupGone(pid, graceMs, kill))) {
+      signalGroup(pid, 'SIGKILL', kill);
+      outcome = (await waitGroupGone(pid, killWaitMs, kill)) ? 'killed' : 'stuck';
     }
   }
   if (outcome !== 'stuck') rmSync(pidFile, { force: true });

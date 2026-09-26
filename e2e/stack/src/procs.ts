@@ -1,6 +1,7 @@
 // Port and process-group facts the stack needs to tell its own coordinator
-// from something else on the port. Listener lookup reads /proc (Linux); where
-// there is no /proc it reports "unknown" and callers fall back to liveness.
+// from something else on the port. Everything here reads /proc, so process
+// identity is Linux-only; without /proc it reports "unknown" and callers fall
+// back to liveness.
 import { existsSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import * as net from 'node:net';
 import path from 'node:path';
@@ -79,6 +80,18 @@ export function processStartTime(pid: number, procRoot = '/proc'): number | unde
   return Number.isInteger(starttime) ? starttime : undefined;
 }
 
+/** Whether pid has exited but its parent has not reaped it yet (state Z). */
+export function isZombie(pid: number, procRoot = '/proc'): boolean {
+  const stat = read(() => readFileSync(path.join(procRoot, String(pid), 'stat'), 'utf8'));
+  return stat !== undefined && stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z');
+}
+
+/** The pids in process group pgid, among the processes this user can read. */
+export function groupMembers(pgid: number, procRoot = '/proc'): number[] {
+  const entries = read(() => readdirSync(procRoot)) ?? [];
+  return entries.filter((e) => /^\d+$/.test(e)).map(Number).filter((pid) => processGroup(pid, procRoot) === pgid);
+}
+
 /** Whether pid's cmdline contains needle as a plain substring (NUL args joined by spaces). */
 export function cmdlineIncludes(pid: number, needle: string, procRoot = '/proc'): boolean {
   const cmdline = read(() => readFileSync(path.join(procRoot, String(pid), 'cmdline'), 'utf8'));
@@ -104,43 +117,39 @@ export function identifyProcess(pid: number, procRoot = '/proc'): ProcessIdentit
 }
 
 /**
- * Whether identity.pid is still the same process: its start time has not
- * changed (a reused pid gets a new one) and its cmdline still contains
- * needle. Both must hold before anything signals it.
+ * kill(2): a negative target is a process group, signal 0 only probes. The
+ * reaping paths take one as a parameter so a test can hand in a signaller
+ * that cannot reach a process the test did not spawn.
  */
-export function isSameProcess(identity: ProcessIdentity, needle: string, procRoot = '/proc'): boolean {
-  return processStartTime(identity.pid, procRoot) === identity.startTime && cmdlineIncludes(identity.pid, needle, procRoot);
-}
+export type Signaller = (target: number, signal: NodeJS.Signals | 0) => boolean;
+
+/** The real kill(2); false when nothing received the signal. */
+export const killSignaller: Signaller = (target, signal) => {
+  try {
+    process.kill(target, signal);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 // kill(0) is the caller's own group and kill(-1) every process it may signal.
 const isGroup = (pgid: number): boolean => Number.isInteger(pgid) && pgid > 1;
 
 /** Whether any process in the group is still alive (and signalable by us). */
-export function groupAlive(pgid: number): boolean {
-  if (!isGroup(pgid)) return false;
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+export function groupAlive(pgid: number, kill: Signaller = killSignaller): boolean {
+  return isGroup(pgid) && kill(-pgid, 0);
 }
 
 /** Signal every process in the group; false when the group is already gone. */
-export function signalGroup(pgid: number, signal: NodeJS.Signals): boolean {
-  if (!isGroup(pgid)) return false;
-  try {
-    process.kill(-pgid, signal);
-    return true;
-  } catch {
-    return false;
-  }
+export function signalGroup(pgid: number, signal: NodeJS.Signals, kill: Signaller = killSignaller): boolean {
+  return isGroup(pgid) && kill(-pgid, signal);
 }
 
 /** Resolves true once the group is gone, false when the timeout passes first. */
-export async function waitGroupGone(pgid: number, timeoutMs: number): Promise<boolean> {
+export async function waitGroupGone(pgid: number, timeoutMs: number, kill: Signaller = killSignaller): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (groupAlive(pgid)) {
+  while (groupAlive(pgid, kill)) {
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, 50));
   }

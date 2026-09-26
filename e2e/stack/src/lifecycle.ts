@@ -5,32 +5,23 @@ import { spawn } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { readStackState, stackClient } from './client.js';
-import { reapCoordinator } from './coordinator.js';
+import { coordinatorDirs, reapCoordinator, type Env } from './coordinator.js';
 import { STACK_ROOT } from './paths.js';
-import { processStartTime } from './procs.js';
+import { killSignaller, processStartTime, type Signaller } from './procs.js';
 import { coordinatorPidFile, startStack, type Stack, type StackOptions, type StackState } from './stack.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Whether pid is a live process. 0 and 1 never are: kill(0) is our own group, 1 is init. */
-export function alive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+// 0 and 1 are never a stack's pid: kill(0) is our own group, 1 is init.
+const isPid = (pid: number): boolean => Number.isInteger(pid) && pid > 1;
+
+/** Whether pid is a live process. */
+export function alive(pid: number, kill: Signaller = killSignaller): boolean {
+  return isPid(pid) && kill(pid, 0);
 }
 
-function signal(pid: number, sig: NodeJS.Signals): void {
-  if (alive(pid)) {
-    try {
-      process.kill(pid, sig);
-    } catch {
-      // exited between the check and the signal
-    }
-  }
+function signal(pid: number, sig: NodeJS.Signals, kill: Signaller = killSignaller): void {
+  if (isPid(pid)) kill(pid, sig);
 }
 
 export function summary(state: StackState): string {
@@ -130,23 +121,37 @@ export interface ForegroundDeps {
 export async function upForeground(options: StackOptions, deps: ForegroundDeps = {}): Promise<Stack> {
   const exit = deps.exit ?? ((code: number) => process.exit(code));
   const emitter = deps.signals ?? process;
-  // Registered before start() begins: a signal during the (often slow)
-  // startup — containers, the coordinator checkout — must still stop
-  // whatever came up, not be missed because nothing was listening yet.
-  let signaled = false;
+  const log = options.log ?? ((line: string) => console.error(`[stack] ${line}`));
+  // Registered before start() begins: a first signal during the (often slow)
+  // startup defers to a clean stop once it is up; a second exits at once,
+  // leaving what started to `stack:down`.
+  let signaled = 0;
+  let up = false;
   // SIGHUP too: the coordinator has its own session, so a closed terminal no
   // longer reaches it directly.
   const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-  for (const sig of signals) emitter.on(sig, () => (signaled = true));
+  for (const sig of signals) {
+    emitter.on(sig, () => {
+      if (up) return;
+      signaled += 1;
+      if (signaled === 1) {
+        log(`${sig} during startup: stopping once it is up; send it again to exit now`);
+      } else {
+        log(`${sig} again during startup: exiting now without teardown; run \`npm run stack:down\` to stop what started`);
+        exit(130);
+      }
+    });
+  }
 
   const stack = await (deps.start ?? startStack)(options);
+  up = true;
   const stop = stack.stop;
   stack.stop = async () => {
     await stop();
     exit(0);
   };
   for (const sig of signals) emitter.on(sig, () => void stack.stop());
-  if (signaled) void stack.stop();
+  if (signaled === 1) void stack.stop();
   return stack;
 }
 
@@ -155,10 +160,20 @@ export interface DownResult {
   lines: string[];
 }
 
+export interface DownOptions {
+  graceMs?: number;
+  procRoot?: string;
+  /** Sends every signal and liveness probe; tests pass one that reaches only what they spawned. */
+  kill?: Signaller;
+  /** Read for FC_COORDINATOR_DIR, where a legacy pid file's coordinator may run from. */
+  env?: Env;
+}
+
 /** `stack:down`: stop the recorded stack, then any coordinator it left behind. */
-export async function stackDown(stateDir: string, options: { graceMs?: number; procRoot?: string } = {}): Promise<DownResult> {
+export async function stackDown(stateDir: string, options: DownOptions = {}): Promise<DownResult> {
   const graceMs = options.graceMs ?? 60_000;
   const procRoot = options.procRoot ?? '/proc';
+  const kill = options.kill ?? killSignaller;
   const lines: string[] = [];
   const state = readStackState(stateDir);
   if (state !== undefined) {
@@ -177,20 +192,24 @@ export async function stackDown(stateDir: string, options: { graceMs?: number; p
     const ours = typeof state.startTime === 'number' && currentStartTime === state.startTime;
     const reused = !ours && currentStartTime !== undefined;
     if (!asked) {
-      if (ours) signal(state.pid, 'SIGTERM');
+      if (ours) signal(state.pid, 'SIGTERM', kill);
       else if (reused) lines.push(`stack pid ${state.pid} is stale (a different process now); nothing to signal`);
     }
     const deadline = Date.now() + graceMs;
-    while (ours && alive(state.pid) && Date.now() < deadline) await sleep(100);
-    if (ours && alive(state.pid)) {
-      signal(state.pid, 'SIGKILL');
+    while (ours && alive(state.pid, kill) && Date.now() < deadline) await sleep(100);
+    if (ours && alive(state.pid, kill)) {
+      signal(state.pid, 'SIGKILL', kill);
       lines.push(`stack pid ${state.pid} did not stop within ${graceMs} ms; killed it`);
     }
     rmSync(path.join(stateDir, 'stack.json'), { force: true });
   }
   // A stack killed without its teardown (SIGKILL, OOM) leaves its coordinator
   // listening against that stack's database; the next `up` would refuse the port.
-  const reaped = await reapCoordinator(coordinatorPidFile(stateDir));
+  const reaped = await reapCoordinator(coordinatorPidFile(stateDir), {
+    procRoot,
+    kill,
+    legacyNeedles: coordinatorDirs(options.env ?? process.env),
+  });
   const orphan = reaped !== undefined && reaped.outcome !== 'gone';
   if (orphan) lines.push(`coordinator pid ${reaped.pid} outlived its stack: ${reaped.outcome}`);
   if (reaped?.outcome === 'stuck') {

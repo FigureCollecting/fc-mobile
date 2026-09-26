@@ -19,7 +19,7 @@ import {
 import { startControl, type Control } from './control.js';
 import { startEdge, type Edge } from './edge.js';
 import { generateEntitlementKey } from './entitlement.js';
-import { REPO_ROOT, STACK_ROOT } from './paths.js';
+import { CACHE_DIR, REPO_ROOT, STACK_ROOT } from './paths.js';
 import { startMockIssuer, USER_A, USER_B, type MockIssuer, type StackUser } from './issuer.js';
 import { startFakeOpenFga, type FakeOpenFga } from './openfga.js';
 import { identifyProcess } from './procs.js';
@@ -133,8 +133,7 @@ export function planStack(options: StackOptions): StackPlan {
     ports: { edge: base, issuer: base + 1, coordinator: base + 2, spineH2c: base + 3, spineH1: base + 4, openfga: base + 5, control: base + 9 },
     origin: `http://localhost:${base}`,
     stateDir: options.stateDir ?? path.join(STACK_ROOT, '.state'),
-    // Under node_modules so no test runner collects the checkout's own test files.
-    cacheDir: options.cacheDir ?? path.join(STACK_ROOT, 'node_modules', '.cache', 'fc-mobile-stack'),
+    cacheDir: options.cacheDir ?? CACHE_DIR,
     log: options.log ?? ((line: string) => console.log(`[stack] ${line}`)),
   };
 }
@@ -162,11 +161,11 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
   const { ports, origin, stateDir, cacheDir, log } = planStack(options);
   mkdirSync(path.join(stateDir, 'logs'), { recursive: true });
   const coordinatorLog = path.join(stateDir, 'logs', 'coordinator.log');
-  // Before anything else starts: a held port fails fast instead of spinning
-  // up postgres and the other containers only to fail on the coordinator: a
-  // rotated log keeps that previous run's tail instead of deleting it.
-  await refuseIfPortHeld(ports.coordinator);
+  // Before anything else starts: the previous run's log moves to .1 instead of
+  // being lost, and a held coordinator port fails here rather than after the
+  // checkout and the containers are up.
   rotateLog(coordinatorLog);
+  await refuseIfPortHeld(ports.coordinator);
   const cleanups: Array<() => Promise<void>> = [];
   const teardown = async (): Promise<void> => {
     for (const cleanup of cleanups.reverse()) {
@@ -242,6 +241,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       port: ports.coordinator,
       logFile: coordinatorLog,
       pidFile: coordinatorPidFile(stateDir),
+      log,
       env: coordinatorEnv({
         port: ports.coordinator,
         databaseUrl: postgres.databaseUrl,

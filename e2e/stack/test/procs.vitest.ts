@@ -8,8 +8,9 @@ import {
   cmdlineIncludes,
   describePid,
   groupAlive,
+  groupMembers,
   identifyProcess,
-  isSameProcess,
+  isZombie,
   portFree,
   portHolders,
   processCwd,
@@ -18,7 +19,7 @@ import {
   signalGroup,
   waitGroupGone,
 } from '../src/procs.js';
-import { freePort } from './procfixtures.js';
+import { FAKE_PID, fakeProcRoot, fakeSignaller, freePort, waitFor } from './procfixtures.js';
 
 const hasProc = existsSync('/proc/net/tcp');
 
@@ -126,34 +127,66 @@ describe('process facts', () => {
   });
 });
 
-describe('process identity (pid-reuse guard)', () => {
+describe('process identity', () => {
   it('records a live pid, refusing an unreadable one', () => {
     const root = fakeProc();
     expect(identifyProcess(100, root)).toEqual({ pid: 100, startTime: 555666 });
     expect(identifyProcess(999, root)).toBeUndefined();
   });
+});
 
-  it('confirms an identity only when both the start time and the cmdline still match', () => {
-    const root = fakeProc();
-    const identity = identifyProcess(100, root);
-    expect(identity).toBeDefined();
-    // The real thing: same pid, same start time, cmdline still names it.
-    expect(isSameProcess(identity!, 'server.js', root)).toBe(true);
-    // A pid reused by something else since: the kernel's start time moved on.
-    expect(isSameProcess({ pid: 100, startTime: 1 }, 'server.js', root)).toBe(false);
-    // Same pid and start time, but not the process we think it is.
-    expect(isSameProcess(identity!, 'not-this-command', root)).toBe(false);
-    // Gone entirely.
-    expect(isSameProcess({ pid: 999, startTime: 1 }, 'server.js', root)).toBe(false);
+describe('process groups in /proc', () => {
+  it('lists the members of a group, ignoring unreadable entries', () => {
+    const root = fakeProcRoot({
+      [FAKE_PID]: { start: 1, argv: ['leader'] },
+      [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 2, argv: ['member'] },
+      [FAKE_PID + 2]: { start: 3, argv: ['other'] },
+    });
+    mkdirSync(path.join(root, 'self'));
+    expect(groupMembers(FAKE_PID, root).sort()).toEqual([FAKE_PID, FAKE_PID + 1]);
+    expect(groupMembers(FAKE_PID + 5, root)).toEqual([]);
+    expect(groupMembers(FAKE_PID, path.join(root, 'missing'))).toEqual([]);
+  });
+
+  it('tells an exited but unreaped process (a zombie) from a live one', () => {
+    const root = fakeProcRoot({ [FAKE_PID]: { start: 1, state: 'Z', argv: [] }, [FAKE_PID + 1]: { start: 2, argv: ['live'] } });
+    expect(isZombie(FAKE_PID, root)).toBe(true);
+    expect(isZombie(FAKE_PID + 1, root)).toBe(false);
+    expect(isZombie(FAKE_PID + 2, root)).toBe(false);
+  });
+
+  it.skipIf(!hasProc)('finds a real detached child as the only member of its own group', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+    try {
+      await waitFor(() => groupMembers(child.pid as number).length > 0);
+      expect(groupMembers(child.pid as number)).toEqual([child.pid]);
+    } finally {
+      child.kill('SIGKILL');
+    }
   });
 });
 
 describe('process groups', () => {
   it('never treats 0 or 1 as a group: kill(0) is our own group and kill(-1) is every process', () => {
+    const kill = fakeSignaller(() => true);
     for (const pgid of [0, 1, -5, Number.NaN]) {
-      expect(groupAlive(pgid)).toBe(false);
-      expect(signalGroup(pgid, 'SIGCONT')).toBe(false);
+      expect(groupAlive(pgid, kill)).toBe(false);
+      expect(signalGroup(pgid, 'SIGCONT', kill)).toBe(false);
     }
+    expect(kill.calls).toEqual([]);
+  });
+
+  it('probes, signals and waits on a group only through the signaller it is given', async () => {
+    let alive = 2;
+    const kill = fakeSignaller((_t, signal) => (signal === 0 ? alive-- > 0 : true));
+    expect(signalGroup(FAKE_PID, 'SIGTERM', kill)).toBe(true);
+    expect(await waitGroupGone(FAKE_PID, 5_000, kill)).toBe(true);
+    expect(kill.calls).toEqual([
+      { target: -FAKE_PID, signal: 'SIGTERM' },
+      { target: -FAKE_PID, signal: 0 },
+      { target: -FAKE_PID, signal: 0 },
+      { target: -FAKE_PID, signal: 0 },
+    ]);
   });
 
   it('sees a group while it lives, signals it, and waits for it to go', async () => {

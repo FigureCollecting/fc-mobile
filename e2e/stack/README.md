@@ -15,9 +15,18 @@ installs fc-coordinator, so `NODE_AUTH_TOKEN` must be set then;
 `npm --prefix e2e/stack run checkout` does only that step.
 
 The coordinator runs in its own process group, recorded in
-`.state/coordinator.pid`. If the stack dies without its teardown (SIGKILL, OOM),
-the coordinator keeps listening; the next `up` refuses its port and names the
-process, and `stack:down` stops it.
+`.state/coordinator.pid` with its kernel start time and checkout directory. If
+the stack dies without its teardown (SIGKILL, OOM), the coordinator keeps
+listening; the next `up` refuses its port and names the process and the checkout
+to run `stack:down` in, and `stack:down` stops it. `stack:down` signals only a
+group it can still prove is this checkout's coordinator, including one whose
+leader died and left tsx's forked node holding the port. Ctrl-C during startup
+stops the stack once it is up; a second Ctrl-C exits at once (status 130) and
+leaves the rest to `stack:down`.
+
+Process identity reads `/proc`, so it is Linux-only. Elsewhere `up` warns that
+it cannot record the coordinator, and `stack:down` cannot stop one a crashed
+stack left behind.
 
 ## What runs
 

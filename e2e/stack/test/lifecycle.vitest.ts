@@ -10,7 +10,7 @@ import { alive, probeRunning, stackDown, summary, upDetached, upForeground } fro
 import { STACK_ROOT } from '../src/paths.js';
 import { processStartTime } from '../src/procs.js';
 import { coordinatorPidFile, type Stack, type StackState } from '../src/stack.js';
-import { answers, fakeCoordinator, FORKING, freePort, isAlive, waitFor } from './procfixtures.js';
+import { answers, FAKE_PID, fakeCoordinator, fakeProcRoot, fakeSignaller, FORKING, freePort, isAlive, ownSignaller, waitFor } from './procfixtures.js';
 
 const scratch = (): string => mkdtempSync(path.join(tmpdir(), 'stack-life-'));
 const FAKE_STACK = path.join(STACK_ROOT, 'test', 'fixtures', 'fake-stack.ts');
@@ -170,9 +170,56 @@ describe('stack:up in the foreground', () => {
   });
 });
 
+describe('stack:up in the foreground, interrupted twice', () => {
+  it('exits 130 on a second SIGINT or SIGTERM during startup, after the first deferred to a clean stop', async () => {
+    for (const [first, second] of [
+      ['SIGINT', 'SIGINT'],
+      ['SIGTERM', 'SIGINT'],
+      ['SIGINT', 'SIGTERM'],
+    ] as const) {
+      const signals = new EventEmitter();
+      const exits: number[] = [];
+      const lines: string[] = [];
+      let resolveStart!: () => void;
+      const starting = new Promise<void>((resolve) => (resolveStart = resolve));
+      let stopped = 0;
+      const up = upForeground(
+        { stateDir: '/s', log: (line) => lines.push(line) },
+        {
+          start: async (options) => {
+            await starting;
+            return { state: { origin: options.stateDir }, stop: async () => void (stopped += 1) } as unknown as Stack;
+          },
+          signals,
+          exit: (code) => void exits.push(code),
+        },
+      );
+      signals.emit(first);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(exits).toEqual([]);
+      expect(lines).toEqual([expect.stringMatching(new RegExp(`^${first} during startup: stopping once it is up`))]);
+      signals.emit(second);
+      expect(exits).toEqual([130]);
+      expect(lines.at(-1)).toMatch(new RegExp(`${second} again during startup: exiting now.*stack:down`));
+      resolveStart();
+      await up;
+      expect(stopped).toBe(0);
+    }
+  });
+});
+
 describe('stack:down', () => {
   it('says so when nothing is running', async () => {
+    expect(await stackDown(scratch(), { kill: fakeSignaller() })).toEqual({ ok: true, lines: ['no stack is running'] });
+    // Nothing recorded, so the real signaller has nothing to reach.
     expect(await stackDown(scratch())).toEqual({ ok: true, lines: ['no stack is running'] });
+  });
+
+  it('never signals pid 1 even when its recorded start time matches', async () => {
+    const procRoot = fakeProcRoot({ 1: { start: 7, argv: ['init'] } });
+    const kill = fakeSignaller();
+    expect(await stackDown(silentStack(1, 7), { graceMs: 100, procRoot, kill })).toEqual({ ok: true, lines: ['stack is down'] });
+    expect(kill.calls).toEqual([]);
   });
 
   it('asks a live stack to shut down through control and waits for its process', async () => {
@@ -182,7 +229,9 @@ describe('stack:down', () => {
     const control = await startControl(target, 0);
     closers.push(() => control.close());
     writeFileSync(path.join(stateDir, 'stack.json'), JSON.stringify({ pid: deadPid(), controlUrl: control.url }));
-    expect(await stackDown(stateDir)).toEqual({ ok: true, lines: ['stack is down'] });
+    const kill = fakeSignaller();
+    expect(await stackDown(stateDir, { kill })).toEqual({ ok: true, lines: ['stack is down'] });
+    expect(kill.calls).toEqual([]);
     expect(asked).toBe(1);
     expect(existsSync(path.join(stateDir, 'stack.json'))).toBe(false);
   });
@@ -194,25 +243,40 @@ describe('stack:down', () => {
     ] as const) {
       const child = spawn(process.execPath, ['-e', script], { stdio: 'ignore' });
       await new Promise((r) => setTimeout(r, 300));
+      const kill = ownSignaller();
+      kill.own(child.pid as number);
       const stateDir = silentStack(child.pid as number);
-      const result = await stackDown(stateDir, { graceMs: 600 });
+      const result = await stackDown(stateDir, { graceMs: 600, kill });
       expect(result.ok).toBe(true);
       expect(result.lines.some((l) => /did not stop .*killed/.test(l))).toBe(killed);
+      expect(kill.calls.filter((c) => c.signal !== 0).map((c) => c.signal)).toEqual(killed ? ['SIGTERM', 'SIGKILL'] : ['SIGTERM']);
       await waitFor(() => child.exitCode !== null || child.signalCode !== null);
     }
+  });
+
+  it('signals the recorded stack pid only through the injected signaller', async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 4242, argv: ['node', 'cli.ts', 'up'] } });
+    const stateDir = silentStack(FAKE_PID, 4242);
+    const kill = fakeSignaller();
+    expect(await stackDown(stateDir, { graceMs: 300, procRoot, kill })).toEqual({ ok: true, lines: ['stack is down'] });
+    expect(kill.calls[0]).toEqual({ target: FAKE_PID, signal: 'SIGTERM' });
+    expect(kill.calls.every((c) => c.target === FAKE_PID)).toBe(true);
   });
 
   it('never signals a stack pid whose recorded start time no longer matches: pid reuse guard', async () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
     try {
       await new Promise((r) => setTimeout(r, 300));
+      const kill = ownSignaller();
+      kill.own(child.pid as number);
       // A start time that is not this child's real one, as if the recorded
       // pid had since been reused by an unrelated process.
       const stateDir = silentStack(child.pid as number, 1);
-      const result = await stackDown(stateDir, { graceMs: 300 });
+      const result = await stackDown(stateDir, { graceMs: 300, kill });
       expect(result.ok).toBe(true);
       expect(result.lines.some((l) => /did not stop|killed/.test(l))).toBe(false);
       expect(result.lines.some((l) => l.includes('is stale'))).toBe(true);
+      expect(kill.calls).toEqual([]);
       expect(existsSync(path.join(stateDir, 'stack.json'))).toBe(false);
       expect(isAlive(child.pid as number)).toBe(true);
     } finally {
@@ -232,10 +296,14 @@ describe('stack:down', () => {
       logFile: path.join(stateDir, 'c.log'),
       pidFile: coordinatorPidFile(stateDir),
     });
+    closers.push(() => orphan.stop());
     const pid = orphan.pid() as number;
-    const result = await stackDown(stateDir);
+    const kill = ownSignaller();
+    kill.ownGroup(pid);
+    const result = await stackDown(stateDir, { kill });
     expect(result.ok).toBe(true);
     expect(result.lines).toEqual([`coordinator pid ${pid} outlived its stack: stopped`, 'stack is down']);
+    expect(kill.calls[0]).toEqual({ target: -pid, signal: 'SIGTERM' });
     expect(orphan.running()).toBe(false);
     expect(await answers(port)).toBe(false);
   });
@@ -243,7 +311,37 @@ describe('stack:down', () => {
   it('reports a coordinator pid file whose group already exited as nothing running', async () => {
     const stateDir = scratch();
     writeFileSync(coordinatorPidFile(stateDir), `${deadPid()}\n`);
-    expect(await stackDown(stateDir)).toEqual({ ok: true, lines: ['no stack is running'] });
+    const kill = fakeSignaller();
+    expect(await stackDown(stateDir, { kill })).toEqual({ ok: true, lines: ['no stack is running'] });
+    expect(kill.calls).toEqual([]);
+  });
+
+  it('stops a coordinator named by a legacy plain-integer pid file once its cmdline names FC_COORDINATOR_DIR', async () => {
+    const stateDir = scratch();
+    const port = await freePort();
+    const dir = fakeCoordinator(FORKING);
+    const orphan = await startCoordinator({
+      dir,
+      env: { PATH: process.env['PATH'] ?? '', COORDINATOR_PORT: String(port) },
+      port,
+      logFile: path.join(stateDir, 'c.log'),
+      pidFile: coordinatorPidFile(stateDir),
+    });
+    closers.push(() => orphan.stop());
+    const pid = orphan.pid() as number;
+    writeFileSync(coordinatorPidFile(stateDir), `${pid}\n`);
+    const kill = ownSignaller();
+    kill.ownGroup(pid);
+
+    expect(await stackDown(stateDir, { kill, env: {} })).toEqual({ ok: true, lines: ['no stack is running'] });
+    expect(kill.calls).toEqual([]);
+    expect(await answers(port)).toBe(true);
+
+    writeFileSync(coordinatorPidFile(stateDir), `${pid}\n`);
+    const result = await stackDown(stateDir, { kill, env: { FC_COORDINATOR_DIR: dir } });
+    expect(result.lines).toEqual([`coordinator pid ${pid} outlived its stack: stopped`, 'stack is down']);
+    expect(await answers(port)).toBe(false);
+    expect(existsSync(coordinatorPidFile(stateDir))).toBe(false);
   });
 });
 

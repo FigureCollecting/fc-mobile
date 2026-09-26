@@ -1,8 +1,9 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   coordinatorEnv,
   DEFAULT_COORDINATOR_REF,
@@ -15,8 +16,23 @@ import {
   startCoordinator,
   type CoordinatorProcess,
 } from '../src/coordinator.js';
-import { portFree } from '../src/procs.js';
-import { answers, fakeCoordinator, FORKING, freePort, IDLE, IGNORES_SIGTERM, isAlive, squat, waitFor } from './procfixtures.js';
+import { STACK_ROOT } from '../src/paths.js';
+import { portFree, processStartTime } from '../src/procs.js';
+import {
+  answers,
+  FAKE_PID,
+  fakeCoordinator,
+  fakeProcRoot,
+  fakeSignaller,
+  FORKING,
+  freePort,
+  IDLE,
+  IGNORES_SIGTERM,
+  isAlive,
+  ownSignaller,
+  squat,
+  waitFor,
+} from './procfixtures.js';
 
 const scratch = (): string => mkdtempSync(path.join(tmpdir(), 'stack-coord-'));
 
@@ -212,6 +228,36 @@ describe('coordinator process ownership', () => {
     expect(coordinator.pid()).toBeUndefined();
   });
 
+  it('warns, and records nothing, when it cannot read the process identity (no /proc)', async () => {
+    const port = await freePort();
+    const pidFile = path.join(scratch(), 'coordinator.pid');
+    const lines: string[] = [];
+    const coordinator = await startCoordinator({
+      dir: fakeCoordinator(FORKING),
+      env: env(port),
+      port,
+      logFile: path.join(scratch(), 'c.log'),
+      pidFile,
+      procRoot: scratch(),
+      log: (line) => lines.push(line),
+    });
+    started.push(coordinator);
+    expect(existsSync(pidFile)).toBe(false);
+    expect(lines).toEqual([expect.stringMatching(new RegExp(`cannot record coordinator pid ${coordinator.pid()}.*Linux-only.*stack:down`))]);
+  });
+
+  it('prints that warning on stderr when no log is given', async () => {
+    const port = await freePort();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const options = { dir: fakeCoordinator(FORKING), env: env(port), port, logFile: path.join(scratch(), 'c.log') };
+      started.push(await startCoordinator({ ...options, pidFile: path.join(scratch(), 'coordinator.pid'), procRoot: scratch() }));
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[stack\] cannot record coordinator pid \d+/));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('kills the group when the leader dies on its own and leaves a child behind', async () => {
     const port = await freePort();
     const pidFile = path.join(scratch(), 'coordinator.pid');
@@ -226,54 +272,199 @@ describe('coordinator process ownership', () => {
 
 describe('reaping a coordinator whose stack is gone', () => {
   const dir = scratch();
+  // stop() signals only the group its own startCoordinator spawned: cleanup after a failed assertion.
+  const orphans: CoordinatorProcess[] = [];
+  afterEach(async () => {
+    for (const c of orphans.splice(0)) await c.stop();
+  });
+  // What the pid file records: this checkout's coordinator directory.
+  const NEEDLE = '/checkouts/this/fc-coordinator-abc/';
+  const record = (name: string, identity: unknown): string => {
+    const file = path.join(dir, name);
+    writeFileSync(file, typeof identity === 'string' ? identity : JSON.stringify(identity));
+    return file;
+  };
+  const leaderArgv = ['node', `${NEEDLE}node_modules/tsx/dist/cli.mjs`, 'src/server.ts'];
+  const forkedArgv = ['node', '--require', `${NEEDLE}node_modules/tsx/dist/preflight.cjs`, 'src/server.ts'];
+  // Delivers SIGTERM, then reports the group gone.
+  const obliging = () => fakeSignaller((_t, signal) => signal === 'SIGTERM');
 
   it('does nothing without a pid file, and clears an unreadable one', async () => {
-    expect(await reapCoordinator(path.join(dir, 'none.pid'))).toBeUndefined();
-    const junk = path.join(dir, 'junk.pid');
-    writeFileSync(junk, 'not a pid\n');
-    expect(await reapCoordinator(junk)).toBeUndefined();
+    const kill = fakeSignaller();
+    expect(await reapCoordinator(path.join(dir, 'none.pid'), { kill })).toBeUndefined();
+    const junk = record('junk.pid', 'not a pid\n');
+    expect(await reapCoordinator(junk, { kill })).toBeUndefined();
     expect(existsSync(junk)).toBe(false);
+    expect(kill.calls).toEqual([]);
+  });
+
+  it('clears a pid file whose identity is malformed, incomplete or names pid 0/1', async () => {
+    const kill = fakeSignaller();
+    for (const identity of [{ pid: 'not-a-number' }, { pid: 12345 }, { pid: 1, startTime: 1, needle: NEEDLE }, '1\n', '0\n']) {
+      const file = record('bad.pid', identity);
+      expect(await reapCoordinator(file, { kill })).toBeUndefined();
+      expect(existsSync(file)).toBe(false);
+    }
+    expect(kill.calls).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)('clears a pid file it cannot read', async () => {
+    const kill = fakeSignaller();
+    const file = record('unreadable.pid', `${FAKE_PID}\n`);
+    chmodSync(file, 0o000);
+    expect(await reapCoordinator(file, { kill })).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+    expect(kill.calls).toEqual([]);
   });
 
   it('reports a recorded group that already exited, and clears its pid file', async () => {
-    const stale = path.join(dir, 'stale.pid');
-    const gone = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
-    writeFileSync(stale, JSON.stringify({ pid: Number(gone), startTime: 1, needle: 'anything' }));
-    expect(await reapCoordinator(stale)).toEqual({ pid: Number(gone), outcome: 'gone' });
+    const kill = fakeSignaller();
+    const gone = Number(execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }));
+    const stale = record('stale.pid', { pid: gone, startTime: 1, needle: NEEDLE });
+    expect(await reapCoordinator(stale, { kill })).toEqual({ pid: gone, outcome: 'gone' });
     expect(existsSync(stale)).toBe(false);
+    expect(kill.calls).toEqual([]);
   });
 
-  it('never signals a pid whose recorded identity no longer matches: pid reuse guard, on a fake procRoot', async () => {
-    // A pid file surviving a reboot or pid-max wraparound: the number is
-    // right, but the kernel start time and cmdline it names are not this
-    // stack's coordinator. reapCoordinator must treat it as gone WITHOUT
-    // sending any signal (the fake procRoot's pid may not even exist, let
-    // alone be safe to kill(-1) or kill(-something-else-now)).
-    const procRoot = scratch();
-    mkdirSync(path.join(procRoot, '100'), { recursive: true });
-    writeFileSync(path.join(procRoot, '100', 'stat'), '100 (node) S 1 100 100 0 -1 0 0 0 0 0 0 0 0 0 20 0 4 0 999');
-    writeFileSync(path.join(procRoot, '100', 'cmdline'), 'node\0some-other-process.js\0');
-    const stale = path.join(dir, 'reused.pid');
-    // Recorded identity: a different start time (777, not 999) and a needle
-    // this fake process's cmdline never contains.
-    writeFileSync(stale, JSON.stringify({ pid: 100, startTime: 777, needle: '/checkout/of/this/stack' }));
-    expect(await reapCoordinator(stale, 12_000, procRoot)).toEqual({ pid: 100, outcome: 'gone' });
-    expect(existsSync(stale)).toBe(false);
+  it('never signals a live pid whose start time moved on: the pid was reused', async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv: leaderArgv } });
+    const kill = fakeSignaller();
+    const file = record('reused.pid', { pid: FAKE_PID, startTime: 777, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill })).toEqual({ pid: FAKE_PID, outcome: 'gone' });
+    expect(kill.calls).toEqual([]);
+    expect(existsSync(file)).toBe(false);
   });
 
-  it('clears a pid file whose identity is malformed JSON', async () => {
-    const junk = path.join(dir, 'malformed.pid');
-    writeFileSync(junk, JSON.stringify({ pid: 'not-a-number' }));
-    expect(await reapCoordinator(junk)).toBeUndefined();
-    expect(existsSync(junk)).toBe(false);
+  it("never signals a live pid whose cmdline does not name this checkout's coordinator", async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv: ['node', '/elsewhere/server.js'] } });
+    const kill = fakeSignaller();
+    const file = record('foreign.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill })).toEqual({ pid: FAKE_PID, outcome: 'gone' });
+    expect(kill.calls).toEqual([]);
+    expect(existsSync(file)).toBe(false);
   });
 
-  it('clears a pid file missing a start time or a needle', async () => {
-    const incomplete = path.join(dir, 'incomplete.pid');
-    writeFileSync(incomplete, JSON.stringify({ pid: 12345 }));
-    expect(await reapCoordinator(incomplete)).toBeUndefined();
-    expect(existsSync(incomplete)).toBe(false);
+  it('signals the group only through the injected signaller once start time and cmdline both match', async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv: leaderArgv } });
+    const kill = obliging();
+    const file = record('match.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill })).toEqual({ pid: FAKE_PID, outcome: 'stopped' });
+    expect(kill.calls).toEqual([
+      { target: -FAKE_PID, signal: 'SIGTERM' },
+      { target: -FAKE_PID, signal: 0 },
+    ]);
+    expect(existsSync(file)).toBe(false);
   });
+
+  it('stops an orphaned group whose leader died alone, found by a member naming this checkout', async () => {
+    const zombie = { [FAKE_PID]: { start: 999, state: 'Z', argv: [] } };
+    for (const leader of [{}, zombie]) {
+      const procRoot = fakeProcRoot({
+        ...leader,
+        [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 1_000, argv: forkedArgv },
+        [FAKE_PID + 2]: { start: 1_001, argv: forkedArgv },
+      });
+      const kill = obliging();
+      const file = record('orphan.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+      expect(await reapCoordinator(file, { procRoot, kill })).toEqual({ pid: FAKE_PID, outcome: 'stopped' });
+      expect(kill.calls[0]).toEqual({ target: -FAKE_PID, signal: 'SIGTERM' });
+      expect(existsSync(file)).toBe(false);
+    }
+  });
+
+  it("leaves a leaderless group alone when no member names this checkout's coordinator", async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 1_000, argv: ['node', '/elsewhere/worker.js'] } });
+    const kill = fakeSignaller();
+    const file = record('strangers.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill })).toEqual({ pid: FAKE_PID, outcome: 'gone' });
+    expect(kill.calls).toEqual([]);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('keeps the pid file while the group survives SIGKILL', async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv: leaderArgv } });
+    const kill = fakeSignaller(() => true);
+    const file = record('stuck.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill, graceMs: 50, killWaitMs: 50 })).toEqual({ pid: FAKE_PID, outcome: 'stuck' });
+    expect(kill.calls.filter((c) => c.signal !== 0)).toEqual([
+      { target: -FAKE_PID, signal: 'SIGTERM' },
+      { target: -FAKE_PID, signal: 'SIGKILL' },
+    ]);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it('checks a legacy plain-integer pid file against the coordinator directories before signalling', async () => {
+    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv: leaderArgv } });
+    const foreign = fakeSignaller();
+    const file = record('legacy.pid', `${FAKE_PID}\n`);
+    expect(await reapCoordinator(file, { procRoot, kill: foreign, legacyNeedles: ['/checkouts/other/'] })).toEqual({ pid: FAKE_PID, outcome: 'gone' });
+    expect(foreign.calls).toEqual([]);
+    expect(existsSync(file)).toBe(false);
+
+    const kill = obliging();
+    record('legacy.pid', `${FAKE_PID}\n`);
+    expect(await reapCoordinator(file, { procRoot, kill, legacyNeedles: ['/checkouts/other/', NEEDLE] })).toEqual({ pid: FAKE_PID, outcome: 'stopped' });
+    expect(kill.calls[0]).toEqual({ target: -FAKE_PID, signal: 'SIGTERM' });
+  });
+
+  it('leaves a real process with the right cmdline but a different start time alive', async () => {
+    const checkout = fakeCoordinator(IDLE);
+    const child = spawn(process.execPath, [path.join(checkout, 'node_modules', 'tsx', 'dist', 'cli.mjs')], { detached: true, stdio: 'ignore' });
+    const pid = child.pid as number;
+    try {
+      await waitFor(() => processStartTime(pid) !== undefined);
+      const kill = ownSignaller();
+      kill.own(pid);
+      const file = record('real-reused.pid', { pid, startTime: (processStartTime(pid) as number) + 1, needle: `${checkout}${path.sep}` });
+      expect(await reapCoordinator(file, { kill })).toEqual({ pid, outcome: 'gone' });
+      expect(kill.calls).toEqual([]);
+      expect(existsSync(file)).toBe(false);
+      expect(isAlive(pid)).toBe(true);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
+  it('stops a real orphaned group after its stack and then its leader were killed', async () => {
+    const stateDir = scratch();
+    const port = await freePort();
+    const host = spawn(
+      process.execPath,
+      ['--import', 'tsx', path.join(STACK_ROOT, 'test', 'fixtures', 'crash', 'host.ts'), fakeCoordinator(FORKING), String(port), stateDir],
+      { cwd: STACK_ROOT, stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    let out = '';
+    host.stdout.on('data', (b: Buffer) => (out += b.toString()));
+    const pidFile = path.join(stateDir, 'coordinator.pid');
+    const kill = ownSignaller();
+    let pid = 0;
+    try {
+      await waitFor(() => out.includes('up') || host.exitCode !== null, 30_000);
+      pid = (JSON.parse(readFileSync(pidFile, 'utf8')) as { pid: number }).pid;
+      kill.ownGroup(pid);
+      expect(kill.members(pid).length).toBeGreaterThan(1);
+      host.kill('SIGKILL');
+      await once(host, 'exit');
+      kill.killOwned(pid);
+      // Dead, or a zombie its new parent has not reaped yet: either way the leader is gone.
+      await waitFor(() => {
+        try {
+          return /\) Z /.test(readFileSync(`/proc/${pid}/stat`, 'utf8'));
+        } catch {
+          return true;
+        }
+      });
+      expect(await answers(port)).toBe(true);
+
+      expect(await reapCoordinator(pidFile, { kill, graceMs: 5_000 })).toEqual({ pid, outcome: 'stopped' });
+      expect(kill.calls[0]).toEqual({ target: -pid, signal: 'SIGTERM' });
+      expect(await answers(port)).toBe(false);
+      expect(existsSync(pidFile)).toBe(false);
+    } finally {
+      host.kill('SIGKILL');
+      if (pid > 1 && kill.members(pid).length > 0) kill(-pid, 'SIGKILL');
+    }
+  }, 60_000);
 
   it('SIGTERMs a live group, and SIGKILLs one that ignores it', async () => {
     for (const [script, outcome] of [
@@ -289,8 +480,11 @@ describe('reaping a coordinator whose stack is gone', () => {
         logFile: path.join(scratch(), 'c.log'),
         pidFile,
       });
+      orphans.push(orphan);
       const pid = orphan.pid() as number;
-      expect(await reapCoordinator(pidFile, 1_000)).toEqual({ pid, outcome });
+      const kill = ownSignaller();
+      kill.ownGroup(pid);
+      expect(await reapCoordinator(pidFile, { kill, graceMs: 1_000 })).toEqual({ pid, outcome });
       expect(await answers(port)).toBe(false);
       expect(existsSync(pidFile)).toBe(false);
     }
@@ -320,24 +514,48 @@ describe('port refusal', () => {
     const port = await freePort();
     const squatter = await squat(port); // in-process: its cwd is this checkout's own STACK_ROOT
     try {
-      await expect(refuseIfPortHeld(port)).rejects.toThrow(/port \d+ is already in use/);
-      await expect(refuseIfPortHeld(port)).rejects.toThrow(/run `npm run stack:down` in the checkout that started it/);
+      const message = await refuseIfPortHeld(port).then(() => 'resolved', (err: Error) => err.message);
+      expect(message).toMatch(/port \d+ is already in use/);
+      expect(message).toMatch(/run `npm run stack:down` in the checkout that started it$/);
     } finally {
       await squatter.close();
     }
   });
 
-  it.skipIf(!existsSync('/proc/net/tcp'))('names the other checkout when the holder runs outside this one', async () => {
-    const port = await freePort();
-    const elsewhere = scratch();
+  /** A listener on port whose cwd is dir; killed after the test. */
+  async function holderIn(dir: string, port: number) {
+    mkdirSync(dir, { recursive: true });
     const child = spawn(
       process.execPath,
       ['-e', `require('node:http').createServer((_q,r)=>r.end('ok')).listen(${port}, '127.0.0.1')`],
-      { cwd: elsewhere, stdio: 'ignore' },
+      { cwd: dir, stdio: 'ignore' },
     );
+    await waitFor(async () => !(await portFree(port)));
+    return child;
+  }
+  const refusal = (port: number): Promise<string> => refuseIfPortHeld(port).then(() => 'resolved', (err: Error) => err.message);
+
+  it.skipIf(!existsSync('/proc/net/tcp'))("names the other harness checkout when the holder runs from that checkout's coordinator cache", async () => {
+    const port = await freePort();
+    const other = realpathSync(scratch());
+    const child = await holderIn(path.join(other, 'e2e', 'stack', 'node_modules', '.cache', 'fc-mobile-stack', 'fc-coordinator-c0db861c7cc7'), port);
     try {
-      await waitFor(async () => !(await portFree(port)));
-      await expect(refuseIfPortHeld(port)).rejects.toThrow(new RegExp(`that checkout is ${elsewhere.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+      const message = await refusal(port);
+      expect(message).toContain(`run \`npm run stack:down\` in the checkout that started it (that checkout is ${other})`);
+      expect(message).not.toContain('runs from');
+    } finally {
+      child.kill('SIGKILL');
+    }
+  });
+
+  it.skipIf(!existsSync('/proc/net/tcp'))('says where the coordinator runs from when no harness checkout can be recovered (FC_COORDINATOR_DIR)', async () => {
+    const port = await freePort();
+    const worktree = path.join(realpathSync(scratch()), 'fc-coordinator-wk05');
+    const child = await holderIn(worktree, port);
+    try {
+      const message = await refusal(port);
+      expect(message).toContain(`(the coordinator runs from ${worktree})`);
+      expect(message).not.toContain('that checkout is');
     } finally {
       child.kill('SIGKILL');
     }

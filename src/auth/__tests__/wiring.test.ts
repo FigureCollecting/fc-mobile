@@ -92,6 +92,31 @@ describe('browser wiring: the store closed by another page', () => {
     expect(session.status.value).toBe('signed-out');
     expect(fetchFn).not.toHaveBeenCalled();
   });
+
+  it('createBrowserSession retries a failed open on the next call instead of keeping the failure', async () => {
+    const factory = new IDBFactory();
+    const seed = await openLocalDb({ factory });
+    const store = new AuthStore(seed);
+    await store.putTokens({ sub: SUB_A, accessToken: 'at', refreshToken: 'rt', expiresAt: Date.now() + 600_000, scope: 'openid' });
+    await store.setCurrentSub(SUB_A);
+    seed.close();
+    const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
+    const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
+    expect(await session.start()).toBe('signed-in');
+    const settle = <T>(req: IDBRequest<T>) =>
+      new Promise<T>((resolve, reject) => {
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    // A newer build upgrades the store: this build cannot open it.
+    (await settle(factory.open('fc-mobile', 3))).close();
+    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ name: 'VersionError' });
+    // The newer store goes away: the next call opens a fresh one.
+    await settle(factory.deleteDatabase('fc-mobile'));
+    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(session.status.value).toBe('signed-out');
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
 });
 
 describe('locks', () => {

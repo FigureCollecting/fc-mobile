@@ -140,6 +140,19 @@ for (const size of CASE_VIEWPORTS) {
       await expect(page).toHaveURL(/labels=1/);
       inPage['compact&labels=1'] = await caseLayout(page);
 
+      // Labels alone on a collection taller than the screen: no empty shelves
+      // either way, so the shelf COUNT stays the same and only a re-measure
+      // of the shelves (not a rebuild for a new count) can move them.
+      await page.goto('/?layout=case&motif=detolf-dark&density=compact&fx=12');
+      await page.waitForSelector('button.shelf-figure');
+      await expect(page.locator('#pre-splash')).toHaveCount(0);
+      for (const query of ['compact&fx=12&labels=1', 'compact&fx=12']) {
+        await page.getByRole('button', { name: /labels: (off|on)/i }).click();
+        await expect(page).toHaveURL(query.endsWith('labels=1') ? /labels=1/ : /^(?!.*labels=1)/);
+        inPage[query] = await caseLayout(page);
+        expect(await page.locator('.case__bay[data-empty="true"]').count(), `${query}: no empty shelves`).toBe(0);
+      }
+
       for (const [query, layout] of Object.entries(inPage)) {
         expectNoOverlap(layout, `in-page ${query}`);
         await page.goto(`/?layout=case&motif=detolf-dark&density=${query}`);

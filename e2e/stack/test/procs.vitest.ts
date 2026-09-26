@@ -4,7 +4,20 @@ import * as net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { describePid, groupAlive, portFree, portHolders, processGroup, signalGroup, waitGroupGone } from '../src/procs.js';
+import {
+  cmdlineIncludes,
+  describePid,
+  groupAlive,
+  identifyProcess,
+  isSameProcess,
+  portFree,
+  portHolders,
+  processCwd,
+  processGroup,
+  processStartTime,
+  signalGroup,
+  waitGroupGone,
+} from '../src/procs.js';
 import { freePort } from './procfixtures.js';
 
 const hasProc = existsSync('/proc/net/tcp');
@@ -39,8 +52,9 @@ function fakeProc(): string {
   fds('300', ['socket:[333]']);
   mkdirSync(path.join(root, '400'));
   mkdirSync(path.join(root, 'self'));
-  writeFileSync(path.join(root, '100', 'stat'), '100 (node (tsx) x) S 1 4242 4242 0 -1 4194560');
+  writeFileSync(path.join(root, '100', 'stat'), '100 (node (tsx) x) S 1 4242 4242 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 4 0 555666');
   writeFileSync(path.join(root, '100', 'cmdline'), 'node\0server.js\0');
+  symlinkSync('/checkout/a', path.join(root, '100', 'cwd'));
   writeFileSync(path.join(root, '200', 'stat'), 'garbage');
   return root;
 }
@@ -89,6 +103,48 @@ describe('process facts', () => {
     const root = fakeProc();
     expect(describePid(100, root)).toBe('pid 100 (node server.js)');
     expect(describePid(999, root)).toBe('pid 999');
+  });
+
+  it('reads the kernel start-time counter past the same comm-field quoting, undefined when unreadable', () => {
+    const root = fakeProc();
+    expect(processStartTime(100, root)).toBe(555666);
+    expect(processStartTime(200, root)).toBeUndefined();
+    expect(processStartTime(999, root)).toBeUndefined();
+  });
+
+  it('reads cwd as the target of the /proc/<pid>/cwd symlink, undefined when unreadable', () => {
+    const root = fakeProc();
+    expect(processCwd(100, root)).toBe('/checkout/a');
+    expect(processCwd(999, root)).toBeUndefined();
+  });
+
+  it('finds a substring across the NUL-joined cmdline', () => {
+    const root = fakeProc();
+    expect(cmdlineIncludes(100, 'server.js', root)).toBe(true);
+    expect(cmdlineIncludes(100, 'nonesuch', root)).toBe(false);
+    expect(cmdlineIncludes(999, 'server.js', root)).toBe(false);
+  });
+});
+
+describe('process identity (pid-reuse guard)', () => {
+  it('records a live pid, refusing an unreadable one', () => {
+    const root = fakeProc();
+    expect(identifyProcess(100, root)).toEqual({ pid: 100, startTime: 555666 });
+    expect(identifyProcess(999, root)).toBeUndefined();
+  });
+
+  it('confirms an identity only when both the start time and the cmdline still match', () => {
+    const root = fakeProc();
+    const identity = identifyProcess(100, root);
+    expect(identity).toBeDefined();
+    // The real thing: same pid, same start time, cmdline still names it.
+    expect(isSameProcess(identity!, 'server.js', root)).toBe(true);
+    // A pid reused by something else since: the kernel's start time moved on.
+    expect(isSameProcess({ pid: 100, startTime: 1 }, 'server.js', root)).toBe(false);
+    // Same pid and start time, but not the process we think it is.
+    expect(isSameProcess(identity!, 'not-this-command', root)).toBe(false);
+    // Gone entirely.
+    expect(isSameProcess({ pid: 999, startTime: 1 }, 'server.js', root)).toBe(false);
   });
 });
 

@@ -3,9 +3,21 @@
 // default is a pinned develop sha so the stack is reproducible.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readFileSync, closeSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, closeSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { describePid, portFree, portHolders, processGroup, signalGroup, waitGroupGone } from './procs.js';
+import { STACK_ROOT } from './paths.js';
+import {
+  describePid,
+  identifyProcess,
+  isSameProcess,
+  portFree,
+  portHolders,
+  processCwd,
+  processGroup,
+  signalGroup,
+  waitGroupGone,
+  type ProcessIdentity,
+} from './procs.js';
 
 export const DEFAULT_COORDINATOR_REF = 'c0db861c7cc7d775f5f05a9e1acc8e41201c6a43';
 export const DEFAULT_COORDINATOR_REPO = 'https://github.com/FigureCollecting/fc-coordinator.git';
@@ -144,8 +156,6 @@ async function healthy(url: string): Promise<boolean> {
   }
 }
 
-const STOP_ORPHAN = '`npm run stack:down` stops a coordinator left running by a crashed stack';
-
 function holders(port: number): string {
   const pids = portHolders(port);
   if (pids === undefined) return '';
@@ -153,9 +163,33 @@ function holders(port: number): string {
   return ` by ${pids.map((pid) => describePid(pid)).join(', ')}`;
 }
 
+/**
+ * The stack:down advice for a held port: names the OTHER checkout to run it
+ * in when a holder's cwd is outside this one, since `stack:down` only stops
+ * what its own checkout started.
+ */
+function stopOrphanAdvice(port: number): string {
+  const base = 'run `npm run stack:down` in the checkout that started it';
+  const elsewhere = (portHolders(port) ?? [])
+    .map((pid) => processCwd(pid))
+    .find((cwd): cwd is string => cwd !== undefined && cwd !== STACK_ROOT && !cwd.startsWith(`${STACK_ROOT}${path.sep}`));
+  return elsewhere === undefined ? base : `${base} (that checkout is ${elsewhere})`;
+}
+
 /** Whether the port's listener belongs to the group; undefined when that cannot be read. */
 function listenerInGroup(port: number, pgid: number): boolean | undefined {
   return portHolders(port)?.some((pid) => processGroup(pid) === pgid);
+}
+
+/** Throws a `stack:down`-pointing error naming the holder when port is occupied; a no-op otherwise. */
+export async function refuseIfPortHeld(port: number): Promise<void> {
+  if (await portFree(port)) return;
+  throw new Error(`port ${port} is already in use${holders(port)}; ${stopOrphanAdvice(port)}`);
+}
+
+/** Rotates an existing log out of the way instead of deleting it, so the previous run's tail survives. */
+export function rotateLog(file: string): void {
+  if (existsSync(file)) renameSync(file, `${file}.1`);
 }
 
 export async function startCoordinator(options: CoordinatorProcessOptions): Promise<CoordinatorProcess> {
@@ -166,15 +200,15 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
 
   const clearPidFile = (pid: number): void => {
     const file = options.pidFile;
-    if (file !== undefined && existsSync(file) && readFileSync(file, 'utf8').trim() === String(pid)) rmSync(file, { force: true });
+    if (file === undefined || !existsSync(file)) return;
+    const recorded = readPidFileIdentity(file);
+    if (recorded !== undefined && recorded.pid === pid) rmSync(file, { force: true });
   };
 
   const start = async (): Promise<void> => {
     // A 200 on /healthz proves only that something answers. An orphan from a
     // crashed stack answers too, against that stack's database.
-    if (!(await portFree(options.port))) {
-      throw new Error(`port ${options.port} is already in use${holders(options.port)}; ${STOP_ORPHAN}`);
-    }
+    await refuseIfPortHeld(options.port);
     const fd = openSync(options.logFile, 'a');
     // Its own process group: tsx forks a second node that holds the port and
     // outlives a leader killed alone, so every stop signals the group.
@@ -187,7 +221,12 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
     closeSync(fd);
     const pid = proc.pid as number;
     child = proc;
-    if (options.pidFile !== undefined) writeFileSync(options.pidFile, `${pid}\n`);
+    if (options.pidFile !== undefined) {
+      // cli embeds this checkout's directory, so a later reapCoordinator can
+      // tell "this stack's coordinator" from a pid reused by anything else.
+      const identity = identifyProcess(pid);
+      if (identity !== undefined) writeFileSync(options.pidFile, JSON.stringify({ ...identity, needle: cli }));
+    }
     let exitCode: number | null = null;
     proc.once('exit', (code) => {
       exitCode = code ?? -1;
@@ -247,16 +286,49 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
 
 export type ReapOutcome = 'gone' | 'stopped' | 'killed' | 'stuck';
 
+interface PidFileIdentity extends ProcessIdentity {
+  needle: string;
+}
+
+/** Parses a pid file's identity; undefined for missing fields or invalid JSON. */
+function readPidFileIdentity(pidFile: string): PidFileIdentity | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(pidFile, 'utf8'));
+  } catch {
+    return undefined;
+  }
+  const { pid, startTime, needle } = (parsed ?? {}) as Partial<PidFileIdentity>;
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 1) return undefined;
+  if (typeof startTime !== 'number' || typeof needle !== 'string') return undefined;
+  return { pid, startTime, needle };
+}
+
 /**
  * Stop the coordinator group a pid file names, for a stack that died without
  * its teardown. SIGTERM first so it drains, then SIGKILL after the grace.
+ *
+ * The pid alone is not enough after a reboot or pid-max wraparound: the
+ * number can point at an unrelated process by the time this runs. The start
+ * time recorded alongside it (and a piece of its cmdline unique to this
+ * checkout) must still match before anything is signalled; a mismatch is
+ * treated exactly like the group already having exited.
  */
-export async function reapCoordinator(pidFile: string, graceMs = 12_000): Promise<{ pid: number; outcome: ReapOutcome } | undefined> {
+export async function reapCoordinator(
+  pidFile: string,
+  graceMs = 12_000,
+  procRoot = '/proc',
+): Promise<{ pid: number; outcome: ReapOutcome } | undefined> {
   if (!existsSync(pidFile)) return undefined;
-  const pid = Number(readFileSync(pidFile, 'utf8').trim());
-  if (!Number.isInteger(pid) || pid <= 1) {
+  const identity = readPidFileIdentity(pidFile);
+  if (identity === undefined) {
     rmSync(pidFile, { force: true });
     return undefined;
+  }
+  const { pid, needle } = identity;
+  if (!isSameProcess(identity, needle, procRoot)) {
+    rmSync(pidFile, { force: true });
+    return { pid, outcome: 'gone' };
   }
   let outcome: ReapOutcome = 'gone';
   if (signalGroup(pid, 'SIGTERM')) {

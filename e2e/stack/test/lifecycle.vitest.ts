@@ -8,6 +8,7 @@ import { startControl, type ControlTarget } from '../src/control.js';
 import { startCoordinator } from '../src/coordinator.js';
 import { alive, probeRunning, stackDown, summary, upDetached, upForeground } from '../src/lifecycle.js';
 import { STACK_ROOT } from '../src/paths.js';
+import { processStartTime } from '../src/procs.js';
 import { coordinatorPidFile, type Stack, type StackState } from '../src/stack.js';
 import { answers, fakeCoordinator, FORKING, freePort, isAlive, waitFor } from './procfixtures.js';
 
@@ -29,9 +30,9 @@ async function recordedStack(health: { edge: boolean; coordinator: boolean }, pi
   return stateDir;
 }
 
-function silentStack(pid: number): string {
+function silentStack(pid: number, startTime = processStartTime(pid) ?? -1): string {
   const stateDir = scratch();
-  writeFileSync(path.join(stateDir, 'stack.json'), JSON.stringify({ pid, controlUrl: 'http://127.0.0.1:9', origin: 'http://localhost:7' }));
+  writeFileSync(path.join(stateDir, 'stack.json'), JSON.stringify({ pid, startTime, controlUrl: 'http://127.0.0.1:9', origin: 'http://localhost:7' }));
   return stateDir;
 }
 
@@ -137,6 +138,36 @@ describe('stack:up in the foreground', () => {
       expect([stopped, exits[0]]).toEqual([1, 0]);
     }
   });
+
+  it('stops the stack immediately once start resolves, when a signal arrived while it was still starting', async () => {
+    const signals = new EventEmitter();
+    const exits: number[] = [];
+    let stopped = 0;
+    let resolveStart!: () => void;
+    const starting = new Promise<void>((resolve) => (resolveStart = resolve));
+
+    const upPromise = upForeground(
+      { stateDir: '/s' },
+      {
+        start: async (options) => {
+          // A signal fires here, before start() has resolved.
+          signals.emit('SIGTERM');
+          await starting;
+          return { state: { origin: options.stateDir }, stop: async () => void (stopped += 1) } as unknown as Stack;
+        },
+        signals,
+        exit: (code) => void exits.push(code),
+      },
+    );
+    // Give the signal handler (registered before start()) a turn, then let
+    // start() resolve.
+    await new Promise((r) => setTimeout(r, 20));
+    resolveStart();
+
+    await upPromise;
+    await waitFor(() => exits.length === 1);
+    expect([stopped, exits[0]]).toEqual([1, 0]);
+  });
 });
 
 describe('stack:down', () => {
@@ -167,6 +198,25 @@ describe('stack:down', () => {
       const result = await stackDown(stateDir, { graceMs: 600 });
       expect(result.ok).toBe(true);
       expect(result.lines.some((l) => /did not stop .*killed/.test(l))).toBe(killed);
+      await waitFor(() => child.exitCode !== null || child.signalCode !== null);
+    }
+  });
+
+  it('never signals a stack pid whose recorded start time no longer matches: pid reuse guard', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      // A start time that is not this child's real one, as if the recorded
+      // pid had since been reused by an unrelated process.
+      const stateDir = silentStack(child.pid as number, 1);
+      const result = await stackDown(stateDir, { graceMs: 300 });
+      expect(result.ok).toBe(true);
+      expect(result.lines.some((l) => /did not stop|killed/.test(l))).toBe(false);
+      expect(result.lines.some((l) => l.includes('is stale'))).toBe(true);
+      expect(existsSync(path.join(stateDir, 'stack.json'))).toBe(false);
+      expect(isAlive(child.pid as number)).toBe(true);
+    } finally {
+      child.kill('SIGKILL');
       await waitFor(() => child.exitCode !== null || child.signalCode !== null);
     }
   });

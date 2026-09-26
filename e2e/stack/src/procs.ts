@@ -69,6 +69,49 @@ export function describePid(pid: number, procRoot = '/proc'): string {
   return command ? `pid ${pid} (${command})` : `pid ${pid}`;
 }
 
+/** The kernel's start-time counter for pid, from /proc/<pid>/stat field 22 (clock ticks since boot); undefined when unreadable. Unlike the pid alone, this survives pid reuse: a new process at the same pid gets a new start time. */
+export function processStartTime(pid: number, procRoot = '/proc'): number | undefined {
+  const stat = read(() => readFileSync(path.join(procRoot, String(pid), 'stat'), 'utf8'));
+  if (stat === undefined) return undefined;
+  // Same "past the comm field" trick as processGroup: starttime is the 22nd
+  // whitespace field overall, the 20th after the comm parens are skipped.
+  const starttime = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);
+  return Number.isInteger(starttime) ? starttime : undefined;
+}
+
+/** Whether pid's cmdline contains needle as a plain substring (NUL args joined by spaces). */
+export function cmdlineIncludes(pid: number, needle: string, procRoot = '/proc'): boolean {
+  const cmdline = read(() => readFileSync(path.join(procRoot, String(pid), 'cmdline'), 'utf8'));
+  if (cmdline === undefined) return false;
+  return cmdline.split('\0').join(' ').includes(needle);
+}
+
+/** The target of /proc/<pid>/cwd; undefined when unreadable (gone, or no /proc). */
+export function processCwd(pid: number, procRoot = '/proc'): string | undefined {
+  return read(() => readlinkSync(path.join(procRoot, String(pid), 'cwd')));
+}
+
+export interface ProcessIdentity {
+  pid: number;
+  /** processStartTime at the moment this identity was recorded. */
+  startTime: number;
+}
+
+/** Records pid's current identity, or undefined when /proc can't confirm it exists. */
+export function identifyProcess(pid: number, procRoot = '/proc'): ProcessIdentity | undefined {
+  const startTime = processStartTime(pid, procRoot);
+  return startTime === undefined ? undefined : { pid, startTime };
+}
+
+/**
+ * Whether identity.pid is still the same process: its start time has not
+ * changed (a reused pid gets a new one) and its cmdline still contains
+ * needle. Both must hold before anything signals it.
+ */
+export function isSameProcess(identity: ProcessIdentity, needle: string, procRoot = '/proc'): boolean {
+  return processStartTime(identity.pid, procRoot) === identity.startTime && cmdlineIncludes(identity.pid, needle, procRoot);
+}
+
 // kill(0) is the caller's own group and kill(-1) every process it may signal.
 const isGroup = (pgid: number): boolean => Number.isInteger(pgid) && pgid > 1;
 

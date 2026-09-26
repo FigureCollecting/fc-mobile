@@ -7,6 +7,7 @@ import path from 'node:path';
 import { readStackState, stackClient } from './client.js';
 import { reapCoordinator } from './coordinator.js';
 import { STACK_ROOT } from './paths.js';
+import { processStartTime } from './procs.js';
 import { coordinatorPidFile, startStack, type Stack, type StackOptions, type StackState } from './stack.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -128,15 +129,24 @@ export interface ForegroundDeps {
 /** `stack:up`: run until a signal or a control /shutdown, then tear down and exit. */
 export async function upForeground(options: StackOptions, deps: ForegroundDeps = {}): Promise<Stack> {
   const exit = deps.exit ?? ((code: number) => process.exit(code));
+  const emitter = deps.signals ?? process;
+  // Registered before start() begins: a signal during the (often slow)
+  // startup — containers, the coordinator checkout — must still stop
+  // whatever came up, not be missed because nothing was listening yet.
+  let signaled = false;
+  // SIGHUP too: the coordinator has its own session, so a closed terminal no
+  // longer reaches it directly.
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  for (const sig of signals) emitter.on(sig, () => (signaled = true));
+
   const stack = await (deps.start ?? startStack)(options);
   const stop = stack.stop;
   stack.stop = async () => {
     await stop();
     exit(0);
   };
-  // SIGHUP too: the coordinator has its own session, so a closed terminal no
-  // longer reaches it directly.
-  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) (deps.signals ?? process).on(sig, () => void stack.stop());
+  for (const sig of signals) emitter.on(sig, () => void stack.stop());
+  if (signaled) void stack.stop();
   return stack;
 }
 
@@ -146,8 +156,9 @@ export interface DownResult {
 }
 
 /** `stack:down`: stop the recorded stack, then any coordinator it left behind. */
-export async function stackDown(stateDir: string, options: { graceMs?: number } = {}): Promise<DownResult> {
+export async function stackDown(stateDir: string, options: { graceMs?: number; procRoot?: string } = {}): Promise<DownResult> {
   const graceMs = options.graceMs ?? 60_000;
+  const procRoot = options.procRoot ?? '/proc';
   const lines: string[] = [];
   const state = readStackState(stateDir);
   if (state !== undefined) {
@@ -157,10 +168,21 @@ export async function stackDown(stateDir: string, options: { graceMs?: number } 
         () => true,
         () => false,
       );
-    if (!asked) signal(state.pid, 'SIGTERM');
+    // A stack.json surviving a reboot or pid-max wraparound can name a pid
+    // that is no longer this stack: its kernel start time would have moved
+    // on. Only a start time that still matches makes state.pid safe to
+    // signal; an already-exited pid is the ordinary case and needs no note,
+    // but one alive under a different start time is a reused pid worth one.
+    const currentStartTime = processStartTime(state.pid, procRoot);
+    const ours = typeof state.startTime === 'number' && currentStartTime === state.startTime;
+    const reused = !ours && currentStartTime !== undefined;
+    if (!asked) {
+      if (ours) signal(state.pid, 'SIGTERM');
+      else if (reused) lines.push(`stack pid ${state.pid} is stale (a different process now); nothing to signal`);
+    }
     const deadline = Date.now() + graceMs;
-    while (alive(state.pid) && Date.now() < deadline) await sleep(100);
-    if (alive(state.pid)) {
+    while (ours && alive(state.pid) && Date.now() < deadline) await sleep(100);
+    if (ours && alive(state.pid)) {
       signal(state.pid, 'SIGKILL');
       lines.push(`stack pid ${state.pid} did not stop within ${graceMs} ms; killed it`);
     }

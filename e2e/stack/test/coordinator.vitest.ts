@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,10 +9,13 @@ import {
   detectSpineWire,
   prepareCheckout,
   reapCoordinator,
+  refuseIfPortHeld,
   resolveCheckout,
+  rotateLog,
   startCoordinator,
   type CoordinatorProcess,
 } from '../src/coordinator.js';
+import { portFree } from '../src/procs.js';
 import { answers, fakeCoordinator, FORKING, freePort, IDLE, IGNORES_SIGTERM, isAlive, squat, waitFor } from './procfixtures.js';
 
 const scratch = (): string => mkdtempSync(path.join(tmpdir(), 'stack-coord-'));
@@ -190,16 +193,20 @@ describe('coordinator process ownership', () => {
     expect(readFileSync(logFile, 'utf8')).toMatch(/drained \d+/);
   });
 
-  it('records its process group in the pid file while it runs', async () => {
+  it('records its pid, start time and checkout in the pid file while it runs', async () => {
     const port = await freePort();
+    const dir = fakeCoordinator(FORKING);
     const pidFile = path.join(scratch(), 'coordinator.pid');
-    const coordinator = await startCoordinator({ dir: fakeCoordinator(FORKING), env: env(port), port, logFile: path.join(scratch(), 'c.log'), pidFile });
+    const coordinator = await startCoordinator({ dir, env: env(port), port, logFile: path.join(scratch(), 'c.log'), pidFile });
     started.push(coordinator);
-    const pid = Number(readFileSync(pidFile, 'utf8'));
-    expect(pid).toBe(coordinator.pid());
+    const identity = JSON.parse(readFileSync(pidFile, 'utf8')) as { pid: number; startTime: number; needle: string };
+    expect(identity.pid).toBe(coordinator.pid());
+    expect(typeof identity.startTime).toBe('number');
+    expect(identity.needle).toContain(dir);
     await coordinator.restart();
-    expect(Number(readFileSync(pidFile, 'utf8'))).toBe(coordinator.pid());
-    expect(coordinator.pid()).not.toBe(pid);
+    const after = JSON.parse(readFileSync(pidFile, 'utf8')) as { pid: number };
+    expect(after.pid).toBe(coordinator.pid());
+    expect(after.pid).not.toBe(identity.pid);
     await coordinator.stop();
     expect(existsSync(pidFile)).toBe(false);
     expect(coordinator.pid()).toBeUndefined();
@@ -231,9 +238,41 @@ describe('reaping a coordinator whose stack is gone', () => {
   it('reports a recorded group that already exited, and clears its pid file', async () => {
     const stale = path.join(dir, 'stale.pid');
     const gone = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
-    writeFileSync(stale, `${gone}\n`);
+    writeFileSync(stale, JSON.stringify({ pid: Number(gone), startTime: 1, needle: 'anything' }));
     expect(await reapCoordinator(stale)).toEqual({ pid: Number(gone), outcome: 'gone' });
     expect(existsSync(stale)).toBe(false);
+  });
+
+  it('never signals a pid whose recorded identity no longer matches: pid reuse guard, on a fake procRoot', async () => {
+    // A pid file surviving a reboot or pid-max wraparound: the number is
+    // right, but the kernel start time and cmdline it names are not this
+    // stack's coordinator. reapCoordinator must treat it as gone WITHOUT
+    // sending any signal (the fake procRoot's pid may not even exist, let
+    // alone be safe to kill(-1) or kill(-something-else-now)).
+    const procRoot = scratch();
+    mkdirSync(path.join(procRoot, '100'), { recursive: true });
+    writeFileSync(path.join(procRoot, '100', 'stat'), '100 (node) S 1 100 100 0 -1 0 0 0 0 0 0 0 0 0 20 0 4 0 999');
+    writeFileSync(path.join(procRoot, '100', 'cmdline'), 'node\0some-other-process.js\0');
+    const stale = path.join(dir, 'reused.pid');
+    // Recorded identity: a different start time (777, not 999) and a needle
+    // this fake process's cmdline never contains.
+    writeFileSync(stale, JSON.stringify({ pid: 100, startTime: 777, needle: '/checkout/of/this/stack' }));
+    expect(await reapCoordinator(stale, 12_000, procRoot)).toEqual({ pid: 100, outcome: 'gone' });
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  it('clears a pid file whose identity is malformed JSON', async () => {
+    const junk = path.join(dir, 'malformed.pid');
+    writeFileSync(junk, JSON.stringify({ pid: 'not-a-number' }));
+    expect(await reapCoordinator(junk)).toBeUndefined();
+    expect(existsSync(junk)).toBe(false);
+  });
+
+  it('clears a pid file missing a start time or a needle', async () => {
+    const incomplete = path.join(dir, 'incomplete.pid');
+    writeFileSync(incomplete, JSON.stringify({ pid: 12345 }));
+    expect(await reapCoordinator(incomplete)).toBeUndefined();
+    expect(existsSync(incomplete)).toBe(false);
   });
 
   it('SIGTERMs a live group, and SIGKILLs one that ignores it', async () => {
@@ -254,6 +293,53 @@ describe('reaping a coordinator whose stack is gone', () => {
       expect(await reapCoordinator(pidFile, 1_000)).toEqual({ pid, outcome });
       expect(await answers(port)).toBe(false);
       expect(existsSync(pidFile)).toBe(false);
+    }
+  });
+});
+
+describe('log rotation', () => {
+  it('renames an existing log to .1 instead of deleting it, and is a no-op without one', () => {
+    const file = path.join(scratch(), 'coordinator.log');
+    writeFileSync(file, 'previous run\n');
+    rotateLog(file);
+    expect(existsSync(file)).toBe(false);
+    expect(readFileSync(`${file}.1`, 'utf8')).toBe('previous run\n');
+
+    // A second rotation with no current log must not touch the old .1.
+    rotateLog(file);
+    expect(readFileSync(`${file}.1`, 'utf8')).toBe('previous run\n');
+  });
+});
+
+describe('port refusal', () => {
+  it('passes silently when the port is free', async () => {
+    await expect(refuseIfPortHeld(await freePort())).resolves.toBeUndefined();
+  });
+
+  it('names the checkout to run stack:down in, for a holder inside this checkout', async () => {
+    const port = await freePort();
+    const squatter = await squat(port); // in-process: its cwd is this checkout's own STACK_ROOT
+    try {
+      await expect(refuseIfPortHeld(port)).rejects.toThrow(/port \d+ is already in use/);
+      await expect(refuseIfPortHeld(port)).rejects.toThrow(/run `npm run stack:down` in the checkout that started it/);
+    } finally {
+      await squatter.close();
+    }
+  });
+
+  it.skipIf(!existsSync('/proc/net/tcp'))('names the other checkout when the holder runs outside this one', async () => {
+    const port = await freePort();
+    const elsewhere = scratch();
+    const child = spawn(
+      process.execPath,
+      ['-e', `require('node:http').createServer((_q,r)=>r.end('ok')).listen(${port}, '127.0.0.1')`],
+      { cwd: elsewhere, stdio: 'ignore' },
+    );
+    try {
+      await waitFor(async () => !(await portFree(port)));
+      await expect(refuseIfPortHeld(port)).rejects.toThrow(new RegExp(`that checkout is ${elsewhere.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    } finally {
+      child.kill('SIGKILL');
     }
   });
 });

@@ -170,7 +170,7 @@ describe('local full stack', () => {
   });
 
   it('records the coordinator process group while up, and leaves neither it nor the files behind', async () => {
-    const pid = Number(readFileSync(coordinatorPidFile(stateDir), 'utf8'));
+    const { pid } = JSON.parse(readFileSync(coordinatorPidFile(stateDir), 'utf8')) as { pid: number };
     expect(pid).toBe(stack.coordinator.pid());
     expect(groupAlive(pid)).toBe(true);
     await stack.stop();

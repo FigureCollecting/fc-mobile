@@ -8,7 +8,9 @@ import {
   coordinatorEnv,
   detectSpineWire,
   prepareCheckout,
+  refuseIfPortHeld,
   resolveCheckout,
+  rotateLog,
   startCoordinator,
   type Checkout,
   type CoordinatorProcess,
@@ -20,6 +22,7 @@ import { generateEntitlementKey } from './entitlement.js';
 import { REPO_ROOT, STACK_ROOT } from './paths.js';
 import { startMockIssuer, USER_A, USER_B, type MockIssuer, type StackUser } from './issuer.js';
 import { startFakeOpenFga, type FakeOpenFga } from './openfga.js';
+import { identifyProcess } from './procs.js';
 import { startPostgres, type LocaleReport, type StackPostgres } from './postgres.js';
 import { startFakeSpine, type FakeSpine } from './spine.js';
 import { startWeb, type StackWeb } from './web.js';
@@ -49,6 +52,8 @@ export interface StackOptions {
 
 export interface StackState {
   pid: number;
+  /** processStartTime(pid) when this file was written; guards `stack:down` against a reused pid. */
+  startTime: number;
   origin: string;
   controlUrl: string;
   issuer: {
@@ -156,6 +161,12 @@ export function chooseWire(option: StackOptions['spineWire'], dir: string): 'h2c
 export async function startStack(options: StackOptions = {}): Promise<Stack> {
   const { ports, origin, stateDir, cacheDir, log } = planStack(options);
   mkdirSync(path.join(stateDir, 'logs'), { recursive: true });
+  const coordinatorLog = path.join(stateDir, 'logs', 'coordinator.log');
+  // Before anything else starts: a held port fails fast instead of spinning
+  // up postgres and the other containers only to fail on the coordinator: a
+  // rotated log keeps that previous run's tail instead of deleting it.
+  await refuseIfPortHeld(ports.coordinator);
+  rotateLog(coordinatorLog);
   const cleanups: Array<() => Promise<void>> = [];
   const teardown = async (): Promise<void> => {
     for (const cleanup of cleanups.reverse()) {
@@ -225,8 +236,6 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     });
     cleanups.push(() => web.stop());
 
-    const coordinatorLog = path.join(stateDir, 'logs', 'coordinator.log');
-    rmSync(coordinatorLog, { force: true });
     log(`coordinator: starting (spine wire ${wire})`);
     const coordinator = await startCoordinator({
       dir: checkout.dir,
@@ -254,6 +263,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     const stateFile = path.join(stateDir, 'stack.json');
     const state: StackState = {
       pid: process.pid,
+      startTime: identifyProcess(process.pid)?.startTime ?? -1,
       origin,
       controlUrl: `http://127.0.0.1:${ports.control}`,
       issuer: {

@@ -530,9 +530,15 @@ describe('CaseShelf (Display A — virtual cases)', () => {
   });
 
   describe('per-figure alpha grounding (real measured feet, not the image edge)', () => {
+    // Gitignored dev-fixture PNGs are absent in CI, so FIXTURE_FIGURES'
+    // own imageUrl is undefined; these tests use a synthetic one instead
+    // and assert the hook actually receives it (not just a fixed mock).
+    const SYNTHETIC_PNG =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
     it('shifts the image down by its measured bottom-margin fraction of its own rendered height', () => {
       mockedUseBottomMarginFrac.mockReturnValue(0.1);
-      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      const rem = { ...FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!, imageUrl: SYNTHETIC_PNG };
       const { container } = renderWithProviders(
         <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
       );
@@ -540,16 +546,18 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       const img = container.querySelector('.shelf-figure__img') as HTMLImageElement;
       const h = parseFloat(btn.style.height);
       expect(img.style.transform).toBe(`translateY(${Math.round(0.1 * h)}px)`);
+      expect(mockedUseBottomMarginFrac).toHaveBeenCalledWith(SYNTHETIC_PNG);
     });
 
     it('applies no transform when the measured margin is 0 — nothing to correct for', () => {
       mockedUseBottomMarginFrac.mockReturnValue(0);
-      const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+      const rem = { ...FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!, imageUrl: SYNTHETIC_PNG };
       const { container } = renderWithProviders(
         <CaseShelf figures={[rem]} motif="detolf-dark" density="compact" />,
       );
       const img = container.querySelector('.shelf-figure__img') as HTMLImageElement;
       expect(img.style.transform).toBeFalsy();
+      expect(mockedUseBottomMarginFrac).toHaveBeenCalledWith(SYNTHETIC_PNG);
     });
 
     it('never measures alpha for unmatted (framed-photo) figures — nothing to measure', () => {

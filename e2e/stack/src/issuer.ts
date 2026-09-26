@@ -38,6 +38,12 @@ export interface IssuerSettings {
 export interface IssuerOptions extends Partial<IssuerSettings> {
   redirectUris: string[];
   allowedOrigins: string[];
+  /**
+   * Exact-match post-logout landing pages, the way a real OP registers them.
+   * Defaults to each redirect URI's origin root ('/'), which is what the
+   * app's sign-out lands on today (Profile.tsx routes home after logout).
+   */
+  postLogoutRedirectUris?: string[];
   clientId?: string;
   users?: StackUser[];
   host?: string;
@@ -123,6 +129,8 @@ export async function startMockIssuer(options: IssuerOptions): Promise<MockIssue
     reuseRevokesFamily: options.reuseRevokesFamily ?? false,
   };
   let current = users[0] as StackUser;
+  const postLogoutRedirectUris =
+    options.postLogoutRedirectUris ?? [...new Set(options.redirectUris.map((r) => `${new URL(r).origin}/`))];
 
   const { privateKey, publicKey } = await generateKeyPair('RS256', { extractable: true });
   const kid = `stack-${randomUUID().slice(0, 8)}`;
@@ -381,10 +389,13 @@ export async function startMockIssuer(options: IssuerOptions): Promise<MockIssue
           }
         }
         if (path === paths.endSession) {
-          const back = target.searchParams.get('post_logout_redirect_uri') ?? '';
-          const allowed = options.redirectUris.some((r) => back !== '' && new URL(r).origin === new URL(back).origin);
-          if (allowed) {
-            res.writeHead(302, { location: back }).end();
+          // Exact match only, against the registry, never the request: an
+          // origin-only check lets any same-origin path serve as an open
+          // redirect, and echoing the request keeps it tainted.
+          const requested = target.searchParams.get('post_logout_redirect_uri') ?? '';
+          const registered = postLogoutRedirectUris.find((u) => u === requested);
+          if (registered !== undefined) {
+            res.writeHead(302, { location: registered }).end();
             return;
           }
           res.writeHead(200, { 'content-type': 'text/plain' }).end('signed out');

@@ -295,12 +295,56 @@ describe('mock OIDC issuer', () => {
     expect((await request(issuer.userinfoEndpoint)).status).toBe(401);
   });
 
-  it('ends the session back to a registered origin, and 404s unknown paths', async () => {
+  it('ends the session at an exactly-registered post-logout URI, and 404s unknown paths', async () => {
     const back = await request(`${issuer.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(`${APP}/`)}`);
     expect(back.status).toBe(302);
     expect(back.headers.location).toBe(`${APP}/`);
     const elsewhere = await request(`${issuer.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent('https://evil.example/')}`);
     expect(elsewhere.status).toBe(200);
     expect((await request(`${issuer.origin}/nothing`)).status).toBe(404);
+  });
+
+  it('refuses a same-origin post-logout URI that is not itself registered', async () => {
+    // Same origin as the registered http://localhost:8480/ landing page, but
+    // an unregistered path: origin-matching alone must not be enough.
+    const offList = await request(
+      `${issuer.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(`${APP}/callback`)}`,
+    );
+    expect(offList.status).toBe(200);
+    expect(offList.headers.location).toBeUndefined();
+  });
+
+  it('redirects to the registered value itself, not an echo of the request', async () => {
+    // A trailing query string makes the request string differ from the
+    // registered one byte-for-byte; only an exact match may redirect, and the
+    // Location header must be the registered string, never the request's.
+    const decorated = await request(
+      `${issuer.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(`${APP}/?evil=1`)}`,
+    );
+    expect(decorated.status).toBe(200);
+
+    const exact = await request(`${issuer.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(`${APP}/`)}`);
+    expect(exact.headers.location).toBe(`${APP}/`);
+  });
+
+  it('honours an explicit postLogoutRedirectUris registration over the default', async () => {
+    const custom = await startMockIssuer({
+      redirectUris: [REDIRECT],
+      allowedOrigins: [APP],
+      postLogoutRedirectUris: [`${APP}/signed-out`],
+    });
+    try {
+      const registered = await request(
+        `${custom.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(`${APP}/signed-out`)}`,
+      );
+      expect(registered.status).toBe(302);
+      expect(registered.headers.location).toBe(`${APP}/signed-out`);
+
+      // The bare origin root is no longer registered once the option is set explicitly.
+      const root = await request(`${custom.endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(`${APP}/`)}`);
+      expect(root.status).toBe(200);
+    } finally {
+      await custom.close();
+    }
   });
 });

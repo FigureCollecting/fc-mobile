@@ -9,6 +9,7 @@ import { useAuthStore } from '../stores/auth';
 import { clearCache } from '../storage/figureCache';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useUnreadCount } from '../hooks/useNotifications';
+import { LEGACY_SCREENS_ENABLED } from '../config/features';
 
 const APP_VERSION = '0.1.0';
 
@@ -33,7 +34,7 @@ export function Profile() {
   const [cacheClearing, setCacheClearing] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
   const push = usePushNotifications();
-  const { data: unreadCount = 0 } = useUnreadCount();
+  const { data: unreadCount = 0 } = useUnreadCount(LEGACY_SCREENS_ENABLED);
 
   const initials = user?.username
     ? user.username.slice(0, 2).toUpperCase()
@@ -130,58 +131,21 @@ export function Profile() {
         <div class="profile__section">
           <h3 class="profile__section-title">Quick Actions</h3>
 
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/notifications')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              <span>Notifications</span>
-            </div>
-            <div class="profile__item-right">
-              {unreadCount > 0 && <span class="profile__notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
-              <ChevronRight />
-            </div>
-          </button>
-
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/calendar')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-              </svg>
-              <span>Release Calendar</span>
-            </div>
-            <ChevronRight />
-          </button>
-
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/analytics')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 20V10" />
-                <path d="M12 20V4" />
-                <path d="M6 20v-6" />
-              </svg>
-              <span>Analytics</span>
-            </div>
-            <ChevronRight />
-          </button>
-
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/collection-dna')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2c-2.5 4-2.5 8 0 12s-2.5 8 0 12" />
-                <path d="M12 2c2.5 4 2.5 8 0 12s2.5 8 0 12" />
-                <line x1="8" y1="6" x2="16" y2="6" />
-                <line x1="7" y1="12" x2="17" y2="12" />
-                <line x1="8" y1="18" x2="16" y2="18" />
-              </svg>
-              <span>Collection DNA</span>
-            </div>
-            <ChevronRight />
-          </button>
+          {LEGACY_SCREENS_ENABLED && (
+            <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/notifications')}>
+              <div class="profile__item-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                <span>Notifications</span>
+              </div>
+              <div class="profile__item-right">
+                {unreadCount > 0 && <span class="profile__notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+                <ChevronRight />
+              </div>
+            </button>
+          )}
 
           <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/import')}>
             <div class="profile__item-left">
@@ -195,27 +159,31 @@ export function Profile() {
             <ChevronRight />
           </button>
 
-          <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/export')}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              <span>Export & Share</span>
-            </div>
-            <ChevronRight />
-          </button>
+          {LEGACY_SCREENS_ENABLED && (
+            <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/export')}>
+              <div class="profile__item-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Export & Share</span>
+              </div>
+              <ChevronRight />
+            </button>
+          )}
 
-          <button class="profile__item profile__item--action" type="button" onClick={() => setSyncSheetOpen(true)}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 0 1 9-9" />
-              </svg>
-              <span>MFC Sync</span>
-            </div>
-            <ChevronRight />
-          </button>
+          {LEGACY_SCREENS_ENABLED && (
+            <button class="profile__item profile__item--action" type="button" onClick={() => setSyncSheetOpen(true)}>
+              <div class="profile__item-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 0 1 9-9" />
+                </svg>
+                <span>MFC Sync</span>
+              </div>
+              <ChevronRight />
+            </button>
+          )}
 
           <button
             class="profile__item profile__item--action"
@@ -251,7 +219,7 @@ export function Profile() {
             <span class="profile__item-value">On</span>
           </div>
 
-          {push.isSupported && (
+          {LEGACY_SCREENS_ENABLED && push.isSupported && (
             <button
               class="profile__item profile__item--action"
               type="button"
@@ -274,6 +242,23 @@ export function Profile() {
               </span>
             </button>
           )}
+        </div>
+
+        {/* Features gated until their mobile condensation pass */}
+        <div class="profile__section">
+          <h3 class="profile__section-title">Coming to Mobile</h3>
+          {['Price Tracker', 'Analytics', 'Release Calendar', 'Collection DNA'].map((feature) => (
+            <div key={feature} class="profile__item profile__item--gated" aria-disabled="true">
+              <div class="profile__item-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                <span>{feature}</span>
+              </div>
+              <span class="profile__soon-pill">after redesign</span>
+            </div>
+          ))}
         </div>
 
         {/* Account */}
@@ -519,6 +504,19 @@ const styles = `
     align-items: center;
     gap: var(--space-3);
     min-width: 0;
+  }
+
+  .profile__item--gated {
+    opacity: 0.55;
+  }
+
+  .profile__soon-pill {
+    font-size: var(--font-2xs);
+    color: var(--text-tertiary);
+    background: var(--surface-tertiary);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    white-space: nowrap;
   }
 
   .profile__item-value {

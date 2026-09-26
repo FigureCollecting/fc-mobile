@@ -1,6 +1,6 @@
 import { Component } from 'preact';
 import type { ComponentChildren } from 'preact';
-import { clearAllCaches } from '../../storage/cacheManager';
+import { clearAllCaches, getCacheStats } from '../../storage/cacheManager';
 
 interface Props {
   children: ComponentChildren;
@@ -9,6 +9,9 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  /** True once we've asked the user to confirm clearing with unsynced edits pending. */
+  confirmingClear: boolean;
+  pendingOpsCount: number;
 }
 
 /**
@@ -16,10 +19,10 @@ interface State {
  * Must be a class component (Preact's error boundary pattern).
  */
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false, error: null };
+  state: State = { hasError: false, error: null, confirmingClear: false, pendingOpsCount: 0 };
 
   static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+    return { hasError: true, error, confirmingClear: false, pendingOpsCount: 0 };
   }
 
   componentDidCatch(error: Error) {
@@ -31,12 +34,28 @@ export class ErrorBoundary extends Component<Props, State> {
   };
 
   private handleClearAndReload = async () => {
+    // First press: if there are unsynced edits, stop and ask for confirmation
+    // instead of silently proceeding (clearAllCaches keeps them, but the
+    // user should still know before reloading).
+    if (!this.state.confirmingClear) {
+      const stats = await getCacheStats().catch(() => null);
+      const pending = stats?.pendingOpsCount ?? 0;
+      if (pending > 0) {
+        this.setState({ confirmingClear: true, pendingOpsCount: pending });
+        return;
+      }
+    }
+
     try {
       await clearAllCaches();
     } catch {
       // Best effort
     }
     window.location.reload();
+  };
+
+  private handleCancelClear = () => {
+    this.setState({ confirmingClear: false });
   };
 
   render() {
@@ -51,26 +70,54 @@ export class ErrorBoundary extends Component<Props, State> {
             </svg>
 
             <h2 class="error-boundary__title">Something went wrong</h2>
-            <p class="error-boundary__message">
-              An unexpected error occurred. You can try again or clear the cache and reload.
-            </p>
 
-            <div class="error-boundary__actions">
-              <button
-                class="error-boundary__btn error-boundary__btn--primary"
-                type="button"
-                onClick={this.handleRetry}
-              >
-                Try Again
-              </button>
-              <button
-                class="error-boundary__btn error-boundary__btn--secondary"
-                type="button"
-                onClick={this.handleClearAndReload}
-              >
-                Clear Cache & Reload
-              </button>
-            </div>
+            {this.state.confirmingClear ? (
+              <>
+                <p class="error-boundary__message">
+                  You have {this.state.pendingOpsCount} unsynced change
+                  {this.state.pendingOpsCount === 1 ? '' : 's'}. They'll be kept, but continuing
+                  clears other cached data and reloads the app.
+                </p>
+                <div class="error-boundary__actions">
+                  <button
+                    class="error-boundary__btn error-boundary__btn--secondary"
+                    type="button"
+                    onClick={this.handleCancelClear}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    class="error-boundary__btn error-boundary__btn--primary"
+                    type="button"
+                    onClick={this.handleClearAndReload}
+                  >
+                    Clear Anyway & Reload
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p class="error-boundary__message">
+                  An unexpected error occurred. You can try again or clear the cache and reload.
+                </p>
+                <div class="error-boundary__actions">
+                  <button
+                    class="error-boundary__btn error-boundary__btn--primary"
+                    type="button"
+                    onClick={this.handleRetry}
+                  >
+                    Try Again
+                  </button>
+                  <button
+                    class="error-boundary__btn error-boundary__btn--secondary"
+                    type="button"
+                    onClick={this.handleClearAndReload}
+                  >
+                    Clear Cache & Reload
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           <style>{styles}</style>

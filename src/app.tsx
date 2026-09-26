@@ -4,11 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
 import { ToastContainer } from './components/ui/Toast';
 import { useSyncOnReconnect } from './hooks/useSyncOnReconnect';
-import { useWebSocket } from './hooks/useWebSocket';
-import { useLiveCollection } from './hooks/useLiveCollection';
-import { useLiveNotifications } from './hooks/useLiveNotifications';
 import { useAuthStore } from './stores/auth';
 import { Onboarding } from './pages/Onboarding';
+import { isFixtureMode } from './dev-fixtures/fixtures';
 
 const ONBOARDING_KEY = 'onboarding_complete';
 
@@ -31,6 +29,9 @@ function AuthRedirect() {
   const [location, setLocation] = useLocation();
 
   useEffect(() => {
+    // Dev fixture mode runs fully offline with no real auth — never bounce to
+    // login, so `npm run dev` lands straight on the collection.
+    if (isFixtureMode()) return;
     // If not authenticated and not on a public route, redirect to login
     if (!isAuthenticated && !PUBLIC_ROUTES.includes(location)) {
       setLocation('/login');
@@ -47,9 +48,6 @@ function AuthRedirect() {
 }
 
 function AppInner() {
-  useWebSocket();
-  useLiveCollection();
-  useLiveNotifications();
   useSyncOnReconnect();
 
   // Onboarding policy:
@@ -57,6 +55,8 @@ function AppInner() {
   //   the "done" flag so returning users don't see it on future launches.
   // - Otherwise show it once (tracked via localStorage).
   const [showOnboarding, setShowOnboarding] = useState(() => {
+    // Fixture mode skips onboarding too, so dev boots directly into fixtures.
+    if (isFixtureMode()) return false;
     const hasToken = !!useAuthStore.getState().user?.token;
     if (hasToken) {
       if (!localStorage.getItem(ONBOARDING_KEY)) {

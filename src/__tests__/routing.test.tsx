@@ -40,15 +40,22 @@ import { useAuthStore } from '../stores/auth';
 const AUTHENTICATED_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
   { path: '/', unique: /collection/i },
   { path: '/discover', unique: /discover/i },
-  { path: '/prices', unique: /price tracker/i },
   { path: '/profile', unique: /profile/i },
   { path: '/settings', unique: /settings/i },
-  { path: '/analytics', unique: /analytics/i },
   { path: '/import', unique: /import/i },
-  { path: '/export', unique: /export/i },
-  { path: '/notifications', unique: /notifications/i },
-  { path: '/calendar', unique: /calendar/i },
-  { path: '/collection-dna', unique: /collection dna/i },
+];
+
+// No backend anywhere (src/config/features.ts) — off by default, deep links
+// land back on the collection instead of a dead screen.
+const DEAD_ROUTES = [
+  '/prices',
+  '/prices/fig-1',
+  '/analytics',
+  '/export',
+  '/notifications',
+  '/calendar',
+  '/collection-dna',
+  '/sync',
 ];
 
 const PUBLIC_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
@@ -84,6 +91,17 @@ describe('routing reachability', () => {
       // content.
       await waitFor(() => {
         expect(screen.getAllByText(unique).length).toBeGreaterThan(0);
+      });
+    });
+  }
+
+  for (const path of DEAD_ROUTES) {
+    it(`redirects ${path} to the collection`, async () => {
+      signIn();
+      const { currentPath } = renderWithProviders(<App />, { initialPath: path });
+      await waitFor(() => expect(currentPath()).toBe('/'));
+      await waitFor(() => {
+        expect(screen.getAllByText(/collection/i).length).toBeGreaterThan(0);
       });
     });
   }

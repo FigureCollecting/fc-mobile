@@ -65,6 +65,14 @@ describe('analytics hooks', () => {
     expect(apiGet).toHaveBeenCalledWith('/analytics/collection/breakdown?groupBy=manufacturer');
   });
 
+  it('useCollectionBreakdown skips the request when enabled=false', async () => {
+    signIn();
+    const { result } = renderHook(() => useCollectionBreakdown('manufacturer', false), { wrapper: wrapper() });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current.isFetching).toBe(false);
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
   it('useCollectionTimeline defaults to 12 months', async () => {
     signIn();
     apiGet.mockResolvedValueOnce({ data: { timeline: [] } });

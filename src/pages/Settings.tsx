@@ -7,6 +7,7 @@ import { theme } from '../stores/theme';
 import type { Theme } from '../stores/theme';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { getCacheStats, clearAllCaches } from '../storage/cacheManager';
+import { LEGACY_SCREENS_ENABLED } from '../config/features';
 import type { CacheStats } from '../storage/cacheManager';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
 
@@ -167,7 +168,9 @@ export function Settings() {
     try {
       await clearAllCaches();
       queryClient.clear();
-      setCacheStats({ figureCount: 0, pendingOpsCount: 0, estimatedSizeKb: 0 });
+      // clearAllCaches() never touches the outbox, so re-read the real
+      // stats instead of assuming pendingOpsCount is 0.
+      setCacheStats(await getCacheStats());
     } finally {
       setCacheClearing(false);
       setClearConfirmOpen(false);
@@ -238,7 +241,7 @@ export function Settings() {
         <section class="settings__section">
           <h3 class="settings__section-title">Notifications</h3>
 
-          {push.isSupported && (
+          {LEGACY_SCREENS_ENABLED && push.isSupported && (
             <div class="settings__row">
               <span class="settings__label">Push Notifications</span>
               <Toggle
@@ -249,7 +252,7 @@ export function Settings() {
             </div>
           )}
 
-          {push.permission === 'denied' && (
+          {LEGACY_SCREENS_ENABLED && push.permission === 'denied' && (
             <p class="settings__hint">Push notifications are blocked in browser settings.</p>
           )}
 

@@ -30,7 +30,12 @@ export function useNotifications(page = 1) {
   });
 }
 
-export function useUnreadCount() {
+/**
+ * `enabled` lets call sites skip the request entirely — notifications has no
+ * backend by default (src/config/features.ts), so the badge callers pass
+ * LEGACY_SCREENS_ENABLED instead of polling a 404 every 60s.
+ */
+export function useUnreadCount(enabled = true) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   return useQuery<number>({
@@ -38,7 +43,7 @@ export function useUnreadCount() {
     queryFn: () => api.get('/notifications/unread-count').then((r) => r.data.count),
     staleTime: 30000,
     refetchInterval: 60000,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && enabled,
   });
 }
 

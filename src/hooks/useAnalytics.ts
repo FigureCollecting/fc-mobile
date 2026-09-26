@@ -55,7 +55,13 @@ export function useCollectionAnalytics() {
   });
 }
 
-export function useCollectionBreakdown(groupBy: string) {
+/**
+ * `enabled` lets call sites on the main tabs (Stats, Discover) skip this
+ * request entirely — same reasoning as useUnreadCount: no backend by
+ * default (src/config/features.ts). Analytics.tsx's own callers are already
+ * behind the LEGACY_SCREENS_ENABLED route gate, so they omit it (default true).
+ */
+export function useCollectionBreakdown(groupBy: string, enabled = true) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   return useQuery<BreakdownItem[]>({
@@ -64,7 +70,7 @@ export function useCollectionBreakdown(groupBy: string) {
       const response = await api.get(`/analytics/collection/breakdown?groupBy=${groupBy}`);
       return (response as { data: { breakdown: BreakdownItem[] } }).data.breakdown;
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && enabled,
     staleTime: 5 * 60_000,
   });
 }

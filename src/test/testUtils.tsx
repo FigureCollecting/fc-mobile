@@ -35,11 +35,11 @@ export interface RenderResult extends ReturnType<typeof render> {
 export function renderWithProviders(ui: VNode, opts: RenderOptions = {}): RenderResult {
   const queryClient = opts.queryClient ?? makeTestQueryClient();
   const loc = memoryLocation({ path: opts.initialPath ?? '/', record: true });
-  const { hook, navigate, history } = loc;
+  const { hook, searchHook, navigate, history } = loc;
 
   const wrapper = ({ children }: { children: ComponentChildren }) => (
     <QueryClientProvider client={queryClient}>
-      <Router hook={hook}>{children}</Router>
+      <Router hook={hook} searchHook={searchHook}>{children}</Router>
     </QueryClientProvider>
   );
 

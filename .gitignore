@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-prod-e2e
 *.local
 
 # Editor directories and files
@@ -41,3 +42,7 @@ dev-dist
 test-results
 playwright-report
 playwright/.cache
+
+# Dev fixtures: product-photo derivatives must NEVER be committed
+src/dev-fixtures/*.png
+src/dev-fixtures/*.webp

@@ -36,27 +36,39 @@ export async function getCacheStats(): Promise<CacheStats> {
   return { figureCount, pendingOpsCount, estimatedSizeKb };
 }
 
+/** Workbox's precache lives under this name prefix (see src/sw.ts, precacheAndRoute). */
+const WORKBOX_PRECACHE_PREFIX = 'workbox-precache';
+
 /**
- * Clear all caches: IndexedDB stores, React Query cache, and Service Worker caches.
- * The React Query client must be cleared by the caller (pass `queryClient.clear()`
- * since we don't hold a reference here).
+ * Clear cached data: IndexedDB figures/metadata, React Query cache, and
+ * runtime Service Worker caches. The React Query client must be cleared by
+ * the caller (pass `queryClient.clear()` since we don't hold a reference
+ * here).
+ *
+ * Two things are deliberately NEVER touched: `pendingOps` (the offline
+ * outbox — clearing it would silently drop unsynced edits) and the workbox
+ * precache (clearing it would leave the shell unable to boot offline until
+ * the next successful fetch).
  */
 export async function clearAllCaches(): Promise<void> {
-  // 1. Clear IndexedDB stores
+  // 1. Clear IndexedDB stores — figures/metadata only, never the outbox.
   const db = await getDb();
-  const tx = db.transaction(['figures', 'metadata', 'pendingOps'], 'readwrite');
+  const tx = db.transaction(['figures', 'metadata'], 'readwrite');
   await Promise.all([
     tx.objectStore('figures').clear(),
     tx.objectStore('metadata').clear(),
-    tx.objectStore('pendingOps').clear(),
     tx.done,
   ]);
 
-  // 2. Clear Service Worker caches
+  // 2. Clear runtime Service Worker caches, but keep the workbox precache.
   if ('caches' in window) {
     try {
       const cacheNames = await caches.keys();
-      await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      await Promise.all(
+        cacheNames
+          .filter((name) => !name.startsWith(WORKBOX_PRECACHE_PREFIX))
+          .map((name) => caches.delete(name)),
+      );
     } catch {
       // SW caches may not be available in all contexts
     }

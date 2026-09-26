@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisterSWOptions } from 'vite-plugin-pwa/types';
 import { applyUpdate, startServiceWorker, updateReady, UPDATE_CHECK_MS } from '../updates';
 
-type Registration = Pick<ServiceWorkerRegistration, 'installing' | 'update'>;
+type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'update'>;
 
 function fakeRegister() {
   const apply = vi.fn(async () => undefined);
@@ -15,7 +15,7 @@ function fakeRegister() {
 }
 
 function registration(over: Partial<Registration> = {}): Registration & { update: ReturnType<typeof vi.fn> } {
-  return { installing: null, update: vi.fn(async () => undefined), ...over } as never;
+  return { active: null, installing: null, update: vi.fn(async () => undefined), ...over } as never;
 }
 
 const ok = () => vi.fn(async () => ({ status: 200, redirected: false }) as Response);
@@ -30,12 +30,11 @@ afterEach(() => {
 });
 
 describe('startServiceWorker', () => {
-  it('registers at once, in prompt mode (never reloads by itself)', () => {
+  it('registers at once, in prompt mode', () => {
     const f = fakeRegister();
-    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true });
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container: new EventTarget() });
     expect(f.register).toHaveBeenCalledTimes(1);
     expect(f.options().immediate).toBe(true);
-    expect(f.options().onNeedReload).toBeUndefined();
   });
 
   it('does nothing where service workers are unsupported', () => {
@@ -46,7 +45,7 @@ describe('startServiceWorker', () => {
 
   it('raises the prompt when a new worker is waiting', () => {
     const f = fakeRegister();
-    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true });
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container: new EventTarget() });
     expect(updateReady.value).toBe(false);
     f.options().onNeedRefresh?.();
     expect(updateReady.value).toBe(true);
@@ -65,6 +64,60 @@ describe('startServiceWorker', () => {
     startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true });
     f.options().onRegisterError?.(new Error('boom'));
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('taking the new build', () => {
+  function started() {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const takeOver = () => container.dispatchEvent(new Event('controllerchange'));
+    return { f, reload, takeOver };
+  }
+
+  it('reloads once the waiting build controls the page, even a page that had no controller at load', () => {
+    const { f, reload, takeOver } = started();
+    f.options().onNeedRefresh?.();
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload when the first install claims the page (no build was waiting)', () => {
+    const { reload, takeOver } = started();
+    takeOver();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('reloads once, however often the prompt is raised or control changes', () => {
+    const { f, reload, takeOver } = started();
+    f.options().onNeedRefresh?.();
+    f.options().onNeedRefresh?.();
+    takeOver();
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads on a change of controller in a page that registered over an active build (returning or hard-reloaded)', () => {
+    const { f, reload, takeOver } = started();
+    f.options().onRegisteredSW?.('/sw.js', registration({ active: {} as ServiceWorker }) as unknown as ServiceWorkerRegistration);
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat the first install as an update: no active build when the page registered', () => {
+    const { f, reload, takeOver } = started();
+    f.options().onRegisteredSW?.('/sw.js', registration({ installing: {} as ServiceWorker }) as unknown as ServiceWorkerRegistration);
+    takeOver();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('owns the reload: the plugin reloads only pages controlled at load, and never twice', () => {
+    const { f, reload } = started();
+    expect(f.options().onNeedReload).toBeTypeOf('function');
+    f.options().onNeedReload?.();
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 

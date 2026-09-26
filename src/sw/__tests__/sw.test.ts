@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import fc from 'fast-check';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { API_NAVIGATION } from '../routes';
 
 // Workbox is mocked so the entry's wiring can be read back; its behaviour in a
 // real browser is covered by e2e/pwa.
@@ -64,11 +65,8 @@ describe('service worker wiring', () => {
     const nav = wb.NavigationRoute.mock.instances[0] as unknown as { handler: unknown; options: { denylist: RegExp[] } };
     expect(nav.handler).toEqual({ boundTo: '/index.html' });
     expect(wb.registerRoute).toHaveBeenCalledWith(nav);
-    const denied = (p: string) => nav.options.denylist.some((re) => re.test(p));
-    expect(denied('/api')).toBe(true);
-    expect(denied('/api/coordinator.v1.SyncService/Push')).toBe(true);
-    expect(denied('/figure/abc')).toBe(false);
-    expect(denied('/discover')).toBe(false);
+    // routes.test.ts runs this denylist through the real NavigationRoute.
+    expect(nav.options.denylist).toEqual([API_NAVIGATION]);
   });
 
   it('serves content-addressed derivatives CacheFirst, caching only status 200', () => {

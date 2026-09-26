@@ -4,7 +4,7 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
-import { API_PATH, isDerivativeRequest } from './sw/routes';
+import { API_NAVIGATION, isDerivativeRequest } from './sw/routes';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -15,7 +15,7 @@ cleanupOutdatedCaches();
 
 // Deep links cold-start offline from the precached shell. /api is the
 // coordinator on this origin: never answered here, online or off.
-registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [API_PATH] }));
+registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [API_NAVIGATION] }));
 
 registerRoute(
   isDerivativeRequest,

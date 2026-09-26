@@ -1,7 +1,7 @@
 /// <reference types="vite-plugin-pwa/vanillajs" />
 // Service worker registration with a prompt-style update. A new build waits
-// until the user reloads; the old shell keeps its own precache meanwhile, and
-// frequent checks keep it from running long against a newer API.
+// until the user reloads, and the old shell keeps its precache meanwhile; once a
+// newer build controls a page, that page reloads, so no old shell outlives it.
 import { signal } from '@preact/signals';
 import { registerSW, type RegisterSWOptions } from 'virtual:pwa-register';
 
@@ -16,21 +16,41 @@ export interface StartOptions {
   register?: (options: RegisterSWOptions) => (reloadPage?: boolean) => Promise<void>;
   fetchImpl?: typeof fetch;
   supported?: boolean;
+  /** Fires controllerchange: navigator.serviceWorker in the app. */
+  container?: Pick<EventTarget, 'addEventListener'>;
+  reload?: () => void;
 }
 
 export function startServiceWorker({
   register = registerSW,
   fetchImpl = (...args) => fetch(...args),
   supported = 'serviceWorker' in navigator,
+  container = navigator.serviceWorker,
+  reload = () => window.location.reload(),
 }: StartOptions = {}): void {
   if (!supported) return;
+  // Once this page runs over an installed build, a change of controller is a
+  // newer build taking over (from this tab or another) and the old precache is
+  // gone: reload. The plugin reloads only pages that had a controller at load.
+  let armed = false;
+  const reloadOnTakeover = (): void => {
+    if (armed) return;
+    armed = true;
+    container.addEventListener('controllerchange', () => reload(), { once: true });
+  };
   apply = register({
     immediate: true,
     onNeedRefresh() {
       updateReady.value = true;
+      reloadOnTakeover();
     },
+    // The reload above covers every page; the plugin's would be a second one.
+    onNeedReload() {},
     onRegisteredSW(swUrl, registration) {
-      if (registration !== undefined) watchForUpdates(swUrl, registration, fetchImpl);
+      if (registration === undefined) return;
+      // With no active build yet, the first install's claim of this page is not an update.
+      if (registration.active !== null) reloadOnTakeover();
+      watchForUpdates(swUrl, registration, fetchImpl);
     },
     onRegisterError(error) {
       console.warn('[sw] registration failed', error);
@@ -38,7 +58,7 @@ export function startServiceWorker({
   });
 }
 
-/** Hand control to the waiting build; the page reloads once it is in charge. */
+/** Hand control to the waiting build; the page reloads when it takes over. */
 export function applyUpdate(): Promise<void> {
   return apply?.(true) ?? Promise.resolve();
 }

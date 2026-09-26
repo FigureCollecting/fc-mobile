@@ -4,6 +4,8 @@ import { Redirect, Route, Switch, useLocation } from 'wouter';
 import { TabBar } from './TabBar';
 import { GatedScreen } from './GatedScreen';
 import { OfflineBanner } from '../ui/OfflineBanner';
+import { InstallBanner } from '../../pwa/InstallBanner';
+import { getPendingOpsCount } from '../../storage/pendingOps';
 import { AnimatedRoutes } from '../ui/AnimatedRoutes';
 import { createScrollChromeHandler } from '../../stores/chrome';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
@@ -68,6 +70,9 @@ export function AppShell() {
   return (
     <div class="app-shell">
       <OfflineBanner />
+      {/* In the layout, above the screen, so it never covers a control. The
+          running outbox is the legacy one until WK-15 switches the app over. */}
+      <InstallBanner unsyncedCount={getPendingOpsCount} />
       <main
         class={`app-content ${isAuthRoute ? 'app-content--auth' : ''}`}
         onScroll={onScroll}

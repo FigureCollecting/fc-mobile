@@ -6,7 +6,8 @@ import type { BrowserContext, Page } from '@playwright/test';
 import { readStackState, stackClient } from '../stack/src/client.js';
 import type { StackState } from '../stack/src/stack.js';
 import { expect, test, watchCsp } from '../fixtures';
-import { bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb } from './web';
+import type { Edge } from '../stack/src/edge.js';
+import { bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb, type WebContainer } from './web';
 
 const IMAGE = requireImage('FC_WEB_IMAGE');
 const IMAGE_NEXT = requireImage('FC_WEB_IMAGE_NEXT');
@@ -29,7 +30,10 @@ test.beforeEach(async ({ context }) => {
   context.on('response', (r) => {
     if (/^\/api(\/|$)/.test(new URL(r.url()).pathname) && r.fromServiceWorker()) apiFromWorker.push(r.url());
   });
-  await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+  await context.addInitScript(() => {
+    localStorage.setItem('onboarding_complete', '1');
+    (window as unknown as { fcControlledAtLoad: boolean }).fcControlledAtLoad = navigator.serviceWorker?.controller != null;
+  });
 });
 test.afterEach(() => expect(apiFromWorker, '/api responses served by the service worker').toEqual([]));
 
@@ -42,6 +46,19 @@ async function shellInstalled(page: Page): Promise<void> {
 }
 
 const buildOf = (page: Page) => page.locator('meta[name="fc-build"]').getAttribute('content');
+/** Null while the page is between documents. */
+const buildNow = (page: Page) => buildOf(page).catch(() => null);
+const controlledAtLoad = (page: Page) => page.evaluate(() => (window as unknown as { fcControlledAtLoad: boolean }).fcControlledAtLoad);
+/**
+ * The app's own trigger: returning to the foreground checks sw.js for a new
+ * build. Repeated until the prompt shows, as the app listens only once registered.
+ */
+async function promptForUpdate(page: Page): Promise<void> {
+  await expect(async () => {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+    await expect(page.getByRole('status')).toContainText(/new version/i, { timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
+}
 
 async function buildServedBy(url: string): Promise<string> {
   const html = await (await fetch(`${url}/index.html`)).text();
@@ -99,10 +116,14 @@ test('(b) /api reaches the coordinator online, fails offline, and the image 404s
   expect(online.nonce).toBeTruthy();
   const nav = await page.goto(`${origin}/api/x`);
   expect(nav?.status()).toBe(401);
-  const routed = (await stack.edge.log()).slice(logged).filter((e) => e.path === '/api/x');
-  expect(routed.map((e) => [e.route, e.status])).toEqual([
-    ['coordinator', 401],
-    ['coordinator', 401],
+  // Workbox matches the navigation denylist against path plus query.
+  const navQuery = await page.goto(`${origin}/api?x=1`);
+  expect(navQuery?.fromServiceWorker()).toBe(false);
+  const routed = (await stack.edge.log()).slice(logged).filter((e) => e.path === '/api/x' || e.path === '/api');
+  expect(routed.map((e) => [e.path, e.route, e.status])).toEqual([
+    ['/api/x', 'coordinator', 401],
+    ['/api/x', 'coordinator', 401],
+    ['/api', 'coordinator', navQuery?.status()],
   ]);
 
   await page.goto(`${origin}/`);
@@ -118,6 +139,7 @@ test('(b) /api reaches the coordinator online, fails offline, and the image 404s
     expect(offline).toEqual({ get: 'error TypeError', push: 'error TypeError' });
     // A navigation to /api is not given the shell either.
     await expect(page.goto(`${origin}/api/x`)).rejects.toThrow(/ERR_CONNECTION_REFUSED/);
+    await expect(page.goto(`${origin}/api?x=1`)).rejects.toThrow(/ERR_CONNECTION_REFUSED/);
   } finally {
     await stack.edge.start();
   }
@@ -157,22 +179,33 @@ test('(b) derivatives: same-origin CacheFirst, and only a 200 is kept', async ({
   expect(cached).toEqual([present]);
 });
 
-test('(c) build N+1 ships while 2 edits are pending: the prompt appears and both edits survive the reload', async ({ context }) => {
-  const probe = await bundleOutboxProbe();
-  await context.addInitScript({ content: probe });
-  const [n, next] = await Promise.all([runWeb(IMAGE), runWeb(IMAGE_NEXT)]);
-  const edge = await openEdge(stackState().coordinator.url, n);
-  try {
-    const [buildN, buildNext] = await Promise.all([buildServedBy(n.url), buildServedBy(next.url)]);
+test.describe('(c) build N+1 ships while 2 edits are pending', () => {
+  let n: WebContainer;
+  let next: WebContainer;
+  let buildN: string;
+  let buildNext: string;
+  test.beforeAll(async () => {
+    [n, next] = await Promise.all([runWeb(IMAGE), runWeb(IMAGE_NEXT)]);
+    [buildN, buildNext] = await Promise.all([buildServedBy(n.url), buildServedBy(next.url)]);
     expect(buildN).not.toBe(buildNext);
+  });
+  test.afterAll(() => {
+    n?.stop();
+    next?.stop();
+  });
 
-    let page = await context.newPage();
-    await page.goto(`${edge.origin}/`);
-    await shellInstalled(page);
-    expect(await buildOf(page)).toBe(buildN);
-    await page.close();
+  let edge: Edge;
+  test.beforeEach(async ({ context }) => {
+    await context.addInitScript({ content: await bundleOutboxProbe() });
+    edge = await openEdge(stackState().coordinator.url, n);
+  });
+  test.afterEach(async () => {
+    await edge.close();
+  });
 
-    // Two edits through the app's own store, in a same-origin page that holds no other connection.
+  async function queueTwoEdits(context: BrowserContext): Promise<string[]> {
+    // Through the app's own store, before any app page is open: the legacy
+    // code's connection to the same database would block the v2 upgrade.
     const side = await context.newPage();
     await side.goto(`${edge.origin}/manifest.webmanifest`);
     const queued = await side.evaluate(
@@ -181,27 +214,92 @@ test('(c) build N+1 ships while 2 edits are pending: the prompt appears and both
     );
     expect(queued).toHaveLength(2);
     await side.close();
+    return queued;
+  }
 
-    edge.setUpstream('web', next.url);
-    page = await context.newPage();
-    await page.goto(`${edge.origin}/`);
-    await expect(page.getByRole('status')).toContainText(/new version/i, { timeout: 30_000 });
-    expect(await buildOf(page)).toBe(buildN);
-
-    await page.getByRole('button', { name: 'Reload' }).click();
-    await expect.poll(() => buildOf(page), { timeout: 30_000 }).toBe(buildNext);
-    await expect(page.getByRole('status')).toHaveCount(0);
-
-    const pending = await page.evaluate(
+  const pendingIn = (page: Page) =>
+    page.evaluate(
       (sub) => (window as unknown as { fcOutboxProbe: typeof import('./outboxProbe') }).fcOutboxProbe.pendingEdits(sub),
       USER_SUB,
     );
-    expect(pending).toEqual(queued);
-  } finally {
-    await edge.close();
-    n.stop();
-    next.stop();
+
+  async function visit(context: BrowserContext, path = '/'): Promise<Page> {
+    const page = await context.newPage();
+    await page.goto(`${edge.origin}${path}`);
+    await shellInstalled(page);
+    expect(await buildOf(page)).toBe(buildN);
+    return page;
   }
+
+  async function hardReload(context: BrowserContext, page: Page): Promise<void> {
+    const cdp = await context.newCDPSession(page);
+    await Promise.all([page.waitForEvent('load'), cdp.send('Page.reload', { ignoreCache: true })]);
+    await cdp.detach();
+    expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull();
+  }
+
+  /** Ship N+1, wait for the prompt, take it from `from`, and see every tab reach N+1. */
+  async function takeUpdate(from: Page, ...others: Page[]): Promise<void> {
+    edge.setUpstream('web', next.url);
+    await promptForUpdate(from);
+    expect(await buildOf(from)).toBe(buildN);
+    await from.getByRole('button', { name: 'Reload' }).click();
+    for (const [i, tab] of [from, ...others].entries()) {
+      await expect.poll(() => buildNow(tab), { timeout: 30_000, message: i === 0 ? 'the tab that took it' : `other tab ${i}` }).toBe(buildNext);
+    }
+    await expect(from.getByRole('status')).toHaveCount(0);
+  }
+
+  // Whether a page had a controller when it registered decides whether the
+  // plugin reloads it; the app's own reload must not depend on it.
+  test('on a returning visit: the prompt appears and Reload moves the page to N+1', async ({ context }) => {
+    const queued = await queueTwoEdits(context);
+    await (await visit(context)).close();
+    const page = await visit(context);
+    expect(await controlledAtLoad(page)).toBe(true);
+    await takeUpdate(page);
+    expect(await pendingIn(page)).toEqual(queued);
+  });
+
+  test('on a first visit: the prompt appears and Reload moves the page to N+1', async ({ context }) => {
+    const queued = await queueTwoEdits(context);
+    const page = await visit(context);
+    expect(await controlledAtLoad(page)).toBe(false);
+    await takeUpdate(page);
+    expect(await pendingIn(page)).toEqual(queued);
+  });
+
+  test('on a hard reload beside a tab still on N: Reload moves both to N+1', async ({ context }) => {
+    const queued = await queueTwoEdits(context);
+    const page = await visit(context);
+    const other = await visit(context, '/discover');
+    await hardReload(context, page);
+    await takeUpdate(page, other);
+    expect(await pendingIn(page)).toEqual(queued);
+  });
+
+  test('on a hard reload with no other tab: nothing waits, and the page moves to N+1 by itself', async ({ context }) => {
+    // No page is left on N, so N+1 activates at once and claims this one; the
+    // old precache is gone, so staying on N's shell is not an option.
+    const queued = await queueTwoEdits(context);
+    const page = await visit(context);
+    await hardReload(context, page);
+    edge.setUpstream('web', next.url);
+    await expect(async () => {
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(await buildNow(page)).toBe(buildNext);
+    }).toPass({ timeout: 30_000 });
+    expect(await pendingIn(page)).toEqual(queued);
+  });
+
+  test('a second tab with no controller at load follows the tab that took N+1', async ({ context }) => {
+    const [a, b] = await Promise.all([context.newPage(), context.newPage()]);
+    await Promise.all([a.goto(`${edge.origin}/`), b.goto(`${edge.origin}/discover`)]);
+    await Promise.all([shellInstalled(a), shellInstalled(b)]);
+    expect([await controlledAtLoad(a), await controlledAtLoad(b)]).toEqual([false, false]);
+    // b's copy of build N loses its precache when N+1 activates: it must not stay on N.
+    await takeUpdate(a, b);
+  });
 });
 
 test('(d) the image sends CSP, HSTS, nosniff, Referrer-Policy and the cache policy', async ({ request }) => {
@@ -235,6 +333,47 @@ test('(d) the image sends CSP, HSTS, nosniff, Referrer-Policy and the cache poli
   } finally {
     web.stop();
   }
+});
+
+test('(d) img-src: same-origin and images.figurecollecting.com images load, a hotlinked original is refused', async ({ context, page, cspViolations }) => {
+  const { origin } = stackState();
+  const src = {
+    self: `${origin}/icons/icon-192.png`,
+    derivative: 'https://images.figurecollecting.com/serve/1@2',
+    hotlinked: 'https://static.myfigurecollection.net/upload/items/1/12345-abcde.jpg',
+  };
+  const at = '2026-01-01T00:00:00Z';
+  const figures = Object.entries(src).map(([id, imageUrl]) => ({
+    _id: id, name: id, manufacturer: 'Maker', imageUrl, collectionStatus: 'owned', userId: 'u1', createdAt: at, updatedAt: at,
+  }));
+  // Signed in against a legacy-shaped API on this origin (connect-src 'self').
+  await context.addInitScript((o) => {
+    localStorage.setItem('fc.apiUrl', `${o}/legacy-api`);
+    const user = { _id: 'u1', username: 'u', email: 'u@example.com', token: 't', refreshToken: 'r', tokenExpiresAt: Date.now() + 3.6e6 };
+    localStorage.setItem('auth-storage', JSON.stringify({ state: { user, isAuthenticated: true, lastActivity: Date.now() }, version: 0 }));
+  }, origin);
+  await context.route(/\/legacy-api\//, (route) =>
+    route.fulfill({ json: /\/figures(\?|$)/.test(route.request().url()) ? { success: true, data: figures, count: 3, page: 1, pages: 1, total: 3 } : { success: true, data: {} } }),
+  );
+  const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
+  const fetched: string[] = [];
+  await context.route(/^https:\/\/(images\.figurecollecting\.com|static\.myfigurecollection\.net)\//, (route) => {
+    fetched.push(route.request().url());
+    return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+  });
+
+  await page.goto(`${origin}/`);
+  const loaded = (url: string) =>
+    page.locator(`img[src="${url}"]`).first().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
+  await expect.poll(() => loaded(src.self)).toBe(true);
+  await expect.poll(() => loaded(src.derivative)).toBe(true);
+  expect(await loaded(src.hotlinked)).toBe(false);
+  expect(fetched).toContain(src.derivative);
+  expect(fetched).not.toContain(src.hotlinked);
+  // The only violations are img-src refusing the hotlinked original.
+  await expect.poll(() => new Set(cspViolations.map((v) => `${v.directive} ${v.blocked}`))).toEqual(new Set([`img-src ${src.hotlinked}`]));
+  await page.close();
+  cspViolations.length = 0;
 });
 
 test('(e) Chrome finds the app installable and every icon URL resolves', async ({ playwright, request }, testInfo) => {

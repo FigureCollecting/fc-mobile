@@ -1,10 +1,18 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { Style } from '../styles/Style';
 import { applyUpdate, updateReady } from './updates';
+
+/** The page normally reloads within a second of Reload; past this, offer it again. */
+export const RETRY_MS = 10_000;
 
 /** Shown until the user takes the waiting build; there is no dismiss, so an old shell does not linger. */
 export function UpdatePrompt() {
   const [applying, setApplying] = useState(false);
+  useEffect(() => {
+    if (!applying) return;
+    const id = setTimeout(() => setApplying(false), RETRY_MS);
+    return () => clearTimeout(id);
+  }, [applying]);
   if (!updateReady.value) return null;
 
   const reload = () => {

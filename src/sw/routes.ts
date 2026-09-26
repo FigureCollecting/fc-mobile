@@ -4,6 +4,12 @@
 /** The edge's coordinator rule, verbatim: ^/api(/.*)?$ */
 export const API_PATH = /^\/api(\/.*)?$/;
 
+/**
+ * The same paths for the NavigationRoute denylist. Workbox tests a denylist
+ * against pathname + search, so a query must end the /api prefix too.
+ */
+export const API_NAVIGATION = /^\/api(?:[/?]|$)/;
+
 /** A display derivative, addressed by the SHA-256 of its bytes, so immutable. */
 export const DERIVATIVE_PATH = /^\/media\/d\/[0-9a-f]{64}$/;
 

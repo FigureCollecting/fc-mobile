@@ -65,6 +65,16 @@ export function InstallBanner({ unsyncedCount, isIosTab = isIosBrowserTab, pollM
         Not now
       </button>
       <Style css={NOTICE_CSS} />
+      <Style css={INSTALL_CSS} />
     </div>
   );
 }
+
+// In the flow of the app shell (a flex column): the screen below shrinks and scrolls.
+const INSTALL_CSS = `
+  .pwa-notice--install {
+    flex-shrink: 0;
+    margin: var(--space-3) var(--space-3) 0;
+    box-shadow: none;
+  }
+`;

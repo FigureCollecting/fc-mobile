@@ -85,7 +85,11 @@ export class AuthSession implements DpopCredentials {
       this.currentSub = sub;
       const usable = tokens.reauth !== true && (tokens.refreshToken !== undefined || !this.expiring(tokens));
       return this.set(usable ? 'signed-in' : 'reauth-required');
-    })();
+    })().catch((err: unknown) => {
+      // Shared while pending; a failed start is not kept, so the next call retries it.
+      this.started = undefined;
+      throw err;
+    });
     return this.started;
   }
 

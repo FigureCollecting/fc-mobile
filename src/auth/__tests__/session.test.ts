@@ -222,6 +222,37 @@ describe('start', () => {
     world.t += TEN_MIN;
     expect(await world.tab().start()).toBe('reauth-required');
   });
+
+  it('retries a start that could not open the store, and a call waiting on start recovers with it', async () => {
+    const world = await World.create();
+    await world.signIn(world.tab());
+    let blocked = true;
+    const tab = world.tab({ db: (open) => (blocked ? Promise.reject(new DOMException('newer store', 'VersionError')) : open()) });
+    await expect(tab.start()).rejects.toMatchObject({ name: 'VersionError' });
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ name: 'VersionError' });
+    blocked = false;
+    const res = await tab.fetch(compareUrl, compareInit()).catch((err: unknown) => err);
+    expect(res).toBeInstanceOf(Response);
+    expect((res as Response).status).toBe(200);
+    expect(await tab.start()).toBe('signed-in');
+    expect(tab.status.value).toBe('signed-in');
+  });
+
+  it('gives concurrent callers one start, whether it fails or succeeds', async () => {
+    const world = await World.create();
+    await world.signIn(world.tab());
+    let asks = 0;
+    const tab = world.tab({
+      db: (open) => (++asks === 1 ? Promise.reject(new DOMException('newer store', 'VersionError')) : open()),
+    });
+    const failed = await Promise.allSettled([tab.start(), tab.start()]);
+    expect(failed.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(asks).toBe(1);
+    await expect(Promise.all([tab.start(), tab.start()])).resolves.toEqual(['signed-in', 'signed-in']);
+    expect(asks).toBe(2);
+    expect(await tab.start()).toBe('signed-in');
+    expect(asks).toBe(2);
+  });
 });
 
 describe('refresh', () => {

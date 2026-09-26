@@ -12,6 +12,8 @@ export interface TabOptions {
   /** Omit to exercise the no-Web-Locks fallback. */
   locks?: MemoryLocks | null;
   timeoutMs?: number;
+  /** Stands in for the store owner, given the default one. */
+  db?: (open: () => Promise<LocalDb>) => Promise<LocalDb>;
 }
 
 export class World {
@@ -41,10 +43,16 @@ export class World {
   }
 
   tab(options: TabOptions = {}): AuthSession {
-    // As index.ts does: another page deleting or upgrading the store closes this connection.
+    // As index.ts does: another page deleting or upgrading the store closes this connection,
+    // and a failed open is retried on the next call.
     let db: Promise<LocalDb> | undefined;
+    const open = () =>
+      (db ??= openLocalDb({ factory: this.factory, onVersionChange: () => (db = undefined) }).catch((err: unknown) => {
+        db = undefined;
+        throw err;
+      }));
     return new AuthSession({
-      db: () => (db ??= openLocalDb({ factory: this.factory, onVersionChange: () => (db = undefined) })),
+      db: options.db === undefined ? open : () => options.db!(open),
       config: this.idp.config,
       origin: APP_ORIGIN,
       fetch: this.net.fetch,

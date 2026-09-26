@@ -71,6 +71,12 @@ describe('browser wiring', () => {
   });
 });
 
+const settle = <T>(req: IDBRequest<T>) =>
+  new Promise<T>((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
 describe('browser wiring: the store closed by another page', () => {
   it('createBrowserSession reopens it on the next call instead of failing on the closed connection', async () => {
     const factory = new IDBFactory();
@@ -103,17 +109,25 @@ describe('browser wiring: the store closed by another page', () => {
     const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
     const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
     expect(await session.start()).toBe('signed-in');
-    const settle = <T>(req: IDBRequest<T>) =>
-      new Promise<T>((resolve, reject) => {
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
     // A newer build upgrades the store: this build cannot open it.
     (await settle(factory.open('fc-mobile', 3))).close();
     await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ name: 'VersionError' });
     // The newer store goes away: the next call opens a fresh one.
     await settle(factory.deleteDatabase('fc-mobile'));
     await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(session.status.value).toBe('signed-out');
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('createBrowserSession recovers a page loaded while a newer build owns the store, once that store is gone', async () => {
+    const factory = new IDBFactory();
+    (await settle(factory.open('fc-mobile', 3))).close();
+    const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
+    const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
+    await expect(session.start()).rejects.toMatchObject({ name: 'VersionError' });
+    await settle(factory.deleteDatabase('fc-mobile'));
+    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(await session.start()).toBe('signed-out');
     expect(session.status.value).toBe('signed-out');
     expect(fetchFn).not.toHaveBeenCalled();
   });

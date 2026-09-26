@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Minimal E2E config: one chromium project, no retries, spawns the Vite dev
- * server on port 5173 and runs tests from ./e2e.
+ * E2E config: desktop chromium runs in CI today. 'mobile-chromium' and
+ * 'webkit' are defined for later units (viewport/gesture work) but are not
+ * yet wired into build.yml.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -20,6 +21,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], channel: 'chromium-headless-shell' },
+    },
+    {
+      name: 'mobile-chromium',
+      use: { ...devices['Pixel 7'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['iPhone 15'] },
     },
   ],
   webServer: {

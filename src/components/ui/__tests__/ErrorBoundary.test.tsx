@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { renderWithProviders } from '../../../test/testUtils';
 import { getDb } from '../../../storage/db';
+import * as cacheManager from '../../../storage/cacheManager';
 
 function Bomb(): never {
   throw new Error('boom');
@@ -67,6 +68,21 @@ describe('ErrorBoundary', () => {
     expect(await db.count('figures')).toBe(0);
     expect(deleted).toContain('runtime-cache-1');
     expect(deleted).not.toContain('workbox-precache-v2-abc');
+  });
+
+  it('reloads immediately when cache stats cannot be read (treats as no pending edits)', async () => {
+    const reload = vi.fn();
+    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload });
+    installFakeCaches(['workbox-precache-v2-abc']);
+    vi.spyOn(cacheManager, 'getCacheStats').mockRejectedValueOnce(new Error('storage unavailable'));
+
+    const user = userEvent.setup();
+    renderWithProviders(<ErrorBoundary><Bomb /></ErrorBoundary>);
+
+    await user.click(screen.getByRole('button', { name: /clear cache & reload/i }));
+    // No confirmation step — a failed read is treated as zero pending ops.
+    expect(screen.queryByText(/unsynced change/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
   it('cancel leaves the error screen without reloading', async () => {

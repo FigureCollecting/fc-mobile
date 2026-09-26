@@ -57,10 +57,20 @@ test('idle app makes no requests to dead endpoints, and /analytics redirects to 
   await mockBackend(page);
   await seedSignedIn(page);
 
+  // page.on('request') never fires for a WebSocket handshake (Playwright has
+  // no request event for it), so the socket.io client's /ws traffic needs its
+  // own listener — otherwise this check would pass even if that client came
+  // back. Path match, not substring, so e.g. '/api/wishlist' can't false-positive.
   const deadRequests: string[] = [];
   page.on('request', (req) => {
     const url = req.url();
-    if (url.includes('/api/notifications') || url.includes('/ws')) {
+    if (url.includes('/api/notifications') || new URL(url).pathname.startsWith('/ws')) {
+      deadRequests.push(url);
+    }
+  });
+  page.on('websocket', (ws) => {
+    const url = ws.url();
+    if (new URL(url).pathname.startsWith('/ws')) {
       deadRequests.push(url);
     }
   });

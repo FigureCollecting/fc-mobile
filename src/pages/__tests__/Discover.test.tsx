@@ -46,11 +46,13 @@ vi.mock('../../api/client', async () => {
 });
 
 import { searchFigures } from '@figurecollecting/fc-shared';
+import { api } from '../../api/client';
 import { Discover } from '../Discover';
 import { renderWithProviders } from '../../test/testUtils';
 import { useAuthStore } from '../../stores/auth';
 
 const mockedSearch = searchFigures as unknown as ReturnType<typeof vi.fn>;
+const mockedGet = api.get as unknown as ReturnType<typeof vi.fn>;
 
 function signIn() {
   useAuthStore.setState({
@@ -92,6 +94,13 @@ describe('Discover page', () => {
     renderWithProviders(<Discover />, { initialPath: '/discover' });
     expect(screen.getByPlaceholderText(/search figures/i)).toBeInTheDocument();
     expect(screen.getByText(/browse the catalog/i)).toBeInTheDocument();
+  });
+
+  it('does not fetch the dead manufacturer-breakdown endpoint by default', () => {
+    signIn();
+    mockedGet.mockClear();
+    renderWithProviders(<Discover />, { initialPath: '/discover' });
+    expect(mockedGet).not.toHaveBeenCalled();
   });
 
   it('shows a retry error state when search fails', async () => {

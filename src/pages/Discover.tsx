@@ -11,6 +11,7 @@ import { useSearch } from '../hooks/useSearch';
 import { useCollection } from '../hooks/useCollection';
 import { useCollectionBreakdown } from '../hooks/useAnalytics';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { LEGACY_SCREENS_ENABLED } from '../config/features';
 
 /** Highlight matching text within a string */
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -94,8 +95,9 @@ export function Discover() {
   const inputRef = useRef<HTMLInputElement>(null);
   const online = useOnlineStatus();
 
-  // Fetch manufacturer breakdown for suggestions
-  const { data: manufacturers } = useCollectionBreakdown('manufacturer');
+  // Fetch manufacturer breakdown for suggestions. No backend by default —
+  // don't fetch a dead endpoint (src/config/features.ts).
+  const { data: manufacturers } = useCollectionBreakdown('manufacturer', LEGACY_SCREENS_ENABLED);
 
   // Fetch user's cached collection for local matching
   const { data: collectionData, dataUpdatedAt: collectionUpdatedAt } = useCollection({ limit: 100 });

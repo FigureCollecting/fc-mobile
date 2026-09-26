@@ -2,6 +2,7 @@ import { SlimHeader } from '../components/layout/SlimHeader';
 import { useCollectionStats } from '../hooks/useCollectionStats';
 import { useCollectionBreakdown } from '../hooks/useAnalytics';
 import { useAuthStore } from '../stores/auth';
+import { LEGACY_SCREENS_ENABLED } from '../config/features';
 
 /**
  * Stats tab — compact at-a-glance numbers. The full Analytics experience is
@@ -10,7 +11,9 @@ import { useAuthStore } from '../stores/auth';
 export function Stats() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { data: counts } = useCollectionStats();
-  const { data: manufacturers } = useCollectionBreakdown('manufacturer');
+  // Breakdown has no backend by default — don't fetch a dead endpoint just
+  // to power the "top manufacturers" list (src/config/features.ts).
+  const { data: manufacturers } = useCollectionBreakdown('manufacturer', LEGACY_SCREENS_ENABLED);
 
   if (!isAuthenticated) {
     return (

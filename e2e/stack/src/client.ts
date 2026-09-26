@@ -20,7 +20,10 @@ export interface StackClient {
     faults(): Promise<FaultRule[]>;
     clearFaults(): Promise<void>;
     releaseHung(): Promise<void>;
-    log(): Promise<EdgeLogEntry[]>;
+    /** Entries after `since` (a seq from cursor()), or all that are kept. */
+    log(since?: number): Promise<EdgeLogEntry[]>;
+    /** The last logged seq: mark a point with this, then read log(mark). */
+    cursor(): Promise<number>;
   };
   coordinator: { stop(): Promise<void>; start(): Promise<void>; restart(): Promise<void> };
   web: { stop(): Promise<void>; start(): Promise<void> };
@@ -28,7 +31,8 @@ export interface StackClient {
     loginAs(sub: string): Promise<void>;
     revokeUser(sub: string): Promise<number>;
     configure(patch: Partial<IssuerSettings>): Promise<IssuerSettings>;
-    log(): Promise<IssuerEvent[]>;
+    log(since?: number): Promise<IssuerEvent[]>;
+    cursor(): Promise<number>;
   };
   spine: { calls(): Promise<SpineCall[]>; clearCalls(): Promise<void> };
   openfga: {
@@ -52,6 +56,8 @@ export function stackClient(controlUrl: string): StackClient {
   const done = async (method: string, route: string, body?: unknown): Promise<void> => {
     await call(method, route, body);
   };
+  const after = (route: string, since?: number): string => (since === undefined ? route : `${route}?since=${since}`);
+  const cursor = async (route: string): Promise<number> => (await call<{ seq: number }>('GET', route)).seq;
   return {
     state: () => call('GET', '/state'),
     health: () => call('GET', '/health'),
@@ -63,7 +69,8 @@ export function stackClient(controlUrl: string): StackClient {
       faults: () => call('GET', '/edge/faults'),
       clearFaults: () => done('DELETE', '/edge/faults'),
       releaseHung: () => done('POST', '/edge/release'),
-      log: () => call('GET', '/edge/log'),
+      log: (since) => call('GET', after('/edge/log', since)),
+      cursor: () => cursor('/edge/cursor'),
     },
     coordinator: {
       stop: () => done('POST', '/coordinator/stop'),
@@ -75,7 +82,8 @@ export function stackClient(controlUrl: string): StackClient {
       loginAs: (sub) => done('POST', '/issuer/login-as', { sub }),
       revokeUser: async (sub) => (await call<{ revoked: number }>('POST', '/issuer/revoke-user', { sub })).revoked,
       configure: (patch) => call('POST', '/issuer/configure', patch),
-      log: () => call('GET', '/issuer/log'),
+      log: (since) => call('GET', after('/issuer/log', since)),
+      cursor: () => cursor('/issuer/cursor'),
     },
     spine: { calls: () => call('GET', '/spine/calls'), clearCalls: () => done('DELETE', '/spine/calls') },
     openfga: {

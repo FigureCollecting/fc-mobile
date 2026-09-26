@@ -71,10 +71,22 @@ jobs:
           test "${api}" = 401 && test "${root}" = 200
           npm run stack:down
 
+      # WK-08: the OIDC build (.env.stack) against the mock issuer and the real coordinator.
+      - name: Build the app for the stack's auth suite
+        run: npm run build:stack
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Auth e2e on the stack (mobile-chromium)
+        run: npm run test:e2e:stack
+
       - name: Upload stack logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: stack-logs
-          path: e2e/stack/.state/
+          path: |
+            e2e/stack/.state/
+            test-results/
           retention-days: 7

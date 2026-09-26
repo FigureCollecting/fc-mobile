@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
+import { lazy, Suspense } from 'preact/compat';
 import { useLocation } from 'wouter';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
@@ -8,6 +9,10 @@ import { useAuthStore } from './stores/auth';
 import { Onboarding } from './pages/Onboarding';
 import { isFixtureMode } from './dev-fixtures/fixtures';
 import { UpdatePrompt } from './pwa/UpdatePrompt';
+import { OIDC_AUTH_ENABLED } from './config/features';
+
+// Lazy so a legacy build never loads the OIDC stack or opens the v2 store.
+const OidcSession = lazy(() => import('./components/auth/OidcSession'));
 
 const ONBOARDING_KEY = 'onboarding_complete';
 
@@ -96,7 +101,13 @@ function AppInner() {
 
   return (
     <>
-      <AuthRedirect />
+      {OIDC_AUTH_ENABLED ? (
+        <Suspense fallback={null}>
+          <OidcSession />
+        </Suspense>
+      ) : (
+        <AuthRedirect />
+      )}
       <AppShell />
     </>
   );

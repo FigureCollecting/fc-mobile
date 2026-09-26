@@ -109,6 +109,11 @@ describe('mock OIDC issuer', () => {
     expect(issuer.log.at(-1)).toMatchObject({ endpoint: 'token', grantType: 'authorization_code', outcome: 'ok', sub: USER_A.sub });
   });
 
+  it('numbers its events from 1 with no gaps', () => {
+    expect(issuer.log.length).toBeGreaterThan(0);
+    expect(issuer.log.map((e) => e.seq)).toEqual(issuer.log.map((_, i) => i + 1));
+  });
+
   it('refuses a wrong code_verifier, a missing one, and a second use of the code', async () => {
     const v = verifier();
     const code = codeFrom(await authorize(goodParams(v)));

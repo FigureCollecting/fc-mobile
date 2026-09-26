@@ -10,7 +10,8 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   // Image-level PWA acceptance has its own config (playwright.pwa.config.ts).
-  testIgnore: ['pwa/**'],
+  // e2e/auth needs the local full stack; it runs from playwright.stack.config.ts.
+  testIgnore: ['pwa/**', 'auth/**'],
   timeout: 30_000,
   retries: 0,
   fullyParallel: false,

@@ -46,8 +46,10 @@ export type LocalDb = IDBPDatabase<LocalDbSchema>;
 export interface OpenLocalDbOptions {
   /** Defaults to the global indexedDB. */
   factory?: IDBFactory;
-  /** Another page is upgrading the database: this connection is already closed; prompt a reload. */
+  /** Another page is upgrading or deleting the database: this connection is already closed. */
   onVersionChange?: () => void;
+  /** The browser closed this connection (site data cleared, storage evicted); a new open may find the store empty. */
+  onClose?: () => void;
   /** An older page (e.g. a v1 tab) still holds the database open; ask the user to close it. */
   onBlocked?: () => void;
 }
@@ -111,6 +113,8 @@ export function openLocalDb(opts: OpenLocalDbOptions = {}): Promise<LocalDb> {
       db.close();
       opts.onVersionChange?.();
     });
+    // Only a close the browser forces fires 'close'; db.close() above does not.
+    db.addEventListener('close', () => opts.onClose?.());
     return db;
   });
 }

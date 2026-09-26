@@ -1,4 +1,5 @@
-import { IDBFactory } from 'fake-indexeddb';
+import { forceCloseDatabase, IDBFactory } from 'fake-indexeddb';
+import { unwrap } from 'idb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LOCAL_DB_NAME, LOCAL_DB_VERSION, openLocalDb } from '../localDb';
 
@@ -152,6 +153,16 @@ describe('openLocalDb', () => {
     expect(v3.version).toBe(3);
     expect(() => db.transaction('facets')).toThrow();
     v3.close();
+  });
+
+  it('reports a connection the browser closed (site data cleared, storage evicted)', async () => {
+    const factory = new IDBFactory();
+    const onClose = vi.fn();
+    const db = await openLocalDb({ factory, onClose });
+    const closed = new Promise<void>((resolve) => db.addEventListener('close', () => resolve()));
+    forceCloseDatabase(unwrap(db) as never);
+    await closed;
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('reports a page still holding v1 open, then completes once it closes', async () => {

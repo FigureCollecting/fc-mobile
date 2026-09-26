@@ -27,7 +27,17 @@ export interface Control {
   close(): Promise<void>;
 }
 
-type Handler = (body: unknown) => unknown;
+type Handler = (body: unknown, query: URLSearchParams) => unknown;
+
+/** Entries after a cursor (`?since=<seq>`); the logs are read this way because the edge log is trimmed. */
+function since<T extends { seq: number }>(log: T[], query: URLSearchParams): T[] {
+  const raw = query.get('since') ?? '0';
+  if (!/^\d{1,15}$/.test(raw)) throw new Error(`bad since ${raw}`);
+  const cursor = Number(raw);
+  return log.filter((e) => e.seq > cursor);
+}
+
+const cursorOf = (log: Array<{ seq: number }>): { seq: number } => ({ seq: log.at(-1)?.seq ?? 0 });
 
 export async function startControl(target: ControlTarget, port: number, host = '127.0.0.1'): Promise<Control> {
   const ok = { ok: true };
@@ -36,7 +46,8 @@ export async function startControl(target: ControlTarget, port: number, host = '
     'GET /health': () => ({ edge: target.edge.running(), coordinator: target.coordinator.running() }),
     'POST /edge/stop': async () => (await target.edge.stop(), ok),
     'POST /edge/start': async () => (await target.edge.start(), ok),
-    'GET /edge/log': () => target.edge.log,
+    'GET /edge/log': (_body, query) => since(target.edge.log, query),
+    'GET /edge/cursor': () => cursorOf(target.edge.log),
     'GET /edge/faults': () => target.edge.faults(),
     'POST /edge/faults': (body) => (target.edge.addFault(body as FaultRule), ok),
     'DELETE /edge/faults': () => (target.edge.clearFaults(), ok),
@@ -46,7 +57,8 @@ export async function startControl(target: ControlTarget, port: number, host = '
     'POST /coordinator/restart': async () => (await target.coordinator.restart(), ok),
     'POST /web/stop': async () => (await target.web.stop(), ok),
     'POST /web/start': async () => (await target.startWeb(), ok),
-    'GET /issuer/log': () => target.issuer.log,
+    'GET /issuer/log': (_body, query) => since(target.issuer.log, query),
+    'GET /issuer/cursor': () => cursorOf(target.issuer.log),
     'POST /issuer/login-as': (body) => (target.issuer.loginAs((body as { sub: string }).sub), ok),
     'POST /issuer/revoke-user': (body) => ({ revoked: target.issuer.revokeUser((body as { sub: string }).sub) }),
     'POST /issuer/configure': (body) => (target.issuer.configure(body as Partial<IssuerSettings>), target.issuer.settings()),
@@ -60,7 +72,8 @@ export async function startControl(target: ControlTarget, port: number, host = '
 
   const server = http.createServer((req, res) => {
     void (async () => {
-      const key = `${req.method as string} ${new URL(req.url as string, 'http://control').pathname}`;
+      const url = new URL(req.url as string, 'http://control');
+      const key = `${req.method as string} ${url.pathname}`;
       if (key === 'POST /shutdown') {
         sendJson(res, 202, ok);
         // Answer first: stopping closes this server too.
@@ -72,7 +85,7 @@ export async function startControl(target: ControlTarget, port: number, host = '
       try {
         const raw = await readBody(req);
         const body: unknown = raw === '' ? undefined : JSON.parse(raw);
-        sendJson(res, 200, await handler(body));
+        sendJson(res, 200, await handler(body, url.searchParams));
       } catch (err) {
         sendJson(res, 400, { error: (err as Error).message });
       }

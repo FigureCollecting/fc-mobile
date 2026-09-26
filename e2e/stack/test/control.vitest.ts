@@ -18,7 +18,11 @@ function stubTarget() {
   const target: ControlTarget = {
     state: { origin: 'http://localhost:1' },
     edge: {
-      log: [{ at: 't', method: 'GET', path: '/', route: 'web', status: 200 }],
+      // As if trimmed: the first entries are gone, seq carries on.
+      log: [
+        { seq: 6, at: 't', method: 'GET', path: '/', route: 'web', status: 200 },
+        { seq: 7, at: 't', method: 'GET', path: '/api/x', route: 'coordinator', status: 401 },
+      ],
       running: () => edgeUp,
       stop: async () => {
         edgeUp = false;
@@ -53,7 +57,10 @@ function stubTarget() {
     web: { stop: note('web.stop') },
     startWeb: note('web.start'),
     issuer: {
-      log: [{ at: 't', endpoint: 'token', outcome: 'ok' }],
+      log: [
+        { seq: 1, at: 't', endpoint: 'token', outcome: 'ok' },
+        { seq: 2, at: 't', endpoint: 'token', grantType: 'refresh_token', outcome: 'ok' },
+      ],
       loginAs: (sub) => {
         if (sub === 'nobody') throw new Error('unknown user nobody');
         called.push(`loginAs:${sub}`);
@@ -120,6 +127,20 @@ describe('control API and client', () => {
     expect(await client.edge.faults()).toEqual([]);
     expect(stub.called).toContain('edge.release');
     expect((await client.edge.log())[0]).toMatchObject({ route: 'web' });
+  });
+
+  it('reads the edge and issuer logs from a cursor, so a trimmed log never hides new entries', async () => {
+    expect(await client.edge.cursor()).toBe(7);
+    expect((await client.edge.log()).map((e) => e.seq)).toEqual([6, 7]);
+    expect((await client.edge.log(6)).map((e) => e.path)).toEqual(['/api/x']);
+    expect(await client.edge.log(7)).toEqual([]);
+    expect(await client.issuer.cursor()).toBe(2);
+    expect((await client.issuer.log(1)).map((e) => e.grantType)).toEqual(['refresh_token']);
+    await expect(client.edge.log(-1)).rejects.toThrow(/400/);
+    expect((await request(`${control.url}/issuer/log?since=x`)).status).toBe(400);
+    const saved = stub.target.edge.log.splice(0);
+    expect(await client.edge.cursor()).toBe(0);
+    stub.target.edge.log.push(...saved);
   });
 
   it('drives the issuer', async () => {

@@ -119,10 +119,10 @@ describe('local full stack', () => {
 
   it('recovers from a coordinator restart through one use_dpop_nonce retry', async () => {
     await control.coordinator.restart();
-    const before = (await control.edge.log()).length;
+    const since = await control.edge.cursor();
     const reply = await alice.call('GET', '/api/auth/session');
     expect(reply.status).toBe(200);
-    const statuses = (await control.edge.log()).slice(before).map((e) => e.status);
+    const statuses = (await control.edge.log(since)).map((e) => e.status);
     expect(statuses).toEqual([401, 200]);
   });
 

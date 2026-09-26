@@ -100,7 +100,13 @@ await stack.edge.fault({ match: '^/api/coordinator\\.v1\\.SyncService/Push$', ac
 await stack.coordinator.restart();                         // new nonce epoch
 await stack.issuer.configure({ accessTokenTtlSeconds: 5 });
 await stack.issuer.revokeUser(state.users[0].sub);         // next refresh is invalid_grant
+const mark = await stack.edge.cursor();                    // then act, then:
+const seen = await stack.edge.log(mark);                   // only what the edge logged since
 ```
+
+Read the edge and issuer logs from a cursor, never by array index: the edge
+keeps only its last 2,000 entries, so `log().slice(n)` goes empty on a
+long-lived stack. Every entry carries a `seq` that is never reused.
 
 `src/device.ts` signs a Node-side device in, enrols it and makes DPoP calls, for
 seeding or for a second device in a sync test.

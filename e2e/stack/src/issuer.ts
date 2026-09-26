@@ -52,6 +52,8 @@ export interface IssuerOptions extends Partial<IssuerSettings> {
 }
 
 export interface IssuerEvent {
+  /** 1, 2, 3… in logging order; read from a cursor rather than an array index. */
+  seq: number;
   at: string;
   endpoint: 'authorize' | 'token' | 'revoke';
   grantType?: string;
@@ -158,8 +160,10 @@ export async function startMockIssuer(options: IssuerOptions): Promise<MockIssue
   };
   const url = (path: string): string => `${origin}${path}`;
 
-  const record = (event: Omit<IssuerEvent, 'at'>): void => {
-    log.push({ at: new Date(now()).toISOString(), ...event });
+  let seq = 0;
+  const record = (event: Omit<IssuerEvent, 'at' | 'seq'>): void => {
+    seq += 1;
+    log.push({ seq, at: new Date(now()).toISOString(), ...event });
   };
 
   const findUser = (hint: string): StackUser | undefined =>

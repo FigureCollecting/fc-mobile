@@ -24,6 +24,8 @@ export interface FaultRule {
 }
 
 export interface EdgeLogEntry {
+  /** 1, 2, 3… in the order entries are logged; never reused, so a reader resumes from it after a trim. */
+  seq: number;
   at: string;
   method: string;
   path: string;
@@ -36,6 +38,8 @@ export interface EdgeOptions {
   coordinator: string;
   web: string;
   port?: number;
+  /** Oldest entries are dropped past this many. Default 2000. */
+  logLimit?: number;
 }
 
 export interface Edge {
@@ -75,6 +79,8 @@ interface ActiveFault {
 export async function startEdge(options: EdgeOptions): Promise<Edge> {
   const upstreams: Record<Route, URL> = { coordinator: new URL(options.coordinator), web: new URL(options.web) };
   const log: EdgeLogEntry[] = [];
+  const logLimit = options.logLimit ?? LOG_LIMIT;
+  let seq = 0;
   let active: ActiveFault[] = [];
   const hung = new Set<http.ServerResponse>();
   const sockets = new Set<Socket>();
@@ -95,11 +101,13 @@ export async function startEdge(options: EdgeOptions): Promise<Edge> {
     const method = req.method as string;
     const path = (req.url as string).split('?')[0] as string;
     const route = routeFor(path);
-    const entry: EdgeLogEntry = { at: new Date().toISOString(), method, path, route };
+    const entry: EdgeLogEntry = { seq: 0, at: new Date().toISOString(), method, path, route };
     const done = (status?: number): void => {
       if (status !== undefined) entry.status = status;
+      seq += 1;
+      entry.seq = seq;
       log.push(entry);
-      if (log.length > LOG_LIMIT) log.splice(0, log.length - LOG_LIMIT);
+      if (log.length > logLimit) log.splice(0, log.length - logLimit);
     };
 
     const fault = takeFault(method, path);

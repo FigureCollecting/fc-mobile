@@ -99,6 +99,20 @@ describe('edge proxy', () => {
     expect(edge.faults()).toHaveLength(0);
   });
 
+  it('numbers every entry, so a reader resumes by seq even after the log is trimmed', async () => {
+    const small = await startEdge({ coordinator: coordinator.url, web: web.url, logLimit: 3 });
+    try {
+      for (let i = 0; i < 5; i += 1) await request(`http://127.0.0.1:${small.port}/r${i}`);
+      expect(small.log.map((e) => [e.seq, e.path])).toEqual([
+        [3, '/r2'],
+        [4, '/r3'],
+        [5, '/r4'],
+      ]);
+    } finally {
+      await small.close();
+    }
+  });
+
   it('ignores a fault whose method does not match', async () => {
     edge.addFault({ match: '^/api/', method: 'POST', action: 'status', status: 503 });
     expect((await request(`${base()}/api/x`)).status).toBe(200);

@@ -1,0 +1,72 @@
+name: Local stack harness
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [develop, main]
+
+# Same fork shift-left push gate as build.yml. The harness has its own
+# package (e2e/stack) so its dependencies never touch the app's lockfile.
+jobs:
+  stack:
+    name: Stack harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: >-
+      github.event_name != 'push'
+      || (github.repository_owner == 'FigureCollecting' && (github.ref_name == 'develop' || github.ref_name == 'main'))
+      || (github.repository_owner != 'FigureCollecting' && github.ref_name != 'develop' && github.ref_name != 'main')
+    permissions:
+      contents: read
+      packages: read
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            e2e/stack/package-lock.json
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Build the app
+        run: npm run build
+
+      - name: Install harness dependencies
+        run: npm --prefix e2e/stack ci
+
+      - name: Typecheck the harness
+        run: npm --prefix e2e/stack run typecheck
+
+      - name: Harness tests with coverage (includes the full-stack acceptance)
+        run: npm --prefix e2e/stack run test:coverage
+
+      - name: One command up, probe, down
+        run: |
+          set -euo pipefail
+          npm run stack:up -- --detach
+          api=$(curl -s -o /dev/null -w '%{http_code}' -D headers.txt http://localhost:8480/api/x)
+          grep -qi '^dpop-nonce:' headers.txt
+          root=$(curl -s -o root.html -w '%{http_code}' http://localhost:8480/)
+          grep -q '<title>FigureCollecting</title>' root.html
+          echo "/api/x -> ${api} (DPoP-Nonce present), / -> ${root}"
+          test "${api}" = 401 && test "${root}" = 200
+          npm run stack:down
+
+      - name: Upload stack logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: stack-logs
+          path: e2e/stack/.state/
+          retention-days: 7

@@ -1,0 +1,34 @@
+{
+  "name": "fc-mobile-stack",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local full-stack harness for fc-mobile e2e: mock OIDC issuer, fake SpineRead, fake OpenFGA, Postgres, nginx, the real fc-coordinator and an edge proxy.",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+    "up": "tsx src/cli.ts up",
+    "down": "tsx src/cli.ts down",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.15.0",
+    "@connectrpc/connect": "^2.2.0",
+    "@connectrpc/connect-node": "^2.2.0",
+    "@figurecollecting/ingest-contract": "^0.6.0",
+    "@testcontainers/postgresql": "^12.1.0",
+    "jose": "^6.2.12",
+    "testcontainers": "^12.1.0",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@vitest/coverage-v8": "^5.0.2",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.2"
+  }
+}

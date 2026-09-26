@@ -1,10 +1,10 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readStackState } from '../src/client.js';
 import { STACK_ROOT } from '../src/paths.js';
-import { chooseWire, DEFAULT_PORT_BASE, optionsFromEnv, planStack } from '../src/stack.js';
+import { chooseWire, coordinatorPidFile, DEFAULT_PORT_BASE, optionsFromEnv, planStack, prepareCoordinator } from '../src/stack.js';
 
 describe('stack options from FC_STACK_* variables', () => {
   it('is empty when nothing is set', () => {
@@ -85,5 +85,20 @@ describe('stack plan', () => {
     expect(chooseWire('h2c', empty)).toBe('h2c');
     expect(chooseWire('auto', empty)).toBe('h2c');
     expect(chooseWire(undefined, empty)).toBe('h2c');
+  });
+});
+
+describe('coordinator checkout for `cli.ts checkout`', () => {
+  it('prepares the checkout the stack would run and says which', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'stack-checkout-'));
+    mkdirSync(path.join(dir, 'node_modules'));
+    writeFileSync(path.join(dir, 'package-lock.json'), '{}');
+    const lines: string[] = [];
+    expect(prepareCoordinator({ coordinatorDir: dir, log: (l) => lines.push(l) })).toEqual({ dir, source: 'dir' });
+    expect(lines).toEqual([`coordinator checkout: ${dir} (directory)`]);
+  });
+
+  it('keeps the coordinator pid file in the state directory', () => {
+    expect(coordinatorPidFile('/s')).toBe('/s/coordinator.pid');
   });
 });

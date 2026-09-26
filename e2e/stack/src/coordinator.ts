@@ -3,8 +3,9 @@
 // default is a pinned develop sha so the stack is reproducible.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readFileSync, closeSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, closeSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { describePid, portFree, portHolders, processGroup, signalGroup, waitGroupGone } from './procs.js';
 
 export const DEFAULT_COORDINATOR_REF = 'c0db861c7cc7d775f5f05a9e1acc8e41201c6a43';
 export const DEFAULT_COORDINATOR_REPO = 'https://github.com/FigureCollecting/fc-coordinator.git';
@@ -116,11 +117,15 @@ export interface CoordinatorProcessOptions {
   env: Record<string, string>;
   port: number;
   logFile: string;
+  /** Records the running coordinator's process group, so `stack:down` can stop it after a crash. */
+  pidFile?: string;
   healthTimeoutMs?: number;
 }
 
 export interface CoordinatorProcess {
   url: string;
+  /** The coordinator's process group (its leader's pid); undefined while stopped. */
+  pid(): number | undefined;
   running(): boolean;
   stop(): Promise<void>;
   start(): Promise<void>;
@@ -139,54 +144,95 @@ async function healthy(url: string): Promise<boolean> {
   }
 }
 
+const STOP_ORPHAN = '`npm run stack:down` stops a coordinator left running by a crashed stack';
+
+function holders(port: number): string {
+  const pids = portHolders(port);
+  if (pids === undefined) return '';
+  if (pids.length === 0) return ' by a process this user cannot inspect';
+  return ` by ${pids.map((pid) => describePid(pid)).join(', ')}`;
+}
+
+/** Whether the port's listener belongs to the group; undefined when that cannot be read. */
+function listenerInGroup(port: number, pgid: number): boolean | undefined {
+  return portHolders(port)?.some((pid) => processGroup(pid) === pgid);
+}
+
 export async function startCoordinator(options: CoordinatorProcessOptions): Promise<CoordinatorProcess> {
   const cli = path.join(options.dir, 'node_modules', 'tsx', 'dist', 'cli.mjs');
   if (!existsSync(cli)) throw new Error(`no tsx in ${options.dir}; run npm ci there first`);
   const url = `http://127.0.0.1:${options.port}`;
   let child: ChildProcess | undefined;
 
+  const clearPidFile = (pid: number): void => {
+    const file = options.pidFile;
+    if (file !== undefined && existsSync(file) && readFileSync(file, 'utf8').trim() === String(pid)) rmSync(file, { force: true });
+  };
+
   const start = async (): Promise<void> => {
+    // A 200 on /healthz proves only that something answers. An orphan from a
+    // crashed stack answers too, against that stack's database.
+    if (!(await portFree(options.port))) {
+      throw new Error(`port ${options.port} is already in use${holders(options.port)}; ${STOP_ORPHAN}`);
+    }
     const fd = openSync(options.logFile, 'a');
+    // Its own process group: tsx forks a second node that holds the port and
+    // outlives a leader killed alone, so every stop signals the group.
     const proc = spawn(process.execPath, [cli, 'src/server.ts'], {
       cwd: options.dir,
       env: options.env,
       stdio: ['ignore', fd, fd],
+      detached: true,
     });
     closeSync(fd);
+    const pid = proc.pid as number;
     child = proc;
+    if (options.pidFile !== undefined) writeFileSync(options.pidFile, `${pid}\n`);
     let exitCode: number | null = null;
     proc.once('exit', (code) => {
       exitCode = code ?? -1;
       if (child === proc) child = undefined;
+      signalGroup(pid, 'SIGKILL');
+      clearPidFile(pid);
     });
     const deadline = Date.now() + (options.healthTimeoutMs ?? 90_000);
     while (Date.now() < deadline) {
       if (exitCode !== null) {
         throw new Error(`coordinator exited with code ${String(exitCode)} before it was healthy:\n${tail(options.logFile)}`);
       }
-      if (await healthy(url)) return;
+      if (await healthy(url)) {
+        if (exitCode === null && listenerInGroup(options.port, pid) !== false) return;
+        signalGroup(pid, 'SIGKILL');
+        throw new Error(
+          `${url}/healthz answered, but the listener is not the coordinator this stack started (pid ${pid}): ` +
+            `port ${options.port} is held${holders(options.port)}`,
+        );
+      }
       await new Promise((r) => setTimeout(r, 200));
     }
-    proc.kill('SIGKILL');
+    signalGroup(pid, 'SIGKILL');
     throw new Error(`coordinator not healthy at ${url} after ${options.healthTimeoutMs ?? 90_000} ms:\n${tail(options.logFile)}`);
   };
 
   const stop = async (): Promise<void> => {
     const proc = child;
     if (proc === undefined) return;
+    const pid = proc.pid as number;
     await new Promise<void>((resolve) => {
-      const kill = setTimeout(() => proc.kill('SIGKILL'), 12_000);
+      const kill = setTimeout(() => signalGroup(pid, 'SIGKILL'), 12_000);
       proc.once('exit', () => {
         clearTimeout(kill);
         resolve();
       });
-      proc.kill('SIGTERM');
+      signalGroup(pid, 'SIGTERM');
     });
+    await waitGroupGone(pid, 5_000);
   };
 
   await start();
   return {
     url,
+    pid: () => child?.pid,
     running: () => child !== undefined,
     stop,
     start: async () => {
@@ -197,4 +243,29 @@ export async function startCoordinator(options: CoordinatorProcessOptions): Prom
       await start();
     },
   };
+}
+
+export type ReapOutcome = 'gone' | 'stopped' | 'killed' | 'stuck';
+
+/**
+ * Stop the coordinator group a pid file names, for a stack that died without
+ * its teardown. SIGTERM first so it drains, then SIGKILL after the grace.
+ */
+export async function reapCoordinator(pidFile: string, graceMs = 12_000): Promise<{ pid: number; outcome: ReapOutcome } | undefined> {
+  if (!existsSync(pidFile)) return undefined;
+  const pid = Number(readFileSync(pidFile, 'utf8').trim());
+  if (!Number.isInteger(pid) || pid <= 1) {
+    rmSync(pidFile, { force: true });
+    return undefined;
+  }
+  let outcome: ReapOutcome = 'gone';
+  if (signalGroup(pid, 'SIGTERM')) {
+    outcome = 'stopped';
+    if (!(await waitGroupGone(pid, graceMs))) {
+      signalGroup(pid, 'SIGKILL');
+      outcome = (await waitGroupGone(pid, 5_000)) ? 'killed' : 'stuck';
+    }
+  }
+  if (outcome !== 'stuck') rmSync(pidFile, { force: true });
+  return { pid, outcome };
 }

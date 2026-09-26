@@ -2,7 +2,7 @@
 // otherwise start one for the run and stop it in teardown. Workers find it
 // through FC_STACK_ORIGIN and the state file.
 import path from 'node:path';
-import { readStackState, stackClient } from './client.js';
+import { degradedMessage, probeRunning } from './lifecycle.js';
 import { STACK_ROOT } from './paths.js';
 import { optionsFromEnv, startStack, type Stack, type StackOptions } from './stack.js';
 
@@ -15,17 +15,13 @@ export function makeGlobalSetup(deps: GlobalSetupDeps = {}): () => Promise<() =>
   const stateDir = deps.stateDir ?? optionsFromEnv().stateDir ?? path.join(STACK_ROOT, '.state');
   const start = deps.start ?? startStack;
   return async () => {
-    const running = readStackState(stateDir);
-    if (running !== undefined) {
-      const up = await stackClient(running.controlUrl).health().then(
-        (h) => h.edge && h.coordinator,
-        () => false,
-      );
-      if (up) {
-        process.env['FC_STACK_ORIGIN'] = running.origin;
-        return async () => undefined;
-      }
+    const running = await probeRunning(stateDir);
+    if (running.kind === 'up') {
+      process.env['FC_STACK_ORIGIN'] = running.state.origin;
+      return async () => undefined;
     }
+    // A fresh stack would collide with the ports a degraded one still holds.
+    if (running.kind === 'degraded') throw new Error(degradedMessage(running));
     const stack = await start({ ...optionsFromEnv(), stateDir });
     process.env['FC_STACK_ORIGIN'] = stack.state.origin;
     return () => stack.stop();

@@ -6,11 +6,11 @@ import { startControl, type ControlTarget } from '../src/control.js';
 import { makeGlobalSetup } from '../src/playwright.js';
 import type { Stack, StackOptions } from '../src/stack.js';
 
-const target = (): ControlTarget =>
+const target = (coordinator = true): ControlTarget =>
   ({
     state: {},
     edge: { running: () => true },
-    coordinator: { running: () => true },
+    coordinator: { running: () => coordinator },
   }) as unknown as ControlTarget;
 
 describe('Playwright globalSetup', () => {
@@ -25,6 +25,20 @@ describe('Playwright globalSetup', () => {
     expect(process.env['FC_STACK_ORIGIN']).toBe('http://localhost:1');
     await teardown();
     await control.close();
+  });
+
+  it('refuses a stack whose control answers but reports a piece down', async () => {
+    const stateDir = mkdtempSync(path.join(tmpdir(), 'stack-pw-'));
+    const control = await startControl(target(false), 0);
+    writeFileSync(path.join(stateDir, 'stack.json'), JSON.stringify({ pid: process.pid, controlUrl: control.url, origin: 'http://localhost:1' }));
+    let started = 0;
+    const setup = makeGlobalSetup({ stateDir, start: async () => ((started += 1), { state: { origin: 'x' } } as Stack) });
+    try {
+      await expect(setup()).rejects.toThrow(/coordinator is down[\s\S]*stack:down/);
+      expect(started).toBe(0);
+    } finally {
+      await control.close();
+    }
   });
 
   it('starts a stack when none answers, and stops it on teardown', async () => {

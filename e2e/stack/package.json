@@ -10,6 +10,7 @@
   "scripts": {
     "up": "tsx src/cli.ts up",
     "down": "tsx src/cli.ts down",
+    "checkout": "tsx src/cli.ts checkout",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",

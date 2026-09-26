@@ -20,8 +20,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -38,12 +36,22 @@ jobs:
 
       - name: Install app dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build the app
         run: npm run build
 
       - name: Install harness dependencies
         run: npm --prefix e2e/stack ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # Installs the coordinator's packages up front, so the steps after it run without the token.
+      - name: Fetch and install the pinned coordinator
+        run: npm --prefix e2e/stack run checkout
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Typecheck the harness
         run: npm --prefix e2e/stack run typecheck

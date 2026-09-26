@@ -134,6 +134,20 @@ export function planStack(options: StackOptions): StackPlan {
   };
 }
 
+/** Where the running coordinator's process group is recorded, for `stack:down` after a crash. */
+export function coordinatorPidFile(stateDir: string): string {
+  return path.join(stateDir, 'coordinator.pid');
+}
+
+/** Fetch and install the coordinator checkout the stack would run (`cli.ts checkout`). */
+export function prepareCoordinator(options: StackOptions): Checkout {
+  const { cacheDir, log } = planStack(options);
+  const checkout = resolveCheckout({ dir: options.coordinatorDir, ref: options.coordinatorRef }, process.env, cacheDir);
+  log(`coordinator checkout: ${checkout.dir} (${checkout.source === 'ref' ? checkout.ref : 'directory'})`);
+  prepareCheckout(checkout);
+  return checkout;
+}
+
 /** The spine wire to hand the coordinator: explicit, or read from its spine client. */
 export function chooseWire(option: StackOptions['spineWire'], dir: string): 'h2c' | 'h1' {
   return option === undefined || option === 'auto' ? detectSpineWire(dir) : option;
@@ -155,10 +169,8 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
   };
 
   try {
-    const checkout = resolveCheckout({ dir: options.coordinatorDir, ref: options.coordinatorRef }, process.env, cacheDir);
+    const checkout = prepareCoordinator({ ...options, cacheDir, log });
     const ref = checkout.source === 'ref' ? checkout.ref : undefined;
-    log(`coordinator checkout: ${checkout.dir} (${ref ?? 'directory'})`);
-    prepareCheckout(checkout);
     const wire = chooseWire(options.spineWire, checkout.dir);
 
     const catalog = buildCatalog({ size: options.catalogSize });
@@ -220,6 +232,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
       dir: checkout.dir,
       port: ports.coordinator,
       logFile: coordinatorLog,
+      pidFile: coordinatorPidFile(stateDir),
       env: coordinatorEnv({
         port: ports.coordinator,
         databaseUrl: postgres.databaseUrl,

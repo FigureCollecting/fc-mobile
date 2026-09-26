@@ -10,7 +10,9 @@ import { stackClient, readStackState, type StackClient } from '../src/client.js'
 import { loginDevice, type Device } from '../src/device.js';
 import { USER_A, USER_B } from '../src/issuer.js';
 import { REPO_ROOT } from '../src/paths.js';
-import { optionsFromEnv, startStack, type Stack } from '../src/stack.js';
+import { DEFAULT_PG_LOCALE, expectedBytewise } from '../src/postgres.js';
+import { groupAlive } from '../src/procs.js';
+import { coordinatorPidFile, optionsFromEnv, startStack, type Stack } from '../src/stack.js';
 import { request } from './helpers.js';
 
 const stateDir = mkdtempSync(path.join(tmpdir(), 'stack-state-'));
@@ -75,7 +77,8 @@ describe('local full stack', () => {
     expect(readStackState(stateDir)?.origin).toBe(stack.state.origin);
     const state = await control.state();
     expect(state.origin).toBe(`http://localhost:${portBase}`);
-    expect(state.postgres.locale).toMatchObject({ collate: 'en_US.UTF-8', bytewise: false });
+    const locale = optionsFromEnv().pgLocale ?? DEFAULT_PG_LOCALE;
+    expect(state.postgres.locale).toMatchObject({ collate: locale, bytewise: expectedBytewise(locale) });
     expect(state.catalog.size).toBe(1200);
     expect(JSON.parse(readFileSync(state.catalog.file, 'utf8')).heads).toHaveLength(1200);
     expect(await stack.postgres.psql('SELECT count(*) FROM schema_migrations', 'migrator')).toMatch(/^[3-9]$|^\d{2,}$/);
@@ -166,8 +169,13 @@ describe('local full stack', () => {
     expect((await request(`${stack.state.origin}/`)).status).toBe(200);
   });
 
-  it('removes the state file when it stops', async () => {
+  it('records the coordinator process group while up, and leaves neither it nor the files behind', async () => {
+    const pid = Number(readFileSync(coordinatorPidFile(stateDir), 'utf8'));
+    expect(pid).toBe(stack.coordinator.pid());
+    expect(groupAlive(pid)).toBe(true);
     await stack.stop();
     expect(existsSync(stack.stateFile)).toBe(false);
+    expect(existsSync(coordinatorPidFile(stateDir))).toBe(false);
+    expect(groupAlive(pid)).toBe(false);
   });
 });

@@ -1,16 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   coordinatorEnv,
   DEFAULT_COORDINATOR_REF,
   detectSpineWire,
   prepareCheckout,
+  reapCoordinator,
   resolveCheckout,
   startCoordinator,
+  type CoordinatorProcess,
 } from '../src/coordinator.js';
+import { answers, fakeCoordinator, FORKING, freePort, IDLE, IGNORES_SIGTERM, isAlive, squat, waitFor } from './procfixtures.js';
 
 const scratch = (): string => mkdtempSync(path.join(tmpdir(), 'stack-coord-'));
 
@@ -115,11 +118,9 @@ describe('coordinator environment', () => {
 
 describe('coordinator process', () => {
   it('fails with the log tail when the process exits before it is healthy', async () => {
-    const dir = scratch();
-    mkdirSync(path.join(dir, 'node_modules', 'tsx', 'dist'), { recursive: true });
-    writeFileSync(path.join(dir, 'node_modules', 'tsx', 'dist', 'cli.mjs'), "console.error('boom: OIDC_ISSUER is required'); process.exit(3);\n");
+    const dir = fakeCoordinator("console.error('boom: OIDC_ISSUER is required'); process.exit(3);\n");
     await expect(
-      startCoordinator({ dir, env: { PATH: process.env['PATH'] ?? '' }, port: 1, logFile: path.join(dir, 'coordinator.log') }),
+      startCoordinator({ dir, env: { PATH: process.env['PATH'] ?? '' }, port: await freePort(), logFile: path.join(dir, 'coordinator.log') }),
     ).rejects.toThrow(/exited with code 3[\s\S]*OIDC_ISSUER is required/);
   });
 
@@ -129,13 +130,131 @@ describe('coordinator process', () => {
     );
   });
 
-  it('times out when nothing becomes healthy', async () => {
-    const dir = scratch();
-    mkdirSync(path.join(dir, 'node_modules', 'tsx', 'dist'), { recursive: true });
-    writeFileSync(path.join(dir, 'node_modules', 'tsx', 'dist', 'cli.mjs'), 'setInterval(() => {}, 1000);\n');
-    await expect(
-      startCoordinator({ dir, env: {}, port: 9, logFile: path.join(dir, 'c.log'), healthTimeoutMs: 600 }),
-    ).rejects.toThrow(/not healthy/);
+  it('times out when nothing becomes healthy, and kills what it started', async () => {
+    const dir = fakeCoordinator(IDLE);
+    const logFile = path.join(dir, 'c.log');
+    await expect(startCoordinator({ dir, env: {}, port: await freePort(), logFile, healthTimeoutMs: 600 })).rejects.toThrow(/not healthy/);
+    const pid = Number(/spawned (\d+)/.exec(readFileSync(logFile, 'utf8'))?.[1]);
+    await waitFor(() => !isAlive(pid));
+  });
+});
+
+describe('coordinator process ownership', () => {
+  const started: CoordinatorProcess[] = [];
+  const squatters: Array<{ close(): Promise<void> }> = [];
+  afterEach(async () => {
+    for (const c of started.splice(0)) await c.stop();
+    for (const s of squatters.splice(0)) await s.close();
+  });
+  const env = (port: number): Record<string, string> => ({ PATH: process.env['PATH'] ?? '', COORDINATOR_PORT: String(port) });
+
+  it('refuses to spawn when the port is already bound, and names the holder', async () => {
+    const port = await freePort();
+    squatters.push(await squat(port));
+    const dir = fakeCoordinator(IDLE);
+    const logFile = path.join(dir, 'c.log');
+    const outcome = await startCoordinator({ dir, env: env(port), port, logFile, healthTimeoutMs: 5_000 }).then(
+      (c) => (started.push(c), 'resolved'),
+      (err: Error) => err.message,
+    );
+    expect(outcome).toMatch(new RegExp(`port ${port} is already in use`));
+    expect(outcome).toMatch(/stack:down/);
+    if (existsSync('/proc/net/tcp')) expect(outcome).toMatch(new RegExp(`pid ${process.pid}\\b`));
+    expect(existsSync(logFile)).toBe(false);
+  });
+
+  it.skipIf(!existsSync('/proc/net/tcp'))('rejects a /healthz answer that does not come from its own child', async () => {
+    const port = await freePort();
+    const dir = fakeCoordinator(IDLE);
+    const logFile = path.join(dir, 'c.log');
+    const outcome = startCoordinator({ dir, env: env(port), port, logFile, healthTimeoutMs: 20_000 }).then(
+      (c) => (started.push(c), 'resolved'),
+      (err: Error) => err.message,
+    );
+    await waitFor(() => existsSync(logFile) && readFileSync(logFile, 'utf8').includes('spawned'));
+    squatters.push(await squat(port));
+    expect(await outcome).toMatch(/answered, but the listener is not the coordinator this stack started \(pid \d+\)/);
+    const pid = Number(/spawned (\d+)/.exec(readFileSync(logFile, 'utf8'))?.[1]);
+    await waitFor(() => !isAlive(pid));
+  });
+
+  it('stops the whole process group with SIGTERM, so the listener drains even when the leader does not relay', async () => {
+    const port = await freePort();
+    const logFile = path.join(scratch(), 'c.log');
+    const coordinator = await startCoordinator({ dir: fakeCoordinator(FORKING), env: env(port), port, logFile });
+    started.push(coordinator);
+    expect(await answers(port)).toBe(true);
+    await coordinator.stop();
+    expect(coordinator.running()).toBe(false);
+    expect(await answers(port)).toBe(false);
+    expect(readFileSync(logFile, 'utf8')).toMatch(/drained \d+/);
+  });
+
+  it('records its process group in the pid file while it runs', async () => {
+    const port = await freePort();
+    const pidFile = path.join(scratch(), 'coordinator.pid');
+    const coordinator = await startCoordinator({ dir: fakeCoordinator(FORKING), env: env(port), port, logFile: path.join(scratch(), 'c.log'), pidFile });
+    started.push(coordinator);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    expect(pid).toBe(coordinator.pid());
+    await coordinator.restart();
+    expect(Number(readFileSync(pidFile, 'utf8'))).toBe(coordinator.pid());
+    expect(coordinator.pid()).not.toBe(pid);
+    await coordinator.stop();
+    expect(existsSync(pidFile)).toBe(false);
+    expect(coordinator.pid()).toBeUndefined();
+  });
+
+  it('kills the group when the leader dies on its own and leaves a child behind', async () => {
+    const port = await freePort();
+    const pidFile = path.join(scratch(), 'coordinator.pid');
+    const coordinator = await startCoordinator({ dir: fakeCoordinator(FORKING), env: env(port), port, logFile: path.join(scratch(), 'c.log'), pidFile });
+    started.push(coordinator);
+    process.kill(coordinator.pid() as number, 'SIGKILL');
+    await waitFor(() => !coordinator.running());
+    await waitFor(async () => !(await answers(port)), 5_000);
+    await waitFor(() => !existsSync(pidFile), 5_000);
+  });
+});
+
+describe('reaping a coordinator whose stack is gone', () => {
+  const dir = scratch();
+
+  it('does nothing without a pid file, and clears an unreadable one', async () => {
+    expect(await reapCoordinator(path.join(dir, 'none.pid'))).toBeUndefined();
+    const junk = path.join(dir, 'junk.pid');
+    writeFileSync(junk, 'not a pid\n');
+    expect(await reapCoordinator(junk)).toBeUndefined();
+    expect(existsSync(junk)).toBe(false);
+  });
+
+  it('reports a recorded group that already exited, and clears its pid file', async () => {
+    const stale = path.join(dir, 'stale.pid');
+    const gone = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' });
+    writeFileSync(stale, `${gone}\n`);
+    expect(await reapCoordinator(stale)).toEqual({ pid: Number(gone), outcome: 'gone' });
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  it('SIGTERMs a live group, and SIGKILLs one that ignores it', async () => {
+    for (const [script, outcome] of [
+      [FORKING, 'stopped'],
+      [IGNORES_SIGTERM, 'killed'],
+    ] as const) {
+      const port = await freePort();
+      const pidFile = path.join(scratch(), 'coordinator.pid');
+      const orphan = await startCoordinator({
+        dir: fakeCoordinator(script),
+        env: { PATH: process.env['PATH'] ?? '', COORDINATOR_PORT: String(port) },
+        port,
+        logFile: path.join(scratch(), 'c.log'),
+        pidFile,
+      });
+      const pid = orphan.pid() as number;
+      expect(await reapCoordinator(pidFile, 1_000)).toEqual({ pid, outcome });
+      expect(await answers(port)).toBe(false);
+      expect(existsSync(pidFile)).toBe(false);
+    }
   });
 });
 

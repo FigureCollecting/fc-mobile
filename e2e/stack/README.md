@@ -1,7 +1,7 @@
 # Local full stack for fc-mobile e2e
 
 One command brings up everything the PWA talks to, on loopback, with no cluster
-and no Ross hands:
+and no manual steps:
 
 ```
 npm --prefix e2e/stack ci        # once (needs NODE_AUTH_TOKEN for @figurecollecting packages)
@@ -11,7 +11,13 @@ npm run stack:down
 ```
 
 `stack:up -- --build` runs the root build first. The first `up` clones and
-installs fc-coordinator, so `NODE_AUTH_TOKEN` must be set then.
+installs fc-coordinator, so `NODE_AUTH_TOKEN` must be set then;
+`npm --prefix e2e/stack run checkout` does only that step.
+
+The coordinator runs in its own process group, recorded in
+`.state/coordinator.pid`. If the stack dies without its teardown (SIGKILL, OOM),
+the coordinator keeps listening; the next `up` refuses its port and names the
+process, and `stack:down` stops it.
 
 ## What runs
 
@@ -71,7 +77,8 @@ musl-based `postgres:*-alpine` images report `en_US.UTF-8` but compare bytewise.
 
 `globalSetup: './e2e/stack/src/playwright.ts'` reuses a stack that
 `stack:up -- --detach` left running, or starts one for the run and stops it
-afterwards. Workers read everything else from the state file:
+afterwards. A recorded stack that answers but has its edge or coordinator down
+is an error, not reused. Workers read everything else from the state file:
 
 ```ts
 import { readStackState, stackClient } from './stack/src/client.js';

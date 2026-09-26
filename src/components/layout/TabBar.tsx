@@ -5,6 +5,7 @@ import { Badge } from '../ui/Badge';
 import { useUnreadCount } from '../../hooks/useNotifications';
 import { useChromeStore } from '../../stores/chrome';
 import { BottomSheet } from '../ui/BottomSheet';
+import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 
 interface TabItem {
   path: string;
@@ -90,12 +91,14 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
     <BottomSheet open={open} onClose={onClose} snapPoint="half">
       <div class="add-sheet">
         <h2 class="add-sheet__title">Add figures</h2>
-        <button class="add-sheet__option" type="button" onClick={() => go('/sync')}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3" />
-          </svg>
-          <span>Sync from MFC</span>
-        </button>
+        {LEGACY_SCREENS_ENABLED && (
+          <button class="add-sheet__option" type="button" onClick={() => go('/sync')}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3" />
+            </svg>
+            <span>Sync from MFC</span>
+          </button>
+        )}
         <button class="add-sheet__option" type="button" onClick={() => go('/import')}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -128,7 +131,7 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 export function TabBar() {
-  const { data: unreadCount = 0 } = useUnreadCount();
+  const { data: unreadCount = 0 } = useUnreadCount(LEGACY_SCREENS_ENABLED);
   const hidden = useChromeStore((s) => s.hidden);
   const [addOpen, setAddOpen] = useState(false);
 

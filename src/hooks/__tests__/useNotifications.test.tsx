@@ -67,6 +67,15 @@ describe('notification hooks', () => {
     await waitFor(() => expect(result.current.data).toBe(7));
   });
 
+  it('useUnreadCount(false) never requests the dead endpoint', async () => {
+    signIn();
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useUnreadCount(false), { wrapper: Wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(apiGet).not.toHaveBeenCalled();
+  });
+
   it('useMarkAsRead calls PUT /notifications/:id/read', async () => {
     apiPut.mockResolvedValueOnce({});
     const { Wrapper } = makeWrapper();

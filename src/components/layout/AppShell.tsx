@@ -1,25 +1,30 @@
 import { lazy, Suspense } from 'preact/compat';
 import { useMemo } from 'preact/hooks';
-import { Route, Switch, useLocation } from 'wouter';
+import { Redirect, Route, Switch, useLocation } from 'wouter';
 import { TabBar } from './TabBar';
 import { GatedScreen } from './GatedScreen';
 import { OfflineBanner } from '../ui/OfflineBanner';
 import { AnimatedRoutes } from '../ui/AnimatedRoutes';
 import { createScrollChromeHandler } from '../../stores/chrome';
+import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 import { Collection } from '../../pages/Collection';
 import { Discover } from '../../pages/Discover';
 import { Stats } from '../../pages/Stats';
 import { Profile } from '../../pages/Profile';
 import { Settings } from '../../pages/Settings';
-import { Sync } from '../../pages/Sync';
 import { Login } from '../../pages/Login';
 import { Register } from '../../pages/Register';
 import { TwoFactor } from '../../pages/TwoFactor';
 import { Import } from '../../pages/Import';
-import { Export } from '../../pages/Export';
-import { Notifications } from '../../pages/Notifications';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
+// No backend anywhere (src/config/features.ts) — lazy so a default build,
+// where LEGACY_SCREENS_ENABLED is off, never pulls these into the main chunk.
+const Sync = lazy(() => import('../../pages/Sync').then((m) => ({ default: m.Sync })));
+const Export = lazy(() => import('../../pages/Export').then((m) => ({ default: m.Export })));
+const Notifications = lazy(() =>
+  import('../../pages/Notifications').then((m) => ({ default: m.Notifications })),
+);
 
 const AUTH_ROUTES = ['/login', '/register', '/2fa'];
 
@@ -76,16 +81,38 @@ export function AppShell() {
             <Route path="/stats" component={Stats} />
             <Route path="/profile" component={Profile} />
             <Route path="/settings" component={Settings} />
-            <Route path="/sync" component={Sync} />
             <Route path="/import" component={Import} />
-            <Route path="/export" component={Export} />
-            <Route path="/notifications" component={Notifications} />
-            {/* Gated until each feature gets its mobile condensation pass */}
-            <Route path="/prices">{() => <GatedScreen feature="Price Tracker" />}</Route>
-            <Route path="/prices/:figureId">{() => <GatedScreen feature="Price Tracker" />}</Route>
-            <Route path="/analytics">{() => <GatedScreen feature="Analytics" />}</Route>
-            <Route path="/calendar">{() => <GatedScreen feature="Release Calendar" />}</Route>
-            <Route path="/collection-dna">{() => <GatedScreen feature="Collection DNA" />}</Route>
+            {/* No backend anywhere (src/config/features.ts): off by default,
+                deep links land back on the collection instead of a dead screen. */}
+            {LEGACY_SCREENS_ENABLED ? (
+              <>
+                <Route path="/sync">
+                  <Suspense fallback={<PageFallback />}><Sync /></Suspense>
+                </Route>
+                <Route path="/export">
+                  <Suspense fallback={<PageFallback />}><Export /></Suspense>
+                </Route>
+                <Route path="/notifications">
+                  <Suspense fallback={<PageFallback />}><Notifications /></Suspense>
+                </Route>
+                <Route path="/prices">{() => <GatedScreen feature="Price Tracker" />}</Route>
+                <Route path="/prices/:figureId">{() => <GatedScreen feature="Price Tracker" />}</Route>
+                <Route path="/analytics">{() => <GatedScreen feature="Analytics" />}</Route>
+                <Route path="/calendar">{() => <GatedScreen feature="Release Calendar" />}</Route>
+                <Route path="/collection-dna">{() => <GatedScreen feature="Collection DNA" />}</Route>
+              </>
+            ) : (
+              <>
+                <Route path="/sync"><Redirect to="/" /></Route>
+                <Route path="/export"><Redirect to="/" /></Route>
+                <Route path="/notifications"><Redirect to="/" /></Route>
+                <Route path="/prices"><Redirect to="/" /></Route>
+                <Route path="/prices/:figureId"><Redirect to="/" /></Route>
+                <Route path="/analytics"><Redirect to="/" /></Route>
+                <Route path="/calendar"><Redirect to="/" /></Route>
+                <Route path="/collection-dna"><Redirect to="/" /></Route>
+              </>
+            )}
             <Route path="/profile/security">
               {() => <Profile />}
             </Route>

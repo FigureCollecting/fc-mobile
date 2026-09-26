@@ -202,9 +202,19 @@ const FIXTURE_MODE_KEY = 'fc-fixture-mode';
 
 /**
  * Fixture mode default: ON in dev, OFF in tests and production builds.
- * Overridable via localStorage ('on' | 'off') for demoing against real data.
+ * Overridable via localStorage ('on' | 'off') for demoing against real data —
+ * but only in a dev build, or a build that opted in via
+ * VITE_ALLOW_FIXTURE_OVERRIDE (set only in .env.test, for the e2e
+ * overlay/smoke suites that exercise a real `vite preview` build offline).
+ * A plain production build ignores the override entirely, so it can never be
+ * flipped on from outside the app (e.g. pasted into devtools) to bypass
+ * sign-in.
  */
 export function isFixtureMode(): boolean {
+  const overrideAllowed =
+    import.meta.env.DEV || import.meta.env.VITE_ALLOW_FIXTURE_OVERRIDE === 'true';
+  if (!overrideAllowed) return false;
+
   try {
     const stored = localStorage.getItem(FIXTURE_MODE_KEY);
     if (stored === 'on') return true;

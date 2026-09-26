@@ -36,4 +36,14 @@ describe('Profile page', () => {
     renderWithProviders(<Profile />, { initialPath: '/profile' });
     expect(screen.getAllByText(/profile/i).length).toBeGreaterThan(0);
   });
+
+  it('hides quick actions for screens with no backend (notifications, export, MFC sync)', () => {
+    signIn();
+    renderWithProviders(<Profile />, { initialPath: '/profile' });
+    expect(screen.queryByText(/^notifications$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/export & share/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^mfc sync$/i)).not.toBeInTheDocument();
+    // Import Collection has a real backend and stays.
+    expect(screen.getByText(/import collection/i)).toBeInTheDocument();
+  });
 });

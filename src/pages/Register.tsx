@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { PasswordStrength } from '../components/auth/PasswordStrength';
+import { Style } from '../styles/Style';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -277,7 +278,7 @@ export function Register() {
         </button>
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </AuthLayout>
   );
 }

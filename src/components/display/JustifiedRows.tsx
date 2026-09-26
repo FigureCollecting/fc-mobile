@@ -8,6 +8,7 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
+import { Style } from '../../styles/Style';
 
 const ROW_GAP_PX = 2;
 
@@ -105,7 +106,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
         </div>
       )}
 
-      <style>{`
+      <Style css={`
         /* Height is set explicitly (inline style) to the packed/virtualized
            content size — rows below are virtualized-list items, positioned
            by transform, not stacked in normal flow. */
@@ -196,7 +197,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
           font-size: var(--font-plate-sub);
           color: rgba(255, 255, 255, 0.7);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

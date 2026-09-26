@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { hapticMedium } from '../../utils/haptics';
+import { Style } from '../../styles/Style';
 
 interface PullToRefreshProps {
   onRefresh: () => Promise<void>;
@@ -110,7 +111,7 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
 
       {children}
 
-      <style>{`
+      <Style css={`
         .pull-to-refresh {
           height: 100%;
           overflow-y: auto;
@@ -140,7 +141,7 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
             transform: rotate(360deg);
           }
         }
-      `}</style>
+      `} />
     </div>
   );
 }

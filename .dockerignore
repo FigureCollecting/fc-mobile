@@ -1,0 +1,14 @@
+.git
+node_modules
+dist
+dist-*
+dev-dist
+coverage
+test-results
+playwright-report
+e2e/stack/node_modules
+e2e/stack/.state
+e2e/stack/coverage
+**/*.log
+.env.local
+.env.*.local

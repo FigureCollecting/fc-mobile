@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface TimelineItem {
   month: string;
   count: number;
@@ -19,7 +21,7 @@ export function TimelineChart({ items, loading }: TimelineChartProps) {
             <div class="timeline-chart__skeleton-bar" style={{ width: `${50 + Math.random() * 40}%` }} />
           </div>
         ))}
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -30,7 +32,7 @@ export function TimelineChart({ items, loading }: TimelineChartProps) {
     return (
       <div class="timeline-chart">
         <p class="timeline-chart__empty">No growth data yet</p>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -52,7 +54,7 @@ export function TimelineChart({ items, loading }: TimelineChartProps) {
           </div>
         );
       })}
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

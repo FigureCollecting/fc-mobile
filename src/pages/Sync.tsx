@@ -2,6 +2,7 @@ import { useCallback } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { Header } from '../components/layout/Header';
 import { SyncDashboard } from '../components/sync/SyncDashboard';
+import { Style } from '../styles/Style';
 
 export function Sync() {
   const [, setLocation] = useLocation();
@@ -30,7 +31,7 @@ export function Sync() {
         <SyncDashboard onViewCollection={handleViewCollection} />
       </div>
 
-      <style>{`
+      <Style css={`
         .page-sync__content {
           padding: var(--space-4);
           padding-bottom: var(--space-12);
@@ -51,7 +52,7 @@ export function Sync() {
           color: var(--text-primary);
           background: var(--surface-tertiary);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

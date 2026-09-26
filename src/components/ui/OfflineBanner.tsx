@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { getPendingOpsCount } from '../../storage/pendingOps';
+import { Style } from '../../styles/Style';
 
 export function OfflineBanner() {
   const online = useOnlineStatus();
@@ -45,7 +46,7 @@ export function OfflineBanner() {
         {pendingCount > 0 && ` (${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'})`}
       </span>
 
-      <style>{`
+      <Style css={`
         .offline-banner {
           display: flex;
           align-items: center;
@@ -64,7 +65,7 @@ export function OfflineBanner() {
         .offline-banner svg {
           flex-shrink: 0;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

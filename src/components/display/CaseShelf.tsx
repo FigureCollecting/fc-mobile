@@ -14,6 +14,7 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
+import { Style } from '../../styles/Style';
 
 export type { PlacementStrategy };
 
@@ -729,7 +730,7 @@ export function CaseShelf({
         </div>
       </div>
 
-      <style>{caseStyles}</style>
+      <Style css={caseStyles} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useCollectionStats } from '../../hooks/useCollectionStats';
+import { Style } from '../../styles/Style';
 
 export function CollectionStats() {
   const { data, isLoading } = useCollectionStats();
@@ -22,7 +23,7 @@ export function CollectionStats() {
         </div>
       ))}
 
-      <style>{`
+      <Style css={`
         .collection-stats {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
@@ -93,7 +94,7 @@ export function CollectionStats() {
           0%, 100% { opacity: 0.4; }
           50% { opacity: 0.8; }
         }
-      `}</style>
+      `} />
     </div>
   );
 }

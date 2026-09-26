@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import type { ComponentChildren } from 'preact';
+import { Style } from '../../styles/Style';
 
 /**
  * Lightweight animated route transitions using CSS transforms + opacity.
@@ -67,7 +68,7 @@ export function AnimatedRoutes({ children }: AnimatedRoutesProps) {
     <div ref={containerRef} class="animated-route">
       {children}
 
-      <style>{`
+      <Style css={`
         .animated-route {
           will-change: transform, opacity;
         }
@@ -122,7 +123,7 @@ export function AnimatedRoutes({ children }: AnimatedRoutesProps) {
             animation: none;
           }
         }
-      `}</style>
+      `} />
     </div>
   );
 }

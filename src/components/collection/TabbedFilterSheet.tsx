@@ -5,6 +5,7 @@ import { FacetControl } from './FacetControl';
 import { getFacet, applyFilters } from '../../utils/facets';
 import type { ListFilters } from '../../hooks/useFigureListParams';
 import { hapticLight } from '../../utils/haptics';
+import { Style } from '../../styles/Style';
 
 type FilterTab = 'maker' | 'scale' | 'tags';
 
@@ -226,7 +227,7 @@ export function TabbedFilterSheet({
         )}
       </div>
 
-      <style>{`
+      <Style css={`
         .filter-sheet2 {
           padding-bottom: var(--space-3);
         }
@@ -334,7 +335,7 @@ export function TabbedFilterSheet({
         .filter-sheet2__btn--apply:active {
           background: var(--brand-600);
         }
-      `}</style>
+      `} />
     </DetentSheet>
   );
 }

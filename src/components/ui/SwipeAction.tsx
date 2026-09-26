@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
+import { Style } from '../../styles/Style';
 
 interface SwipeActionProps {
   onSwipeLeft?: () => void;
@@ -75,7 +76,7 @@ export function SwipeAction({
         {children}
       </div>
 
-      <style>{`
+      <Style css={`
         .swipe-action {
           position: relative;
           overflow: hidden;
@@ -107,7 +108,7 @@ export function SwipeAction({
           z-index: 1;
           background: var(--surface-primary);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useLocation } from 'wouter';
 import type { Figure, IRelease } from '@figurecollecting/fc-shared';
 import { LazyImage } from '../ui/LazyImage';
 import { releaseCountdown, formatReleaseDate } from '../../utils/countdown';
+import { Style } from '../../styles/Style';
 
 interface ReleaseCardProps {
   figure: Figure;
@@ -76,7 +77,7 @@ export function ReleaseCard({ figure, release }: ReleaseCardProps) {
         )}
       </div>
 
-      <style>{releaseCardStyles}</style>
+      <Style css={releaseCardStyles} />
     </button>
   );
 }

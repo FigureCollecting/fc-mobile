@@ -6,6 +6,7 @@ import { useUnreadCount } from '../../hooks/useNotifications';
 import { useChromeStore } from '../../stores/chrome';
 import { BottomSheet } from '../ui/BottomSheet';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
+import { Style } from '../../styles/Style';
 
 interface TabItem {
   path: string;
@@ -107,7 +108,7 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
           </svg>
           <span>Import from CSV</span>
         </button>
-        <style>{`
+        <Style css={`
           .add-sheet { display: flex; flex-direction: column; gap: var(--space-1); padding-bottom: var(--space-4); }
           .add-sheet__title {
             font-size: var(--font-base);
@@ -124,7 +125,7 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
             color: var(--text-primary);
           }
           .add-sheet__option:active { background: var(--surface-tertiary); }
-        `}</style>
+        `} />
       </div>
     </BottomSheet>
   );
@@ -158,7 +159,7 @@ export function TabBar() {
         </div>
         {RIGHT_TABS.map((t) => <Tab key={t.path} item={t} unread={unreadCount} />)}
 
-        <style>{`
+        <Style css={`
           .tab-bar {
             display: flex;
             align-items: stretch;
@@ -235,7 +236,7 @@ export function TabBar() {
             transform: scale(0.94);
             background: var(--brand-600);
           }
-        `}</style>
+        `} />
       </nav>
       <AddSheet open={addOpen} onClose={() => setAddOpen(false)} />
     </>

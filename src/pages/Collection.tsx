@@ -22,6 +22,7 @@ import { useAuthStore } from '../stores/auth';
 import { applyFilters, countActiveFilters } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
 import { getFixtureFigures, isFixtureMode } from '../dev-fixtures/fixtures';
+import { Style } from '../styles/Style';
 
 /** Fold-open near-square threshold: at or above this container width, the
  *  figure detail opens as a right-hand pane instead of a full-screen
@@ -39,7 +40,7 @@ function SkeletonShelves() {
           <div class="skeleton-shelves__figure" style={{ width: '22%' }} />
         </div>
       ))}
-      <style>{`
+      <Style css={`
         .skeleton-shelves {
           display: flex;
           flex-direction: column;
@@ -65,7 +66,7 @@ function SkeletonShelves() {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.55; }
         }
-      `}</style>
+      `} />
     </div>
   );
 }
@@ -155,7 +156,7 @@ export function Collection() {
       <div class="page-collection" data-density={density} ref={pageRef}>
         <SlimHeader context={<span>Collection</span>} />
         <p class="page-collection__empty">Sign in to see your collection</p>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -166,7 +167,7 @@ export function Collection() {
       <div class="page-collection" data-density={density} ref={pageRef}>
         <SlimHeader context={<span>Collection</span>} actions={headerActions} />
         <SkeletonShelves />
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -181,7 +182,7 @@ export function Collection() {
             title="You're offline"
             message="No cached data yet. We'll refresh automatically once you're back online."
           />
-          <style>{styles}</style>
+          <Style css={styles} />
         </div>
       );
     }
@@ -193,7 +194,7 @@ export function Collection() {
           message="Something went wrong fetching your figures. Try again?"
           onRetry={handleRefresh}
         />
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -280,7 +281,7 @@ export function Collection() {
         />
       )}
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

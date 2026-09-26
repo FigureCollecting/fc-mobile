@@ -5,6 +5,7 @@ import { CalendarGrid } from '../components/calendar/CalendarGrid';
 import { ReleaseCard } from '../components/calendar/ReleaseCard';
 import { useReleaseCalendar } from '../hooks/useReleaseCalendar';
 import { useAuthStore } from '../stores/auth';
+import { Style } from '../styles/Style';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -17,7 +18,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="15 18 9 12 15 6" />
       </svg>
-      <style>{`
+      <Style css={`
         .rc-back-btn {
           display: flex;
           align-items: center;
@@ -32,7 +33,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
           background: var(--surface-tertiary);
           color: var(--text-primary);
         }
-      `}</style>
+      `} />
     </button>
   );
 }
@@ -116,7 +117,7 @@ export function ReleaseCalendar() {
       <div class="page-rc">
         <Header title="Calendar" leading={<BackButton onClick={handleBack} />} />
         <p class="rc-empty">Sign in to view your release calendar.</p>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -225,7 +226,7 @@ export function ReleaseCalendar() {
         </div>
       </PullToRefresh>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { TimelineChart } from '../components/analytics/TimelineChart';
 import { useCollectionAnalytics, useCollectionBreakdown, useCollectionTimeline, usePriceSummary } from '../hooks/useAnalytics';
 import { useAuthStore } from '../stores/auth';
 import { useQueryClient } from '@tanstack/react-query';
+import { Style } from '../styles/Style';
 
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -22,7 +23,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
         <path d="M12 19l-7-7 7-7" />
       </svg>
 
-      <style>{`
+      <Style css={`
         .analytics-back-btn {
           display: flex;
           align-items: center;
@@ -39,7 +40,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
           color: var(--text-primary);
           background: var(--surface-tertiary);
         }
-      `}</style>
+      `} />
     </button>
   );
 }
@@ -85,7 +86,7 @@ export function Analytics() {
         <div class="analytics__empty">
           <p>Sign in to view your collection analytics</p>
         </div>
-        <style>{styles}</style>
+        <Style css={styles} />
       </div>
     );
   }
@@ -262,7 +263,7 @@ export function Analytics() {
         </div>
       </PullToRefresh>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

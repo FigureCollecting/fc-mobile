@@ -1,4 +1,5 @@
 import finalC from '../../assets/brand/final-C.svg?raw';
+import { Style } from '../../styles/Style';
 
 // Traced from the brand mark; the source fill is baked black, swap for
 // currentColor so this renders as a plain white mark on the always-dark
@@ -16,7 +17,7 @@ export function BrandWatermark() {
   return (
     <>
       <span class="brand-watermark" aria-hidden="true" dangerouslySetInnerHTML={{ __html: MARK_SVG }} />
-      <style>{`
+      <Style css={`
         .brand-watermark {
           display: block;
           height: 100%;
@@ -31,7 +32,7 @@ export function BrandWatermark() {
           height: 100%;
           width: auto;
         }
-      `}</style>
+      `} />
     </>
   );
 }

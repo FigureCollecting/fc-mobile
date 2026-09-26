@@ -1,6 +1,7 @@
 import { useCallback } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import { hapticHeavy } from '../../utils/haptics';
+import { Style } from '../../styles/Style';
 
 interface DeleteSheetProps {
   open: boolean;
@@ -75,7 +76,7 @@ export function DeleteSheet({ open, onClose, onConfirm, isDeleting, figureName, 
         </div>
       </div>
 
-      <style>{`
+      <Style css={`
         .delete-sheet {
           display: flex;
           flex-direction: column;
@@ -178,7 +179,7 @@ export function DeleteSheet({ open, onClose, onConfirm, isDeleting, figureName, 
         .delete-sheet__btn--delete:active:not(:disabled) {
           opacity: 0.85;
         }
-      `}</style>
+      `} />
     </BottomSheet>
   );
 }

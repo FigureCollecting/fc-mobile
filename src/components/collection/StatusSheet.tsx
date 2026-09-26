@@ -2,6 +2,7 @@ import { useCallback } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
 import type { CollectionStatus } from '@figurecollecting/fc-shared';
 import { hapticMedium } from '../../utils/haptics';
+import { Style } from '../../styles/Style';
 
 interface StatusSheetProps {
   open: boolean;
@@ -85,7 +86,7 @@ export function StatusSheet({ open, onClose, currentStatus, onSelect, isUpdating
         )}
       </div>
 
-      <style>{`
+      <Style css={`
         .status-sheet {
           padding-bottom: var(--space-4);
         }
@@ -177,7 +178,7 @@ export function StatusSheet({ open, onClose, currentStatus, onSelect, isUpdating
           font-size: var(--font-sm);
           margin-top: var(--space-4);
         }
-      `}</style>
+      `} />
     </BottomSheet>
   );
 }

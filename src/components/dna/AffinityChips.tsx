@@ -1,3 +1,5 @@
+import { Style } from '../../styles/Style';
+
 interface AffinityItem {
   label: string;
   count: number;
@@ -36,7 +38,7 @@ export function AffinityChips({ title, items }: AffinityChipsProps) {
         ))}
       </div>
 
-      <style>{`
+      <Style css={`
         .affinity-chips {
           display: flex;
           flex-direction: column;
@@ -90,7 +92,7 @@ export function AffinityChips({ title, items }: AffinityChipsProps) {
           border-radius: var(--radius-full);
           line-height: 1.3;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

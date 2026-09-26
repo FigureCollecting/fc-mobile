@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'preact/hooks';
+import { Style } from '../../styles/Style';
 
 interface LastSyncedBadgeProps {
   /** Unix timestamp (ms) of when the cached data was last fetched. */
@@ -30,7 +31,7 @@ export function LastSyncedBadge({ timestamp }: LastSyncedBadgeProps) {
       </svg>
       <span>Last synced {label}</span>
 
-      <style>{`
+      <Style css={`
         .last-synced {
           display: inline-flex;
           align-items: center;
@@ -43,7 +44,7 @@ export function LastSyncedBadge({ timestamp }: LastSyncedBadgeProps) {
           font-size: var(--font-xs);
           width: fit-content;
         }
-      `}</style>
+      `} />
     </div>
   );
 }

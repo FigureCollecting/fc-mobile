@@ -4,6 +4,7 @@ import type { Density } from './density';
 import { CASE_MOTIFS } from './CaseShelf';
 import type { CaseMotif } from './CaseShelf';
 import type { LayoutMode } from '../../hooks/useFigureListParams';
+import { Style } from '../../styles/Style';
 
 interface DisplayToggleProps {
   layout: LayoutMode;
@@ -133,7 +134,7 @@ export function DisplayToggle({
         </svg>
       </button>
 
-      <style>{`
+      <Style css={`
         .display-toggle {
           display: flex;
           align-items: center;
@@ -185,7 +186,7 @@ export function DisplayToggle({
           background: var(--surface-tertiary);
           color: var(--brand-400);
         }
-      `}</style>
+      `} />
     </div>
   );
 }

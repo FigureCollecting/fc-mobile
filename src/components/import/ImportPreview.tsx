@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'preact/hooks';
 import type { CollectionStatus } from '@figurecollecting/fc-shared';
+import { Style } from '../../styles/Style';
 
 export interface ImportItem {
   /** Index in the original parsed array */
@@ -122,7 +123,7 @@ export function ImportPreview({ items, onToggle, onToggleAll }: ImportPreviewPro
         )}
       </div>
 
-      <style>{styles}</style>
+      <Style css={styles} />
     </div>
   );
 }

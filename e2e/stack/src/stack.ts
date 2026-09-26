@@ -159,13 +159,13 @@ export function chooseWire(option: StackOptions['spineWire'], dir: string): 'h2c
 
 export async function startStack(options: StackOptions = {}): Promise<Stack> {
   const { ports, origin, stateDir, cacheDir, log } = planStack(options);
-  mkdirSync(path.join(stateDir, 'logs'), { recursive: true });
   const coordinatorLog = path.join(stateDir, 'logs', 'coordinator.log');
-  // Before anything else starts: the previous run's log moves to .1 instead of
-  // being lost, and a held coordinator port fails here rather than after the
-  // checkout and the containers are up.
-  rotateLog(coordinatorLog);
+  // Refuse a held port before anything changes: the holder may be this
+  // checkout's own live stack, still writing coordinator.log. Then keep the
+  // previous run's log as .1, before the checkout and any container.
   await refuseIfPortHeld(ports.coordinator);
+  mkdirSync(path.dirname(coordinatorLog), { recursive: true });
+  rotateLog(coordinatorLog);
   const cleanups: Array<() => Promise<void>> = [];
   const teardown = async (): Promise<void> => {
     for (const cleanup of cleanups.reverse()) {

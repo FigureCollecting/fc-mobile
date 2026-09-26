@@ -176,10 +176,10 @@ const CACHE_LAYOUT = path.join(path.sep, path.relative(REPO_ROOT, CACHE_DIR), pa
 const THIS_CHECKOUT = realpathSync(REPO_ROOT);
 
 /** Where a holder with this cwd was started from, for the advice; undefined when that is this checkout. */
-function origin(cwd: string): string | undefined {
+export function holderOrigin(cwd: string, thisCheckout = THIS_CHECKOUT): string | undefined {
   const at = `${cwd}${path.sep}`.indexOf(CACHE_LAYOUT);
   const dir = at === -1 ? cwd : cwd.slice(0, at);
-  if (dir === THIS_CHECKOUT || dir.startsWith(`${THIS_CHECKOUT}${path.sep}`)) return undefined;
+  if (dir === thisCheckout || dir.startsWith(`${thisCheckout}${path.sep}`)) return undefined;
   return at === -1 ? `the coordinator runs from ${cwd}` : `that checkout is ${dir}`;
 }
 
@@ -192,7 +192,7 @@ function stopOrphanAdvice(port: number): string {
   const base = 'run `npm run stack:down` in the checkout that started it';
   const note = (portHolders(port) ?? [])
     .map((pid) => processCwd(pid))
-    .map((cwd) => (cwd === undefined ? undefined : origin(cwd)))
+    .map((cwd) => (cwd === undefined ? undefined : holderOrigin(cwd)))
     .find((text) => text !== undefined);
   return note === undefined ? base : `${base} (${note})`;
 }
@@ -341,40 +341,43 @@ function readPidFile(pidFile: string): PidFileIdentity | undefined {
 interface PidRecord {
   pid: number;
   startTime?: number;
-  needles: string[];
+  needles: Array<string | RegExp>;
 }
 
-function readPidRecord(pidFile: string, legacyNeedles: string[]): PidRecord | undefined {
+function readPidRecord(pidFile: string, legacyPatterns: RegExp[]): PidRecord | undefined {
   // Before identities were recorded the file held only the pid.
   const legacy = /^(\d+)\s*$/.exec(readText(pidFile) ?? '');
   if (legacy !== null) {
     const pid = Number(legacy[1]);
-    return pid > 1 ? { pid, needles: legacyNeedles } : undefined;
+    return pid > 1 ? { pid, needles: legacyPatterns } : undefined;
   }
   const identity = readPidFile(pidFile);
   return identity === undefined ? undefined : { pid: identity.pid, startTime: identity.startTime, needles: [identity.needle] };
 }
 
 /**
- * Whether the recorded group is still this checkout's coordinator. A live
- * leader must keep its start time (when recorded) and a cmdline naming the
- * checkout. A dead one (gone, or a zombie) leaves it to the members: Linux
- * never reuses a pid while a group with that id exists, so a member naming
- * the checkout is the orphan tsx forked.
+ * Whether the recorded group is still a coordinator from this checkout directory:
+ * a leader whose stat is readable (zombie too) must keep its recorded start time;
+ * a live leader must name the directory, else some member must (tsx's fork).
  */
 function stillOurs(record: PidRecord, procRoot: string): boolean {
   const names = (pid: number): boolean => record.needles.some((needle) => cmdlineIncludes(pid, needle, procRoot));
   const startTime = processStartTime(record.pid, procRoot);
-  if (startTime !== undefined && !isZombie(record.pid, procRoot)) {
-    return (record.startTime === undefined || startTime === record.startTime) && names(record.pid);
-  }
+  if (startTime !== undefined && record.startTime !== undefined && startTime !== record.startTime) return false;
+  if (startTime !== undefined && !isZombie(record.pid, procRoot)) return names(record.pid);
   return groupMembers(record.pid, procRoot).some(names);
 }
 
-/** Where this checkout's coordinators run from: its ref cache, and FC_COORDINATOR_DIR when set. */
-export function coordinatorDirs(env: Env): string[] {
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The tsx paths this checkout's coordinators run with: under its ref cache, and under FC_COORDINATOR_DIR when set. */
+export function legacyCoordinatorPatterns(env: Env): RegExp[] {
+  const tsx = escapeRegExp(path.join(path.sep, 'node_modules', 'tsx', path.sep));
   const dir = env['FC_COORDINATOR_DIR'];
-  return [CACHE_DIR, ...(dir === undefined || dir === '' ? [] : [dir])].map((d) => path.join(d, path.sep));
+  return [
+    new RegExp(`${escapeRegExp(path.join(CACHE_DIR, 'fc-coordinator-'))}[^${escapeRegExp(path.sep)}]+${tsx}`),
+    ...(dir === undefined || dir === '' ? [] : [new RegExp(escapeRegExp(path.join(dir, 'node_modules', 'tsx', path.sep)))]),
+  ];
 }
 
 export interface ReapOptions {
@@ -384,8 +387,8 @@ export interface ReapOptions {
   procRoot?: string;
   /** Sends every signal and liveness probe. */
   kill?: Signaller;
-  /** Directories a legacy plain-integer pid file's coordinator may run from (coordinatorDirs). */
-  legacyNeedles?: string[];
+  /** What a legacy plain-integer pid file's coordinator runs with (legacyCoordinatorPatterns). */
+  legacyPatterns?: RegExp[];
 }
 
 /**
@@ -398,9 +401,9 @@ export async function reapCoordinator(
   pidFile: string,
   options: ReapOptions = {},
 ): Promise<{ pid: number; outcome: ReapOutcome } | undefined> {
-  const { graceMs = 12_000, killWaitMs = 5_000, procRoot = '/proc', kill = killSignaller, legacyNeedles = [] } = options;
+  const { graceMs = 12_000, killWaitMs = 5_000, procRoot = '/proc', kill = killSignaller, legacyPatterns = [] } = options;
   if (!existsSync(pidFile)) return undefined;
-  const record = readPidRecord(pidFile, legacyNeedles);
+  const record = readPidRecord(pidFile, legacyPatterns);
   if (record === undefined) {
     rmSync(pidFile, { force: true });
     return undefined;
@@ -409,9 +412,9 @@ export async function reapCoordinator(
   let outcome: ReapOutcome = 'gone';
   if (stillOurs(record, procRoot) && signalGroup(pid, 'SIGTERM', kill)) {
     outcome = 'stopped';
-    if (!(await waitGroupGone(pid, graceMs, kill))) {
+    if (!(await waitGroupGone(pid, graceMs, kill, procRoot))) {
       signalGroup(pid, 'SIGKILL', kill);
-      outcome = (await waitGroupGone(pid, killWaitMs, kill)) ? 'killed' : 'stuck';
+      outcome = (await waitGroupGone(pid, killWaitMs, kill, procRoot)) ? 'killed' : 'stuck';
     }
   }
   if (outcome !== 'stuck') rmSync(pidFile, { force: true });

@@ -98,7 +98,9 @@ describe('stack:up --detach', () => {
     const result = await run(stateDir, 'ok');
     expect(result).toMatchObject({ ok: true, adopted: false });
     const pid = (result as { state: StackState }).state.pid;
-    closers.push(() => void process.kill(pid, 'SIGTERM'));
+    const kill = ownSignaller();
+    kill.own(pid);
+    closers.push(() => void kill(pid, 'SIGTERM'));
     expect(pid).not.toBe(process.pid);
     expect(isAlive(pid)).toBe(true);
   });
@@ -200,11 +202,31 @@ describe('stack:up in the foreground, interrupted twice', () => {
       expect(lines).toEqual([expect.stringMatching(new RegExp(`^${first} during startup: stopping once it is up`))]);
       signals.emit(second);
       expect(exits).toEqual([130]);
-      expect(lines.at(-1)).toMatch(new RegExp(`${second} again during startup: exiting now.*stack:down`));
+      expect(lines.at(-1)).toMatch(new RegExp(`${second} again during startup: exiting now without teardown`));
+      expect(lines.at(-1)).toContain("`npm run stack:down` stops the coordinator; testcontainers' Ryuk removes the containers once no testcontainers client remains");
       resolveStart();
       await up;
       expect(stopped).toBe(0);
     }
+  });
+
+  it('never exits 130 or logs a startup line for signals after it is up, even while the teardown runs', async () => {
+    const signals = new EventEmitter();
+    const exits: number[] = [];
+    const lines: string[] = [];
+    let finishStop!: () => void;
+    const stopping = new Promise<void>((resolve) => (finishStop = resolve));
+    await upForeground(
+      { stateDir: '/s', log: (line) => lines.push(line) },
+      { start: async (options) => ({ state: { origin: options.stateDir }, stop: () => stopping }) as unknown as Stack, signals, exit: (code) => void exits.push(code) },
+    );
+    signals.emit('SIGINT');
+    signals.emit('SIGTERM');
+    expect(exits).toEqual([]);
+    finishStop();
+    await waitFor(() => exits.length > 0);
+    expect(exits.every((code) => code === 0)).toBe(true);
+    expect(lines.filter((line) => line.includes('during startup'))).toEqual([]);
   });
 });
 
@@ -257,10 +279,16 @@ describe('stack:down', () => {
   it('signals the recorded stack pid only through the injected signaller', async () => {
     const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 4242, argv: ['node', 'cli.ts', 'up'] } });
     const stateDir = silentStack(FAKE_PID, 4242);
-    const kill = fakeSignaller();
-    expect(await stackDown(stateDir, { graceMs: 300, procRoot, kill })).toEqual({ ok: true, lines: ['stack is down'] });
-    expect(kill.calls[0]).toEqual({ target: FAKE_PID, signal: 'SIGTERM' });
-    expect(kill.calls.every((c) => c.target === FAKE_PID)).toBe(true);
+    // Alive at the first liveness probe, gone from the second on.
+    let probes = 0;
+    const kill = fakeSignaller((_target, signal) => signal === 0 && probes++ === 0);
+    expect(await stackDown(stateDir, { graceMs: 5_000, procRoot, kill })).toEqual({ ok: true, lines: ['stack is down'] });
+    expect(kill.calls).toEqual([
+      { target: FAKE_PID, signal: 'SIGTERM' },
+      { target: FAKE_PID, signal: 0 },
+      { target: FAKE_PID, signal: 0 },
+      { target: FAKE_PID, signal: 0 },
+    ]);
   });
 
   it('never signals a stack pid whose recorded start time no longer matches: pid reuse guard', async () => {
@@ -304,7 +332,8 @@ describe('stack:down', () => {
     expect(result.ok).toBe(true);
     expect(result.lines).toEqual([`coordinator pid ${pid} outlived its stack: stopped`, 'stack is down']);
     expect(kill.calls[0]).toEqual({ target: -pid, signal: 'SIGTERM' });
-    expect(orphan.running()).toBe(false);
+    // The leader may still be a zombie this process has not reaped yet.
+    await waitFor(() => !orphan.running());
     expect(await answers(port)).toBe(false);
   });
 

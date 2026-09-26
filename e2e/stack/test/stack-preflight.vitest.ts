@@ -1,6 +1,6 @@
-// Where startStack runs its pre-flight: before the coordinator checkout and
-// before any container. The starters are spies here, so a regression that
-// moves the pre-flight later fails on the spy instead of starting Docker.
+// Where startStack runs its pre-flight: the port refusal first, with no side
+// effects, then the log rotation, both before the checkout and any container.
+// The starters are spies, so moving either step later fails on a spy.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -36,14 +36,20 @@ describe('stack start-up pre-flight', () => {
     for (const close of closers.splice(0)) await close();
   });
 
-  it('refuses a held coordinator port before any checkout or container starts, keeping the last log as .1', async () => {
-    const coordinatorPort = await freePort();
-    const squatter = await squat(coordinatorPort);
-    closers.push(() => squatter.close());
+  const seededState = (): { stateDir: string; log: string } => {
     const stateDir = mkdtempSync(path.join(tmpdir(), 'stack-preflight-'));
     const log = path.join(stateDir, 'logs', 'coordinator.log');
     mkdirSync(path.dirname(log), { recursive: true });
     writeFileSync(log, 'the previous run\n');
+    writeFileSync(`${log}.1`, 'an older run\n');
+    return { stateDir, log };
+  };
+
+  it('refuses a held coordinator port before any checkout or container starts, touching no log', async () => {
+    const coordinatorPort = await freePort();
+    const squatter = await squat(coordinatorPort);
+    closers.push(() => squatter.close());
+    const { stateDir, log } = seededState();
     const lines: string[] = [];
 
     const outcome = await startStack({ portBase: coordinatorPort - 2, stateDir, log: (line) => lines.push(line) }).then(
@@ -56,7 +62,30 @@ describe('stack start-up pre-flight', () => {
     expect(vi.mocked(startPostgres)).not.toHaveBeenCalled();
     expect(vi.mocked(startWeb)).not.toHaveBeenCalled();
     expect(lines).toEqual([]);
-    expect(readFileSync(`${log}.1`, 'utf8')).toBe('the previous run\n');
-    expect(existsSync(log)).toBe(false);
+    // A refused start may be this checkout's own live stack: its log stays put.
+    expect(readFileSync(log, 'utf8')).toBe('the previous run\n');
+    expect(readFileSync(`${log}.1`, 'utf8')).toBe('an older run\n');
+    const fresh = path.join(mkdtempSync(path.join(tmpdir(), 'stack-preflight-')), 'state');
+    await expect(startStack({ portBase: coordinatorPort - 2, stateDir: fresh, log: () => {} })).rejects.toThrow(/already in use/);
+    expect(existsSync(fresh)).toBe(false);
+  });
+
+  it('rotates the last coordinator log to .1 before the checkout, once the port is free', async () => {
+    const coordinatorPort = await freePort();
+    const { stateDir, log } = seededState();
+    const seen: Array<{ current: boolean; previous: string }> = [];
+    vi.mocked(prepareCheckout).mockImplementationOnce(() => {
+      seen.push({ current: existsSync(log), previous: readFileSync(`${log}.1`, 'utf8') });
+      throw new Error('stopped at the checkout');
+    });
+
+    const outcome = await startStack({ portBase: coordinatorPort - 2, stateDir, log: () => {} }).then(
+      () => 'resolved',
+      (err: Error) => err.message,
+    );
+
+    expect(outcome).toBe('stopped at the checkout');
+    expect(seen).toEqual([{ current: false, previous: 'the previous run\n' }]);
+    expect(vi.mocked(startPostgres)).not.toHaveBeenCalled();
   });
 });

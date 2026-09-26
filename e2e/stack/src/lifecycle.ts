@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { readStackState, stackClient } from './client.js';
-import { coordinatorDirs, reapCoordinator, type Env } from './coordinator.js';
+import { legacyCoordinatorPatterns, reapCoordinator, type Env } from './coordinator.js';
 import { STACK_ROOT } from './paths.js';
 import { killSignaller, processStartTime, type Signaller } from './procs.js';
 import { coordinatorPidFile, startStack, type Stack, type StackOptions, type StackState } from './stack.js';
@@ -124,7 +124,7 @@ export async function upForeground(options: StackOptions, deps: ForegroundDeps =
   const log = options.log ?? ((line: string) => console.error(`[stack] ${line}`));
   // Registered before start() begins: a first signal during the (often slow)
   // startup defers to a clean stop once it is up; a second exits at once,
-  // leaving what started to `stack:down`.
+  // without teardown.
   let signaled = 0;
   let up = false;
   // SIGHUP too: the coordinator has its own session, so a closed terminal no
@@ -137,7 +137,10 @@ export async function upForeground(options: StackOptions, deps: ForegroundDeps =
       if (signaled === 1) {
         log(`${sig} during startup: stopping once it is up; send it again to exit now`);
       } else {
-        log(`${sig} again during startup: exiting now without teardown; run \`npm run stack:down\` to stop what started`);
+        log(
+          `${sig} again during startup: exiting now without teardown; ` +
+            "`npm run stack:down` stops the coordinator; testcontainers' Ryuk removes the containers once no testcontainers client remains",
+        );
         exit(130);
       }
     });
@@ -208,7 +211,7 @@ export async function stackDown(stateDir: string, options: DownOptions = {}): Pr
   const reaped = await reapCoordinator(coordinatorPidFile(stateDir), {
     procRoot,
     kill,
-    legacyNeedles: coordinatorDirs(options.env ?? process.env),
+    legacyPatterns: legacyCoordinatorPatterns(options.env ?? process.env),
   });
   const orphan = reaped !== undefined && reaped.outcome !== 'gone';
   if (orphan) lines.push(`coordinator pid ${reaped.pid} outlived its stack: ${reaped.outcome}`);

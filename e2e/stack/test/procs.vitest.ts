@@ -125,6 +125,13 @@ describe('process facts', () => {
     expect(cmdlineIncludes(100, 'nonesuch', root)).toBe(false);
     expect(cmdlineIncludes(999, 'server.js', root)).toBe(false);
   });
+
+  it('matches a pattern across the NUL-joined cmdline', () => {
+    const root = fakeProc();
+    expect(cmdlineIncludes(100, /^node server\.js/, root)).toBe(true);
+    expect(cmdlineIncludes(100, /^server/, root)).toBe(false);
+    expect(cmdlineIncludes(999, /server/, root)).toBe(false);
+  });
 });
 
 describe('process identity', () => {
@@ -189,6 +196,22 @@ describe('process groups', () => {
     ]);
   });
 
+  it('calls a group gone once every member it can read is a zombie, though kill(-pgid, 0) still answers', async () => {
+    const kill = fakeSignaller(() => true);
+    const zombies = fakeProcRoot({
+      [FAKE_PID]: { start: 1, state: 'Z', argv: [] },
+      [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 2, state: 'Z', argv: [] },
+    });
+    expect(await waitGroupGone(FAKE_PID, 5_000, kill, zombies)).toBe(true);
+    const oneLive = fakeProcRoot({
+      [FAKE_PID]: { start: 1, state: 'Z', argv: [] },
+      [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 2, argv: ['live'] },
+    });
+    expect(await waitGroupGone(FAKE_PID, 100, kill, oneLive)).toBe(false);
+    // Members this user cannot read prove nothing: still waiting.
+    expect(await waitGroupGone(FAKE_PID, 100, kill, fakeProcRoot({}))).toBe(false);
+  });
+
   it('sees a group while it lives, signals it, and waits for it to go', async () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
     const pgid = child.pid as number;
@@ -196,7 +219,8 @@ describe('process groups', () => {
     expect(await waitGroupGone(pgid, 100)).toBe(false);
     expect(signalGroup(pgid, 'SIGTERM')).toBe(true);
     expect(await waitGroupGone(pgid, 5_000)).toBe(true);
-    expect(groupAlive(pgid)).toBe(false);
+    // Gone means no live member; the zombie lasts until this process reaps it.
+    await waitFor(() => !groupAlive(pgid));
     expect(signalGroup(pgid, 'SIGTERM')).toBe(false);
   });
 });

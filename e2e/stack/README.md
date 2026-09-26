@@ -21,8 +21,9 @@ listening; the next `up` refuses its port and names the process and the checkout
 to run `stack:down` in, and `stack:down` stops it. `stack:down` signals only a
 group it can still prove is this checkout's coordinator, including one whose
 leader died and left tsx's forked node holding the port. Ctrl-C during startup
-stops the stack once it is up; a second Ctrl-C exits at once (status 130) and
-leaves the rest to `stack:down`.
+stops the stack once it is up; a second Ctrl-C exits at once (status 130)
+without teardown: `stack:down` stops the coordinator, and testcontainers' Ryuk
+removes the containers once no testcontainers client remains.
 
 Process identity reads `/proc`, so it is Linux-only. Elsewhere `up` warns that
 it cannot record the coordinator, and `stack:down` cannot stop one a crashed

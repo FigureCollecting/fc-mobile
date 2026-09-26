@@ -92,11 +92,12 @@ export function groupMembers(pgid: number, procRoot = '/proc'): number[] {
   return entries.filter((e) => /^\d+$/.test(e)).map(Number).filter((pid) => processGroup(pid, procRoot) === pgid);
 }
 
-/** Whether pid's cmdline contains needle as a plain substring (NUL args joined by spaces). */
-export function cmdlineIncludes(pid: number, needle: string, procRoot = '/proc'): boolean {
+/** Whether pid's cmdline (NUL args joined by spaces) contains needle as a plain substring, or matches it as a pattern. */
+export function cmdlineIncludes(pid: number, needle: string | RegExp, procRoot = '/proc'): boolean {
   const cmdline = read(() => readFileSync(path.join(procRoot, String(pid), 'cmdline'), 'utf8'));
   if (cmdline === undefined) return false;
-  return cmdline.split('\0').join(' ').includes(needle);
+  const joined = cmdline.split('\0').join(' ');
+  return typeof needle === 'string' ? joined.includes(needle) : needle.test(joined);
 }
 
 /** The target of /proc/<pid>/cwd; undefined when unreadable (gone, or no /proc). */
@@ -146,10 +147,16 @@ export function signalGroup(pgid: number, signal: NodeJS.Signals, kill: Signalle
   return isGroup(pgid) && kill(-pgid, signal);
 }
 
-/** Resolves true once the group is gone, false when the timeout passes first. */
-export async function waitGroupGone(pgid: number, timeoutMs: number, kill: Signaller = killSignaller): Promise<boolean> {
+// Under a pid 1 that never reaps, exited members stay zombies and kill(-pgid, 0) still succeeds.
+const allZombies = (pgid: number, procRoot: string): boolean => {
+  const members = groupMembers(pgid, procRoot);
+  return members.length > 0 && members.every((pid) => isZombie(pid, procRoot));
+};
+
+/** Resolves true once the group is gone or only zombies, false when the timeout passes first. */
+export async function waitGroupGone(pgid: number, timeoutMs: number, kill: Signaller = killSignaller, procRoot = '/proc'): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (groupAlive(pgid, kill)) {
+  while (groupAlive(pgid, kill) && !allZombies(pgid, procRoot)) {
     if (Date.now() >= deadline) return false;
     await new Promise((r) => setTimeout(r, 50));
   }

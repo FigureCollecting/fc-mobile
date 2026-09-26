@@ -8,6 +8,8 @@ import {
   coordinatorEnv,
   DEFAULT_COORDINATOR_REF,
   detectSpineWire,
+  holderOrigin,
+  legacyCoordinatorPatterns,
   prepareCheckout,
   reapCoordinator,
   refuseIfPortHeld,
@@ -16,7 +18,7 @@ import {
   startCoordinator,
   type CoordinatorProcess,
 } from '../src/coordinator.js';
-import { STACK_ROOT } from '../src/paths.js';
+import { CACHE_DIR, STACK_ROOT } from '../src/paths.js';
 import { portFree, processStartTime } from '../src/procs.js';
 import {
   answers,
@@ -372,6 +374,38 @@ describe('reaping a coordinator whose stack is gone', () => {
     }
   });
 
+  it('never scans the members of a zombie leader whose start time moved on: the pid was reused', async () => {
+    const procRoot = fakeProcRoot({
+      [FAKE_PID]: { start: 111, state: 'Z', argv: [] },
+      [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 1_000, argv: forkedArgv },
+    });
+    const kill = fakeSignaller();
+    const file = record('zombie-reused.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill })).toEqual({ pid: FAKE_PID, outcome: 'gone' });
+    expect(kill.calls).toEqual([]);
+  });
+
+  it('calls a group gone once every member is a zombie, even while kill(-pgid, 0) still answers', async () => {
+    const procRoot = fakeProcRoot({
+      [FAKE_PID]: { start: 999, argv: leaderArgv },
+      [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 1_000, argv: forkedArgv },
+    });
+    // Under a pid 1 that never reaps, SIGTERM leaves zombies that still count for kill(2).
+    const kill = fakeSignaller((_target, signal) => {
+      if (signal === 'SIGTERM') {
+        for (const pid of [FAKE_PID, FAKE_PID + 1]) {
+          const stat = path.join(procRoot, String(pid), 'stat');
+          writeFileSync(stat, readFileSync(stat, 'utf8').replace(') S ', ') Z '));
+        }
+      }
+      return true;
+    });
+    const file = record('zombies.pid', { pid: FAKE_PID, startTime: 999, needle: NEEDLE });
+    expect(await reapCoordinator(file, { procRoot, kill, graceMs: 2_000 })).toEqual({ pid: FAKE_PID, outcome: 'stopped' });
+    expect(kill.calls.filter((c) => c.signal !== 0)).toEqual([{ target: -FAKE_PID, signal: 'SIGTERM' }]);
+    expect(existsSync(file)).toBe(false);
+  });
+
   it("leaves a leaderless group alone when no member names this checkout's coordinator", async () => {
     const procRoot = fakeProcRoot({ [FAKE_PID + 1]: { pgrp: FAKE_PID, start: 1_000, argv: ['node', '/elsewhere/worker.js'] } });
     const kill = fakeSignaller();
@@ -393,18 +427,26 @@ describe('reaping a coordinator whose stack is gone', () => {
     expect(existsSync(file)).toBe(true);
   });
 
-  it('checks a legacy plain-integer pid file against the coordinator directories before signalling', async () => {
-    const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv: leaderArgv } });
-    const foreign = fakeSignaller();
-    const file = record('legacy.pid', `${FAKE_PID}\n`);
-    expect(await reapCoordinator(file, { procRoot, kill: foreign, legacyNeedles: ['/checkouts/other/'] })).toEqual({ pid: FAKE_PID, outcome: 'gone' });
-    expect(foreign.calls).toEqual([]);
-    expect(existsSync(file)).toBe(false);
+  it("checks a legacy plain-integer pid file against this checkout's tsx paths before signalling", async () => {
+    const legacyPatterns = legacyCoordinatorPatterns({ FC_COORDINATOR_DIR: '/work/fc-coordinator-wk05' });
+    const reap = async (argv: string[]) => {
+      const procRoot = fakeProcRoot({ [FAKE_PID]: { start: 999, argv } });
+      const kill = obliging();
+      const file = record('legacy.pid', `${FAKE_PID}\n`);
+      const result = await reapCoordinator(file, { procRoot, kill, legacyPatterns });
+      return { outcome: result?.outcome, calls: kill.calls, kept: existsSync(file) };
+    };
+    const stopped = { outcome: 'stopped', calls: [{ target: -FAKE_PID, signal: 'SIGTERM' }, { target: -FAKE_PID, signal: 0 }], kept: false };
+    const untouched = { outcome: 'gone', calls: [], kept: false };
 
-    const kill = obliging();
-    record('legacy.pid', `${FAKE_PID}\n`);
-    expect(await reapCoordinator(file, { procRoot, kill, legacyNeedles: ['/checkouts/other/', NEEDLE] })).toEqual({ pid: FAKE_PID, outcome: 'stopped' });
-    expect(kill.calls[0]).toEqual({ target: -FAKE_PID, signal: 'SIGTERM' });
+    expect(await reap(['node', `${CACHE_DIR}/fc-coordinator-c0db861c7cc7/node_modules/tsx/dist/cli.mjs`, 'src/server.ts'])).toEqual(stopped);
+    expect(await reap(['node', '--require', '/work/fc-coordinator-wk05/node_modules/tsx/dist/preflight.cjs', 'src/server.ts'])).toEqual(stopped);
+    // An editor or a grep with a file of the cache open is not a coordinator.
+    expect(await reap(['vim', `${CACHE_DIR}/fc-coordinator-c0db861c7cc7/src/server.ts`])).toEqual(untouched);
+    expect(await reap(['grep', '-r', 'x', `${CACHE_DIR}/`])).toEqual(untouched);
+    expect(await reap(['vim', '/work/fc-coordinator-wk05/src/server.ts'])).toEqual(untouched);
+    expect(await reap(leaderArgv)).toEqual(untouched);
+    expect(legacyCoordinatorPatterns({ FC_COORDINATOR_DIR: '' })).toHaveLength(1);
   });
 
   it('leaves a real process with the right cmdline but a different start time alive', async () => {
@@ -506,6 +548,16 @@ describe('log rotation', () => {
 });
 
 describe('port refusal', () => {
+  it('tells this checkout from a sibling directory that only shares its prefix', () => {
+    const cache = path.join('e2e', 'stack', 'node_modules', '.cache', 'fc-mobile-stack', 'fc-coordinator-c0db861c7cc7');
+    const here = '/work/fc-mobile';
+    expect(holderOrigin(here, here)).toBeUndefined();
+    expect(holderOrigin(path.join(here, 'e2e', 'stack'), here)).toBeUndefined();
+    expect(holderOrigin(path.join(here, cache), here)).toBeUndefined();
+    expect(holderOrigin('/work/fc-mobile-b', here)).toBe('the coordinator runs from /work/fc-mobile-b');
+    expect(holderOrigin(path.join('/work/fc-mobile-b', cache), here)).toBe('that checkout is /work/fc-mobile-b');
+  });
+
   it('passes silently when the port is free', async () => {
     await expect(refuseIfPortHeld(await freePort())).resolves.toBeUndefined();
   });

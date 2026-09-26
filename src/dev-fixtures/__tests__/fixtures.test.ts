@@ -52,6 +52,40 @@ describe('dev fixture manifest', () => {
     setFixtureMode(false);
     expect(isFixtureMode()).toBe(false);
   });
+
+  it('a production build ignores the localStorage override entirely', () => {
+    setFixtureMode(true);
+    expect(isFixtureMode()).toBe(true);
+
+    // Simulate a real prod build: DEV false and no VITE_ALLOW_FIXTURE_OVERRIDE
+    // (that var only exists in .env.test, which vitest itself loads — a real
+    // `vite build` with no --mode loads .env.production, which never sets it).
+    const wasDev = import.meta.env.DEV;
+    const wasOverride = import.meta.env.VITE_ALLOW_FIXTURE_OVERRIDE;
+    (import.meta.env as { DEV: boolean }).DEV = false;
+    (import.meta.env as { VITE_ALLOW_FIXTURE_OVERRIDE?: string }).VITE_ALLOW_FIXTURE_OVERRIDE = undefined;
+    try {
+      expect(isFixtureMode()).toBe(false);
+    } finally {
+      (import.meta.env as { DEV: boolean }).DEV = wasDev;
+      (import.meta.env as { VITE_ALLOW_FIXTURE_OVERRIDE?: string }).VITE_ALLOW_FIXTURE_OVERRIDE = wasOverride;
+    }
+  });
+
+  it('VITE_ALLOW_FIXTURE_OVERRIDE keeps the override working on a non-dev build (the e2e preview build)', () => {
+    setFixtureMode(true);
+
+    const wasDev = import.meta.env.DEV;
+    (import.meta.env as { DEV: boolean }).DEV = false;
+    // .env.test already sets this for real; asserting the current value
+    // covers the exact e2e-build configuration this exists for.
+    try {
+      expect(import.meta.env.VITE_ALLOW_FIXTURE_OVERRIDE).toBe('true');
+      expect(isFixtureMode()).toBe(true);
+    } finally {
+      (import.meta.env as { DEV: boolean }).DEV = wasDev;
+    }
+  });
 });
 
 describe('fixture stress-test multiplier (?fx=N)', () => {

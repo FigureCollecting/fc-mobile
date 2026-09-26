@@ -4,9 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
 import { ToastContainer } from './components/ui/Toast';
 import { useSyncOnReconnect } from './hooks/useSyncOnReconnect';
-import { useWebSocket } from './hooks/useWebSocket';
-import { useLiveCollection } from './hooks/useLiveCollection';
-import { useLiveNotifications } from './hooks/useLiveNotifications';
 import { useAuthStore } from './stores/auth';
 import { Onboarding } from './pages/Onboarding';
 import { isFixtureMode } from './dev-fixtures/fixtures';
@@ -51,9 +48,6 @@ function AuthRedirect() {
 }
 
 function AppInner() {
-  useWebSocket();
-  useLiveCollection();
-  useLiveNotifications();
   useSyncOnReconnect();
 
   // Onboarding policy:

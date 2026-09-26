@@ -32,11 +32,12 @@ describe('TabBar', () => {
     expect(currentPath()).toBe('/stats');
   });
 
-  it('opens the Add sheet with the sync and import flows', async () => {
+  it('opens the Add sheet with the import flow', async () => {
     const user = userEvent.setup();
     const { currentPath } = renderWithProviders(<TabBar />);
     await user.click(screen.getByRole('button', { name: /add figures/i }));
-    expect(screen.getByText(/sync from mfc/i)).toBeInTheDocument();
+    // MFC Sync has no backend (src/config/features.ts) and is off by default.
+    expect(screen.queryByText(/sync from mfc/i)).not.toBeInTheDocument();
     expect(screen.getByText(/import from csv/i)).toBeInTheDocument();
     await user.click(screen.getByText(/import from csv/i));
     expect(currentPath()).toBe('/import');

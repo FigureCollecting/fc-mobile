@@ -33,14 +33,27 @@ export default defineConfig({
       use: { ...devices['iPhone 15'] },
     },
   ],
-  webServer: {
-    // --mode test loads .env.test (VITE_API_URL=http://localhost:5080/api),
-    // NOT .env.production's real https://figurecollecting.com/api. Without
-    // this, a production build talks to the live backend for real — the
-    // network mocks below are anchored to :5080 and silently never match it.
-    command: 'npm run build -- --mode test && npm run preview -- --port 5173 --strictPort',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  webServer: [
+    {
+      // --mode test loads .env.test (VITE_API_URL=http://localhost:5080/api),
+      // NOT .env.production's real https://figurecollecting.com/api. Without
+      // this, a production build talks to the live backend for real — the
+      // network mocks below are anchored to :5080 and silently never match it.
+      command: 'npm run build -- --mode test && npm run preview -- --port 5173 --strictPort',
+      url: 'http://localhost:5173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      // A genuine `vite build` (no --mode: defaults to production, loading
+      // .env.production) on its own port and outDir, for the one check in
+      // e2e/dead-screens.spec.ts that needs the REAL production config —
+      // specifically, that .env.production never sets VITE_ALLOW_FIXTURE_OVERRIDE
+      // (see src/dev-fixtures/fixtures.ts), unlike the --mode test build above.
+      command: 'npm run build -- --outDir dist-prod-e2e && npm run preview -- --outDir dist-prod-e2e --port 4174 --strictPort',
+      url: 'http://localhost:4174',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });

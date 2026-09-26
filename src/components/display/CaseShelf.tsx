@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'preact/hooks';
+import { useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { VirtualItem } from '@tanstack/virtual-core';
@@ -537,23 +537,30 @@ export function CaseShelf({
   // per-row (tanstack/virtual-core supports variable sizes natively) since
   // DYNAMIC mode means row height isn't a single shared constant anymore.
   const scrollParent = useScrollParent(hostRef);
+  const bayHeights = useMemo(() => rows.map((row) => computeBayHeight(row, plateZone)), [rows, plateZone]);
   const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>({
-    count: rows.length,
+    count: bayHeights.length,
     getScrollElement: () => scrollParent,
-    estimateSize: (index) => computeBayHeight(rows[index] ?? [], plateZone),
+    estimateSize: (index) => bayHeights[index] ?? 0,
     overscan: 3,
   });
+  // virtual-core caches every bay's offset and rebuilds only when the bay
+  // COUNT changes, so a density, labels or width change that keeps the
+  // count left stale offsets (overlapping shelves until a reload).
+  const bayHeightsKey = bayHeights.join(',');
+  useLayoutEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, bayHeightsKey]);
   const virtualBays: VirtualItem[] = scrollParent
     ? rowVirtualizer.getVirtualItems()
-    : rows.reduce<VirtualItem[]>((acc, row, index) => {
-        const size = computeBayHeight(row, plateZone);
+    : bayHeights.reduce<VirtualItem[]>((acc, size, index) => {
         const start = acc.length ? acc[acc.length - 1].end : 0;
         acc.push({ key: index, index, start, end: start + size, size, lane: 0 });
         return acc;
       }, []);
   const totalBaysHeight = scrollParent
     ? rowVirtualizer.getTotalSize()
-    : rows.reduce((sum, row) => sum + computeBayHeight(row, plateZone), 0);
+    : bayHeights.reduce((sum, size) => sum + size, 0);
 
   // Case padding (10px top + 14px bottom) plus the packed bay content —
   // the watermark slot sizes itself off this, not the viewport.
@@ -614,7 +621,7 @@ export function CaseShelf({
         {virtualBays.map((vBay) => {
           const row = rows[vBay.index];
           if (!row) return null;
-          const bayHeightPx = computeBayHeight(row, plateZone);
+          const bayHeightPx = bayHeights[vBay.index];
           // The shelf's own surface Y — where the floor, every figure's
           // feet, and (when labels are on) the plate's own anchor all
           // land — is NOT bayHeightPx itself when labels are on.
@@ -805,11 +812,16 @@ const caseStyles = `
 
   /* The ONE shared preserve-3d subtree for this bay's shelf shell AND its
      figures/plates (see the JSX comment above for why they used to be two
-     separate subtrees and why that broke occlusion). */
+     separate subtrees and why that broke occlusion).
+     pointer-events: none (inherited by the whole subtree) because the
+     full-bay boxes here (.case__row, this element) sit at z=0, in front of
+     every figure pushed back with a negative translateZ, and 3D hit-testing
+     gave them every tap. Only .shelf-figure opts back in. */
   .case__interior3d {
     position: absolute;
     inset: 0;
     transform-style: preserve-3d;
+    pointer-events: none;
   }
 
   /* Back wall: flat, pushed back -caseD. Top-corner ambient occlusion baked
@@ -952,6 +964,7 @@ const caseStyles = `
     top: 0;
     left: 0;
     padding: 0;
+    pointer-events: auto;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;

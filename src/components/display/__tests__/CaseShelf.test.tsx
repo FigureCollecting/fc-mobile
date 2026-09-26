@@ -445,6 +445,35 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       });
     });
 
+    it('restacks the virtualized bays when density or labels change without a remount', async () => {
+      mockScrollViewport(780);
+      const figures = getFixtureFigures(2);
+      const view = (density: 'compact' | 'comfortable', labels: boolean) => (
+        <div class="app-content" style={{ height: '780px', overflow: 'auto' }}>
+          <CaseShelf figures={figures} motif="detolf-dark" density={density} labels={labels} />
+        </div>
+      );
+      /** Each bay must start where the one above it ends. */
+      const expectStacked = (container: HTMLElement) => {
+        const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+        expect(bays.length).toBeGreaterThan(1);
+        let expectedTop = 0;
+        for (const bay of bays) {
+          expect(bay.style.transform).toBe(`translateY(${expectedTop}px)`);
+          expectedTop += parseFloat(bay.style.height);
+        }
+        const caseBox = container.querySelector('.case') as HTMLElement;
+        expect(caseBox.style.height).toBe(`${24 + expectedTop}px`);
+      };
+
+      const { container, rerender } = renderWithProviders(view('compact', false));
+      await waitFor(() => expectStacked(container));
+      rerender(view('comfortable', false));
+      await waitFor(() => expectStacked(container));
+      rerender(view('comfortable', true));
+      await waitFor(() => expectStacked(container));
+    });
+
     it('renders every figure when no .app-content scroll ancestor is present (fallback)', () => {
       const many = getFixtureFigures(20);
       const { container } = renderWithProviders(

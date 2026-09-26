@@ -23,8 +23,9 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # NODE_AUTH_TOKEN is set per step on the install and build steps only, so
+    # the scan and test steps (third-party actions included) run without it.
     env:
-      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
       FC_WEB_IMAGE: fc-mobile-web:ci
       FC_WEB_IMAGE_NEXT: fc-mobile-web:ci-next
       FC_STACK_WEB_IMAGE: fc-mobile-web:ci
@@ -43,11 +44,15 @@ jobs:
 
       - name: Install app dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Install harness dependencies and the pinned coordinator
         run: |
           npm --prefix e2e/stack ci
           npm --prefix e2e/stack run checkout
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build image N and N+1
         # N+1 differs only in its build id: enough for a new sw.js, which is
@@ -61,6 +66,8 @@ jobs:
               --build-arg "VITE_BUILD_ID=${pair#*=}" \
               -t "${pair%%=*}" .
           done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Verify the image runs as a non-root user
         run: |

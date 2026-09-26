@@ -146,9 +146,16 @@ describe('local full stack', () => {
 
   it('takes the whole origin down for a true outage and brings it back', async () => {
     await control.edge.stop();
-    await expect(request(`${stack.state.origin}/`)).rejects.toThrow(/ECONNREFUSED/);
-    expect(await control.health()).toMatchObject({ edge: false });
-    await control.edge.start();
+    try {
+      // localhost may resolve to ::1 and 127.0.0.1; Node then reports an AggregateError.
+      const err = (await request(`${stack.state.origin}/`).catch((e: unknown) => e)) as NodeJS.ErrnoException & {
+        errors?: NodeJS.ErrnoException[];
+      };
+      expect([err.code, ...(err.errors ?? []).map((e) => e.code)]).toContain('ECONNREFUSED');
+      expect(await control.health()).toMatchObject({ edge: false });
+    } finally {
+      await control.edge.start();
+    }
     expect((await request(`${stack.state.origin}/`)).status).toBe(200);
   });
 

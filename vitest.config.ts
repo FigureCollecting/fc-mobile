@@ -24,12 +24,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    // Node >=22's built-in (file-backed, empty-by-default) Web Storage globals
-    // shadow jsdom's real localStorage/sessionStorage before the jsdom
-    // environment ever gets a chance to install them (see jsdom environment
-    // setup, which only overrides globals that aren't already defined).
-    // Disabling Node's implementation for the worker process lets jsdom's
-    // through on every supported Node version.
+    // Node's built-in Web Storage globals shadow jsdom's; jsdom only installs
+    // globals not already defined, so disable Node's.
     execArgv: ['--no-experimental-webstorage'],
     globals: true,
     setupFiles: ['./src/test/setup.ts'],

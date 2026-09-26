@@ -474,6 +474,54 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       await waitFor(() => expectStacked(container));
     });
 
+    it('stands empty shelves at the occupied pitch below a short collection, down to the bottom of the screen', async () => {
+      mockScrollViewport(780);
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('app-content') ? 780 : 0;
+      });
+      const { container } = renderWithProviders(
+        <div class="app-content">
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />
+        </div>,
+      );
+      await waitFor(() => expect(container.querySelectorAll('.case__bay[data-empty="true"]').length).toBeGreaterThan(0));
+      const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+      const heights = bays.map((b) => parseFloat(b.style.height));
+      const occupied = bays.filter((b) => !b.dataset.empty).map((b) => parseFloat(b.style.height));
+      const empty = bays.filter((b) => b.dataset.empty === 'true');
+      const pitch = [...occupied].sort((a, b) => a - b)[Math.floor((occupied.length - 1) / 2)];
+      for (const bay of empty) {
+        expect(parseFloat(bay.style.height)).toBe(pitch);
+        expect(bay.querySelectorAll('.shelf-figure')).toHaveLength(0);
+        // Still a real shelf: the same 3D shell as an occupied one.
+        expect(bay.querySelector('.case__floor3d')).not.toBeNull();
+      }
+      // Empty shelves only BELOW the figures.
+      expect(bays.findIndex((b) => b.dataset.empty === 'true')).toBe(occupied.length);
+      // The case fits the 780 px screen and less than one more shelf would.
+      const caseHeight = parseFloat((container.querySelector('.case') as HTMLElement).style.height);
+      expect(caseHeight).toBe(24 + heights.reduce((s, h) => s + h, 0));
+      expect(caseHeight).toBeLessThanOrEqual(780);
+      expect(caseHeight + pitch).toBeGreaterThan(780);
+    });
+
+    it('keeps the eye-line on the figures when empty shelves extend the case (occupied shelves keep their look)', async () => {
+      mockScrollViewport(780);
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('app-content') ? 780 : 0;
+      });
+      const { container } = renderWithProviders(
+        <div class="app-content">
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" />
+        </div>,
+      );
+      await waitFor(() => expect(container.querySelectorAll('.case__bay[data-empty="true"]').length).toBeGreaterThan(0));
+      const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+      const occupiedSpan = bays.filter((b) => !b.dataset.empty).reduce((s, b) => s + parseFloat(b.style.height), 0);
+      // WORLD_EYE_FOCUS_FRACTION (16.5 %) of the occupied span, as on a case without empty shelves.
+      expect(parseFloat(bays[0].style.getPropertyValue('--bay-origin-y'))).toBeCloseTo(0.165 * occupiedSpan, 6);
+    });
+
     it('renders every figure when no .app-content scroll ancestor is present (fallback)', () => {
       const many = getFixtureFigures(20);
       const { container } = renderWithProviders(

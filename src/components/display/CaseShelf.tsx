@@ -14,6 +14,8 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
+import { useFillHeight } from '../../hooks/useFillHeight';
+import { emptyShelfFill } from './shelfFill';
 import { Style } from '../../styles/Style';
 
 export type { PlacementStrategy };
@@ -34,6 +36,12 @@ export const PLATE_ZONE_PX = 34;
  *  chrome below it — the same "+30" a fixed band already implied, kept as a
  *  constant now that row height is per-row instead of one shared constant. */
 const BAY_MARGIN_PX = 30;
+
+/** .case's own top + bottom padding (10px + 14px, see the CSS below). */
+const CASE_PADDING_Y_PX = 24;
+
+/** The row of an empty shelf appended by emptyShelfFill. */
+const EMPTY_ROW: ShelfRow = [];
 
 /** Small uniform offset (px) every figure/footprint sits forward of the
  *  true z=0 front-glass plane — see figureDepthPlacement's module doc. */
@@ -537,7 +545,18 @@ export function CaseShelf({
   // per-row (tanstack/virtual-core supports variable sizes natively) since
   // DYNAMIC mode means row height isn't a single shared constant anymore.
   const scrollParent = useScrollParent(hostRef);
-  const bayHeights = useMemo(() => rows.map((row) => computeBayHeight(row, plateZone)), [rows, plateZone]);
+  const occupiedBayHeights = useMemo(() => rows.map((row) => computeBayHeight(row, plateZone)), [rows, plateZone]);
+  // Empty shelves below a short collection, down to the bottom of the
+  // screen (see emptyShelfFill). The page above the case moves only when
+  // the figure set changes (filters, chips, sort); resizes re-measure too.
+  const fillHeightPx = useFillHeight(hostRef, scrollParent, figures);
+  const bayHeights = useMemo(
+    () =>
+      fillHeightPx === null
+        ? occupiedBayHeights
+        : [...occupiedBayHeights, ...emptyShelfFill(occupiedBayHeights, fillHeightPx - CASE_PADDING_Y_PX)],
+    [occupiedBayHeights, fillHeightPx],
+  );
   const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>({
     count: bayHeights.length,
     getScrollElement: () => scrollParent,
@@ -564,7 +583,7 @@ export function CaseShelf({
 
   // Case padding (10px top + 14px bottom) plus the packed bay content —
   // the watermark slot sizes itself off this, not the viewport.
-  const caseHeightPx = 24 + totalBaysHeight;
+  const caseHeightPx = CASE_PADDING_Y_PX + totalBaysHeight;
   const watermarkHeightPx = Math.min(Math.round(caseHeightPx * 0.21), 120);
 
   // Bays are positioned RELATIVE to windowStart (the first mounted bay's
@@ -600,7 +619,12 @@ export function CaseShelf({
   // depend on .case__world's box height resolving correctly at all.
   const scrollTopPx = rowVirtualizer.scrollOffset ?? 0;
   const viewportHeightPx = scrollParent ? scrollParent.clientHeight : totalBaysHeight;
-  const visibleSpanPx = Math.max(1, Math.min(viewportHeightPx, totalBaysHeight - scrollTopPx));
+  // The eye tracks the FIGURES: empty shelves below a short collection
+  // lengthen the case, not the span the eye focuses on, so the occupied
+  // shelves keep the look they have without them. Equal to totalBaysHeight
+  // whenever there are no empty shelves.
+  const occupiedSpanPx = occupiedBayHeights.reduce((sum, h) => sum + h, 0);
+  const visibleSpanPx = Math.max(1, Math.min(viewportHeightPx, occupiedSpanPx - scrollTopPx));
   const eyeYAbsolutePx = scrollTopPx + WORLD_EYE_FOCUS_FRACTION * visibleSpanPx;
   const eyeYWorldPx = eyeYAbsolutePx - windowStart;
 
@@ -619,8 +643,7 @@ export function CaseShelf({
           } as Record<string, string>}
         >
         {virtualBays.map((vBay) => {
-          const row = rows[vBay.index];
-          if (!row) return null;
+          const row = rows[vBay.index] ?? EMPTY_ROW;
           const bayHeightPx = bayHeights[vBay.index];
           // The shelf's own surface Y — where the floor, every figure's
           // feet, and (when labels are on) the plate's own anchor all
@@ -647,6 +670,7 @@ export function CaseShelf({
             <section
               key={vBay.key}
               class="case__bay"
+              data-empty={vBay.index >= rows.length ? 'true' : undefined}
               style={{
                 height: `${bayHeightPx}px`,
                 transform: `translateY(${bayWorldOffset}px)`,

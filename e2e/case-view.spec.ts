@@ -112,5 +112,45 @@ for (const size of CASE_VIEWPORTS) {
         expect(layout, `in-page switch to ${query} matches a fresh load`).toEqual(await caseLayout(page));
       }
     });
+
+    test('a short collection fills the screen with empty shelves, without scrolling', async ({ page }) => {
+      await openCase(page, size);
+      const layout = await caseLayout(page);
+      const fit = await page.evaluate(() => {
+        const scroller = document.querySelector('.app-content') as HTMLElement;
+        const box = document.querySelector('.case') as HTMLElement;
+        const visibleBottom =
+          scroller.getBoundingClientRect().top + scroller.clientHeight - parseFloat(getComputedStyle(scroller).paddingBottom);
+        return {
+          gap: Math.round(visibleBottom - box.getBoundingClientRect().bottom),
+          scrolls: scroller.scrollHeight > scroller.clientHeight,
+          empty: Array.from(document.querySelectorAll('.case__bay[data-empty="true"]')).map((bay) => ({
+            height: Math.round(bay.getBoundingClientRect().height),
+            figures: bay.querySelectorAll('.shelf-figure').length,
+          })),
+          occupied: Array.from(document.querySelectorAll('.case__bay:not([data-empty])')).map((bay) =>
+            Math.round(bay.getBoundingClientRect().height),
+          ),
+        };
+      });
+      expectNoOverlap(layout, 'filled case');
+      expect(fit.scrolls, 'the filled case never makes the page scroll').toBe(false);
+      expect(fit.empty.length, 'empty shelves below the figures').toBeGreaterThan(0);
+      const pitch = fit.empty[0].height;
+      for (const bay of fit.empty) {
+        expect(bay).toEqual({ height: pitch, figures: 0 });
+      }
+      expect(pitch).toBeLessThanOrEqual(Math.max(...fit.occupied));
+      expect(pitch).toBeGreaterThanOrEqual(Math.min(...fit.occupied));
+      // Down to the bottom of the screen: less than one more shelf (plus the
+      // page's own bottom padding) is left under the cabinet.
+      expect(fit.gap).toBeGreaterThanOrEqual(0);
+      expect(fit.gap).toBeLessThan(pitch + 16);
+    });
+
+    test('a collection taller than the screen gets no empty shelves', async ({ page }) => {
+      await openCase(page, size, '&fx=12');
+      expect(await page.locator('.case__bay[data-empty="true"]').count()).toBe(0);
+    });
   });
 }

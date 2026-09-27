@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import type { CaseViewport } from './caseViewports';
-import { figurePixels, visibleSpot, overlapSpots, occludingSpots, emptySpotInBox, ownerAt, inBox, inFrontOf } from './figurePixels';
+import { figurePixels, visibleSpot, overlapSpots, occludingSpots, emptySpotInBox, ownerAt, inBox, inFrontOf, solid, EMPTY } from './figurePixels';
 import type { FigurePixels, Spot } from './figurePixels';
 
 /**
@@ -74,10 +74,10 @@ async function tapOpens(page: Page, size: CaseViewport, fp: FigurePixels, spot: 
   await closeViewer(page, size);
 }
 
-/** Taps the pixel at `spot` and expects nothing to open. */
-async function tapOpensNothing(page: Page, size: CaseViewport, fp: FigurePixels, spot: Spot, why: string) {
+/** Taps the pixel at `spot` (at `within` of the way into it) and expects nothing to open. */
+async function tapOpensNothing(page: Page, size: CaseViewport, fp: FigurePixels, spot: Spot, why: string, within = 0.5) {
   await figuresAt(page, fp);
-  await page.touchscreen.tap(spot.x + 0.5, spot.y + 0.5);
+  await page.touchscreen.tap(spot.x + within, spot.y + within);
   await page.waitForTimeout(800);
   await expect(viewer(page, size), why).toHaveCount(0);
   await expect(page.locator('.pswp'), why).toHaveCount(0);
@@ -378,3 +378,67 @@ for (const c of PIXEL_CASES) {
     }
   });
 }
+
+/**
+ * Pixel rows just inside the top of a figure's image that pressing it
+ * (.shelf-figure:active shrinks the figure 1.5 %) moves out from under the
+ * finger, with nothing drawn within 2 px: a real tap there clicks at a point
+ * outside the pressed element. Each spot is the pixel whose top-left corner
+ * the click reports.
+ */
+async function pressBandSpots(page: Page, fp: FigurePixels): Promise<(Spot & { figure: number })[]> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
+  const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+  const drawnBox = (i: number) =>
+    page.evaluate((i) => {
+      const button = document.querySelector(`button.shelf-figure[data-e2e-figure="${i}"]`)!;
+      const r = button.querySelector('.shelf-figure__img, .shelf-figure__silhouette')!.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right };
+    }, i);
+  const spots: (Spot & { figure: number })[] = [];
+  for (let i = 0; i < fp.names.length; i++) {
+    const rest = await drawnBox(i);
+    const { nodeId } = await cdp.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: `button.shelf-figure[data-e2e-figure="${i}"]`,
+    });
+    await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['active'] });
+    const pressed = await drawnBox(i);
+    await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
+    const y = Math.ceil(rest.top);
+    if (y >= pressed.top) continue;
+    for (let x = Math.ceil(rest.left) + 2; x < Math.floor(rest.right) - 2; x++) {
+      if (solid(fp, x, y, EMPTY, 2)) spots.push({ x, y, figure: i });
+    }
+  }
+  await cdp.detach();
+  return spots;
+}
+
+test('a tap in the band a pressed figure shrinks away from resolves by what is drawn there', async ({ page }) => {
+  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover-est')!;
+  await openCase(page, size, '', 'comfortable');
+  const fp = await figurePixels(page);
+  const spots = await pressBandSpots(page, fp);
+  // The press starts on that figure: its image is the element under the finger.
+  const pressedFirst = await page.evaluate(
+    (spots) =>
+      spots.filter(({ x, y, figure }) => {
+        const hit = document.elementFromPoint(x + 0.2, y + 0.2)?.closest<HTMLElement>('button.shelf-figure');
+        return hit?.dataset.e2eFigure === String(figure);
+      }),
+    spots,
+  );
+  expect(pressedFirst.length, 'a pixel in some figure\'s press band with nothing drawn around it').toBeGreaterThan(0);
+  const spot = pressedFirst[Math.floor(pressedFirst.length / 2)];
+  await tapOpensNothing(
+    page,
+    size,
+    fp,
+    spot,
+    `tap at ${spot.x},${spot.y}, in the press band of "${fp.names[spot.figure]}", where no figure is drawn`,
+    0.2,
+  );
+});

@@ -118,26 +118,64 @@ describe('figureAt (the nearest figure drawn under a point)', () => {
     expect(figureAt(pointStack(front.part, back.part), 80, 50)).toBe(back.button);
   });
 
-  it('reads a one-pixel square around the point: a click reports whole pixels and a pressed figure shrinks a little', () => {
-    // 1000x1000 image drawn 100x100: ten source pixels a screen pixel, so the
-    // mask (256 cells) is finer than a screen pixel. A clear gap from x=50
-    // to x=51.5 on screen is inside the slop; one from x=46 to x=55 is not.
-    const narrow = figure('matted');
-    const wide = figure('matted');
-    const back = figure('matted', undefined, undefined, -10);
-    const gapped = (from: number, to: number) => {
-      const data = new Uint8ClampedArray(1000 * 1000 * 4);
-      for (let y = 0; y < 1000; y++) for (let x = 0; x < 1000; x++) if (x < from || x >= to) data[(y * 1000 + x) * 4 + 3] = 255;
-      return computeAlphaMask({ width: 1000, height: 1000, data })!;
-    };
-    for (const img of [narrow.part, wide.part, back.part]) {
-      Object.defineProperty(img, 'naturalWidth', { value: 1000, configurable: true });
-      Object.defineProperty(img, 'naturalHeight', { value: 1000, configurable: true });
-    }
-    const masks: Record<string, AlphaMask> = { [narrow.src]: gapped(500, 515), [wide.src]: gapped(460, 550), [back.src]: OPAQUE };
+  /** A 1000x1000 image drawn 100x100 (ten source pixels a screen pixel, so
+   *  the mask's 256 cells are finer than a screen pixel), drawn only where
+   *  `drawn(x, y)` holds, in screen px from the image's corner. */
+  function fine(drawn: (x: number, y: number) => boolean): AlphaMask {
+    const data = new Uint8ClampedArray(1000 * 1000 * 4);
+    for (let y = 0; y < 1000; y++) for (let x = 0; x < 1000; x++) if (drawn(x / 10, y / 10)) data[(y * 1000 + x) * 4 + 3] = 255;
+    return computeAlphaMask({ width: 1000, height: 1000, data })!;
+  }
+  function fineFigure(z = 0) {
+    const f = figure('matted', rect(0, 0, 100, 100), undefined, z);
+    Object.defineProperty(f.part, 'naturalWidth', { value: 1000, configurable: true });
+    Object.defineProperty(f.part, 'naturalHeight', { value: 1000, configurable: true });
+    return f;
+  }
+
+  it('reads the pixel under the point: a gap in the art narrower than a pixel never swallows a tap', () => {
+    // A click reports whole pixels, up to half a pixel off the finger.
+    const front = fineFigure();
+    const back = fineFigure(-10);
+    const masks: Record<string, AlphaMask> = { [front.src]: fine((x) => x < 50 || x >= 50.8), [back.src]: OPAQUE };
     mockedGetAlphaMask.mockImplementation((src) => masks[src]);
-    expect(figureAt(pointStack(narrow.part, back.part), 50.75, 50)).toBe(narrow.button);
-    expect(figureAt(pointStack(wide.part, back.part), 50.5, 50)).toBe(back.button);
+    for (const x of [49.6, 50, 50.4, 50.8, 51.2]) expect(figureAt(pointStack(front.part, back.part), x, 50, front.button)).toBe(front.button);
+  });
+
+  it('gives a tap in a gap the pixel under the finger fits in to the figure drawn behind it', () => {
+    const front = fineFigure();
+    const back = fineFigure(-10);
+    const masks: Record<string, AlphaMask> = { [front.src]: fine((x) => x < 50 || x >= 52), [back.src]: OPAQUE };
+    mockedGetAlphaMask.mockImplementation((src) => masks[src]);
+    expect(figureAt(pointStack(front.part, back.part), 51, 50, front.button)).toBe(back.button);
+  });
+
+  it('where nothing is drawn under the point, gives the tap to a figure drawn within 1.5 px of it, on every side', () => {
+    const front = fineFigure();
+    const sides: [string, (x: number, y: number) => boolean][] = [
+      ['left', (x) => x < 48.6],
+      ['right', (x) => x >= 51.4],
+      ['above', (_, y) => y < 48.6],
+      ['below', (_, y) => y >= 51.4],
+    ];
+    for (const [side, drawn] of sides) {
+      mockedGetAlphaMask.mockReturnValue(fine(drawn));
+      expect(figureAt(pointStack(front.part), 50, 50, front.button), side).toBe(front.button);
+    }
+  });
+
+  it('opens nothing where the nearest figure art is more than 1.5 px away', () => {
+    const front = fineFigure();
+    mockedGetAlphaMask.mockReturnValue(fine((x, y) => x < 48.4 || x >= 51.6 || y < 48.4 || y >= 51.6));
+    expect(figureAt(pointStack(front.part), 50, 50, front.button)).toBeNull();
+  });
+
+  it('prefers a figure drawn under the point to a nearer one drawn only within 1.5 px of it', () => {
+    const front = fineFigure();
+    const back = fineFigure(-10);
+    const masks: Record<string, AlphaMask> = { [front.src]: fine((x) => x >= 51.2), [back.src]: OPAQUE };
+    mockedGetAlphaMask.mockImplementation((src) => masks[src]);
+    expect(figureAt(pointStack(front.part, back.part), 50, 50, front.button)).toBe(back.button);
   });
 
   it('is null where no figure is drawn at all', () => {
@@ -265,7 +303,7 @@ describe('tapTarget (which figure a click on a figure selects)', () => {
     const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? CLEAR : OPAQUE));
     listing(front.part, back.part);
-    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50, target: front.part })).toBe(back.button);
+    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50 })).toBe(back.button);
   });
 
   it('gives a real tap to the figure it landed on where that figure is drawn, whatever the browser lists first', () => {
@@ -273,37 +311,49 @@ describe('tapTarget (which figure a click on a figure selects)', () => {
     const back = figure('matted', undefined, undefined, -20);
     mockedGetAlphaMask.mockReturnValue(OPAQUE);
     listing(back.part, front.part);
-    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50, target: front.part })).toBe(front.button);
+    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50 })).toBe(front.button);
   });
 
   it('is null for a real tap where no figure is drawn', () => {
     const front = figure('matted');
     listing(front.part);
-    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50, target: front.part })).toBeNull();
+    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50 })).toBeNull();
   });
 
-  it('keeps keyboard and assistive activation (no pointer) on the figure it was sent to', () => {
+  it('resolves a real tap by its point where the pressed figure has shrunk away from it (.shelf-figure:active)', () => {
+    // The press shrinks the figure 1.5 %, so a tap near its edge clicks at a
+    // point outside the element it landed on.
+    const front = figure('matted', rect(200, 200, 100, 100));
+    const back = figure('matted', rect(150, 150, 200, 200), undefined, -10);
+    listing(back.part);
+    expect(tapTarget(front.button, { detail: 1, clientX: 199, clientY: 250 })).toBeNull();
+    mockedGetAlphaMask.mockImplementation((src) => (src === back.src ? OPAQUE : CLEAR));
+    expect(tapTarget(front.button, { detail: 1, clientX: 199, clientY: 250 })).toBe(back.button);
+  });
+
+  it('keeps keyboard and assistive activation (no pointer: detail 0) on the figure it was sent to', () => {
     const front = figure('matted');
     listing(front.part);
-    expect(tapTarget(front.button, { detail: 0, clientX: 50, clientY: 50, target: front.button })).toBe(front.button);
+    expect(tapTarget(front.button, { detail: 0, clientX: 50, clientY: 50 })).toBe(front.button);
+    expect(tapTarget(front.button, { detail: 0, clientX: 0, clientY: 0 })).toBe(front.button);
   });
 
-  it('keeps a click whose point lies outside the element it landed on (a synthetic click)', () => {
+  it('keeps a synthetic click with no position (0, 0) on the figure it was sent to', () => {
     const front = figure('matted', rect(200, 200, 100, 100));
     listing(front.part);
-    expect(tapTarget(front.button, { detail: 1, clientX: 0, clientY: 0, target: front.part })).toBe(front.button);
+    expect(tapTarget(front.button, { detail: 1, clientX: 0, clientY: 0 })).toBe(front.button);
   });
 
-  it('measures a click with no element target against the figure itself', () => {
-    const front = figure('matted', rect(200, 200, 100, 100));
+  it('resolves a click at a point on either axis 0 by its point', () => {
+    const front = figure('matted', rect(0, 0, 100, 100));
     listing(front.part);
-    expect(tapTarget(front.button, { detail: 1, clientX: 0, clientY: 0, target: null })).toBe(front.button);
-    expect(tapTarget(front.button, { detail: 1, clientX: 250, clientY: 250, target: null })).toBeNull();
+    expect(tapTarget(front.button, { detail: 1, clientX: 0, clientY: 50 })).toBeNull();
+    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 0 })).toBeNull();
   });
 
   it('keeps the figure where the browser cannot list the elements at a point', () => {
     const front = figure('matted');
     delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
-    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50, target: front.part })).toBe(front.button);
+    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50 })).toBe(front.button);
   });
 });

@@ -16,12 +16,19 @@ import { alphaMaskDrawnIn, getAlphaMask } from './alphaMargin';
  */
 
 /**
- * Half the side of the square a tap is read over, in CSS px: a click
- * reports whole pixels (up to half a pixel off) and a pressed figure
- * shrinks by 1.5 % (.shelf-figure:active), so a gap in the art narrower
- * than a pixel never swallows a tap.
+ * Half the side of the square read as the pixel under the finger, in CSS
+ * px: a click reports whole pixels, up to half a pixel off the finger, so a
+ * gap in the art narrower than a pixel never swallows a tap.
  */
-export const TAP_SLOP_PX = 1;
+export const TAP_POINT_PX = 0.5;
+
+/**
+ * Half the side of the square read when no figure is drawn under the
+ * finger: the art's outermost pixel ring and narrow gaps in it, and a
+ * pressed figure shrinking 1.5 % (.shelf-figure:active) away from the
+ * finger, still take the tap.
+ */
+export const TAP_SLOP_PX = 1.5;
 
 export interface ClientBox {
   left: number;
@@ -53,17 +60,25 @@ export function imageFraction(
   };
 }
 
-/** Whether figure `button` draws within TAP_SLOP_PX of client point (x, y). */
-function drawsAt(button: Element, x: number, y: number): boolean {
+/** Where a figure is drawn relative to a point: under it, only within TAP_SLOP_PX of it, or neither. */
+const UNDER = 0;
+const NEAR = 1;
+const NOWHERE = 2;
+
+/** Where figure `button` is drawn relative to client point (x, y). */
+function reach(button: Element, x: number, y: number): number {
   const img = button.querySelector<HTMLImageElement>('img.shelf-figure__img:not(.shelf-figure__img--photo)');
-  if (!img) return true; // framed or silhouette: the browser hit its drawn part
+  if (!img) return UNDER; // framed or silhouette: the browser hit its drawn part
   const mask = getAlphaMask(img.getAttribute('src') ?? '');
   const box = img.getBoundingClientRect();
-  const from = imageFraction(box, img.naturalWidth, img.naturalHeight, x - TAP_SLOP_PX, y - TAP_SLOP_PX);
-  const to = imageFraction(box, img.naturalWidth, img.naturalHeight, x + TAP_SLOP_PX, y + TAP_SLOP_PX);
-  // Not measured yet, unreadable, or not decoded: its box, as before.
-  if (!mask || !from || !to) return true;
-  return alphaMaskDrawnIn(mask, from.u, from.v, to.u, to.v);
+  const drawnWithin = (r: number) => {
+    const from = imageFraction(box, img.naturalWidth, img.naturalHeight, x - r, y - r);
+    const to = imageFraction(box, img.naturalWidth, img.naturalHeight, x + r, y + r);
+    // Not measured yet, unreadable, or not decoded: its box, as before.
+    return !mask || !from || !to || alphaMaskDrawnIn(mask, from.u, from.v, to.u, to.v);
+  };
+  if (drawnWithin(TAP_POINT_PX)) return UNDER;
+  return drawnWithin(TAP_SLOP_PX) ? NEAR : NOWHERE;
 }
 
 /** A figure's depth in the case (--fig-z, px; larger is nearer the viewer). */
@@ -81,9 +96,10 @@ function inFront(a: HTMLElement, b: HTMLElement): boolean {
 }
 
 /**
- * The figure drawn at client point (x, y) nearest the viewer, or null.
- * `hit` is the figure the browser's own hit test chose there, which is in
- * front of every other figure at the point.
+ * The figure drawn at client point (x, y) nearest the viewer, or null: one
+ * drawn under the point, else one drawn within TAP_SLOP_PX of it. `hit` is
+ * the figure the browser's own hit test chose there, which is in front of
+ * every other figure at the point.
  */
 export function figureAt(
   doc: Pick<Document, 'elementsFromPoint'>,
@@ -91,38 +107,37 @@ export function figureAt(
   y: number,
   hit: HTMLElement | null = null,
 ): HTMLElement | null {
-  if (hit && drawsAt(hit, x, y)) return hit;
   let best: HTMLElement | null = null;
+  let bestReach = NOWHERE;
+  if (hit) {
+    bestReach = reach(hit, x, y);
+    if (bestReach === UNDER) return hit;
+    if (bestReach === NEAR) best = hit;
+  }
   const asked = new Set<Element>(hit ? [hit] : []);
   for (const el of doc.elementsFromPoint(x, y)) {
     const button = el.closest<HTMLElement>('.shelf-figure');
     if (!button || asked.has(button)) continue;
     asked.add(button);
-    if ((!best || inFront(button, best)) && drawsAt(button, x, y)) best = button;
+    const r = reach(button, x, y);
+    if (r < bestReach || (r === bestReach && r !== NOWHERE && best !== hit && inFront(button, best!))) {
+      best = button;
+      bestReach = r;
+    }
   }
   return best;
-}
-
-function contains(el: Element, x: number, y: number): boolean {
-  const r = el.getBoundingClientRect();
-  return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
 }
 
 /**
  * The figure a click that landed on figure `own` selects. A tap resolves by
  * its point (possibly to another figure, or to none), with `own` (the
- * browser's hit) asked first; keyboard or assistive
- * activation carries no pointer position (detail 0, or a point outside the
- * element it landed on) and stays on `own`.
+ * browser's hit) asked first. Keyboard, assistive and other synthetic
+ * activation carries no pointer position (detail 0, or the point 0, 0) and
+ * stays on `own`.
  */
-export function tapTarget(
-  own: HTMLElement,
-  event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY' | 'target'>,
-): HTMLElement | null {
+export function tapTarget(own: HTMLElement, event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY'>): HTMLElement | null {
   const doc = own.ownerDocument;
-  const landed = event.target instanceof Element ? event.target : own;
-  if (event.detail === 0 || typeof doc.elementsFromPoint !== 'function' || !contains(landed, event.clientX, event.clientY)) {
-    return own;
-  }
+  const positionless = event.detail === 0 || (event.clientX === 0 && event.clientY === 0);
+  if (positionless || typeof doc.elementsFromPoint !== 'function') return own;
   return figureAt(doc, event.clientX, event.clientY, own);
 }

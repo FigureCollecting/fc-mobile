@@ -8,6 +8,11 @@ import { alphaMaskDrawnIn, getAlphaMask } from './alphaMargin';
  * take pointer events only on their drawn part (CSS), so the browser
  * already gets those right; a matted figure's image box is mostly
  * transparent, so its tap is checked against the image's alpha mask.
+ *
+ * Depth: the browser's own hit (a click's target) honours the case's 3D
+ * depth, but elementsFromPoint lists a 3D case's elements in page order,
+ * not depth order (Chromium: last in the page first). So the figure the
+ * browser hit is asked first, and the others are ranked by their depth.
  */
 
 /**
@@ -61,16 +66,41 @@ function drawsAt(button: Element, x: number, y: number): boolean {
   return alphaMaskDrawnIn(mask, from.u, from.v, to.u, to.v);
 }
 
-/** The nearest figure drawn at client point (x, y), or null. */
-export function figureAt(doc: Pick<Document, 'elementsFromPoint'>, x: number, y: number): HTMLElement | null {
-  const asked = new Set<Element>();
+/** A figure's depth in the case (--fig-z, px; larger is nearer the viewer). */
+function depth(button: HTMLElement): number {
+  return parseFloat(button.style.getPropertyValue('--fig-z')) || 0;
+}
+
+/** Whether figure `a` is drawn over figure `b`: nearer the viewer, or as
+ *  near and later in the page (painted over it). */
+function inFront(a: HTMLElement, b: HTMLElement): boolean {
+  const za = depth(a);
+  const zb = depth(b);
+  if (za !== zb) return za > zb;
+  return (b.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
+/**
+ * The figure drawn at client point (x, y) nearest the viewer, or null.
+ * `hit` is the figure the browser's own hit test chose there, which is in
+ * front of every other figure at the point.
+ */
+export function figureAt(
+  doc: Pick<Document, 'elementsFromPoint'>,
+  x: number,
+  y: number,
+  hit: HTMLElement | null = null,
+): HTMLElement | null {
+  if (hit && drawsAt(hit, x, y)) return hit;
+  let best: HTMLElement | null = null;
+  const asked = new Set<Element>(hit ? [hit] : []);
   for (const el of doc.elementsFromPoint(x, y)) {
     const button = el.closest<HTMLElement>('.shelf-figure');
     if (!button || asked.has(button)) continue;
     asked.add(button);
-    if (drawsAt(button, x, y)) return button;
+    if ((!best || inFront(button, best)) && drawsAt(button, x, y)) best = button;
   }
-  return null;
+  return best;
 }
 
 function contains(el: Element, x: number, y: number): boolean {
@@ -80,7 +110,8 @@ function contains(el: Element, x: number, y: number): boolean {
 
 /**
  * The figure a click that landed on figure `own` selects. A tap resolves by
- * its point (possibly to another figure, or to none); keyboard or assistive
+ * its point (possibly to another figure, or to none), with `own` (the
+ * browser's hit) asked first; keyboard or assistive
  * activation carries no pointer position (detail 0, or a point outside the
  * element it landed on) and stays on `own`.
  */
@@ -93,5 +124,5 @@ export function tapTarget(
   if (event.detail === 0 || typeof doc.elementsFromPoint !== 'function' || !contains(landed, event.clientX, event.clientY)) {
     return own;
   }
-  return figureAt(doc, event.clientX, event.clientY);
+  return figureAt(doc, event.clientX, event.clientY, own);
 }

@@ -31,6 +31,9 @@ export interface FigurePixels {
   bay: number[];
   /** Per pixel, row-major: the figure index seen there, EMPTY or MIXED. */
   owner: Int16Array;
+  /** Per pixel, row-major: bit i set where figure i, shown alone, draws
+   *  (so also where a nearer figure hides it). */
+  drawn: Uint32Array;
 }
 
 async function nextFrames(page: Page) {
@@ -68,6 +71,8 @@ async function setFigureCss(page: Page, css: string) {
 
 export async function figurePixels(page: Page): Promise<FigurePixels> {
   await settle(page);
+  const count = await page.locator('button.shelf-figure').count();
+  if (count > 32) throw new Error(`figurePixels reads at most 32 figures, not ${count}`);
   const meta = await page.evaluate(() => {
     const bays = Array.from(document.querySelectorAll('.case__bay'));
     return Array.from(document.querySelectorAll<HTMLElement>('button.shelf-figure')).map((button, i) => {
@@ -114,12 +119,14 @@ export async function figurePixels(page: Page): Promise<FigurePixels> {
         const dist = (a: ImageData, b: ImageData, k: number) =>
           Math.abs(a.data[k] - b.data[k]) + Math.abs(a.data[k + 1] - b.data[k + 1]) + Math.abs(a.data[k + 2] - b.data[k + 2]);
         const owner = new Int16Array(F.width * F.height);
+        const drawnBits = new Uint32Array(F.width * F.height);
         for (let p = 0; p < owner.length; p++) {
           const k = p * 4;
           let best = -1;
           let bestD = Infinity;
           I.forEach((img, i) => {
             if (dist(img, E, k) <= 24) return; // figure i alone does not draw here
+            drawnBits[p] |= 1 << i;
             const d = dist(F, img, k);
             if (d < bestD) {
               bestD = d;
@@ -130,10 +137,13 @@ export async function figurePixels(page: Page): Promise<FigurePixels> {
           if (best < 0) owner[p] = drawn <= 8 ? EMPTY : MIXED;
           else owner[p] = bestD <= 12 && drawn > 24 ? best : MIXED;
         }
-        let bin = '';
-        const bytes = new Uint8Array(owner.buffer);
-        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        return { width: F.width, height: F.height, owner: btoa(bin) };
+        const base64 = (buffer: ArrayBuffer) => {
+          let bin = '';
+          const bytes = new Uint8Array(buffer);
+          for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+          return btoa(bin);
+        };
+        return { width: F.width, height: F.height, owner: base64(owner.buffer), drawn: base64(drawnBits.buffer) };
       },
       {
         full: full.toString('base64'),
@@ -144,6 +154,7 @@ export async function figurePixels(page: Page): Promise<FigurePixels> {
       },
     );
     const raw = Buffer.from(result.owner, 'base64');
+    const drawnRaw = Buffer.from(result.drawn, 'base64');
     return {
       width: result.width,
       height: result.height,
@@ -152,6 +163,7 @@ export async function figurePixels(page: Page): Promise<FigurePixels> {
       z: meta.map((m) => m.z),
       bay: meta.map((m) => m.bay),
       owner: new Int16Array(raw.buffer, raw.byteOffset, raw.byteLength / 2),
+      drawn: new Uint32Array(drawnRaw.buffer.slice(drawnRaw.byteOffset, drawnRaw.byteOffset + drawnRaw.byteLength)),
     };
   } finally {
     await decoder.close();
@@ -259,6 +271,57 @@ export function overlapSpots(fp: FigurePixels, r = 3, reach = 12): OverlapSpot[]
     }
   }
   return [...bestByPair.values()].sort((a, b) => a.edge - b.edge);
+}
+
+export interface OccludingSpot extends Spot {
+  /** The nearer figure the user sees there. */
+  seen: number;
+  /** A figure behind it, drawn at the same pixels. */
+  under: number;
+  /** How far out every pixel around the spot is still `seen` drawn over `under`. */
+  depth: number;
+}
+
+/** Whether figure `figure`, shown alone, draws at pixel (x, y). */
+function drawnBy(fp: FigurePixels, x: number, y: number, figure: number): boolean {
+  if (x < 0 || y < 0 || x >= fp.width || y >= fp.height) return false;
+  return (fp.drawn[y * fp.width + x] & (1 << figure)) !== 0;
+}
+
+/**
+ * Pixels the user sees of a figure standing in front of another figure that
+ * is drawn there too, so the tap belongs to the nearer one whatever order
+ * the browser lists them in. The deepest spot (at least `r`, at most 4 px)
+ * per pair of figures, deepest first.
+ */
+export function occludingSpots(fp: FigurePixels, r = 1): OccludingSpot[] {
+  const best = new Map<string, OccludingSpot>();
+  for (let y = 0; y < fp.height; y++) {
+    for (let x = 0; x < fp.width; x++) {
+      const seen = ownerAt(fp, x, y);
+      if (seen < 0) continue;
+      for (let under = 0; under < fp.names.length; under++) {
+        if (under === seen || !drawnBy(fp, x, y, under) || !inFrontOf(fp, seen, under)) continue;
+        let depth = 0;
+        while (depth < 4) {
+          const d = depth + 1;
+          let all = true;
+          for (let dy = -d; dy <= d && all; dy++) {
+            for (let dx = -d; dx <= d && all; dx++) {
+              all = ownerAt(fp, x + dx, y + dy) === seen && drawnBy(fp, x + dx, y + dy, under);
+            }
+          }
+          if (!all) break;
+          depth = d;
+        }
+        if (depth < r) continue;
+        const key = `${seen}>${under}`;
+        const held = best.get(key);
+        if (!held || depth > held.depth) best.set(key, { x, y, seen, under, depth });
+      }
+    }
+  }
+  return [...best.values()].sort((a, b) => b.depth - a.depth);
 }
 
 /** A pixel inside figure i's box with no figure drawn around it. */

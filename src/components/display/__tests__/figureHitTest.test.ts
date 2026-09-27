@@ -24,10 +24,12 @@ function rect(left: number, top: number, width: number, height: number) {
   return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) } as DOMRect;
 }
 
-/** A figure button like ShelfFigure renders, its drawn part at `box` on screen. */
-function figure(kind: 'matted' | 'framed' | 'silhouette', box = rect(0, 0, 100, 100), src = `${kind}-${Math.random()}.png`) {
+/** A figure button like ShelfFigure renders, its drawn part at `box` on
+ *  screen, `z` px deep (--fig-z: larger is nearer the viewer). */
+function figure(kind: 'matted' | 'framed' | 'silhouette', box = rect(0, 0, 100, 100), src = `${kind}-${Math.random()}.png`, z = 0) {
   const button = document.createElement('button');
   button.className = kind === 'framed' ? 'shelf-figure shelf-figure--framed' : 'shelf-figure';
+  button.style.setProperty('--fig-z', `${z}px`);
   let part: HTMLElement;
   if (kind === 'matted') {
     part = document.createElement('img');
@@ -91,24 +93,24 @@ describe('imageFraction (object-fit: contain, object-position: bottom)', () => {
   });
 });
 
-describe('figureAt (the figure drawn under a point, nearest first)', () => {
+describe('figureAt (the nearest figure drawn under a point)', () => {
   it('passes a tap on a transparent pixel of the nearer figure to the figure drawn behind it', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? CLEAR : OPAQUE));
     expect(figureAt(pointStack(front.part, back.part), 50, 50)).toBe(back.button);
   });
 
   it('gives the tap to the nearer figure where it is drawn', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockReturnValue(OPAQUE);
     expect(figureAt(pointStack(front.part, back.part), 50, 50)).toBe(front.button);
   });
 
   it('reads the mask at the point: the same figure takes one pixel and passes the next', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     // Front drawn only in its left half.
     const leftHalf = mask((x) => x < 5);
     mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? leftHalf : OPAQUE));
@@ -122,7 +124,7 @@ describe('figureAt (the figure drawn under a point, nearest first)', () => {
     // to x=51.5 on screen is inside the slop; one from x=46 to x=55 is not.
     const narrow = figure('matted');
     const wide = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     const gapped = (from: number, to: number) => {
       const data = new Uint8ClampedArray(1000 * 1000 * 4);
       for (let y = 0; y < 1000; y++) for (let x = 0; x < 1000; x++) if (x < from || x >= to) data[(y * 1000 + x) * 4 + 3] = 255;
@@ -140,7 +142,7 @@ describe('figureAt (the figure drawn under a point, nearest first)', () => {
 
   it('is null where no figure is drawn at all', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockReturnValue(CLEAR);
     expect(figureAt(pointStack(front.part, back.part, document.body), 50, 50)).toBeNull();
     expect(figureAt(pointStack(document.body), 50, 50)).toBeNull();
@@ -158,13 +160,13 @@ describe('figureAt (the figure drawn under a point, nearest first)', () => {
     const framed = figure('framed');
     const silhouette = figure('silhouette');
     mockedGetAlphaMask.mockReturnValue(CLEAR);
-    expect(figureAt(pointStack(framed.part, silhouette.part), 50, 50)).toBe(framed.button);
-    expect(figureAt(pointStack(silhouette.part, framed.part), 50, 50)).toBe(silhouette.button);
+    expect(figureAt(pointStack(framed.part, silhouette.part), 50, 50, framed.button)).toBe(framed.button);
+    expect(figureAt(pointStack(framed.part, silhouette.part), 50, 50, silhouette.button)).toBe(silhouette.button);
   });
 
   it('falls back to the whole box while the mask is not measured yet, cannot be read, or the image has not decoded', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockReturnValue(undefined);
     expect(figureAt(pointStack(front.part, back.part), 50, 50)).toBe(front.button);
     mockedGetAlphaMask.mockReturnValue(null);
@@ -183,10 +185,62 @@ describe('figureAt (the figure drawn under a point, nearest first)', () => {
 
   it('skips elements that are not figures and asks each figure once', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? CLEAR : OPAQUE));
     expect(figureAt(pointStack(document.body, front.part, front.button, back.part), 50, 50)).toBe(back.button);
     expect(mockedGetAlphaMask.mock.calls.filter(([src]) => src === front.src)).toHaveLength(1);
+  });
+});
+
+describe('figureAt in a 3D case (the browser lists the figures at a point in page order, not depth order)', () => {
+  // Chromium lists the elements of a 3D rendering context at a point last in
+  // the page first, whatever their depth; its click target does honour depth.
+
+  it('gives the tap to the figure the browser hit where it is drawn, not to the one it lists first', () => {
+    const front = figure('matted', undefined, undefined, 0);
+    const back = figure('matted', undefined, undefined, -20);
+    mockedGetAlphaMask.mockReturnValue(OPAQUE);
+    expect(figureAt(pointStack(back.part, front.part), 50, 50, front.button)).toBe(front.button);
+  });
+
+  it('gives it to a framed photo in front of another framed photo it covers', () => {
+    const front = figure('framed', undefined, undefined, -5);
+    const back = figure('framed', undefined, undefined, -15);
+    expect(figureAt(pointStack(back.part, front.part), 50, 50, front.button)).toBe(front.button);
+  });
+
+  it('passes a transparent pixel of the figure the browser hit to the nearest figure drawn behind it', () => {
+    const hit = figure('matted', undefined, undefined, 0);
+    const middle = figure('matted', undefined, undefined, -10);
+    const far = figure('matted', undefined, undefined, -20);
+    mockedGetAlphaMask.mockImplementation((src) => (src === hit.src ? CLEAR : OPAQUE));
+    expect(figureAt(pointStack(far.part, middle.part, hit.part), 50, 50, hit.button)).toBe(middle.button);
+    expect(figureAt(pointStack(middle.part, far.part, hit.part), 50, 50, hit.button)).toBe(middle.button);
+  });
+
+  it('at equal depth, gives it to the figure later in the page (drawn over the other)', () => {
+    const hit = figure('matted', undefined, undefined, 0);
+    const first = figure('matted', undefined, undefined, -10);
+    const second = figure('matted', undefined, undefined, -10);
+    mockedGetAlphaMask.mockImplementation((src) => (src === hit.src ? CLEAR : OPAQUE));
+    expect(figureAt(pointStack(first.part, second.part, hit.part), 50, 50, hit.button)).toBe(second.button);
+    expect(figureAt(pointStack(second.part, first.part, hit.part), 50, 50, hit.button)).toBe(second.button);
+  });
+
+  it('reads a figure without a depth as depth 0', () => {
+    const hit = figure('matted', undefined, undefined, 0);
+    const flat = figure('matted');
+    flat.button.style.removeProperty('--fig-z');
+    const behind = figure('matted', undefined, undefined, -10);
+    mockedGetAlphaMask.mockImplementation((src) => (src === hit.src ? CLEAR : OPAQUE));
+    expect(figureAt(pointStack(behind.part, flat.part, hit.part), 50, 50, hit.button)).toBe(flat.button);
+  });
+
+  it('orders the figures by depth when the browser hit none of them', () => {
+    const near = figure('matted', undefined, undefined, 0);
+    const far = figure('matted', undefined, undefined, -20);
+    mockedGetAlphaMask.mockReturnValue(OPAQUE);
+    expect(figureAt(pointStack(far.part, near.part), 50, 50)).toBe(near.button);
   });
 });
 
@@ -208,10 +262,18 @@ describe('tapTarget (which figure a click on a figure selects)', () => {
 
   it('resolves a real tap by its point', () => {
     const front = figure('matted');
-    const back = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
     mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? CLEAR : OPAQUE));
     listing(front.part, back.part);
     expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50, target: front.part })).toBe(back.button);
+  });
+
+  it('gives a real tap to the figure it landed on where that figure is drawn, whatever the browser lists first', () => {
+    const front = figure('matted', undefined, undefined, 0);
+    const back = figure('matted', undefined, undefined, -20);
+    mockedGetAlphaMask.mockReturnValue(OPAQUE);
+    listing(back.part, front.part);
+    expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50, target: front.part })).toBe(front.button);
   });
 
   it('is null for a real tap where no figure is drawn', () => {

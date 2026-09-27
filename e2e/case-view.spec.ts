@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import type { CaseViewport } from './caseViewports';
-import { figurePixels, visibleSpot, overlapSpots, emptySpotInBox } from './figurePixels';
+import { figurePixels, visibleSpot, overlapSpots, occludingSpots, emptySpotInBox, ownerAt, inBox, inFrontOf } from './figurePixels';
 import type { FigurePixels, Spot } from './figurePixels';
 
 /**
@@ -210,12 +210,51 @@ for (const size of CASE_VIEWPORTS) {
  * in these layouts (hence radius 1: a pixel whose 3x3 neighbourhood is all
  * the figure behind); `slide` also moves one figure halfway over its
  * neighbour for a deep overlap. Framed photos fill their whole box.
+ *
+ * `occluded`: where a nearer figure is drawn over a farther one, the tap
+ * belongs to the nearer one. The browser lists the elements at a point in
+ * page order, not depth order, so the pairs that matter are a nearer figure
+ * that comes EARLIER in the page than the figure it covers (`earlier`
+ * requires one); `slideUnder` makes such a pair deep by sliding the farther
+ * figure under the nearer one. `pin` is a pixel of `seen` that opened
+ * `under`, the figure behind it, before.
  */
-const PIXEL_CASES = [
+interface PixelCase {
+  label: string;
+  size: string;
+  density: string;
+  query: string;
+  radius?: number;
+  slide?: boolean;
+  slideUnder?: boolean;
+  occluded?: boolean;
+  earlier?: boolean;
+  pin?: { x: number; y: number; seen: string; under: string };
+}
+
+const PIXEL_CASES: PixelCase[] = [
   { label: 'matted, compact, three sets', size: 'fold8-open-landscape-est', density: 'compact', query: '&fx=3', radius: 1 },
   { label: 'silhouettes, compact, three sets', size: 'fold8-open-landscape-est', density: 'compact', query: '&fx=3&fxbranch=silhouette', radius: 1 },
   { label: 'matted, one figure slid over its neighbour', size: 'fold8-cover-est', density: 'compact', query: '', radius: 3, slide: true },
   { label: 'framed photos, compact', size: 'fold8-cover-est', density: 'compact', query: '&fxbranch=framed' },
+  {
+    label: 'framed photos, compact, three sets',
+    size: 'fold8-open-landscape-est',
+    density: 'compact',
+    query: '&fx=3&fxbranch=framed',
+    occluded: true,
+    earlier: true,
+    pin: { x: 757, y: 190, seen: 'Nendoroid Hatsune Miku', under: 'Madoka Kaname' },
+  },
+  {
+    label: 'matted, a farther figure later in the page slid under a nearer one',
+    size: 'fold8-cover-est',
+    density: 'compact',
+    query: '',
+    slideUnder: true,
+    occluded: true,
+    earlier: true,
+  },
 ];
 
 /** Moves the nearer of two neighbouring figures on the first shelf over the
@@ -241,11 +280,36 @@ async function slideNeighbourOver(page: Page): Promise<string> {
   return name;
 }
 
+/** On the first shelf, slides a figure that stands farther back and comes
+ *  later in the page under the centre of the nearer figure just before it;
+ *  returns both accessible names. */
+async function slideFartherUnder(page: Page): Promise<{ front: string; back: string }> {
+  return page.evaluate(() => {
+    const bay = document.querySelector('.case__bay')!;
+    const figures = Array.from(bay.querySelectorAll<HTMLElement>('button.shelf-figure')).map((el) => ({
+      el,
+      x: parseFloat(el.style.getPropertyValue('--fig-x')),
+      z: parseFloat(el.style.getPropertyValue('--fig-z')),
+      w: parseFloat(el.style.width),
+    }));
+    const k = figures.findIndex((front, i) => i + 1 < figures.length && front.z > figures[i + 1].z);
+    if (k < 0) throw new Error('no figure on the first shelf stands in front of the next one');
+    const [front, back] = [figures[k], figures[k + 1]];
+    back.el.dataset.e2eSlid = '1';
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`.shelf-figure[data-e2e-slid]{--fig-x:${front.x + (front.w - back.w) / 2}px !important}`);
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    const name = (el: HTMLElement) => el.querySelector('.sr-only')!.textContent!.trim();
+    return { front: name(front.el), back: name(back.el) };
+  });
+}
+
 for (const c of PIXEL_CASES) {
   const size = CASE_VIEWPORTS.find((v) => v.name === c.size)!;
   test(`tap targets follow the drawn pixels: ${c.label} at ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
     await openCase(page, size, c.query, c.density);
     const slid = c.slide ? await slideNeighbourOver(page) : null;
+    const slidUnder = c.slideUnder ? await slideFartherUnder(page) : null;
     const fp = await figurePixels(page);
 
     if (c.radius !== undefined) {
@@ -268,6 +332,42 @@ for (const c of PIXEL_CASES) {
       const empty = fp.boxes.map((_, i) => emptySpotInBox(fp, i)).find((spot) => spot !== null);
       expect(empty, 'a transparent spot inside some figure box').toBeTruthy();
       await tapOpensNothing(page, size, fp, empty!, `tap at ${empty!.x},${empty!.y} where no figure is drawn`);
+    }
+
+    if (c.pin) {
+      const { x, y, seen, under } = c.pin;
+      const at = ownerAt(fp, x, y);
+      expect(at >= 0 ? fp.names[at] : at, `the pinned pixel ${x},${y} shows "${seen}"`).toBe(seen);
+      // The click lands on the rounded point (x + 1, y + 1), where the
+      // browser also lists the frame of the figure behind.
+      const behind = fp.names.findIndex((name, i) => name === under && inFrontOf(fp, at, i) && inBox(fp.boxes[i], x + 1, y, -1));
+      expect(behind, `"${under}" stands behind "${seen}", its box within a pixel of ${x},${y}`).toBeGreaterThanOrEqual(0);
+      await tapOpens(page, size, fp, { x, y }, seen, `tap on "${seen}" at ${x},${y}, in front of "${under}"`);
+    }
+
+    if (c.occluded) {
+      const spots = occludingSpots(fp);
+      expect(spots.length, 'a nearer figure is drawn over a figure behind it').toBeGreaterThan(0);
+      // The nearer figure comes earlier in the page than the one it covers.
+      const earlier = spots.filter((spot) => spot.seen < spot.under);
+      if (c.earlier) expect(earlier.length, 'a nearer figure earlier in the page covers a later one').toBeGreaterThan(0);
+      if (slidUnder) {
+        expect(
+          earlier.map((spot) => `${fp.names[spot.seen]} over ${fp.names[spot.under]}`),
+          'the slid figure is drawn under the nearer one',
+        ).toContain(`${slidUnder.front} over ${slidUnder.back}`);
+      }
+      const later = spots.filter((spot) => spot.seen > spot.under);
+      for (const spot of [...earlier.slice(0, 3), ...later.slice(0, 1)]) {
+        await tapOpens(
+          page,
+          size,
+          fp,
+          spot,
+          fp.names[spot.seen],
+          `tap on "${fp.names[spot.seen]}" at ${spot.x},${spot.y}, drawn over "${fp.names[spot.under]}" behind it`,
+        );
+      }
     }
 
     // Every figure of the first set still opens from a pixel of its own.

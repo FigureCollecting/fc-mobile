@@ -11,7 +11,7 @@ import type { CaseViewport } from './caseViewports';
  * is involved. Baselines are recorded for the chromium project; refresh
  * them with
  *   npx playwright test e2e/case-screenshots.spec.ts --project=chromium --update-snapshots
- * after an intended visual change (or new measured Fold8 sizes).
+ * after an intended visual change.
  */
 
 test.use({ hasTouch: true, isMobile: true });
@@ -86,7 +86,7 @@ async function hidePlateText(page: Page) {
   });
 }
 
-const VARIANT_SIZES = CASE_VIEWPORTS.filter((v) => v.name === 'fold8-cover-est' || v.name === 'fold8-open-landscape-est');
+const VARIANT_SIZES = CASE_VIEWPORTS.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open');
 
 const VARIANTS = [
   { variant: 'labels', density: 'compact', query: '&labels=1' },

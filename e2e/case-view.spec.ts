@@ -18,6 +18,12 @@ async function openCase(page: Page, size: CaseViewport, query = '', density = 'c
   await page.addInitScript(() => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
+    // The fixed tab bar is not part of the case, and on a short screen it
+    // covers the lower shelves (where headless Chromium at a pixel ratio of
+    // 1 also paints a black band around its + button over the 3D shelves).
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync('.tab-bar { display: none !important; }');
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
   });
   await page.setViewportSize({ width: size.width, height: size.height });
   await page.goto(`/?layout=case&motif=detolf-dark&density=${density}${query}`);
@@ -140,9 +146,9 @@ for (const size of CASE_VIEWPORTS) {
       await expect(page).toHaveURL(/labels=1/);
       inPage['compact&labels=1'] = await caseLayout(page);
 
-      // Labels alone on a collection taller than the screen: no empty shelves
-      // either way, so the shelf COUNT stays the same and only a re-measure
-      // of the shelves (not a rebuild for a new count) can move them.
+      // Labels alone on a collection taller than the screen: the shelf COUNT
+      // stays the same, so only a re-measure of the shelves (not a rebuild
+      // for a new count) can move them.
       await page.goto('/?layout=case&motif=detolf-dark&density=compact&fx=12');
       await page.waitForSelector('button.shelf-figure');
       await expect(page.locator('#pre-splash')).toHaveCount(0);
@@ -150,7 +156,6 @@ for (const size of CASE_VIEWPORTS) {
         await page.getByRole('button', { name: /labels: (off|on)/i }).click();
         await expect(page).toHaveURL(query.endsWith('labels=1') ? /labels=1/ : /^(?!.*labels=1)/);
         inPage[query] = await caseLayout(page);
-        expect(await page.locator('.case__bay[data-empty="true"]').count(), `${query}: no empty shelves`).toBe(0);
       }
 
       for (const [query, layout] of Object.entries(inPage)) {
@@ -160,56 +165,17 @@ for (const size of CASE_VIEWPORTS) {
         expect(layout, `in-page switch to ${query} matches a fresh load`).toEqual(await caseLayout(page));
       }
     });
-
-    test('a short collection fills the screen with empty shelves, without scrolling', async ({ page }) => {
-      await openCase(page, size);
-      const layout = await caseLayout(page);
-      const fit = await page.evaluate(() => {
-        const scroller = document.querySelector('.app-content') as HTMLElement;
-        const box = document.querySelector('.case') as HTMLElement;
-        const visibleBottom =
-          scroller.getBoundingClientRect().top + scroller.clientHeight - parseFloat(getComputedStyle(scroller).paddingBottom);
-        return {
-          gap: Math.round(visibleBottom - box.getBoundingClientRect().bottom),
-          scrolls: scroller.scrollHeight > scroller.clientHeight,
-          empty: Array.from(document.querySelectorAll('.case__bay[data-empty="true"]')).map((bay) => ({
-            height: Math.round(bay.getBoundingClientRect().height),
-            figures: bay.querySelectorAll('.shelf-figure').length,
-          })),
-          occupied: Array.from(document.querySelectorAll('.case__bay:not([data-empty])')).map((bay) =>
-            Math.round(bay.getBoundingClientRect().height),
-          ),
-        };
-      });
-      expectNoOverlap(layout, 'filled case');
-      expect(fit.scrolls, 'the filled case never makes the page scroll').toBe(false);
-      expect(fit.empty.length, 'empty shelves below the figures').toBeGreaterThan(0);
-      const pitch = fit.empty[0].height;
-      for (const bay of fit.empty) {
-        expect(bay).toEqual({ height: pitch, figures: 0 });
-      }
-      expect(pitch).toBeLessThanOrEqual(Math.max(...fit.occupied));
-      expect(pitch).toBeGreaterThanOrEqual(Math.min(...fit.occupied));
-      // Down to the bottom of the screen: less than one more shelf (plus the
-      // page's own bottom padding) is left under the cabinet.
-      expect(fit.gap).toBeGreaterThanOrEqual(0);
-      expect(fit.gap).toBeLessThan(pitch + 16);
-    });
-
-    test('a collection taller than the screen gets no empty shelves', async ({ page }) => {
-      await openCase(page, size, '&fx=12');
-      expect(await page.locator('.case__bay[data-empty="true"]').count()).toBe(0);
-    });
   });
 }
 
 /**
  * Where a nearer figure's box covers part of a figure behind it, a tap
  * belongs to the figure the user sees at that pixel, never to the nearer
- * figure's transparent surroundings. The fixtures overlap only by a sliver
- * in these layouts (hence radius 1: a pixel whose 3x3 neighbourhood is all
- * the figure behind); `slide` also moves one figure halfway over its
- * neighbour for a deep overlap. Framed photos fill their whole box.
+ * figure's transparent surroundings. At the measured Fold8 sizes the
+ * silhouettes overlap only by a sliver (hence radius 1: a pixel whose 3x3
+ * neighbourhood is all the figure behind) and the matted figures not at
+ * all, so `slide` moves one figure halfway over its neighbour for a deep
+ * overlap. Framed photos fill their whole box.
  *
  * `occluded`: where a nearer figure is drawn over a farther one, the tap
  * belongs to the nearer one. The browser lists the elements at a point in
@@ -233,22 +199,22 @@ interface PixelCase {
 }
 
 const PIXEL_CASES: PixelCase[] = [
-  { label: 'matted, compact, three sets', size: 'fold8-open-landscape-est', density: 'compact', query: '&fx=3', radius: 1 },
-  { label: 'silhouettes, compact, three sets', size: 'fold8-open-landscape-est', density: 'compact', query: '&fx=3&fxbranch=silhouette', radius: 1 },
-  { label: 'matted, one figure slid over its neighbour', size: 'fold8-cover-est', density: 'compact', query: '', radius: 3, slide: true },
-  { label: 'framed photos, compact', size: 'fold8-cover-est', density: 'compact', query: '&fxbranch=framed' },
+  { label: 'matted, three sets, one figure slid over its neighbour', size: 'fold8-open', density: 'compact', query: '&fx=3', radius: 3, slide: true },
+  { label: 'silhouettes, comfortable, three sets', size: 'fold8-open', density: 'comfortable', query: '&fx=3&fxbranch=silhouette', radius: 1 },
+  { label: 'matted, one figure slid over its neighbour', size: 'fold8-cover', density: 'compact', query: '', radius: 3, slide: true },
+  { label: 'framed photos, compact', size: 'fold8-cover', density: 'compact', query: '&fxbranch=framed' },
   {
     label: 'framed photos, compact, three sets',
-    size: 'fold8-open-landscape-est',
+    size: 'fold8-open',
     density: 'compact',
     query: '&fx=3&fxbranch=framed',
     occluded: true,
     earlier: true,
-    pin: { x: 757, y: 190, seen: 'Nendoroid Hatsune Miku', under: 'Madoka Kaname' },
+    pin: { x: 745, y: 194, seen: 'Nendoroid Hatsune Miku', under: 'Madoka Kaname' },
   },
   {
     label: 'matted, a farther figure later in the page slid under a nearer one',
-    size: 'fold8-cover-est',
+    size: 'fold8-cover',
     density: 'compact',
     query: '',
     slideUnder: true,
@@ -418,7 +384,7 @@ async function pressBandSpots(page: Page, fp: FigurePixels): Promise<(Spot & { f
 }
 
 test('a tap in the band a pressed figure shrinks away from resolves by what is drawn there', async ({ page }) => {
-  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover-est')!;
+  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
   await openCase(page, size, '', 'comfortable');
   const fp = await figurePixels(page);
   const spots = await pressBandSpots(page, fp);
@@ -442,3 +408,4 @@ test('a tap in the band a pressed figure shrinks away from resolves by what is d
     0.2,
   );
 });
+

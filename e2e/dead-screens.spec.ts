@@ -110,4 +110,14 @@ test.describe('real production build', () => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/login$/, { timeout: 15_000 });
   });
+
+  test('ships no dev fixture art (real cut-outs or synthetic stand-ins) in its precache', async ({ request }) => {
+    const sw = await request.get('/sw.js');
+    expect(sw.ok()).toBe(true);
+    const precachedPngs = (await sw.text()).match(/assets\/[^"']+\.png/g) ?? [];
+    const fixtureArt = precachedPngs.filter((p) =>
+      /assets\/(rem|dark-angel|miku-nendo|madoka|spike|miku-deepsea|ryuuko)-[\w-]+\.png/.test(p),
+    );
+    expect(fixtureArt).toEqual([]);
+  });
 });

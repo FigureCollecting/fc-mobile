@@ -1,14 +1,19 @@
-import { describe, it, expect, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { screen, waitFor, fireEvent } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 
-vi.mock('../alphaMargin', () => ({ useBottomMarginFrac: vi.fn(() => 0), useContactBand: vi.fn(() => null) }));
+vi.mock('../alphaMargin', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../alphaMargin')>()),
+  useBottomMarginFrac: vi.fn(() => 0),
+  useContactBand: vi.fn(() => null),
+  getAlphaMask: vi.fn(() => undefined),
+}));
 
 import { CaseShelf, PLATE_ZONE_PX, DEFAULT_DYNAMIC_COMPARTMENT_MM, DETOLF_PROFILE } from '../CaseShelf';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
-import { useBottomMarginFrac } from '../alphaMargin';
+import { useBottomMarginFrac, getAlphaMask, computeAlphaMask } from '../alphaMargin';
 import { SHELF_BAND } from '../density';
 import { packShelves } from '../packShelves';
 import { resolveRelHeights } from '../sizeResolution';
@@ -164,8 +169,231 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     renderWithProviders(
       <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" onSelect={onSelect} />,
     );
-    await user.click(screen.getByRole('button', { name: FIXTURE_FIGURES[2].name }));
+    // A finger lands on the figure's drawn part; its box takes no taps.
+    await user.click(screen.getByRole('button', { name: FIXTURE_FIGURES[2].name }).firstElementChild!);
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_FIGURES[2], 2);
+  });
+
+  describe('taps follow the drawn pixels, not the figure boxes', () => {
+    const mockedGetAlphaMask = vi.mocked(getAlphaMask);
+    const clear = computeAlphaMask({ width: 1, height: 1, data: [0, 0, 0, 0] })!;
+    const drawn = computeAlphaMask({ width: 1, height: 1, data: [0, 0, 0, 255] })!;
+    const box = { left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    const front = { ...FIXTURE_FIGURES[0], imageUrl: 'front.png' };
+    const back = { ...FIXTURE_FIGURES[1], imageUrl: 'back.png' };
+
+    /** Renders two matted figures whose images overlap at (50, 50), front first in hit order. */
+    function renderOverlap(onSelect: (figure: Figure, index: number) => void) {
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[front, back]} motif="detolf-dark" density="compact" onSelect={onSelect} />,
+      );
+      const imgs = Array.from(container.querySelectorAll('img.shelf-figure__img')) as HTMLImageElement[];
+      for (const img of imgs) {
+        img.getBoundingClientRect = () => box;
+        Object.defineProperty(img, 'naturalWidth', { value: 100, configurable: true });
+        Object.defineProperty(img, 'naturalHeight', { value: 100, configurable: true });
+      }
+      const [frontImg, backImg] = imgs;
+      Object.defineProperty(document, 'elementsFromPoint', { value: () => [frontImg, backImg], configurable: true });
+      return { frontImg, backImg };
+    }
+
+    afterEach(() => {
+      delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+      mockedGetAlphaMask.mockReset();
+      mockedGetAlphaMask.mockReturnValue(undefined);
+    });
+
+    it('a tap on a transparent pixel of the nearer figure selects the figure drawn behind it', () => {
+      mockedGetAlphaMask.mockImplementation((src) => (src === 'front.png' ? clear : drawn));
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(back, 1);
+    });
+
+    it('a tap where no figure is drawn selects nothing', () => {
+      mockedGetAlphaMask.mockReturnValue(clear);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('keyboard activation still selects the focused figure', () => {
+      mockedGetAlphaMask.mockReturnValue(clear);
+      const onSelect = vi.fn();
+      renderOverlap(onSelect);
+      fireEvent.click(screen.getByRole('button', { name: front.name }), { detail: 0 });
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('a click off the figures (the shelf itself) selects nothing', () => {
+      const onSelect = vi.fn();
+      const { container } = renderWithProviders(
+        <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" onSelect={onSelect} />,
+      );
+      fireEvent.click(container.querySelector('.case__bay')!, { detail: 1, clientX: 5, clientY: 5 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('a click the browser sends to the shelf row selects the figure drawn at its point', () => {
+      // Pressed on the nearer figure's box, released on the one behind it
+      // once the press shrank the nearer one (.shelf-figure:active).
+      mockedGetAlphaMask.mockImplementation((src) => (src === 'front.png' ? clear : drawn));
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      fireEvent.click(frontImg.closest('.case__row')!, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(back, 1);
+    });
+
+    it("a tap on the shelf's front edge selects nothing, even over the bottom of a figure", () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg, backImg } = renderOverlap(onSelect);
+      const bay = frontImg.closest('.case__bay')!;
+      for (const edge of ['.case__plinth-lip3d', '.case__plinth3d']) {
+        const el = bay.querySelector(edge)!;
+        expect(getComputedStyle(el).pointerEvents, edge).toBe('auto');
+        Object.defineProperty(document, 'elementsFromPoint', { value: () => [el, frontImg, backImg], configurable: true });
+        fireEvent.click(el, { detail: 1, clientX: 50, clientY: 50 });
+      }
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A primary pointer pressed and released at (x, y), where the browser
+     * hits `landed`. Chromium's touch adjustment sends the pointer events to
+     * a figure nearby (`on`), but leaves their point where the finger was.
+     */
+    function press(on: Element, x: number, y: number, landed: Element, moveTo?: { x: number; y: number }) {
+      const at = { pointerId: 1, isPrimary: true, clientX: x, clientY: y };
+      Object.defineProperty(document, 'elementFromPoint', { value: () => landed, configurable: true });
+      fireEvent.pointerDown(on, at);
+      // By the click, the press has shrunk the figure (.shelf-figure:active) off the point.
+      Object.defineProperty(document, 'elementFromPoint', { value: () => null, configurable: true });
+      if (moveTo) fireEvent.pointerMove(on, { ...at, clientX: moveTo.x, clientY: moveTo.y });
+      fireEvent.pointerUp(on, at);
+    }
+
+    it("a touch that landed on the shelf's front edge selects nothing, though the browser moves its click onto a figure", () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      press(frontImg, 50.5, 105.5, frontImg.closest('.case__bay')!.querySelector('.case__plinth-lip3d')!);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 99 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("a touch on a figure's last row selects it, though the browser sends its click to the shelf's edge", () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const cap = frontImg.closest('.case__bay')!.querySelector('.case__plinth3d')!;
+      press(cap, 50.5, 99.5, frontImg);
+      fireEvent.click(cap, { detail: 1, clientX: 51, clientY: 100 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('a drag selects nothing, and the next tap selects again', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      press(frontImg, 50, 50, frontImg, { x: 50, y: 80 });
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).not.toHaveBeenCalled();
+      press(frontImg, 50, 50, frontImg);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('keyboard activation right after a touch elsewhere still selects the focused figure', () => {
+      mockedGetAlphaMask.mockReturnValue(clear);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const lip = frontImg.closest('.case__bay')!.querySelector('.case__plinth-lip3d')!;
+      press(lip, 50, 105, lip);
+      fireEvent.click(screen.getByRole('button', { name: back.name }), { detail: 0 });
+      expect(onSelect).toHaveBeenCalledWith(back, 1);
+    });
+
+    it('a mouse drag that leaves the case and comes back within reach selects nothing', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const at = { pointerId: 1, isPrimary: true, pointerType: 'mouse', clientX: 50, clientY: 50 };
+      Object.defineProperty(document, 'elementFromPoint', { value: () => frontImg, configurable: true });
+      fireEvent.pointerDown(frontImg, at);
+      // Off the case (up over the page's header) and back, where the case sees no move of its own.
+      fireEvent.pointerMove(document.body, { ...at, clientY: -60 });
+      fireEvent.pointerMove(frontImg, { ...at, clientY: 53 });
+      fireEvent.pointerUp(frontImg, { ...at, clientY: 53 });
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 53 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('a press the browser cancels (a scroll took it) selects nothing', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const at = { pointerId: 1, isPrimary: true, pointerType: 'touch', clientX: 50, clientY: 50 };
+      Object.defineProperty(document, 'elementFromPoint', { value: () => frontImg, configurable: true });
+      fireEvent.pointerDown(frontImg, at);
+      fireEvent.pointerCancel(frontImg, at);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('a click uses up its press: the next click with no press of its own goes by its own point', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const lip = frontImg.closest('.case__bay')!.querySelector('.case__plinth-lip3d')!;
+      press(lip, 50, 105, lip);
+      fireEvent.click(lip, { detail: 1, clientX: 50, clientY: 105 });
+      expect(onSelect).not.toHaveBeenCalled();
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('follows the pointer on the whole page only while the case takes taps, and stops once it is gone', () => {
+      const add = vi.spyOn(document, 'addEventListener');
+      const remove = vi.spyOn(document, 'removeEventListener');
+      try {
+        const followed = (spy: typeof add) => spy.mock.calls.filter(([type]) => String(type).startsWith('pointer')).map(([type, , capture]) => [type, capture]);
+        renderWithProviders(<CaseShelf figures={[front, back]} motif="detolf-dark" density="compact" />).unmount();
+        expect(followed(add)).toEqual([]);
+        const { unmount } = renderWithProviders(<CaseShelf figures={[front, back]} motif="detolf-dark" density="compact" onSelect={vi.fn()} />);
+        const following = [['pointermove', true], ['pointerup', true], ['pointercancel', true]];
+        expect(followed(add)).toEqual(following);
+        unmount();
+        expect(followed(remove)).toEqual(following);
+        const handler = (spy: typeof add, type: string) => spy.mock.calls.find(([t]) => t === type)![1];
+        for (const [type] of following) expect(handler(remove, type as string), String(type)).toBe(handler(add, type as string));
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+      }
+    });
+
+    it('the figure box takes no taps; only its drawn part does', () => {
+      const photo = { ...FIXTURE_FIGURES[2], _id: 'unmatted-photo', imageUrl: 'photo.jpg' };
+      const bare = { ...FIXTURE_FIGURES[3], _id: 'no-image', imageUrl: undefined };
+      const { container } = renderWithProviders(
+        <CaseShelf figures={[front, photo, bare]} motif="detolf-dark" density="compact" />,
+      );
+      for (const button of container.querySelectorAll('button.shelf-figure')) {
+        expect(getComputedStyle(button).pointerEvents).toBe('none');
+      }
+      for (const part of ['.shelf-figure__img', '.shelf-figure__frame', '.shelf-figure__silhouette']) {
+        expect(getComputedStyle(container.querySelector(part)!).pointerEvents, part).toBe('auto');
+      }
+    });
   });
 
   it('carries the watermark slot with a placeholder wordmark by default', () => {
@@ -443,6 +671,35 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         expect(bays.length).toBeGreaterThan(0);
         expect(bays.length).toBeLessThan(40);
       });
+    });
+
+    it('restacks the virtualized bays when density or labels change without a remount', async () => {
+      mockScrollViewport(780);
+      const figures = getFixtureFigures(2);
+      const view = (density: 'compact' | 'comfortable', labels: boolean) => (
+        <div class="app-content" style={{ height: '780px', overflow: 'auto' }}>
+          <CaseShelf figures={figures} motif="detolf-dark" density={density} labels={labels} />
+        </div>
+      );
+      /** Each bay must start where the one above it ends. */
+      const expectStacked = (container: HTMLElement) => {
+        const bays = Array.from(container.querySelectorAll('.case__bay')) as HTMLElement[];
+        expect(bays.length).toBeGreaterThan(1);
+        let expectedTop = 0;
+        for (const bay of bays) {
+          expect(bay.style.transform).toBe(`translateY(${expectedTop}px)`);
+          expectedTop += parseFloat(bay.style.height);
+        }
+        const caseBox = container.querySelector('.case') as HTMLElement;
+        expect(caseBox.style.height).toBe(`${24 + expectedTop}px`);
+      };
+
+      const { container, rerender } = renderWithProviders(view('compact', false));
+      await waitFor(() => expectStacked(container));
+      rerender(view('comfortable', false));
+      await waitFor(() => expectStacked(container));
+      rerender(view('comfortable', true));
+      await waitFor(() => expectStacked(container));
     });
 
     it('renders every figure when no .app-content scroll ancestor is present (fallback)', () => {

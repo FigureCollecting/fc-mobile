@@ -41,13 +41,86 @@ export function computeBottomMarginFrac(buffer: AlphaBuffer): number {
   return 0;
 }
 
+/** Cells on a mask's long side: about one per CSS px of the tallest figure
+ *  a shelf draws (the comfortable band is 216 px), at most 8 KB a mask. */
+export const ALPHA_MASK_MAX_CELLS = 256;
+
+/**
+ * Where an image is drawn, on a grid of at most ALPHA_MASK_MAX_CELLS cells a
+ * side: a cell is set when ANY pixel it covers is past ALPHA_THRESHOLD, so a
+ * thin strand never drops out. One bit per cell, row-major.
+ */
+export interface AlphaMask {
+  width: number;
+  height: number;
+  bits: Uint8Array;
+  /** How many cells are set. */
+  drawn: number;
+}
+
+export function computeAlphaMask(buffer: AlphaBuffer): AlphaMask | null {
+  const { width, height, data } = buffer;
+  if (width <= 0 || height <= 0) return null;
+  const scale = Math.min(1, ALPHA_MASK_MAX_CELLS / Math.max(width, height));
+  const maskWidth = Math.ceil(width * scale);
+  const maskHeight = Math.ceil(height * scale);
+  const bits = new Uint8Array(Math.ceil((maskWidth * maskHeight) / 8));
+  let drawn = 0;
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * width * 4;
+    const cellRow = Math.floor((y * maskHeight) / height) * maskWidth;
+    for (let x = 0; x < width; x++) {
+      if (data[rowStart + x * 4 + 3] <= ALPHA_THRESHOLD) continue;
+      const cell = cellRow + Math.floor((x * maskWidth) / width);
+      const bit = 1 << (cell & 7);
+      if (!(bits[cell >> 3] & bit)) {
+        bits[cell >> 3] |= bit;
+        drawn++;
+      }
+    }
+  }
+  return { width: maskWidth, height: maskHeight, bits, drawn };
+}
+
+/**
+ * Whether the image is drawn anywhere in the rectangle from (u0, v0) to
+ * (u1, v1), in fractions of the image across and down (0..1; the part
+ * outside the image reads as clear).
+ */
+export function alphaMaskDrawnIn(mask: AlphaMask, u0: number, v0: number, u1: number, v1: number): boolean {
+  const x0 = Math.max(0, Math.floor(u0 * mask.width));
+  const x1 = Math.min(mask.width - 1, Math.ceil(u1 * mask.width) - 1);
+  const y0 = Math.max(0, Math.floor(v0 * mask.height));
+  const y1 = Math.min(mask.height - 1, Math.ceil(v1 * mask.height) - 1);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const cell = y * mask.width + x;
+      if (mask.bits[cell >> 3] & (1 << (cell & 7))) return true;
+    }
+  }
+  return false;
+}
+
 const marginCache = new Map<string, number>();
 const pending = new Map<string, Promise<number>>();
+/** null: measured, but no usable mask (unreadable, or nothing drawn). */
+const maskCache = new Map<string, AlphaMask | null>();
 
 /** Test-only: reset module-level caches between test cases. */
 export function __clearAlphaMarginCache(): void {
   marginCache.clear();
   pending.clear();
+  maskCache.clear();
+}
+
+/**
+ * The drawn-pixel mask of a matted figure's image, from the same canvas read
+ * that measures its bottom margin (useBottomMarginFrac): undefined until that
+ * measurement finishes, null when it failed or the image draws nothing —
+ * callers then treat the figure's whole box as drawn.
+ */
+export function getAlphaMask(imageUrl: string): AlphaMask | null | undefined {
+  return maskCache.get(imageUrl);
 }
 
 async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
@@ -57,6 +130,7 @@ async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
   if (inFlight) return inFlight;
 
   const promise = (async () => {
+    let mask: AlphaMask | null = null;
     try {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -72,6 +146,7 @@ async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
       if (!ctx) return 0;
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      mask = computeAlphaMask(imageData);
       return computeBottomMarginFrac(imageData);
     } catch {
       // Tainted canvas (cross-origin image without CORS headers), decode
@@ -80,6 +155,7 @@ async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
       // the shelf over a single bad image.
       return 0;
     } finally {
+      maskCache.set(imageUrl, mask && mask.drawn > 0 ? mask : null);
       pending.delete(imageUrl);
     }
   })();

@@ -2,13 +2,17 @@
  * Dev fixture manifest — 7 transparent matted figures for fully-offline
  * development of the display layer (virtual cases, justified rows, viewer).
  *
- * The PNGs themselves are GITIGNORED (product-photo derivatives never enter
- * the repo). This manifest is code and IS committed: it carries the metadata
- * the display layer needs — native pixel dims, shelf sizing, and the two
+ * The real cut-out PNGs are GITIGNORED (product-photo derivatives never
+ * enter the repo; copy them in from fc-design-assets for local sign-off).
+ * This manifest is code and IS committed: it carries the metadata the
+ * display layer needs — native pixel dims, shelf sizing, and the two
  * per-figure footprint scalars that drive the CSS contact shadow (translated
- * from the shelf2.py compositor recipe). When the PNGs are absent (CI), the
- * glob resolves to nothing and imageUrl stays undefined — components fall
- * back to placeholders, so builds/tests never depend on the images.
+ * from the shelf2.py compositor recipe). Where a real cut-out is absent (CI,
+ * clean checkouts) the fixture draws its committed synthetic stand-in,
+ * ./synthetic/<name>.png (our own flat shapes, RGBA, same native size;
+ * scripts/synthetic-fixtures.mjs), so the case's matted branch renders
+ * everywhere. Tests use only the synthetic art (VITE_FIXTURE_ART in
+ * .env.test), never the git-ignored files.
  */
 import type { Figure } from '@figurecollecting/fc-shared';
 
@@ -50,15 +54,30 @@ export interface FixtureDisplayMeta {
   baseRecovered: boolean;
 }
 
-// Lazy-safe image resolution: glob is empty when the gitignored PNGs are absent.
-const IMAGE_URLS = import.meta.glob('./*.png', {
-  eager: true,
-  import: 'default',
-  query: '?url',
-}) as Record<string, string>;
+/** Fixture art by glob key: the git-ignored real cut-outs and the committed synthetic stand-ins. */
+export interface FixtureArt {
+  real: Record<string, string>;
+  synthetic: Record<string, string>;
+  /** Ignore the real cut-outs (tests), so results never depend on git-ignored files. */
+  syntheticOnly: boolean;
+}
+
+/** The real cut-out when present (local sign-off), else the synthetic stand-in. */
+export function resolveFixtureArt(name: string, art: FixtureArt): string | undefined {
+  const real = art.syntheticOnly ? undefined : art.real[`./${name}.png`];
+  return real ?? art.synthetic[`./synthetic/${name}.png`];
+}
+
+// A build that cannot switch fixture mode on resolves these to undefined
+// (vite.config.ts, fixtureArtOnlyWhereFixturesRun), so none of it ships.
+const ART: FixtureArt = {
+  real: import.meta.glob('./*.png', { eager: true, import: 'default', query: '?url' }),
+  synthetic: import.meta.glob('./synthetic/*.png', { eager: true, import: 'default', query: '?url' }),
+  syntheticOnly: import.meta.env.VITE_FIXTURE_ART === 'synthetic',
+};
 
 function img(name: string): string | undefined {
-  return IMAGE_URLS[`./${name}.png`];
+  return resolveFixtureArt(name, ART);
 }
 
 const NOW = '2026-07-01T00:00:00.000Z';
@@ -251,18 +270,42 @@ export function getFixtureMultiplier(): number {
   }
 }
 
+export type FixtureBranch = 'matted' | 'framed' | 'silhouette';
+
+const FIXTURE_BRANCH_PARAM = 'fxbranch';
+
+/**
+ * Dev-only switch for the case's three render branches: `?fxbranch=framed`
+ * draws the fixtures as a real figure without matting data draws today (a
+ * framed photo), `?fxbranch=silhouette` as one without an image. Matted
+ * (the fixtures as they are) for anything else.
+ */
+export function getFixtureBranch(): FixtureBranch {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_BRANCH_PARAM);
+  return raw === 'framed' || raw === 'silhouette' ? raw : 'matted';
+}
+
+function toBranch(figure: Figure, branch: FixtureBranch): Figure {
+  // An id outside the fixture manifest resolves UNMATTED_META, exactly like
+  // a real figure without displayMeta.
+  if (branch === 'framed') return { ...figure, _id: `${figure._id}-framed` };
+  if (branch === 'silhouette') return { ...figure, imageUrl: undefined };
+  return figure;
+}
+
 /**
  * The fixture figures, repeated per the `?fx=N` multiplier with unique ids
  * (`fx-rem-x1`, `fx-rem-x2`, ...). getDisplayMeta strips the `-xN` suffix to
  * resolve the original matte metadata, so every repeated copy still renders
- * matted (not a generic framed-photo fallback).
+ * matted (not a generic framed-photo fallback) — unless `?fxbranch` asks
+ * for another branch (getFixtureBranch).
  */
-export function getFixtureFigures(multiplier = getFixtureMultiplier()): Figure[] {
-  if (multiplier <= 1) return FIXTURE_FIGURES;
+export function getFixtureFigures(multiplier = getFixtureMultiplier(), branch = getFixtureBranch()): Figure[] {
+  if (multiplier <= 1 && branch === 'matted') return FIXTURE_FIGURES;
   const out: Figure[] = [];
-  for (let copy = 1; copy <= multiplier; copy++) {
+  for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const base of FIXTURE_FIGURES) {
-      out.push(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` });
+      out.push(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch));
     }
   }
   return out;

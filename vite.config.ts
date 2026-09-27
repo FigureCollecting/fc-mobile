@@ -1,12 +1,38 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { defineConfig, loadEnv } from 'vite';
+import type { Plugin } from 'vite';
 import preact from '@preact/preset-vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { NGINX_CONF, previewHeaders } from './deploy/securityHeaders.ts';
 import { WEB_MANIFEST } from './deploy/webManifest.ts';
 
 const nm = path.resolve(import.meta.dirname, 'node_modules');
+
+const NO_FIXTURE_ART = '\0fc-no-fixture-art';
+
+/**
+ * Dev fixture art (the git-ignored real cut-outs and the committed
+ * synthetic stand-ins that src/dev-fixtures/fixtures.ts globs) belongs only
+ * in builds where fixture mode can be switched on. Any other build resolves
+ * it to nothing: unused imported assets are still emitted, and the service
+ * worker would precache them.
+ */
+function fixtureArtOnlyWhereFixturesRun(mode: string): Plugin {
+  const allowed = loadEnv(mode, import.meta.dirname, 'VITE_').VITE_ALLOW_FIXTURE_OVERRIDE === 'true';
+  return {
+    name: 'fc-fixture-art-only-where-fixtures-run',
+    apply: 'build',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      const fromFixtures = importer?.replaceAll('\\', '/').endsWith('/src/dev-fixtures/fixtures.ts');
+      return !allowed && fromFixtures && /\.png(\?|$)/.test(source) ? NO_FIXTURE_ART : null;
+    },
+    load(id) {
+      return id === NO_FIXTURE_ART ? 'export default undefined;' : null;
+    },
+  };
+}
 
 export default defineConfig(({ mode }) => ({
   // `npm run dev` against a local coordinator started with
@@ -26,6 +52,7 @@ export default defineConfig(({ mode }) => ({
     // This prevents "rewrote react to preact/compat but was not an absolute path"
     // and ensures transitive deps (fc-shared -> zustand -> react) resolve correctly.
     preact({ reactAliasesEnabled: false }),
+    fixtureArtOnlyWhereFixturesRun(mode),
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'src',

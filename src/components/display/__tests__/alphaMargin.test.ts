@@ -7,8 +7,24 @@ import {
   computeContactBand,
   useContactBand,
   __clearContactBandCache,
+  computeAlphaMask,
+  alphaMaskDrawnIn,
+  getAlphaMask,
+  ALPHA_MASK_MAX_CELLS,
 } from '../alphaMargin';
-import type { AlphaBuffer } from '../alphaMargin';
+import type { AlphaBuffer, AlphaMask } from '../alphaMargin';
+
+/** Whether the mask is drawn at the single point (u, v). */
+function alphaMaskAt(mask: AlphaMask, u: number, v: number): boolean {
+  return alphaMaskDrawnIn(mask, u, v, u + 1e-9, v + 1e-9);
+}
+
+/** A fully transparent RGBA buffer with the listed pixels set to `alpha`. */
+function bufferWithPixels(width: number, height: number, pixels: [number, number][], alpha = 255): AlphaBuffer {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (const [x, y] of pixels) data[(y * width + x) * 4 + 3] = alpha;
+  return { width, height, data };
+}
 
 /** Builds a synthetic RGBA buffer: fully opaque above `opaqueUntilRow`
  *  (exclusive), fully transparent from there to the bottom. */
@@ -317,5 +333,125 @@ describe('useContactBand (canvas-backed, real image measurement)', () => {
 
     renderHook(() => useContactBand('https://example.com/cached.png'));
     expect(getImageData).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('computeAlphaMask / alphaMaskAt', () => {
+  it('marks exactly the drawn pixels of a small image, one cell per pixel', () => {
+    const mask = computeAlphaMask(bufferWithPixels(4, 3, [[1, 0], [3, 2]]))!;
+    expect(mask.width).toBe(4);
+    expect(mask.height).toBe(3);
+    const drawn: string[] = [];
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 4; x++) if (alphaMaskAt(mask, (x + 0.5) / 4, (y + 0.5) / 3)) drawn.push(`${x},${y}`);
+    }
+    expect(drawn).toEqual(['1,0', '3,2']);
+  });
+
+  it('caps the long side at ALPHA_MASK_MAX_CELLS and keeps the aspect ratio', () => {
+    const mask = computeAlphaMask(bufferWithPixels(600, 800, []))!;
+    expect(mask.height).toBe(ALPHA_MASK_MAX_CELLS);
+    expect(mask.width).toBe(Math.ceil((600 * ALPHA_MASK_MAX_CELLS) / 800));
+  });
+
+  it('keeps a cell drawn when ANY pixel it covers is drawn, so a one-pixel strand survives downsampling', () => {
+    const strand = Array.from({ length: 1000 }, (_, y) => [333, y] as [number, number]);
+    const mask = computeAlphaMask(bufferWithPixels(1000, 1000, strand))!;
+    expect(mask.width).toBe(ALPHA_MASK_MAX_CELLS);
+    expect(alphaMaskAt(mask, 333.5 / 1000, 0.5)).toBe(true);
+    expect(alphaMaskAt(mask, 0.5, 0.5)).toBe(false);
+  });
+
+  it('ignores anti-aliasing dust at or below the alpha threshold (the same one grounding uses)', () => {
+    const mask = computeAlphaMask(bufferWithPixels(2, 1, [[0, 0]], 10))!;
+    expect(alphaMaskAt(mask, 0.25, 0.5)).toBe(false);
+    const faint = computeAlphaMask(bufferWithPixels(2, 1, [[0, 0]], 11))!;
+    expect(alphaMaskAt(faint, 0.25, 0.5)).toBe(true);
+  });
+
+  it('reads nothing outside the image', () => {
+    const mask = computeAlphaMask(bufferWithPixels(1, 1, [[0, 0]]))!;
+    expect(alphaMaskAt(mask, 0.5, 0.5)).toBe(true);
+    for (const [u, v] of [[-0.01, 0.5], [1, 0.5], [0.5, -0.01], [0.5, 1]]) expect(alphaMaskAt(mask, u, v)).toBe(false);
+  });
+
+  it('reads a rectangle as drawn when any cell it touches is, clipped to the image', () => {
+    const mask = computeAlphaMask(bufferWithPixels(4, 4, [[3, 3]]))!;
+    expect(alphaMaskDrawnIn(mask, 0, 0, 0.74, 0.74)).toBe(false);
+    expect(alphaMaskDrawnIn(mask, 0, 0, 0.76, 0.76)).toBe(true);
+    expect(alphaMaskDrawnIn(mask, 0.9, 0.9, 1.5, 1.5)).toBe(true);
+    expect(alphaMaskDrawnIn(mask, 1, 0, 2, 1)).toBe(false);
+    expect(alphaMaskDrawnIn(mask, -1, -1, 0, 0)).toBe(false);
+  });
+
+  it('returns null for a degenerate zero-size buffer', () => {
+    expect(computeAlphaMask({ width: 0, height: 10, data: [] })).toBeNull();
+  });
+});
+
+describe('getAlphaMask (from the same canvas read as the grounding margin)', () => {
+  function mockDecode(impl: () => Promise<void>) {
+    HTMLImageElement.prototype.decode = vi.fn(impl);
+  }
+  let getContextSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    __clearAlphaMarginCache();
+  });
+
+  afterEach(() => {
+    getContextSpy?.mockRestore();
+    delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  it('is undefined until the image is measured, then holds its mask without a second canvas read', async () => {
+    mockDecode(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 10, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const getImageData = vi.fn(() => bufferWithBottomMargin(10, 100, 78));
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData,
+    } as unknown as CanvasRenderingContext2D);
+
+    const url = 'https://example.com/mask.png';
+    expect(getAlphaMask(url)).toBeUndefined();
+    const { result } = renderHook(() => useBottomMarginFrac(url));
+    await waitFor(() => expect(result.current).toBeCloseTo(22 / 100, 5));
+
+    const mask = getAlphaMask(url)!;
+    expect(mask).toBeTruthy();
+    expect(alphaMaskAt(mask, 0.5, 0.5)).toBe(true); // row 50: drawn
+    expect(alphaMaskAt(mask, 0.5, 0.9)).toBe(false); // row 90: the transparent margin
+    expect(getImageData).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds null for an image with no drawn pixel at all, so the figure keeps its whole box rather than no tap target', async () => {
+    mockDecode(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 4, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 4, configurable: true });
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => bufferWithPixels(4, 4, []),
+    } as unknown as CanvasRenderingContext2D);
+
+    const url = 'https://example.com/blank-mask.png';
+    renderHook(() => useBottomMarginFrac(url));
+    await waitFor(() => expect(getAlphaMask(url)).toBeNull());
+  });
+
+  it('holds null when the canvas cannot be read (tainted), so a tap falls back to the whole box', async () => {
+    mockDecode(() => Promise.resolve());
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => {
+        throw new DOMException('tainted canvas', 'SecurityError');
+      },
+    } as unknown as CanvasRenderingContext2D);
+
+    const url = 'https://example.com/tainted-mask.png';
+    const { result } = renderHook(() => useBottomMarginFrac(url));
+    await waitFor(() => expect(result.current).toBe(0));
+    await waitFor(() => expect(getAlphaMask(url)).toBeNull());
   });
 });

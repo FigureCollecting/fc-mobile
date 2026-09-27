@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { VirtualItem } from '@tanstack/virtual-core';
@@ -14,6 +14,8 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
+import { CASE_AT_REST, nextPress, pressTapTarget } from './figureHitTest';
+import type { CasePress } from './figureHitTest';
 import { Style } from '../../styles/Style';
 
 export type { PlacementStrategy };
@@ -35,6 +37,9 @@ export const PLATE_ZONE_PX = 34;
  *  constant now that row height is per-row instead of one shared constant. */
 const BAY_MARGIN_PX = 30;
 
+/** .case's own top + bottom padding (10px + 14px, see the CSS below). */
+const CASE_PADDING_Y_PX = 24;
+
 /** Small uniform offset (px) every figure/footprint sits forward of the
  *  true z=0 front-glass plane — see figureDepthPlacement's module doc. */
 const FRONT_MARGIN_PX = 6;
@@ -46,6 +51,9 @@ const FRONT_MARGIN_PX = 6;
  *  a named constant cross-referenced with the CSS `padding: 0 6px 13px`
  *  below rather than a silently-duplicated magic number. */
 const ROW_PADDING_X_PX = 6;
+
+/** The pointer events of a press on the case that are followed on the whole page (see the tap handler). */
+const PRESS_FOLLOW_EVENTS = ['pointermove', 'pointerup', 'pointercancel'] as const;
 
 /**
  * ONE shared camera for the whole visible case (Ross, correcting a
@@ -255,12 +263,10 @@ function ShelfFigure({
   item,
   zPlacement,
   shelfLineY,
-  onSelect,
 }: {
   item: ShelfItem;
   zPlacement: FigureZPlacement;
   shelfLineY: number;
-  onSelect?: (figure: Figure, index: number) => void;
 }) {
   const { figure, meta, w, h } = item;
 
@@ -287,7 +293,7 @@ function ShelfFigure({
         '--fig-z': `${zPlacement.billboardZPx}px`,
       } as Record<string, string>}
       type="button"
-      onClick={onSelect ? () => onSelect(figure, item.index) : undefined}
+      data-index={item.index}
       data-synthetic-base={meta.matted && !meta.baseRecovered ? 'true' : undefined}
     >
       {figure.imageUrl ? (
@@ -537,27 +543,34 @@ export function CaseShelf({
   // per-row (tanstack/virtual-core supports variable sizes natively) since
   // DYNAMIC mode means row height isn't a single shared constant anymore.
   const scrollParent = useScrollParent(hostRef);
+  const bayHeights = useMemo(() => rows.map((row) => computeBayHeight(row, plateZone)), [rows, plateZone]);
   const rowVirtualizer = useVirtualizer<HTMLElement, HTMLElement>({
-    count: rows.length,
+    count: bayHeights.length,
     getScrollElement: () => scrollParent,
-    estimateSize: (index) => computeBayHeight(rows[index] ?? [], plateZone),
+    estimateSize: (index) => bayHeights[index] ?? 0,
     overscan: 3,
   });
+  // virtual-core caches every bay's offset and rebuilds only when the bay
+  // COUNT changes, so a density, labels or width change that keeps the
+  // count left stale offsets (overlapping shelves until a reload).
+  const bayHeightsKey = bayHeights.join(',');
+  useLayoutEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, bayHeightsKey]);
   const virtualBays: VirtualItem[] = scrollParent
     ? rowVirtualizer.getVirtualItems()
-    : rows.reduce<VirtualItem[]>((acc, row, index) => {
-        const size = computeBayHeight(row, plateZone);
+    : bayHeights.reduce<VirtualItem[]>((acc, size, index) => {
         const start = acc.length ? acc[acc.length - 1].end : 0;
         acc.push({ key: index, index, start, end: start + size, size, lane: 0 });
         return acc;
       }, []);
   const totalBaysHeight = scrollParent
     ? rowVirtualizer.getTotalSize()
-    : rows.reduce((sum, row) => sum + computeBayHeight(row, plateZone), 0);
+    : bayHeights.reduce((sum, size) => sum + size, 0);
 
   // Case padding (10px top + 14px bottom) plus the packed bay content —
   // the watermark slot sizes itself off this, not the viewport.
-  const caseHeightPx = 24 + totalBaysHeight;
+  const caseHeightPx = CASE_PADDING_Y_PX + totalBaysHeight;
   const watermarkHeightPx = Math.min(Math.round(caseHeightPx * 0.21), 120);
 
   // Bays are positioned RELATIVE to windowStart (the first mounted bay's
@@ -597,12 +610,46 @@ export function CaseShelf({
   const eyeYAbsolutePx = scrollTopPx + WORLD_EYE_FOCUS_FRACTION * visibleSpanPx;
   const eyeYWorldPx = eyeYAbsolutePx - windowStart;
 
+  // One tap handler for the whole case: a tap selects the figure DRAWN under
+  // the finger, not always the one whose box the browser hit, and goes by
+  // where the finger landed (its pointer events), not where the browser's
+  // touch adjustment moved its click (figureHitTest).
+  const pressRef = useRef<CasePress | null>(null);
+  const trackPress = (event: PointerEvent) => {
+    pressRef.current = nextPress(pressRef.current, event);
+  };
+  // A press goes down on the case, but its moves, release and cancel are
+  // followed on the whole page, so a mouse or pen drag that leaves the case
+  // and comes back is still a drag.
+  const selecting = !!onSelect;
+  useEffect(() => {
+    if (!selecting) return;
+    const follow = (event: PointerEvent) => {
+      pressRef.current = nextPress(pressRef.current, event);
+    };
+    for (const type of PRESS_FOLLOW_EVENTS) document.addEventListener(type, follow, true);
+    return () => {
+      for (const type of PRESS_FOLLOW_EVENTS) document.removeEventListener(type, follow, true);
+    };
+  }, [selecting]);
+  const handleTap = onSelect
+    ? (event: MouseEvent) => {
+        const chosen = pressTapTarget(event, pressRef.current);
+        pressRef.current = null;
+        if (!chosen) return;
+        const index = Number(chosen.dataset.index);
+        onSelect(figures[index], index);
+      }
+    : undefined;
+
   return (
     <div class="case-host" ref={hostRef}>
       <div
         class={`case ${motif === 'glass-clear' ? 'case--light' : ''}`}
         data-motif={motif}
         style={{ height: `${caseHeightPx}px`, '--case-d': `${caseD}px` } as Record<string, string>}
+        onClick={handleTap}
+        onPointerDown={onSelect ? trackPress : undefined}
       >
         <div
           class="case__world"
@@ -613,8 +660,7 @@ export function CaseShelf({
         >
         {virtualBays.map((vBay) => {
           const row = rows[vBay.index];
-          if (!row) return null;
-          const bayHeightPx = computeBayHeight(row, plateZone);
+          const bayHeightPx = bayHeights[vBay.index];
           // The shelf's own surface Y — where the floor, every figure's
           // feet, and (when labels are on) the plate's own anchor all
           // land — is NOT bayHeightPx itself when labels are on.
@@ -714,7 +760,6 @@ export function CaseShelf({
                       item={item}
                       zPlacement={zPlacements.get(item.figure._id) ?? ZERO_PLACEMENT}
                       shelfLineY={shelfLineY}
-                      onSelect={onSelect}
                     />,
                     labels && <ShelfPlate key={`plate-${item.figure._id}`} item={item} shelfLineY={shelfLineY} />,
                   ])}
@@ -805,11 +850,17 @@ const caseStyles = `
 
   /* The ONE shared preserve-3d subtree for this bay's shelf shell AND its
      figures/plates (see the JSX comment above for why they used to be two
-     separate subtrees and why that broke occlusion). */
+     separate subtrees and why that broke occlusion).
+     pointer-events: none (inherited by the whole subtree) because the
+     full-bay boxes here (.case__row, this element) sit at z=0, in front of
+     every figure pushed back with a negative translateZ, and 3D hit-testing
+     gave them every tap. Only a figure's drawn part and the shelf's front
+     edge opt back in. */
   .case__interior3d {
     position: absolute;
     inset: 0;
     transform-style: preserve-3d;
+    pointer-events: none;
   }
 
   /* Back wall: flat, pushed back -caseD. Top-corner ambient occlusion baked
@@ -900,6 +951,14 @@ const caseStyles = `
     background: var(--plinth3d-gradient);
   }
 
+  /* The shelf's front edge (lip and cap) is drawn over the bottom of the
+     figures standing nearest the front, so it takes the taps there and
+     opens nothing, instead of passing them to the figure hidden behind it. */
+  .case__plinth-lip3d,
+  .case__plinth3d {
+    pointer-events: auto;
+  }
+
   /* Figures are positioned ANALYTICALLY per item (--fig-x/--fig-y/--fig-z
      on .shelf-figure below), not by flexbox — see ShelfFigure's doc
      comment for why (feet must land on the same point as the figure's own
@@ -946,12 +1005,16 @@ const caseStyles = `
      element, not flex layout plus a lone Z push. :active repeats the full
      translate3d so the tap-scale doesn't reset the figure to (0,0,0) while
      pressed (a plain transform on :active would otherwise REPLACE, not add
-     to, the base transform). */
+     to, the base transform). The box itself takes no taps; its drawn part
+     does (the image, the frame, or the silhouette inside its rounded
+     outline), and the case's tap handler passes a matted image's
+     transparent pixels on to whatever is drawn behind (figureHitTest). */
   .shelf-figure {
     position: absolute;
     top: 0;
     left: 0;
     padding: 0;
+    pointer-events: none;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -962,6 +1025,12 @@ const caseStyles = `
     transform: translate3d(var(--fig-x, 0px), var(--fig-y, 0px), var(--fig-z, 0px)) scale(0.985);
   }
 
+  /* Only while the case hit-tests a press (figureHitTest CASE_AT_REST, off
+     again before the next frame): the pressed figure as drawn at rest. */
+  .${CASE_AT_REST} .shelf-figure:active {
+    transform: translate3d(var(--fig-x, 0px), var(--fig-y, 0px), var(--fig-z, 0px));
+  }
+
   .shelf-figure__img {
     width: 100%;
     height: 100%;
@@ -969,6 +1038,12 @@ const caseStyles = `
     object-position: bottom;
     position: relative;
     z-index: 2;
+  }
+
+  .shelf-figure__img,
+  .shelf-figure__frame,
+  .shelf-figure__silhouette {
+    pointer-events: auto;
   }
 
   /* Contact shadow/footprint: two-lobe wide soft ellipse + tight dark AO

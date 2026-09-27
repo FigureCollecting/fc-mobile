@@ -14,7 +14,8 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
-import { caseTapTarget } from './figureHitTest';
+import { nextPress, pressTapTarget } from './figureHitTest';
+import type { CasePress } from './figureHitTest';
 import { Style } from '../../styles/Style';
 
 export type { PlacementStrategy };
@@ -607,10 +608,19 @@ export function CaseShelf({
   const eyeYWorldPx = eyeYAbsolutePx - windowStart;
 
   // One tap handler for the whole case: a tap selects the figure DRAWN under
-  // the finger, not always the one whose box the browser hit (figureHitTest).
+  // the finger, not always the one whose box the browser hit, and goes by
+  // where the finger landed (its pointer events), not where the browser's
+  // touch adjustment moved its click (figureHitTest).
+  const pressRef = useRef<CasePress | null>(null);
+  const trackPress = onSelect
+    ? (event: PointerEvent) => {
+        pressRef.current = nextPress(pressRef.current, event);
+      }
+    : undefined;
   const handleTap = onSelect
     ? (event: MouseEvent) => {
-        const chosen = caseTapTarget(event.target as Element, event);
+        const chosen = pressTapTarget(event, pressRef.current);
+        pressRef.current = null;
         if (!chosen) return;
         const index = Number(chosen.dataset.index);
         onSelect(figures[index], index);
@@ -624,6 +634,10 @@ export function CaseShelf({
         data-motif={motif}
         style={{ height: `${caseHeightPx}px`, '--case-d': `${caseD}px` } as Record<string, string>}
         onClick={handleTap}
+        onPointerDown={trackPress}
+        onPointerMove={trackPress}
+        onPointerUp={trackPress}
+        onPointerCancel={trackPress}
       >
         <div
           class="case__world"

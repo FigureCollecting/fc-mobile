@@ -200,6 +200,7 @@ describe('CaseShelf (Display A — virtual cases)', () => {
 
     afterEach(() => {
       delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint;
       mockedGetAlphaMask.mockReset();
       mockedGetAlphaMask.mockReturnValue(undefined);
     });
@@ -261,6 +262,63 @@ describe('CaseShelf (Display A — virtual cases)', () => {
         fireEvent.click(el, { detail: 1, clientX: 50, clientY: 50 });
       }
       expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A primary pointer pressed and released at (x, y), where the browser
+     * hits `landed`. Chromium's touch adjustment sends the pointer events to
+     * a figure nearby (`on`), but leaves their point where the finger was.
+     */
+    function press(on: Element, x: number, y: number, landed: Element, moveTo?: { x: number; y: number }) {
+      const at = { pointerId: 1, isPrimary: true, clientX: x, clientY: y };
+      Object.defineProperty(document, 'elementFromPoint', { value: () => landed, configurable: true });
+      fireEvent.pointerDown(on, at);
+      // By the click, the press has shrunk the figure (.shelf-figure:active) off the point.
+      Object.defineProperty(document, 'elementFromPoint', { value: () => null, configurable: true });
+      if (moveTo) fireEvent.pointerMove(on, { ...at, clientX: moveTo.x, clientY: moveTo.y });
+      fireEvent.pointerUp(on, at);
+    }
+
+    it("a touch that landed on the shelf's front edge selects nothing, though the browser moves its click onto a figure", () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      press(frontImg, 50.5, 105.5, frontImg.closest('.case__bay')!.querySelector('.case__plinth-lip3d')!);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 99 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("a touch on a figure's last row selects it, though the browser sends its click to the shelf's edge", () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const cap = frontImg.closest('.case__bay')!.querySelector('.case__plinth3d')!;
+      press(cap, 50.5, 99.5, frontImg);
+      fireEvent.click(cap, { detail: 1, clientX: 51, clientY: 100 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('a drag selects nothing, and the next tap selects again', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      press(frontImg, 50, 50, frontImg, { x: 50, y: 80 });
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).not.toHaveBeenCalled();
+      press(frontImg, 50, 50, frontImg);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('keyboard activation right after a touch elsewhere still selects the focused figure', () => {
+      mockedGetAlphaMask.mockReturnValue(clear);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const lip = frontImg.closest('.case__bay')!.querySelector('.case__plinth-lip3d')!;
+      press(lip, 50, 105, lip);
+      fireEvent.click(screen.getByRole('button', { name: back.name }), { detail: 0 });
+      expect(onSelect).toHaveBeenCalledWith(back, 1);
     });
 
     it('the figure box takes no taps; only its drawn part does', () => {

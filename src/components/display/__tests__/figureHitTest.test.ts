@@ -5,7 +5,8 @@ vi.mock('../alphaMargin', async (importOriginal) => ({
   getAlphaMask: vi.fn(() => undefined),
 }));
 
-import { imageFraction, figureAt, tapTarget, caseTapTarget } from '../figureHitTest';
+import { imageFraction, figureAt, tapTarget, caseTapTarget, nextPress, pressTapTarget, TAP_MOVE_PX, PRESS_CLICK_MS } from '../figureHitTest';
+import type { CasePress } from '../figureHitTest';
 import { computeAlphaMask, getAlphaMask } from '../alphaMargin';
 import type { AlphaMask } from '../alphaMargin';
 
@@ -432,5 +433,206 @@ describe('caseTapTarget (which figure a click anywhere in the case selects)', ()
     figure('matted');
     delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
     expect(caseTapTarget(caseElement('case__row'), { detail: 1, clientX: 50, clientY: 50 })).toBeNull();
+  });
+});
+
+describe('nextPress and pressTapTarget (a click in the case goes by where its pointer went down)', () => {
+  const realElementsFromPoint = Object.getOwnPropertyDescriptor(document, 'elementsFromPoint');
+  const realElementFromPoint = Object.getOwnPropertyDescriptor(document, 'elementFromPoint');
+  let theCase: HTMLElement;
+
+  beforeEach(() => {
+    mockedGetAlphaMask.mockReturnValue(OPAQUE);
+    theCase = document.body;
+    landsOn(null);
+  });
+
+  afterEach(() => {
+    if (realElementsFromPoint) Object.defineProperty(document, 'elementsFromPoint', realElementsFromPoint);
+    else delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+    if (realElementFromPoint) Object.defineProperty(document, 'elementFromPoint', realElementFromPoint);
+    else delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+  });
+
+  function listing(...elements: Element[]) {
+    Object.defineProperty(document, 'elementsFromPoint', { value: vi.fn(() => elements), configurable: true });
+  }
+
+  /** The element the browser hits at any point (document.elementFromPoint). */
+  function landsOn(element: Element | null) {
+    const elementFromPoint = vi.fn(() => element);
+    Object.defineProperty(document, 'elementFromPoint', { value: elementFromPoint, configurable: true });
+    return elementFromPoint;
+  }
+
+  /** A case element that is not a figure, e.g. 'case__plinth-lip3d'. */
+  function caseElement(className = 'case__plinth-lip3d') {
+    const el = document.createElement('div');
+    el.className = className;
+    document.body.append(el);
+    return el;
+  }
+
+  /** A pointer event on the case (its listener is on `theCase`), as nextPress reads it. */
+  function pointer(type: string, clientX: number, clientY: number, extra: { timeStamp?: number; pointerId?: number; isPrimary?: boolean } = {}) {
+    return { type, clientX, clientY, timeStamp: 1000, pointerId: 1, isPrimary: true, currentTarget: theCase, ...extra };
+  }
+
+  /** A finished press that went down at (x, y) on `chosen`, up at time 1000. */
+  function press(chosen: HTMLElement | null, x = 50, y = 50, extra: Partial<CasePress> = {}): CasePress {
+    return { pointerId: 1, x, y, chosen, moved: 0, endedAt: 1000, cancelled: false, ...extra };
+  }
+
+  /** A click the browser sent to `target` at (clientX, clientY), 10 ms after the press came up. */
+  function click(target: Element, clientX: number, clientY: number, extra: { detail?: number; timeStamp?: number; pointerId?: number } = {}) {
+    return { target, clientX, clientY, detail: 1, timeStamp: 1010, ...extra };
+  }
+
+  describe('nextPress (the press a pointer makes on the case, from its own pointer events)', () => {
+    it('records where the primary pointer went down, and the figure drawn there', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      listing(framed.part);
+      const elementFromPoint = landsOn(framed.part);
+      expect(nextPress(null, pointer('pointerdown', 57.5, 99.5))).toEqual({
+        pointerId: 1,
+        x: 57.5,
+        y: 99.5,
+        chosen: framed.button,
+        moved: 0,
+        endedAt: null,
+        cancelled: false,
+      });
+      expect(elementFromPoint).toHaveBeenCalledWith(57.5, 99.5);
+    });
+
+    it("chooses nothing where the pointer went down on the shelf's front edge, even over a figure", () => {
+      const framed = figure('framed', rect(0, 0, 100, 100), undefined, -10);
+      listing(framed.part);
+      for (const edge of ['case__plinth-lip3d', 'case__plinth3d']) {
+        landsOn(caseElement(edge));
+        expect(nextPress(null, pointer('pointerdown', 50.5, 105.5))!.chosen, edge).toBeNull();
+      }
+    });
+
+    it('resolves the drawn pixels where the pointer went down, from the element the browser hits there', () => {
+      const front = figure('matted', rect(0, 0, 100, 100));
+      const back = figure('matted', rect(0, 0, 100, 100), undefined, -10);
+      mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? CLEAR : OPAQUE));
+      const elementsFromPoint = vi.fn(() => [front.part, back.part]);
+      Object.defineProperty(document, 'elementsFromPoint', { value: elementsFromPoint, configurable: true });
+      landsOn(front.part);
+      expect(nextPress(null, pointer('pointerdown', 40.5, 40.5))!.chosen).toBe(back.button);
+      expect(elementsFromPoint).toHaveBeenCalledWith(40.5, 40.5);
+      landsOn(caseElement('case__row'));
+      expect(nextPress(null, pointer('pointerdown', 40.5, 40.5))!.chosen).toBe(back.button);
+      landsOn(caseElement('case__world'));
+      expect(nextPress(null, pointer('pointerdown', 40.5, 40.5))!.chosen).toBeNull();
+    });
+
+    it('chooses nothing where the pointer went down outside the case, or on nothing at all', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      listing(framed.part);
+      landsOn(framed.part);
+      theCase = caseElement('case');
+      expect(nextPress(null, pointer('pointerdown', 50, 50))!.chosen).toBeNull();
+      theCase = document.body;
+      landsOn(null);
+      expect(nextPress(null, pointer('pointerdown', 50, 50))!.chosen).toBeNull();
+    });
+
+    it('records no press where the browser cannot hit-test a point', () => {
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+      expect(nextPress(null, pointer('pointerdown', 50, 50))).toBeNull();
+    });
+
+    it('starts over on every new press, and ignores a second finger going down', () => {
+      const first = nextPress(null, pointer('pointerdown', 10, 10));
+      expect(nextPress(first, pointer('pointerdown', 90, 90, { pointerId: 2, isPrimary: false }))).toBe(first);
+      expect(nextPress(first, pointer('pointerdown', 90, 90, { pointerId: 2 }))).toMatchObject({ pointerId: 2, x: 90, y: 90 });
+      expect(nextPress(null, pointer('pointerdown', 90, 90, { pointerId: 2, isPrimary: false }))).toBeNull();
+    });
+
+    it('keeps the farthest the pointer got from where it went down, and when it came up', () => {
+      let p = nextPress(null, pointer('pointerdown', 10, 10));
+      p = nextPress(p, pointer('pointermove', 13, 14));
+      p = nextPress(p, pointer('pointermove', 11, 10));
+      expect(p).toMatchObject({ x: 10, y: 10, moved: 5, endedAt: null });
+      p = nextPress(p, pointer('pointerup', 10, 10, { timeStamp: 1234 }));
+      expect(p).toMatchObject({ x: 10, y: 10, moved: 5, endedAt: 1234, cancelled: false });
+    });
+
+    it('counts the release point as a move too', () => {
+      const p = nextPress(nextPress(null, pointer('pointerdown', 0, 0)), pointer('pointerup', 6, 8, { timeStamp: 1100 }));
+      expect(p).toMatchObject({ moved: 10, endedAt: 1100 });
+    });
+
+    it('marks a press the browser cancelled (a scroll took it), without reading the cancel point', () => {
+      const p = nextPress(nextPress(null, pointer('pointerdown', 50, 50)), pointer('pointercancel', 0, 0, { timeStamp: 1300 }));
+      expect(p).toMatchObject({ moved: 0, endedAt: 1300, cancelled: true });
+    });
+
+    it('ignores other pointers, other events, events with no press, and events after the press ended', () => {
+      const down = nextPress(null, pointer('pointerdown', 10, 10));
+      expect(nextPress(down, pointer('pointermove', 90, 90, { pointerId: 2 }))).toBe(down);
+      expect(nextPress(down, pointer('pointerup', 90, 90, { pointerId: 2 }))).toBe(down);
+      expect(nextPress(down, pointer('pointerover', 90, 90))).toBe(down);
+      expect(nextPress(null, pointer('pointerup', 90, 90))).toBeNull();
+      const up = nextPress(down, pointer('pointerup', 10, 10, { timeStamp: 1100 }));
+      expect(nextPress(up, pointer('pointermove', 90, 90))).toBe(up);
+      expect(nextPress(up, pointer('pointercancel', 90, 90))).toBe(up);
+    });
+  });
+
+  describe('pressTapTarget (which figure a click in the case selects)', () => {
+    it('selects the figure its press landed on, not the one the browser moved the click to', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      const other = figure('framed', rect(200, 0, 100, 100));
+      listing(other.part);
+      expect(pressTapTarget(click(other.part, 250, 50), press(framed.button))).toBe(framed.button);
+      expect(pressTapTarget(click(caseElement(), 51, 100), press(framed.button, 50.5, 99.5))).toBe(framed.button);
+    });
+
+    it('selects nothing where its press landed on no figure, though the browser moved the click onto one', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      listing(framed.part);
+      expect(caseTapTarget(framed.part, click(framed.part, 50, 99))).toBe(framed.button);
+      expect(pressTapTarget(click(framed.part, 50, 99), press(null, 50.5, 105.5))).toBeNull();
+    });
+
+    it('never counts a drag as a tap: a press that moved farther than TAP_MOVE_PX selects nothing', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      listing(framed.part);
+      expect(pressTapTarget(click(framed.part, 50, 50), press(framed.button, 50, 50, { moved: TAP_MOVE_PX }))).toBe(framed.button);
+      expect(pressTapTarget(click(framed.part, 50, 50), press(framed.button, 50, 50, { moved: TAP_MOVE_PX + 0.1 }))).toBeNull();
+    });
+
+    it('never counts a press the browser cancelled (a scroll) as a tap', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      listing(framed.part);
+      expect(pressTapTarget(click(framed.part, 50, 50), press(framed.button, 50, 50, { cancelled: true }))).toBeNull();
+    });
+
+    it('keeps keyboard and assistive activation (no position) on the figure it was sent to, whatever the last press', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      listing(framed.part);
+      expect(pressTapTarget(click(framed.button, 0, 0, { detail: 0 }), press(null))).toBe(framed.button);
+      expect(pressTapTarget(click(framed.button, 50, 50, { detail: 0 }), press(null))).toBe(framed.button);
+      expect(pressTapTarget(click(framed.button, 0, 0), press(null))).toBe(framed.button);
+    });
+
+    it('goes by the click itself when no press of its own came before it', () => {
+      const front = figure('matted', rect(0, 0, 100, 100));
+      listing(front.part);
+      const at = (extra: Parameters<typeof click>[3], p: CasePress | null) => pressTapTarget(click(front.part, 50, 50, extra), p);
+      // Its own press: it landed on no figure.
+      expect(at({}, press(null))).toBeNull();
+      expect(at({ timeStamp: 1000 + PRESS_CLICK_MS }, press(null))).toBeNull();
+      expect(at({ pointerId: 1 }, press(null))).toBeNull();
+      // None, still down, long over, or another pointer's: the click's own target and point.
+      expect(at({}, null)).toBe(front.button);
+      expect(at({}, press(null, 50, 50, { endedAt: null }))).toBe(front.button);
+      expect(at({ timeStamp: 1001 + PRESS_CLICK_MS }, press(null))).toBe(front.button);
+      expect(at({ pointerId: 7 }, press(null))).toBe(front.button);
+    });
   });
 });

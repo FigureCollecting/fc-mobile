@@ -164,3 +164,94 @@ export function caseTapTarget(target: Element, event: Pick<MouseEvent, 'detail' 
   }
   return figureAt(doc, event.clientX, event.clientY);
 }
+
+/**
+ * A press on the case as its own pointer events report it. Chromium's touch
+ * adjustment moves the click a touch sends (by up to about 8 px, onto a
+ * figure nearby, or off a figure's last row onto the shelf's edge), and it
+ * retargets the touch's pointerdown too, but it leaves the touch's pointer
+ * coordinates where the finger landed.
+ */
+export interface CasePress {
+  pointerId: number;
+  /** Where the pointer went down (client px). */
+  x: number;
+  y: number;
+  /** The figure drawn where it went down (caseTapTarget there), or null. */
+  chosen: HTMLElement | null;
+  /** The farthest the pointer got from (x, y) before it came up (px). */
+  moved: number;
+  /** When it came up or was cancelled (event time, ms); null while down. */
+  endedAt: number | null;
+  /** The browser cancelled it (it became a scroll or a gesture). */
+  cancelled: boolean;
+}
+
+/**
+ * How far a press may wander and still be a tap (CSS px). Wider than
+ * Android's touch slop (8 dp), past which a touch becomes a scroll and
+ * sends no click, so no tap the browser sends is refused.
+ */
+export const TAP_MOVE_PX = 10;
+
+/** How long after its pointer came up a click still belongs to that press (ms); a tap's click follows at once. */
+export const PRESS_CLICK_MS = 1000;
+
+type PressEvent = Pick<PointerEvent, 'type' | 'pointerId' | 'isPrimary' | 'clientX' | 'clientY' | 'timeStamp' | 'currentTarget'>;
+
+/**
+ * The figure a press going down at client point (x, y) in `theCase` lands
+ * on: caseTapTarget from the element the browser hits there, at that point.
+ * Read as the pointer goes down, before the press shrinks the figure
+ * (.shelf-figure:active). Null off every figure and outside the case.
+ */
+function landedOn(theCase: Element, x: number, y: number): HTMLElement | null {
+  const hit = theCase.ownerDocument.elementFromPoint(x, y);
+  return hit && theCase.contains(hit) ? caseTapTarget(hit, { detail: 1, clientX: x, clientY: y }) : null;
+}
+
+/**
+ * The press after pointer event `event` (pointerdown, pointermove, pointerup
+ * or pointercancel) on the case, the event's currentTarget. Records no press
+ * where the browser cannot hit-test a point.
+ */
+export function nextPress(press: CasePress | null, event: PressEvent): CasePress | null {
+  if (event.type === 'pointerdown') {
+    if (!event.isPrimary) return press;
+    const theCase = event.currentTarget as Element;
+    if (typeof theCase.ownerDocument.elementFromPoint !== 'function') return null;
+    const { pointerId, clientX: x, clientY: y } = event;
+    return { pointerId, x, y, chosen: landedOn(theCase, x, y), moved: 0, endedAt: null, cancelled: false };
+  }
+  if (!press || press.pointerId !== event.pointerId || press.endedAt !== null) return press;
+  if (event.type === 'pointercancel') return { ...press, endedAt: event.timeStamp, cancelled: true };
+  if (event.type !== 'pointermove' && event.type !== 'pointerup') return press;
+  const moved = Math.max(press.moved, Math.hypot(event.clientX - press.x, event.clientY - press.y));
+  return { ...press, moved, endedAt: event.type === 'pointerup' ? event.timeStamp : null };
+}
+
+type CaseClick = Pick<MouseEvent, 'target' | 'detail' | 'clientX' | 'clientY' | 'timeStamp'> & {
+  /** The pointer that made the click (a PointerEvent click), where the browser names one. */
+  pointerId?: number;
+};
+
+/** Whether `press` made `click`: it came up at most PRESS_CLICK_MS before, and is the click's own pointer where the click names one. */
+function madeBy(click: CaseClick, press: CasePress | null): press is CasePress {
+  if (!press || press.endedAt === null || click.timeStamp - press.endedAt > PRESS_CLICK_MS) return false;
+  return typeof click.pointerId !== 'number' || click.pointerId === press.pointerId;
+}
+
+/**
+ * The figure a click in the case selects: the one its press landed on
+ * (nextPress), not the one the browser sent the click to. So a touch on the
+ * shelf's visible edge just below a figure opens nothing, and one on a
+ * figure's last row just above the edge opens it. A press that moved more
+ * than TAP_MOVE_PX, or that the browser cancelled, is a drag or a scroll and
+ * selects nothing. Keyboard and assistive activation (no position) stays on
+ * the element the click was sent to, and a click with a position but no
+ * press of its own goes by its own target and point (caseTapTarget).
+ */
+export function pressTapTarget(click: CaseClick, press: CasePress | null): HTMLElement | null {
+  if (positionless(click) || !madeBy(click, press)) return caseTapTarget(click.target as Element, click);
+  return press.cancelled || press.moved > TAP_MOVE_PX ? null : press.chosen;
+}

@@ -487,6 +487,201 @@ for (const branch of ['framed', 'silhouette']) {
   });
 }
 
+/** Whether the element the browser hits at each spot's pixel centre, `dy` px lower, is the shelf's front edge. */
+function edgeUnder(page: Page, spots: Spot[], dy = 0): Promise<boolean[]> {
+  return page.evaluate(
+    ({ spots, dy }) =>
+      spots.map(({ x, y }) => !!document.elementFromPoint(x + 0.5, y + dy + 0.5)?.matches('.case__plinth-lip3d, .case__plinth3d')),
+    { spots, dy },
+  );
+}
+
+/**
+ * Pixels of the shelf's front edge (lip or cap) the user sees 0 to 9 px
+ * below the bottom of a figure's box, at the figure's centre: no figure is
+ * drawn within 1 px, and the edge is the element under the pixel. A real
+ * touch lands there, but Chromium's touch adjustment moves the click it
+ * sends up onto the figure.
+ */
+async function edgeBelowSpots(page: Page, fp: FigurePixels): Promise<(Spot & { figure: number; below: number })[]> {
+  const candidates: (Spot & { figure: number; below: number })[] = [];
+  fp.boxes.forEach((box, figure) => {
+    const x = Math.floor(box.x + box.width / 2);
+    const bottom = box.y + box.height;
+    for (let y = Math.floor(bottom); y <= Math.floor(bottom) + 9; y++) {
+      const below = y + 0.5 - bottom;
+      if (below >= 0 && solid(fp, x, y, EMPTY, 1)) candidates.push({ x, y, figure, below });
+    }
+  });
+  const onEdge = await edgeUnder(page, candidates);
+  return candidates.filter((_, i) => onEdge[i]);
+}
+
+/**
+ * Per figure, its last visible row right above the shelf's front edge: at
+ * the figure's centre, the lowest pixel whose centre the browser hits on the
+ * figure's drawn part (for a matted figure, where the user sees its art),
+ * with the edge hit 1 or 2 px lower. A frame's drop shadow below it falls on
+ * the shelf, not on the figure.
+ */
+async function lastRowSpots(page: Page, fp: FigurePixels): Promise<(Spot & { figure: number })[]> {
+  const parts = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button.shelf-figure')).map((button) => {
+      const part = button.querySelector('.shelf-figure__frame, .shelf-figure__silhouette, .shelf-figure__img')!;
+      const r = part.getBoundingClientRect();
+      return { matted: part.matches('img'), top: r.top, bottom: r.bottom };
+    }),
+  );
+  const rows: (Spot & { figure: number })[] = [];
+  parts.forEach(({ top, bottom }, figure) => {
+    const x = Math.floor(fp.boxes[figure].x + fp.boxes[figure].width / 2);
+    for (let y = Math.ceil(bottom - 0.5) - 1; y >= Math.max(top, bottom - 12); y--) rows.push({ x, y, figure });
+  });
+  const hits = await page.evaluate(
+    (rows) =>
+      rows.map(({ x, y }) => {
+        const at = (dy: number) => document.elementFromPoint(x + 0.5, y + dy + 0.5);
+        const onEdge = (el: Element | null) => !!el?.matches('.case__plinth-lip3d, .case__plinth3d');
+        const button = at(0)?.closest<HTMLElement>('button.shelf-figure');
+        return { figure: button ? Number(button.dataset.e2eFigure) : -1, edgeBelow: onEdge(at(1)) || onEdge(at(2)) };
+      }),
+    rows,
+  );
+  const spots: (Spot & { figure: number })[] = [];
+  const seen = new Set<number>();
+  rows.forEach((spot, i) => {
+    const { x, y, figure } = spot;
+    if (seen.has(figure) || hits[i].figure !== figure) return;
+    if (parts[figure].matted && ![x - 1, x, x + 1].every((px) => ownerAt(fp, px, y) === figure)) return;
+    seen.add(figure);
+    if (hits[i].edgeBelow) spots.push(spot);
+  });
+  return spots;
+}
+
+/** Touch-taps each spot's pixel centre in turn; none of them may open a viewer. */
+async function tapsOpenNothing(page: Page, fp: FigurePixels, spots: Spot[], why: (spot: Spot) => string) {
+  await figuresAt(page, fp);
+  await page.evaluate(() => {
+    const w = window as unknown as { __e2eClicks: number };
+    w.__e2eClicks = 0;
+    document.addEventListener('click', () => w.__e2eClicks++, { capture: true });
+  });
+  const opened = page.locator('.figure-viewer-sheet, .detail-pane');
+  for (const [n, spot] of spots.entries()) {
+    await page.touchscreen.tap(spot.x + 0.5, spot.y + 0.5);
+    // The tap's click, then two frames for a viewer to render.
+    await page.waitForFunction((n) => (window as unknown as { __e2eClicks: number }).__e2eClicks > n, n);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    expect(await opened.count(), why(spot)).toBe(0);
+  }
+  await page.waitForTimeout(800);
+  await expect(opened, 'no viewer opens late').toHaveCount(0);
+}
+
+/**
+ * Real touches at the phone's own pixel ratio: a touch goes by where the
+ * finger landed, not by the point Chromium's touch adjustment moves its
+ * click to.
+ */
+test.describe('touches at the Fold8 pixel ratio', () => {
+  test.use({ deviceScaleFactor: 2.8125 });
+
+  for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
+    for (const branch of ['matted', 'framed', 'silhouette']) {
+      test(`a touch on the shelf's front edge just below a ${branch} figure opens nothing, and one on its last row above the edge opens it, at ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
+        test.setTimeout(90_000);
+        await openCase(page, size, branch === 'matted' ? '' : `&fxbranch=${branch}`);
+        const fp = await figurePixels(page);
+        const below = await edgeBelowSpots(page, fp);
+        expect(below.length, 'the shelf edge shows just below some figure').toBeGreaterThan(0);
+        await tapsOpenNothing(page, fp, below, (spot) => {
+          const s = spot as (typeof below)[number];
+          return `touch at ${s.x},${s.y}, ${s.below.toFixed(1)} px below the box of "${fp.names[s.figure]}", on the shelf edge`;
+        });
+        const rows = await lastRowSpots(page, fp);
+        expect(rows.length, "some figure's last visible row sits right above the shelf edge").toBeGreaterThan(0);
+        for (const s of rows) {
+          await tapOpens(page, size, fp, s, fp.names[s.figure], `touch on the last row of "${fp.names[s.figure]}" at ${s.x},${s.y}, right above the shelf edge`);
+        }
+      });
+    }
+  }
+});
+
+/** A pen press at (x, y) through the DevTools protocol, moving to (x, y - up) before it lifts. */
+async function penPress(page: Page, x: number, y: number, up = 0) {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type: 'mouseMoved' | 'mousePressed' | 'mouseReleased', at: number, buttons: number) =>
+    cdp.send('Input.dispatchMouseEvent', { type, x, y: at, button: 'left', buttons, clickCount: 1, pointerType: 'pen' });
+  await send('mouseMoved', y, 0);
+  await send('mousePressed', y, 1);
+  for (let step = 1; step <= 4 && up; step++) await send('mouseMoved', y - (up * step) / 4, 1);
+  await send('mouseReleased', y - up, 0);
+  await cdp.detach();
+}
+
+/** Waits long enough for a viewer to open, and expects none. */
+async function opensNothing(page: Page, why: string) {
+  await page.waitForTimeout(800);
+  await expect(page.locator('.figure-viewer-sheet, .detail-pane'), why).toHaveCount(0);
+}
+
+test('a mouse or pen press opens the figure drawn under it and nothing on the shelf edge, and a drag opens nothing', async ({ page }) => {
+  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+  await openCase(page, size, '&fxbranch=silhouette');
+  const fp = await figurePixels(page);
+  // A pixel deep inside a figure, and another 20 to 30 px above it that the user also sees of it.
+  const drag = fp.names
+    .map((_, figure) => {
+      const from = visibleSpot(fp, figure);
+      const up = from ? [20, 22, 24, 26, 28, 30].find((dy) => solid(fp, from.x, from.y - dy, figure, 1)) : undefined;
+      return from && up ? { figure, from, up } : null;
+    })
+    .find((d) => d !== null);
+  expect(drag, 'a figure tall enough to drag across').toBeTruthy();
+  const { figure, from, up } = drag!;
+  const name = fp.names[figure];
+  const [edge] = await edgeBelowSpots(page, fp);
+  expect(edge, 'the shelf edge shows just below some figure').toBeTruthy();
+
+  await figuresAt(page, fp);
+  await page.mouse.move(from.x + 0.5, from.y + 0.5);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 0.5, from.y + 0.5 - up, { steps: 5 });
+  await page.mouse.up();
+  await opensNothing(page, `a mouse drag ${up} px up across "${name}" from ${from.x},${from.y}`);
+  await penPress(page, from.x + 0.5, from.y + 0.5, up);
+  await opensNothing(page, `a pen drag ${up} px up across "${name}" from ${from.x},${from.y}`);
+
+  await penPress(page, from.x + 0.5, from.y + 0.5);
+  await expect(viewer(page, size), `a pen press on "${name}": the viewer opens`).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('.figure-viewer-sheet__name')).toHaveText(name);
+  await closeViewer(page, size);
+  await figuresAt(page, fp);
+  await penPress(page, edge.x + 0.5, edge.y + 0.5);
+  await opensNothing(page, `a pen press at ${edge.x},${edge.y} on the shelf edge`);
+  await page.mouse.click(edge.x + 0.5, edge.y + 0.5);
+  await opensNothing(page, `a mouse press at ${edge.x},${edge.y} on the shelf edge`);
+  await page.mouse.click(from.x + 0.5, from.y + 0.5);
+  await expect(viewer(page, size), `a mouse press on "${name}": the viewer opens`).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('.figure-viewer-sheet__name')).toHaveText(name);
+});
+
+test('the keyboard opens the focused figure, even right after a touch on the shelf edge', async ({ page }) => {
+  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+  await openCase(page, size, '&fxbranch=framed');
+  const fp = await figurePixels(page);
+  const [edge] = await edgeBelowSpots(page, fp);
+  expect(edge, 'the shelf edge shows just below some figure').toBeTruthy();
+  await tapsOpenNothing(page, fp, [edge], () => `a touch at ${edge.x},${edge.y} on the shelf edge`);
+  const name = fp.names[edge.figure];
+  await page.locator(`button.shelf-figure[data-e2e-figure="${edge.figure}"]`).focus();
+  await page.keyboard.press('Enter');
+  await expect(viewer(page, size), `Enter on the focused "${name}": the viewer opens`).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('.figure-viewer-sheet__name')).toHaveText(name);
+});
+
 /**
  * Pixels where a press lands on the box of one figure while the user sees
  * another one, and the pressed figure's shrink (.shelf-figure:active) moves

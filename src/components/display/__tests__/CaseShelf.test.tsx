@@ -321,6 +321,66 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       expect(onSelect).toHaveBeenCalledWith(back, 1);
     });
 
+    it('a mouse drag that leaves the case and comes back within reach selects nothing', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const at = { pointerId: 1, isPrimary: true, pointerType: 'mouse', clientX: 50, clientY: 50 };
+      Object.defineProperty(document, 'elementFromPoint', { value: () => frontImg, configurable: true });
+      fireEvent.pointerDown(frontImg, at);
+      // Off the case (up over the page's header) and back, where the case sees no move of its own.
+      fireEvent.pointerMove(document.body, { ...at, clientY: -60 });
+      fireEvent.pointerMove(frontImg, { ...at, clientY: 53 });
+      fireEvent.pointerUp(frontImg, { ...at, clientY: 53 });
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 53 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('a press the browser cancels (a scroll took it) selects nothing', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const at = { pointerId: 1, isPrimary: true, pointerType: 'touch', clientX: 50, clientY: 50 };
+      Object.defineProperty(document, 'elementFromPoint', { value: () => frontImg, configurable: true });
+      fireEvent.pointerDown(frontImg, at);
+      fireEvent.pointerCancel(frontImg, at);
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('a click uses up its press: the next click with no press of its own goes by its own point', () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      const lip = frontImg.closest('.case__bay')!.querySelector('.case__plinth-lip3d')!;
+      press(lip, 50, 105, lip);
+      fireEvent.click(lip, { detail: 1, clientX: 50, clientY: 105 });
+      expect(onSelect).not.toHaveBeenCalled();
+      fireEvent.click(frontImg, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(front, 0);
+    });
+
+    it('follows the pointer on the whole page only while the case takes taps, and stops once it is gone', () => {
+      const add = vi.spyOn(document, 'addEventListener');
+      const remove = vi.spyOn(document, 'removeEventListener');
+      try {
+        const followed = (spy: typeof add) => spy.mock.calls.filter(([type]) => String(type).startsWith('pointer')).map(([type, , capture]) => [type, capture]);
+        renderWithProviders(<CaseShelf figures={[front, back]} motif="detolf-dark" density="compact" />).unmount();
+        expect(followed(add)).toEqual([]);
+        const { unmount } = renderWithProviders(<CaseShelf figures={[front, back]} motif="detolf-dark" density="compact" onSelect={vi.fn()} />);
+        const following = [['pointermove', true], ['pointerup', true], ['pointercancel', true]];
+        expect(followed(add)).toEqual(following);
+        unmount();
+        expect(followed(remove)).toEqual(following);
+        const handler = (spy: typeof add, type: string) => spy.mock.calls.find(([t]) => t === type)![1];
+        for (const [type] of following) expect(handler(remove, type as string), String(type)).toBe(handler(add, type as string));
+      } finally {
+        add.mockRestore();
+        remove.mockRestore();
+      }
+    });
+
     it('the figure box takes no taps; only its drawn part does', () => {
       const photo = { ...FIXTURE_FIGURES[2], _id: 'unmatted-photo', imageUrl: 'photo.jpg' };
       const bare = { ...FIXTURE_FIGURES[3], _id: 'no-image', imageUrl: undefined };

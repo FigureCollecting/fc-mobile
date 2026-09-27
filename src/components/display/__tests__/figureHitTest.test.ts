@@ -5,7 +5,7 @@ vi.mock('../alphaMargin', async (importOriginal) => ({
   getAlphaMask: vi.fn(() => undefined),
 }));
 
-import { imageFraction, figureAt, tapTarget, caseTapTarget, nextPress, pressTapTarget, TAP_MOVE_PX, PRESS_CLICK_MS } from '../figureHitTest';
+import { imageFraction, figureAt, tapTarget, caseTapTarget, nextPress, pressTapTarget, TAP_MOVE_PX, PRESS_CLICK_MS, CASE_AT_REST } from '../figureHitTest';
 import type { CasePress } from '../figureHitTest';
 import { computeAlphaMask, getAlphaMask } from '../alphaMargin';
 import type { AlphaMask } from '../alphaMargin';
@@ -422,6 +422,26 @@ describe('caseTapTarget (which figure a click anywhere in the case selects)', ()
     }
   });
 
+  it("resolves by its point a click on the shelf's front edge above where the edge is drawn (Chromium hit-tests it from about 1 px higher)", () => {
+    for (const edge of ['case__plinth-lip3d', 'case__plinth3d']) {
+      const behind = figure('framed', undefined, undefined, -10);
+      const el = caseElement(edge);
+      el.getBoundingClientRect = () => rect(0, 100, 100, 10);
+      listing(el, behind.part);
+      expect(caseTapTarget(el, { detail: 1, clientX: 50, clientY: 99.02 }), `${edge}, above its drawn top`).toBe(behind.button);
+      expect(caseTapTarget(el, { detail: 1, clientX: 50, clientY: 100 }), `${edge}, on its drawn top`).toBeNull();
+      expect(caseTapTarget(el, { detail: 0, clientX: 50, clientY: 99.5 }), `${edge}, no position`).toBeNull();
+      listing(el);
+      expect(caseTapTarget(el, { detail: 1, clientX: 50, clientY: 99.5 }), `${edge}, no figure drawn there`).toBeNull();
+    }
+    // Only the edge: any other part of the case still selects nothing, above its top or not.
+    const behind = figure('framed', undefined, undefined, -10);
+    const other = caseElement('case__world');
+    other.getBoundingClientRect = () => rect(0, 100, 100, 10);
+    listing(other, behind.part);
+    expect(caseTapTarget(other, { detail: 1, clientX: 50, clientY: 99.5 })).toBeNull();
+  });
+
   it('selects nothing for a shelf row or bay click with no pointer position (keyboard, script)', () => {
     const seen = figure('matted');
     listing(seen.part);
@@ -527,6 +547,46 @@ describe('nextPress and pressTapTarget (a click in the case goes by where its po
       expect(nextPress(null, pointer('pointerdown', 40.5, 40.5))!.chosen).toBe(back.button);
       landsOn(caseElement('case__world'));
       expect(nextPress(null, pointer('pointerdown', 40.5, 40.5))!.chosen).toBeNull();
+    });
+
+    it("chooses the figure drawn on its last row where the browser hits the shelf's edge above where the edge is drawn", () => {
+      const framed = figure('framed', rect(0, 0, 100, 100), undefined, -10);
+      listing(framed.part);
+      for (const edge of ['case__plinth-lip3d', 'case__plinth3d']) {
+        const el = caseElement(edge);
+        el.getBoundingClientRect = () => rect(0, 100, 100, 10);
+        landsOn(el);
+        expect(nextPress(null, pointer('pointerdown', 50.5, 99.5))!.chosen, `${edge}, above its drawn top`).toBe(framed.button);
+        expect(nextPress(null, pointer('pointerdown', 50.5, 100.5))!.chosen, `${edge}, on it`).toBeNull();
+      }
+    });
+
+    it('hit-tests a press with every figure at rest: the case wears CASE_AT_REST (no press shrink) only while the browser hit-tests', () => {
+      const framed = figure('framed', rect(0, 0, 100, 100));
+      const atRest: boolean[] = [];
+      const row = caseElement('case__row');
+      Object.defineProperty(document, 'elementFromPoint', {
+        value: () => (atRest.push(theCase.classList.contains(CASE_AT_REST)), row),
+        configurable: true,
+      });
+      Object.defineProperty(document, 'elementsFromPoint', {
+        value: () => (atRest.push(theCase.classList.contains(CASE_AT_REST)), [framed.part]),
+        configurable: true,
+      });
+      expect(nextPress(null, pointer('pointerdown', 50, 50))!.chosen).toBe(framed.button);
+      expect(atRest).toEqual([true, true]);
+      expect(theCase.classList.contains(CASE_AT_REST)).toBe(false);
+    });
+
+    it('takes CASE_AT_REST off the case even when the hit test throws', () => {
+      Object.defineProperty(document, 'elementFromPoint', {
+        value: () => {
+          throw new Error('hit test failed');
+        },
+        configurable: true,
+      });
+      expect(() => nextPress(null, pointer('pointerdown', 50, 50))).toThrow('hit test failed');
+      expect(theCase.classList.contains(CASE_AT_REST)).toBe(false);
     });
 
     it('chooses nothing where the pointer went down outside the case, or on nothing at all', () => {

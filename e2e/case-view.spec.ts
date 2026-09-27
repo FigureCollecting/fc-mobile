@@ -559,6 +559,49 @@ async function lastRowSpots(page: Page, fp: FigurePixels): Promise<(Spot & { fig
   return spots;
 }
 
+/**
+ * Per figure, its last visible row right above where the shelf's front edge
+ * (its cap) is drawn, as the screenshots show it, not as the browser
+ * hit-tests it (Chromium hit-tests the cap from about 1 px above its drawn
+ * top): in a column of the figure's drawn part (not a frame's drop shadow),
+ * the lowest pixel the user sees as the figure, one or two rows above the
+ * first row of the drawn cap (`edgeY`); the row right above the cap first,
+ * then the column nearest the part's centre.
+ */
+async function lastVisibleRowSpots(page: Page, fp: FigurePixels): Promise<(Spot & { figure: number; edgeY: number })[]> {
+  const parts = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button.shelf-figure')).map((button) => {
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      };
+      return {
+        part: box(button.querySelector('.shelf-figure__frame, .shelf-figure__silhouette, .shelf-figure__img')!),
+        capTop: button.closest('.case__bay')!.querySelector('.case__plinth3d')!.getBoundingClientRect().top,
+      };
+    }),
+  );
+  const spots: (Spot & { figure: number; edgeY: number })[] = [];
+  parts.forEach(({ part, capTop }, figure) => {
+    const edgeY = Math.ceil(capTop);
+    const inPart = (y: number) => y + 0.5 > part.top && y + 0.5 < part.bottom;
+    // The figure's last visible row in column x, if it is one of the two rows right above the drawn cap.
+    const lastRow = (x: number) =>
+      [edgeY - 1, edgeY - 2].find(
+        (y) => inPart(y) && ownerAt(fp, x, y) === figure && !(inPart(y + 1) && ownerAt(fp, x, y + 1) === figure),
+      );
+    const centre = (part.left + part.right) / 2;
+    const columns: Spot[] = [];
+    for (let x = Math.ceil(part.left); x + 1 <= part.right; x++) {
+      const y = lastRow(x);
+      if (y !== undefined) columns.push({ x, y });
+    }
+    columns.sort((a, b) => b.y - a.y || Math.abs(a.x + 0.5 - centre) - Math.abs(b.x + 0.5 - centre));
+    if (columns.length) spots.push({ ...columns[0], figure, edgeY });
+  });
+  return spots;
+}
+
 /** Touch-taps each spot's pixel centre in turn; none of them may open a viewer. */
 async function tapsOpenNothing(page: Page, fp: FigurePixels, spots: Spot[], why: (spot: Spot) => string) {
   await figuresAt(page, fp);
@@ -604,6 +647,23 @@ test.describe('touches at the Fold8 pixel ratio', () => {
         for (const s of rows) {
           await tapOpens(page, size, fp, s, fp.names[s.figure], `touch on the last row of "${fp.names[s.figure]}" at ${s.x},${s.y}, right above the shelf edge`);
         }
+      });
+
+      test(`a touch on a ${branch} figure's last visible row right above the drawn shelf edge opens it, and one on the drawn edge under it opens nothing, at ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
+        test.setTimeout(90_000);
+        await openCase(page, size, branch === 'matted' ? '' : `&fxbranch=${branch}`);
+        const fp = await figurePixels(page);
+        const rows = await lastVisibleRowSpots(page, fp);
+        expect(rows.filter((s) => s.y === s.edgeY - 1).length, "some figure's art reaches the row right above the drawn shelf edge").toBeGreaterThan(0);
+        for (const s of rows) {
+          await tapOpens(page, size, fp, s, fp.names[s.figure], `touch on the last visible row of "${fp.names[s.figure]}" at ${s.x},${s.y}, the shelf edge drawn from row ${s.edgeY}`);
+        }
+        const edge = rows.map((s) => ({ ...s, y: s.edgeY })).filter((s) => ownerAt(fp, s.x, s.y) === EMPTY);
+        expect(edge.length, 'the drawn shelf edge shows right under some of those rows').toBeGreaterThan(0);
+        await tapsOpenNothing(page, fp, edge, (spot) => {
+          const s = spot as (typeof edge)[number];
+          return `touch at ${s.x},${s.y} on the drawn shelf edge right under the last visible row of "${fp.names[s.figure]}"`;
+        });
       });
     }
   }
@@ -666,6 +726,128 @@ test('a mouse or pen press opens the figure drawn under it and nothing on the sh
   await page.mouse.click(from.x + 0.5, from.y + 0.5);
   await expect(viewer(page, size), `a mouse press on "${name}": the viewer opens`).toBeVisible({ timeout: 3_000 });
   await expect(page.locator('.figure-viewer-sheet__name')).toHaveText(name);
+});
+
+/** A pen press through the DevTools protocol that goes down at the first point, moves through the others, and lifts at the last. */
+async function penPath(page: Page, points: Spot[]) {
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type: 'mouseMoved' | 'mousePressed' | 'mouseReleased', { x, y }: Spot, buttons: number) =>
+    cdp.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons, clickCount: 1, pointerType: 'pen' });
+  await send('mouseMoved', points[0], 0);
+  await send('mousePressed', points[0], 1);
+  for (const point of points.slice(1)) await send('mouseMoved', point, 1);
+  await send('mouseReleased', points[points.length - 1], 0);
+  await cdp.detach();
+}
+
+test('a mouse or pen drag that leaves the case and comes back near where it went down opens nothing', async ({ page }) => {
+  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+  await openCase(page, size, '&fxbranch=silhouette');
+  const fp = await figurePixels(page);
+  const figure = fp.names.findIndex((_, i) => visibleSpot(fp, i) !== null);
+  const from = visibleSpot(fp, figure)!;
+  const name = fp.names[figure];
+  const start = { x: from.x + 0.5, y: from.y + 0.5 };
+  // Up off the case, over the page's header, in one move; and back to 3 px from the start in one more.
+  const off = { x: start.x, y: (await page.locator('.case').evaluate((c) => c.getBoundingClientRect().top)) - 60 };
+  const back = { x: start.x, y: start.y + 3 };
+  expect(off.y, 'the page shows something above the case').toBeGreaterThan(0);
+
+  await figuresAt(page, fp);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(off.x, off.y);
+  await page.mouse.move(back.x, back.y);
+  await page.mouse.up();
+  await opensNothing(page, `a mouse drag from ${from.x},${from.y} on "${name}" off the case to ${off.x},${off.y} and back`);
+  await penPath(page, [start, off, back]);
+  await opensNothing(page, `a pen drag from ${from.x},${from.y} on "${name}" off the case to ${off.x},${off.y} and back`);
+
+  // The same press without the trip off the case is a tap.
+  await penPath(page, [start, back]);
+  await expect(viewer(page, size), `a pen press on "${name}" that moved 3 px: the viewer opens`).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('.figure-viewer-sheet__name')).toHaveText(name);
+});
+
+/**
+ * Points 0.25 px inside a framed or silhouette figure's drawn part, at the
+ * middle of each side, where the browser hits the part at rest but not while
+ * the figure is pressed (.shelf-figure:active shrinks it 1.5 % off the
+ * point). Chromium makes a mouse or pen press :active before the case's
+ * pointerdown handler runs.
+ */
+async function outlineRingSpots(page: Page): Promise<(Spot & { figure: number; side: string })[]> {
+  const atRest = await page.evaluate(() =>
+    Array.from(document.querySelectorAll<HTMLElement>('button.shelf-figure')).flatMap((button) => {
+      const part = button.querySelector('.shelf-figure__frame, .shelf-figure__silhouette')!;
+      const r = part.getBoundingClientRect();
+      const midX = (r.left + r.right) / 2;
+      const midY = (r.top + r.bottom) / 2;
+      return [
+        { x: midX, y: r.bottom - 0.25, side: 'bottom' },
+        { x: r.left + 0.25, y: midY, side: 'left' },
+        { x: r.right - 0.25, y: midY, side: 'right' },
+        { x: midX, y: r.top + 0.25, side: 'top' },
+      ]
+        .filter((p) => document.elementFromPoint(p.x, p.y) === part)
+        .map((p) => ({ ...p, figure: Number(button.dataset.e2eFigure) }));
+    }),
+  );
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
+  const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+  const spots: (Spot & { figure: number; side: string })[] = [];
+  for (const figure of new Set(atRest.map((s) => s.figure))) {
+    const own = atRest.filter((s) => s.figure === figure);
+    const { nodeId } = await cdp.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: `button.shelf-figure[data-e2e-figure="${figure}"]`,
+    });
+    await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['active'] });
+    const pressed = await page.evaluate(
+      (points) =>
+        points.map(({ x, y }) => document.elementFromPoint(x, y)?.closest<HTMLElement>('button.shelf-figure')?.dataset.e2eFigure ?? null),
+      own,
+    );
+    await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
+    own.forEach((spot, i) => {
+      if (pressed[i] !== String(figure)) spots.push(spot);
+    });
+  }
+  await cdp.detach();
+  return spots;
+}
+
+test.describe('mouse and pen presses at the Fold8 pixel ratio', () => {
+  test.use({ deviceScaleFactor: 2.8125 });
+
+  for (const branch of ['framed', 'silhouette']) {
+    test(`a mouse or pen press just inside a ${branch} figure's outline opens it, though the press shrinks the figure off the point`, async ({ page }) => {
+      test.setTimeout(150_000);
+      const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+      await openCase(page, size, `&fxbranch=${branch}`);
+      const fp = await figurePixels(page);
+      const spots = await outlineRingSpots(page);
+      expect(spots.length, 'a point inside a figure outline that the pressed figure shrinks off').toBeGreaterThan(0);
+      for (const s of spots) {
+        for (const input of ['mouse', 'pen']) {
+          await figuresAt(page, fp);
+          if (input === 'mouse') {
+            await page.mouse.move(s.x, s.y);
+            await page.mouse.down();
+            await page.mouse.up();
+          } else {
+            await penPath(page, [s]);
+          }
+          const why = `a ${input} press at ${s.x.toFixed(2)},${s.y.toFixed(2)}, 0.25 px inside the ${s.side} of "${fp.names[s.figure]}"`;
+          await expect(viewer(page, size), `${why}: the viewer opens`).toBeVisible({ timeout: 3_000 });
+          await expect(page.locator('.figure-viewer-sheet__name'), why).toHaveText(fp.names[s.figure]);
+          await closeViewer(page, size);
+        }
+      }
+    });
+  }
 });
 
 test('the keyboard opens the focused figure, even right after a touch on the shelf edge', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { VirtualItem } from '@tanstack/virtual-core';
@@ -14,7 +14,7 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
-import { nextPress, pressTapTarget } from './figureHitTest';
+import { CASE_AT_REST, nextPress, pressTapTarget } from './figureHitTest';
 import type { CasePress } from './figureHitTest';
 import { Style } from '../../styles/Style';
 
@@ -51,6 +51,9 @@ const FRONT_MARGIN_PX = 6;
  *  a named constant cross-referenced with the CSS `padding: 0 6px 13px`
  *  below rather than a silently-duplicated magic number. */
 const ROW_PADDING_X_PX = 6;
+
+/** The pointer events of a press on the case that are followed on the whole page (see the tap handler). */
+const PRESS_FOLLOW_EVENTS = ['pointermove', 'pointerup', 'pointercancel'] as const;
 
 /**
  * ONE shared camera for the whole visible case (Ross, correcting a
@@ -612,11 +615,23 @@ export function CaseShelf({
   // where the finger landed (its pointer events), not where the browser's
   // touch adjustment moved its click (figureHitTest).
   const pressRef = useRef<CasePress | null>(null);
-  const trackPress = onSelect
-    ? (event: PointerEvent) => {
-        pressRef.current = nextPress(pressRef.current, event);
-      }
-    : undefined;
+  const trackPress = (event: PointerEvent) => {
+    pressRef.current = nextPress(pressRef.current, event);
+  };
+  // A press goes down on the case, but its moves, release and cancel are
+  // followed on the whole page, so a mouse or pen drag that leaves the case
+  // and comes back is still a drag.
+  const selecting = !!onSelect;
+  useEffect(() => {
+    if (!selecting) return;
+    const follow = (event: PointerEvent) => {
+      pressRef.current = nextPress(pressRef.current, event);
+    };
+    for (const type of PRESS_FOLLOW_EVENTS) document.addEventListener(type, follow, true);
+    return () => {
+      for (const type of PRESS_FOLLOW_EVENTS) document.removeEventListener(type, follow, true);
+    };
+  }, [selecting]);
   const handleTap = onSelect
     ? (event: MouseEvent) => {
         const chosen = pressTapTarget(event, pressRef.current);
@@ -634,10 +649,7 @@ export function CaseShelf({
         data-motif={motif}
         style={{ height: `${caseHeightPx}px`, '--case-d': `${caseD}px` } as Record<string, string>}
         onClick={handleTap}
-        onPointerDown={trackPress}
-        onPointerMove={trackPress}
-        onPointerUp={trackPress}
-        onPointerCancel={trackPress}
+        onPointerDown={onSelect ? trackPress : undefined}
       >
         <div
           class="case__world"
@@ -1011,6 +1023,12 @@ const caseStyles = `
 
   .shelf-figure:active {
     transform: translate3d(var(--fig-x, 0px), var(--fig-y, 0px), var(--fig-z, 0px)) scale(0.985);
+  }
+
+  /* Only while the case hit-tests a press (figureHitTest CASE_AT_REST, off
+     again before the next frame): the pressed figure as drawn at rest. */
+  .${CASE_AT_REST} .shelf-figure:active {
+    transform: translate3d(var(--fig-x, 0px), var(--fig-y, 0px), var(--fig-z, 0px));
   }
 
   .shelf-figure__img {

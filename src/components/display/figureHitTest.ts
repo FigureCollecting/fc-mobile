@@ -152,17 +152,28 @@ function positionless(event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY'>)
  * click on a shelf row or bay resolves by its point: the browser sends a
  * click there when it was pressed on one element and released on another
  * (a pressed figure shrinks off the finger, .shelf-figure:active), their
- * common parent. Any other click, such as one on the shelf's front edge
- * (drawn over the bottom of the figures nearest the front), selects nothing.
+ * common parent. A click on the shelf's front edge (drawn over the bottom
+ * of the figures nearest the front) selects nothing where the edge is
+ * drawn, and resolves by its point just above that (aboveDrawnEdge). Any
+ * other click selects nothing.
  */
 export function caseTapTarget(target: Element, event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY'>): HTMLElement | null {
   const own = target.closest<HTMLElement>('.shelf-figure');
   if (own) return tapTarget(own, event);
   const doc = target.ownerDocument;
-  if (!target.matches('.case__row, .case__bay') || positionless(event) || typeof doc.elementsFromPoint !== 'function') {
-    return null;
-  }
+  if (!(target.matches('.case__row, .case__bay') || aboveDrawnEdge(target, event.clientY))) return null;
+  if (positionless(event) || typeof doc.elementsFromPoint !== 'function') return null;
   return figureAt(doc, event.clientX, event.clientY);
+}
+
+/**
+ * Whether `target` is the shelf's front edge (its lip or cap) and client y
+ * lies above where that edge is drawn: Chromium hit-tests the edge from
+ * about 1 px above its drawn top, over the last visible row of the figures
+ * standing behind it.
+ */
+function aboveDrawnEdge(target: Element, y: number): boolean {
+  return target.matches('.case__plinth-lip3d, .case__plinth3d') && y < target.getBoundingClientRect().top;
 }
 
 /**
@@ -200,14 +211,29 @@ export const PRESS_CLICK_MS = 1000;
 type PressEvent = Pick<PointerEvent, 'type' | 'pointerId' | 'isPrimary' | 'clientX' | 'clientY' | 'timeStamp' | 'currentTarget'>;
 
 /**
+ * A class the case wears only while landedOn hit-tests a press: inside it a
+ * pressed figure does not shrink (.shelf-figure:active), so the press is
+ * judged against the figures as drawn at rest. It comes off before the
+ * browser draws again, so it is never seen.
+ */
+export const CASE_AT_REST = 'case--at-rest';
+
+/**
  * The figure a press going down at client point (x, y) in `theCase` lands
- * on: caseTapTarget from the element the browser hits there, at that point.
- * Read as the pointer goes down, before the press shrinks the figure
- * (.shelf-figure:active). Null off every figure and outside the case.
+ * on: caseTapTarget from the element the browser hits there, at that point,
+ * with every figure at rest (CASE_AT_REST). Chromium has already made a
+ * mouse or pen press's figure :active, and shrunk it, when the case's
+ * pointerdown handler runs; a touch's comes later. Null off every figure
+ * and outside the case.
  */
 function landedOn(theCase: Element, x: number, y: number): HTMLElement | null {
-  const hit = theCase.ownerDocument.elementFromPoint(x, y);
-  return hit && theCase.contains(hit) ? caseTapTarget(hit, { detail: 1, clientX: x, clientY: y }) : null;
+  theCase.classList.add(CASE_AT_REST);
+  try {
+    const hit = theCase.ownerDocument.elementFromPoint(x, y);
+    return hit && theCase.contains(hit) ? caseTapTarget(hit, { detail: 1, clientX: x, clientY: y }) : null;
+  } finally {
+    theCase.classList.remove(CASE_AT_REST);
+  }
 }
 
 /**

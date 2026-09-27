@@ -238,6 +238,31 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       expect(onSelect).not.toHaveBeenCalled();
     });
 
+    it('a click the browser sends to the shelf row selects the figure drawn at its point', () => {
+      // Pressed on the nearer figure's box, released on the one behind it
+      // once the press shrank the nearer one (.shelf-figure:active).
+      mockedGetAlphaMask.mockImplementation((src) => (src === 'front.png' ? clear : drawn));
+      const onSelect = vi.fn();
+      const { frontImg } = renderOverlap(onSelect);
+      fireEvent.click(frontImg.closest('.case__row')!, { detail: 1, clientX: 50, clientY: 50 });
+      expect(onSelect).toHaveBeenCalledTimes(1);
+      expect(onSelect).toHaveBeenCalledWith(back, 1);
+    });
+
+    it("a tap on the shelf's front edge selects nothing, even over the bottom of a figure", () => {
+      mockedGetAlphaMask.mockReturnValue(drawn);
+      const onSelect = vi.fn();
+      const { frontImg, backImg } = renderOverlap(onSelect);
+      const bay = frontImg.closest('.case__bay')!;
+      for (const edge of ['.case__plinth-lip3d', '.case__plinth3d']) {
+        const el = bay.querySelector(edge)!;
+        expect(getComputedStyle(el).pointerEvents, edge).toBe('auto');
+        Object.defineProperty(document, 'elementsFromPoint', { value: () => [el, frontImg, backImg], configurable: true });
+        fireEvent.click(el, { detail: 1, clientX: 50, clientY: 50 });
+      }
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
     it('the figure box takes no taps; only its drawn part does', () => {
       const photo = { ...FIXTURE_FIGURES[2], _id: 'unmatted-photo', imageUrl: 'photo.jpg' };
       const bare = { ...FIXTURE_FIGURES[3], _id: 'no-image', imageUrl: undefined };

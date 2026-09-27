@@ -80,6 +80,31 @@ async function tapOpens(page: Page, size: CaseViewport, fp: FigurePixels, spot: 
   await closeViewer(page, size);
 }
 
+/**
+ * Presses and releases a mouse at `spot` (0.2 px into the pixel) without
+ * moving, and expects the viewer to open on `name`; returns the class of the
+ * element the browser sent the click to.
+ */
+async function pressOpens(page: Page, size: CaseViewport, fp: FigurePixels, spot: Spot, name: string, why: string) {
+  await figuresAt(page, fp);
+  await page.evaluate(() => {
+    const w = window as unknown as { __e2eClickTarget?: string };
+    w.__e2eClickTarget = undefined;
+    document.addEventListener('click', (e) => (w.__e2eClickTarget = (e.target as Element).getAttribute('class') ?? ''), {
+      capture: true,
+      once: true,
+    });
+  });
+  await page.mouse.move(spot.x + 0.2, spot.y + 0.2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(viewer(page, size), `${why}: the viewer opens`).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('.figure-viewer-sheet__name'), why).toHaveText(name);
+  const target = await page.evaluate(() => (window as unknown as { __e2eClickTarget?: string }).__e2eClickTarget);
+  await closeViewer(page, size);
+  return target;
+}
+
 /** Taps the pixel at `spot` (at `within` of the way into it) and expects nothing to open. */
 async function tapOpensNothing(page: Page, size: CaseViewport, fp: FigurePixels, spot: Spot, why: string, within = 0.5) {
   await figuresAt(page, fp);
@@ -409,3 +434,122 @@ test('a tap in the band a pressed figure shrinks away from resolves by what is d
   );
 });
 
+/**
+ * Pixels of the shelf's front edge (its lip and the flat cap in front of the
+ * figures) drawn over the bottom of a figure's frame or silhouette: inside
+ * the figure's drawn part, where the user sees the shelf, not the figure.
+ * Per figure, the lowest such pixel at its centre (tapped 0.2 px into it,
+ * so the click's whole-pixel point stays inside the part), with `rows`
+ * hidden rows up to it; most hidden rows first.
+ */
+async function shelfEdgeSpots(page: Page, fp: FigurePixels): Promise<(Spot & { figure: number; rows: number })[]> {
+  const parts = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('button.shelf-figure')).map((button) => {
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      };
+      const edges = button.closest('.case__bay')!.querySelectorAll('.case__plinth-lip3d, .case__plinth3d');
+      return { part: box(button.querySelector('.shelf-figure__frame, .shelf-figure__silhouette')!), edges: Array.from(edges).map(box) };
+    }),
+  );
+  const spots: (Spot & { figure: number; rows: number })[] = [];
+  parts.forEach(({ part, edges }, figure) => {
+    const x = Math.floor((part.left + part.right) / 2);
+    // The lowest pixel whose centre is inside the drawn part.
+    const y = Math.ceil(part.bottom - 0.5) - 1;
+    const onEdge = edges.some((e) => x + 0.5 > e.left && x + 0.5 < e.right && y + 0.5 > e.top && y + 0.5 < e.bottom);
+    if (!onEdge || !solid(fp, x, y, EMPTY, 1)) return;
+    let rows = 1;
+    while (y - rows > part.top && ownerAt(fp, x, y - rows) === EMPTY) rows++;
+    spots.push({ x, y, figure, rows });
+  });
+  return spots.sort((a, b) => b.rows - a.rows);
+}
+
+for (const branch of ['framed', 'silhouette']) {
+  test(`a tap on the shelf's front edge over the bottom of a ${branch} figure opens nothing`, async ({ page }) => {
+    const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+    await openCase(page, size, `&fxbranch=${branch}`);
+    const fp = await figurePixels(page);
+    const spots = await shelfEdgeSpots(page, fp);
+    expect(spots.length, 'the shelf edge hides the bottom of some figure').toBeGreaterThan(0);
+    for (const spot of spots.slice(0, 3)) {
+      await tapOpensNothing(
+        page,
+        size,
+        fp,
+        spot,
+        `tap at ${spot.x},${spot.y} on the shelf edge over the bottom of "${fp.names[spot.figure]}"`,
+        0.2,
+      );
+    }
+  });
+}
+
+/**
+ * Pixels where a press lands on the box of one figure while the user sees
+ * another one, and the pressed figure's shrink (.shelf-figure:active) moves
+ * its box off the point, so the release lands on the figure seen there: two
+ * different elements, and the browser sends the click to their common
+ * parent. Each spot is pressed 0.2 px into the pixel.
+ */
+async function shrinkAwaySpots(page: Page, fp: FigurePixels): Promise<(Spot & { seen: number; pressed: number })[]> {
+  const figureAt = (spots: Spot[]) =>
+    page.evaluate(
+      (spots) =>
+        spots.map(({ x, y }) => {
+          const button = document.elementFromPoint(x + 0.2, y + 0.2)?.closest<HTMLElement>('button.shelf-figure');
+          return button ? Number(button.dataset.e2eFigure) : -1;
+        }),
+      spots,
+    );
+  const seenSpots: (Spot & { seen: number })[] = [];
+  for (let y = 0; y < fp.height; y++) {
+    for (let x = 0; x < fp.width; x++) {
+      const seen = ownerAt(fp, x, y);
+      if (seen >= 0 && solid(fp, x, y, seen, 1)) seenSpots.push({ x, y, seen });
+    }
+  }
+  const atRest = await figureAt(seenSpots);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
+  const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+  const spots: (Spot & { seen: number; pressed: number })[] = [];
+  for (let pressed = 0; pressed < fp.names.length; pressed++) {
+    const onOther = seenSpots.filter((spot, i) => atRest[i] === pressed && spot.seen !== pressed);
+    if (!onOther.length) continue;
+    const { nodeId } = await cdp.send('DOM.querySelector', {
+      nodeId: root.nodeId,
+      selector: `button.shelf-figure[data-e2e-figure="${pressed}"]`,
+    });
+    await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: ['active'] });
+    const released = await figureAt(onOther);
+    await cdp.send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] });
+    onOther.forEach((spot, i) => {
+      if (released[i] === spot.seen) spots.push({ ...spot, pressed });
+    });
+  }
+  await cdp.detach();
+  return spots;
+}
+
+test('a press the pressed figure shrinks away from opens the figure seen there', async ({ page }) => {
+  const size = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+  await openCase(page, size);
+  await slideNeighbourOver(page);
+  const fp = await figurePixels(page);
+  const spots = await shrinkAwaySpots(page, fp);
+  expect(spots.length, "a pixel of one figure inside the box of a figure in front of it, in that figure's press band").toBeGreaterThan(0);
+  const spot = spots[Math.floor(spots.length / 2)];
+  const target = await pressOpens(
+    page,
+    size,
+    fp,
+    spot,
+    fp.names[spot.seen],
+    `press at ${spot.x},${spot.y} on "${fp.names[spot.seen]}", in the box of "${fp.names[spot.pressed]}" that shrinks away when pressed`,
+  );
+  expect(target, 'the browser sends such a click to the shelf row').toBe('case__row');
+});

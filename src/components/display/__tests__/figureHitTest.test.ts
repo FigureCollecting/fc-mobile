@@ -5,7 +5,7 @@ vi.mock('../alphaMargin', async (importOriginal) => ({
   getAlphaMask: vi.fn(() => undefined),
 }));
 
-import { imageFraction, figureAt, tapTarget } from '../figureHitTest';
+import { imageFraction, figureAt, tapTarget, caseTapTarget } from '../figureHitTest';
 import { computeAlphaMask, getAlphaMask } from '../alphaMargin';
 import type { AlphaMask } from '../alphaMargin';
 
@@ -355,5 +355,82 @@ describe('tapTarget (which figure a click on a figure selects)', () => {
     const front = figure('matted');
     delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
     expect(tapTarget(front.button, { detail: 1, clientX: 50, clientY: 50 })).toBe(front.button);
+  });
+});
+
+describe('caseTapTarget (which figure a click anywhere in the case selects)', () => {
+  const realElementsFromPoint = Object.getOwnPropertyDescriptor(document, 'elementsFromPoint');
+
+  beforeEach(() => {
+    mockedGetAlphaMask.mockReturnValue(OPAQUE);
+  });
+
+  afterEach(() => {
+    if (realElementsFromPoint) Object.defineProperty(document, 'elementsFromPoint', realElementsFromPoint);
+    else delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+  });
+
+  function listing(...elements: Element[]) {
+    Object.defineProperty(document, 'elementsFromPoint', { value: vi.fn(() => elements), configurable: true });
+  }
+
+  /** A case element that is not a figure, e.g. 'case__row' or 'case__plinth3d'. */
+  function caseElement(className: string) {
+    const el = document.createElement(className === 'case__bay' ? 'section' : 'div');
+    el.className = className;
+    document.body.append(el);
+    return el;
+  }
+
+  it('resolves a click on a figure as tapTarget does', () => {
+    const front = figure('matted');
+    const back = figure('matted', undefined, undefined, -10);
+    mockedGetAlphaMask.mockImplementation((src) => (src === front.src ? CLEAR : OPAQUE));
+    listing(front.part, back.part);
+    expect(caseTapTarget(front.part, { detail: 1, clientX: 50, clientY: 50 })).toBe(back.button);
+    expect(caseTapTarget(front.part, { detail: 0, clientX: 0, clientY: 0 })).toBe(front.button);
+  });
+
+  it('resolves by its point a click the browser sent to the shelf row (pressed on one figure, released on another)', () => {
+    const seen = figure('matted', undefined, undefined, -10);
+    listing(seen.part);
+    expect(caseTapTarget(caseElement('case__row'), { detail: 1, clientX: 50, clientY: 50 })).toBe(seen.button);
+  });
+
+  it('resolves by its point a click the browser sent to the shelf bay (released off every figure)', () => {
+    const framed = figure('framed');
+    listing(framed.part);
+    expect(caseTapTarget(caseElement('case__bay'), { detail: 1, clientX: 50, clientY: 50 })).toBe(framed.button);
+  });
+
+  it('is null for such a click where no figure is drawn', () => {
+    const front = figure('matted');
+    mockedGetAlphaMask.mockReturnValue(CLEAR);
+    listing(front.part);
+    expect(caseTapTarget(caseElement('case__row'), { detail: 1, clientX: 50, clientY: 50 })).toBeNull();
+    listing();
+    expect(caseTapTarget(caseElement('case__bay'), { detail: 1, clientX: 50, clientY: 50 })).toBeNull();
+  });
+
+  it("selects nothing on the shelf's front edge, even where a figure is drawn behind it", () => {
+    for (const edge of ['case__plinth-lip3d', 'case__plinth3d']) {
+      const behind = figure('framed', undefined, undefined, -10);
+      const el = caseElement(edge);
+      listing(el, behind.part);
+      expect(caseTapTarget(el, { detail: 1, clientX: 50, clientY: 50 }), edge).toBeNull();
+    }
+  });
+
+  it('selects nothing for a shelf row or bay click with no pointer position (keyboard, script)', () => {
+    const seen = figure('matted');
+    listing(seen.part);
+    expect(caseTapTarget(caseElement('case__row'), { detail: 0, clientX: 50, clientY: 50 })).toBeNull();
+    expect(caseTapTarget(caseElement('case__bay'), { detail: 1, clientX: 0, clientY: 0 })).toBeNull();
+  });
+
+  it('selects nothing for a shelf row click where the browser cannot list the elements at a point', () => {
+    figure('matted');
+    delete (document as { elementsFromPoint?: unknown }).elementsFromPoint;
+    expect(caseTapTarget(caseElement('case__row'), { detail: 1, clientX: 50, clientY: 50 })).toBeNull();
   });
 });

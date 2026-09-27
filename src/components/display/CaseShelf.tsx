@@ -14,7 +14,7 @@ import type { Density } from './density';
 import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
-import { tapTarget } from './figureHitTest';
+import { caseTapTarget } from './figureHitTest';
 import { Style } from '../../styles/Style';
 
 export type { PlacementStrategy };
@@ -610,8 +610,7 @@ export function CaseShelf({
   // the finger, not always the one whose box the browser hit (figureHitTest).
   const handleTap = onSelect
     ? (event: MouseEvent) => {
-        const own = (event.target as Element).closest<HTMLElement>('.shelf-figure');
-        const chosen = own && tapTarget(own, event);
+        const chosen = caseTapTarget(event.target as Element, event);
         if (!chosen) return;
         const index = Number(chosen.dataset.index);
         onSelect(figures[index], index);
@@ -829,7 +828,8 @@ const caseStyles = `
      pointer-events: none (inherited by the whole subtree) because the
      full-bay boxes here (.case__row, this element) sit at z=0, in front of
      every figure pushed back with a negative translateZ, and 3D hit-testing
-     gave them every tap. Only a figure's drawn part opts back in. */
+     gave them every tap. Only a figure's drawn part and the shelf's front
+     edge opt back in. */
   .case__interior3d {
     position: absolute;
     inset: 0;
@@ -923,6 +923,14 @@ const caseStyles = `
     bottom: 0;
     height: 10px;
     background: var(--plinth3d-gradient);
+  }
+
+  /* The shelf's front edge (lip and cap) is drawn over the bottom of the
+     figures standing nearest the front, so it takes the taps there and
+     opens nothing, instead of passing them to the figure hidden behind it. */
+  .case__plinth-lip3d,
+  .case__plinth3d {
+    pointer-events: auto;
   }
 
   /* Figures are positioned ANALYTICALLY per item (--fig-x/--fig-y/--fig-z

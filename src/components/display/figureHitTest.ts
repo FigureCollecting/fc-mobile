@@ -137,7 +137,30 @@ export function figureAt(
  */
 export function tapTarget(own: HTMLElement, event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY'>): HTMLElement | null {
   const doc = own.ownerDocument;
-  const positionless = event.detail === 0 || (event.clientX === 0 && event.clientY === 0);
-  if (positionless || typeof doc.elementsFromPoint !== 'function') return own;
+  if (positionless(event) || typeof doc.elementsFromPoint !== 'function') return own;
   return figureAt(doc, event.clientX, event.clientY, own);
+}
+
+/** Keyboard, assistive and other synthetic activation: no pointer position (detail 0, or the point 0, 0). */
+function positionless(event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY'>): boolean {
+  return event.detail === 0 || (event.clientX === 0 && event.clientY === 0);
+}
+
+/**
+ * The figure a click anywhere in the case selects; `target` is the element
+ * the browser sent it to. A click on a figure goes by tapTarget. A pointer
+ * click on a shelf row or bay resolves by its point: the browser sends a
+ * click there when it was pressed on one element and released on another
+ * (a pressed figure shrinks off the finger, .shelf-figure:active), their
+ * common parent. Any other click, such as one on the shelf's front edge
+ * (drawn over the bottom of the figures nearest the front), selects nothing.
+ */
+export function caseTapTarget(target: Element, event: Pick<MouseEvent, 'detail' | 'clientX' | 'clientY'>): HTMLElement | null {
+  const own = target.closest<HTMLElement>('.shelf-figure');
+  if (own) return tapTarget(own, event);
+  const doc = target.ownerDocument;
+  if (!target.matches('.case__row, .case__bay') || positionless(event) || typeof doc.elementsFromPoint !== 'function') {
+    return null;
+  }
+  return figureAt(doc, event.clientX, event.clientY);
 }

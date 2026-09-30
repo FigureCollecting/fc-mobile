@@ -31,7 +31,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
-    include: ['src/**/*.{test,spec}.{ts,tsx}', 'deploy/**/*.test.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'deploy/**/*.test.ts', 'e2e/*.vitest.ts'],
     exclude: ['node_modules', 'dist'],
     // Force Vitest to run zustand, framer-motion, fc-shared, and wouter through
     // the Vite transform pipeline so our "react -> preact/compat" aliases apply
@@ -57,7 +57,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      include: ['src/**/*.{ts,tsx}', 'deploy/**/*.ts'],
+      include: ['src/**/*.{ts,tsx}', 'deploy/**/*.ts', 'e2e/handsOff.ts'],
       exclude: [
         '**/__tests__/**',
         '**/*.test.{ts,tsx}',

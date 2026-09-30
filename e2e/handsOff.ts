@@ -20,7 +20,7 @@ export const HANDS_OFF_LAUNCH_ARGS: string[] = [`--host-resolver-rules=${handsOf
 export function isHandsOffUrl(url: string): boolean {
   let host: string;
   try {
-    host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
+    host = new URL(url).hostname.replace(/\.$/, '');
   } catch {
     return false;
   }

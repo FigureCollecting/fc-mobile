@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { HANDS_OFF_LAUNCH_ARGS } from './e2e/handsOff';
 
 /**
  * E2E config: runs tests from ./e2e against a production build served by
@@ -25,11 +26,11 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], channel: 'chromium-headless-shell' },
+      use: { ...devices['Desktop Chrome'], channel: 'chromium-headless-shell', launchOptions: { args: HANDS_OFF_LAUNCH_ARGS } },
     },
     {
       name: 'mobile-chromium',
-      use: { ...devices['Pixel 7'] },
+      use: { ...devices['Pixel 7'], launchOptions: { args: HANDS_OFF_LAUNCH_ARGS } },
     },
     {
       name: 'webkit',

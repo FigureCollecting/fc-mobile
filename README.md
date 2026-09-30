@@ -12,6 +12,14 @@ npm run dev
 The dev server expects a backend on the URL set by `VITE_API_URL`.
 `.env.development` defaults to `http://localhost:5080/api`.
 
+Every page the dev server serves (spike pages too) gets the preview CSP plus
+inline styles (`devServerHeaders` in `deploy/securityHeaders.ts`), so it
+reaches only its own origin, the mode's `VITE_API_URL` and
+`VITE_IMAGE_MANAGER_URL`, and the production hosts: never a hands-off host
+(sites that bar AI agents by name, `e2e/handsOff.ts`). Every e2e browser
+context aborts requests to those hosts, and every Chromium the suites launch
+resolves them to nothing.
+
 ## Build
 
 ```bash

@@ -58,6 +58,14 @@ export function previewHeaders(conf: string, env: Record<string, string | undefi
   return { ...headers, 'Content-Security-Policy': formatCsp(csp) };
 }
 
-export function devServerHeaders(_conf: string, _env: Record<string, string | undefined>): Headers {
-  return {};
+/**
+ * The vite dev server's headers, on every response it sends (the app and any
+ * spike page): the mode's preview CSP, so a page in dev reaches no host the
+ * app does not use (none of the hands-off ones, e2e/handsOff.ts), with inline
+ * styles allowed because vite's dev client injects CSS as <style> elements.
+ */
+export function devServerHeaders(conf: string, env: Record<string, string | undefined>): Headers {
+  const csp = parseCsp(previewHeaders(conf, env)['Content-Security-Policy'] as string);
+  (csp['style-src'] as string[]).push("'unsafe-inline'");
+  return { 'Content-Security-Policy': formatCsp(csp) };
 }

@@ -1,5 +1,6 @@
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules } from './handsOff';
@@ -157,3 +158,43 @@ test.describe('the route guard every e2e context gets', () => {
   });
 });
 
+test.describe('the vite dev server (npm run dev, and any spike page it serves)', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'runs only where the resolver rules back it up');
+
+  test('refuses a hands-off image under its CSP, so the page never even asks for it', async ({ page, handsOffBlocked, cspViolations }) => {
+    const { createServer } = await import('vite');
+    const server = await createServer({
+      configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+      mode: 'development',
+      logLevel: 'error',
+      server: { port: 0 },
+      optimizeDeps: { noDiscovery: true },
+    });
+    await server.listen();
+    try {
+      const origin = new URL(server.resolvedUrls?.local[0] as string).origin;
+      // The page's shell only: the app is not what this checks.
+      await page.route(`${origin}/src/main.tsx`, (route) => route.fulfill({ contentType: 'text/javascript', body: '' }));
+      const response = await page.goto(`${origin}/spike/hands-off-probe.html`);
+      const served = response?.headers()['content-security-policy'];
+      expect(served, 'the dev server sends a CSP').toBeTruthy();
+      expect(served).toBe(server.config.server.headers?.['Content-Security-Policy']);
+
+      const control = `${origin}/favicon.svg`;
+      await page.evaluate((urls) => {
+        for (const src of urls) document.body.append(Object.assign(new Image(), { src }));
+      }, [control, ...HANDS_OFF_IMAGES]);
+      await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete));
+
+      expect(await page.locator(`img[src="${control}"]`).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+      await expect
+        .poll(() => new Set(cspViolations.map((v) => `${v.directive} ${v.blocked}`)))
+        .toEqual(new Set(HANDS_OFF_IMAGES.map((u) => `img-src ${u}`)));
+      // Refused by the CSP before any request: the route guard never saw one.
+      expect(handsOffBlocked).toEqual([]);
+      cspViolations.length = 0;
+    } finally {
+      await server.close();
+    }
+  });
+});

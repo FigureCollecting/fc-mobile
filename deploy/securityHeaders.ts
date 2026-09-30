@@ -57,3 +57,7 @@ export function previewHeaders(conf: string, env: Record<string, string | undefi
   add('img-src', crossOrigin(env['VITE_IMAGE_MANAGER_URL']));
   return { ...headers, 'Content-Security-Policy': formatCsp(csp) };
 }
+
+export function devServerHeaders(_conf: string, _env: Record<string, string | undefined>): Headers {
+  return {};
+}

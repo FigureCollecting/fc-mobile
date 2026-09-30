@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { NGINX_CONF, parseCsp, previewHeaders, readNginxHeaders } from '../securityHeaders';
+import { HANDS_OFF_DOMAINS } from '../../e2e/handsOff';
+import { NGINX_CONF, devServerHeaders, parseCsp, previewHeaders, readNginxHeaders } from '../securityHeaders';
 
 const conf = readFileSync(NGINX_CONF, 'utf8');
 
@@ -81,5 +82,69 @@ describe('previewHeaders (vite preview, for the e2e suite)', () => {
 
   it('points at the deployed config', () => {
     expect(path.relative(process.cwd(), NGINX_CONF)).toBe(path.join('deploy', 'nginx', 'default.conf'));
+  });
+});
+
+/** Where `vite` serves the app in dev. */
+const DEV_ORIGIN = 'http://localhost:5173';
+
+/**
+ * Whether a CSP source list lets a page at DEV_ORIGIN fetch `url`: the source
+ * forms CSP3 has, ports ignored, so it errs toward "allows".
+ */
+function allows(sources: string[], url: string): boolean {
+  const u = new URL(url);
+  return sources.some((source) => {
+    if (source === '*') return !['data:', 'blob:', 'filesystem:'].includes(u.protocol);
+    if (source.startsWith("'")) return source === "'self'" && u.origin === DEV_ORIGIN;
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(source)) return u.protocol === source || (source === 'http:' && u.protocol === 'https:');
+    const m = /^(?:([a-z][a-z0-9+.-]*):\/\/)?(\*\.)?([^:/]+)/i.exec(source);
+    if (m === null) return false;
+    const [, scheme, wildcard, host] = m as unknown as [string, string | undefined, string | undefined, string];
+    const hostMatches = wildcard ? u.hostname.endsWith(`.${host}`) : u.hostname === host;
+    const schemeMatches = scheme === undefined || u.protocol === `${scheme}:` || (scheme === 'http' && u.protocol === 'https:');
+    return hostMatches && schemeMatches;
+  });
+}
+
+/** Every directive that governs a fetch, each falling back to default-src as CSP does. */
+const FETCH_DIRECTIVES = [
+  'child-src', 'connect-src', 'font-src', 'frame-src', 'img-src', 'manifest-src', 'media-src', 'object-src',
+  'script-src', 'script-src-elem', 'style-src', 'style-src-elem', 'worker-src',
+];
+
+const HANDS_OFF_URLS = HANDS_OFF_DOMAINS.flatMap((d) => [`https://${d}/x.jpg`, `https://static.${d}/x.jpg`, `http://www.${d}/x.jpg`, `wss://${d}/`]);
+
+describe('the CSP matcher these tests use', () => {
+  it('flags every source form that would let a hands-off request through', () => {
+    const url = 'https://static.myfigurecollection.net/upload/x.jpg';
+    for (const source of ['*', 'https:', 'http:', '*.myfigurecollection.net', 'https://static.myfigurecollection.net', 'static.myfigurecollection.net:443']) {
+      expect(allows([source], url), source).toBe(true);
+    }
+    for (const source of ["'self'", "'none'", 'data:', 'https://images.figurecollecting.com', '*.figurecollecting.com', 'http://localhost:8000']) {
+      expect(allows([source], url), source).toBe(false);
+    }
+    expect(allows(["'self'"], `${DEV_ORIGIN}/favicon.svg`)).toBe(true);
+  });
+});
+
+describe('devServerHeaders (the vite dev server, and every spike page it serves)', () => {
+  const env = { VITE_API_URL: 'http://localhost:5080/api', VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' };
+  const preview = parseCsp(previewHeaders(conf, env)['Content-Security-Policy'] as string);
+
+  it("is the mode's preview CSP with inline styles allowed (vite's dev client injects CSS as <style>), and nothing else", () => {
+    const headers = devServerHeaders(conf, env);
+    expect(Object.keys(headers)).toEqual(['Content-Security-Policy']);
+    const dev = parseCsp(headers['Content-Security-Policy'] as string);
+    expect(dev).toEqual({ ...preview, 'style-src': [...(preview['style-src'] as string[]), "'unsafe-inline'"] });
+  });
+
+  it('lets no page fetch anything from a hands-off host', () => {
+    const csp = parseCsp(devServerHeaders(conf, env)['Content-Security-Policy'] as string);
+    expect(csp['default-src']).toBeDefined();
+    for (const directive of FETCH_DIRECTIVES) {
+      const sources = csp[directive] ?? (csp['default-src'] as string[]);
+      for (const url of HANDS_OFF_URLS) expect(allows(sources, url), `${directive} ${url}`).toBe(false);
+    }
   });
 });

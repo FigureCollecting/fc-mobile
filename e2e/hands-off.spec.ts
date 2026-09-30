@@ -122,8 +122,7 @@ test.describe('the route guard every e2e context gets', () => {
     expect(await page.evaluate(() => Array.from(document.images, (img) => img.naturalWidth))).toEqual(HANDS_OFF_IMAGES.map(() => 0));
   });
 
-  test('aborts a navigation and a fetch to a hands-off host too', async ({ page, handsOffBlocked }) => {
-    await expect(page.goto('https://myfigurecollection.net/item/1')).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
+  test('aborts a fetch and a navigation to a hands-off host too', async ({ page, handsOffBlocked }) => {
     const fetched = await page.evaluate(() =>
       fetch('https://vndb.org/v11').then(
         () => 'answered',
@@ -131,7 +130,8 @@ test.describe('the route guard every e2e context gets', () => {
       ),
     );
     expect(fetched).toBe('refused');
-    expect(handsOffBlocked).toEqual(['https://myfigurecollection.net/item/1', 'https://vndb.org/v11']);
+    await expect(page.goto('https://myfigurecollection.net/item/1')).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
+    expect(handsOffBlocked).toEqual(['https://vndb.org/v11', 'https://myfigurecollection.net/item/1']);
   });
 
   test('blockHandsOff keeps any browser off the hosts and lets other hosts through', async ({ playwright }) => {
@@ -156,3 +156,4 @@ test.describe('the route guard every e2e context gets', () => {
     }
   });
 });
+

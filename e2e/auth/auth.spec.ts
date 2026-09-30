@@ -1,7 +1,8 @@
 // WK-08 acceptance on the local full stack: the OIDC build behind nginx, the
 // real fc-coordinator through the edge, the PKCE-verifying mock issuer.
 import { readFileSync } from 'node:fs';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { guardedTest as test } from '../fixtures';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
 import type { StackUser } from '../stack/src/issuer.js';

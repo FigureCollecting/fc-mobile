@@ -6,6 +6,7 @@ import type { BrowserContext, Page } from '@playwright/test';
 import { readStackState, stackClient } from '../stack/src/client.js';
 import type { StackState } from '../stack/src/stack.js';
 import { expect, test, watchCsp } from '../fixtures';
+import { HANDS_OFF_LAUNCH_ARGS, blockHandsOff } from '../handsOff';
 import type { Edge } from '../stack/src/edge.js';
 import { bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb, type WebContainer } from './web';
 
@@ -379,7 +380,8 @@ test('(d) img-src: same-origin and images.figurecollecting.com images load, a ho
 test('(e) Chrome finds the app installable and every icon URL resolves', async ({ playwright, request }, testInfo) => {
   const { origin } = stackState();
   // A persistent profile: Chrome never offers install in an incognito-like context.
-  const context = await playwright.chromium.launchPersistentContext(testInfo.outputPath('profile'), { channel: 'chromium' });
+  const context = await playwright.chromium.launchPersistentContext(testInfo.outputPath('profile'), { channel: 'chromium', args: HANDS_OFF_LAUNCH_ARGS });
+  await blockHandsOff(context);
   const violations = await watchCsp(context);
   const page = await context.newPage();
   await page.goto(`${origin}/`);

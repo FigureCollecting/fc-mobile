@@ -85,6 +85,18 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
     expect(testInfo.project.use.launchOptions?.args ?? []).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
   });
 
+  test('every Chromium project of every Playwright config (e2e, PWA, stack) launches with them', async () => {
+    type Project = { name?: string; use?: { browserName?: string; defaultBrowserType?: string; launchOptions?: { args?: string[] } } };
+    for (const file of ['../playwright.config.ts', '../playwright.pwa.config.ts', '../playwright.stack.config.ts']) {
+      const { default: config } = (await import(file)) as { default: { projects: Project[] } };
+      const chromium = config.projects.filter((p) => (p.use?.browserName ?? p.use?.defaultBrowserType ?? 'chromium') === 'chromium');
+      expect(chromium.length, file).toBeGreaterThan(0);
+      for (const p of chromium) {
+        expect(p.use?.launchOptions?.args ?? [], `${file} ${p.name}`).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
+      }
+    }
+  });
+
   test('they give a hands-off host no address, so an image there is never sent even with no route', async ({ playwright }) => {
     const sentinel = await startSentinel();
     const rules = [handsOffResolverRules(), sentinel.catchAll].filter(Boolean).join(', ');

@@ -2,7 +2,7 @@ import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, handsOffResolverRules } from './handsOff';
+import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules } from './handsOff';
 
 /**
  * Ross, 2026-09-29: nothing we run may send a request to a site that bars AI
@@ -25,6 +25,13 @@ const HANDS_OFF_IMAGES = [
 
 /** A host that is not hands-off, loaded first to prove the sentinel catches what a browser sends. */
 const CANARY = 'http://fc-canary.test/canary.png';
+
+/** Not hands-off, though they look like it or mention one: the guard must let them through. */
+const LOOK_ALIKES = [
+  'http://notmyfigurecollection.net/x.png',
+  'http://myfigurecollection.net.fc-canary.test/x.png',
+  'http://fc-canary.test/from?u=https://static.myfigurecollection.net/x.jpg',
+];
 
 /**
  * A local TCP listener standing in for the internet. It records the Host of
@@ -90,6 +97,59 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
       await loadImages(page, HANDS_OFF_IMAGES);
       expect(new Set(sentinel.hosts)).toEqual(new Set(['fc-canary.test']));
       for (const url of HANDS_OFF_IMAGES) expect(failed.get(url), url).toBe('net::ERR_NAME_NOT_RESOLVED');
+    } finally {
+      await browser.close();
+      await sentinel.close();
+    }
+  });
+});
+
+test.describe('the route guard every e2e context gets', () => {
+  // The resolver rules are the net under these tests; WebKit has none.
+  test.skip(({ browserName }) => browserName !== 'chromium', 'runs only where the resolver rules back it up');
+
+  test('aborts an image on every hands-off host before it is sent', async ({ page, handsOffBlocked }) => {
+    const failed = failures(page);
+    const answered: string[] = [];
+    page.on('response', (r) => answered.push(r.url()));
+
+    await loadImages(page, HANDS_OFF_IMAGES);
+
+    expect(new Set(handsOffBlocked)).toEqual(new Set(HANDS_OFF_IMAGES));
+    // Blocked by the client (the route), not a failed lookup (the resolver rules under it).
+    for (const url of HANDS_OFF_IMAGES) expect(failed.get(url), url).toMatch(/^net::ERR_BLOCKED_BY_CLIENT\b/);
+    expect(answered).toEqual([]);
+    expect(await page.evaluate(() => Array.from(document.images, (img) => img.naturalWidth))).toEqual(HANDS_OFF_IMAGES.map(() => 0));
+  });
+
+  test('aborts a navigation and a fetch to a hands-off host too', async ({ page, handsOffBlocked }) => {
+    await expect(page.goto('https://myfigurecollection.net/item/1')).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
+    const fetched = await page.evaluate(() =>
+      fetch('https://vndb.org/v11').then(
+        () => 'answered',
+        () => 'refused',
+      ),
+    );
+    expect(fetched).toBe('refused');
+    expect(handsOffBlocked).toEqual(['https://myfigurecollection.net/item/1', 'https://vndb.org/v11']);
+  });
+
+  test('blockHandsOff keeps any browser off the hosts and lets other hosts through', async ({ playwright }) => {
+    const sentinel = await startSentinel();
+    // No hands-off rules here: whatever the guard lets through reaches the sentinel.
+    const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${sentinel.catchAll}`] });
+    try {
+      const context = await browser.newContext();
+      const blocked = await blockHandsOff(context);
+      const page = await context.newPage();
+      await loadImages(page, [CANARY]);
+      await expect.poll(() => sentinel.hosts, 'the canary reached the sentinel').toContain('fc-canary.test');
+
+      await loadImages(page, [...HANDS_OFF_IMAGES, ...LOOK_ALIKES]);
+      await expect
+        .poll(() => new Set(sentinel.hosts))
+        .toEqual(new Set(['fc-canary.test', 'notmyfigurecollection.net', 'myfigurecollection.net.fc-canary.test']));
+      expect(new Set(blocked)).toEqual(new Set(HANDS_OFF_IMAGES));
     } finally {
       await browser.close();
       await sentinel.close();

@@ -18,3 +18,13 @@ export const CASE_VIEWPORTS: CaseViewport[] = [
   { name: 'fold8-open-rotated', width: 657, height: 687 },
   { name: 'android', width: 412, height: 915 },
 ];
+
+/** A sign-off size: one Playwright project, whose full-frame PNGs must come out at `png` device pixels. */
+export interface ShotViewport extends CaseViewport {
+  deviceScaleFactor: number;
+  /** A phone: touch, and a mobile viewport. */
+  mobile: boolean;
+  png: { width: number; height: number };
+}
+
+export const SHOT_VIEWPORTS: ShotViewport[] = [];

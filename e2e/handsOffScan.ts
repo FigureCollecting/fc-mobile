@@ -330,11 +330,11 @@ export function unguardedSites({ file, code }: Source): string[] {
   };
 
   const visitBinding = (node: ts.BindingElement): void => {
-    const key = node.propertyName ?? node.name;
-    if (!ts.isIdentifier(key)) return;
-    if (EXPERIMENTAL_BROWSERS.has(key.text)) flag(node, `${key.text} opens a browser the scan cannot check`);
-    else if (LAUNCH_OPTIONS_AT.has(key.text) || UNREADABLE_BROWSERS.has(key.text) || OPENERS.has(key.text)) {
-      flag(node, `${key.text} is taken, not called, so the scan cannot check what it opens`);
+    const key = node.propertyName !== undefined ? keyName(node.propertyName) : ts.isIdentifier(node.name) ? node.name.text : undefined;
+    if (key === undefined) return;
+    if (EXPERIMENTAL_BROWSERS.has(key)) flag(node, `${key} opens a browser the scan cannot check`);
+    else if (LAUNCH_OPTIONS_AT.has(key) || UNREADABLE_BROWSERS.has(key) || OPENERS.has(key)) {
+      flag(node, `${key} is taken, not called, so the scan cannot check what it opens`);
     }
   };
 

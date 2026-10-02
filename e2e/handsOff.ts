@@ -103,3 +103,14 @@ export async function guardContext<C extends Guardable>(context: C, blocked: str
   const escaped = guard.escaped();
   if (escaped.length > 0) throw new Error(`hands-off requests the route guard did not abort: ${escaped.join(', ')}`);
 }
+
+/** Stub. */
+export function refuseHandsOffRequests(..._args: unknown[]): void {}
+
+/** Stub. */
+export function refuseHandsOffLookups(..._args: unknown[]): void {}
+
+/** Stub. */
+export function handsOffLookupsRefused(..._args: unknown[]): boolean {
+  return false;
+}

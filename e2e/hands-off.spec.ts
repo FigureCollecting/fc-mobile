@@ -1,3 +1,4 @@
+import dns from 'node:dns';
 import { writeFileSync } from 'node:fs';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -6,7 +7,14 @@ import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
 import { test as guarded, expect } from './fixtures';
-import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, guardContext, handsOffResolverRules } from './handsOff';
+import {
+  HANDS_OFF_DOMAINS,
+  HANDS_OFF_LAUNCH_ARGS,
+  blockHandsOff,
+  guardContext,
+  handsOffLookupsRefused,
+  handsOffResolverRules,
+} from './handsOff';
 
 /**
  * Ross, 2026-09-29: nothing we run may send a request to a site that bars AI
@@ -342,6 +350,58 @@ test.describe('the route guard every e2e context gets', () => {
     expect(answer).toBe('refused');
     expect(handsOffBlocked).toEqual([url]);
     expect(failed.get(url)).toMatch(/^net::ERR_BLOCKED_BY_CLIENT\b/);
+  });
+});
+
+test.describe("API requests and this worker's own DNS (sent from Node: no route or resolver rule sees them)", () => {
+  // A local proxy stands in for the internet: an API request the guard lets through lands on it, never on the host.
+  const proxied = test.extend<{ proxyNet: Sentinel }>({
+    proxyNet: async ({}, use) => {
+      const sentinel = await startSentinel();
+      await use(sentinel);
+      await sentinel.close();
+    },
+    proxy: async ({ proxyNet }, use) => {
+      await use({ server: `http://127.0.0.1:${proxyNet.port}` });
+    },
+  });
+
+  proxied('the request fixture, context.request and page.request refuse a hands-off URL before sending it', async ({ request, context, page, handsOffBlocked, proxyNet }) => {
+    await request.get('http://fc-canary.test/api').catch(() => undefined);
+    expect(proxyNet.hosts, 'the canary reached the stand-in proxy').toEqual(['fc-canary.test']);
+
+    const sent = [
+      ['http://vndb.org/v11', () => request.get('http://vndb.org/v11')],
+      ['https://static.myfigurecollection.net./x.jpg', () => request.fetch('https://static.myfigurecollection.net./x.jpg', { method: 'HEAD' })],
+      ['http://www.suruga-ya.jp/api', () => context.request.post('http://www.suruga-ya.jp/api', { data: {} })],
+      ['https://t.vndb.org../x.jpg', () => page.request.get('https://t.vndb.org../x.jpg')],
+    ] as const;
+    for (const [url, send] of sent) await expect(send(), url).rejects.toThrow(`hands-off host, not sent: ${url}`);
+    expect(proxyNet.hosts).toEqual(['fc-canary.test']);
+    expect(handsOffBlocked).toEqual(sent.map(([url]) => url));
+  });
+
+  test("this worker's DNS has no address for a hands-off host, so nothing the guards miss is sent from Node", async ({ playwright }) => {
+    // First: until e2e/fixtures.ts refuses these lookups, the lines below would ask the real DNS.
+    expect(handsOffLookupsRefused(), 'e2e/fixtures.ts refuses hands-off lookups in every worker').toBe(true);
+    for (const host of ['vndb.org', 'T.VNDB.ORG.', 'static.myfigurecollection.net..']) {
+      await expect(dns.promises.lookup(host), host).rejects.toMatchObject({ code: 'ENOTFOUND', hostname: host });
+      await expect(
+        new Promise((resolve, reject) => dns.lookup(host, { all: true }, (error, addresses) => (error ? reject(error) : resolve(addresses)))),
+        host,
+      ).rejects.toMatchObject({ code: 'ENOTFOUND', hostname: host });
+    }
+    await expect(dns.promises.lookup('localhost')).resolves.toMatchObject({ address: expect.any(String) });
+
+    // Node's own fetch, and an API request context of Playwright's with no guard on it.
+    await expect(fetch('http://vndb.org/v11')).rejects.toMatchObject({ cause: { code: 'ENOTFOUND', hostname: 'vndb.org' } });
+    // hands-off-scan: unguarded on purpose, to show the DNS under it.
+    const api = await playwright.request.newContext();
+    try {
+      await expect(api.get('http://vndb.org./v11')).rejects.toThrow('getaddrinfo ENOTFOUND vndb.org. (a hands-off host)');
+    } finally {
+      await api.dispose();
+    }
   });
 });
 

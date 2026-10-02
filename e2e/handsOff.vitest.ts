@@ -1,7 +1,18 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, guardContext, handsOffResolverRules, isHandsOffHost, isHandsOffUrl } from './handsOff';
+import {
+  HANDS_OFF_DOMAINS,
+  HANDS_OFF_LAUNCH_ARGS,
+  blockHandsOff,
+  guardContext,
+  handsOffLookupsRefused,
+  handsOffResolverRules,
+  isHandsOffHost,
+  isHandsOffUrl,
+  refuseHandsOffLookups,
+  refuseHandsOffRequests,
+} from './handsOff';
 
 const HANDS_OFF_URLS = [
   'https://myfigurecollection.net/',
@@ -139,6 +150,7 @@ function fakeContext() {
   return {
     routes,
     sockets,
+    request: fakeApi(),
     route: vi.fn(async (pattern: RegExp, handler: Handler) => {
       routes.push({ pattern, handler });
     }),
@@ -165,6 +177,10 @@ function fakeRequest(url: string, from: FakeRequest | null = null, failure: stri
 function fakeRoute(request: string | FakeRequest) {
   const req = typeof request === 'string' ? fakeRequest(request) : request;
   return { request: () => req, abort: vi.fn(async () => {}), fallback: vi.fn(async () => {}) };
+}
+
+function fakeApi() {
+  return { fetch: vi.fn(async (..._args: unknown[]) => 'the response') };
 }
 
 function fakeSocket(url: string) {
@@ -259,6 +275,111 @@ describe('blockHandsOff', () => {
     await context.send(fakeRequest('https://vndb.org/a'), true);
     expect(guard.blocked).toEqual(['https://vndb.org/a', 'https://vndb.org/a']);
     expect(guard.escaped()).toEqual([]);
+  });
+});
+
+describe('refuseHandsOffRequests (an API request context: the request fixture, context.request, page.request)', () => {
+  it('refuses a hands-off URL before sending it, and lists it', async () => {
+    const api = fakeApi();
+    const send = api.fetch;
+    const blocked: string[] = [];
+    refuseHandsOffRequests(api as never, blocked);
+    await expect(api.fetch('http://vndb.org./v11', { method: 'POST' })).rejects.toThrow('hands-off host, not sent: http://vndb.org./v11');
+    await expect(api.fetch({ url: () => 'https://t.vndb.org/x.jpg' })).rejects.toThrow('hands-off host, not sent: https://t.vndb.org/x.jpg');
+    expect(send).not.toHaveBeenCalled();
+    expect(blocked).toEqual(['http://vndb.org./v11', 'https://t.vndb.org/x.jpg']);
+  });
+
+  it('sends anything else as it was asked', async () => {
+    const api = fakeApi();
+    const send = api.fetch;
+    const blocked: string[] = [];
+    refuseHandsOffRequests(api as never, blocked, 'http://localhost:5173');
+    const options = { method: 'GET' };
+    await expect(api.fetch('https://example.com/?u=https://vndb.org/x', options)).resolves.toBe('the response');
+    await expect(api.fetch('/sw.js')).resolves.toBe('the response');
+    expect(send.mock.calls).toEqual([['https://example.com/?u=https://vndb.org/x', options], ['/sw.js', undefined]]);
+    expect(blocked).toEqual([]);
+  });
+
+  it('reads a relative URL against the base URL it is given', async () => {
+    const api = fakeApi();
+    refuseHandsOffRequests(api as never, [], 'https://vndb.org');
+    await expect(api.fetch('/v11')).rejects.toThrow('hands-off host, not sent: /v11');
+    expect(api.fetch).not.toBe(fakeApi().fetch);
+  });
+
+  it("guards every context's own API requests (context.request, which page.request is) with blockHandsOff", async () => {
+    const context = fakeContext();
+    const send = context.request.fetch;
+    const { blocked } = await blockHandsOff(context as never);
+    await expect(context.request.fetch('https://static.myfigurecollection.net/x.jpg')).rejects.toThrow(/hands-off host, not sent/);
+    await expect(context.request.fetch('http://localhost:5173/')).resolves.toBe('the response');
+    expect(send.mock.calls).toEqual([['http://localhost:5173/', undefined]]);
+    expect(blocked).toEqual(['https://static.myfigurecollection.net/x.jpg']);
+  });
+});
+
+describe("refuseHandsOffLookups (this process's own DNS)", () => {
+  type Callback = (error: NodeJS.ErrnoException | null, ...rest: unknown[]) => void;
+
+  function fakeDns() {
+    const lookup = vi.fn((_host: string, ...rest: unknown[]) => {
+      (rest[rest.length - 1] as Callback)(null, '192.0.2.1', 4);
+    });
+    const promisify = Symbol('customPromisifyArgs');
+    Object.assign(lookup, { [promisify]: ['address', 'family'] });
+    return { module: { lookup, promises: { lookup: vi.fn(async () => ({ address: '192.0.2.1', family: 4 })) } }, lookup, promisify };
+  }
+
+  function lookUp(module: { lookup: (...args: never[]) => void }, ...args: unknown[]) {
+    return new Promise<unknown[]>((resolve) => {
+      (module.lookup as (...a: unknown[]) => void)(...args, (...result: unknown[]) => resolve(result));
+    });
+  }
+
+  it.each(['vndb.org', 'T.VNDB.ORG.', 'static.myfigurecollection.net..'])('finds no address for %s, by callback and by promise', async (host) => {
+    const { module, lookup } = fakeDns();
+    refuseHandsOffLookups(module as never);
+    const notFound = { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname: host, message: `getaddrinfo ENOTFOUND ${host} (a hands-off host)` };
+    const [error] = await lookUp(module, host, { all: true });
+    expect(error).toMatchObject(notFound);
+    expect((await lookUp(module, host))[0]).toMatchObject(notFound);
+    await expect(module.promises.lookup(host, { all: true } as never)).rejects.toMatchObject(notFound);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(module.promises.lookup).not.toBe(fakeDns().module.promises.lookup);
+  });
+
+  it('answers by callback later, as Node does, never during the call', async () => {
+    const { module } = fakeDns();
+    refuseHandsOffLookups(module as never);
+    let returned = false;
+    const answered = new Promise<boolean>((resolve) => {
+      (module.lookup as (...a: unknown[]) => void)('vndb.org', () => resolve(returned));
+    });
+    returned = true;
+    expect(await answered).toBe(true);
+  });
+
+  it('passes every other lookup to the real one unchanged', async () => {
+    const { module, lookup } = fakeDns();
+    const real = module.promises.lookup;
+    refuseHandsOffLookups(module as never);
+    expect(await lookUp(module, 'localhost', { family: 4 })).toEqual([null, '192.0.2.1', 4]);
+    expect(lookup).toHaveBeenCalledWith('localhost', { family: 4 }, expect.any(Function));
+    await expect(module.promises.lookup('notvndb.org', { all: true } as never)).resolves.toEqual({ address: '192.0.2.1', family: 4 });
+    expect(real).toHaveBeenCalledWith('notvndb.org', { all: true });
+  });
+
+  it("keeps the real lookup's promisify shape, says it is installed, and installs once", () => {
+    const { module, promisify } = fakeDns();
+    expect(handsOffLookupsRefused(module as never)).toBe(false);
+    refuseHandsOffLookups(module as never);
+    const once = { lookup: module.lookup, promised: module.promises.lookup };
+    refuseHandsOffLookups(module as never);
+    expect(handsOffLookupsRefused(module as never)).toBe(true);
+    expect({ lookup: module.lookup, promised: module.promises.lookup }).toEqual(once);
+    expect((module.lookup as unknown as Record<symbol, unknown>)[promisify]).toEqual(['address', 'family']);
   });
 });
 

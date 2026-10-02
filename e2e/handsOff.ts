@@ -31,15 +31,21 @@ export function isHandsOffUrl(url: string): boolean {
 const MENTIONS_HANDS_OFF = new RegExp(HANDS_OFF_DOMAINS.map((d) => d.replaceAll('.', '\\.')).join('|'), 'i');
 
 /**
- * Aborts every request the context's pages and workers make to a hands-off
- * host before it is sent, and lists it in `blocked`.
+ * Aborts every request the context's pages and service workers make to a
+ * hands-off host before it is sent, closes every WebSocket its pages open to
+ * one before it connects, and lists each in `blocked`.
  */
-export async function blockHandsOff(context: Pick<BrowserContext, 'route'>, blocked: string[] = []): Promise<string[]> {
+export async function blockHandsOff(context: Pick<BrowserContext, 'route' | 'routeWebSocket'>, blocked: string[] = []): Promise<string[]> {
   await context.route(MENTIONS_HANDS_OFF, (route) => {
     const url = route.request().url();
     if (!isHandsOffUrl(url)) return route.fallback();
     blocked.push(url);
     return route.abort('blockedbyclient');
+  });
+  await context.routeWebSocket(MENTIONS_HANDS_OFF, (ws) => {
+    if (!isHandsOffUrl(ws.url())) return ws.connectToServer();
+    blocked.push(ws.url());
+    return ws.close({ code: 1008, reason: 'hands-off host' });
   });
   return blocked;
 }

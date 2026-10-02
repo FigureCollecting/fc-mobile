@@ -17,8 +17,8 @@ Every page the dev server serves gets the preview CSP plus inline styles
 own origin, the mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL`, and the
 production hosts: never a hands-off host (sites that bar AI agents by name,
 `e2e/handsOff.ts`). Every e2e browser context aborts requests to those hosts
-(its pages' and its service workers'), and every Chromium the suites launch
-resolves them to nothing. A spike page is therefore an HTML file in this repo,
+(its pages' and its service workers') and closes its pages' WebSockets to them,
+and every Chromium the suites launch resolves them to nothing. A spike page is therefore an HTML file in this repo,
 opened through `npm run dev` or from a spec on `e2e/fixtures.ts`; a page
 opened from disk or from another server has none of these guards.
 

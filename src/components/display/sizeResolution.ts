@@ -73,10 +73,11 @@ export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
  * meant one scraper-corrupted heightMm became the anchor and silently
  * shrank every other figure toward 0). `anchorMm` is the case/compartment's
  * own real or assumed physical height in mm — the CALLER's job (CaseShelf
- * resolves it from caseMode/caseProfile: DETOLF_PROFILE.innerHeightMm in
- * fixed mode, a documented default virtual-compartment height in dynamic
- * mode) — this module only relates a figure's own mm to whatever anchor
- * it's given, it has no opinion on cabinets.
+ * resolves it from caseMode/caseProfile: the cabinet profile's smallest
+ * compartment (fixedModeCompartmentMm) in fixed mode, a documented default
+ * virtual-compartment height in dynamic mode) — this module only relates a
+ * figure's own mm to whatever anchor it's given, it has no opinion on
+ * cabinets.
  *
  * relHeight is intentionally NOT clamped to <= 1: a figure genuinely taller
  * than the compartment is supposed to overflow it (render taller than the

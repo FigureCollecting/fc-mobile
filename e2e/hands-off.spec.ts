@@ -244,7 +244,7 @@ test.describe('the route guard every e2e context gets', () => {
     const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${sentinel.catchAll}`] });
     try {
       const context = await browser.newContext();
-      const blocked = await blockHandsOff(context);
+      const { blocked } = await blockHandsOff(context);
       const page = await context.newPage();
       await loadImages(page, [CANARY]);
       await expect.poll(() => sentinel.hosts, 'the canary reached the sentinel').toContain('fc-canary.test');
@@ -272,7 +272,7 @@ test.describe('the route guard every e2e context gets', () => {
     const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${sentinel.catchAll}`] });
     try {
       const context = await browser.newContext();
-      const blocked = await blockHandsOff(context);
+      const { blocked } = await blockHandsOff(context);
       const page = await context.newPage();
       await page.setContent('<title>probe</title>');
       await socketCloseCodes(page, ['ws://fc-canary.test/socket', 'ws://notmyfigurecollection.net/socket', ...HANDS_OFF_SOCKETS]);

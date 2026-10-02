@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
 import { test as guarded, expect } from './fixtures';
-import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules } from './handsOff';
+import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, guardContext, handsOffResolverRules } from './handsOff';
 
 /**
  * Ross, 2026-09-29: nothing we run may send a request to a site that bars AI
@@ -282,6 +282,38 @@ test.describe('the route guard every e2e context gets', () => {
       await browser.close();
       await sentinel.close();
     }
+  });
+
+  test('guardContext fails its test on a hands-off request the route guard never saw (a redirect hop)', async ({ browser }) => {
+    const context = await browser.newContext();
+    try {
+      const blocked: string[] = [];
+      let navigation = '';
+      const run = guardContext(context, blocked, async () => {
+        const page = await context.newPage();
+        // The redirect comes from a route, so nothing leaves the browser; the hop itself is never routed.
+        await page.route('http://fc-redirector.test/**', (route) => route.fulfill({ status: 302, headers: { Location: 'http://vndb.org./v11' } }));
+        navigation = await page.goto('http://fc-redirector.test/go').then(
+          () => 'loaded',
+          (e: Error) => e.message,
+        );
+      });
+      await expect(run).rejects.toThrow(
+        'hands-off requests the route guard did not abort: http://vndb.org./v11 (redirect from http://fc-redirector.test/go)',
+      );
+      // The resolver rules stopped the hop.
+      expect(navigation).toMatch(/net::ERR_NAME_NOT_RESOLVED/);
+      expect(blocked).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('a redirect hop to a hands-off host fails the e2e test that followed it', async ({ page, handsOffBlocked }) => {
+    test.fail(true, "the fixture's check fails this test after it ran: the expected outcome");
+    await page.route('http://fc-redirector.test/**', (route) => route.fulfill({ status: 302, headers: { Location: 'http://vndb.org/v11' } }));
+    await expect(page.goto('http://fc-redirector.test/go')).rejects.toThrow(/net::ERR_NAME_NOT_RESOLVED/);
+    expect(handsOffBlocked).toEqual([]);
   });
 
   test("aborts a service worker's own request to a hands-off host too", async ({ context, page, handsOffBlocked }) => {

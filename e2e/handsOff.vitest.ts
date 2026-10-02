@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules, isHandsOffHost, isHandsOffUrl } from './handsOff';
+import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, guardContext, handsOffResolverRules, isHandsOffHost, isHandsOffUrl } from './handsOff';
 
 const HANDS_OFF_URLS = [
   'https://myfigurecollection.net/',
@@ -126,9 +126,16 @@ describe('isHandsOffUrl', () => {
 
 type Handler = (route: unknown) => Promise<void> | void;
 
+interface FakeRequest {
+  url: () => string;
+  redirectedFrom: () => FakeRequest | null;
+  failure: () => { errorText: string } | null;
+}
+
 function fakeContext() {
   const routes: Array<{ pattern: RegExp; handler: Handler }> = [];
   const sockets: Array<{ pattern: RegExp; handler: Handler }> = [];
+  const listeners: Array<(request: FakeRequest) => void> = [];
   return {
     routes,
     sockets,
@@ -138,11 +145,26 @@ function fakeContext() {
     routeWebSocket: vi.fn(async (pattern: RegExp, handler: Handler) => {
       sockets.push({ pattern, handler });
     }),
+    on: vi.fn((event: string, listener: (request: FakeRequest) => void) => {
+      if (event === 'request') listeners.push(listener);
+    }),
+    /** The context sends a request: its 'request' event, then its route (if routed). */
+    send: async (request: FakeRequest, routed: boolean) => {
+      for (const listener of listeners) listener(request);
+      const route = fakeRoute(request);
+      if (routed) await routes[0]!.handler(route);
+      return route;
+    },
   };
 }
 
-function fakeRoute(url: string) {
-  return { request: () => ({ url: () => url }), abort: vi.fn(async () => {}), fallback: vi.fn(async () => {}) };
+function fakeRequest(url: string, from: FakeRequest | null = null, failure: string | null = null): FakeRequest {
+  return { url: () => url, redirectedFrom: () => from, failure: () => (failure === null ? null : { errorText: failure }) };
+}
+
+function fakeRoute(request: string | FakeRequest) {
+  const req = typeof request === 'string' ? fakeRequest(request) : request;
+  return { request: () => req, abort: vi.fn(async () => {}), fallback: vi.fn(async () => {}) };
 }
 
 function fakeSocket(url: string) {
@@ -165,7 +187,7 @@ describe('blockHandsOff', () => {
   it('aborts a hands-off request as blocked by the client, and lists it', async () => {
     const context = fakeContext();
     const blocked: string[] = [];
-    expect(await blockHandsOff(context as never, blocked)).toBe(blocked);
+    expect((await blockHandsOff(context as never, blocked)).blocked).toBe(blocked);
     const route = fakeRoute(HANDS_OFF_URLS[1]!);
     await context.routes[0]!.handler(route);
     expect(route.abort).toHaveBeenCalledWith('blockedbyclient');
@@ -175,7 +197,7 @@ describe('blockHandsOff', () => {
 
   it('routes WebSockets with the same pattern, and closes one to a hands-off host without connecting it', async () => {
     const context = fakeContext();
-    const blocked = await blockHandsOff(context as never);
+    const { blocked } = await blockHandsOff(context as never);
     expect(context.sockets).toHaveLength(1);
     expect(context.sockets[0]!.pattern).toBe(context.routes[0]!.pattern);
     const socket = fakeSocket('wss://vndb.org/socket');
@@ -187,7 +209,7 @@ describe('blockHandsOff', () => {
 
   it('connects a WebSocket that only mentions a hands-off host to its server', async () => {
     const context = fakeContext();
-    const blocked = await blockHandsOff(context as never);
+    const { blocked } = await blockHandsOff(context as never);
     const socket = fakeSocket('ws://localhost:5173/?u=vndb.org');
     await context.sockets[0]!.handler(socket);
     expect(socket.connectToServer).toHaveBeenCalledOnce();
@@ -197,12 +219,73 @@ describe('blockHandsOff', () => {
 
   it('passes on a request that only mentions a hands-off host', async () => {
     const context = fakeContext();
-    const blocked = await blockHandsOff(context as never);
+    const { blocked } = await blockHandsOff(context as never);
     const route = fakeRoute('https://example.com/?u=https://vndb.org/x');
     await context.routes[0]!.handler(route);
     expect(route.fallback).toHaveBeenCalledOnce();
     expect(route.abort).not.toHaveBeenCalled();
     expect(blocked).toEqual([]);
+  });
+
+  it('lists as escaped each hands-off request it saw sent but did not abort: a redirect hop, or one another route took first', async () => {
+    const context = fakeContext();
+    const guard = await blockHandsOff(context as never);
+    const page = fakeRequest('http://fc-redirector.test/go');
+    await context.send(fakeRequest('https://vndb.org/aborted'), true);
+    await context.send(page, false);
+    await context.send(fakeRequest('http://vndb.org./v11', page), false);
+    await context.send(fakeRequest('https://static.myfigurecollection.net/x.jpg'), false);
+    await context.send(fakeRequest('https://example.com/?u=https://vndb.org/x'), true);
+    expect(context.on).toHaveBeenCalledWith('request', expect.any(Function));
+    expect(guard.blocked).toEqual(['https://vndb.org/aborted']);
+    expect(guard.escaped()).toEqual([
+      'http://vndb.org./v11 (redirect from http://fc-redirector.test/go)',
+      'https://static.myfigurecollection.net/x.jpg',
+    ]);
+  });
+
+  it("does not list a request the page's CSP refused before sending it (Chromium still reports it, failed as 'csp')", async () => {
+    const context = fakeContext();
+    const guard = await blockHandsOff(context as never);
+    await context.send(fakeRequest('https://t.vndb.org/x.jpg', null, 'csp'), false);
+    await context.send(fakeRequest('https://t.vndb.org/y.jpg', null, 'net::ERR_NAME_NOT_RESOLVED'), false);
+    expect(guard.escaped()).toEqual(['https://t.vndb.org/y.jpg']);
+  });
+
+  it('lists nothing as escaped when it aborted every hands-off request sent', async () => {
+    const context = fakeContext();
+    const guard = await blockHandsOff(context as never);
+    await context.send(fakeRequest('https://vndb.org/a'), true);
+    await context.send(fakeRequest('https://vndb.org/a'), true);
+    expect(guard.blocked).toEqual(['https://vndb.org/a', 'https://vndb.org/a']);
+    expect(guard.escaped()).toEqual([]);
+  });
+});
+
+describe('guardContext (the context every e2e fixture test gets)', () => {
+  it('guards the context for the test, and passes when nothing escaped', async () => {
+    const context = fakeContext();
+    const blocked: string[] = [];
+    const use = vi.fn(async (c: unknown) => {
+      expect(c).toBe(context);
+      await context.send(fakeRequest('https://t.vndb.org/x.jpg'), true);
+    });
+    await guardContext(context as never, blocked, use);
+    expect(use).toHaveBeenCalledOnce();
+    expect(blocked).toEqual(['https://t.vndb.org/x.jpg']);
+  });
+
+  it('fails the test, after it ran, on each hands-off request that escaped the guard', async () => {
+    const context = fakeContext();
+    const page = fakeRequest('http://fc-redirector.test/go');
+    const use = vi.fn(async () => {
+      await context.send(page, false);
+      await context.send(fakeRequest('http://vndb.org/v11', page), false);
+    });
+    await expect(guardContext(context as never, [], use)).rejects.toThrow(
+      'hands-off requests the route guard did not abort: http://vndb.org/v11 (redirect from http://fc-redirector.test/go)',
+    );
+    expect(use).toHaveBeenCalledOnce();
   });
 });
 

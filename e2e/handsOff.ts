@@ -60,3 +60,13 @@ export async function blockHandsOff(context: Pick<BrowserContext, 'route' | 'rou
   });
   return blocked;
 }
+
+/** The context every e2e fixture test gets. */
+export async function guardContext<C extends Pick<BrowserContext, 'route' | 'routeWebSocket'>>(
+  context: C,
+  blocked: string[],
+  use: (context: C) => Promise<void>,
+): Promise<void> {
+  await blockHandsOff(context, blocked);
+  await use(context);
+}

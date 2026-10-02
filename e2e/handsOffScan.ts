@@ -111,9 +111,9 @@ export function unguardedSites({ file, code }: Source): string[] {
     if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return false;
     const name = declaration.name.text;
     const statement = declaration.parent.parent;
-    // A block, the file, or a switch case: whatever holds the statement and the ones after it.
+    // A block, the file, or a switch case: whatever holds the statement and the ones after it (a for header's are out of scope there).
     const list = (statement.parent as Partial<Pick<ts.Block, 'statements'>>).statements;
-    if (!ts.isVariableStatement(statement) || list === undefined) return false;
+    if (list === undefined) return false;
     const later = list.slice(list.indexOf(statement) + 1);
     const guardsIt = (node: ts.Node): boolean => {
       if (isGuardCall(node, guards)) {

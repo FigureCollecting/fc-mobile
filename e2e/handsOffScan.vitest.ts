@@ -155,8 +155,12 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
         '    await blockHandsOff(context);',
         '}',
         'for (const other = await browser.newContext(); ; ) break;',
+        'if (ready) for (const third = await browser.newContext(); ; ) break;',
       ),
-    ).toEqual(['x.spec.ts:6: browser.newContext() opens a context that no blockHandsOff guards']);
+    ).toEqual([
+      'x.spec.ts:6: browser.newContext() opens a context that no blockHandsOff guards',
+      'x.spec.ts:7: browser.newContext() opens a context that no blockHandsOff guards',
+    ]);
   });
 
   it("flags a browser's own page unless its context is guarded", () => {

@@ -196,16 +196,17 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
     type Use = { browserName?: string; defaultBrowserType?: string; launchOptions?: { args?: string[] }; proxy?: unknown; connectOptions?: unknown };
     type Project = { name?: string; use?: Use };
     /** The one project on another browser: WebKit, with the route guard only, not in CI (README). */
-    const others = { '../playwright.config.ts': ['webkit'], '../playwright.pwa.config.ts': [], '../playwright.stack.config.ts': [] };
+    const others = { '../playwright.config.ts': [['webkit', 'webkit']], '../playwright.pwa.config.ts': [], '../playwright.stack.config.ts': [] };
     for (const [file, expected] of Object.entries(others)) {
       const { default: config } = (await import(file)) as { default: { use?: Use; projects: Project[] } };
-      const isChromium = (p: Project) => (p.use?.browserName ?? p.use?.defaultBrowserType ?? 'chromium') === 'chromium';
+      const engine = (p: Project) => p.use?.browserName ?? p.use?.defaultBrowserType ?? 'chromium';
+      const isChromium = (p: Project) => engine(p) === 'chromium';
       const chromium = config.projects.filter(isChromium);
       expect(chromium.length, file).toBeGreaterThan(0);
       for (const p of chromium) {
         expect(p.use?.launchOptions?.args ?? [], `${file} ${p.name}`).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
       }
-      expect(config.projects.filter((p) => !isChromium(p)).map((p) => p.name), file).toEqual(expected);
+      expect(config.projects.filter((p) => !isChromium(p)).map((p) => [p.name, engine(p)]), file).toEqual(expected);
       // A proxy looks hosts up itself, and a browser connected to has launch args of its own: either goes round the rules.
       for (const use of [config.use, ...config.projects.map((p) => p.use)]) expect([use?.proxy, use?.connectOptions], file).toEqual([undefined, undefined]);
     }

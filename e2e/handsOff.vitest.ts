@@ -1,5 +1,3 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   HANDS_OFF_DOMAINS,
@@ -407,33 +405,5 @@ describe('guardContext (the context every e2e fixture test gets)', () => {
       'hands-off requests the route guard did not abort: http://vndb.org/v11 (redirect from http://fc-redirector.test/go)',
     );
     expect(use).toHaveBeenCalledOnce();
-  });
-});
-
-describe('every browser context the e2e suites open is guarded', () => {
-  const root = import.meta.dirname;
-  const sources = (readdirSync(root, { recursive: true }) as string[])
-    .filter((f) => f.endsWith('.ts') && !f.endsWith('.vitest.ts') && !f.split(path.sep).includes('node_modules'))
-    .map((f) => ({ file: f.split(path.sep).join('/'), code: readFileSync(path.join(root, f), 'utf8') }));
-
-  it('finds the specs', () => {
-    expect(sources.map((s) => s.file)).toEqual(expect.arrayContaining(['fixtures.ts', 'auth/auth.spec.ts', 'pwa/pwa.spec.ts']));
-  });
-
-  it('takes `test` from e2e/fixtures.ts (guarded), never straight from @playwright/test', () => {
-    const direct = sources.filter(({ file, code }) => {
-      if (file === 'fixtures.ts') return false;
-      return Array.from(code.matchAll(/^import\s+\{([^}]*)\}\s+from\s+'@playwright\/test'/gm)).some((m) =>
-        m[1]!.split(',').some((spec) => /^test\b/.test(spec.trim())),
-      );
-    });
-    expect(direct.map((s) => s.file)).toEqual([]);
-  });
-
-  it('calls blockHandsOff wherever a file launches a browser or opens a context itself', () => {
-    const unguarded = sources.filter(
-      ({ code }) => /\.(launch|launchPersistentContext|newContext)\(/.test(code) && !/\bblockHandsOff\(/.test(code),
-    );
-    expect(unguarded.map((s) => s.file)).toEqual([]);
   });
 });

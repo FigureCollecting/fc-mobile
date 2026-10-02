@@ -57,7 +57,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      include: ['src/**/*.{ts,tsx}', 'deploy/**/*.ts', 'e2e/handsOff.ts', 'e2e/signoffShots.ts'],
+      include: ['src/**/*.{ts,tsx}', 'deploy/**/*.ts', 'e2e/handsOff.ts', 'e2e/handsOffScan.ts', 'e2e/signoffShots.ts'],
       exclude: [
         '**/__tests__/**',
         '**/*.test.{ts,tsx}',

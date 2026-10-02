@@ -1011,6 +1011,19 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       expect(fixedNoProfileHeight).toBe(dynamicHeight);
     });
 
+    it('dynamic mode ignores a caseProfile (it only anchors fixed mode)', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const { container: dynamic } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: dynamicWithProfile } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseProfile={IKEA_DETOLF} />,
+      );
+      const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
+      const withProfileHeight = parseFloat((dynamicWithProfile.querySelector('.shelf-figure') as HTMLElement).style.height);
+      expect(withProfileHeight).toBe(dynamicHeight);
+    });
+
     it('falls back to the dynamic anchor for a profile with no compartments (a top-only unit)', () => {
       const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
       const topOnly = { ...IKEA_DETOLF, surfaces: IKEA_DETOLF.surfaces.slice(-1) };

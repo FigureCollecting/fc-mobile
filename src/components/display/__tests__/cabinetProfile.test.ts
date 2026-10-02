@@ -5,6 +5,7 @@ import {
   TOP_CLEARANCE_CAP_MM,
   HEADROOM_MIN_MM,
   STACK_TOLERANCE_MM,
+  FIT_EPSILON_MM,
   inchesToMm,
   topClearanceRawMm,
   topClearanceMm,
@@ -145,6 +146,12 @@ describe('fitsOnTop (G17: a figure over the clearance is a violator)', () => {
     expect(fitsOnTop(detolfHeight, 609.6)).toBe(true);
     expect(fitsOnTop(detolfHeight, 610.6)).toBe(false);
     expect(fitsOnTop(detolfHeight, 609.6 + 2 * GOLDEN_EPS)).toBe(false);
+  });
+
+  it('the 1e-6 mm tolerance is inclusive at its edge', () => {
+    const detolfHeight = boxOfHeight(1630);
+    expect(FIT_EPSILON_MM).toBe(GOLDEN_EPS);
+    expect(fitsOnTop(detolfHeight, topClearanceMm(detolfHeight) + FIT_EPSILON_MM)).toBe(true);
   });
 
   it('tolerates float drift within 1e-6 mm (a ceiling typed as 96 * 25.4 on a 72 in rack)', () => {

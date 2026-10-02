@@ -447,6 +447,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         "  const context = await webkit.launchPersistentContext(dir, { args: HANDS_OFF_LAUNCH_ARGS });",
         '  await blockHandsOff(context);',
         "  await playwright['chromium'].launch({ args: HANDS_OFF_LAUNCH_ARGS });",
+        '  await browserType.launch({ args: HANDS_OFF_LAUNCH_ARGS });',
         '});',
       ),
     ).toEqual([

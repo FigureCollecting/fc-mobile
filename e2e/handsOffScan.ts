@@ -87,17 +87,16 @@ function member(node: ts.Node): { name: string; receiver: ts.Expression } | unde
   return undefined;
 }
 
-/** chromium, firefox or webkit: by name, or as a member (playwright.chromium). */
-function isBrowserType(node: ts.Expression): boolean {
+/** Which browser type this is (chromium, firefox or webkit, by name or as a member: playwright.chromium), if one. */
+function browserType(node: ts.Expression): string | undefined {
   const r = unwrapped(node);
-  if (ts.isIdentifier(r)) return BROWSER_TYPES.has(r.text);
-  const m = member(r);
-  return m !== undefined && BROWSER_TYPES.has(m.name);
+  const name = ts.isIdentifier(r) ? r.text : member(r)?.name;
+  return name !== undefined && BROWSER_TYPES.has(name) ? name : undefined;
 }
 
 /** Whether `receiver.name` opens a browser whose launch args the scan cannot read. */
 function opensUnreadable(name: string, receiver: ts.Expression): boolean {
-  return UNREADABLE_BROWSERS.has(name) || (name === 'connect' && isBrowserType(receiver));
+  return UNREADABLE_BROWSERS.has(name) || (name === 'connect' && browserType(receiver) !== undefined);
 }
 
 /** Whether these args carry the hands-off resolver rules: HANDS_OFF_LAUNCH_ARGS itself, or an array that spreads it. */
@@ -181,8 +180,8 @@ function isAwaited(node: ts.Node): boolean {
  *   the project's, a launcher, newContext or newPage taken without being called,
  *   launchServer, connect, connectOverCDP and _android / _electron;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
- *   spread that is not a Chromium device, proxy and connectOptions: each leaves
- *   the resolver rules behind;
+ *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
+ *   connectOptions: each leaves the resolver rules behind;
  * - each context, browser page or API request context the file opens that a
  *   guard does not take before anything else uses it, on every path (not under
  *   a condition, a loop or a callback), blockHandsOff awaited;
@@ -294,6 +293,10 @@ export function unguardedSites({ file, code }: Source): string[] {
     const callee = node.expression.getText(source);
     const optionsAt = LAUNCH_OPTIONS_AT.get(name);
     if (optionsAt !== undefined && !hasResolverRules(node.arguments[optionsAt])) flag(node, `${callee}() launches without the hands-off resolver rules`);
+    // Firefox and WebKit ignore --host-resolver-rules, given or not.
+    if (optionsAt !== undefined && (browserType(receiver) ?? 'chromium') !== 'chromium') {
+      flag(node, `${callee}() launches a browser other than chromium, which has no hands-off resolver rules`);
+    }
     if (opensUnreadable(name, receiver)) flag(node, `${callee}() opens a browser the scan cannot check`);
     if (name === 'newContext' && /\brequest$/.test(receiver.getText(source))) {
       if (!guardedAtCall(node, API_GUARDS)) flag(node, `${callee}() opens an API request context that no refuseHandsOffRequests guards`);

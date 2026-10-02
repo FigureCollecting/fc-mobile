@@ -41,8 +41,8 @@ The e2e suites guard the rest:
   directly (an import, a require, any call given its module name, a path into
   `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS` or a
   spread of it, or `launchOptions` that replace them; another browser
-  (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`), a
-  `proxy` or `connectOptions`; `launchServer`, `connect`, `connectOverCDP`,
+  (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`, a
+  `firefox` or `webkit` launch), a `proxy` or `connectOptions`; `launchServer`, `connect`, `connectOverCDP`,
   `_android`, or a launcher passed around uncalled; a context, page or API
   context that a guard does not take before its first use, on every path; a
   route that continues, fetches, or has a handler it cannot read. It does not

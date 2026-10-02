@@ -15,6 +15,7 @@ import {
   handsOffLookupsRefused,
   handsOffResolverRules,
   isHandsOffHost,
+  refuseHandsOffLookups,
 } from './handsOff';
 
 /**
@@ -191,15 +192,22 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
     net.hosts.length = 0;
   });
 
-  test('every Chromium project of every Playwright config (e2e, PWA, stack) launches with them', async () => {
-    type Project = { name?: string; use?: { browserName?: string; defaultBrowserType?: string; launchOptions?: { args?: string[] } } };
-    for (const file of ['../playwright.config.ts', '../playwright.pwa.config.ts', '../playwright.stack.config.ts']) {
-      const { default: config } = (await import(file)) as { default: { projects: Project[] } };
-      const chromium = config.projects.filter((p) => (p.use?.browserName ?? p.use?.defaultBrowserType ?? 'chromium') === 'chromium');
+  test('every Chromium project of every Playwright config (e2e, PWA, stack) launches with them, and none goes round them', async () => {
+    type Use = { browserName?: string; defaultBrowserType?: string; launchOptions?: { args?: string[] }; proxy?: unknown; connectOptions?: unknown };
+    type Project = { name?: string; use?: Use };
+    /** The one project on another browser: WebKit, with the route guard only, not in CI (README). */
+    const others = { '../playwright.config.ts': ['webkit'], '../playwright.pwa.config.ts': [], '../playwright.stack.config.ts': [] };
+    for (const [file, expected] of Object.entries(others)) {
+      const { default: config } = (await import(file)) as { default: { use?: Use; projects: Project[] } };
+      const isChromium = (p: Project) => (p.use?.browserName ?? p.use?.defaultBrowserType ?? 'chromium') === 'chromium';
+      const chromium = config.projects.filter(isChromium);
       expect(chromium.length, file).toBeGreaterThan(0);
       for (const p of chromium) {
         expect(p.use?.launchOptions?.args ?? [], `${file} ${p.name}`).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
       }
+      expect(config.projects.filter((p) => !isChromium(p)).map((p) => p.name), file).toEqual(expected);
+      // A proxy looks hosts up itself, and a browser connected to has launch args of its own: either goes round the rules.
+      for (const use of [config.use, ...config.projects.map((p) => p.use)]) expect([use?.proxy, use?.connectOptions], file).toEqual([undefined, undefined]);
     }
   });
 
@@ -393,11 +401,39 @@ test.describe("API requests and this worker's own DNS (sent from Node: no route 
     expect(handsOffBlocked).toEqual(sent.map(([url]) => url));
   });
 
+  proxied.describe('under a hands-off baseURL', () => {
+    proxied.use({ baseURL: 'http://vndb.org' });
+
+    proxied('context.request and page.request read a relative URL against it, and refuse it', async ({ context, page, handsOffBlocked, proxyNet }) => {
+      for (const send of [() => context.request.get('/v11'), () => page.request.get('/v11')]) await expect(send()).rejects.toThrow('hands-off host, not sent: /v11');
+      expect(proxyNet.hosts).toEqual([]);
+      expect(handsOffBlocked).toEqual(['/v11', '/v11']);
+    });
+  });
+
   test("this worker's DNS has no address for a hands-off host, so nothing the guards miss is sent from Node", async ({ playwright }) => {
-    // First: unless e2e/fixtures.ts refuses these lookups and knows these hosts, the lines below would ask the real DNS.
-    expect(handsOffLookupsRefused(), 'e2e/fixtures.ts refuses hands-off lookups in every worker').toBe(true);
+    // First, with nothing real under it: the lines below ask this worker's DNS, so unless its refusal works, is installed
+    // and knows these hosts, they would ask the real one.
     const hosts = ['vndb.org', 'T.VNDB.ORG.', 'static.myfigurecollection.net..'];
     expect(hosts.filter((host) => !isHandsOffHost(host))).toEqual([]);
+    const passedOn: unknown[] = [];
+    const standIn = {
+      lookup: (host: unknown, ...rest: unknown[]) => {
+        passedOn.push(host);
+        (rest[rest.length - 1] as (error: null, address: string, family: number) => void)(null, '192.0.2.1', 4);
+      },
+      promises: { lookup: async (host: unknown) => (passedOn.push(host), { address: '192.0.2.1', family: 4 }) },
+    };
+    refuseHandsOffLookups(standIn as never);
+    for (const host of hosts) {
+      await expect(standIn.promises.lookup(host), host).rejects.toMatchObject({ code: 'ENOTFOUND' });
+      await expect(new Promise((resolve, reject) => standIn.lookup(host, (error: Error | null) => (error ? reject(error) : resolve(host)))), host).rejects.toMatchObject({
+        code: 'ENOTFOUND',
+      });
+    }
+    expect(passedOn, 'what the refusal passed on to the stand-in').toEqual([]);
+    expect(handsOffLookupsRefused(), 'e2e/fixtures.ts refuses hands-off lookups in every worker').toBe(true);
+
     for (const host of hosts) {
       await expect(dns.promises.lookup(host), host).rejects.toMatchObject({ code: 'ENOTFOUND', hostname: host });
       await expect(

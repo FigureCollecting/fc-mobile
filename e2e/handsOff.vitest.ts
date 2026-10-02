@@ -306,6 +306,20 @@ describe('refuseHandsOffRequests (an API request context: the request fixture, c
     await expect(api.fetch('/v11')).rejects.toThrow('hands-off host, not sent: /v11');
   });
 
+  it("reads a relative context.request URL against the base URL blockHandsOff and guardContext are given (the fixture's baseURL)", async () => {
+    const context = fakeContext();
+    const other = fakeContext();
+    const sends = [context.request.fetch, other.request.fetch];
+    const { blocked } = await blockHandsOff(context as never, [], 'http://vndb.org');
+    await expect(context.request.fetch('/v11')).rejects.toThrow('hands-off host, not sent: /v11');
+    const seen: string[] = [];
+    await guardContext(other as never, seen, async () => {
+      await expect(other.request.fetch('/api')).rejects.toThrow('hands-off host, not sent: /api');
+    }, 'https://www.suruga-ya.jp');
+    for (const send of sends) expect(send).not.toHaveBeenCalled();
+    expect([blocked, seen]).toEqual([['/v11'], ['/api']]);
+  });
+
   it("guards every context's own API requests (context.request, which page.request is) with blockHandsOff", async () => {
     const context = fakeContext();
     const send = context.request.fetch;
@@ -367,9 +381,35 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
     expect(lookup).toHaveBeenCalledWith('localhost', { family: 4 }, expect.any(Function));
     await expect(module.promises.lookup('notvndb.org', { all: true } as never)).resolves.toEqual({ address: '192.0.2.1', family: 4 });
     expect(real).toHaveBeenCalledWith('notvndb.org', { all: true });
-    // Not a host name at all: the real lookup answers, as Node would (with its own error).
-    expect(await lookUp(module, undefined)).toEqual([null, '192.0.2.1', 4]);
-    await expect(module.promises.lookup(undefined as never)).resolves.toEqual({ address: '192.0.2.1', family: 4 });
+    // Not a host name at all: the real lookup answers, as Node would (with its own error), even if it would print as one.
+    const printsAsOne = { toString: () => 'vndb.org' };
+    for (const notAName of [undefined, printsAsOne]) {
+      expect(await lookUp(module, notAName)).toEqual([null, '192.0.2.1', 4]);
+      await expect(module.promises.lookup(notAName as never)).resolves.toEqual({ address: '192.0.2.1', family: 4 });
+    }
+    expect(lookup).toHaveBeenLastCalledWith(printsAsOne, expect.any(Function));
+  });
+
+  it('says it is installed only when both lookups refuse, and installs only the one that does not', async () => {
+    for (const missing of ['lookup', 'promises.lookup'] as const) {
+      const { module, lookup } = fakeDns();
+      const real = { lookup: module.lookup, promised: module.promises.lookup };
+      refuseHandsOffLookups(module as never);
+      const refusing = { lookup: module.lookup, promised: module.promises.lookup };
+      if (missing === 'lookup') module.lookup = real.lookup;
+      else module.promises.lookup = real.promised;
+      expect(handsOffLookupsRefused(module as never), missing).toBe(false);
+
+      refuseHandsOffLookups(module as never);
+      expect(handsOffLookupsRefused(module as never), missing).toBe(true);
+      // The one still installed is the same function, not wrapped a second time.
+      if (missing === 'lookup') expect(module.promises.lookup).toBe(refusing.promised);
+      else expect(module.lookup).toBe(refusing.lookup);
+      expect((await lookUp(module, 'vndb.org'))[0], missing).toMatchObject({ code: 'ENOTFOUND' });
+      await expect(module.promises.lookup('vndb.org'), missing).rejects.toMatchObject({ code: 'ENOTFOUND' });
+      expect(lookup).not.toHaveBeenCalled();
+      expect(real.promised).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps the real lookup's promisify shape, says it is installed, and installs once", () => {

@@ -92,6 +92,8 @@ describe('blockHandsOff', () => {
     expect(pattern).toBeInstanceOf(RegExp);
     for (const url of HANDS_OFF_URLS) expect(pattern.test(url), url).toBe(true);
     expect(pattern.test('http://localhost:5173/assets/index.js')).toBe(false);
+    // The dots are literal: a name that only resembles a domain is not routed.
+    expect(pattern.test('http://localhost:5173/myfigurecollection-net/vndb_org.jpg')).toBe(false);
   });
 
   it('aborts a hands-off request as blocked by the client, and lists it', async () => {

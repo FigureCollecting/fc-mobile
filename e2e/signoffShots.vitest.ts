@@ -104,6 +104,7 @@ describe('SHOT_VIEWPORTS (one Playwright project each)', () => {
     expect(SHOT_VIEWPORTS.find((v) => v.name === 'fold8-cover-full')?.png).toEqual({ width: 1248, height: 1972 });
     expect(SHOT_VIEWPORTS.find((v) => v.name === 'fold8-open-full')?.png).toEqual({ width: 2448, height: 1848 });
     expect(SHOT_VIEWPORTS.find((v) => v.name === 'fold8-open-rotated-full')?.png).toEqual({ width: 1848, height: 2448 });
+    expect(SHOT_VIEWPORTS.find((v) => v.name === 'desktop')?.png).toEqual({ width: 1536, height: 730 });
   });
 
   it('share no name with each other, the case viewports or the existing projects', () => {

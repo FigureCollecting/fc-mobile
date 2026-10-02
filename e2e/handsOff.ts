@@ -9,22 +9,33 @@ import type { BrowserContext } from '@playwright/test';
  */
 export const HANDS_OFF_DOMAINS = ['myfigurecollection.net', 'suruga-ya.jp', 'suruga-ya.com', 'hobby-genki.com', 'vndb.org'] as const;
 
-/** Chromium --host-resolver-rules: each domain and every host under it resolves to nothing. */
+/**
+ * Chromium --host-resolver-rules: each domain and every host under it resolves
+ * to nothing, spelled with trailing dots too (vndb.org. is the same host to a
+ * resolver). The trailing-dot patterns fail closed: a name that only starts
+ * with a hands-off domain (vndb.org.example) resolves to nothing as well.
+ */
 export function handsOffResolverRules(): string {
-  return HANDS_OFF_DOMAINS.flatMap((d) => [`MAP ${d} ~NOTFOUND`, `MAP *.${d} ~NOTFOUND`]).join(', ');
+  return HANDS_OFF_DOMAINS.flatMap((d) => [`MAP ${d} ~NOTFOUND`, `MAP *.${d} ~NOTFOUND`, `MAP ${d}.* ~NOTFOUND`, `MAP *.${d}.* ~NOTFOUND`]).join(', ');
 }
 
 export const HANDS_OFF_LAUNCH_ARGS: string[] = [`--host-resolver-rules=${handsOffResolverRules()}`];
+
+/** Whether a hostname is a hands-off domain or under one, in any case and with any trailing dots (a look-alike is not). */
+export function isHandsOffHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.+$/, '');
+  return HANDS_OFF_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
 
 /** Whether the URL's host is a hands-off domain or under one (a look-alike is not). */
 export function isHandsOffUrl(url: string): boolean {
   let host: string;
   try {
-    host = new URL(url).hostname.replace(/\.$/, '');
+    host = new URL(url).hostname;
   } catch {
     return false;
   }
-  return HANDS_OFF_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+  return isHandsOffHost(host);
 }
 
 /** Any URL that mentions a hands-off domain; isHandsOffUrl decides. */

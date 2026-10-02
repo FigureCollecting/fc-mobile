@@ -131,6 +131,12 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
     ).toEqual([]);
   });
 
+  it('trusts a context by the name `context` or by its guard, not by a name that ends in Context', () => {
+    expect(scan('x.spec.ts', 'async function visit(context, otherContext) {', '  await context.newPage();', '  await otherContext.newPage();', '}')).toEqual([
+      'x.spec.ts:3: otherContext.newPage() opens a page in a context of its own that no blockHandsOff guards',
+    ]);
+  });
+
   it("flags a browser's own page unless its context is guarded", () => {
     expect(
       scan(
@@ -203,6 +209,19 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
     expect(scan('hands-off.spec.ts', '// a note of another kind', 'const c = await playwright.chromium.launch();')).toEqual([
       'hands-off.spec.ts:2: playwright.chromium.launch() launches without the hands-off resolver rules',
+    ]);
+    expect(
+      scan(
+        'hands-off.spec.ts',
+        '// hands-off-scan: a note on a test does not cover the calls in it.',
+        "test('a', async ({ playwright, browser }) => {",
+        '  const b = await playwright.chromium.launch();',
+        '  const page = await browser.newPage();',
+        '});',
+      ),
+    ).toEqual([
+      'hands-off.spec.ts:3: playwright.chromium.launch() launches without the hands-off resolver rules',
+      'hands-off.spec.ts:4: browser.newPage() opens a page in a context of its own that no blockHandsOff guards',
     ]);
   });
 });

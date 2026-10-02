@@ -136,11 +136,11 @@ export function unguardedSites({ file, code }: Source): string[] {
     return later.some(guardsIt);
   };
 
-  /** A page's context, a context the file guards, or one named as a context (the fixture's, a helper's parameter). */
+  /** A page's context, a context the file guards, or `context` (the fixture's, or a helper's parameter it is passed to). */
   const isContext = (receiver: ts.Expression): boolean => {
     const r = unwrapped(receiver);
     if (ts.isCallExpression(r) && ts.isPropertyAccessExpression(r.expression) && r.expression.name.text === 'context') return true;
-    return ts.isIdentifier(r) && (r.text === 'context' || r.text.endsWith('Context') || guardedNames.has(r.text));
+    return ts.isIdentifier(r) && (r.text === 'context' || guardedNames.has(r.text));
   };
 
   const visit = (node: ts.Node): void => {

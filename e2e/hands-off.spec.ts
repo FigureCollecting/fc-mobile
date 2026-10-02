@@ -175,6 +175,12 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
     expect(testInfo.project.use.launchOptions?.args ?? []).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
   });
 
+  test('a test fails if anything reached the sentinel under its browser', async ({ page, net }) => {
+    test.fail(true, "this spec's sentinel check fails the test after it ran: the expected outcome");
+    await loadImages(page, [CANARY]);
+    await expect.poll(() => net.hosts).toContain('fc-canary.test');
+  });
+
   test("this spec's browser keeps them, and sends what they do not map to the sentinel", async ({ launchOptions, net, page }) => {
     expect(launchOptions.args).toContain(`${HANDS_OFF_LAUNCH_ARGS[0]}, ${net.catchAll}`);
     const failed = failures(page);

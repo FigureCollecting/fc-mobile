@@ -37,6 +37,25 @@ const LOOK_ALIKES = [
   'http://fc-canary.test/from?u=https://static.myfigurecollection.net/x.jpg',
 ];
 
+/** WebSockets to hands-off hosts (plain ws, so a sentinel would read the Host of any that got out). */
+const HANDS_OFF_SOCKETS = ['ws://vndb.org/socket', 'ws://static.myfigurecollection.net/socket', 'ws://www.suruga-ya.jp:8080/socket'];
+
+/** Opens each WebSocket and resolves with each one's close code. */
+async function socketCloseCodes(page: Page, urls: string[]): Promise<number[]> {
+  return page.evaluate(
+    (all) =>
+      Promise.all(
+        all.map(
+          (u) =>
+            new Promise<number>((resolve) => {
+              new WebSocket(u).addEventListener('close', (e) => resolve(e.code));
+            }),
+        ),
+      ),
+    urls,
+  );
+}
+
 /** A service worker that fetches each URL posted to it and answers 'answered' or 'refused'. */
 const PROBE_WORKER = `
 self.addEventListener('install', () => self.skipWaiting());
@@ -178,6 +197,30 @@ test.describe('the route guard every e2e context gets', () => {
         .poll(() => new Set(sentinel.hosts))
         .toEqual(new Set(['fc-canary.test', 'notmyfigurecollection.net', 'myfigurecollection.net.fc-canary.test']));
       expect(new Set(blocked)).toEqual(new Set(HANDS_OFF_IMAGES));
+    } finally {
+      await browser.close();
+      await sentinel.close();
+    }
+  });
+
+  test('closes a WebSocket to a hands-off host before it connects', async ({ page, handsOffBlocked }) => {
+    await page.setContent('<title>probe</title>');
+    // 1008: closed by the guard (policy), not 1006 from a failed lookup (the resolver rules under it).
+    expect(await socketCloseCodes(page, HANDS_OFF_SOCKETS)).toEqual(HANDS_OFF_SOCKETS.map(() => 1008));
+    expect(new Set(handsOffBlocked)).toEqual(new Set(HANDS_OFF_SOCKETS));
+  });
+
+  test('blockHandsOff keeps any browser\'s WebSockets off the hosts and lets others through', async ({ playwright }) => {
+    const sentinel = await startSentinel();
+    const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${sentinel.catchAll}`] });
+    try {
+      const context = await browser.newContext();
+      const blocked = await blockHandsOff(context);
+      const page = await context.newPage();
+      await page.setContent('<title>probe</title>');
+      await socketCloseCodes(page, ['ws://fc-canary.test/socket', 'ws://notmyfigurecollection.net/socket', ...HANDS_OFF_SOCKETS]);
+      await expect.poll(() => new Set(sentinel.hosts)).toEqual(new Set(['fc-canary.test', 'notmyfigurecollection.net']));
+      expect(new Set(blocked)).toEqual(new Set(HANDS_OFF_SOCKETS));
     } finally {
       await browser.close();
       await sentinel.close();

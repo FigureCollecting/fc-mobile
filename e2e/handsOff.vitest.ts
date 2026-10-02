@@ -71,16 +71,25 @@ type Handler = (route: unknown) => Promise<void> | void;
 
 function fakeContext() {
   const routes: Array<{ pattern: RegExp; handler: Handler }> = [];
+  const sockets: Array<{ pattern: RegExp; handler: Handler }> = [];
   return {
     routes,
+    sockets,
     route: vi.fn(async (pattern: RegExp, handler: Handler) => {
       routes.push({ pattern, handler });
+    }),
+    routeWebSocket: vi.fn(async (pattern: RegExp, handler: Handler) => {
+      sockets.push({ pattern, handler });
     }),
   };
 }
 
 function fakeRoute(url: string) {
   return { request: () => ({ url: () => url }), abort: vi.fn(async () => {}), fallback: vi.fn(async () => {}) };
+}
+
+function fakeSocket(url: string) {
+  return { url: () => url, close: vi.fn(async () => {}), connectToServer: vi.fn(() => ({})) };
 }
 
 describe('blockHandsOff', () => {
@@ -105,6 +114,28 @@ describe('blockHandsOff', () => {
     expect(route.abort).toHaveBeenCalledWith('blockedbyclient');
     expect(route.fallback).not.toHaveBeenCalled();
     expect(blocked).toEqual([HANDS_OFF_URLS[1]]);
+  });
+
+  it('routes WebSockets with the same pattern, and closes one to a hands-off host without connecting it', async () => {
+    const context = fakeContext();
+    const blocked = await blockHandsOff(context as never);
+    expect(context.sockets).toHaveLength(1);
+    expect(context.sockets[0]!.pattern).toBe(context.routes[0]!.pattern);
+    const socket = fakeSocket('wss://vndb.org/socket');
+    await context.sockets[0]!.handler(socket);
+    expect(socket.close).toHaveBeenCalledWith({ code: 1008, reason: 'hands-off host' });
+    expect(socket.connectToServer).not.toHaveBeenCalled();
+    expect(blocked).toEqual(['wss://vndb.org/socket']);
+  });
+
+  it('connects a WebSocket that only mentions a hands-off host to its server', async () => {
+    const context = fakeContext();
+    const blocked = await blockHandsOff(context as never);
+    const socket = fakeSocket('ws://localhost:5173/?u=vndb.org');
+    await context.sockets[0]!.handler(socket);
+    expect(socket.connectToServer).toHaveBeenCalledOnce();
+    expect(socket.close).not.toHaveBeenCalled();
+    expect(blocked).toEqual([]);
   });
 
   it('passes on a request that only mentions a hands-off host', async () => {

@@ -81,7 +81,7 @@ describe('unguardedSites: where test and browsers come from', () => {
         "import { shot } from './playwright-helpers';",
       ),
     ).toEqual([]);
-    expect(scan('fixtures.ts', "import { test as base, expect, type BrowserContext } from '@playwright/test';")).toEqual([]);
+    expect(scan('fixtures.ts', "import { test as base, expect, type BrowserContext } from '@playwright/test';", "const { test } = require('@playwright/test');")).toEqual([]);
   });
 });
 
@@ -196,6 +196,18 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
         '  const okApi = await playwright.request.newContext();',
         '  refuseHandsOffRequests(okApi);',
         '  await okApi.get(\'/\');',
+        '  const labelled = await browser.newContext();',
+        '  log.labelled = { labelled: 1 };',
+        '  const { labelled: alias } = other;',
+        '  await (blockHandsOff(labelled));',
+        '  const pg = await browser.newPage();',
+        '  await blockHandsOff(pg.mainFrame());',
+        '  const pg2 = await browser.newPage();',
+        '  await blockHandsOff(wrap(pg2.context));',
+        '  const second = await browser.newContext();',
+        '  await blockHandsOff(other, second);',
+        '  for (const looped = await browser.newContext(); ; ) break;',
+        '  await blockHandsOff(looped);',
         '});',
       ),
     ).toEqual([
@@ -204,6 +216,10 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
       'x.spec.ts:8: browser.newPage() opens a page in a context of its own that no blockHandsOff guards',
       'x.spec.ts:11: playwright.request.newContext() opens an API request context that no refuseHandsOffRequests guards',
       'x.spec.ts:14: browser.newContext() opens a context that no blockHandsOff guards',
+      'x.spec.ts:26: browser.newPage() opens a page in a context of its own that no blockHandsOff guards',
+      'x.spec.ts:28: browser.newPage() opens a page in a context of its own that no blockHandsOff guards',
+      'x.spec.ts:30: browser.newContext() opens a context that no blockHandsOff guards',
+      'x.spec.ts:32: browser.newContext() opens a context that no blockHandsOff guards',
     ]);
   });
 
@@ -232,6 +248,16 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
         '  } finally {',
         '    await blockHandsOff(six);',
         '  }',
+        '  const seven = await browser.newContext();',
+        '  try {',
+        '    await other();',
+        '  } finally {',
+        '    await blockHandsOff(seven);',
+        '  }',
+        '  const eight = await browser.newContext();',
+        '  {',
+        '    await blockHandsOff(eight);',
+        '  }',
         '});',
       ),
     ).toEqual([
@@ -240,6 +266,7 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
       'x.spec.ts:6: browser.newContext() opens a context that no blockHandsOff guards',
       'x.spec.ts:8: browser.newContext() opens a context that no blockHandsOff guards',
       'x.spec.ts:16: browser.newContext() opens a context that no blockHandsOff guards',
+      'x.spec.ts:22: browser.newContext() opens a context that no blockHandsOff guards',
     ]);
   });
 
@@ -336,6 +363,8 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         '  await playwright.chromium.launch({ args: HANDS_OFF_LAUNCH_ARGS.slice(1) });',
         "  await playwright.chromium.launch({ args: ['HANDS_OFF_LAUNCH_ARGS'] });",
         '  await playwright.chromium.launch({ args });',
+        '  await playwright.chromium.launch({ args: otherArgs });',
+        '  await playwright.chromium.launch({ args: [...otherArgs] });',
         '  await playwright.chromium.launch({ ...more, args: HANDS_OFF_LAUNCH_ARGS });',
         "  await playwright.chromium.launch({ 'args': ['--x', ...HANDS_OFF_LAUNCH_ARGS], slowMo: 1 });",
         "  await playwright.chromium.launch({ ['args']: HANDS_OFF_LAUNCH_ARGS });",
@@ -355,11 +384,13 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       'x.spec.ts:6: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:7: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:8: playwright.chromium.launch() launches without the hands-off resolver rules',
-      "x.spec.ts:13: launchOptions replaces the project's launch args and its hands-off resolver rules",
-      "x.spec.ts:14: launchOptions replaces the project's launch args and its hands-off resolver rules",
+      'x.spec.ts:9: playwright.chromium.launch() launches without the hands-off resolver rules',
+      'x.spec.ts:10: playwright.chromium.launch() launches without the hands-off resolver rules',
       "x.spec.ts:15: launchOptions replaces the project's launch args and its hands-off resolver rules",
       "x.spec.ts:16: launchOptions replaces the project's launch args and its hands-off resolver rules",
       "x.spec.ts:17: launchOptions replaces the project's launch args and its hands-off resolver rules",
+      "x.spec.ts:18: launchOptions replaces the project's launch args and its hands-off resolver rules",
+      "x.spec.ts:19: launchOptions replaces the project's launch args and its hands-off resolver rules",
     ]);
   });
 
@@ -384,6 +415,10 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         "  await playwright.webkit['connect']('ws://127.0.0.1:1');",
         '  const [device] = await playwright._android.devices();',
         "  await device.connect('coordinator.v1.CompareService', 'Compare', {});",
+        '  const open = browser.newContext.bind(browser);',
+        '  const { newPage, launchServer: serve } = browser;',
+        '  const { _electron } = playwright;',
+        "  await chromium.connect('ws://127.0.0.1:1');",
         '});',
       ),
     ).toEqual([
@@ -395,6 +430,11 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       'x.spec.ts:8: chromium.connectOverCDP() opens a browser the scan cannot check',
       "x.spec.ts:9: playwright.webkit['connect']() opens a browser the scan cannot check",
       'x.spec.ts:10: playwright._android opens a browser the scan cannot check',
+      'x.spec.ts:12: browser.newContext is taken, not called, so the scan cannot check what it opens',
+      'x.spec.ts:13: newPage is taken, not called, so the scan cannot check what it opens',
+      'x.spec.ts:13: launchServer is taken, not called, so the scan cannot check what it opens',
+      'x.spec.ts:14: _electron opens a browser the scan cannot check',
+      'x.spec.ts:15: chromium.connect() opens a browser the scan cannot check',
     ]);
   });
 
@@ -409,7 +449,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         "test.use({ ...devices['Desktop Firefox'] });",
         "test.use({ ...devices['iPhone 15'], isMobile: true });",
         'test.use({ ...devices[name] });',
-        "test.use({ ...devices['Pixel 7'] });",
+        "test.use({ ...devices['Pixel 7'], ...settings['Desktop Firefox'], ...iphone });",
         "test.use({ proxy: { server: 'http://127.0.0.1:3128' } });",
         "test.use({ 'connectOptions': { wsEndpoint: 'ws://127.0.0.1:1' } });",
         "const context = await browser.newContext({ proxy: { server: 'http://127.0.0.1:3128' } });",
@@ -470,6 +510,10 @@ describe('unguardedSites: routes, which run newest first, so ahead of the hands-
         "  await page.route('**/api/**', (route) => route.fallback());",
         "  await context.route('**/api/**', async (route) => route.abort('blockedbyclient'));",
         "  await page.unroute('**/api/**');",
+        "  await page.route('**/x', function (route) { return route.abort(); });",
+        "  await context.routeWebSocket('**', onSocket);",
+        "  await page.route('**/y', (route) => route.fulfill({ body: cache.fetch() }));",
+        '  await withApi(url, (api) => api.fetch(url));',
         '});',
       ),
     ).toEqual([
@@ -479,6 +523,7 @@ describe('unguardedSites: routes, which run newest first, so ahead of the hands-
       'x.spec.ts:5: route.fallback() sends a routed request on with changes, ahead of the hands-off guard',
       'x.spec.ts:6: page.routeFromHAR() can send requests on, ahead of the hands-off guard',
       'x.spec.ts:7: page.route() takes a handler the scan cannot read',
+      'x.spec.ts:13: context.routeWebSocket() takes a handler the scan cannot read',
     ]);
   });
 

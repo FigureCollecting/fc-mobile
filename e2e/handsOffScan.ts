@@ -141,7 +141,12 @@ function firstUse(nodes: readonly ts.Node[], name: string): ts.Identifier | unde
   return found;
 }
 
-/** Whether `node` runs whenever the statement in `list` it sits in runs: nothing between them but awaits, parentheses, a declaration it initialises, or a try block. */
+/**
+ * Whether `node` runs whenever the statement in `list` it sits in runs: nothing
+ * between them but awaits, parentheses, declarations, blocks, and a try's own
+ * block (not its catch or finally). A block under an if, a loop or a function
+ * stops at that statement.
+ */
 function onEveryPath(node: ts.Node, list: readonly ts.Node[]): boolean {
   for (let at = node; !list.includes(at); at = at.parent) {
     const up = at.parent;
@@ -149,10 +154,10 @@ function onEveryPath(node: ts.Node, list: readonly ts.Node[]): boolean {
       ts.isAwaitExpression(up) ||
       ts.isParenthesizedExpression(up) ||
       ts.isExpressionStatement(up) ||
+      ts.isVariableDeclaration(up) ||
       ts.isVariableDeclarationList(up) ||
       ts.isVariableStatement(up) ||
-      (ts.isVariableDeclaration(up) && up.initializer === at) ||
-      (ts.isBlock(up) && ts.isTryStatement(up.parent) && up.parent.tryBlock === up) ||
+      ts.isBlock(up) ||
       (ts.isTryStatement(up) && up.tryBlock === at);
     if (!plain) return false;
   }
@@ -270,7 +275,7 @@ export function unguardedSites({ file, code }: Source): string[] {
         const param = at.parameters[0]?.name;
         if (param !== undefined && ts.isIdentifier(param) && param.text === receiver.text) {
           const route = at.parent;
-          return ts.isCallExpression(route) && route.arguments[1] === at && member(route.expression)?.name === 'route';
+          return ts.isCallExpression(route) && member(route.expression)?.name === 'route';
         }
       }
     }
@@ -336,8 +341,7 @@ export function unguardedSites({ file, code }: Source): string[] {
       const spread = unwrapped(node.expression);
       const device = ts.isElementAccessExpression(spread) || ts.isPropertyAccessExpression(spread) ? spread : undefined;
       if (device !== undefined && ts.isIdentifier(device.expression) && device.expression.text === 'devices') {
-        const name = member(device)?.name;
-        if (name === undefined || devices[name]?.defaultBrowserType !== 'chromium') {
+        if (devices[member(device)?.name ?? '']?.defaultBrowserType !== 'chromium') {
           flag(node, `${node.getText(source)} may pick a browser other than chromium, which has no hands-off resolver rules`);
         }
       }

@@ -199,8 +199,10 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
   test('they give a hands-off host no address, so an image there is never sent even with no route', async ({ playwright }) => {
     const sentinel = await startSentinel();
     const rules = [handsOffResolverRules(), sentinel.catchAll].filter(Boolean).join(', ');
+    // hands-off-scan: its own rules, the hands-off ones first and then the sentinel.
     const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${rules}`] });
     try {
+      // hands-off-scan: no route guard, on purpose: the resolver rules alone are under test.
       const page = await browser.newPage();
       const failed = failures(page);
       await loadImages(page, [CANARY]);
@@ -249,6 +251,7 @@ test.describe('the route guard every e2e context gets', () => {
   test('blockHandsOff keeps any browser off the hosts and lets other hosts through', async ({ playwright }) => {
     const sentinel = await startSentinel();
     // No hands-off rules here: whatever the guard lets through reaches the sentinel.
+    // hands-off-scan: no hands-off rules, on purpose: the sentinel catches whatever the guard lets through.
     const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${sentinel.catchAll}`] });
     try {
       const context = await browser.newContext();
@@ -277,6 +280,7 @@ test.describe('the route guard every e2e context gets', () => {
 
   test('blockHandsOff keeps any browser\'s WebSockets off the hosts and lets others through', async ({ playwright }) => {
     const sentinel = await startSentinel();
+    // hands-off-scan: no hands-off rules, on purpose: the sentinel catches whatever the guard lets through.
     const browser = await playwright.chromium.launch({ args: [`--host-resolver-rules=${sentinel.catchAll}`] });
     try {
       const context = await browser.newContext();

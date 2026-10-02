@@ -35,6 +35,7 @@ export default defineConfig({
       use: { ...devices['Pixel 7'], launchOptions: { args: HANDS_OFF_LAUNCH_ARGS } },
     },
     {
+      // The route guard only (e2e/fixtures.ts): --host-resolver-rules is a Chromium switch. Not in CI.
       name: 'webkit',
       use: { ...devices['iPhone 15'] },
     },

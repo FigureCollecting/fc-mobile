@@ -476,6 +476,16 @@ test.describe('the vite dev server (npm run dev, and any spike page it serves)',
     cspViolations.length = 0;
   });
 
+  test('does not stop a navigation under that CSP: in a spec, the route guard does', async ({ page, handsOffBlocked, cspViolations }, testInfo) => {
+    const file = testInfo.outputPath('spike-links.html');
+    writeFileSync(file, '<!doctype html><title>links</title><a id="out" href="https://vndb.org/v11">out</a>');
+    await page.goto(`${origin}/${path.relative(repoRoot, file).split(path.sep).map(encodeURIComponent).join('/')}`);
+    await page.click('#out');
+    await expect.poll(() => [...handsOffBlocked]).toEqual(['https://vndb.org/v11']);
+    // The CSP saw nothing to refuse: the link was followed, and the guard stopped it.
+    expect(cspViolations).toEqual([]);
+  });
+
   test('runs the app itself under that CSP: the case view draws, HMR connects, and nothing is refused', async ({ page, handsOffBlocked }) => {
     test.setTimeout(120_000); // the first visit pre-bundles the app's dependencies
     const sockets: string[] = [];

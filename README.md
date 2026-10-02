@@ -13,14 +13,32 @@ The dev server expects a backend on the URL set by `VITE_API_URL`.
 `.env.development` defaults to `http://localhost:5080/api`.
 
 Every page the dev server serves gets the preview CSP plus inline styles
-(`devServerHeaders` in `deploy/securityHeaders.ts`), so it reaches only its
-own origin, the mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL`, and the
-production hosts: never a hands-off host (sites that bar AI agents by name,
-`e2e/handsOff.ts`). Every e2e browser context aborts requests to those hosts
-(its pages' and its service workers') and closes its pages' WebSockets to them,
-and every Chromium the suites launch resolves them to nothing. A spike page is therefore an HTML file in this repo,
-opened through `npm run dev` or from a spec on `e2e/fixtures.ts`; a page
-opened from disk or from another server has none of these guards.
+(`devServerHeaders` in `deploy/securityHeaders.ts`). The CSP refuses images,
+scripts, fetches and WebSockets from any host but the page's own origin, the
+mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL` and the production hosts,
+so never from a hands-off host (sites that bar AI agents by name,
+`e2e/handsOff.ts`). A CSP does not stop a navigation: a link, a `location`
+change, `window.open` or a meta refresh still leaves.
+
+The e2e suites guard the rest:
+- Every context from `e2e/fixtures.ts` aborts its pages' and service workers'
+  requests to those hosts, navigations included, closes its pages' WebSockets
+  to them, and refuses its API requests to them (`request`, `context.request`,
+  `page.request`). A test fails if one of its requests got past that guard
+  (a redirect hop, which routes never see).
+- Every Chromium the suites launch resolves those hosts, with or without
+  trailing dots, to nothing; that also stops redirect hops and workers'
+  WebSockets.
+- Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests)
+  find no address for them.
+- `e2e/handsOffScan.ts` fails the unit tests on a spec that takes `test` or a
+  browser from Playwright directly, launches Chromium without the resolver
+  rules, or opens a context no guard covers.
+
+A spike page is therefore an HTML file in this repo, opened from a spec on
+`e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;
+opened from disk or another server it has no guard at all. WebKit gets the
+route guard but no resolver rules (that switch is Chromium's); it is not in CI.
 
 ## Build
 

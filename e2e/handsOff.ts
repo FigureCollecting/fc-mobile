@@ -3,10 +3,18 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
 
 /**
  * Ross, 2026-09-29: no request ever goes to a site that bars AI agents by name.
- * Every context the e2e suites open aborts requests to these hosts before they
- * are sent (blockHandsOff, wired in e2e/fixtures.ts), and every Chromium they
- * launch gets HANDS_OFF_LAUNCH_ARGS, so its resolver has no address for them
- * either. The app's CSP and the vite dev server's refuse them as well.
+ * The e2e suites stop one at each layer it could leave by, each tested in
+ * e2e/hands-off.spec.ts against local sentinels:
+ * - every fixture context (e2e/fixtures.ts, guardContext) aborts its pages'
+ *   and workers' requests to these hosts, closes its pages' WebSockets to them
+ *   and refuses its API requests to them, and fails its test on one that got
+ *   past (a redirect hop);
+ * - every Chromium they launch gets HANDS_OFF_LAUNCH_ARGS, so its resolver has
+ *   no address for them (which also stops a redirect hop);
+ * - each worker's Node DNS has none either (refuseHandsOffLookups);
+ * - e2e/handsOffScan.ts keeps every spec on these guards.
+ * The app's CSP and the vite dev server's refuse them as subresources; a CSP
+ * does not stop a navigation.
  */
 export const HANDS_OFF_DOMAINS = ['myfigurecollection.net', 'suruga-ya.jp', 'suruga-ya.com', 'hobby-genki.com', 'vndb.org'] as const;
 

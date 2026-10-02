@@ -39,7 +39,7 @@ export default defineConfig(({ mode }) => ({
   // COORDINATOR_PUBLIC_ORIGIN=http://localhost:5173 and COORDINATOR_ROUTE_PREFIX=/api:
   // the path and Host pass through unchanged, so every DPoP htu matches.
   server: {
-    // The dev CSP keeps pages in dev (spike pages too) off the hands-off hosts.
+    // The dev CSP refuses the hands-off hosts' images, scripts and fetches on every page in dev (spike pages too); not navigations.
     headers: devServerHeaders(readFileSync(NGINX_CONF, 'utf8'), loadEnv(mode, import.meta.dirname, 'VITE_')),
     proxy: {
       '/api': { target: process.env.FC_COORDINATOR_URL ?? 'http://127.0.0.1:5052', changeOrigin: false },

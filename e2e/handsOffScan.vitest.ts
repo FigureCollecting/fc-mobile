@@ -438,6 +438,23 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
   });
 
+  it('flags a launch of firefox or webkit, which ignore the resolver rules even when given them', () => {
+    expect(
+      scan(
+        'x.spec.ts',
+        "test('a', async ({ playwright }) => {",
+        '  await playwright.firefox.launch({ args: HANDS_OFF_LAUNCH_ARGS });',
+        "  const context = await webkit.launchPersistentContext(dir, { args: HANDS_OFF_LAUNCH_ARGS });",
+        '  await blockHandsOff(context);',
+        "  await playwright['chromium'].launch({ args: HANDS_OFF_LAUNCH_ARGS });",
+        '});',
+      ),
+    ).toEqual([
+      'x.spec.ts:2: playwright.firefox.launch() launches a browser other than chromium, which has no hands-off resolver rules',
+      'x.spec.ts:3: webkit.launchPersistentContext() launches a browser other than chromium, which has no hands-off resolver rules',
+    ]);
+  });
+
   it('flags a browser other than chromium, a proxy and connectOptions, in test.use or anywhere else', () => {
     expect(
       scan(

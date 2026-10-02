@@ -14,6 +14,7 @@ import {
   guardContext,
   handsOffLookupsRefused,
   handsOffResolverRules,
+  isHandsOffHost,
 } from './handsOff';
 
 /**
@@ -392,9 +393,11 @@ test.describe("API requests and this worker's own DNS (sent from Node: no route 
   });
 
   test("this worker's DNS has no address for a hands-off host, so nothing the guards miss is sent from Node", async ({ playwright }) => {
-    // First: until e2e/fixtures.ts refuses these lookups, the lines below would ask the real DNS.
+    // First: unless e2e/fixtures.ts refuses these lookups and knows these hosts, the lines below would ask the real DNS.
     expect(handsOffLookupsRefused(), 'e2e/fixtures.ts refuses hands-off lookups in every worker').toBe(true);
-    for (const host of ['vndb.org', 'T.VNDB.ORG.', 'static.myfigurecollection.net..']) {
+    const hosts = ['vndb.org', 'T.VNDB.ORG.', 'static.myfigurecollection.net..'];
+    expect(hosts.filter((host) => !isHandsOffHost(host))).toEqual([]);
+    for (const host of hosts) {
       await expect(dns.promises.lookup(host), host).rejects.toMatchObject({ code: 'ENOTFOUND', hostname: host });
       await expect(
         new Promise((resolve, reject) => dns.lookup(host, { all: true }, (error, addresses) => (error ? reject(error) : resolve(addresses)))),

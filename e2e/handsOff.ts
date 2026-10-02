@@ -85,6 +85,7 @@ export async function blockHandsOff(context: Guardable, blocked: string[] = []):
     return route.abort('blockedbyclient');
   });
   await context.routeWebSocket(MENTIONS_HANDS_OFF, (ws) => {
+    // hands-off-scan: the guard's own route connects only a WebSocket that is not to a hands-off host.
     if (!isHandsOffUrl(ws.url())) return ws.connectToServer();
     blocked.push(ws.url());
     return ws.close({ code: 1008, reason: 'hands-off host' });

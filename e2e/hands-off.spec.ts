@@ -372,6 +372,7 @@ test.describe("API requests and this worker's own DNS (sent from Node: no route 
       await use(sentinel);
       await sentinel.close();
     },
+    // hands-off-scan: the proxy is a local sentinel; the guards under test refuse before anything reaches it.
     proxy: async ({ proxyNet }, use) => {
       await use({ server: `http://127.0.0.1:${proxyNet.port}` });
     },

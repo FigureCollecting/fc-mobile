@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { devices } from '@playwright/test';
 import ts from 'typescript';
 
 export interface Source {
@@ -18,14 +19,29 @@ export function e2eSources(root: string): Source[] {
     .map((f) => ({ file: f.split(path.sep).join('/'), code: readFileSync(path.join(root, f), 'utf8') }));
 }
 
-const PLAYWRIGHT = /^(?:@playwright\/test|playwright|playwright-core)(?:\/.*)?$/;
+/** Playwright, by package name or by a path into its package under node_modules. */
+const PLAYWRIGHT = /^(?:@playwright\/test|playwright|playwright-core)(?:\/.*)?$|(?:^|\/)node_modules\/(?:@playwright\/test|playwright(?:-core)?)(?:\/|$)/;
 /** Values a spec may take from Playwright itself: none of them opens a browser, a context or a request. */
 const HARMLESS = new Set(['expect', 'devices', 'defineConfig']);
-const RESOLVER_RULES = /\b(?:HANDS_OFF_LAUNCH_ARGS|handsOffResolverRules)\b/;
+/** What every Chromium's args must hold: this identifier, as the args or spread into them. */
+const LAUNCH_ARGS = 'HANDS_OFF_LAUNCH_ARGS';
 const CONTEXT_GUARDS = new Set(['blockHandsOff', 'guardContext']);
 const API_GUARDS = new Set(['refuseHandsOffRequests']);
-/** The one file whose browsers all end at a local sentinel, so it may open unguarded ones on purpose. */
-const NOTE_FILE = 'hands-off.spec.ts';
+/** Browser launchers whose args the scan reads, by the index of their options argument. */
+const LAUNCH_OPTIONS_AT = new Map([
+  ['launch', 0],
+  ['launchPersistentContext', 1],
+]);
+/** Ways to a browser whose launch args the scan cannot read (and `connect` on a browser type). */
+const UNREADABLE_BROWSERS = new Set(['launchServer', 'connectOverCDP']);
+const BROWSER_TYPES = new Set(['chromium', 'firefox', 'webkit']);
+const EXPERIMENTAL_BROWSERS = new Set(['_android', '_electron']);
+/** Members that open a context or a page: the scan follows them only when called. */
+const OPENERS = new Set(['newContext', 'newPage']);
+/** Route calls that send the request on. Routes run newest first, so a spec's own route runs ahead of the guard's. */
+const SENDS_ON = new Set(['continue', 'connectToServer']);
+/** The files whose `hands-off-scan:` notes count: the spec whose browsers all end at a local sentinel, and the guard itself. */
+const NOTE_FILES = new Set(['hands-off.spec.ts', 'handsOff.ts']);
 const NOTE = 'hands-off-scan:';
 
 function scriptKind(file: string): ts.ScriptKind {
@@ -52,25 +68,124 @@ function landing(node: ts.Node): ts.Node {
   return out;
 }
 
-function isGuardCall(node: ts.Node, guards: Set<string>): node is ts.CallExpression {
+function isGuardCall(node: ts.Node, guards: Set<string>): node is ts.CallExpression & { expression: ts.Identifier } {
   return ts.isCallExpression(node) && ts.isIdentifier(node.expression) && guards.has(node.expression.text);
 }
 
+/** A property's name as written (an identifier, a string, a computed string); undefined for any other computed name. */
+function keyName(name: ts.PropertyName): string | undefined {
+  if (ts.isComputedPropertyName(name)) return ts.isStringLiteralLike(name.expression) ? name.expression.text : undefined;
+  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) ? name.text : undefined;
+}
+
+/** `receiver.name` or `receiver['name']`. */
+function member(node: ts.Node): { name: string; receiver: ts.Expression } | undefined {
+  if (ts.isPropertyAccessExpression(node)) return { name: node.name.text, receiver: node.expression };
+  if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
+    return { name: node.argumentExpression.text, receiver: node.expression };
+  }
+  return undefined;
+}
+
+/** chromium, firefox or webkit: by name, or as a member (playwright.chromium). */
+function isBrowserType(node: ts.Expression): boolean {
+  const r = unwrapped(node);
+  if (ts.isIdentifier(r)) return BROWSER_TYPES.has(r.text);
+  const m = member(r);
+  return m !== undefined && BROWSER_TYPES.has(m.name);
+}
+
+/** Whether `receiver.name` opens a browser whose launch args the scan cannot read. */
+function opensUnreadable(name: string, receiver: ts.Expression): boolean {
+  return UNREADABLE_BROWSERS.has(name) || (name === 'connect' && isBrowserType(receiver));
+}
+
+/** Whether these args carry the hands-off resolver rules: HANDS_OFF_LAUNCH_ARGS itself, or an array that spreads it. */
+function carriesRules(args: ts.Expression): boolean {
+  if (ts.isIdentifier(args)) return args.text === LAUNCH_ARGS;
+  return ts.isArrayLiteralExpression(args) && args.elements.some((e) => ts.isSpreadElement(e) && ts.isIdentifier(e.expression) && e.expression.text === LAUNCH_ARGS);
+}
+
+/** Whether launch options end with args that carry the rules: no spread or computed name after them can replace them. */
 function hasResolverRules(options: ts.Expression | undefined): boolean {
   if (options === undefined || !ts.isObjectLiteralExpression(options)) return false;
-  return options.properties.some(
-    (p) => ts.isPropertyAssignment(p) && p.name.getText() === 'args' && RESOLVER_RULES.test(p.initializer.getText()),
-  );
+  let rules = false;
+  for (const p of options.properties) {
+    if (ts.isSpreadAssignment(p)) {
+      rules = false;
+    } else {
+      const key = keyName(p.name);
+      if (key === undefined || key === 'args') rules = key === 'args' && ts.isPropertyAssignment(p) && carriesRules(p.initializer);
+    }
+  }
+  return rules;
+}
+
+/** An identifier that names something rather than reading a variable: `x.name`, `{ name: v }`, `{ name: n } = x`. */
+function isMemberName(node: ts.Identifier): boolean {
+  const p = node.parent;
+  return (ts.isPropertyAccessExpression(p) && p.name === node) || (ts.isPropertyAssignment(p) && p.name === node) || (ts.isBindingElement(p) && p.propertyName === node);
+}
+
+/** The first read of `name` in these nodes, in source order. */
+function firstUse(nodes: readonly ts.Node[], name: string): ts.Identifier | undefined {
+  let found: ts.Identifier | undefined;
+  const look = (node: ts.Node): boolean => {
+    if (ts.isIdentifier(node) && node.text === name && !isMemberName(node)) {
+      found = node;
+      return true;
+    }
+    return ts.forEachChild(node, look) ?? false;
+  };
+  nodes.some(look);
+  return found;
+}
+
+/** Whether `node` runs whenever the statement in `list` it sits in runs: nothing between them but awaits, parentheses, a declaration it initialises, or a try block. */
+function onEveryPath(node: ts.Node, list: readonly ts.Node[]): boolean {
+  for (let at = node; !list.includes(at); at = at.parent) {
+    const up = at.parent;
+    const plain =
+      ts.isAwaitExpression(up) ||
+      ts.isParenthesizedExpression(up) ||
+      ts.isExpressionStatement(up) ||
+      ts.isVariableDeclarationList(up) ||
+      ts.isVariableStatement(up) ||
+      (ts.isVariableDeclaration(up) && up.initializer === at) ||
+      (ts.isBlock(up) && ts.isTryStatement(up.parent) && up.parent.tryBlock === up) ||
+      (ts.isTryStatement(up) && up.tryBlock === at);
+    if (!plain) return false;
+  }
+  return true;
+}
+
+function isAwaited(node: ts.Node): boolean {
+  let up = node.parent;
+  while (ts.isParenthesizedExpression(up)) up = up.parent;
+  return ts.isAwaitExpression(up);
 }
 
 /**
  * What keeps one e2e source file off the hands-off guard (e2e/handsOff.ts), as
- * `file:line: what`: taking test, a browser type or `request` from Playwright
- * instead of e2e/fixtures.ts (whose contexts are guarded), a launch without the
- * hands-off resolver rules, launchOptions that replace the project's, and each
- * context, browser page or API request context the file opens itself that no
- * guard covers at that call. In hands-off.spec.ts a `hands-off-scan:` comment
- * on the statement exempts it.
+ * `file:line: what`. Read from the syntax tree:
+ * - test, a browser type or `request` taken from Playwright (by import, export,
+ *   require, any call given its module name, or a path into node_modules)
+ *   instead of from e2e/fixtures.ts, whose contexts are guarded;
+ * - a launch whose args are not HANDS_OFF_LAUNCH_ARGS or spread it (or that a
+ *   later spread or computed name could replace), launchOptions that replace
+ *   the project's, a launcher, newContext or newPage taken without being called,
+ *   launchServer, connect, connectOverCDP and _android / _electron;
+ * - browserName or defaultBrowserType other than 'chromium', a devices[...]
+ *   spread that is not a Chromium device, proxy and connectOptions: each leaves
+ *   the resolver rules behind;
+ * - each context, browser page or API request context the file opens that a
+ *   guard does not take before anything else uses it, on every path (not under
+ *   a condition, a loop or a callback), blockHandsOff awaited;
+ * - a route that sends the request on (continue, connectToServer, fallback with
+ *   changes, routeFromHAR), fetches it itself, or has a handler the scan cannot
+ *   read: routes run newest first, so it would run ahead of the guard's.
+ * A `hands-off-scan:` comment on a statement exempts it in hands-off.spec.ts
+ * and handsOff.ts only.
  */
 export function unguardedSites({ file, code }: Source): string[] {
   const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true, scriptKind(file));
@@ -87,12 +202,13 @@ export function unguardedSites({ file, code }: Source): string[] {
   };
   collect(source);
 
+  /** A note in a comment on the statement (one of a block's, not an if's body) that holds `node`. */
   const noted = (node: ts.Node): boolean => {
-    if (file !== NOTE_FILE) return false;
+    if (!NOTE_FILES.has(file)) return false;
     for (let at: ts.Node | undefined = node; at !== undefined && !ts.isSourceFile(at); at = at.parent) {
       const comments = ts.getLeadingCommentRanges(code, at.getFullStart()) ?? [];
       if (comments.some((c) => code.slice(c.pos, c.end).includes(NOTE))) return true;
-      if (ts.isStatement(at)) return false;
+      if (ts.isStatement(at) && 'statements' in at.parent) return false;
     }
     return false;
   };
@@ -103,38 +219,40 @@ export function unguardedSites({ file, code }: Source): string[] {
     found.push(`${file}:${line + 1}: ${what}`);
   };
 
-  /** Whether the value of `call` (a context, page or API context) reaches `guards` there or later in its block. */
-  const guardedAtCall = (call: ts.CallExpression, guards: Set<string>, ofContext: boolean): boolean => {
+  /**
+   * Whether the value of `call` (a context, a browser's page, an API context) is
+   * guarded before anything else uses it: handed straight to a guard, or held in
+   * a name whose first use after it, in its statement list, is a guard's first
+   * argument (a page's: page.context()), on every path, blockHandsOff awaited.
+   */
+  const guardedAtCall = (call: ts.CallExpression, guards: Set<string>, ofPage = false): boolean => {
     const value = landing(call);
     if (isGuardCall(value.parent, guards) && value.parent.arguments[0] === value) return true;
     const declaration = value.parent;
     if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return false;
-    const name = declaration.name.text;
-    const statement = declaration.parent.parent;
-    // A block, the file, or a switch case: whatever holds the statement and the ones after it (a for header's are out of scope there).
+    const { parent: declarationList } = declaration;
+    // Not a for header's: the statements after a loop are not in its scope.
+    if (!ts.isVariableDeclarationList(declarationList) || !ts.isVariableStatement(declarationList.parent)) return false;
+    const statement = declarationList.parent;
+    // A block, the file, or a switch case: whatever holds the statement and the ones after it.
     const list = (statement.parent as Partial<Pick<ts.Block, 'statements'>>).statements;
     if (list === undefined) return false;
-    const later = list.slice(list.indexOf(statement) + 1);
-    const guardsIt = (node: ts.Node): boolean => {
-      if (isGuardCall(node, guards)) {
-        const first = node.arguments[0];
-        if (first !== undefined && ts.isIdentifier(first) && first.text === name) return true;
-        // blockHandsOff(page.context()) guards a browser's own page.
-        if (
-          ofContext &&
-          first !== undefined &&
-          ts.isCallExpression(first) &&
-          ts.isPropertyAccessExpression(first.expression) &&
-          first.expression.name.text === 'context' &&
-          ts.isIdentifier(first.expression.expression) &&
-          first.expression.expression.text === name
-        ) {
-          return true;
-        }
-      }
-      return ts.forEachChild(node, guardsIt) ?? false;
-    };
-    return later.some(guardsIt);
+    const { declarations } = declarationList;
+    const after = [...declarations.slice(declarations.indexOf(declaration) + 1), ...list.slice(list.indexOf(statement) + 1)];
+    let use: ts.Expression | undefined = firstUse(after, declaration.name.text);
+    if (use !== undefined && ofPage) {
+      const access = use.parent;
+      const isContextCall = ts.isPropertyAccessExpression(access) && access.name.text === 'context' && ts.isCallExpression(access.parent) && access.parent.expression === access;
+      use = isContextCall ? access.parent : undefined;
+    }
+    const guard = use?.parent;
+    return (
+      guard !== undefined &&
+      isGuardCall(guard, guards) &&
+      guard.arguments[0] === use &&
+      onEveryPath(guard, list) &&
+      (guard.expression.text !== 'blockHandsOff' || isAwaited(guard))
+    );
   };
 
   /** A page's context, a context the file guards, or `context` (the fixture's, or a helper's parameter it is passed to). */
@@ -144,11 +262,112 @@ export function unguardedSites({ file, code }: Source): string[] {
     return ts.isIdentifier(r) && (r.text === 'context' || guardedNames.has(r.text));
   };
 
+  /** Whether `receiver` is the first parameter of a handler given to `.route(url, handler)`. */
+  const isRouteParameter = (receiver: ts.Expression): boolean => {
+    if (!ts.isIdentifier(receiver)) return false;
+    for (let at: ts.Node = receiver; !ts.isSourceFile(at); at = at.parent) {
+      if (ts.isArrowFunction(at) || ts.isFunctionExpression(at)) {
+        const param = at.parameters[0]?.name;
+        if (param !== undefined && ts.isIdentifier(param) && param.text === receiver.text) {
+          const route = at.parent;
+          return ts.isCallExpression(route) && route.arguments[1] === at && member(route.expression)?.name === 'route';
+        }
+      }
+    }
+    return false;
+  };
+
+  const visitCall = (node: ts.CallExpression): void => {
+    const module = playwrightModule(node.arguments[0]);
+    if (module !== undefined) {
+      if (!takesTest) flag(node, node.expression.kind === ts.SyntaxKind.ImportKeyword ? `imports ${module} at run time` : `requires ${module}`);
+      return;
+    }
+    const m = member(node.expression);
+    if (m === undefined) return;
+    const { name, receiver } = m;
+    const callee = node.expression.getText(source);
+    const optionsAt = LAUNCH_OPTIONS_AT.get(name);
+    if (optionsAt !== undefined && !hasResolverRules(node.arguments[optionsAt])) flag(node, `${callee}() launches without the hands-off resolver rules`);
+    if (opensUnreadable(name, receiver)) flag(node, `${callee}() opens a browser the scan cannot check`);
+    if (name === 'newContext' && /\brequest$/.test(receiver.getText(source))) {
+      if (!guardedAtCall(node, API_GUARDS)) flag(node, `${callee}() opens an API request context that no refuseHandsOffRequests guards`);
+    } else if (name === 'newContext' || name === 'launchPersistentContext') {
+      if (!guardedAtCall(node, CONTEXT_GUARDS)) flag(node, `${callee}() opens a context that no blockHandsOff guards`);
+    } else if (name === 'newPage' && !isContext(receiver)) {
+      if (!guardedAtCall(node, CONTEXT_GUARDS, true)) flag(node, `${callee}() opens a page in a context of its own that no blockHandsOff guards`);
+    }
+    if (SENDS_ON.has(name)) flag(node, `${callee}() sends a routed request on, ahead of the hands-off guard`);
+    if (name === 'fallback' && node.arguments.length > 0) flag(node, `${callee}() sends a routed request on with changes, ahead of the hands-off guard`);
+    if (name === 'routeFromHAR') flag(node, `${callee}() can send requests on, ahead of the hands-off guard`);
+    if (name === 'fetch' && isRouteParameter(receiver)) flag(node, `${callee}() fetches a routed request itself, outside the hands-off guards`);
+    const handler = node.arguments[1];
+    if ((name === 'route' || name === 'routeWebSocket') && handler !== undefined && !ts.isArrowFunction(handler) && !ts.isFunctionExpression(handler)) {
+      flag(node, `${callee}() takes a handler the scan cannot read`);
+    }
+  };
+
+  /** A launcher, newContext or newPage named but not called here; _android and _electron anywhere. */
+  const visitMember = (node: ts.PropertyAccessExpression | ts.ElementAccessExpression): void => {
+    const m = member(node);
+    if (m === undefined) return;
+    if (EXPERIMENTAL_BROWSERS.has(m.name)) {
+      flag(node, `${node.getText(source)} opens a browser the scan cannot check`);
+      return;
+    }
+    const called = ts.isCallExpression(node.parent) && node.parent.expression === node;
+    if (!called && (LAUNCH_OPTIONS_AT.has(m.name) || opensUnreadable(m.name, m.receiver) || OPENERS.has(m.name))) {
+      flag(node, `${node.getText(source)} is taken, not called, so the scan cannot check what it opens`);
+    }
+  };
+
+  const visitBinding = (node: ts.BindingElement): void => {
+    const key = node.propertyName ?? node.name;
+    if (!ts.isIdentifier(key)) return;
+    if (EXPERIMENTAL_BROWSERS.has(key.text)) flag(node, `${key.text} opens a browser the scan cannot check`);
+    else if (LAUNCH_OPTIONS_AT.has(key.text) || UNREADABLE_BROWSERS.has(key.text) || OPENERS.has(key.text)) {
+      flag(node, `${key.text} is taken, not called, so the scan cannot check what it opens`);
+    }
+  };
+
+  /** An option in any object literal (test.use, a fixture, launch or context options). */
+  const visitOption = (node: ts.ObjectLiteralElementLike): void => {
+    if (ts.isSpreadAssignment(node)) {
+      const spread = unwrapped(node.expression);
+      const device = ts.isElementAccessExpression(spread) || ts.isPropertyAccessExpression(spread) ? spread : undefined;
+      if (device !== undefined && ts.isIdentifier(device.expression) && device.expression.text === 'devices') {
+        const name = member(device)?.name;
+        if (name === undefined || devices[name]?.defaultBrowserType !== 'chromium') {
+          flag(node, `${node.getText(source)} may pick a browser other than chromium, which has no hands-off resolver rules`);
+        }
+      }
+      return;
+    }
+    const value = ts.isPropertyAssignment(node) ? node.initializer : undefined;
+    switch (keyName(node.name)) {
+      case 'launchOptions':
+        if (!hasResolverRules(value)) flag(node, "launchOptions replaces the project's launch args and its hands-off resolver rules");
+        break;
+      case 'browserName':
+      case 'defaultBrowserType':
+        if (value === undefined || !ts.isStringLiteralLike(value) || value.text !== 'chromium') {
+          flag(node, `${node.getText(source)} may pick a browser other than chromium, which has no hands-off resolver rules`);
+        }
+        break;
+      case 'proxy':
+        flag(node, 'proxy sends requests through a proxy, which looks the hands-off hosts up itself');
+        break;
+      case 'connectOptions':
+        flag(node, 'connectOptions opens a browser the scan cannot check');
+        break;
+    }
+  };
+
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && !takesTest) {
+    if (ts.isImportDeclaration(node)) {
       const module = playwrightModule(node.moduleSpecifier);
       const clause = node.importClause;
-      if (module !== undefined && clause !== undefined && !clause.isTypeOnly) {
+      if (!takesTest && module !== undefined && clause !== undefined && !clause.isTypeOnly) {
         if (clause.name !== undefined) flag(node, `imports the default export of ${module}`);
         const bindings = clause.namedBindings;
         if (bindings !== undefined && ts.isNamespaceImport(bindings)) flag(node, `imports all of ${module}`);
@@ -166,28 +385,13 @@ export function unguardedSites({ file, code }: Source): string[] {
       const module = playwrightModule(node.moduleReference.expression);
       if (module !== undefined) flag(node, `requires ${module}`);
     } else if (ts.isCallExpression(node)) {
-      const module = playwrightModule(node.arguments[0]);
-      if (module !== undefined && !takesTest && ts.isIdentifier(node.expression) && node.expression.text === 'require') {
-        flag(node, `requires ${module}`);
-      } else if (module !== undefined && !takesTest && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-        flag(node, `imports ${module} at run time`);
-      } else if (ts.isPropertyAccessExpression(node.expression)) {
-        const method = node.expression.name.text;
-        const callee = node.expression.getText(source);
-        if (method === 'launch' || method === 'launchPersistentContext') {
-          if (!hasResolverRules(node.arguments[method === 'launch' ? 0 : 1])) flag(node, `${callee}() launches without the hands-off resolver rules`);
-        }
-        if (method === 'newContext' && /\brequest$/.test(node.expression.expression.getText(source))) {
-          if (!guardedAtCall(node, API_GUARDS, false)) flag(node, `${callee}() opens an API request context that no refuseHandsOffRequests guards`);
-        } else if (method === 'newContext' || method === 'launchPersistentContext') {
-          if (!guardedAtCall(node, CONTEXT_GUARDS, false)) flag(node, `${callee}() opens a context that no blockHandsOff guards`);
-        } else if (method === 'newPage' && !isContext(node.expression.expression)) {
-          if (!guardedAtCall(node, CONTEXT_GUARDS, true)) flag(node, `${callee}() opens a page in a context of its own that no blockHandsOff guards`);
-        }
-      }
-    } else if ((ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) && node.name.getText(source) === 'launchOptions' && !takesTest) {
-      const value = ts.isPropertyAssignment(node) ? node.initializer.getText(source) : '';
-      if (!RESOLVER_RULES.test(value)) flag(node, "launchOptions replaces the project's launch args and its hands-off resolver rules");
+      visitCall(node);
+    } else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      visitMember(node);
+    } else if (ts.isBindingElement(node)) {
+      visitBinding(node);
+    } else if (ts.isObjectLiteralElementLike(node) && ts.isObjectLiteralExpression(node.parent)) {
+      visitOption(node);
     }
     ts.forEachChild(node, visit);
   };

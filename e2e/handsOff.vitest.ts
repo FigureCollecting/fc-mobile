@@ -1,13 +1,16 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules, isHandsOffUrl } from './handsOff';
+import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules, isHandsOffHost, isHandsOffUrl } from './handsOff';
 
 const HANDS_OFF_URLS = [
   'https://myfigurecollection.net/',
   'https://static.myfigurecollection.net/upload/items/1/12345-abcde.jpg',
   'http://STATIC.MyFigureCollection.NET/x.jpg',
   'https://myfigurecollection.net./x.jpg',
+  'https://vndb.org../x',
+  'http://static.myfigurecollection.net.../x.jpg',
+  'https://T.VNDB.ORG./x',
   'https://user:pw@static.myfigurecollection.net/x.jpg',
   'https://example.com@static.myfigurecollection.net/x.jpg',
   'https://www.suruga-ya.jp/database/pics/game/g1.jpg',
@@ -42,18 +45,72 @@ describe('the hands-off hosts', () => {
   });
 });
 
+/**
+ * Chromium's --host-resolver-rules matching (net/base/host_mapping_rules.cc): the
+ * first MAP rule whose pattern matches the host wins, '*' standing for any run
+ * of characters.
+ */
+function mappedBy(rules: string[], host: string): string | undefined {
+  return rules.find((rule) => {
+    const glob = rule.split(' ')[1]!;
+    return new RegExp(`^${glob.split('*').map((part) => part.replaceAll('.', '\\.')).join('.*')}$`).test(host);
+  });
+}
+
 describe('the resolver rules every Chromium the suites launch gets', () => {
-  it('give each hands-off domain and every host under it no address', () => {
-    const rules = handsOffResolverRules().split(', ');
+  const rules = handsOffResolverRules().split(', ');
+
+  it('give each hands-off domain and every host under it no address, with or without trailing dots', () => {
     for (const domain of HANDS_OFF_DOMAINS) {
       expect(rules).toContain(`MAP ${domain} ~NOTFOUND`);
       expect(rules).toContain(`MAP *.${domain} ~NOTFOUND`);
+      expect(rules).toContain(`MAP ${domain}.* ~NOTFOUND`);
+      expect(rules).toContain(`MAP *.${domain}.* ~NOTFOUND`);
     }
-    expect(rules).toHaveLength(HANDS_OFF_DOMAINS.length * 2);
+    expect(rules).toHaveLength(HANDS_OFF_DOMAINS.length * 4);
+  });
+
+  it.each([
+    'vndb.org',
+    'vndb.org.',
+    'vndb.org..',
+    't.vndb.org',
+    't.vndb.org.',
+    'static.myfigurecollection.net.',
+    'myfigurecollection.net...',
+    'www.suruga-ya.jp.',
+    'suruga-ya.com..',
+    'a.b.hobby-genki.com.',
+  ])('map %s to nothing', (host) => {
+    expect(mappedBy(rules, host)).toMatch(/ ~NOTFOUND$/);
+  });
+
+  it.each(['notvndb.org', 'xvndb.org.', 'vndb.orgx', 'notmyfigurecollection.net.', 'fc-canary.test', 'localhost', 'images.figurecollecting.com'])(
+    'leave %s alone',
+    (host) => {
+      expect(mappedBy(rules, host)).toBeUndefined();
+    },
+  );
+
+  it('fail closed on a name that only starts with a hands-off domain', () => {
+    expect(mappedBy(rules, 'vndb.org.example')).toBe('MAP vndb.org.* ~NOTFOUND');
   });
 
   it('are the one launch argument', () => {
     expect(HANDS_OFF_LAUNCH_ARGS).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
+  });
+});
+
+describe('isHandsOffHost (a hostname, as a DNS lookup gets it)', () => {
+  it.each(['vndb.org', 'VNDB.ORG', 'vndb.org.', 'vndb.org..', 'Static.MyFigureCollection.Net.', 'www.suruga-ya.jp', 'a.b.hobby-genki.com'])(
+    '%s is hands-off',
+    (host) => {
+      expect(isHandsOffHost(host)).toBe(true);
+    },
+  );
+
+  it.each(['notvndb.org', 'vndb.org.example', 'xvndb.org.', '.', '', 'localhost'])('%j is not', (host) => {
+    expect(isHandsOffHost(host)).toBe(false);
   });
 });
 

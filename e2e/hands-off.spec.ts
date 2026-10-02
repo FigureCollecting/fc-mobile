@@ -5,14 +5,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
-import { test, expect } from './fixtures';
+import { test as guarded, expect } from './fixtures';
 import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules } from './handsOff';
 
 /**
  * Ross, 2026-09-29: nothing we run may send a request to a site that bars AI
- * agents by name. These tests never reach one: every browser they start maps
- * every host it resolves to a local sentinel first, so a request that gets
- * past the guard under test lands on 127.0.0.1 and fails the test.
+ * agents by name. These tests never reach one: every browser they use sends
+ * every host its rules do not map to a local sentinel (the project's browser
+ * too, after the project's own hands-off rules), so a request that gets past
+ * the guard under test lands on 127.0.0.1 and fails the test.
  */
 
 /** Images on every hands-off domain: the apex, subdomains, http, https and a port. */
@@ -25,6 +26,10 @@ const HANDS_OFF_IMAGES = [
   'https://www.hobby-genki.com/img/1.jpg',
   'https://t.vndb.org/cv/00/1.jpg',
   'http://s2.vndb.org:8080/ch/1.jpg',
+  // Fully qualified (trailing-dot) names: the same hosts to a resolver.
+  'http://vndb.org./v/1.jpg',
+  'https://static.myfigurecollection.net./upload/items/1/1.jpg',
+  'http://www.suruga-ya.jp../database/pics/1.jpg',
 ];
 
 /** A host that is not hands-off, loaded first to prove the sentinel catches what a browser sends. */
@@ -38,7 +43,13 @@ const LOOK_ALIKES = [
 ];
 
 /** WebSockets to hands-off hosts (plain ws, so a sentinel would read the Host of any that got out). */
-const HANDS_OFF_SOCKETS = ['ws://vndb.org/socket', 'ws://static.myfigurecollection.net/socket', 'ws://www.suruga-ya.jp:8080/socket'];
+const HANDS_OFF_SOCKETS = [
+  'ws://vndb.org/socket',
+  'ws://static.myfigurecollection.net/socket',
+  'ws://www.suruga-ya.jp:8080/socket',
+  'ws://vndb.org./socket',
+  'ws://t.vndb.org../socket',
+];
 
 /** Opens each WebSocket and resolves with each one's close code. */
 async function socketCloseCodes(page: Page, urls: string[]): Promise<number[]> {
@@ -85,11 +96,48 @@ async function startSentinel() {
   const { port } = server.address() as AddressInfo;
   return {
     hosts,
-    /** Last in a rule list: every host no earlier rule maps goes to the sentinel. */
-    catchAll: `MAP * 127.0.0.1:${port}`,
+    port,
+    /** Last in a rule list: every host no earlier rule maps goes to the sentinel (localhost, where the servers under test are, excepted). */
+    catchAll: `MAP * 127.0.0.1:${port}, EXCLUDE localhost, EXCLUDE 127.0.0.1`,
     close: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
+
+type Sentinel = Awaited<ReturnType<typeof startSentinel>>;
+
+const RESOLVER_RULES_FLAG = '--host-resolver-rules=';
+
+/**
+ * The project's browser for this spec: its own launch args, with every host its
+ * hands-off rules do not map sent on to a worker sentinel. A test fails if
+ * anything reached that sentinel.
+ */
+const test = guarded.extend<{ netCheck: void }, { net: Sentinel }>({
+  net: [
+    async ({}, use) => {
+      const sentinel = await startSentinel();
+      await use(sentinel);
+      await sentinel.close();
+    },
+    { scope: 'worker' },
+  ],
+  // hands-off-scan: keeps the project's resolver rules and appends the sentinel after them.
+  launchOptions: [
+    async ({ launchOptions, net }, use) => {
+      const args = (launchOptions.args ?? []).map((a) => (a.startsWith(RESOLVER_RULES_FLAG) ? `${a}, ${net.catchAll}` : a));
+      await use({ ...launchOptions, args });
+    },
+    { scope: 'worker' },
+  ],
+  netCheck: [
+    async ({ net }, use) => {
+      const before = net.hosts.length;
+      await use();
+      expect(net.hosts.slice(before), 'what reached the sentinel past every guard').toEqual([]);
+    },
+    { auto: true },
+  ],
+});
 
 /** Puts the images in a blank page (no CSP) and waits until each has loaded or failed. */
 async function loadImages(page: Page, urls: string[]): Promise<void> {
@@ -117,6 +165,15 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
   test('this project launches Chromium with them', ({}, testInfo) => {
     expect(HANDS_OFF_LAUNCH_ARGS).toHaveLength(1);
     expect(testInfo.project.use.launchOptions?.args ?? []).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
+  });
+
+  test("this spec's browser keeps them, and sends what they do not map to the sentinel", async ({ launchOptions, net, page }) => {
+    expect(launchOptions.args).toContain(`${HANDS_OFF_LAUNCH_ARGS[0]}, ${net.catchAll}`);
+    const failed = failures(page);
+    await loadImages(page, [CANARY]);
+    await expect.poll(() => net.hosts).toContain('fc-canary.test');
+    expect(failed.get(CANARY)).toBe('net::ERR_EMPTY_RESPONSE');
+    net.hosts.length = 0;
   });
 
   test('every Chromium project of every Playwright config (e2e, PWA, stack) launches with them', async () => {

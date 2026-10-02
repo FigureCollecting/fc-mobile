@@ -43,7 +43,10 @@ export async function signoffShot(
   return { path: file, ...pngSize(readFileSync(file)) };
 }
 
-/** Stub. */
-export function shotSizeError(..._args: unknown[]): string | undefined {
-  return 'not written yet';
+/** Why a sign-off PNG is not its panel's size (more than SHOT_TOLERANCE_PX off either way), or undefined when it is. */
+export function shotSizeError(png: PngSize, panel: PngSize): string | undefined {
+  const off: string[] = [];
+  if (Math.abs(png.width - panel.width) > SHOT_TOLERANCE_PX) off.push(`${png.width} wide, the panel is ${panel.width}`);
+  if (Math.abs(png.height - panel.height) > SHOT_TOLERANCE_PX) off.push(`${png.height} high, the panel is ${panel.height}`);
+  return off.length === 0 ? undefined : off.join('; ');
 }

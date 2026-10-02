@@ -12,13 +12,15 @@ npm run dev
 The dev server expects a backend on the URL set by `VITE_API_URL`.
 `.env.development` defaults to `http://localhost:5080/api`.
 
-Every page the dev server serves (spike pages too) gets the preview CSP plus
-inline styles (`devServerHeaders` in `deploy/securityHeaders.ts`), so it
-reaches only its own origin, the mode's `VITE_API_URL` and
-`VITE_IMAGE_MANAGER_URL`, and the production hosts: never a hands-off host
-(sites that bar AI agents by name, `e2e/handsOff.ts`). Every e2e browser
-context aborts requests to those hosts, and every Chromium the suites launch
-resolves them to nothing.
+Every page the dev server serves gets the preview CSP plus inline styles
+(`devServerHeaders` in `deploy/securityHeaders.ts`), so it reaches only its
+own origin, the mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL`, and the
+production hosts: never a hands-off host (sites that bar AI agents by name,
+`e2e/handsOff.ts`). Every e2e browser context aborts requests to those hosts
+(its pages' and its service workers'), and every Chromium the suites launch
+resolves them to nothing. A spike page is therefore an HTML file in this repo,
+opened through `npm run dev` or from a spec on `e2e/fixtures.ts`; a page
+opened from disk or from another server has none of these guards.
 
 ## Build
 
@@ -89,7 +91,14 @@ End-to-end smoke (Playwright):
 ```bash
 npx playwright install chromium    # one-time
 npm run test:e2e                   # boots the Vite dev server and runs e2e/
+npm run test:e2e:shots             # sign-off PNGs (below)
 ```
+
+Sign-off shots: `e2e/signoff.shots.spec.ts` runs once per `SHOT_VIEWPORTS`
+project (`e2e/caseViewports.ts`: the Fold8's full cover 444x701, open 870x657
+and turned 657x870 panels at DPR 2.8125, and desktop 1536x730) and saves full
+frames to `test-results/signoff/<project>/<name>.png` with `signoffShot`
+(`e2e/signoffShots.ts`), checking each PNG's size against the panel's pixels.
 
 Mocks:
 - `src/test/framerMotionMock.tsx` — drop-in for framer-motion so jsdom

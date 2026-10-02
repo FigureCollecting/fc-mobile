@@ -367,6 +367,9 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
     expect(lookup).toHaveBeenCalledWith('localhost', { family: 4 }, expect.any(Function));
     await expect(module.promises.lookup('notvndb.org', { all: true } as never)).resolves.toEqual({ address: '192.0.2.1', family: 4 });
     expect(real).toHaveBeenCalledWith('notvndb.org', { all: true });
+    // Not a host name at all: the real lookup answers, as Node would (with its own error).
+    expect(await lookUp(module, undefined)).toEqual([null, '192.0.2.1', 4]);
+    await expect(module.promises.lookup(undefined as never)).resolves.toEqual({ address: '192.0.2.1', family: 4 });
   });
 
   it("keeps the real lookup's promisify shape, says it is installed, and installs once", () => {

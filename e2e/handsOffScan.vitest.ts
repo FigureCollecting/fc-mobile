@@ -79,6 +79,7 @@ describe('unguardedSites: where test and browsers come from', () => {
         "const config = await import('../playwright.config.ts');",
         "import { stealth } from '../node_modules/playwright-extra/index.js';",
         "import { shot } from './playwright-helpers';",
+        "import helper = require('./helper');",
       ),
     ).toEqual([]);
     expect(scan('fixtures.ts', "import { test as base, expect, type BrowserContext } from '@playwright/test';", "const { test } = require('@playwright/test');")).toEqual([]);
@@ -419,6 +420,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         '  const { newPage, launchServer: serve } = browser;',
         '  const { _electron } = playwright;',
         "  await chromium.connect('ws://127.0.0.1:1');",
+        "  const { 'launch': quoted, ['newPage']: computed } = playwright.chromium;",
         '});',
       ),
     ).toEqual([
@@ -435,6 +437,8 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       'x.spec.ts:13: launchServer is taken, not called, so the scan cannot check what it opens',
       'x.spec.ts:14: _electron opens a browser the scan cannot check',
       'x.spec.ts:15: chromium.connect() opens a browser the scan cannot check',
+      'x.spec.ts:16: launch is taken, not called, so the scan cannot check what it opens',
+      'x.spec.ts:16: newPage is taken, not called, so the scan cannot check what it opens',
     ]);
   });
 

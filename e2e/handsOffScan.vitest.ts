@@ -53,6 +53,14 @@ describe('unguardedSites: where test and browsers come from', () => {
     expect(scan('x.spec.ts', code)).toEqual([`x.spec.ts:1: ${what}`]);
   });
 
+  it('reads TSX, JSX and a namespace alias too', () => {
+    expect(scan('x.spec.tsx', "import { test } from '@playwright/test';", 'const shown = <div>{test.name}</div>;')).toEqual([
+      'x.spec.tsx:1: imports test from @playwright/test',
+    ]);
+    expect(scan('x.spec.jsx', "import { chromium } from 'playwright';", 'const shown = <div />;')).toEqual(['x.spec.jsx:1: imports chromium from playwright']);
+    expect(scan('x.spec.ts', 'import Page = Types.Page;')).toEqual([]);
+  });
+
   it('lets types and the harmless values through, and lets e2e/fixtures.ts take test', () => {
     expect(
       scan(
@@ -135,6 +143,20 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
     expect(scan('x.spec.ts', 'async function visit(context, otherContext) {', '  await context.newPage();', '  await otherContext.newPage();', '}')).toEqual([
       'x.spec.ts:3: otherContext.newPage() opens a page in a context of its own that no blockHandsOff guards',
     ]);
+  });
+
+  it('reads a guard in any statement list (a switch case too), and flags a context opened in a for header', () => {
+    expect(
+      scan(
+        'x.spec.ts',
+        'switch (kind) {',
+        "  case 'a':",
+        '    const context = await browser.newContext();',
+        '    await blockHandsOff(context);',
+        '}',
+        'for (const other = await browser.newContext(); ; ) break;',
+      ),
+    ).toEqual(['x.spec.ts:6: browser.newContext() opens a context that no blockHandsOff guards']);
   });
 
   it("flags a browser's own page unless its context is guarded", () => {

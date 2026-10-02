@@ -1,4 +1,5 @@
-import type { BrowserContext, Request } from '@playwright/test';
+import dns from 'node:dns';
+import type { APIRequestContext, BrowserContext, Request } from '@playwright/test';
 
 /**
  * Ross, 2026-09-29: no request ever goes to a site that bars AI agents by name.
@@ -27,11 +28,11 @@ export function isHandsOffHost(hostname: string): boolean {
   return HANDS_OFF_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
-/** Whether the URL's host is a hands-off domain or under one (a look-alike is not). */
-export function isHandsOffUrl(url: string): boolean {
+/** Whether the URL's host (a relative URL read against `base`) is a hands-off domain or under one (a look-alike is not). */
+export function isHandsOffUrl(url: string, base?: string): boolean {
   let host: string;
   try {
-    host = new URL(url).hostname;
+    host = new URL(url, base).hostname;
   } catch {
     return false;
   }
@@ -41,7 +42,7 @@ export function isHandsOffUrl(url: string): boolean {
 /** Any URL that mentions a hands-off domain; isHandsOffUrl decides. */
 const MENTIONS_HANDS_OFF = new RegExp(HANDS_OFF_DOMAINS.map((d) => d.replaceAll('.', '\\.')).join('|'), 'i');
 
-type Guardable = Pick<BrowserContext, 'route' | 'routeWebSocket' | 'on'>;
+type Guardable = Pick<BrowserContext, 'route' | 'routeWebSocket' | 'on' | 'request'>;
 
 export interface HandsOffGuard {
   /** Every hands-off URL the guard stopped (requests aborted, WebSockets closed), in order. */
@@ -57,7 +58,8 @@ export interface HandsOffGuard {
 /**
  * Aborts every request the context's pages and service workers make to a
  * hands-off host before it is sent, closes every WebSocket its pages open to
- * one before it connects, and lists each in `blocked`. Routes never see a
+ * one before it connects, refuses its own API requests to one (context.request,
+ * which page.request is), and lists each in `blocked`. Routes never see a
  * redirect hop, so it also watches what the context sends: `escaped` lists any
  * hands-off request it did not abort.
  */
@@ -79,6 +81,7 @@ export async function blockHandsOff(context: Guardable, blocked: string[] = []):
     blocked.push(ws.url());
     return ws.close({ code: 1008, reason: 'hands-off host' });
   });
+  refuseHandsOffRequests(context.request, blocked);
   return {
     blocked,
     escaped: () =>
@@ -104,13 +107,61 @@ export async function guardContext<C extends Guardable>(context: C, blocked: str
   if (escaped.length > 0) throw new Error(`hands-off requests the route guard did not abort: ${escaped.join(', ')}`);
 }
 
-/** Stub. */
-export function refuseHandsOffRequests(..._args: unknown[]): void {}
+/**
+ * Makes an API request context (the request fixture, context.request) refuse a
+ * hands-off URL before sending it, and list it in `blocked`. It runs in Node,
+ * so no route, resolver rule or CSP sees it. Every method (get, post, ...)
+ * sends through `fetch`.
+ */
+export function refuseHandsOffRequests(api: Pick<APIRequestContext, 'fetch'>, blocked: string[] = [], baseURL?: string): void {
+  const send = api.fetch.bind(api);
+  api.fetch = async (urlOrRequest, options) => {
+    const url = typeof urlOrRequest === 'string' ? urlOrRequest : urlOrRequest.url();
+    if (isHandsOffUrl(url, baseURL)) {
+      blocked.push(url);
+      throw new Error(`hands-off host, not sent: ${url}`);
+    }
+    return send(urlOrRequest, options);
+  };
+}
 
-/** Stub. */
-export function refuseHandsOffLookups(..._args: unknown[]): void {}
+type Lookups = { lookup: typeof dns.lookup; promises: { lookup: typeof dns.promises.lookup } };
 
-/** Stub. */
-export function handsOffLookupsRefused(..._args: unknown[]): boolean {
-  return false;
+const REFUSES_HANDS_OFF = Symbol.for('fc-mobile.e2e.refusesHandsOff');
+
+function notFound(hostname: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname} (a hands-off host)`), { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname });
+}
+
+/**
+ * Makes this process's DNS lookups (dns.lookup and dns.promises.lookup: what
+ * Node's net, http and fetch, and Playwright's API requests, resolve with) find
+ * no address for a hands-off host, as the resolver rules do in Chromium. Every
+ * other lookup goes to the real one unchanged. Installs once per module.
+ */
+export function refuseHandsOffLookups(module: Lookups = dns): void {
+  if (handsOffLookupsRefused(module)) return;
+  const lookup = module.lookup;
+  const refusing = function (this: unknown, hostname: string, ...rest: unknown[]) {
+    if (typeof hostname === 'string' && isHandsOffHost(hostname)) {
+      process.nextTick(rest[rest.length - 1] as (error: Error) => void, notFound(hostname));
+      return;
+    }
+    return (lookup as (...args: unknown[]) => void).call(this, hostname, ...rest);
+  };
+  // util.promisify(dns.lookup) resolves with { address, family } through this symbol.
+  for (const key of Object.getOwnPropertySymbols(lookup)) Object.assign(refusing, { [key]: (lookup as unknown as Record<symbol, unknown>)[key] });
+  module.lookup = Object.assign(refusing, { [REFUSES_HANDS_OFF]: true }) as unknown as typeof dns.lookup;
+
+  const promised = module.promises.lookup;
+  const refusingPromise = function (this: unknown, hostname: string, ...rest: unknown[]) {
+    if (typeof hostname === 'string' && isHandsOffHost(hostname)) return Promise.reject(notFound(hostname));
+    return (promised as (...args: unknown[]) => Promise<unknown>).call(this, hostname, ...rest);
+  };
+  module.promises.lookup = Object.assign(refusingPromise, { [REFUSES_HANDS_OFF]: true }) as unknown as typeof dns.promises.lookup;
+}
+
+/** Whether refuseHandsOffLookups is installed on the module (this process's dns by default). */
+export function handsOffLookupsRefused(module: Lookups = dns): boolean {
+  return REFUSES_HANDS_OFF in module.lookup && REFUSES_HANDS_OFF in module.promises.lookup;
 }

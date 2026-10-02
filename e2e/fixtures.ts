@@ -1,9 +1,12 @@
 // Every e2e test runs under the shipped CSP and fails on any violation the
 // page reports. The listener is installed before the app's first script.
 import { test as base, expect, type BrowserContext } from '@playwright/test';
-import { guardContext } from './handsOff';
+import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests } from './handsOff';
 
 export { expect };
+
+// This worker's own DNS (Node's fetch and http, Playwright's API requests) has no address for a hands-off host.
+refuseHandsOffLookups();
 
 export interface CspViolation {
   directive: string;
@@ -44,6 +47,10 @@ export const guardedTest = base.extend<{ handsOffBlocked: string[] }>({
   },
   context: async ({ context, handsOffBlocked }, use) => {
     await guardContext(context, handsOffBlocked, use);
+  },
+  request: async ({ request, handsOffBlocked, baseURL }, use) => {
+    refuseHandsOffRequests(request, handsOffBlocked, baseURL);
+    await use(request);
   },
 });
 

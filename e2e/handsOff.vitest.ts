@@ -306,7 +306,6 @@ describe('refuseHandsOffRequests (an API request context: the request fixture, c
     const api = fakeApi();
     refuseHandsOffRequests(api as never, [], 'https://vndb.org');
     await expect(api.fetch('/v11')).rejects.toThrow('hands-off host, not sent: /v11');
-    expect(api.fetch).not.toBe(fakeApi().fetch);
   });
 
   it("guards every context's own API requests (context.request, which page.request is) with blockHandsOff", async () => {
@@ -329,7 +328,7 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
     });
     const promisify = Symbol('customPromisifyArgs');
     Object.assign(lookup, { [promisify]: ['address', 'family'] });
-    return { module: { lookup, promises: { lookup: vi.fn(async () => ({ address: '192.0.2.1', family: 4 })) } }, lookup, promisify };
+    return { module: { lookup, promises: { lookup: vi.fn(async (..._args: unknown[]) => ({ address: '192.0.2.1', family: 4 })) } }, lookup, promisify };
   }
 
   function lookUp(module: { lookup: (...args: never[]) => void }, ...args: unknown[]) {
@@ -340,6 +339,7 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
 
   it.each(['vndb.org', 'T.VNDB.ORG.', 'static.myfigurecollection.net..'])('finds no address for %s, by callback and by promise', async (host) => {
     const { module, lookup } = fakeDns();
+    const real = module.promises.lookup;
     refuseHandsOffLookups(module as never);
     const notFound = { code: 'ENOTFOUND', syscall: 'getaddrinfo', hostname: host, message: `getaddrinfo ENOTFOUND ${host} (a hands-off host)` };
     const [error] = await lookUp(module, host, { all: true });
@@ -347,7 +347,7 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
     expect((await lookUp(module, host))[0]).toMatchObject(notFound);
     await expect(module.promises.lookup(host, { all: true } as never)).rejects.toMatchObject(notFound);
     expect(lookup).not.toHaveBeenCalled();
-    expect(module.promises.lookup).not.toBe(fakeDns().module.promises.lookup);
+    expect(real).not.toHaveBeenCalled();
   });
 
   it('answers by callback later, as Node does, never during the call', async () => {

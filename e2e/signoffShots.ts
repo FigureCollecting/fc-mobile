@@ -42,3 +42,8 @@ export async function signoffShot(
   await testInfo.attach(name, { path: file, contentType: 'image/png' });
   return { path: file, ...pngSize(readFileSync(file)) };
 }
+
+/** Stub. */
+export function shotSizeError(..._args: unknown[]): string | undefined {
+  return 'not written yet';
+}

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CASE_VIEWPORTS, SHOT_VIEWPORTS } from './caseViewports';
-import { SHOT_TOLERANCE_PX, pngSize, signoffPath, signoffShot } from './signoffShots';
+import { SHOT_TOLERANCE_PX, pngSize, shotSizeError, signoffPath, signoffShot } from './signoffShots';
 
 /** The first 24 bytes of a PNG: signature, IHDR length and type, width, height. */
 function pngHeader(width: number, height: number): Buffer {
@@ -32,6 +32,33 @@ describe('pngSize', () => {
     const idat = pngHeader(1, 1);
     idat.write('IDAT', 12, 'latin1');
     expect(() => pngSize(idat)).toThrow(/not a PNG/);
+  });
+});
+
+describe('shotSizeError (a sign-off PNG against its panel)', () => {
+  const panel = { width: 1248, height: 1972 };
+
+  it("allows the plan's 3 px", () => {
+    expect(SHOT_TOLERANCE_PX).toBe(3);
+  });
+
+  it.each([
+    [1248, 1972],
+    [1249, 1972],
+    [1251, 1969],
+    [1245, 1975],
+  ])('passes %i x %i', (width, height) => {
+    expect(shotSizeError({ width, height }, panel)).toBeUndefined();
+  });
+
+  it.each([
+    [1252, 1972, '1252 wide, the panel is 1248'],
+    [1244, 1972, '1244 wide, the panel is 1248'],
+    [1248, 1976, '1976 high, the panel is 1972'],
+    [1248, 1968, '1968 high, the panel is 1972'],
+    [1348, 2072, '1348 wide, the panel is 1248; 2072 high, the panel is 1972'],
+  ])('refuses %i x %i: %s', (width, height, why) => {
+    expect(shotSizeError({ width, height }, panel)).toBe(why);
   });
 });
 

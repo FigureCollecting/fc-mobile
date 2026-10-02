@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { test, expect } from './fixtures';
 import { SHOT_VIEWPORTS } from './caseViewports';
 import type { ShotViewport } from './caseViewports';
-import { SHOT_TOLERANCE_PX, pngSize, signoffShot } from './signoffShots';
+import { shotSizeError, signoffShot } from './signoffShots';
 import { HANDS_OFF_LAUNCH_ARGS } from './handsOff';
 
 /**
@@ -26,9 +25,12 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('this project is its panel: CSS size, pixel ratio, touch, and the hands-off resolver rules', async ({ page }, testInfo) => {
+test('this project is its panel: CSS size, pixel ratio, touch, a mobile viewport, and the hands-off resolver rules', async ({ page }, testInfo) => {
   const v = shotViewport(testInfo.project.name);
   expect(testInfo.project.use.launchOptions?.args ?? []).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
+  // A mobile viewport lays a page out at its meta viewport width; a desktop one ignores the tag.
+  await page.setContent('<meta name="viewport" content="width=1000">');
+  expect(await page.evaluate(() => document.documentElement.clientWidth), 'layout width under a 1000 px meta viewport').toBe(v.mobile ? 1000 : v.width);
   await page.goto('/?layout=rows');
   expect(
     await page.evaluate(() => ({ width: innerWidth, height: innerHeight, ratio: devicePixelRatio, touch: navigator.maxTouchPoints > 0 })),
@@ -48,11 +50,8 @@ for (const screen of SCREENS) {
     await expect(page.locator('#pre-splash')).toHaveCount(0);
     await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete && img.naturalWidth > 0));
 
+    // signoffShot reads the size from the saved file's PNG header.
     const shot = await signoffShot(page, testInfo, screen.name);
-
-    const header = pngSize(readFileSync(shot.path));
-    expect(header).toEqual({ width: shot.width, height: shot.height });
-    expect(Math.abs(header.width - v.png.width), `${header.width} wide, the panel is ${v.png.width}`).toBeLessThanOrEqual(SHOT_TOLERANCE_PX);
-    expect(Math.abs(header.height - v.png.height), `${header.height} high, the panel is ${v.png.height}`).toBeLessThanOrEqual(SHOT_TOLERANCE_PX);
+    expect(shotSizeError(shot, v.png), shot.path).toBeUndefined();
   });
 }

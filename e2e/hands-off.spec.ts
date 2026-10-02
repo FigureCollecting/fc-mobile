@@ -1,7 +1,10 @@
+import { writeFileSync } from 'node:fs';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
+import type { ViteDevServer } from 'vite';
 import { test, expect } from './fixtures';
 import { HANDS_OFF_DOMAINS, HANDS_OFF_LAUNCH_ARGS, blockHandsOff, handsOffResolverRules } from './handsOff';
 
@@ -33,6 +36,18 @@ const LOOK_ALIKES = [
   'http://myfigurecollection.net.fc-canary.test/x.png',
   'http://fc-canary.test/from?u=https://static.myfigurecollection.net/x.jpg',
 ];
+
+/** A service worker that fetches each URL posted to it and answers 'answered' or 'refused'. */
+const PROBE_WORKER = `
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('message', (event) => {
+  event.waitUntil(
+    fetch(event.data, { mode: 'no-cors' })
+      .then(() => 'answered', () => 'refused')
+      .then((answer) => event.source.postMessage(answer)),
+  );
+});
+`;
 
 /**
  * A local TCP listener standing in for the internet. It records the Host of
@@ -168,45 +183,116 @@ test.describe('the route guard every e2e context gets', () => {
       await sentinel.close();
     }
   });
+
+  test("aborts a service worker's own request to a hands-off host too", async ({ context, page, handsOffBlocked }) => {
+    const url = HANDS_OFF_IMAGES[0] as string;
+    const failed = new Map<string, string>();
+    context.on('requestfailed', (r) => {
+      if (r.serviceWorker()) failed.set(r.url(), r.failure()?.errorText ?? '');
+    });
+    // A page and a worker of our own on the e2e origin (no CSP): the worker fetches what the page posts it.
+    await context.route('**/hands-off-probe/', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>probe</title>' }));
+    await context.route('**/hands-off-probe/sw.js', (route) => route.fulfill({ contentType: 'text/javascript', body: PROBE_WORKER }));
+    await page.goto('/hands-off-probe/');
+
+    const answer = await page.evaluate(async (target) => {
+      const reg = await navigator.serviceWorker.register('/hands-off-probe/sw.js', { scope: '/hands-off-probe/' });
+      const worker = (reg.installing ?? reg.waiting ?? reg.active) as ServiceWorker;
+      await new Promise<void>((resolve) => {
+        if (worker.state === 'activated') resolve();
+        else worker.addEventListener('statechange', () => worker.state === 'activated' && resolve());
+      });
+      const reply = new Promise<string>((resolve) => navigator.serviceWorker.addEventListener('message', (e) => resolve(String(e.data))));
+      worker.postMessage(target);
+      return reply;
+    }, url);
+
+    expect(answer).toBe('refused');
+    expect(handsOffBlocked).toEqual([url]);
+    expect(failed.get(url)).toMatch(/^net::ERR_BLOCKED_BY_CLIENT\b/);
+  });
 });
 
 test.describe('the vite dev server (npm run dev, and any spike page it serves)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'runs only where the resolver rules back it up');
 
-  test('refuses a hands-off image under its CSP, so the page never even asks for it', async ({ page, handsOffBlocked, cspViolations }) => {
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+  let server: ViteDevServer;
+  let origin: string;
+
+  test.beforeAll(async () => {
     const { createServer } = await import('vite');
-    const server = await createServer({
-      configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+    server = await createServer({
+      configFile: path.join(repoRoot, 'vite.config.ts'),
       mode: 'development',
       logLevel: 'error',
       server: { port: 0 },
-      optimizeDeps: { noDiscovery: true },
     });
     await server.listen();
-    try {
-      const origin = new URL(server.resolvedUrls?.local[0] as string).origin;
-      // The page's shell only: the app is not what this checks.
-      await page.route(`${origin}/src/main.tsx`, (route) => route.fulfill({ contentType: 'text/javascript', body: '' }));
-      const response = await page.goto(`${origin}/spike/hands-off-probe.html`);
-      const served = response?.headers()['content-security-policy'];
-      expect(served, 'the dev server sends a CSP').toBeTruthy();
-      expect(served).toBe(server.config.server.headers?.['Content-Security-Policy']);
+    origin = new URL(server.resolvedUrls?.local[0] as string).origin;
+  });
 
-      const control = `${origin}/favicon.svg`;
-      await page.evaluate((urls) => {
-        for (const src of urls) document.body.append(Object.assign(new Image(), { src }));
-      }, [control, ...HANDS_OFF_IMAGES]);
-      await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete));
+  test.afterAll(async () => {
+    await server?.close();
+  });
 
-      expect(await page.locator(`img[src="${control}"]`).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
-      await expect
-        .poll(() => new Set(cspViolations.map((v) => `${v.directive} ${v.blocked}`)))
-        .toEqual(new Set(HANDS_OFF_IMAGES.map((u) => `img-src ${u}`)));
-      // Refused by the CSP before any request: the route guard never saw one.
-      expect(handsOffBlocked).toEqual([]);
-      cspViolations.length = 0;
-    } finally {
-      await server.close();
-    }
+  test('refuses a hands-off image under its CSP, so the page never even asks for it', async ({ page, handsOffBlocked, cspViolations }) => {
+    // The app's shell only: the app is not what this checks.
+    await page.route(`${origin}/src/main.tsx`, (route) => route.fulfill({ contentType: 'text/javascript', body: '' }));
+    const response = await page.goto(`${origin}/`);
+    const served = response?.headers()['content-security-policy'];
+    expect(served, 'the dev server sends a CSP').toBeTruthy();
+    expect(served).toBe(server.config.server.headers?.['Content-Security-Policy']);
+
+    const control = `${origin}/favicon.svg`;
+    await page.evaluate((urls) => {
+      for (const src of urls) document.body.append(Object.assign(new Image(), { src }));
+    }, [control, ...HANDS_OFF_IMAGES]);
+    await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete));
+
+    expect(await page.locator(`img[src="${control}"]`).evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    await expect
+      .poll(() => new Set(cspViolations.map((v) => `${v.directive} ${v.blocked}`)))
+      .toEqual(new Set(HANDS_OFF_IMAGES.map((u) => `img-src ${u}`)));
+    // Refused by the CSP before any request: the route guard never saw one.
+    expect(handsOffBlocked).toEqual([]);
+    cspViolations.length = 0;
+  });
+
+  test('serves a spike page from its own file under the CSP too, which refuses the hands-off images in its markup', async ({ page, handsOffBlocked, cspViolations }, testInfo) => {
+    // A spike page as SC-0 or CAB-PERF adds one: an HTML file of its own in the repo, not the app's index.html.
+    // test-results/ is in the repo (so the dev server serves it) and outside vite's file watcher.
+    const file = testInfo.outputPath('spike.html');
+    writeFileSync(file, `<!doctype html><html><body>${['/favicon.svg', ...HANDS_OFF_IMAGES].map((u) => `<img src="${u}">`).join('')}</body></html>`);
+    const url = `${origin}/${path.relative(repoRoot, file).split(path.sep).map(encodeURIComponent).join('/')}`;
+
+    const response = await page.goto(url);
+    expect(response?.status()).toBe(200);
+    expect(await page.title(), 'its own page, not the app shell').toBe('');
+    expect(response?.headers()['content-security-policy']).toBe(server.config.server.headers?.['Content-Security-Policy']);
+    await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete));
+
+    expect(await page.locator('img[src="/favicon.svg"]').evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+    await expect
+      .poll(() => new Set(cspViolations.map((v) => `${v.directive} ${v.blocked}`)))
+      .toEqual(new Set(HANDS_OFF_IMAGES.map((u) => `img-src ${u}`)));
+    expect(handsOffBlocked).toEqual([]);
+    cspViolations.length = 0;
+  });
+
+  test('runs the app itself under that CSP: the case view draws, HMR connects, and nothing is refused', async ({ page, handsOffBlocked }) => {
+    test.setTimeout(120_000); // the first visit pre-bundles the app's dependencies
+    const sockets: string[] = [];
+    page.on('websocket', (ws) => sockets.push(ws.url()));
+    await page.addInitScript(() => {
+      localStorage.setItem('onboarding_complete', '1');
+      localStorage.setItem('fc-fixture-mode', 'on');
+    });
+
+    await page.goto(`${origin}/?layout=case&motif=detolf-dark&density=compact`);
+    await page.locator('button.shelf-figure').first().waitFor({ timeout: 90_000 });
+    await expect.poll(() => sockets.some((u) => u.startsWith(origin.replace(/^http/, 'ws')))).toBe(true);
+    expect(handsOffBlocked).toEqual([]);
+    // The cspViolations fixture fails the test on any violation (an inline script or style, the HMR socket).
   });
 });

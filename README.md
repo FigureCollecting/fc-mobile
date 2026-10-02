@@ -24,16 +24,30 @@ The e2e suites guard the rest:
 - Every context from `e2e/fixtures.ts` aborts its pages' and service workers'
   requests to those hosts, navigations included, closes its pages' WebSockets
   to them, and refuses its API requests to them (`request`, `context.request`,
-  `page.request`). A test fails if one of its requests got past that guard
-  (a redirect hop, which routes never see).
+  `page.request`, a relative URL read against the test's `baseURL`). A test
+  fails if one of its requests got past that guard (a redirect hop, which
+  routes never see).
+- A route a spec adds runs before the guard's. One that continues a request,
+  or fetches it with `route.fetch()` (which no API guard sees), goes round
+  the abort and leaves only the two layers below and the failing test, so the
+  scan refuses such routes.
 - Every Chromium the suites launch resolves those hosts, with or without
   trailing dots, to nothing; that also stops redirect hops and workers'
   WebSockets.
-- Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests)
-  find no address for them.
-- `e2e/handsOffScan.ts` fails the unit tests on a spec that takes `test` or a
-  browser from Playwright directly, launches Chromium without the resolver
-  rules, or opens a context no guard covers.
+- Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
+  `route.fetch()`) find no address for them.
+- `e2e/handsOffScan.ts` reads every e2e source's syntax tree and fails the
+  unit tests on: `test`, a browser type or `request` taken from Playwright
+  directly (an import, a require, any call given its module name, a path into
+  `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS` or a
+  spread of it, or `launchOptions` that replace them; another browser
+  (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`), a
+  `proxy` or `connectOptions`; `launchServer`, `connect`, `connectOverCDP`,
+  `_android`, or a launcher passed around uncalled; a context, page or API
+  context that a guard does not take before its first use, on every path; a
+  route that continues, fetches, or has a handler it cannot read. It does not
+  follow values through variables (launch options or a device held in a
+  `const`, a module name built at run time).
 
 A spike page is therefore an HTML file in this repo, opened from a spec on
 `e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;

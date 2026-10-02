@@ -45,8 +45,8 @@ export const guardedTest = base.extend<{ handsOffBlocked: string[] }>({
   handsOffBlocked: async ({}, use) => {
     await use([]);
   },
-  context: async ({ context, handsOffBlocked }, use) => {
-    await guardContext(context, handsOffBlocked, use);
+  context: async ({ context, handsOffBlocked, baseURL }, use) => {
+    await guardContext(context, handsOffBlocked, use, baseURL);
   },
   request: async ({ request, handsOffBlocked, baseURL }, use) => {
     refuseHandsOffRequests(request, handsOffBlocked, baseURL);

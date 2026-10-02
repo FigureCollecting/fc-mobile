@@ -67,11 +67,14 @@ export interface HandsOffGuard {
  * Aborts every request the context's pages and service workers make to a
  * hands-off host before it is sent, closes every WebSocket its pages open to
  * one before it connects, refuses its own API requests to one (context.request,
- * which page.request is), and lists each in `blocked`. Routes never see a
- * redirect hop, so it also watches what the context sends: `escaped` lists any
- * hands-off request it did not abort.
+ * which page.request is; a relative URL read against `baseURL`, the context's
+ * own), and lists each in `blocked`. Routes never see a redirect hop, so it
+ * also watches what the context sends: `escaped` lists any hands-off request it
+ * did not abort. A route the spec adds later runs first: one that sends the
+ * request on (continue) or fetches it (route.fetch) goes round the abort and
+ * the API guard, which e2e/handsOffScan.ts stops.
  */
-export async function blockHandsOff(context: Guardable, blocked: string[] = []): Promise<HandsOffGuard> {
+export async function blockHandsOff(context: Guardable, blocked: string[] = [], baseURL?: string): Promise<HandsOffGuard> {
   const sent: Request[] = [];
   const aborted = new Set<Request>();
   context.on('request', (request) => {
@@ -90,7 +93,7 @@ export async function blockHandsOff(context: Guardable, blocked: string[] = []):
     blocked.push(ws.url());
     return ws.close({ code: 1008, reason: 'hands-off host' });
   });
-  refuseHandsOffRequests(context.request, blocked);
+  refuseHandsOffRequests(context.request, blocked, baseURL);
   return {
     blocked,
     escaped: () =>
@@ -105,12 +108,12 @@ export async function blockHandsOff(context: Guardable, blocked: string[] = []):
 }
 
 /**
- * The context every e2e fixture test gets: guarded by blockHandsOff while the
- * test runs, and the test fails afterwards if any hands-off request escaped
- * the guard.
+ * The context every e2e fixture test gets: guarded by blockHandsOff (with the
+ * test's baseURL) while the test runs, and the test fails afterwards if any
+ * hands-off request escaped the guard.
  */
-export async function guardContext<C extends Guardable>(context: C, blocked: string[], use: (context: C) => Promise<void>): Promise<void> {
-  const guard = await blockHandsOff(context, blocked);
+export async function guardContext<C extends Guardable>(context: C, blocked: string[], use: (context: C) => Promise<void>, baseURL?: string): Promise<void> {
+  const guard = await blockHandsOff(context, blocked, baseURL);
   await use(context);
   const escaped = guard.escaped();
   if (escaped.length > 0) throw new Error(`hands-off requests the route guard did not abort: ${escaped.join(', ')}`);
@@ -146,28 +149,31 @@ function notFound(hostname: string): NodeJS.ErrnoException {
  * Makes this process's DNS lookups (dns.lookup and dns.promises.lookup: what
  * Node's net, http and fetch, and Playwright's API requests, resolve with) find
  * no address for a hands-off host, as the resolver rules do in Chromium. Every
- * other lookup goes to the real one unchanged. Installs once per module.
+ * other lookup goes to the real one unchanged. Installs each once per module.
  */
 export function refuseHandsOffLookups(module: Lookups = dns): void {
-  if (handsOffLookupsRefused(module)) return;
   const lookup = module.lookup;
-  const refusing = function (this: unknown, hostname: string, ...rest: unknown[]) {
-    if (typeof hostname === 'string' && isHandsOffHost(hostname)) {
-      process.nextTick(rest[rest.length - 1] as (error: Error) => void, notFound(hostname));
-      return;
-    }
-    return (lookup as (...args: unknown[]) => void).call(this, hostname, ...rest);
-  };
-  // util.promisify(dns.lookup) resolves with { address, family } through this symbol.
-  for (const key of Object.getOwnPropertySymbols(lookup)) Object.assign(refusing, { [key]: (lookup as unknown as Record<symbol, unknown>)[key] });
-  module.lookup = Object.assign(refusing, { [REFUSES_HANDS_OFF]: true }) as unknown as typeof dns.lookup;
+  if (!(REFUSES_HANDS_OFF in lookup)) {
+    const refusing = function (this: unknown, hostname: string, ...rest: unknown[]) {
+      if (typeof hostname === 'string' && isHandsOffHost(hostname)) {
+        process.nextTick(rest[rest.length - 1] as (error: Error) => void, notFound(hostname));
+        return;
+      }
+      return (lookup as (...args: unknown[]) => void).call(this, hostname, ...rest);
+    };
+    // util.promisify(dns.lookup) resolves with { address, family } through this symbol.
+    for (const key of Object.getOwnPropertySymbols(lookup)) Object.assign(refusing, { [key]: (lookup as unknown as Record<symbol, unknown>)[key] });
+    module.lookup = Object.assign(refusing, { [REFUSES_HANDS_OFF]: true }) as unknown as typeof dns.lookup;
+  }
 
   const promised = module.promises.lookup;
-  const refusingPromise = function (this: unknown, hostname: string, ...rest: unknown[]) {
-    if (typeof hostname === 'string' && isHandsOffHost(hostname)) return Promise.reject(notFound(hostname));
-    return (promised as (...args: unknown[]) => Promise<unknown>).call(this, hostname, ...rest);
-  };
-  module.promises.lookup = Object.assign(refusingPromise, { [REFUSES_HANDS_OFF]: true }) as unknown as typeof dns.promises.lookup;
+  if (!(REFUSES_HANDS_OFF in promised)) {
+    const refusingPromise = function (this: unknown, hostname: string, ...rest: unknown[]) {
+      if (typeof hostname === 'string' && isHandsOffHost(hostname)) return Promise.reject(notFound(hostname));
+      return (promised as (...args: unknown[]) => Promise<unknown>).call(this, hostname, ...rest);
+    };
+    module.promises.lookup = Object.assign(refusingPromise, { [REFUSES_HANDS_OFF]: true }) as unknown as typeof dns.promises.lookup;
+  }
 }
 
 /** Whether refuseHandsOffLookups is installed on the module (this process's dns by default). */

@@ -29,18 +29,27 @@ function placeholderSurfaces(id: string): string[] {
   return profile.surfaces.filter((s) => s.provenance.kind === 'placeholder').map((s) => s.name);
 }
 
+/** case-cabinet-design-v3 order_v3, ranks 1-7; Ross's further presets come after the rack (rank 8 on). */
+const V3_ORDER = [
+  'ikea-detolf',
+  'open-bookcase',
+  'glass-cabinet-legs',
+  'unit-a',
+  'wide-custom',
+  'short-pitch',
+  'open-steel-rack',
+];
+
 describe('preset registry (case-cabinet-design-v3 preset_library)', () => {
-  it('lists the presets in v3 order, ranked 1..n, the Detolf first and the open steel rack last', () => {
-    expect(CABINET_PRESETS.map((p) => p.id)).toEqual([
-      'ikea-detolf',
-      'open-bookcase',
-      'glass-cabinet-legs',
-      'unit-a',
-      'wide-custom',
-      'short-pitch',
-      'open-steel-rack',
-    ]);
-    expect(CABINET_PRESETS.map((p) => p.preferenceRank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it('lists the presets most preferred first: ranks strictly ascending, the Detolf first', () => {
+    const ranks = CABINET_PRESETS.map((p) => p.preferenceRank);
+    ranks.slice(1).forEach((rank, i) => expect(rank).toBeGreaterThan(ranks[i]));
+    expect(CABINET_PRESETS[0]).toBe(IKEA_DETOLF);
+  });
+
+  it('ranks the v3 presets 1-7 in v3 order, so further presets can follow the rack as data only', () => {
+    expect(V3_ORDER.map((id) => getCabinetPreset(id)?.preferenceRank)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(CABINET_PRESETS.slice(0, V3_ORDER.length).map((p) => p.id)).toEqual(V3_ORDER);
   });
 
   it('defaults to the IKEA Detolf (Ross CC3), the most preferred preset', () => {
@@ -51,7 +60,8 @@ describe('preset registry (case-cabinet-design-v3 preset_library)', () => {
   });
 
   it("keeps the open steel rack at LOW preference (Ross CC3: Ross's own rack stays a preset)", () => {
-    expect(Math.max(...CABINET_PRESETS.map((p) => p.preferenceRank))).toBe(OPEN_STEEL_RACK.preferenceRank);
+    const otherV3Ranks = V3_ORDER.filter((id) => id !== OPEN_STEEL_RACK.id).map((id) => getCabinetPreset(id)!.preferenceRank);
+    expect(OPEN_STEEL_RACK.preferenceRank).toBeGreaterThan(Math.max(...otherV3Ranks));
   });
 
   it('looks presets up by id', () => {
@@ -112,6 +122,10 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
     expect(IKEA_DETOLF.materials).toEqual({ sides: 'glass', back: 'glass', front: 'glassDoor' });
   });
 
+  it("uses 4 mm glass (glass shops), not v3's 5 mm", () => {
+    expect(IKEA_DETOLF.glassMm).toBe(4);
+  });
+
   it('carries the IKEA 3.5 kg per glass shelf; base floor and top loads are not published', () => {
     expect(IKEA_DETOLF.surfaces.map((s) => s.maxLoadKg)).toEqual([null, 3.5, 3.5, 3.5, null]);
     expect(IKEA_DETOLF.provenance.loads?.kind).toBe('cited');
@@ -138,6 +152,9 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
     expect(Math.abs(2438.4 - IKEA_DETOLF.outer.heightMm - 808.4)).toBeLessThanOrEqual(GOLDEN_EPS);
     expect(fitsOnTop(IKEA_DETOLF, 609.6)).toBe(true);
     expect(fitsOnTop(IKEA_DETOLF, 610.6)).toBe(false);
+    // a user ceiling of 1800 mm leaves 170 mm on top (CC9: the ceiling becomes a user setting)
+    expect(fitsOnTop(IKEA_DETOLF, 170, 1800)).toBe(true);
+    expect(fitsOnTop(IKEA_DETOLF, 300, 1800)).toBe(false);
     expect(framingHeadroomMm(IKEA_DETOLF, null)).toBe(300);
     expect(Math.abs(framingHeadroomMm(IKEA_DETOLF, 600) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
   });

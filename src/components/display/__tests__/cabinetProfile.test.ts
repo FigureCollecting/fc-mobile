@@ -86,6 +86,8 @@ describe('inch constants (CC9 rounding rule: exact x 25.4, never rounded)', () =
     expect(inchesToMm(1.75)).toBe(44.45);
     expect(inchesToMm(20.8125)).toBe(528.6375);
     expect(inchesToMm(1 / 64)).toBe(0.396875);
+    // the scaled product lands just under the micrometre (492759999.99999994): rounded, not floored
+    expect(inchesToMm(19.4)).toBe(492.76);
   });
 });
 
@@ -161,8 +163,28 @@ describe('fitsOnTop (G17: a figure over the clearance is a violator)', () => {
     expect(fitsOnTop(rackHeight, 609.6, driftedCeiling)).toBe(true);
   });
 
+  it('reads the clearance against the ceiling it is given, not the 96 in default (CC9 user ceiling)', () => {
+    const detolfHeight = boxOfHeight(1630); // 1800 mm room: clearance 170 mm; the default room allows 609.6
+    expect(fitsOnTop(detolfHeight, 170, 1800)).toBe(true);
+    expect(fitsOnTop(detolfHeight, 300, 1800)).toBe(false);
+    expect(fitsOnTop(detolfHeight, 300)).toBe(true);
+  });
+
   it('a cabinet taller than the room has no usable top: every top figure is a violator', () => {
     expect(fitsOnTop(boxOfHeight(2500), 1)).toBe(false);
+  });
+
+  it('a top with no clearance takes nothing, not even a figure inside the 1e-6 mm tolerance', () => {
+    for (const height of [0, 5e-7, -10]) {
+      expect(fitsOnTop(boxOfHeight(2500), height)).toBe(false);
+      expect(fitsOnTop(boxOfHeight(2438.4), height)).toBe(false);
+    }
+  });
+
+  it('a figure height of zero or less is never reported as fitting', () => {
+    expect(fitsOnTop(boxOfHeight(1630), 0)).toBe(false);
+    expect(fitsOnTop(boxOfHeight(1630), -10)).toBe(false);
+    expect(fitsOnTop(boxOfHeight(1630), 1e-9)).toBe(true);
   });
 
   it('a profile whose top is not usable takes nothing on top', () => {
@@ -338,8 +360,28 @@ describe('checkCabinetProfile (G19 registry invariant, every check fails by name
       'zero-thickness middle shelf',
       { surfaces: [surface('base floor', 68), surface('shelf 2', 518, 0), surface('top', 1000)] },
     ],
+    ['infinite outer width', { outer: { widthMm: Number.POSITIVE_INFINITY, depthMm: 400, heightMm: 1000 } }],
+    ['zero interior width', { interior: { widthMm: 0, depthMm: 394 } }],
+    ['zero interior depth', { interior: { widthMm: 564, depthMm: 0 } }],
+    [
+      'infinite max load',
+      {
+        surfaces: [
+          surface('base floor', 68),
+          { ...surface('shelf 2', 518), maxLoadKg: Number.POSITIVE_INFINITY },
+          surface('top', 1000),
+        ],
+      },
+    ],
   ])("'dimensions': %s", (_label, patch) => {
     expect(checkCabinetProfile(box(patch))).toEqual(['dimensions']);
+  });
+
+  it.each<[string, Partial<CabinetProfile>]>([
+    ['infinite side panel', { panels: { sideMm: Number.POSITIVE_INFINITY, backMm: 6 } }],
+    ['zero outer depth', { outer: { widthMm: 600, depthMm: 0, heightMm: 1000 } }],
+  ])("'dimensions' and 'interior': %s (the interior no longer fits inside it)", (_label, patch) => {
+    expect(checkCabinetProfile(box(patch))).toEqual(['dimensions', 'interior']);
   });
 
   it("'dimensions': non-finite or non-positive outer sizes also fail the checks that use them", () => {
@@ -418,5 +460,21 @@ describe('fixedModeCompartmentMm (thin adapter for CaseShelf fixed mode)', () =>
 
   it('returns null when the profile has no compartments', () => {
     expect(fixedModeCompartmentMm(box({ surfaces: [surface('top', 1000, 950)] }))).toBeNull();
+  });
+
+  it('returns null when the smallest compartment is zero, negative or not a number (it cannot anchor a scale)', () => {
+    const flush = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 86), surface('top', 1000)] });
+    expect(clearHeightsMm(flush)).toEqual([0, 896]);
+    expect(checkCabinetProfile(flush)).toEqual([]); // a valid profile can reach the adapter with a zero gap
+    expect(fixedModeCompartmentMm(flush)).toBeNull();
+    const overlapping = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 80), surface('top', 1000)] });
+    expect(fixedModeCompartmentMm(overlapping)).toBeNull();
+    const unsized = box({ surfaces: [surface('base floor', 68), surface('shelf 2', Number.NaN), surface('top', 1000)] });
+    expect(fixedModeCompartmentMm(unsized)).toBeNull();
+  });
+
+  it('returns a small positive compartment as it is', () => {
+    const tight = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 87), surface('top', 1000)] });
+    expect(fixedModeCompartmentMm(tight)).toBe(1);
   });
 });

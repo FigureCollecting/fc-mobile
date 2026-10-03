@@ -1,8 +1,12 @@
 // Every e2e test runs under the shipped CSP and fails on any violation the
 // page reports. The listener is installed before the app's first script.
 import { test as base, expect, type BrowserContext } from '@playwright/test';
+import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests } from './handsOff';
 
 export { expect };
+
+// This worker's own DNS (Node's fetch and http, Playwright's API requests) has no address for a hands-off host.
+refuseHandsOffLookups();
 
 export interface CspViolation {
   directive: string;
@@ -31,7 +35,26 @@ export async function watchCsp(context: BrowserContext): Promise<CspViolation[]>
   return seen;
 }
 
-export const test = base.extend<{ cspViolations: CspViolation[] }>({
+/**
+ * Every context aborts its pages' and workers' requests to the hands-off hosts
+ * before they are sent (e2e/handsOff.ts), and the test fails if one got past
+ * that route guard (a redirect hop); handsOffBlocked lists what it stopped.
+ * Specs that must not run under the CSP check (e2e/auth) take this one.
+ */
+export const guardedTest = base.extend<{ handsOffBlocked: string[] }>({
+  handsOffBlocked: async ({}, use) => {
+    await use([]);
+  },
+  context: async ({ context, handsOffBlocked, baseURL }, use) => {
+    await guardContext(context, handsOffBlocked, use, baseURL);
+  },
+  request: async ({ request, handsOffBlocked, baseURL }, use) => {
+    refuseHandsOffRequests(request, handsOffBlocked, baseURL);
+    await use(request);
+  },
+});
+
+export const test = guardedTest.extend<{ cspViolations: CspViolation[] }>({
   cspViolations: [
     async ({ context }, use) => {
       const seen = await watchCsp(context);

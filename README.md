@@ -12,6 +12,48 @@ npm run dev
 The dev server expects a backend on the URL set by `VITE_API_URL`.
 `.env.development` defaults to `http://localhost:5080/api`.
 
+Every page the dev server serves gets the preview CSP plus inline styles
+(`devServerHeaders` in `deploy/securityHeaders.ts`). The CSP refuses images,
+scripts, fetches and WebSockets from any host but the page's own origin, the
+mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL` and the production hosts,
+so never from a hands-off host (sites that bar AI agents by name,
+`e2e/handsOff.ts`). A CSP does not stop a navigation: a link, a `location`
+change, `window.open` or a meta refresh still leaves.
+
+The e2e suites guard the rest:
+- Every context from `e2e/fixtures.ts` aborts its pages' and service workers'
+  requests to those hosts, navigations included, closes its pages' WebSockets
+  to them, and refuses its API requests to them (`request`, `context.request`,
+  `page.request`, a relative URL read against the test's `baseURL`). A test
+  fails if one of its requests got past that guard (a redirect hop, which
+  routes never see).
+- A route a spec adds runs before the guard's. One that continues a request,
+  or fetches it with `route.fetch()` (which no API guard sees), goes round
+  the abort and leaves only the two layers below and the failing test, so the
+  scan refuses such routes.
+- Every Chromium the suites launch resolves those hosts, with or without
+  trailing dots, to nothing; that also stops redirect hops and workers'
+  WebSockets.
+- Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
+  `route.fetch()`) find no address for them.
+- `e2e/handsOffScan.ts` reads every e2e source's syntax tree and fails the
+  unit tests on: `test`, a browser type or `request` taken from Playwright
+  directly (an import, a require, any call given its module name, a path into
+  `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS` or a
+  spread of it, or `launchOptions` that replace them; another browser
+  (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`, a
+  `firefox` or `webkit` launch), a `proxy` or `connectOptions`; `launchServer`, `connect`, `connectOverCDP`,
+  `_android`, or a launcher passed around uncalled; a context, page or API
+  context that a guard does not take before its first use, on every path; a
+  route that continues, fetches, or has a handler it cannot read. It does not
+  follow values through variables (launch options or a device held in a
+  `const`, a module name built at run time).
+
+A spike page is therefore an HTML file in this repo, opened from a spec on
+`e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;
+opened from disk or another server it has no guard at all. WebKit gets the
+route guard but no resolver rules (that switch is Chromium's); it is not in CI.
+
 ## Build
 
 ```bash
@@ -81,7 +123,14 @@ End-to-end smoke (Playwright):
 ```bash
 npx playwright install chromium    # one-time
 npm run test:e2e                   # boots the Vite dev server and runs e2e/
+npm run test:e2e:shots             # sign-off PNGs (below)
 ```
+
+Sign-off shots: `e2e/signoff.shots.spec.ts` runs once per `SHOT_VIEWPORTS`
+project (`e2e/caseViewports.ts`: the Fold8's full cover 444x701, open 870x657
+and turned 657x870 panels at DPR 2.8125, and desktop 1536x730) and saves full
+frames to `test-results/signoff/<project>/<name>.png` with `signoffShot`
+(`e2e/signoffShots.ts`), checking each PNG's size against the panel's pixels.
 
 Mocks:
 - `src/test/framerMotionMock.tsx` — drop-in for framer-motion so jsdom

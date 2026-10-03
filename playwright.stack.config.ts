@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
+import { HANDS_OFF_LAUNCH_ARGS } from './e2e/handsOff';
 
 // The auth suite on the local full stack: `npm run build:stack` behind nginx, the real
 // coordinator and the mock issuer. globalSetup starts the stack (or reuses a detached one)
@@ -18,5 +19,5 @@ export default defineConfig({
     baseURL: 'http://localhost:8480',
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'mobile-chromium', use: { ...devices['Pixel 7'] } }],
+  projects: [{ name: 'mobile-chromium', use: { ...devices['Pixel 7'], launchOptions: { args: HANDS_OFF_LAUNCH_ARGS } } }],
 });

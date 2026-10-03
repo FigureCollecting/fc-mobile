@@ -149,11 +149,14 @@ export function topClearanceMm(profile: HasOuterHeight, ceilingMm: number = CEIL
 
 /**
  * G17: may a figure this tall stand on the top? One over the clearance is a
- * violator; one of exactly the clearance fits (within 1e-6 mm). A cabinet
- * taller than the room, or a top that is not usable, takes nothing.
+ * violator; one of exactly the clearance fits (within 1e-6 mm). A top that is
+ * not usable, or has no clearance (a cabinet as tall as the room or taller),
+ * takes nothing; a figure height of zero or less, or NaN, never fits.
  */
 export function fitsOnTop(profile: CabinetProfile, figureHeightMm: number, ceilingMm: number = CEILING_DEFAULT_MM): boolean {
-  return profile.top.usable && figureHeightMm <= topClearanceMm(profile, ceilingMm) + FIT_EPSILON_MM;
+  if (!profile.top.usable || !(figureHeightMm > 0)) return false;
+  const clearanceMm = topClearanceMm(profile, ceilingMm);
+  return clearanceMm > 0 && figureHeightMm <= clearanceMm + FIT_EPSILON_MM;
 }
 
 /**
@@ -183,7 +186,13 @@ export function clearHeightsMm(profile: CabinetProfile): number[] {
   return clear;
 }
 
-/** The v1 stack: base + every board + every clear height. Meets the outer height within 5 mm when consistent. */
+/**
+ * The v1 stack: base + every board + every clear height. Meets the outer
+ * height within 5 mm when consistent. The clear heights are derived from the
+ * surfaces, so this sum equals base + the bottom board + (top surface's top -
+ * first surface's top): no interior shelf, and no board but the bottom one,
+ * appears in it.
+ */
 export function stackSumMm(profile: CabinetProfile): number {
   const boards = profile.surfaces.reduce((sum, s) => sum + s.thicknessMm, 0);
   const clear = clearHeightsMm(profile).reduce((sum, c) => sum + c, 0);
@@ -246,7 +255,9 @@ function interiorOk(p: CabinetProfile): boolean {
  * - ascending: at least one surface, tops strictly ascending
  * - gap: each surface sits at least its own board above the one below (clear >= 0)
  * - top-height: the top surface is the outer height (within 5 mm)
- * - stack-sum: base + boards + clear heights = outer height (within 5 mm)
+ * - stack-sum: base + boards + clear heights = outer height (within 5 mm). With
+ *   clear heights derived (stackSumMm), and given top-height, this pins base +
+ *   bottom board to the first surface's top; no interior shelf or board can fail it
  * - clearance: the cabinet fits the room: raw ceiling - height >= 0 (the floored value never fails)
  * - interior: the interior fits inside the walls (or rack posts) and the shelf plate inside the interior
  */
@@ -307,9 +318,11 @@ export function unverifiedFields(profile: CabinetProfile): UnverifiedField[] {
  * caseCamera (remove it then). Today every shelf band is drawn at one height,
  * so fixed mode needs ONE compartment height as its mm -> px anchor: the
  * smallest interior clear height, so a figure that fits the band fits every
- * compartment. null when the profile has no compartments.
+ * compartment. null when the profile has no compartments, or when the
+ * smallest is zero, negative or NaN (no mm -> px scale can be anchored on it);
+ * CaseShelf then uses its dynamic default.
  */
 export function fixedModeCompartmentMm(profile: CabinetProfile): number | null {
-  const clear = clearHeightsMm(profile);
-  return clear.length > 0 ? Math.min(...clear) : null;
+  const smallest = Math.min(...clearHeightsMm(profile));
+  return Number.isFinite(smallest) && smallest > 0 ? smallest : null;
 }

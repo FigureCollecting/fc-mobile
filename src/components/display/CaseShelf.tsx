@@ -461,8 +461,8 @@ export function CaseShelf({
   // mode locks to the real caseProfile's own shelf height; dynamic mode
   // uses a documented generous default (DEFAULT_DYNAMIC_COMPARTMENT_MM).
   // Falls back to the dynamic default if 'fixed' is requested without a
-  // profile, or with one that has no compartments — degrade gracefully,
-  // never crash on a missing prop.
+  // profile, or with one that has no compartment of positive height —
+  // degrade gracefully, never crash on a missing prop.
   const fixedCompartmentMm = caseMode === 'fixed' && caseProfile ? fixedModeCompartmentMm(caseProfile) : null;
   const compartmentMm = fixedCompartmentMm ?? DEFAULT_DYNAMIC_COMPARTMENT_MM;
   const pxPerMm = band / compartmentMm;

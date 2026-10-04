@@ -581,6 +581,32 @@ describe('unguardedSites: routes, which run newest first, so ahead of the hands-
     ]);
   });
 
+  it("flags unroute and unrouteAll on anything but the page: either can take the hands-off route guard off a context", () => {
+    const off = 'can take the hands-off route guard off a context';
+    expect(
+      scan(
+        'x.spec.ts',
+        "test('a', async ({ page, context, browser }) => {",
+        "  await context.unrouteAll({ behavior: 'ignoreErrors' });",
+        '  await page.context().unrouteAll();',
+        '  await context.unroute(/vndb/i);',
+        '  const ctx = await browser.newContext();',
+        '  await blockHandsOff(ctx);',
+        "  await ctx.unroute('**/*');",
+        '  await browser.contexts()[0].unrouteAll();',
+        "  await page.unroute('**/api/**');",
+        '  await page.unrouteAll();',
+        '});',
+      ),
+    ).toEqual([
+      `x.spec.ts:2: context.unrouteAll() ${off}`,
+      `x.spec.ts:3: page.context().unrouteAll() ${off}`,
+      `x.spec.ts:4: context.unroute() ${off}`,
+      `x.spec.ts:7: ctx.unroute() ${off}`,
+      `x.spec.ts:8: browser.contexts()[0].unrouteAll() ${off}`,
+    ]);
+  });
+
   it('honours a hands-off-scan: note in e2e/handsOff.ts, the guard itself', () => {
     const noted = ['// hands-off-scan: the guard connects only what is not hands-off.', 'if (!isHandsOffUrl(ws.url())) return ws.connectToServer();'];
     expect(scan('handsOff.ts', ...noted)).toEqual([]);

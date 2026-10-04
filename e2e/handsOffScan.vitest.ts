@@ -474,6 +474,39 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
   });
 
+  it('fails closed on a member it cannot name: a computed key on a Playwright object, or in a destructuring', () => {
+    const unnamed = 'takes a member by a name the scan cannot read';
+    expect(
+      scan(
+        'x.spec.ts',
+        "test('a', async ({ playwright, browser, context, page, request }) => {",
+        "  const k = 'launch';",
+        '  await playwright.chromium[k]();',
+        '  const { [k]: go } = playwright.chromium;',
+        '  await playwright[engine].launch({ args: HANDS_OFF_LAUNCH_ARGS });',
+        '  await (browser)[open]();',
+        '  await context[method]();',
+        '  await page.context()[method]();',
+        '  await page[method]();',
+        '  await request[method]();',
+        '  const first = items[i] ?? browser.contexts()[0];',
+        "  const { ['viewport']: size, [`baseURL`]: base } = settings;",
+        '  const { [name]: value } = settings;',
+        '});',
+      ),
+    ).toEqual([
+      `x.spec.ts:3: playwright.chromium[k] ${unnamed}`,
+      `x.spec.ts:4: [k]: go ${unnamed}`,
+      `x.spec.ts:5: playwright[engine] ${unnamed}`,
+      `x.spec.ts:6: (browser)[open] ${unnamed}`,
+      `x.spec.ts:7: context[method] ${unnamed}`,
+      `x.spec.ts:8: page.context()[method] ${unnamed}`,
+      `x.spec.ts:9: page[method] ${unnamed}`,
+      `x.spec.ts:10: request[method] ${unnamed}`,
+      `x.spec.ts:13: [name]: value ${unnamed}`,
+    ]);
+  });
+
   it('flags a launch of firefox or webkit, which ignore the resolver rules even when given them', () => {
     expect(
       scan(

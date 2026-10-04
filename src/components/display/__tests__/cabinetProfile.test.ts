@@ -343,12 +343,12 @@ describe('checkCabinetProfile (G19 registry invariant, every check fails by name
     ['shelf plate wider than the interior', { plate: { widthMm: 565, depthMm: 300, frontInsetMm: 20 } }],
     ['shelf plate running past the back', { plate: { widthMm: 500, depthMm: 380, frontInsetMm: 20 } }],
     [
-      'open rack interior wider than the outer box less its posts',
+      'open rack interior wider than the outer box less its posts (depth fits: width alone fails)',
       {
         frame: 'open-rack',
         panels: { sideMm: 0, backMm: 0 },
         rack: { postMm: 40, beamMm: 18 },
-        interior: { widthMm: 530, depthMm: 394 },
+        interior: { widthMm: 530, depthMm: 320 },
       },
     ],
     [

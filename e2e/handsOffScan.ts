@@ -41,6 +41,8 @@ const EXPERIMENTAL_BROWSERS = new Set(['_android', '_electron']);
 const OPENERS = new Set(['newContext', 'newPage']);
 /** Route calls that send the request on. Routes run newest first, so a spec's own route runs ahead of the guard's. */
 const SENDS_ON = new Set(['continue', 'connectToServer']);
+/** Route calls that remove routes: on a context, the hands-off guard's too. A page's routes are its own. */
+const UNROUTES = new Set(['unroute', 'unrouteAll']);
 /** The files whose `hands-off-scan:` notes count: the spec whose browsers all end at a local sentinel, and the guard itself. */
 const NOTE_FILES = new Set(['hands-off.spec.ts', 'handsOff.ts']);
 const NOTE = 'hands-off-scan:';
@@ -207,7 +209,9 @@ function isAwaited(node: ts.Node): boolean {
  *   a condition, a loop or a callback), blockHandsOff awaited;
  * - a route that sends the request on (continue, connectToServer, fallback with
  *   changes, routeFromHAR), fetches it itself, or has a handler the scan cannot
- *   read: routes run newest first, so it would run ahead of the guard's.
+ *   read: routes run newest first, so it would run ahead of the guard's;
+ * - unroute or unrouteAll on anything but `page`: on a context, either can take
+ *   the guard's routes off.
  * A `hands-off-scan:` comment on a statement exempts it in hands-off.spec.ts
  * and handsOff.ts only.
  */
@@ -330,6 +334,7 @@ export function unguardedSites({ file, code }: Source): string[] {
     if (SENDS_ON.has(name)) flag(node, `${callee}() sends a routed request on, ahead of the hands-off guard`);
     if (name === 'fallback' && node.arguments.length > 0) flag(node, `${callee}() sends a routed request on with changes, ahead of the hands-off guard`);
     if (name === 'routeFromHAR') flag(node, `${callee}() can send requests on, ahead of the hands-off guard`);
+    if (UNROUTES.has(name) && !(ts.isIdentifier(receiver) && receiver.text === 'page')) flag(node, `${callee}() can take the hands-off route guard off a context`);
     if (name === 'fetch' && isRouteParameter(receiver)) flag(node, `${callee}() fetches a routed request itself, outside the hands-off guards`);
     const handler = node.arguments[1];
     if ((name === 'route' || name === 'routeWebSocket') && handler !== undefined && !ts.isArrowFunction(handler) && !ts.isFunctionExpression(handler)) {

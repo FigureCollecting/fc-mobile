@@ -11,6 +11,7 @@ import {
   isHandsOffUrl,
   refuseHandsOffLookups,
   refuseHandsOffRequests,
+  refuseRoundTheRules,
   type ConfigUse,
 } from './handsOff';
 
@@ -511,6 +512,33 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
     expect(handsOffLookupsRefused(module as never)).toBe(true);
     expect({ lookup: module.lookup, promised: module.promises.lookup }).toEqual(once);
     expect((module.lookup as unknown as Record<symbol, unknown>)[promisify]).toEqual(['address', 'family']);
+  });
+});
+
+describe('refuseRoundTheRules (what every e2e worker checks before it starts)', () => {
+  it('passes a worker with no proxy in its environment and no browser to connect to', () => {
+    expect(() => refuseRoundTheRules({ PATH: '/usr/bin', no_proxy: 'localhost', NO_PROXY: '*', http_proxy: '' }, undefined)).not.toThrow();
+  });
+
+  it.each(['http_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'Ftp_Proxy', 'auto_proxy', 'SOCKS_SERVER', 'socks_proxy'])(
+    'refuses %s in the environment: Chromium (the headless shell even with --no-proxy-server) would send hosts to it',
+    (name) => {
+      expect(() => refuseRoundTheRules({ [name]: 'http://127.0.0.1:3128' }, undefined)).toThrow(
+        `hands-off: ${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`,
+      );
+    },
+  );
+
+  it('refuses a browser to connect to (connectOptions, or PW_TEST_CONNECT_WS_ENDPOINT): it has launch args of its own', () => {
+    expect(() => refuseRoundTheRules({}, { wsEndpoint: 'ws://127.0.0.1:1' })).toThrow(
+      'hands-off: connectOptions connects this worker to a browser with launch args of its own',
+    );
+  });
+
+  it('lists every reason at once', () => {
+    expect(() => refuseRoundTheRules({ http_proxy: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1' }, {})).toThrow(
+      /^hands-off: http_proxy .*; HTTPS_PROXY .*; connectOptions .*own$/,
+    );
   });
 });
 

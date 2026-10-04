@@ -1,5 +1,6 @@
+import { execFile } from 'node:child_process';
 import dns from 'node:dns';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -361,6 +362,50 @@ test.describe('the route guard every e2e context gets', () => {
     expect(answer).toBe('refused');
     expect(handsOffBlocked).toEqual([url]);
     expect(failed.get(url)).toMatch(/^net::ERR_BLOCKED_BY_CLIENT\b/);
+  });
+});
+
+test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy in its environment or a browser to connect to', () => {
+  /**
+   * Runs a spec on e2e/fixtures.ts in a Playwright run of its own, under `env`. Its one test asks for no browser,
+   * so nothing is launched or connected to either way: whether its worker started is all it shows.
+   */
+  async function childRun(dir: string, env: Record<string, string>): Promise<{ code: number | null; out: string }> {
+    const fixtures = fileURLToPath(new URL('./fixtures.ts', import.meta.url));
+    writeFileSync(path.join(dir, 'child.spec.ts'), `import { guardedTest } from ${JSON.stringify(fixtures)};\nguardedTest('starts', () => {});\n`);
+    // Its own outputDir: by default the child would clean, and skip specs in, this run's test-results.
+    writeFileSync(path.join(dir, 'child.config.ts'), "export default { testDir: '.', outputDir: 'out', reporter: [['list']], workers: 1 };\n");
+    // Without the runner's own variables, which would make the child take itself for one of this run's workers.
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:TEST_|PW_|PLAYWRIGHT_)/.test(k)));
+    const cli = fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url));
+    return new Promise((resolve) => {
+      execFile(process.execPath, [cli, 'test', '-c', 'child.config.ts'], { cwd: dir, env: { ...inherited, ...env } }, (error, stdout, stderr) =>
+        resolve({ code: error === null ? 0 : (error.code as number | null), out: stdout + stderr }),
+      );
+    });
+  }
+
+  test('starts with neither, and refuses http_proxy or PW_TEST_CONNECT_WS_ENDPOINT', async ({}, testInfo) => {
+    test.setTimeout(120_000);
+    const runs = {
+      neither: {},
+      proxy: { http_proxy: 'http://127.0.0.1:9' },
+      connect: { PW_TEST_CONNECT_WS_ENDPOINT: 'ws://127.0.0.1:9' },
+    };
+    const results = await Promise.all(
+      Object.entries(runs).map(([name, env]) => {
+        const dir = testInfo.outputPath(name);
+        mkdirSync(dir, { recursive: true });
+        return childRun(dir, env);
+      }),
+    );
+    const [neither, proxy, connect] = results;
+    expect(neither.out).toContain('1 passed');
+    expect(neither.code).toBe(0);
+    expect(proxy.out).toContain("hands-off: http_proxy in this worker's environment sends requests through a proxy");
+    expect(proxy.code).toBe(1);
+    expect(connect.out).toContain('hands-off: connectOptions connects this worker to a browser with launch args of its own');
+    expect(connect.code).toBe(1);
   });
 });
 

@@ -142,8 +142,13 @@ export function topClearanceRawMm(profile: HasOuterHeight, ceilingMm: number = C
   return Math.min(TOP_CLEARANCE_CAP_MM, ceilingMm - profile.outer.heightMm);
 }
 
-/** CC9: max(0, min(24 in, ceiling - outer height)): how tall a figure may stand on the top. */
+/**
+ * CC9: max(0, min(24 in, ceiling - outer height)): how tall a figure may stand
+ * on the top. A non-finite ceiling or outer height throws (RangeError); the
+ * raw value above does not check the height, so G19 can name it instead.
+ */
 export function topClearanceMm(profile: HasOuterHeight, ceilingMm: number = CEILING_DEFAULT_MM): number {
+  requireFinite(profile.outer.heightMm, 'outer.heightMm');
   return Math.max(0, topClearanceRawMm(profile, ceilingMm));
 }
 
@@ -151,7 +156,8 @@ export function topClearanceMm(profile: HasOuterHeight, ceilingMm: number = CEIL
  * G17: may a figure this tall stand on the top? One over the clearance is a
  * violator; one of exactly the clearance fits (within 1e-6 mm). A top that is
  * not usable, or has no clearance (a cabinet as tall as the room or taller),
- * takes nothing; a figure height of zero or less, or NaN, never fits.
+ * takes nothing; a figure height of zero or less, or NaN, never fits. A
+ * non-finite ceiling or outer height throws, as in topClearanceMm.
  */
 export function fitsOnTop(profile: CabinetProfile, figureHeightMm: number, ceilingMm: number = CEILING_DEFAULT_MM): boolean {
   if (!profile.top.usable || !(figureHeightMm > 0)) return false;
@@ -162,6 +168,7 @@ export function fitsOnTop(profile: CabinetProfile, figureHeightMm: number, ceili
 /**
  * CC9 framing headroom above the top: min(clearance, max(300, tallest top
  * figure + 40)), from the UNFILTERED collection; null = nothing on the top.
+ * top.usable is not read: a top that takes nothing is framed like an empty one.
  */
 export function framingHeadroomMm(
   profile: HasOuterHeight,
@@ -237,9 +244,11 @@ function ascendingOk(p: CabinetProfile): boolean {
 }
 
 function interiorOk(p: CabinetProfile): boolean {
-  const wall = Math.max(p.panels.sideMm, p.rack?.postMm ?? 0);
+  const post = p.rack?.postMm ?? 0;
+  const wall = Math.max(p.panels.sideMm, post);
   const fitsWidth = p.interior.widthMm <= p.outer.widthMm - 2 * wall + FIT_EPSILON_MM;
-  const fitsDepth = p.interior.depthMm <= p.outer.depthMm - p.panels.backMm + FIT_EPSILON_MM;
+  // depth: a front post (no front panel), then the back panel or back post, whichever is deeper
+  const fitsDepth = p.interior.depthMm <= p.outer.depthMm - post - Math.max(p.panels.backMm, post) + FIT_EPSILON_MM;
   const plate = p.plate;
   const plateFits =
     !plate ||
@@ -250,16 +259,18 @@ function interiorOk(p: CabinetProfile): boolean {
 
 /**
  * G19 registry invariant. Returns the names of the checks the profile FAILS
- * (empty = valid). Each check is written so a NaN fails it.
+ * (empty = valid). Each check is written so a NaN in the profile fails it; a
+ * non-finite ceiling is a caller error and throws (RangeError).
  * - dimensions: sizes finite and positive (panels, base, loads, insets >= 0), rank a whole number >= 1
  * - ascending: at least one surface, tops strictly ascending
  * - gap: each surface sits at least its own board above the one below (clear >= 0)
  * - top-height: the top surface is the outer height (within 5 mm)
  * - stack-sum: base + boards + clear heights = outer height (within 5 mm). With
- *   clear heights derived (stackSumMm), and given top-height, this pins base +
- *   bottom board to the first surface's top; no interior shelf or board can fail it
+ *   clear heights derived (stackSumMm), and given top-height, this only checks
+ *   base + bottom board against the first surface's top (within the tolerances);
+ *   no interior shelf or board can fail it
  * - clearance: the cabinet fits the room: raw ceiling - height >= 0 (the floored value never fails)
- * - interior: the interior fits inside the walls (or rack posts) and the shelf plate inside the interior
+ * - interior: the interior fits inside the walls (or rack posts, front and back too) and the shelf plate inside the interior
  */
 export function checkCabinetProfile(profile: CabinetProfile, ceilingMm: number = CEILING_DEFAULT_MM): ProfileCheck[] {
   const { surfaces, outer } = profile;

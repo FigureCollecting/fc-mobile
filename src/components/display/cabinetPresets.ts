@@ -305,10 +305,13 @@ const PRESET_DATA: readonly CabinetProfile[] = [
   OPEN_STEEL_RACK,
 ];
 
+/** A copy sorted most preferred first (rank 1 first); the list given is left as it is. */
+export function byPreferenceRank(presets: readonly CabinetProfile[]): CabinetProfile[] {
+  return [...presets].sort((a, b) => a.preferenceRank - b.preferenceRank);
+}
+
 /** Every preset, most preferred first. */
-export const CABINET_PRESETS: readonly CabinetProfile[] = [...PRESET_DATA].sort(
-  (a, b) => a.preferenceRank - b.preferenceRank,
-);
+export const CABINET_PRESETS: readonly CabinetProfile[] = byPreferenceRank(PRESET_DATA);
 
 /** The IKEA Detolf (Ross CC3). A user's own default choice is stored per device later (SC-5). */
 export const DEFAULT_CABINET_PROFILE_ID = IKEA_DETOLF.id;

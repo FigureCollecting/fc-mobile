@@ -111,6 +111,20 @@ describe('the resolver rules every Chromium the suites launch gets', () => {
   it('are the one launch argument', () => {
     expect(HANDS_OFF_LAUNCH_ARGS).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
   });
+
+  it('are frozen with the domains, so no spec can add a rule list or a proxy to the launch args, or empty the domains', () => {
+    expect(Object.isFrozen(HANDS_OFF_LAUNCH_ARGS)).toBe(true);
+    expect(Object.isFrozen(HANDS_OFF_DOMAINS)).toBe(true);
+    expect(() => HANDS_OFF_LAUNCH_ARGS.push('--proxy-server=http://127.0.0.1:9')).toThrow(TypeError);
+    expect(() => {
+      HANDS_OFF_LAUNCH_ARGS[0] = '--host-resolver-rules=MAP * 127.0.0.1';
+    }).toThrow(TypeError);
+    expect(() => {
+      (HANDS_OFF_DOMAINS as unknown as string[]).length = 0;
+    }).toThrow(TypeError);
+    expect(HANDS_OFF_LAUNCH_ARGS).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
+    expect(HANDS_OFF_DOMAINS).toHaveLength(5);
+  });
 });
 
 describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs are checked)', () => {
@@ -124,7 +138,7 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
       projects: [
         { name: 'chromium', use: use(['defaultBrowserType', 'chromium'], rules) },
         { name: 'plain', use: use(rules) },
-        { name: 'more', use: use(['launchOptions', { args: [...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu'] }]) },
+        { name: 'more', use: use(['launchOptions', { args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) }]) },
         { name: 'webkit', use: use(['defaultBrowserType', 'webkit']) },
       ],
     };
@@ -172,7 +186,7 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
         { name: 'rules-first', use: use(launch(['args', ['--host-resolver-rules=MAP * 127.0.0.1', ...HANDS_OFF_LAUNCH_ARGS]])) },
         { name: 'proxy-arg', use: use(launch(['args', [...HANDS_OFF_LAUNCH_ARGS, '--proxy-server=http://127.0.0.1:9']])) },
         { name: 'ends-switches', use: use(launch(['args', ['--', ...HANDS_OFF_LAUNCH_ARGS]])) },
-        { name: 'plain-switches', use: use(launch(['args', [...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu', '--no-proxy-server']])) },
+        { name: 'plain-switches', use: use(launch(['args', Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu', '--no-proxy-server'])])) },
         { name: 'launch-proxy', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['proxy', { server: 'http://127.0.0.1:9' }])) },
         { name: 'launch-env', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['env', { http_proxy: 'http://127.0.0.1:9' }])) },
       ],
@@ -186,6 +200,37 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
       'launch-proxy: launchOptions.proxy sends requests through a proxy, which looks the hands-off hosts up itself',
       "launch-env: launchOptions.env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules",
     ]);
+  });
+
+  it('reads the args against the rules built afresh, so args with one more rule list or a proxy are flagged even if a spec pushed the same onto HANDS_OFF_LAUNCH_ARGS', () => {
+    const round = 'launches Chromium with an arg that replaces or goes round the hands-off resolver rules';
+    const original = [...HANDS_OFF_LAUNCH_ARGS];
+    for (const extra of ['--host-resolver-rules=MAP * 127.0.0.1', '--proxy-server=http://127.0.0.1:9']) {
+      let pushed = false;
+      try {
+        HANDS_OFF_LAUNCH_ARGS.push(extra);
+        pushed = true;
+      } catch {
+        // Frozen: the push is refused, as it should be. The check below must hold either way.
+      }
+      try {
+        const config = { projects: [{ name: 'p', use: use(['launchOptions', { args: Object.freeze([...original, extra]) }]) }] };
+        expect(configBypasses(config), extra).toEqual([`p: ${round}`]);
+      } finally {
+        if (pushed) HANDS_OFF_LAUNCH_ARGS.pop();
+      }
+    }
+  });
+
+  it('wants the args frozen, as HANDS_OFF_LAUNCH_ARGS is: a copy is an array a spec can still push onto through its launchOptions fixture', () => {
+    const config = {
+      projects: [
+        { name: 'copy', use: use(['launchOptions', { args: [...HANDS_OFF_LAUNCH_ARGS] }]) },
+        { name: 'itself', use: use(rules) },
+        { name: 'frozen-more', use: use(['launchOptions', { args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) }]) },
+      ],
+    };
+    expect(configBypasses(config)).toEqual(['copy: launches Chromium with args a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_ARGS itself']);
   });
 
   it('flags a proxy or connectOptions in the config or in any project', () => {

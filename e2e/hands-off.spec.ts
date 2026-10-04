@@ -10,9 +10,9 @@ import type { ViteDevServer } from 'vite';
 import { test as guarded, expect } from './fixtures';
 import {
   HANDS_OFF_DOMAINS,
-  HANDS_OFF_LAUNCH_ARGS,
   blockHandsOff,
   configBypasses,
+  goesRoundTheRules,
   guardContext,
   handsOffLookupsRefused,
   handsOffResolverRules,
@@ -174,9 +174,10 @@ test('the probe images cover every hands-off domain', () => {
 test.describe('resolver rules (the network-level net under every Chromium)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', '--host-resolver-rules is a Chromium switch');
 
-  test('this project launches Chromium with them', ({}, testInfo) => {
-    expect(HANDS_OFF_LAUNCH_ARGS).toHaveLength(1);
-    expect(testInfo.project.use.launchOptions?.args ?? []).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
+  test('this project launches Chromium with them, built afresh here, and with frozen args no spec can add to', ({}, testInfo) => {
+    const args = testInfo.project.use.launchOptions?.args ?? [];
+    expect(args.filter(goesRoundTheRules)).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
+    expect(Object.isFrozen(args)).toBe(true);
   });
 
   test('a test fails if anything reached the sentinel under its browser', async ({ page, net }) => {
@@ -186,7 +187,7 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
   });
 
   test("this spec's browser keeps them, and sends what they do not map to the sentinel", async ({ launchOptions, net, page }) => {
-    expect(launchOptions.args).toContain(`${HANDS_OFF_LAUNCH_ARGS[0]}, ${net.catchAll}`);
+    expect(launchOptions.args).toContain(`--host-resolver-rules=${handsOffResolverRules()}, ${net.catchAll}`);
     const failed = failures(page);
     await loadImages(page, [CANARY]);
     await expect.poll(() => net.hosts).toContain('fc-canary.test');

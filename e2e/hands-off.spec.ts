@@ -440,10 +440,12 @@ test.describe("API requests and this worker's own DNS (sent from Node: no route 
   proxied.describe('under a hands-off baseURL', () => {
     proxied.use({ baseURL: 'http://vndb.org' });
 
-    proxied('context.request and page.request read a relative URL against it, and refuse it', async ({ context, page, handsOffBlocked, proxyNet }) => {
-      for (const send of [() => context.request.get('/v11'), () => page.request.get('/v11')]) await expect(send()).rejects.toThrow('hands-off host, not sent: /v11');
+    proxied('the request fixture, context.request and page.request read a relative URL against it, and refuse it', async ({ request, context, page, handsOffBlocked, proxyNet }) => {
+      for (const send of [() => request.get('/v11'), () => context.request.get('/v11'), () => page.request.get('/v11')]) {
+        await expect(send()).rejects.toThrow('hands-off host, not sent: /v11');
+      }
       expect(proxyNet.hosts).toEqual([]);
-      expect(handsOffBlocked).toEqual(['/v11', '/v11']);
+      expect(handsOffBlocked).toEqual(['/v11', '/v11', '/v11']);
     });
   });
 

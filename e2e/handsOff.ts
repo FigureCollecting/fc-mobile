@@ -19,8 +19,11 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   to (refuseRoundTheRules);
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts keeps every spec on these guards.
- * The app's CSP and the vite dev server's refuse them as subresources; a CSP
- * does not stop a navigation.
+ * The app's CSP and the vite dev server's refuse requests to them, as the
+ * route guard does, at the HTTP level; a CSP does not stop a navigation. Full
+ * Chromium (not the headless shell) may still open a TCP connection to one,
+ * sending nothing, for a frame, a form post or a popup either refuses: only
+ * the resolver rules stop that.
  */
 export const HANDS_OFF_DOMAINS = Object.freeze(['myfigurecollection.net', 'suruga-ya.jp', 'suruga-ya.com', 'hobby-genki.com', 'vndb.org'] as const);
 

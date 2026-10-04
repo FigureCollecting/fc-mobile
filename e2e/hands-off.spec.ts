@@ -257,7 +257,7 @@ test.describe('the route guard every e2e context gets', () => {
     expect(handsOffBlocked).toEqual(['https://vndb.org/v11', 'https://myfigurecollection.net/item/1']);
   });
 
-  test('blockHandsOff keeps any browser off the hosts and lets other hosts through', async ({ playwright }) => {
+  test("blockHandsOff keeps any browser's HTTP requests off the hosts and lets other hosts through", async ({ playwright }) => {
     const sentinel = await startSentinel();
     // No hands-off rules here: whatever the guard lets through reaches the sentinel.
     // hands-off-scan: no hands-off rules, on purpose: the sentinel catches whatever the guard lets through.

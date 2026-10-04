@@ -18,7 +18,12 @@ scripts, fetches and WebSockets from any host but the page's own origin, the
 mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL` and the production hosts,
 so never from a hands-off host (sites that bar AI agents by name,
 `e2e/handsOff.ts`). A CSP does not stop a navigation: a link, a `location`
-change, `window.open` or a meta refresh still leaves.
+change, `window.open` or a meta refresh still leaves. The CSP, like the e2e
+route guard below, refuses at the HTTP level: full Chromium (not the headless
+shell) may still open a TCP connection to a hands-off host, sending nothing,
+for a frame, a form post or a popup it refuses. Only the resolver rules below
+stop that; every Chromium in the three Playwright configs has them, and your
+own Chrome on `npm run dev` does not.
 
 The e2e suites guard the rest:
 - Every context from `e2e/fixtures.ts` aborts its pages' and service workers'

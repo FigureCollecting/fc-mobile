@@ -149,6 +149,44 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
     ]);
   });
 
+  it("reads each project as Playwright merges it, its use over the config's: a top-level browserName or launchOptions counts", () => {
+    const firefox = { use: use(['browserName', 'firefox']), projects: [{ name: 'chromium', use: use(['defaultBrowserType', 'chromium'], rules) }] };
+    expect(configBypasses(firefox)).toEqual(['chromium: runs firefox, which has no hands-off resolver rules']);
+    const merged = {
+      use: use(['defaultBrowserType', 'webkit'], rules),
+      projects: [
+        { name: 'webkit' },
+        { name: 'chromium', use: use(['browserName', 'chromium'], ['launchOptions', undefined]) },
+        { name: 'replaces', use: use(['defaultBrowserType', 'chromium'], ['launchOptions', { args: ['--disable-gpu'] }]) },
+      ],
+    };
+    expect(configBypasses(merged, { webkit: 'webkit' })).toEqual(['replaces: launches Chromium without the hands-off resolver rules']);
+  });
+
+  it('wants HANDS_OFF_LAUNCH_ARGS as the only args that touch the resolver or a proxy, and no proxy or env in the launch options', () => {
+    const launch = (...options: [string, unknown][]) => ['launchOptions', Object.fromEntries(options)] as [string, unknown];
+    const config = {
+      projects: [
+        { name: 'later-rules', use: use(launch(['args', [...HANDS_OFF_LAUNCH_ARGS, '--host-resolver-rules=MAP fc-canary.test 127.0.0.1']])) },
+        { name: 'rules-first', use: use(launch(['args', ['--host-resolver-rules=MAP * 127.0.0.1', ...HANDS_OFF_LAUNCH_ARGS]])) },
+        { name: 'proxy-arg', use: use(launch(['args', [...HANDS_OFF_LAUNCH_ARGS, '--proxy-server=http://127.0.0.1:9']])) },
+        { name: 'ends-switches', use: use(launch(['args', ['--', ...HANDS_OFF_LAUNCH_ARGS]])) },
+        { name: 'plain-switches', use: use(launch(['args', [...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu', '--no-proxy-server']])) },
+        { name: 'launch-proxy', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['proxy', { server: 'http://127.0.0.1:9' }])) },
+        { name: 'launch-env', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['env', { http_proxy: 'http://127.0.0.1:9' }])) },
+      ],
+    };
+    const round = 'launches Chromium with an arg that replaces or goes round the hands-off resolver rules';
+    expect(configBypasses(config)).toEqual([
+      `later-rules: ${round}`,
+      `rules-first: ${round}`,
+      `proxy-arg: ${round}`,
+      `ends-switches: ${round}`,
+      'launch-proxy: launchOptions.proxy sends requests through a proxy, which looks the hands-off hosts up itself',
+      "launch-env: launchOptions.env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules",
+    ]);
+  });
+
   it('flags a proxy or connectOptions in the config or in any project', () => {
     const config = {
       use: use(['proxy', { server: 'http://127.0.0.1:3128' }]),

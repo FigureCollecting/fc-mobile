@@ -395,6 +395,38 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
   });
 
+  it('flags args that spread HANDS_OFF_LAUNCH_ARGS beside one that replaces its rules, goes round them, or cannot be read', () => {
+    const overridden = 'playwright.chromium.launch() launches with an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read';
+    const env = "env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules";
+    expect(
+      scan(
+        'x.spec.ts',
+        "test('a', async ({ playwright }) => {",
+        "  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, '--host-resolver-rules=MAP * 127.0.0.1'] });",
+        "  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, '--proxy-server=http://127.0.0.1:3128'] });",
+        "  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, '--proxy-pac-url=http://127.0.0.1/p.pac'] });",
+        "  await playwright.chromium.launch({ args: ['--proxy-auto-detect', ...HANDS_OFF_LAUNCH_ARGS] });",
+        "  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, '-host-rules=MAP vndb.org 192.0.2.1'] });",
+        "  await playwright.chromium.launch({ args: ['--', ...HANDS_OFF_LAUNCH_ARGS] });",
+        '  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, extra] });',
+        '  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, `--proxy-server=${proxy}`] });',
+        '  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, ...more] });',
+        "  await playwright.chromium.launch({ args: [...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu', `--lang=en`, '--no-proxy-server', ...HANDS_OFF_LAUNCH_ARGS] });",
+        "  await playwright.chromium.launch({ args: HANDS_OFF_LAUNCH_ARGS, env: { ...process.env, http_proxy: 'http://127.0.0.1:3128' } });",
+        '});',
+        "test.use({ launchOptions: { args: [...HANDS_OFF_LAUNCH_ARGS, '--Proxy-Server=http://127.0.0.1:3128'] } });",
+        "test.use({ launchOptions: { args: HANDS_OFF_LAUNCH_ARGS, 'env': {} } });",
+        "spawn('node', [], { env: { http_proxy: 'http://127.0.0.1:3128' } });",
+        "export default { webServer: { command: 'vite', env: { PORT: '5173' } } };",
+      ),
+    ).toEqual([
+      ...[2, 3, 4, 5, 6, 7, 8, 9, 10].map((line) => `x.spec.ts:${line}: ${overridden}`),
+      `x.spec.ts:12: ${env}`,
+      'x.spec.ts:14: launchOptions carries an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read',
+      `x.spec.ts:15: ${env}`,
+    ]);
+  });
+
   it('checks launchOptions in e2e/fixtures.ts too', () => {
     expect(scan('fixtures.ts', 'export const t = base.extend({});', "t.use({ launchOptions: { args: ['--x'] } });")).toEqual([
       "fixtures.ts:2: launchOptions replaces the project's launch args and its hands-off resolver rules",

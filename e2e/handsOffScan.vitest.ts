@@ -614,6 +614,20 @@ describe('unguardedSites: routes, which run newest first, so ahead of the hands-
   });
 });
 
+describe('unguardedSites: the shapes each check reads through', () => {
+  const inTest = (...lines: string[]) => scan('x.spec.ts', "test('x', async ({ playwright, browser }) => {", ...lines, '});');
+
+  it.each([
+    ['parentheses round a browser type', ['await (playwright.firefox).launch({ args: HANDS_OFF_LAUNCH_ARGS });'], ['x.spec.ts:2: (playwright.firefox).launch() launches a browser other than chromium, which has no hands-off resolver rules']],
+    ['a launcher handed on as an argument, not called', ['const b = await Reflect.apply(playwright.chromium.launch, playwright.chromium, []);'], ['x.spec.ts:2: playwright.chromium.launch is taken, not called, so the scan cannot check what it opens']],
+    ["a context given to a guard as its second argument, not its first", ['await blockHandsOff(blocked, await browser.newContext());'], ['x.spec.ts:2: browser.newContext() opens a context that no blockHandsOff guards']],
+    ['a browser context from a name that only ends in request', ['const api = await myrequest.newContext();', 'await blockHandsOff(api);'], []],
+    ['a context in parentheses, then guarded', ['const ctx = (await browser.newContext());', 'await blockHandsOff(ctx);'], []],
+  ])('%s', (_, lines, found) => {
+    expect(inTest(...lines)).toEqual(found);
+  });
+});
+
 describe('e2eSources', () => {
   it('reads every JS and TS source outside node_modules, specs or not', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'e2e-sources-'));

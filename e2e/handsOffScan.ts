@@ -45,6 +45,8 @@ const SENDS_ON = new Set(['continue', 'connectToServer']);
 const UNROUTES = new Set(['unroute', 'unrouteAll']);
 /** The files whose `hands-off-scan:` notes count: the spec whose browsers all end at a local sentinel, and the guard itself. */
 const NOTE_FILES = new Set(['hands-off.spec.ts', 'handsOff.ts']);
+/** Playwright objects by the names its fixtures give them: a member of one taken by a name the scan cannot read is flagged. */
+const PLAYWRIGHT_OBJECTS = new Set(['playwright', 'browser', 'page', 'request']);
 const NOTE = 'hands-off-scan:';
 
 function scriptKind(file: string): ts.ScriptKind {
@@ -211,7 +213,9 @@ function isAwaited(node: ts.Node): boolean {
  *   changes, routeFromHAR), fetches it itself, or has a handler the scan cannot
  *   read: routes run newest first, so it would run ahead of the guard's;
  * - unroute or unrouteAll on anything but `page`: on a context, either can take
- *   the guard's routes off.
+ *   the guard's routes off;
+ * - a member taken by a computed name it cannot read: of a browser type, a
+ *   context, `playwright`, `browser`, `page` or `request`, or in a destructuring.
  * A `hands-off-scan:` comment on a statement exempts it in hands-off.spec.ts
  * and handsOff.ts only.
  */
@@ -342,10 +346,22 @@ export function unguardedSites({ file, code }: Source): string[] {
     }
   };
 
-  /** A launcher, newContext or newPage named but not called here; _android and _electron anywhere. */
+  /** A browser type, a context, or a Playwright object by its fixture's name. */
+  const isPlaywrightObject = (receiver: ts.Expression): boolean => {
+    const r = unwrapped(receiver);
+    return browserType(r) !== undefined || isContext(r) || (ts.isIdentifier(r) && PLAYWRIGHT_OBJECTS.has(r.text));
+  };
+
+  /**
+   * A launcher, newContext or newPage named but not called here; _android and
+   * _electron anywhere; a member of a Playwright object by a computed name.
+   */
   const visitMember = (node: ts.PropertyAccessExpression | ts.ElementAccessExpression): void => {
     const m = member(node);
-    if (m === undefined) return;
+    if (m === undefined) {
+      if (isPlaywrightObject(node.expression)) flag(node, `${node.getText(source)} takes a member by a name the scan cannot read`);
+      return;
+    }
     if (EXPERIMENTAL_BROWSERS.has(m.name)) {
       flag(node, `${node.getText(source)} opens a browser the scan cannot check`);
       return;
@@ -358,7 +374,11 @@ export function unguardedSites({ file, code }: Source): string[] {
 
   const visitBinding = (node: ts.BindingElement): void => {
     const key = node.propertyName !== undefined ? keyName(node.propertyName) : ts.isIdentifier(node.name) ? node.name.text : undefined;
-    if (key === undefined) return;
+    if (key === undefined) {
+      // A pattern with no name of its own (`[{ a }] = x`) is read through its elements; a computed name cannot be read.
+      if (node.propertyName !== undefined) flag(node, `${node.getText(source)} takes a member by a name the scan cannot read`);
+      return;
+    }
     if (EXPERIMENTAL_BROWSERS.has(key)) flag(node, `${key} opens a browser the scan cannot check`);
     else if (LAUNCH_OPTIONS_AT.has(key) || UNREADABLE_BROWSERS.has(key) || OPENERS.has(key)) {
       flag(node, `${key} is taken, not called, so the scan cannot check what it opens`);

@@ -6,6 +6,7 @@ import {
   IKEA_DETOLF,
   OPEN_STEEL_RACK,
   UNIT_A,
+  byPreferenceRank,
   getCabinetPreset,
 } from '../cabinetPresets';
 import {
@@ -62,6 +63,12 @@ describe('preset registry (case-cabinet-design-v3 preset_library)', () => {
   it("keeps the open steel rack at LOW preference (Ross CC3: Ross's own rack stays a preset)", () => {
     const otherV3Ranks = V3_ORDER.filter((id) => id !== OPEN_STEEL_RACK.id).map((id) => getCabinetPreset(id)!.preferenceRank);
     expect(OPEN_STEEL_RACK.preferenceRank).toBeGreaterThan(Math.max(...otherV3Ranks));
+  });
+
+  it('sorts by preference rank into a new list, so the order presets are listed in does not matter', () => {
+    const listed = [OPEN_STEEL_RACK, UNIT_A, IKEA_DETOLF];
+    expect(byPreferenceRank(listed).map((p) => p.id)).toEqual(['ikea-detolf', 'unit-a', 'open-steel-rack']);
+    expect(listed.map((p) => p.id)).toEqual(['open-steel-rack', 'unit-a', 'ikea-detolf']);
   });
 
   it('looks presets up by id', () => {
@@ -256,6 +263,13 @@ describe('v1 presets kept until Ross sends his sizes (marked placeholder)', () =
       expect(tops[i] - tops[i - 1]).toBeGreaterThanOrEqual(200);
       expect(tops[i] - tops[i - 1]).toBeLessThanOrEqual(230);
     }
+  });
+
+  it('gives the glass cabinet on legs 4 even compartments (v1: 4 by default) on 150 mm tapered legs', () => {
+    const legs = getCabinetPreset('glass-cabinet-legs')!;
+    expect(clearHeightsMm(legs)).toEqual([406.5, 406.5, 406.5, 406.5]);
+    expect(legs.surfaces.map((s) => s.thicknessMm)).toEqual([18, 6, 6, 6, 18]);
+    expect(legs.base).toEqual({ style: 'legs', heightMm: 150, leg: { taper: true } });
   });
 
   it('gives the wide custom cabinet 6 short compartments on 100 mm legs', () => {

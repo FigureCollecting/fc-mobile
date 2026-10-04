@@ -125,6 +125,17 @@ describe('topClearanceMm / topClearanceRawMm (CC9, G17 goldens from camera-out-v
     },
   );
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects a non-finite outer height (%s) instead of a NaN or made-up clearance; G19 still names it',
+    (heightMm) => {
+      const profile = box({ outer: { widthMm: 600, depthMm: 400, heightMm } });
+      expect(() => topClearanceMm(profile)).toThrow(/outer\.heightMm/);
+      expect(() => framingHeadroomMm(profile, null)).toThrow(RangeError);
+      expect(() => fitsOnTop(profile, 100)).toThrow(RangeError);
+      expect(checkCabinetProfile(profile)).toContain('dimensions');
+    },
+  );
+
   it('is never negative and never above the cap, for any finite room and cabinet', () => {
     fc.assert(
       fc.property(
@@ -216,6 +227,10 @@ describe('framingHeadroomMm (CC9 headroom goldens from camera-out-v3.json cc9)',
     expect(framingHeadroomMm(boxOfHeight(1630), null, 1830)).toBeCloseTo(200, 9);
   });
 
+  it('frames the 300 mm minimum above a top that takes nothing, as above an empty one (top.usable is not read)', () => {
+    expect(framingHeadroomMm(box({ top: { usable: false } }), null)).toBe(HEADROOM_MIN_MM);
+  });
+
   it.each([Number.NaN, Number.POSITIVE_INFINITY])('rejects a non-finite tallest top figure (%s)', (tallest) => {
     expect(() => framingHeadroomMm(boxOfHeight(1630), tallest)).toThrow(RangeError);
   });
@@ -231,6 +246,31 @@ describe('derived stack: clearHeightsMm and stackSumMm', () => {
     const topOnly = box({ surfaces: [surface('top', 1000, 950)] });
     expect(clearHeightsMm(topOnly)).toEqual([]);
     expect(stackSumMm(topOnly)).toBe(50 + 950);
+  });
+
+  it('reduces to base + bottom board + (top surface top - first surface top), so no interior board can fail stack-sum', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            topMm: fc.double({ min: 1, max: 3000, noNaN: true }),
+            thicknessMm: fc.double({ min: 1, max: 100, noNaN: true }),
+          }),
+          { minLength: 1, maxLength: 9 },
+        ),
+        fc.double({ min: 0, max: 200, noNaN: true }),
+        (raw, baseMm) => {
+          const surfaces = raw.map((s, i) => surface(`s${i}`, s.topMm, s.thicknessMm));
+          const profile = box({ surfaces, base: { style: 'plinth', heightMm: baseMm } });
+          const first = surfaces[0];
+          const last = surfaces[surfaces.length - 1];
+          expect(stackSumMm(profile)).toBeCloseTo(baseMm + first.thicknessMm + last.topMm - first.topMm, 6);
+        },
+      ),
+    );
+    const absurdShelfBoard = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 518, 440), surface('top', 1000)] });
+    expect(clearHeightsMm(absurdShelfBoard)).toEqual([10, 464]);
+    expect(checkCabinetProfile(absurdShelfBoard)).not.toContain('stack-sum');
   });
 });
 
@@ -293,6 +333,10 @@ describe('checkCabinetProfile (G19 registry invariant, every check fails by name
     expect(checkCabinetProfile(boxOfHeight(1630), 1600)).toEqual(['clearance']);
   });
 
+  it('a non-finite ceiling is a caller error: it throws rather than naming a check', () => {
+    expect(() => checkCabinetProfile(box(), Number.NaN)).toThrow(RangeError);
+  });
+
   it.each<[string, Partial<CabinetProfile>]>([
     ['interior wider than the outer box less its sides', { interior: { widthMm: 565, depthMm: 394 } }],
     ['interior deeper than the outer box less its back', { interior: { widthMm: 564, depthMm: 395 } }],
@@ -307,6 +351,24 @@ describe('checkCabinetProfile (G19 registry invariant, every check fails by name
         interior: { widthMm: 530, depthMm: 394 },
       },
     ],
+    [
+      'open rack interior deeper than the outer box less its front and back posts',
+      {
+        frame: 'open-rack',
+        panels: { sideMm: 0, backMm: 0 },
+        rack: { postMm: 40, beamMm: 18 },
+        interior: { widthMm: 520, depthMm: 321 },
+      },
+    ],
+    [
+      'open rack interior as deep as the outer box',
+      {
+        frame: 'open-rack',
+        panels: { sideMm: 0, backMm: 0 },
+        rack: { postMm: 40, beamMm: 18 },
+        interior: { widthMm: 520, depthMm: 400 },
+      },
+    ],
   ])("'interior': %s", (_label, patch) => {
     expect(checkCabinetProfile(box(patch))).toEqual(['interior']);
   });
@@ -319,10 +381,20 @@ describe('checkCabinetProfile (G19 registry invariant, every check fails by name
           frame: 'open-rack',
           panels: { sideMm: 0, backMm: 0 },
           rack: { postMm: 40, beamMm: 18 },
-          interior: { widthMm: 520, depthMm: 400 },
+          interior: { widthMm: 520, depthMm: 320 },
         }),
       ),
     ).toEqual([]);
+  });
+
+  it("'interior' on an open rack: a back panel inside the post line takes no extra depth, a thicker one does", () => {
+    const rack: Partial<CabinetProfile> = {
+      frame: 'open-rack',
+      rack: { postMm: 40, beamMm: 18 },
+      interior: { widthMm: 520, depthMm: 320 },
+    };
+    expect(checkCabinetProfile(box({ ...rack, panels: { sideMm: 0, backMm: 6 } }))).toEqual([]);
+    expect(checkCabinetProfile(box({ ...rack, panels: { sideMm: 0, backMm: 50 } }))).toEqual(['interior']);
   });
 
   it.each<[string, Partial<CabinetProfile>]>([
@@ -340,7 +412,10 @@ describe('checkCabinetProfile (G19 registry invariant, every check fails by name
       },
     ],
     ['zero shelf pin pitch', { shelves: { mode: 'adjustable', pinPitchMm: 0 } }],
-    ['zero rack beam', { frame: 'open-rack', rack: { postMm: 0.1, beamMm: 0 } }],
+    [
+      'zero rack beam',
+      { frame: 'open-rack', rack: { postMm: 0.1, beamMm: 0 }, interior: { widthMm: 564, depthMm: 393 } },
+    ],
     ['zero rack post', { frame: 'open-rack', rack: { postMm: 0, beamMm: 18 } }],
     ['zero plate depth', { plate: { widthMm: 300, depthMm: 0, frontInsetMm: 20 } }],
     ['negative plate inset', { plate: { widthMm: 300, depthMm: 200, frontInsetMm: -1 } }],

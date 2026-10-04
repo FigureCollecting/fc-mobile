@@ -10,10 +10,11 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   and workers' requests to these hosts, closes its pages' WebSockets to them
  *   and refuses its API requests to them, and fails its test on one that got
  *   past (a redirect hop);
- * - every Chromium they launch gets HANDS_OFF_LAUNCH_ARGS, so its resolver has
- *   no address for them (which also stops a redirect hop), and no arg beside
- *   them that replaces them or goes round them (configBypasses for the
- *   configs, e2e/handsOffScan.ts for the specs);
+ * - every Chromium they launch gets HANDS_OFF_LAUNCH_ARGS (frozen, so no spec
+ *   can change them), so its resolver has no address for them (which also
+ *   stops a redirect hop), and no arg beside them that replaces them or goes
+ *   round them (configBypasses for the configs, against the rules built
+ *   afresh; e2e/handsOffScan.ts for the specs);
  * - no worker starts with a proxy in its environment or a browser to connect
  *   to (refuseRoundTheRules);
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
@@ -21,7 +22,7 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  * The app's CSP and the vite dev server's refuse them as subresources; a CSP
  * does not stop a navigation.
  */
-export const HANDS_OFF_DOMAINS = ['myfigurecollection.net', 'suruga-ya.jp', 'suruga-ya.com', 'hobby-genki.com', 'vndb.org'] as const;
+export const HANDS_OFF_DOMAINS = Object.freeze(['myfigurecollection.net', 'suruga-ya.jp', 'suruga-ya.com', 'hobby-genki.com', 'vndb.org'] as const);
 
 /**
  * Chromium --host-resolver-rules: each domain and every host under it resolves
@@ -33,7 +34,20 @@ export function handsOffResolverRules(): string {
   return HANDS_OFF_DOMAINS.flatMap((d) => [`MAP ${d} ~NOTFOUND`, `MAP *.${d} ~NOTFOUND`, `MAP ${d}.* ~NOTFOUND`, `MAP *.${d}.* ~NOTFOUND`]).join(', ');
 }
 
-export const HANDS_OFF_LAUNCH_ARGS: string[] = [`--host-resolver-rules=${handsOffResolverRules()}`];
+/** The hands-off launch args, built afresh: what every check compares a browser's args with, never the export a spec could reach. */
+function handsOffLaunchArgs(): string[] {
+  return [`--host-resolver-rules=${handsOffResolverRules()}`];
+}
+
+/**
+ * The args every Chromium the suites launch gets. Frozen, as HANDS_OFF_DOMAINS
+ * is: a spec that pushes onto it or sets an element throws before any browser
+ * launches with the change. The configs pass this array itself, never a copy,
+ * so the args a worker launches with (its launchOptions fixture's) are frozen
+ * too. Typed string[] because Playwright's launch args are: the freeze holds
+ * at run time, where nothing type-checks the specs.
+ */
+export const HANDS_OFF_LAUNCH_ARGS: string[] = Object.freeze(handsOffLaunchArgs()) as string[];
 
 /** Chromium switches that replace the hands-off resolver rules, or send requests round them (a proxy looks hosts up itself). */
 const ROUND_THE_RULES = ['host-resolver-rules', 'host-rules', 'proxy-server', 'proxy-pac-url', 'proxy-auto-detect'];
@@ -68,8 +82,11 @@ function mergedUse(config: ConfigUse = {}, project: ConfigUse = {}): ConfigUse {
  * What in a Playwright config keeps a browser off the hands-off resolver rules,
  * as `project: what`. Each project is read as Playwright merges it (its `use`
  * over the config's): a Chromium project whose launch args leave the rules out,
- * or hold any other arg that could replace them or go round them; a project on
- * another browser that `others` (project name to its browser) does not name.
+ * hold any other arg that could replace them or go round them, or are not
+ * frozen (a spec could push onto them through its launchOptions fixture before
+ * the worker's browser launches); a project on another browser that `others`
+ * (project name to its browser) does not name. The rules are built afresh for
+ * the comparison, not read from HANDS_OFF_LAUNCH_ARGS.
  * Then, where each is written: a proxy, connectOptions, or launch options with
  * a proxy or an env of their own.
  */
@@ -80,12 +97,15 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
     const use = mergedUse(config.use, project.use);
     const engine = use.browserName ?? use.defaultBrowserType ?? 'chromium';
     const args = use.launchOptions?.args ?? [];
+    const rules = handsOffLaunchArgs();
     if (engine !== 'chromium') {
       if (others[name] !== engine) found.push(`${name}: runs ${engine}, which has no hands-off resolver rules`);
-    } else if (!HANDS_OFF_LAUNCH_ARGS.every((arg) => args.includes(arg))) {
+    } else if (!rules.every((arg) => args.includes(arg))) {
       found.push(`${name}: launches Chromium without the hands-off resolver rules`);
-    } else if (!isDeepStrictEqual(args.filter(goesRoundTheRules), HANDS_OFF_LAUNCH_ARGS)) {
+    } else if (!isDeepStrictEqual(args.filter(goesRoundTheRules), rules)) {
       found.push(`${name}: launches Chromium with an arg that replaces or goes round the hands-off resolver rules`);
+    } else if (!Object.isFrozen(args)) {
+      found.push(`${name}: launches Chromium with args a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_ARGS itself`);
     }
   }
   const proxied = 'sends requests through a proxy, which looks the hands-off hosts up itself';

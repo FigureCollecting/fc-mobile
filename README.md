@@ -36,10 +36,15 @@ The e2e suites guard the rest:
   spec launches, gets `HANDS_OFF_LAUNCH_ARGS` (the hands-off spec's own: the
   same rules, then a local sentinel): resolver rules that give those hosts,
   with or without trailing dots, no address, which also stops redirect hops
-  and workers' WebSockets. A test reads each config as Playwright merges
-  it (a project's `use` over the config's) and fails on a Chromium project
-  whose args leave the rules out or add another rule list, a proxy switch or
-  `--`, and on a `proxy`, `connectOptions`, or launch `proxy` or `env`.
+  and workers' WebSockets. `HANDS_OFF_LAUNCH_ARGS` and the domain list are
+  frozen: a spec that pushes onto either, or sets an element, throws before
+  any browser launches with the change. A test reads each config as
+  Playwright merges it (a project's `use` over the config's), compares its
+  args with the rules built afresh (not with the export), and fails on a
+  Chromium project whose args leave the rules out, add another rule list, a
+  proxy switch or `--`, or are not frozen (a copy is an array a spec could
+  push onto through its `launchOptions` fixture before the worker's browser
+  launches), and on a `proxy`, `connectOptions`, or launch `proxy` or `env`.
 - Each worker refuses to start with a proxy in its environment (`http_proxy`
   and the like: Chromium sends hosts to it unresolved, and the headless shell
   does so even with `--no-proxy-server`) or a browser to connect to

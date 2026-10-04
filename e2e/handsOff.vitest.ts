@@ -226,11 +226,14 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
     const config = {
       projects: [
         { name: 'copy', use: use(['launchOptions', { args: [...HANDS_OFF_LAUNCH_ARGS] }]) },
+        // Sealed is not frozen: an element can still be set, to another rule list.
+        { name: 'sealed', use: use(['launchOptions', { args: Object.seal([...HANDS_OFF_LAUNCH_ARGS]) }]) },
         { name: 'itself', use: use(rules) },
         { name: 'frozen-more', use: use(['launchOptions', { args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) }]) },
       ],
     };
-    expect(configBypasses(config)).toEqual(['copy: launches Chromium with args a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_ARGS itself']);
+    const notFrozen = 'launches Chromium with args a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_ARGS itself';
+    expect(configBypasses(config)).toEqual([`copy: ${notFrozen}`, `sealed: ${notFrozen}`]);
   });
 
   it('flags a proxy or connectOptions in the config or in any project', () => {

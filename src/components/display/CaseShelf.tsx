@@ -7,6 +7,8 @@ import type { ShelfItem, ShelfRow } from './packShelves';
 import { getDisplayMeta } from './displayMeta';
 import { resolveRelHeights, resolveHeightMm, resolveDepthMm } from './sizeResolution';
 import { computeFigureZPlacement } from './figureDepthPlacement';
+import { fixedModeCompartmentMm } from './cabinetProfile';
+import type { CabinetProfile } from './cabinetProfile';
 import type { PlacementStrategy, FigureZPlacement } from './figureDepthPlacement';
 import { useBottomMarginFrac, useContactBand } from './alphaMargin';
 import { SHELF_BAND } from './density';
@@ -130,50 +132,26 @@ export const CASE_MOTIFS: { value: CaseMotif; label: string }[] = [
   { value: 'bookcase-wood', label: 'Bookcase' },
 ];
 
+/**
+ * FIXED mode locks the case to a real cabinet (a CabinetProfile from
+ * cabinetProfile.ts / cabinetPresets.ts, e.g. the IKEA Detolf default) so
+ * figures render at true physical scale: the profile's smallest
+ * compartment (fixedModeCompartmentMm, a thin adapter until this rig moves
+ * onto caseCamera) is the mm->px scale anchor, see compartmentMm below. A
+ * figure taller than the compartment overflows its shelf band rather than
+ * being silently resized to fit. What's still NOT wired up: actually
+ * FLAGGING a violator (a dedicated "won't fit" UI treatment) — that's the
+ * remaining structural seam for the "will this figure fit my Detolf?"
+ * feature (figure_sizing_and_case_dimension_model); today an oversized
+ * figure just renders larger than its neighbors, with no separate warning
+ * affordance.
+ */
 export type CaseMode = 'dynamic' | 'fixed';
-
-/**
- * Real cabinet inner dimensions for FIXED mode — locks the case to a real
- * profile (e.g. an IKEA Detolf's true inner shelf W x D x H) so figures
- * render at true physical scale. innerHeightMm now DOES drive sizing (the
- * mm->px scale anchor, see compartmentMm below) — a figure taller than the
- * compartment overflows its shelf band rather than being silently resized
- * to fit. What's still NOT wired up: actually FLAGGING a violator (a
- * dedicated "won't fit" UI treatment) — that's the remaining structural
- * seam for the "will this figure fit my Detolf?" feature
- * (figure_sizing_and_case_dimension_model); today an oversized figure just
- * renders larger than its neighbors, with no separate warning affordance.
- */
-export interface CaseProfile {
-  name: string;
-  innerWidthMm: number;
-  innerDepthMm: number;
-  /** Per-shelf-compartment clear height. */
-  innerHeightMm: number;
-}
-
-/**
- * A real IKEA Detolf, computed from the commissioned geometry model
- * (cabinet_perspective_reference.md) rather than a rough estimate — the
- * first concrete CaseProfile, now consumed by FIXED mode as the sizing
- * anchor (see compartmentMm), grounded in real numbers rather than a rough
- * estimate. Exterior 16.93 x 14.57 x 64.17in per IKEA's own listing;
- * interior usable width/depth and per-shelf clear opening height are
- * collector-measured (IKEA doesn't publish them) — see the doc's §12
- * sources and its "Geometry ground truth — IKEA Detolf" table for the full
- * derivation.
- */
-export const DETOLF_PROFILE: CaseProfile = {
-  name: 'IKEA Detolf',
-  innerWidthMm: 385, // usable width 15.16in
-  innerDepthMm: 330, // usable depth ~13in (330mm, collector-measured)
-  innerHeightMm: 370, // clear opening ~14.57-14.76in per shelf level
-};
 
 /**
  * DYNAMIC mode's virtual compartment height (mm) — the sizing anchor when
  * there's no real caseProfile to lock to. Deliberately more generous than
- * DETOLF_PROFILE's real 370mm shelf (dynamic mode isn't modeling any one
+ * a real Detolf compartment (378-396mm; dynamic mode isn't modeling any one
  * real cabinet, so it shouldn't inherit a specific cabinet's cramped
  * headroom) while still landing typical figures at roughly the sizes they
  * rendered at under the old figure-anchored scale: a labeled ~470mm figure
@@ -196,10 +174,10 @@ interface CaseShelfProps {
   labels?: boolean;
   /** Dynamic (default): each row's compartment height adapts to whatever's
    *  actually packed onto it. Fixed: locks to caseProfile's real
-   *  dimensions and highlights figures that don't fit — see CaseProfile. */
+   *  dimensions and highlights figures that don't fit — see CabinetProfile. */
   caseMode?: CaseMode;
   /** Required once caseMode is 'fixed'; ignored in dynamic mode. */
-  caseProfile?: CaseProfile;
+  caseProfile?: CabinetProfile;
   /** True-depth (default, Ross): billboards physically recede their full
    *  footprint depth — honest perspective shrink included by design (a
    *  taller figure seated deep CAN project smaller than a shorter one up
@@ -483,8 +461,10 @@ export function CaseShelf({
   // mode locks to the real caseProfile's own shelf height; dynamic mode
   // uses a documented generous default (DEFAULT_DYNAMIC_COMPARTMENT_MM).
   // Falls back to the dynamic default if 'fixed' is requested without a
-  // profile — degrade gracefully, never crash on a missing prop.
-  const compartmentMm = caseMode === 'fixed' && caseProfile ? caseProfile.innerHeightMm : DEFAULT_DYNAMIC_COMPARTMENT_MM;
+  // profile, or with one that has no compartment of positive height —
+  // degrade gracefully, never crash on a missing prop.
+  const fixedCompartmentMm = caseMode === 'fixed' && caseProfile ? fixedModeCompartmentMm(caseProfile) : null;
+  const compartmentMm = fixedCompartmentMm ?? DEFAULT_DYNAMIC_COMPARTMENT_MM;
   const pxPerMm = band / compartmentMm;
 
   // ONE shared physical-height scale across the whole displayed set (not

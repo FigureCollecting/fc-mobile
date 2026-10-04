@@ -154,7 +154,7 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
     ]);
   });
 
-  it('reads a guard in any statement list (a switch case too), and flags a context opened in a for header', () => {
+  it('reads a guard in any statement list (a switch case too), and flags a context opened in a for header or as the body of an if', () => {
     expect(
       scan(
         'x.spec.ts',
@@ -165,10 +165,13 @@ describe('unguardedSites: each context a file opens, at its own call', () => {
         '}',
         'for (const other = await browser.newContext(); ; ) break;',
         'if (ready) for (const third = await browser.newContext(); ; ) break;',
+        'if (ready) var fourth = await browser.newContext();',
+        'await blockHandsOff(fourth);',
       ),
     ).toEqual([
       'x.spec.ts:6: browser.newContext() opens a context that no blockHandsOff guards',
       'x.spec.ts:7: browser.newContext() opens a context that no blockHandsOff guards',
+      'x.spec.ts:8: browser.newContext() opens a context that no blockHandsOff guards',
     ]);
   });
 

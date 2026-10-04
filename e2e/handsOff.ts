@@ -1,4 +1,5 @@
 import dns from 'node:dns';
+import { isDeepStrictEqual } from 'node:util';
 import type { APIRequestContext, BrowserContext, Request } from '@playwright/test';
 
 /**
@@ -30,35 +31,68 @@ export function handsOffResolverRules(): string {
 
 export const HANDS_OFF_LAUNCH_ARGS: string[] = [`--host-resolver-rules=${handsOffResolverRules()}`];
 
+/** Chromium switches that replace the hands-off resolver rules, or send requests round them (a proxy looks hosts up itself). */
+const ROUND_THE_RULES = ['host-resolver-rules', 'host-rules', 'proxy-server', 'proxy-pac-url', 'proxy-auto-detect'];
+
+/**
+ * Whether a Chromium launch arg could replace the hands-off resolver rules or go
+ * round them: a rule list (Chromium keeps the last one given), a proxy switch,
+ * or a lone `--`, after which nothing is a switch. Read so that it fails closed:
+ * any number of leading dashes (Chromium takes `-x` as `--x`), in any case.
+ */
+export function goesRoundTheRules(arg: string): boolean {
+  if (arg === '--') return true;
+  const name = arg.replace(/^-+/, '').toLowerCase();
+  return ROUND_THE_RULES.some((s) => name.startsWith(s));
+}
+
 /** The options of a Playwright config's or project's `use` that decide its browser and how it reaches the network. */
 export interface ConfigUse {
   browserName?: string;
   defaultBrowserType?: string;
-  launchOptions?: { args?: string[] };
+  launchOptions?: { args?: string[]; proxy?: unknown; env?: unknown };
   proxy?: unknown;
   connectOptions?: unknown;
 }
 
+/** A project's `use` as Playwright merges it: the config's, with each option the project sets to anything but undefined over it. */
+function mergedUse(config: ConfigUse = {}, project: ConfigUse = {}): ConfigUse {
+  return { ...config, ...Object.fromEntries(Object.entries(project).filter(([, value]) => value !== undefined)) };
+}
+
 /**
  * What in a Playwright config keeps a browser off the hands-off resolver rules,
- * as `project: what`: a Chromium project whose launch args leave them out, a
- * project on another browser that `others` (project name to its browser) does
- * not name, and a proxy or connectOptions anywhere.
+ * as `project: what`. Each project is read as Playwright merges it (its `use`
+ * over the config's): a Chromium project whose launch args leave the rules out,
+ * or hold any other arg that could replace them or go round them; a project on
+ * another browser that `others` (project name to its browser) does not name.
+ * Then, where each is written: a proxy, connectOptions, or launch options with
+ * a proxy or an env of their own.
  */
 export function configBypasses(config: { use?: ConfigUse; projects: { name?: string; use?: ConfigUse }[] }, others: Record<string, string> = {}): string[] {
   const found: string[] = [];
-  for (const { name = '(unnamed)', use } of config.projects) {
-    const engine = use?.browserName ?? use?.defaultBrowserType ?? 'chromium';
+  for (const project of config.projects) {
+    const name = project.name ?? '(unnamed)';
+    const use = mergedUse(config.use, project.use);
+    const engine = use.browserName ?? use.defaultBrowserType ?? 'chromium';
+    const args = use.launchOptions?.args ?? [];
     if (engine !== 'chromium') {
       if (others[name] !== engine) found.push(`${name}: runs ${engine}, which has no hands-off resolver rules`);
-    } else if (!HANDS_OFF_LAUNCH_ARGS.every((arg) => use?.launchOptions?.args?.includes(arg))) {
+    } else if (!HANDS_OFF_LAUNCH_ARGS.every((arg) => args.includes(arg))) {
       found.push(`${name}: launches Chromium without the hands-off resolver rules`);
+    } else if (!isDeepStrictEqual(args.filter(goesRoundTheRules), HANDS_OFF_LAUNCH_ARGS)) {
+      found.push(`${name}: launches Chromium with an arg that replaces or goes round the hands-off resolver rules`);
     }
   }
+  const proxied = 'sends requests through a proxy, which looks the hands-off hosts up itself';
   // A proxy looks hosts up itself, and a browser connected to has launch args of its own: either goes round the rules.
   for (const [where, use] of [['(config)', config.use], ...config.projects.map((p) => [p.name ?? '(unnamed)', p.use] as const)] as const) {
-    if (use?.proxy !== undefined) found.push(`${where}: proxy sends requests through a proxy, which looks the hands-off hosts up itself`);
+    if (use?.proxy !== undefined) found.push(`${where}: proxy ${proxied}`);
     if (use?.connectOptions !== undefined) found.push(`${where}: connectOptions connects to a browser with launch args of its own`);
+    if (use?.launchOptions?.proxy !== undefined) found.push(`${where}: launchOptions.proxy ${proxied}`);
+    if (use?.launchOptions?.env !== undefined) {
+      found.push(`${where}: launchOptions.env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules`);
+    }
   }
   return found;
 }

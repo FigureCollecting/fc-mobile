@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { devices } from '@playwright/test';
 import ts from 'typescript';
+import { goesRoundTheRules } from './handsOff';
 
 export interface Source {
   /** Relative to the e2e directory, with forward slashes. */
@@ -23,7 +24,7 @@ export function e2eSources(root: string): Source[] {
 const PLAYWRIGHT = /^(?:@playwright\/test|playwright|playwright-core)(?:\/.*)?$|(?:^|\/)node_modules\/(?:@playwright\/test|playwright(?:-core)?)(?:\/|$)/;
 /** Values a spec may take from Playwright itself: none of them opens a browser, a context or a request. */
 const HARMLESS = new Set(['expect', 'devices', 'defineConfig']);
-/** What every Chromium's args must hold: this identifier, as the args or spread into them. */
+/** What every Chromium's args must hold: this identifier, as the args or spread into them among plain switches. */
 const LAUNCH_ARGS = 'HANDS_OFF_LAUNCH_ARGS';
 const CONTEXT_GUARDS = new Set(['blockHandsOff', 'guardContext']);
 const API_GUARDS = new Set(['refuseHandsOffRequests']);
@@ -99,25 +100,42 @@ function opensUnreadable(name: string, receiver: ts.Expression): boolean {
   return UNREADABLE_BROWSERS.has(name) || (name === 'connect' && browserType(receiver) !== undefined);
 }
 
-/** Whether these args carry the hands-off resolver rules: HANDS_OFF_LAUNCH_ARGS itself, or an array that spreads it. */
-function carriesRules(args: ts.Expression): boolean {
-  if (ts.isIdentifier(args)) return args.text === LAUNCH_ARGS;
-  return ts.isArrayLiteralExpression(args) && args.elements.some((e) => ts.isSpreadElement(e) && ts.isIdentifier(e.expression) && e.expression.text === LAUNCH_ARGS);
+/** Launch args that keep the hands-off resolver rules in force, leave them out, or hold one that could replace them or go round them. */
+type Rules = 'kept' | 'missing' | 'overridden';
+
+/**
+ * HANDS_OFF_LAUNCH_ARGS itself, or an array that spreads it among string
+ * literals none of which goes round its rules, keeps them; an array that
+ * spreads it beside any other element (a value the scan cannot read) does not.
+ */
+function argsRules(args: ts.Expression): Rules {
+  if (ts.isIdentifier(args)) return args.text === LAUNCH_ARGS ? 'kept' : 'missing';
+  if (!ts.isArrayLiteralExpression(args)) return 'missing';
+  const spreadsRules = (e: ts.Expression) => ts.isSpreadElement(e) && ts.isIdentifier(e.expression) && e.expression.text === LAUNCH_ARGS;
+  if (!args.elements.some(spreadsRules)) return 'missing';
+  return args.elements.every((e) => spreadsRules(e) || (ts.isStringLiteralLike(e) && !goesRoundTheRules(e.text))) ? 'kept' : 'overridden';
 }
 
-/** Whether launch options end with args that carry the rules: no spread or computed name after them can replace them. */
-function hasResolverRules(options: ts.Expression | undefined): boolean {
-  if (options === undefined || !ts.isObjectLiteralExpression(options)) return false;
-  let rules = false;
+/** What launch options' last args do to the rules: no spread or computed name after them may replace them. */
+function launchRules(options: ts.Expression | undefined): Rules {
+  if (options === undefined || !ts.isObjectLiteralExpression(options)) return 'missing';
+  let rules: Rules = 'missing';
   for (const p of options.properties) {
     if (ts.isSpreadAssignment(p)) {
-      rules = false;
+      rules = 'missing';
     } else {
       const key = keyName(p.name);
-      if (key === undefined || key === 'args') rules = key === 'args' && ts.isPropertyAssignment(p) && carriesRules(p.initializer);
+      if (key === undefined || key === 'args') rules = key === 'args' && ts.isPropertyAssignment(p) ? argsRules(p.initializer) : 'missing';
     }
   }
   return rules;
+}
+
+/** Whether this object literal is launch options: an argument of a launcher, or the value of launchOptions. */
+function isLaunchOptions(object: ts.Node): boolean {
+  const up = object.parent;
+  if (ts.isPropertyAssignment(up)) return keyName(up.name) === 'launchOptions';
+  return ts.isCallExpression(up) && LAUNCH_OPTIONS_AT.has(member(up.expression)?.name ?? '');
 }
 
 /** An identifier that names something rather than reading a variable: `x.name`, `{ name: v }`, `{ name: n } = x`. */
@@ -175,9 +193,11 @@ function isAwaited(node: ts.Node): boolean {
  * - test, a browser type or `request` taken from Playwright (by import, export,
  *   require, any call given its module name, or a path into node_modules)
  *   instead of from e2e/fixtures.ts, whose contexts are guarded;
- * - a launch whose args are not HANDS_OFF_LAUNCH_ARGS or spread it (or that a
- *   later spread or computed name could replace), launchOptions that replace
- *   the project's, a launcher, newContext or newPage taken without being called,
+ * - a launch whose args are not HANDS_OFF_LAUNCH_ARGS, or a spread of it among
+ *   string literals none of which is another rule list, a proxy switch or `--`
+ *   (goesRoundTheRules), or that a later spread or computed name could replace;
+ *   launchOptions that do the same; an env in launch options (a proxy rides in
+ *   it); a launcher, newContext or newPage taken without being called,
  *   launchServer, connect, connectOverCDP and _android / _electron;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
  *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
@@ -292,7 +312,9 @@ export function unguardedSites({ file, code }: Source): string[] {
     const { name, receiver } = m;
     const callee = node.expression.getText(source);
     const optionsAt = LAUNCH_OPTIONS_AT.get(name);
-    if (optionsAt !== undefined && !hasResolverRules(node.arguments[optionsAt])) flag(node, `${callee}() launches without the hands-off resolver rules`);
+    const rules = optionsAt === undefined ? 'kept' : launchRules(node.arguments[optionsAt]);
+    if (rules === 'missing') flag(node, `${callee}() launches without the hands-off resolver rules`);
+    if (rules === 'overridden') flag(node, `${callee}() launches with an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read`);
     // Firefox and WebKit ignore --host-resolver-rules, given or not.
     if (optionsAt !== undefined && (browserType(receiver) ?? 'chromium') !== 'chromium') {
       flag(node, `${callee}() launches a browser other than chromium, which has no hands-off resolver rules`);
@@ -352,8 +374,14 @@ export function unguardedSites({ file, code }: Source): string[] {
     }
     const value = ts.isPropertyAssignment(node) ? node.initializer : undefined;
     switch (keyName(node.name)) {
-      case 'launchOptions':
-        if (!hasResolverRules(value)) flag(node, "launchOptions replaces the project's launch args and its hands-off resolver rules");
+      case 'launchOptions': {
+        const rules = launchRules(value);
+        if (rules === 'missing') flag(node, "launchOptions replaces the project's launch args and its hands-off resolver rules");
+        if (rules === 'overridden') flag(node, 'launchOptions carries an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read');
+        break;
+      }
+      case 'env':
+        if (isLaunchOptions(node.parent)) flag(node, "env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules");
         break;
       case 'browserName':
       case 'defaultBrowserType':

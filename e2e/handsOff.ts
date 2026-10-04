@@ -97,6 +97,24 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
   return found;
 }
 
+/** Where Chromium and Node read a proxy from in the environment, by name in any case (no_proxy only lists hosts to skip one for). */
+const PROXY_VARIABLES = new Set(['http_proxy', 'https_proxy', 'all_proxy', 'ftp_proxy', 'auto_proxy', 'socks_server', 'socks_proxy']);
+
+/**
+ * Throws if this worker would run its browsers round the hands-off resolver
+ * rules: a proxy in its environment (Chromium sends hosts to it unresolved; the
+ * headless shell does even with --no-proxy-server), or a browser to connect to
+ * (connectOptions, which PW_TEST_CONNECT_WS_ENDPOINT sets), which has launch
+ * args of its own. Every reason, in one error.
+ */
+export function refuseRoundTheRules(env: Record<string, string | undefined>, connectOptions: unknown): void {
+  const reasons = Object.entries(env)
+    .filter(([name, value]) => PROXY_VARIABLES.has(name.toLowerCase()) && !!value)
+    .map(([name]) => `${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`);
+  if (connectOptions !== undefined) reasons.push('connectOptions connects this worker to a browser with launch args of its own');
+  if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
+}
+
 /** Whether a hostname is a hands-off domain or under one, in any case and with any trailing dots (a look-alike is not). */
 export function isHandsOffHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.+$/, '');

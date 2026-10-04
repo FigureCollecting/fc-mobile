@@ -1,7 +1,7 @@
 // Every e2e test runs under the shipped CSP and fails on any violation the
 // page reports. The listener is installed before the app's first script.
 import { test as base, expect, type BrowserContext } from '@playwright/test';
-import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests } from './handsOff';
+import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests, refuseRoundTheRules } from './handsOff';
 
 export { expect };
 
@@ -41,7 +41,15 @@ export async function watchCsp(context: BrowserContext): Promise<CspViolation[]>
  * that route guard (a redirect hop); handsOffBlocked lists what it stopped.
  * Specs that must not run under the CSP check (e2e/auth) take this one.
  */
-export const guardedTest = base.extend<{ handsOffBlocked: string[] }>({
+export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOffWorker: void }>({
+  // No worker starts with a proxy in its environment or a browser to connect to: either goes round the resolver rules.
+  handsOffWorker: [
+    async ({ connectOptions }, use) => {
+      refuseRoundTheRules(process.env, connectOptions);
+      await use();
+    },
+    { scope: 'worker', auto: true },
+  ],
   handsOffBlocked: async ({}, use) => {
     await use([]);
   },

@@ -387,25 +387,24 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy 
 
   test('starts with neither, and refuses http_proxy or PW_TEST_CONNECT_WS_ENDPOINT', async ({}, testInfo) => {
     test.setTimeout(120_000);
-    const runs = {
-      neither: {},
-      proxy: { http_proxy: 'http://127.0.0.1:9' },
-      connect: { PW_TEST_CONNECT_WS_ENDPOINT: 'ws://127.0.0.1:9' },
-    };
-    const results = await Promise.all(
-      Object.entries(runs).map(([name, env]) => {
+    const runs: [string, Record<string, string>][] = [
+      ['neither', {}],
+      ['proxied', { http_proxy: 'http://127.0.0.1:9' }],
+      ['connected', { PW_TEST_CONNECT_WS_ENDPOINT: 'ws://127.0.0.1:9' }],
+    ];
+    const [neither, proxied, connected] = await Promise.all(
+      runs.map(([name, env]) => {
         const dir = testInfo.outputPath(name);
         mkdirSync(dir, { recursive: true });
         return childRun(dir, env);
       }),
     );
-    const [neither, proxy, connect] = results;
     expect(neither.out).toContain('1 passed');
     expect(neither.code).toBe(0);
-    expect(proxy.out).toContain("hands-off: http_proxy in this worker's environment sends requests through a proxy");
-    expect(proxy.code).toBe(1);
-    expect(connect.out).toContain('hands-off: connectOptions connects this worker to a browser with launch args of its own');
-    expect(connect.code).toBe(1);
+    expect(proxied.out).toContain("hands-off: http_proxy in this worker's environment sends requests through a proxy");
+    expect(proxied.code).toBe(1);
+    expect(connected.out).toContain('hands-off: connectOptions connects this worker to a browser with launch args of its own');
+    expect(connected.code).toBe(1);
   });
 });
 

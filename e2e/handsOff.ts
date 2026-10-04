@@ -11,7 +11,11 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   and refuses its API requests to them, and fails its test on one that got
  *   past (a redirect hop);
  * - every Chromium they launch gets HANDS_OFF_LAUNCH_ARGS, so its resolver has
- *   no address for them (which also stops a redirect hop);
+ *   no address for them (which also stops a redirect hop), and no arg beside
+ *   them that replaces them or goes round them (configBypasses for the
+ *   configs, e2e/handsOffScan.ts for the specs);
+ * - no worker starts with a proxy in its environment or a browser to connect
+ *   to (refuseRoundTheRules);
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts keeps every spec on these guards.
  * The app's CSP and the vite dev server's refuse them as subresources; a CSP

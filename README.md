@@ -29,30 +29,47 @@ The e2e suites guard the rest:
   routes never see).
 - A route a spec adds runs before the guard's. One that continues a request,
   or fetches it with `route.fetch()` (which no API guard sees), goes round
-  the abort and leaves only the two layers below and the failing test, so the
-  scan refuses such routes.
-- Every Chromium the suites launch resolves those hosts, with or without
-  trailing dots, to nothing; that also stops redirect hops and workers'
-  WebSockets.
+  the abort and leaves only the layers below and the failing test, so the
+  scan refuses such routes. `unroute` or `unrouteAll` on a context would take
+  the guard's routes off, so the scan refuses them on anything but `page`.
+- Every Chromium project in the three Playwright configs, and every Chromium a
+  spec launches, gets `HANDS_OFF_LAUNCH_ARGS` (the hands-off spec's own: the
+  same rules, then a local sentinel): resolver rules that give those hosts,
+  with or without trailing dots, no address, which also stops redirect hops
+  and workers' WebSockets. A test reads each config as Playwright merges
+  it (a project's `use` over the config's) and fails on a Chromium project
+  whose args leave the rules out or add another rule list, a proxy switch or
+  `--`, and on a `proxy`, `connectOptions`, or launch `proxy` or `env`.
+- Each worker refuses to start with a proxy in its environment (`http_proxy`
+  and the like: Chromium sends hosts to it unresolved, and the headless shell
+  does so even with `--no-proxy-server`) or a browser to connect to
+  (`connectOptions`, or `PW_TEST_CONNECT_WS_ENDPOINT`).
 - Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
   `route.fetch()`) find no address for them.
 - `e2e/handsOffScan.ts` reads every e2e source's syntax tree and fails the
   unit tests on: `test`, a browser type or `request` taken from Playwright
   directly (an import, a require, any call given its module name, a path into
-  `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS` or a
-  spread of it, or `launchOptions` that replace them; another browser
-  (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`, a
-  `firefox` or `webkit` launch), a `proxy` or `connectOptions`; `launchServer`, `connect`, `connectOverCDP`,
-  `_android`, or a launcher passed around uncalled; a context, page or API
-  context that a guard does not take before its first use, on every path; a
-  route that continues, fetches, or has a handler it cannot read. It does not
-  follow values through variables (launch options or a device held in a
-  `const`, a module name built at run time).
+  `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS`, or a
+  spread of it among string literals none of which is another rule list, a
+  proxy switch or `--`; `launchOptions` that replace them, or an `env` in
+  launch options; another browser (`browserName`, `defaultBrowserType`, a
+  non-Chromium `devices[...]`, a `firefox` or `webkit` launch), a `proxy` or
+  `connectOptions`; `launchServer`, `connect`, `connectOverCDP`, `_android`,
+  or a launcher passed around uncalled; a member of a Playwright object, or a
+  destructured one, taken by a computed name; a context, page or API context
+  that a guard does not take before its first use, on every path; a route
+  that continues, fetches, or has a handler it cannot read; `unroute` or
+  `unrouteAll` on anything but `page`. It does not follow values through
+  variables (launch options or a device held in a `const`, a module name
+  built at run time).
 
 A spike page is therefore an HTML file in this repo, opened from a spec on
 `e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;
-opened from disk or another server it has no guard at all. WebKit gets the
-route guard but no resolver rules (that switch is Chromium's); it is not in CI.
+opened from disk or another server it has no guard at all. A browser other
+than Chromium gets the route guard and the worker's DNS but no resolver rules
+(that switch is Chromium's), and the hands-off spec's browser checks skip on
+it: the `webkit` project, which a local `npm run test:e2e` runs (CI does not),
+and any run given `--browser firefox` or `--browser webkit`.
 
 ## Build
 

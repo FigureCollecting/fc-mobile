@@ -11,6 +11,7 @@ import {
   HANDS_OFF_DOMAINS,
   HANDS_OFF_LAUNCH_ARGS,
   blockHandsOff,
+  configBypasses,
   guardContext,
   handsOffLookupsRefused,
   handsOffResolverRules,
@@ -193,22 +194,12 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
   });
 
   test('every Chromium project of every Playwright config (e2e, PWA, stack) launches with them, and none goes round them', async () => {
-    type Use = { browserName?: string; defaultBrowserType?: string; launchOptions?: { args?: string[] }; proxy?: unknown; connectOptions?: unknown };
-    type Project = { name?: string; use?: Use };
     /** The one project on another browser: WebKit, with the route guard only, not in CI (README). */
-    const others = { '../playwright.config.ts': [['webkit', 'webkit']], '../playwright.pwa.config.ts': [], '../playwright.stack.config.ts': [] };
-    for (const [file, expected] of Object.entries(others)) {
-      const { default: config } = (await import(file)) as { default: { use?: Use; projects: Project[] } };
-      const engine = (p: Project) => p.use?.browserName ?? p.use?.defaultBrowserType ?? 'chromium';
-      const isChromium = (p: Project) => engine(p) === 'chromium';
-      const chromium = config.projects.filter(isChromium);
-      expect(chromium.length, file).toBeGreaterThan(0);
-      for (const p of chromium) {
-        expect(p.use?.launchOptions?.args ?? [], `${file} ${p.name}`).toEqual(expect.arrayContaining(HANDS_OFF_LAUNCH_ARGS));
-      }
-      expect(config.projects.filter((p) => !isChromium(p)).map((p) => [p.name, engine(p)]), file).toEqual(expected);
-      // A proxy looks hosts up itself, and a browser connected to has launch args of its own: either goes round the rules.
-      for (const use of [config.use, ...config.projects.map((p) => p.use)]) expect([use?.proxy, use?.connectOptions], file).toEqual([undefined, undefined]);
+    const others = { '../playwright.config.ts': { webkit: 'webkit' }, '../playwright.pwa.config.ts': {}, '../playwright.stack.config.ts': {} };
+    for (const [file, other] of Object.entries(others)) {
+      const { default: config } = (await import(file)) as { default: Parameters<typeof configBypasses>[0] };
+      expect(config.projects.length, file).toBeGreaterThan(0);
+      expect(configBypasses(config, other), file).toEqual([]);
     }
   });
 

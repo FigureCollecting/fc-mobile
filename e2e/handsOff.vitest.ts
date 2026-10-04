@@ -3,6 +3,7 @@ import {
   HANDS_OFF_DOMAINS,
   HANDS_OFF_LAUNCH_ARGS,
   blockHandsOff,
+  configBypasses,
   guardContext,
   handsOffLookupsRefused,
   handsOffResolverRules,
@@ -10,6 +11,7 @@ import {
   isHandsOffUrl,
   refuseHandsOffLookups,
   refuseHandsOffRequests,
+  type ConfigUse,
 } from './handsOff';
 
 const HANDS_OFF_URLS = [
@@ -107,6 +109,56 @@ describe('the resolver rules every Chromium the suites launch gets', () => {
 
   it('are the one launch argument', () => {
     expect(HANDS_OFF_LAUNCH_ARGS).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
+  });
+});
+
+describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs are checked)', () => {
+  /** A `use` from [option, value] pairs: these options written as an object literal would trip e2e/handsOffScan.ts. */
+  const use = (...options: [string, unknown][]): ConfigUse => Object.fromEntries(options);
+  const rules: [string, unknown] = ['launchOptions', { args: HANDS_OFF_LAUNCH_ARGS }];
+
+  it('finds nothing when every Chromium project launches with the rules and each other browser is named', () => {
+    const config = {
+      use: use(['baseURL', 'http://localhost:5173']),
+      projects: [
+        { name: 'chromium', use: use(['defaultBrowserType', 'chromium'], rules) },
+        { name: 'plain', use: use(rules) },
+        { name: 'more', use: use(['launchOptions', { args: [...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu'] }]) },
+        { name: 'webkit', use: use(['defaultBrowserType', 'webkit']) },
+      ],
+    };
+    expect(configBypasses(config, { webkit: 'webkit' })).toEqual([]);
+  });
+
+  it('flags a Chromium project without the rules, and a browser that is not the one named for its project', () => {
+    const config = {
+      projects: [
+        { name: 'bare' },
+        { name: 'other-args', use: use(['launchOptions', { args: ['--disable-gpu'] }]) },
+        { name: 'firefox', use: use(['browserName', 'firefox'], rules) },
+        { name: 'webkit', use: use(['defaultBrowserType', 'firefox']) },
+        { use: use(['defaultBrowserType', 'webkit']) },
+      ],
+    };
+    expect(configBypasses(config, { webkit: 'webkit' })).toEqual([
+      'bare: launches Chromium without the hands-off resolver rules',
+      'other-args: launches Chromium without the hands-off resolver rules',
+      'firefox: runs firefox, which has no hands-off resolver rules',
+      'webkit: runs firefox, which has no hands-off resolver rules',
+      '(unnamed): runs webkit, which has no hands-off resolver rules',
+    ]);
+  });
+
+  it('flags a proxy or connectOptions in the config or in any project', () => {
+    const config = {
+      use: use(['proxy', { server: 'http://127.0.0.1:3128' }]),
+      projects: [{ name: 'chromium', use: use(rules, ['connectOptions', { wsEndpoint: 'ws://127.0.0.1:1' }]) }, { use: use(rules, ['proxy', {}]) }],
+    };
+    expect(configBypasses(config)).toEqual([
+      '(config): proxy sends requests through a proxy, which looks the hands-off hosts up itself',
+      'chromium: connectOptions connects to a browser with launch args of its own',
+      '(unnamed): proxy sends requests through a proxy, which looks the hands-off hosts up itself',
+    ]);
   });
 });
 

@@ -30,6 +30,39 @@ export function handsOffResolverRules(): string {
 
 export const HANDS_OFF_LAUNCH_ARGS: string[] = [`--host-resolver-rules=${handsOffResolverRules()}`];
 
+/** The options of a Playwright config's or project's `use` that decide its browser and how it reaches the network. */
+export interface ConfigUse {
+  browserName?: string;
+  defaultBrowserType?: string;
+  launchOptions?: { args?: string[] };
+  proxy?: unknown;
+  connectOptions?: unknown;
+}
+
+/**
+ * What in a Playwright config keeps a browser off the hands-off resolver rules,
+ * as `project: what`: a Chromium project whose launch args leave them out, a
+ * project on another browser that `others` (project name to its browser) does
+ * not name, and a proxy or connectOptions anywhere.
+ */
+export function configBypasses(config: { use?: ConfigUse; projects: { name?: string; use?: ConfigUse }[] }, others: Record<string, string> = {}): string[] {
+  const found: string[] = [];
+  for (const { name = '(unnamed)', use } of config.projects) {
+    const engine = use?.browserName ?? use?.defaultBrowserType ?? 'chromium';
+    if (engine !== 'chromium') {
+      if (others[name] !== engine) found.push(`${name}: runs ${engine}, which has no hands-off resolver rules`);
+    } else if (!HANDS_OFF_LAUNCH_ARGS.every((arg) => use?.launchOptions?.args?.includes(arg))) {
+      found.push(`${name}: launches Chromium without the hands-off resolver rules`);
+    }
+  }
+  // A proxy looks hosts up itself, and a browser connected to has launch args of its own: either goes round the rules.
+  for (const [where, use] of [['(config)', config.use], ...config.projects.map((p) => [p.name ?? '(unnamed)', p.use] as const)] as const) {
+    if (use?.proxy !== undefined) found.push(`${where}: proxy sends requests through a proxy, which looks the hands-off hosts up itself`);
+    if (use?.connectOptions !== undefined) found.push(`${where}: connectOptions connects to a browser with launch args of its own`);
+  }
+  return found;
+}
+
 /** Whether a hostname is a hands-off domain or under one, in any case and with any trailing dots (a look-alike is not). */
 export function isHandsOffHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.+$/, '');

@@ -492,6 +492,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         '  const first = items[i] ?? browser.contexts()[0];',
         "  const { ['viewport']: size, [`baseURL`]: base } = settings;",
         '  const { [name]: value } = settings;',
+        '  const [{ viewport }] = sizes;',
         '});',
       ),
     ).toEqual([

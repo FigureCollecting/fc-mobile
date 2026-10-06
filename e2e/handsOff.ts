@@ -72,6 +72,8 @@ export interface ConfigUse {
   browserName?: string;
   defaultBrowserType?: string;
   launchOptions?: { args?: string[]; proxy?: unknown; env?: unknown };
+  /** Playwright's proxy option falls back on contextOptions.proxy, so every context sends through it. */
+  contextOptions?: { proxy?: unknown };
   proxy?: unknown;
   connectOptions?: unknown;
 }
@@ -90,8 +92,8 @@ function mergedUse(config: ConfigUse = {}, project: ConfigUse = {}): ConfigUse {
  * the worker's browser launches); a project on another browser that `others`
  * (project name to its browser) does not name. The rules are built afresh for
  * the comparison, not read from HANDS_OFF_LAUNCH_ARGS.
- * Then, where each is written: a proxy, connectOptions, or launch options with
- * a proxy or an env of their own.
+ * Then, where each is written: a proxy, connectOptions, launch options with a
+ * proxy or an env of their own, or context options with a proxy.
  */
 export function configBypasses(config: { use?: ConfigUse; projects: { name?: string; use?: ConfigUse }[] }, others: Record<string, string> = {}): string[] {
   const found: string[] = [];
@@ -117,6 +119,7 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
     if (use?.proxy !== undefined) found.push(`${where}: proxy ${proxied}`);
     if (use?.connectOptions !== undefined) found.push(`${where}: connectOptions connects to a browser with launch args of its own`);
     if (use?.launchOptions?.proxy !== undefined) found.push(`${where}: launchOptions.proxy ${proxied}`);
+    if (use?.contextOptions?.proxy !== undefined) found.push(`${where}: contextOptions.proxy ${proxied}`);
     if (use?.launchOptions?.env !== undefined) {
       found.push(`${where}: launchOptions.env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules`);
     }

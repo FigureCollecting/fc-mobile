@@ -49,7 +49,8 @@ The e2e suites guard the rest:
   Chromium project whose args leave the rules out, add another rule list, a
   proxy switch or `--`, or are not frozen (a copy is an array a spec could
   push onto through its `launchOptions` fixture before the worker's browser
-  launches), and on a `proxy`, `connectOptions`, or launch `proxy` or `env`.
+  launches), and on a `proxy` (in `use` or in `contextOptions`),
+  `connectOptions`, or launch `proxy` or `env`.
 - Each worker refuses to start with a proxy in its environment (`http_proxy`
   and the like: Chromium sends hosts to it unresolved, and the headless shell
   does so even with `--no-proxy-server`) or a browser to connect to

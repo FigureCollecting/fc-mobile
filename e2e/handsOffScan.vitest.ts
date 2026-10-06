@@ -500,6 +500,9 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         'test.use({ launchOptions: { ...viaProxy, args: HANDS_OFF_LAUNCH_ARGS } });',
         'test.use({ launchOptions: { [key]: true, args: HANDS_OFF_LAUNCH_ARGS } });',
         'test.use({ launchOptions: { slowMo: 1, args: HANDS_OFF_LAUNCH_ARGS } });',
+        // Not an object literal at all: flagged as launching without the rules.
+        'test.use({ launchOptions: options });',
+        "test('b', async ({ playwright }) => { await playwright.chromium.launch(new Quiet()); });",
       ),
     ).toEqual([
       ...[2, 3, 4, 5].map((line) => `x.spec.ts:${line}: playwright.chromium.launch() ${call}`),
@@ -507,6 +510,8 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       `x.spec.ts:8: playwright.chromium.launch() ${call}`,
       `x.spec.ts:11: ${held}`,
       `x.spec.ts:12: ${held}`,
+      "x.spec.ts:14: launchOptions replaces the project's launch args and its hands-off resolver rules",
+      'x.spec.ts:15: playwright.chromium.launch() launches without the hands-off resolver rules',
     ]);
   });
 

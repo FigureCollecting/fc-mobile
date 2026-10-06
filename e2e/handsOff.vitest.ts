@@ -214,6 +214,42 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
     ]);
   });
 
+  it("flags ignoreDefaultArgs in the launch options, in the config or in any project: Playwright takes each arg it names off Chromium's command line, the rules among them", () => {
+    const launch = (...options: [string, unknown][]) => ['launchOptions', Object.freeze(Object.fromEntries(options))] as [string, unknown];
+    const ignoresRules = launch(['args', HANDS_OFF_LAUNCH_ARGS], ['ignoreDefaultArgs', Object.freeze([...HANDS_OFF_LAUNCH_ARGS])]);
+    const config = {
+      use: use(ignoresRules),
+      projects: [
+        { name: 'from-config' },
+        { name: 'ignores-rules', use: use(ignoresRules) },
+        { name: 'ignores-first', use: use(launch(['ignoreDefaultArgs', HANDS_OFF_LAUNCH_ARGS], ['args', HANDS_OFF_LAUNCH_ARGS])) },
+        { name: 'ignores-all-defaults', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['ignoreDefaultArgs', true])) },
+        { name: 'unset', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['ignoreDefaultArgs', undefined])) },
+      ],
+    };
+    const ignored = "launchOptions.ignoreDefaultArgs can take the hands-off resolver rules off Chromium's command line";
+    expect(configBypasses(config)).toEqual([`(config): ${ignored}`, `ignores-rules: ${ignored}`, `ignores-first: ${ignored}`, `ignores-all-defaults: ${ignored}`]);
+  });
+
+  it('flags every launch option but args, proxy and env (each read above): the check reads nothing else, so it wants HANDS_OFF_LAUNCH_OPTIONS and nothing beside it', () => {
+    const launch = (...options: [string, unknown][]) => ['launchOptions', Object.freeze(Object.fromEntries(options))] as [string, unknown];
+    const config = {
+      use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['timeout', 1])),
+      projects: [
+        { name: 'export', use: use(['launchOptions', HANDS_OFF_LAUNCH_OPTIONS]) },
+        { name: 'executable', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['executablePath', '/opt/chromium-wrapper'])) },
+        { name: 'slow', use: use(launch(['slowMo', 50], ['args', HANDS_OFF_LAUNCH_ARGS])) },
+        { name: 'unset', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['slowMo', undefined])) },
+      ],
+    };
+    const unread = 'is a launch option the hands-off check does not read: pass HANDS_OFF_LAUNCH_OPTIONS itself';
+    expect(configBypasses(config)).toEqual([
+      `(config): launchOptions.timeout ${unread}`,
+      `executable: launchOptions.executablePath ${unread}`,
+      `slow: launchOptions.slowMo ${unread}`,
+    ]);
+  });
+
   it('reads the args against the rules built afresh, so args with one more rule list or a proxy are flagged even if a spec pushed the same onto HANDS_OFF_LAUNCH_ARGS', () => {
     const round = 'launches Chromium with an arg that replaces or goes round the hands-off resolver rules';
     const original = [...HANDS_OFF_LAUNCH_ARGS];

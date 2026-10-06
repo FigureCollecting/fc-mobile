@@ -383,6 +383,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ).toEqual([
       'x.spec.ts:2: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:3: playwright.chromium.launch() launches without the hands-off resolver rules',
+      "x.spec.ts:3: ignoreDefaultArgs can take the hands-off resolver rules off Chromium's command line",
       'x.spec.ts:4: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:5: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:6: playwright.chromium.launch() launches without the hands-off resolver rules',
@@ -427,6 +428,33 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       `x.spec.ts:12: ${env}`,
       'x.spec.ts:14: launchOptions carries an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read',
       `x.spec.ts:15: ${env}`,
+    ]);
+  });
+
+  it("flags ignoreDefaultArgs wherever it is written, before or after the args: Playwright takes each arg it names off Chromium's command line, the rules among them", () => {
+    const ignored = "can take the hands-off resolver rules off Chromium's command line";
+    expect(
+      scan(
+        'x.spec.ts',
+        'test.use({ launchOptions: { args: HANDS_OFF_LAUNCH_ARGS, ignoreDefaultArgs: HANDS_OFF_LAUNCH_ARGS } });',
+        'test.use({ launchOptions: { ignoreDefaultArgs: [...HANDS_OFF_LAUNCH_ARGS], args: HANDS_OFF_LAUNCH_ARGS } });',
+        "test('a', async ({ playwright }) => {",
+        '  await playwright.chromium.launch({ args: HANDS_OFF_LAUNCH_ARGS, ignoreDefaultArgs: HANDS_OFF_LAUNCH_ARGS });',
+        '  await playwright.chromium.launch({ ignoreDefaultArgs: true, args: HANDS_OFF_LAUNCH_ARGS });',
+        "  const c = await playwright.chromium.launchPersistentContext(dir, { 'ignoreDefaultArgs': HANDS_OFF_LAUNCH_ARGS, args: HANDS_OFF_LAUNCH_ARGS });",
+        '  await blockHandsOff(c);',
+        "  const d = await playwright.chromium.launchPersistentContext(dir, { args: HANDS_OFF_LAUNCH_ARGS, ['ignoreDefaultArgs']: HANDS_OFF_LAUNCH_ARGS });",
+        '  await blockHandsOff(d);',
+        '  const options = { ignoreDefaultArgs };',
+        '  await playwright.chromium.launch({ ...options, args: HANDS_OFF_LAUNCH_ARGS });',
+        '  defaults.ignoreDefaultArgs = HANDS_OFF_LAUNCH_ARGS;',
+        "  defaults['ignoreDefaultArgs'] = HANDS_OFF_LAUNCH_ARGS;",
+        '});',
+      ),
+    ).toEqual([
+      ...[1, 2, 4, 5, 6, 8, 10].map((line) => `x.spec.ts:${line}: ignoreDefaultArgs ${ignored}`),
+      `x.spec.ts:12: defaults.ignoreDefaultArgs ${ignored}`,
+      `x.spec.ts:13: defaults['ignoreDefaultArgs'] ${ignored}`,
     ]);
   });
 

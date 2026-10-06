@@ -411,14 +411,15 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy 
     });
   }
 
-  test('starts with neither, and refuses http_proxy or PW_TEST_CONNECT_WS_ENDPOINT', async ({}, testInfo) => {
+  test('starts with neither, and refuses http_proxy, PW_TEST_CONNECT_WS_ENDPOINT or SELENIUM_REMOTE_URL', async ({}, testInfo) => {
     test.setTimeout(120_000);
     const runs: [string, Record<string, string>][] = [
       ['neither', {}],
       ['proxied', { http_proxy: 'http://127.0.0.1:9' }],
       ['connected', { PW_TEST_CONNECT_WS_ENDPOINT: 'ws://127.0.0.1:9' }],
+      ['selenium', { SELENIUM_REMOTE_URL: 'http://127.0.0.1:9/wd/hub' }],
     ];
-    const [neither, proxied, connected] = await Promise.all(
+    const [neither, proxied, connected, selenium] = await Promise.all(
       runs.map(([name, env]) => {
         const dir = testInfo.outputPath(name);
         mkdirSync(dir, { recursive: true });
@@ -431,6 +432,8 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy 
     expect(proxied.code).toBe(1);
     expect(connected.out).toContain('hands-off: connectOptions connects this worker to a browser with launch args of its own');
     expect(connected.code).toBe(1);
+    expect(selenium.out).toContain("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
+    expect(selenium.code).toBe(1);
   });
 });
 

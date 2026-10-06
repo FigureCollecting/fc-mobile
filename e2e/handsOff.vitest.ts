@@ -645,6 +645,8 @@ describe("refuseHandsOffLookups (this process's own DNS)", () => {
 describe('refuseRoundTheRules (what every e2e worker checks before it starts)', () => {
   it('passes a worker with no proxy in its environment and no browser to connect to', () => {
     expect(() => refuseRoundTheRules({ PATH: '/usr/bin', no_proxy: 'localhost', NO_PROXY: '*', http_proxy: '' }, undefined)).not.toThrow();
+    // Empty is unset to Playwright too; a name that only starts like one of its connect variables is not one.
+    expect(() => refuseRoundTheRules({ SELENIUM_REMOTE_URL: '', PW_TEST_CONNECT_WS_ENDPOINT: '', SELENIUM_REMOTE_URLS: 'x', PW_TEST_REPORTER: 'list' }, undefined)).not.toThrow();
   });
 
   it.each(['http_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'Ftp_Proxy', 'auto_proxy', 'SOCKS_SERVER', 'socks_proxy'])(
@@ -656,6 +658,15 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
     },
   );
 
+  it.each(['SELENIUM_REMOTE_URL', 'selenium_remote_url', 'SELENIUM_REMOTE_CAPABILITIES', 'SELENIUM_REMOTE_HEADERS', 'PW_TEST_CONNECT_WS_ENDPOINT', 'PWTEST_UNDER_TEST'])(
+    "refuses %s in the environment, in any case: Playwright reads it at a launch, and it can send the launch to a browser with launch args of its own (a Selenium grid, a browser server, or a test hook that names one)",
+    (name) => {
+      expect(() => refuseRoundTheRules({ [name]: 'http://127.0.0.1:4444/wd/hub' }, undefined)).toThrow(
+        `hands-off: ${name} in this worker's environment can connect it to a browser with launch args of its own`,
+      );
+    },
+  );
+
   it('refuses a browser to connect to (connectOptions, or PW_TEST_CONNECT_WS_ENDPOINT): it has launch args of its own', () => {
     expect(() => refuseRoundTheRules({}, { wsEndpoint: 'ws://127.0.0.1:1' })).toThrow(
       'hands-off: connectOptions connects this worker to a browser with launch args of its own',
@@ -663,8 +674,8 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
   });
 
   it('lists every reason at once', () => {
-    expect(() => refuseRoundTheRules({ http_proxy: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1' }, {})).toThrow(
-      /^hands-off: http_proxy .*; HTTPS_PROXY .*; connectOptions .*own$/,
+    expect(() => refuseRoundTheRules({ http_proxy: 'http://127.0.0.1:1', SELENIUM_REMOTE_URL: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1' }, {})).toThrow(
+      /^hands-off: http_proxy .*; SELENIUM_REMOTE_URL .*; HTTPS_PROXY .*; connectOptions .*own$/,
     );
   });
 });

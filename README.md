@@ -22,7 +22,7 @@ change, `window.open` or a meta refresh still leaves. The CSP, like the e2e
 route guard below, refuses a request before it is sent, but not the
 connection: for an https frame or form post the CSP refuses, or a popup the
 guard aborts, full Chromium (your own Chrome's engine) still connects to the
-hands-off host and sends it a TLS ClientHello that names it. Only the resolver
+hands-off host and sends it a TLS ClientHello that names it. The resolver
 rules below stop that (`e2e/hands-off.spec.ts` tests both). Every Chromium in
 the three Playwright configs has them; your own Chrome on `npm run dev` does
 not, so open a spike page only in a Chromium launched with

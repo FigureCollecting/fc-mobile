@@ -23,7 +23,7 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  * are sent, as the route guard does; a CSP does not stop a navigation. Neither
  * stops the connection: for an https frame or form post the CSP refuses, or a
  * popup the guard aborts, full Chromium still connects to the host and sends
- * it a TLS ClientHello naming it. Only the resolver rules stop that (tested in
+ * it a TLS ClientHello naming it. The resolver rules stop that (both tested in
  * e2e/hands-off.spec.ts), so open a spike page only in a Chromium launched
  * with HANDS_OFF_LAUNCH_ARGS, never in your own browser.
  */
@@ -101,9 +101,9 @@ function mergedUse(config: ConfigUse = {}, project: ConfigUse = {}): ConfigUse {
  * frozen (a spec could push onto them through its launchOptions fixture before
  * the worker's browser launches), or launch options that are not frozen (a
  * spec that imports the config could set args or a proxy on them); a project
- * on another browser that `others`
- * (project name to its browser) does not name. The rules are built afresh for
- * the comparison, not read from HANDS_OFF_LAUNCH_ARGS.
+ * on another browser that `others` (project name to its browser) does not
+ * name. The rules are built afresh for the comparison, not read from
+ * HANDS_OFF_LAUNCH_ARGS.
  * Then, where each is written: a proxy, connectOptions, launch options with a
  * proxy or an env of their own, or context options with a proxy.
  */

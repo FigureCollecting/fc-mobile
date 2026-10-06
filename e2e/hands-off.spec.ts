@@ -121,7 +121,7 @@ async function startSentinel() {
     socket.on('error', () => {});
     // A hello cut short is recorded as `tls ?`, which counts as a host the sentinel could not name.
     socket.once('data', (chunk) => {
-      hosts.push(chunk[0] === 0x16 ? `tls ${serverName(chunk)}` : (/\r\nhost: ([^\r\n:]+)/i.exec(chunk.toString('latin1'))?.[1] ?? 'unknown'));
+      hosts.push(chunk[0] === 0x16 ? `tls ${serverName(Buffer.from(chunk))}` : (/\r\nhost: ([^\r\n:]+)/i.exec(chunk.toString('latin1'))?.[1] ?? 'unknown'));
       socket.destroy();
     });
   });

@@ -37,12 +37,19 @@ const LAUNCH_OPTIONS_AT = new Map([
 const UNREADABLE_BROWSERS = new Set(['launchServer', 'connectOverCDP']);
 const BROWSER_TYPES = new Set(['chromium', 'firefox', 'webkit']);
 const EXPERIMENTAL_BROWSERS = new Set(['_android', '_electron']);
-/** Playwright's private hold on the launch options the worker's browser, and every launch in the worker, start from. */
-const DEFAULT_LAUNCH_OPTIONS = '_defaultLaunchOptions';
+/**
+ * Playwright's private holds on the launch options the worker's browser, and
+ * every launch in the worker, start from: the playwright object's
+ * _defaultLaunchOptions, and the _browserOptions worker fixture that sets it.
+ * A pattern, not strings, so that this file names neither.
+ */
+const PRIVATE_HOLDS = /^_(?:defaultLaunchOptions|browserOptions)$/;
 const DEFAULTS_TAKEN = 'takes the launch options every browser in the worker starts from, a private API the scan cannot check';
 /** Launch options that take args off Chromium's command line, user args included (Playwright builds them all in defaultArgs). */
 const IGNORE_DEFAULT_ARGS = 'ignoreDefaultArgs';
 const IGNORES_ARGS = "can take the hands-off resolver rules off Chromium's command line";
+/** Calls whose first argument, an object literal, overrides fixtures (test.extend, test.use). */
+const FIXTURE_CALLS = new Set(['extend', 'use']);
 /** Members that open a context or a page: the scan follows them only when called. */
 const OPENERS = new Set(['newContext', 'newPage']);
 /** Route calls that send the request on. Routes run newest first, so a spec's own route runs ahead of the guard's. */
@@ -209,9 +216,12 @@ function isAwaited(node: ts.Node): boolean {
  *   launchOptions that do the same; an env in launch options (a proxy rides in
  *   it); a launcher, newContext or newPage taken without being called,
  *   launchServer, connect, connectOverCDP and _android / _electron;
- *   _defaultLaunchOptions, where the worker's browser and every launch in the
- *   worker take their options from; ignoreDefaultArgs as a key in any object
- *   or a member, before or after the args;
+ *   _defaultLaunchOptions or _browserOptions, where the worker's browser and
+ *   every launch in the worker take their options from, named anywhere (an
+ *   identifier or a string); a fixture test.extend or test.use overrides that
+ *   is private (named with a leading underscore) or named by a computed key it
+ *   cannot read; ignoreDefaultArgs as a key in any object or a member, before
+ *   or after the args;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
  *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
  *   connectOptions: each leaves the resolver rules behind;
@@ -375,7 +385,6 @@ export function unguardedSites({ file, code }: Source): string[] {
       flag(node, `${node.getText(source)} opens a browser the scan cannot check`);
       return;
     }
-    if (m.name === DEFAULT_LAUNCH_OPTIONS) flag(node, `${node.getText(source)} ${DEFAULTS_TAKEN}`);
     if (m.name === IGNORE_DEFAULT_ARGS) flag(node, `${node.getText(source)} ${IGNORES_ARGS}`);
     const called = ts.isCallExpression(node.parent) && node.parent.expression === node;
     if (!called && (LAUNCH_OPTIONS_AT.has(m.name) || opensUnreadable(m.name, m.receiver) || OPENERS.has(m.name))) {
@@ -391,10 +400,17 @@ export function unguardedSites({ file, code }: Source): string[] {
       return;
     }
     if (EXPERIMENTAL_BROWSERS.has(key)) flag(node, `${key} opens a browser the scan cannot check`);
-    else if (key === DEFAULT_LAUNCH_OPTIONS) flag(node, `${key} ${DEFAULTS_TAKEN}`);
     else if (LAUNCH_OPTIONS_AT.has(key) || UNREADABLE_BROWSERS.has(key) || OPENERS.has(key)) {
       flag(node, `${key} is taken, not called, so the scan cannot check what it opens`);
     }
+  };
+
+  /** A private hold named anywhere, by an identifier or a string: with its receiver when it names a member. */
+  const visitName = (node: ts.Identifier | ts.StringLiteralLike): void => {
+    if (!PRIVATE_HOLDS.test(node.text)) return;
+    const up = node.parent;
+    const written = (ts.isPropertyAccessExpression(up) && up.name === node) || (ts.isElementAccessExpression(up) && up.argumentExpression === node) ? up : node;
+    flag(written, `${written.getText(source)} ${DEFAULTS_TAKEN}`);
   };
 
   /** An option in any object literal (test.use, a fixture, launch or context options). */
@@ -408,6 +424,12 @@ export function unguardedSites({ file, code }: Source): string[] {
         }
       }
       return;
+    }
+    const call = node.parent.parent;
+    if (ts.isCallExpression(call) && call.arguments[0] === node.parent && FIXTURE_CALLS.has(member(call.expression)?.name ?? '')) {
+      const fixture = keyName(node.name);
+      if (fixture === undefined) flag(node, `${node.name.getText(source)} overrides a fixture by a name the scan cannot read`);
+      else if (fixture.startsWith('_') && !PRIVATE_HOLDS.test(fixture)) flag(node, `${fixture} overrides a private Playwright fixture, which the scan cannot check`);
     }
     const value = ts.isPropertyAssignment(node) ? node.initializer : undefined;
     switch (keyName(node.name)) {
@@ -467,6 +489,8 @@ export function unguardedSites({ file, code }: Source): string[] {
       visitBinding(node);
     } else if (ts.isObjectLiteralElementLike(node) && ts.isObjectLiteralExpression(node.parent)) {
       visitOption(node);
+    } else if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+      visitName(node);
     }
     ts.forEachChild(node, visit);
   };

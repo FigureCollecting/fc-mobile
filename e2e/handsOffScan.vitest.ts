@@ -544,6 +544,8 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         'playwright._browserOptions = {};',
         "const v = test.extend({ handsOffNote: async ({}, use) => use('fine'), 'quoted': 1, ['computed']: 2 });",
         "const record = { _id: 'u1', '_defaultLaunchOptionsLike': 1 };",
+        'test.use({ viewport_note: 1 });',
+        "app.use('/x', { _mounted: true });",
       ),
     ).toEqual([
       `x.spec.ts:2: '_defaultLaunchOptions' ${taken}`,

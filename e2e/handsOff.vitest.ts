@@ -226,10 +226,18 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
         { name: 'ignores-first', use: use(launch(['ignoreDefaultArgs', HANDS_OFF_LAUNCH_ARGS], ['args', HANDS_OFF_LAUNCH_ARGS])) },
         { name: 'ignores-all-defaults', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['ignoreDefaultArgs', true])) },
         { name: 'unset', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['ignoreDefaultArgs', undefined])) },
+        // Set, if harmless: only undefined is unset, so it is flagged as any value is.
+        { name: 'ignores-none', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['ignoreDefaultArgs', false])) },
       ],
     };
     const ignored = "launchOptions.ignoreDefaultArgs can take the hands-off resolver rules off Chromium's command line";
-    expect(configBypasses(config)).toEqual([`(config): ${ignored}`, `ignores-rules: ${ignored}`, `ignores-first: ${ignored}`, `ignores-all-defaults: ${ignored}`]);
+    expect(configBypasses(config)).toEqual([
+      `(config): ${ignored}`,
+      `ignores-rules: ${ignored}`,
+      `ignores-first: ${ignored}`,
+      `ignores-all-defaults: ${ignored}`,
+      `ignores-none: ${ignored}`,
+    ]);
   });
 
   it('flags every launch option but args, proxy and env (each read above): the check reads nothing else, so it wants HANDS_OFF_LAUNCH_OPTIONS and nothing beside it', () => {
@@ -241,6 +249,7 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
         { name: 'executable', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['executablePath', '/opt/chromium-wrapper'])) },
         { name: 'slow', use: use(launch(['slowMo', 50], ['args', HANDS_OFF_LAUNCH_ARGS])) },
         { name: 'unset', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['slowMo', undefined])) },
+        { name: 'headed', use: use(launch(['args', HANDS_OFF_LAUNCH_ARGS], ['headless', false])) },
       ],
     };
     const unread = 'is a launch option the hands-off check does not read: pass HANDS_OFF_LAUNCH_OPTIONS itself';
@@ -248,6 +257,7 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
       `(config): launchOptions.timeout ${unread}`,
       `executable: launchOptions.executablePath ${unread}`,
       `slow: launchOptions.slowMo ${unread}`,
+      `headed: launchOptions.headless ${unread}`,
     ]);
   });
 

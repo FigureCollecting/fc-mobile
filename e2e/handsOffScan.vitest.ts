@@ -391,11 +391,13 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       'x.spec.ts:8: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:9: playwright.chromium.launch() launches without the hands-off resolver rules',
       'x.spec.ts:10: playwright.chromium.launch() launches without the hands-off resolver rules',
+      'x.spec.ts:11: playwright.chromium.launch() launches with options spread in or under a computed name, which the scan cannot read',
       "x.spec.ts:15: launchOptions replaces the project's launch args and its hands-off resolver rules",
       "x.spec.ts:16: launchOptions replaces the project's launch args and its hands-off resolver rules",
       "x.spec.ts:17: launchOptions replaces the project's launch args and its hands-off resolver rules",
       "x.spec.ts:18: launchOptions replaces the project's launch args and its hands-off resolver rules",
       "x.spec.ts:19: launchOptions replaces the project's launch args and its hands-off resolver rules",
+      'x.spec.ts:20: launchOptions holds options spread in or under a computed name, which the scan cannot read',
     ]);
   });
 
@@ -453,6 +455,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       ),
     ).toEqual([
       ...[1, 2, 4, 5, 6, 8, 10].map((line) => `x.spec.ts:${line}: ignoreDefaultArgs ${ignored}`),
+      'x.spec.ts:11: playwright.chromium.launch() launches with options spread in or under a computed name, which the scan cannot read',
       `x.spec.ts:12: defaults.ignoreDefaultArgs ${ignored}`,
       `x.spec.ts:13: defaults['ignoreDefaultArgs'] ${ignored}`,
     ]);
@@ -472,7 +475,61 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         '  await playwright.chromium.launch({ ...paths, args: HANDS_OFF_LAUNCH_ARGS });',
         '});',
       ),
-    ).toEqual([1, 3, 4, 6].map((line) => `x.spec.ts:${line}: ${binary}`));
+    ).toEqual([
+      ...[1, 3, 4, 6].map((line) => `x.spec.ts:${line}: ${binary}`),
+      'x.spec.ts:7: playwright.chromium.launch() launches with options spread in or under a computed name, which the scan cannot read',
+    ]);
+  });
+
+  it('fails closed on launch options it cannot read in full: a spread or a computed name anywhere in them, before the args too', () => {
+    const call = 'launches with options spread in or under a computed name, which the scan cannot read';
+    const held = 'launchOptions holds options spread in or under a computed name, which the scan cannot read';
+    expect(
+      scan(
+        'x.spec.ts',
+        "test('a', async ({ playwright }) => {",
+        '  await playwright.chromium.launch({ ...new Quiet(), args: HANDS_OFF_LAUNCH_ARGS });',
+        '  await playwright.chromium.launch({ ...viaProxy, args: HANDS_OFF_LAUNCH_ARGS });',
+        '  await playwright.chromium.launch({ [key]: [], args: HANDS_OFF_LAUNCH_ARGS });',
+        '  await playwright.chromium.launch({ ...{ slowMo: 1 }, args: HANDS_OFF_LAUNCH_ARGS });',
+        '  const c = await playwright.chromium.launchPersistentContext(dir, { ...o, args: HANDS_OFF_LAUNCH_ARGS });',
+        '  await blockHandsOff(c);',
+        '  await playwright.chromium.launch({ get [key]() { return []; }, args: HANDS_OFF_LAUNCH_ARGS });',
+        "  await playwright.chromium.launch({ slowMo: 1, 'headless': true, ['channel']: 'chromium', args: HANDS_OFF_LAUNCH_ARGS });",
+        '});',
+        'test.use({ launchOptions: { ...viaProxy, args: HANDS_OFF_LAUNCH_ARGS } });',
+        'test.use({ launchOptions: { [key]: true, args: HANDS_OFF_LAUNCH_ARGS } });',
+        'test.use({ launchOptions: { slowMo: 1, args: HANDS_OFF_LAUNCH_ARGS } });',
+      ),
+    ).toEqual([
+      ...[2, 3, 4, 5].map((line) => `x.spec.ts:${line}: playwright.chromium.launch() ${call}`),
+      `x.spec.ts:6: playwright.chromium.launchPersistentContext() ${call}`,
+      `x.spec.ts:8: playwright.chromium.launch() ${call}`,
+      `x.spec.ts:11: ${held}`,
+      `x.spec.ts:12: ${held}`,
+    ]);
+  });
+
+  it('reads a class field as it reads a key in an object: one spread into launch options carries its options with it', () => {
+    expect(
+      scan(
+        'x.spec.ts',
+        'class Quiet { ignoreDefaultArgs = HANDS_OFF_LAUNCH_ARGS; }',
+        "class Wrapped { executablePath = '/tmp/wrapper-that-drops-args'; }",
+        "class Proxied { static proxy = { server: 'http://127.0.0.1:3128' }; }",
+        "class Engine { browserName = 'firefox'; }",
+        'class Getter { get ignoreDefaultArgs() { return true; } }',
+        'class Options { launchOptions = { args: [] }; }',
+        "class Plain { args = HANDS_OFF_LAUNCH_ARGS; slowMo = 1; browserName = 'chromium'; }",
+      ),
+    ).toEqual([
+      "x.spec.ts:1: ignoreDefaultArgs can take the hands-off resolver rules off Chromium's command line",
+      'x.spec.ts:2: executablePath launches a browser binary the scan cannot check, which may leave out the args it is given',
+      'x.spec.ts:3: proxy sends requests through a proxy, which looks the hands-off hosts up itself',
+      "x.spec.ts:4: browserName = 'firefox' may pick a browser other than chromium, which has no hands-off resolver rules",
+      "x.spec.ts:5: ignoreDefaultArgs can take the hands-off resolver rules off Chromium's command line",
+      "x.spec.ts:6: launchOptions replaces the project's launch args and its hands-off resolver rules",
+    ]);
   });
 
   it('checks launchOptions in e2e/fixtures.ts too', () => {
@@ -563,6 +620,7 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
         "const record = { _id: 'u1', '_defaultLaunchOptionsLike': 1 };",
         'test.use({ viewport_note: 1 });',
         "app.use('/x', { _mounted: true });",
+        'const holds = { x_defaultLaunchOptions: 1, y_browserOptions: 2 };',
       ),
     ).toEqual([
       `x.spec.ts:2: '_defaultLaunchOptions' ${taken}`,
@@ -576,6 +634,29 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
       "x.spec.ts:11: [`_combined${'ContextOptions'}`] overrides a fixture by a name the scan cannot read",
       `x.spec.ts:12: _browserOptions ${taken}`,
       `x.spec.ts:13: playwright._browserOptions ${taken}`,
+    ]);
+  });
+
+  it("reads test.use's and test.extend's first argument through `as`, `satisfies`, `!`, a type assertion and parentheses", () => {
+    const fixture = 'overrides a private Playwright fixture, which the scan cannot check';
+    expect(
+      scan(
+        'x.spec.ts',
+        'test.use({ _combinedContextOptions: async ({}, use) => use({}) } as any);',
+        'test.use(({ _reuseContext: true }));',
+        'test.use({ [k]: {} } as any);',
+        'test.use({ _reuseContext: true } satisfies object);',
+        'const t = test.extend({ _contextReuseMode: 1 }!);',
+        'const u = test.extend(<any>({ _optionConnectOptions: {} }) as never);',
+        "app.use('/x', { _mounted: true } as any);",
+      ),
+    ).toEqual([
+      `x.spec.ts:1: _combinedContextOptions ${fixture}`,
+      `x.spec.ts:2: _reuseContext ${fixture}`,
+      'x.spec.ts:3: [k] overrides a fixture by a name the scan cannot read',
+      `x.spec.ts:4: _reuseContext ${fixture}`,
+      `x.spec.ts:5: _contextReuseMode ${fixture}`,
+      `x.spec.ts:6: _optionConnectOptions ${fixture}`,
     ]);
   });
 

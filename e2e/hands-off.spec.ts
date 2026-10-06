@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import type { ViteDevServer } from 'vite';
-import { test as guarded, expect } from './fixtures';
+import { test as guarded, expect, watchCsp } from './fixtures';
 import {
   HANDS_OFF_DOMAINS,
   blockHandsOff,
@@ -116,6 +116,9 @@ async function startSentinel() {
 }
 
 type Sentinel = Awaited<ReturnType<typeof startSentinel>>;
+
+/** What the sentinel records for a connection it could not name the host of: TLS, a TLS hello it cannot read, plain HTTP. */
+const UNNAMED = new Set(['tls', '?', 'unknown']);
 
 const RESOLVER_RULES_FLAG = '--host-resolver-rules=';
 
@@ -569,6 +572,63 @@ test.describe('the vite dev server (npm run dev, and any spike page it serves)',
     await expect.poll(() => [...handsOffBlocked]).toEqual(['https://vndb.org/v11']);
     // The CSP saw nothing to refuse: the link was followed, and the guard stopped it.
     expect(cspViolations).toEqual([]);
+  });
+
+  test('refuses a frame, a form post and a popup to a hands-off host, yet full Chromium still connects to it (for https, a TLS ClientHello naming it) unless the resolver rules give it no address', async ({ playwright }, testInfo) => {
+    test.setTimeout(60_000);
+    // frame-src 'none' refuses the frame and form-action 'self' the post; the route guard aborts the popup's navigation.
+    const file = testInfo.outputPath('spike-connect.html');
+    writeFileSync(
+      file,
+      '<!doctype html><title>connect</title><iframe src="https://frame.vndb.org/f"></iframe>' +
+        '<form method="post" action="https://form.vndb.org/p"><input name="a" value="1"></form>' +
+        '<a id="popup" href="https://popup.vndb.org/w" target="_blank">popup</a>',
+    );
+    const url = `${origin}/${path.relative(repoRoot, file).split(path.sep).map(encodeURIComponent).join('/')}`;
+    const sentinel = await startSentinel();
+
+    /** Opens the page in full Chromium (the engine of your own Chrome) under `rules`, the sentinel's last, behind the route guard. */
+    const open = async (rules: string, connected: string[]) => {
+      sentinel.hosts.length = 0;
+      // hands-off-scan: its own rules, which end at the sentinel: whatever Chromium connects to lands on 127.0.0.1.
+      const browser = await playwright.chromium.launch({ channel: 'chromium', args: [`--host-resolver-rules=${rules}`] });
+      try {
+        const context = await browser.newContext();
+        const guard = await blockHandsOff(context);
+        const csp = await watchCsp(context);
+        const page = await context.newPage();
+        await page.goto(url);
+        await page.click('#popup');
+        await expect.poll(() => guard.blocked).toEqual(['https://popup.vndb.org/w']);
+        // Last: a click waits for a navigation the CSP never lets finish.
+        await page.evaluate(() => document.forms[0]?.submit());
+        // By host: Chromium reports a refused frame by its origin only.
+        await expect.poll(() => new Set(csp.map((v) => `${v.directive} ${new URL(v.blocked).hostname}`))).toEqual(new Set(['frame-src frame.vndb.org', 'form-action form.vndb.org']));
+        // Then a canary from a page with no CSP: the sentinel catches what this browser connects to.
+        const blank = await context.newPage();
+        await blank.setContent('<img src="https://fc-canary.test/canary.png">');
+        // Full Chromium's own requests (clients2.google.com) land there too: a host the sentinel named that is neither hands-off nor the canary does not count.
+        const counted = () =>
+          new Set(
+            sentinel.hosts.filter((h) => {
+              const name = h.replace(/^tls /, '');
+              return name === 'fc-canary.test' || isHandsOffHost(name) || UNNAMED.has(name);
+            }),
+          );
+        await expect.poll(counted).toEqual(new Set([...connected, 'tls fc-canary.test']));
+        // Refused before it was sent, every one: the guard saw no request get past it.
+        expect(guard.escaped()).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    };
+
+    try {
+      await open(sentinel.catchAll, ['tls frame.vndb.org', 'tls form.vndb.org', 'tls popup.vndb.org']);
+      await open(`${handsOffResolverRules()}, ${sentinel.catchAll}`, []);
+    } finally {
+      await sentinel.close();
+    }
   });
 
   test('runs the app itself under that CSP: the case view draws, HMR connects, and nothing is refused', async ({ page, handsOffBlocked }) => {

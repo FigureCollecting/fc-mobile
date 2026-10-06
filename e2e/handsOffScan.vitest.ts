@@ -524,6 +524,42 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
   });
 
+  it("flags the worker's launch options' private holds wherever their names are written (a string, a key, a binding, _browserOptions too), and a private or unreadable fixture in test.extend or test.use", () => {
+    const taken = 'takes the launch options every browser in the worker starts from, a private API the scan cannot check';
+    expect(
+      scan(
+        'x.spec.ts',
+        'test.beforeAll(({ playwright }) => {',
+        "  Reflect.get(playwright, '_defaultLaunchOptions').args = [];",
+        "  Reflect.set(playwright, '_defaultLaunchOptions', {});",
+        '  Object.assign(playwright, { _defaultLaunchOptions: {} });',
+        '  Object.defineProperty(playwright, `_defaultLaunchOptions`, { value: {} });',
+        "  Object.getOwnPropertyDescriptor(playwright, '_defaultLaunchOptions')!.value.args = [];",
+        "  const key = '_defaultLaunchOptions';",
+        '});',
+        "const t = test.extend({ _browserOptions: [async ({}, use) => use({}), { scope: 'worker', auto: true }] });",
+        "test.use({ _optionConnectOptions: { wsEndpoint: 'ws://127.0.0.1:1' } });",
+        "const u = base.extend({ [`_combined${'ContextOptions'}`]: async ({}, use) => use({}) });",
+        'const { _browserOptions: options } = fixtures;',
+        'playwright._browserOptions = {};',
+        "const v = test.extend({ handsOffNote: async ({}, use) => use('fine'), 'quoted': 1, ['computed']: 2 });",
+        "const record = { _id: 'u1', '_defaultLaunchOptionsLike': 1 };",
+      ),
+    ).toEqual([
+      `x.spec.ts:2: '_defaultLaunchOptions' ${taken}`,
+      `x.spec.ts:3: '_defaultLaunchOptions' ${taken}`,
+      `x.spec.ts:4: _defaultLaunchOptions ${taken}`,
+      `x.spec.ts:5: \`_defaultLaunchOptions\` ${taken}`,
+      `x.spec.ts:6: '_defaultLaunchOptions' ${taken}`,
+      `x.spec.ts:7: '_defaultLaunchOptions' ${taken}`,
+      `x.spec.ts:9: _browserOptions ${taken}`,
+      'x.spec.ts:10: _optionConnectOptions overrides a private Playwright fixture, which the scan cannot check',
+      "x.spec.ts:11: [`_combined${'ContextOptions'}`] overrides a fixture by a name the scan cannot read",
+      `x.spec.ts:12: _browserOptions ${taken}`,
+      `x.spec.ts:13: playwright._browserOptions ${taken}`,
+    ]);
+  });
+
   it('fails closed on a member it cannot name: a computed key on a Playwright object, or in a destructuring', () => {
     const unnamed = 'takes a member by a name the scan cannot read';
     expect(

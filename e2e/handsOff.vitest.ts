@@ -247,6 +247,22 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
       '(unnamed): proxy sends requests through a proxy, which looks the hands-off hosts up itself',
     ]);
   });
+
+  it("flags a proxy in contextOptions, in the config or in any project: Playwright's proxy option reads it, so every context sends through it", () => {
+    /** contextOptions holding `proxy`: written as an object literal it would trip e2e/handsOffScan.ts too. */
+    const contextProxy = (server: string): [string, unknown] => ['contextOptions', Object.fromEntries([['proxy', { server }]])];
+    const config = {
+      use: use(contextProxy('http://127.0.0.1:3128')),
+      projects: [
+        { name: 'chromium', use: use(rules, contextProxy('http://127.0.0.1:9')) },
+        { name: 'other-context-options', use: use(rules, ['contextOptions', { ignoreHTTPSErrors: true }]) },
+        { name: 'unset-proxy', use: use(rules, ['contextOptions', Object.fromEntries([['proxy', undefined]])]) },
+      ],
+    };
+    const proxied = 'contextOptions.proxy sends requests through a proxy, which looks the hands-off hosts up itself';
+    expect(configBypasses(config)).toEqual([`(config): ${proxied}`, `chromium: ${proxied}`]);
+    expect(configBypasses({ projects: [{ name: 'project-only', use: use(rules, contextProxy('http://127.0.0.1:9')) }] })).toEqual([`project-only: ${proxied}`]);
+  });
 });
 
 describe('isHandsOffHost (a hostname, as a DNS lookup gets it)', () => {

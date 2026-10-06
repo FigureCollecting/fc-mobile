@@ -117,8 +117,12 @@ function opensUnreadable(name: string, receiver: ts.Expression): boolean {
   return UNREADABLE_BROWSERS.has(name) || (name === 'connect' && browserType(receiver) !== undefined);
 }
 
-/** Launch args that keep the hands-off resolver rules in force, leave them out, or hold one that could replace them or go round them. */
-type Rules = 'kept' | 'missing' | 'overridden';
+/**
+ * Launch args that keep the hands-off resolver rules in force, leave them out,
+ * or hold one that could replace them or go round them; or launch options that
+ * keep them but that the scan cannot read in full (a spread, a computed name).
+ */
+type Rules = 'kept' | 'missing' | 'overridden' | 'unread';
 
 /**
  * HANDS_OFF_LAUNCH_ARGS itself, or an array that spreads it among string
@@ -133,19 +137,36 @@ function argsRules(args: ts.Expression): Rules {
   return args.elements.every((e) => spreadsRules(e) || (ts.isStringLiteralLike(e) && !goesRoundTheRules(e.text))) ? 'kept' : 'overridden';
 }
 
-/** What launch options' last args do to the rules: no spread or computed name after them may replace them. */
+/**
+ * What launch options' last args do to the rules: no spread or computed name
+ * after them may replace them, and none before them may be there at all (it
+ * could carry ignoreDefaultArgs, executablePath, an env or a proxy).
+ */
 function launchRules(options: ts.Expression | undefined): Rules {
   if (options === undefined || !ts.isObjectLiteralExpression(options)) return 'missing';
   let rules: Rules = 'missing';
+  let unread = false;
   for (const p of options.properties) {
-    if (ts.isSpreadAssignment(p)) {
-      rules = 'missing';
-    } else {
-      const key = keyName(p.name);
-      if (key === undefined || key === 'args') rules = key === 'args' && ts.isPropertyAssignment(p) ? argsRules(p.initializer) : 'missing';
-    }
+    const key = ts.isSpreadAssignment(p) ? undefined : keyName(p.name);
+    if (key === undefined) unread = true;
+    if (key === undefined || key === 'args') rules = key === 'args' && ts.isPropertyAssignment(p) ? argsRules(p.initializer) : 'missing';
   }
-  return rules;
+  return rules === 'kept' && unread ? 'unread' : rules;
+}
+
+/** The expression an object literal is written as: out through `as`, `satisfies`, `!`, a type assertion and parentheses. */
+function writtenAs(node: ts.Expression): ts.Expression {
+  let out = node;
+  while (
+    ts.isAsExpression(out.parent) ||
+    ts.isSatisfiesExpression(out.parent) ||
+    ts.isNonNullExpression(out.parent) ||
+    ts.isTypeAssertionExpression(out.parent) ||
+    ts.isParenthesizedExpression(out.parent)
+  ) {
+    out = out.parent;
+  }
+  return out;
 }
 
 /** Whether this object literal is launch options: an argument of a launcher, or the value of launchOptions. */
@@ -342,6 +363,7 @@ export function unguardedSites({ file, code }: Source): string[] {
     const rules = optionsAt === undefined ? 'kept' : launchRules(node.arguments[optionsAt]);
     if (rules === 'missing') flag(node, `${callee}() launches without the hands-off resolver rules`);
     if (rules === 'overridden') flag(node, `${callee}() launches with an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read`);
+    if (rules === 'unread') flag(node, `${callee}() launches with options spread in or under a computed name, which the scan cannot read`);
     // Firefox and WebKit ignore --host-resolver-rules, given or not.
     if (optionsAt !== undefined && (browserType(receiver) ?? 'chromium') !== 'chromium') {
       flag(node, `${callee}() launches a browser other than chromium, which has no hands-off resolver rules`);
@@ -413,8 +435,8 @@ export function unguardedSites({ file, code }: Source): string[] {
     flag(written, `${written.getText(source)} ${DEFAULTS_TAKEN}`);
   };
 
-  /** An option in any object literal (test.use, a fixture, launch or context options). */
-  const visitOption = (node: ts.ObjectLiteralElementLike): void => {
+  /** An option in any object literal (test.use, a fixture, launch or context options), or a class's member of that name. */
+  const visitOption = (node: ts.ObjectLiteralElementLike | (ts.ClassElement & { name: ts.PropertyName })): void => {
     if (ts.isSpreadAssignment(node)) {
       const spread = unwrapped(node.expression);
       const device = ts.isElementAccessExpression(spread) || ts.isPropertyAccessExpression(spread) ? spread : undefined;
@@ -425,18 +447,20 @@ export function unguardedSites({ file, code }: Source): string[] {
       }
       return;
     }
-    const call = node.parent.parent;
-    if (ts.isCallExpression(call) && call.arguments[0] === node.parent && FIXTURE_CALLS.has(member(call.expression)?.name ?? '')) {
+    const written = ts.isObjectLiteralExpression(node.parent) ? writtenAs(node.parent) : undefined;
+    const call = written?.parent;
+    if (call !== undefined && ts.isCallExpression(call) && call.arguments[0] === written && FIXTURE_CALLS.has(member(call.expression)?.name ?? '')) {
       const fixture = keyName(node.name);
       if (fixture === undefined) flag(node, `${node.name.getText(source)} overrides a fixture by a name the scan cannot read`);
       else if (fixture.startsWith('_') && !PRIVATE_HOLDS.test(fixture)) flag(node, `${fixture} overrides a private Playwright fixture, which the scan cannot check`);
     }
-    const value = ts.isPropertyAssignment(node) ? node.initializer : undefined;
+    const value = ts.isPropertyAssignment(node) || ts.isPropertyDeclaration(node) ? node.initializer : undefined;
     switch (keyName(node.name)) {
       case 'launchOptions': {
         const rules = launchRules(value);
         if (rules === 'missing') flag(node, "launchOptions replaces the project's launch args and its hands-off resolver rules");
         if (rules === 'overridden') flag(node, 'launchOptions carries an arg that replaces or goes round the hands-off resolver rules, or one the scan cannot read');
+        if (rules === 'unread') flag(node, 'launchOptions holds options spread in or under a computed name, which the scan cannot read');
         break;
       }
       case 'env':
@@ -445,7 +469,8 @@ export function unguardedSites({ file, code }: Source): string[] {
       case 'browserName':
       case 'defaultBrowserType':
         if (value === undefined || !ts.isStringLiteralLike(value) || value.text !== 'chromium') {
-          flag(node, `${node.getText(source)} may pick a browser other than chromium, which has no hands-off resolver rules`);
+          // A class field's text ends at its semicolon.
+          flag(node, `${node.getText(source).replace(/;$/, '')} may pick a browser other than chromium, which has no hands-off resolver rules`);
         }
         break;
       case 'proxy':
@@ -492,6 +517,8 @@ export function unguardedSites({ file, code }: Source): string[] {
       visitBinding(node);
     } else if (ts.isObjectLiteralElementLike(node) && ts.isObjectLiteralExpression(node.parent)) {
       visitOption(node);
+    } else if (ts.isClassElement(node) && node.name !== undefined) {
+      visitOption(node as ts.ClassElement & { name: ts.PropertyName });
     } else if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
       visitName(node);
     }

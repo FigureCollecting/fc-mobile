@@ -19,11 +19,13 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   to (refuseRoundTheRules);
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts keeps every spec on these guards.
- * The app's CSP and the vite dev server's refuse requests to them, as the
- * route guard does, at the HTTP level; a CSP does not stop a navigation. Full
- * Chromium (not the headless shell) may still open a TCP connection to one,
- * sending nothing, for a frame, a form post or a popup either refuses: only
- * the resolver rules stop that.
+ * The app's CSP and the vite dev server's refuse requests to them before they
+ * are sent, as the route guard does; a CSP does not stop a navigation. Neither
+ * stops the connection: for an https frame or form post the CSP refuses, or a
+ * popup the guard aborts, full Chromium still connects to the host and sends
+ * it a TLS ClientHello naming it. Only the resolver rules stop that (tested in
+ * e2e/hands-off.spec.ts), so open a spike page only in a Chromium launched
+ * with HANDS_OFF_LAUNCH_ARGS, never in your own browser.
  */
 export const HANDS_OFF_DOMAINS = Object.freeze(['myfigurecollection.net', 'suruga-ya.jp', 'suruga-ya.com', 'hobby-genki.com', 'vndb.org'] as const);
 

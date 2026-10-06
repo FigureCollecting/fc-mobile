@@ -91,16 +91,37 @@ self.addEventListener('message', (event) => {
 });
 `;
 
+/** The host a TLS ClientHello names (its server_name extension), or '?' if the hello names none the reader can find. */
+function serverName(hello: Buffer): string {
+  try {
+    // The record and handshake headers, the version and the random; then the session id, cipher suites and compression methods.
+    let at = 5 + 4 + 2 + 32;
+    at += 1 + hello.readUInt8(at);
+    at += 2 + hello.readUInt16BE(at);
+    at += 1 + hello.readUInt8(at);
+    const end = at + 2 + hello.readUInt16BE(at);
+    for (at += 2; at + 4 <= end; at += 4 + hello.readUInt16BE(at + 2)) {
+      // server_name (0): the list's length, the name's type and length, then the name.
+      if (hello.readUInt16BE(at) === 0) return hello.toString('latin1', at + 9, at + 9 + hello.readUInt16BE(at + 7));
+    }
+  } catch {
+    // Cut short: no name to read.
+  }
+  return '?';
+}
+
 /**
  * A local TCP listener standing in for the internet. It records the Host of
- * each plain HTTP request, or 'tls' for an https handshake, and hangs up.
+ * each plain HTTP request, or `tls <host>` for an https handshake (the host its
+ * ClientHello names), and hangs up.
  */
 async function startSentinel() {
   const hosts: string[] = [];
   const server = net.createServer((socket) => {
     socket.on('error', () => {});
+    // A hello cut short is recorded as `tls ?`, which counts as a host the sentinel could not name.
     socket.once('data', (chunk) => {
-      hosts.push(chunk[0] === 0x16 ? 'tls' : (/\r\nhost: ([^\r\n:]+)/i.exec(chunk.toString('latin1'))?.[1] ?? 'unknown'));
+      hosts.push(chunk[0] === 0x16 ? `tls ${serverName(chunk)}` : (/\r\nhost: ([^\r\n:]+)/i.exec(chunk.toString('latin1'))?.[1] ?? 'unknown'));
       socket.destroy();
     });
   });
@@ -117,8 +138,8 @@ async function startSentinel() {
 
 type Sentinel = Awaited<ReturnType<typeof startSentinel>>;
 
-/** What the sentinel records for a connection it could not name the host of: TLS, a TLS hello it cannot read, plain HTTP. */
-const UNNAMED = new Set(['tls', '?', 'unknown']);
+/** What the sentinel records, past any `tls `, for a connection it could not name the host of: a TLS hello it cannot read, plain HTTP. */
+const UNNAMED = new Set(['?', 'unknown']);
 
 const RESOLVER_RULES_FLAG = '--host-resolver-rules=';
 

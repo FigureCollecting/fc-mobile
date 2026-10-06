@@ -221,7 +221,7 @@ function isAwaited(node: ts.Node): boolean {
  *   identifier or a string); a fixture test.extend or test.use overrides that
  *   is private (named with a leading underscore) or named by a computed key it
  *   cannot read; ignoreDefaultArgs as a key in any object or a member, before
- *   or after the args;
+ *   or after the args; executablePath as a key in any object;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
  *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
  *   connectOptions: each leaves the resolver rules behind;
@@ -453,6 +453,9 @@ export function unguardedSites({ file, code }: Source): string[] {
         break;
       case IGNORE_DEFAULT_ARGS:
         flag(node, `${IGNORE_DEFAULT_ARGS} ${IGNORES_ARGS}`);
+        break;
+      case 'executablePath':
+        flag(node, 'executablePath launches a browser binary the scan cannot check, which may leave out the args it is given');
         break;
       case 'connectOptions':
         flag(node, 'connectOptions opens a browser the scan cannot check');

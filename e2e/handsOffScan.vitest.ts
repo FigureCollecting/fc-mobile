@@ -458,6 +458,23 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
   });
 
+  it('flags executablePath wherever it is written: a browser binary the scan cannot check, which may leave out the args it is given', () => {
+    const binary = 'executablePath launches a browser binary the scan cannot check, which may leave out the args it is given';
+    expect(
+      scan(
+        'x.spec.ts',
+        "test.use({ launchOptions: { args: HANDS_OFF_LAUNCH_ARGS, executablePath: '/opt/chromium-wrapper' } });",
+        "test('a', async ({ playwright }) => {",
+        "  await playwright.chromium.launch({ executablePath: '/opt/chromium-wrapper', args: HANDS_OFF_LAUNCH_ARGS });",
+        "  const c = await playwright.chromium.launchPersistentContext(dir, { args: HANDS_OFF_LAUNCH_ARGS, ['executablePath']: wrapper });",
+        '  await blockHandsOff(c);',
+        "  const paths = { 'executablePath': wrapper };",
+        '  await playwright.chromium.launch({ ...paths, args: HANDS_OFF_LAUNCH_ARGS });',
+        '});',
+      ),
+    ).toEqual([1, 3, 4, 6].map((line) => `x.spec.ts:${line}: ${binary}`));
+  });
+
   it('checks launchOptions in e2e/fixtures.ts too', () => {
     expect(scan('fixtures.ts', 'export const t = base.extend({});', "t.use({ launchOptions: { args: ['--x'] } });")).toEqual([
       "fixtures.ts:2: launchOptions replaces the project's launch args and its hands-off resolver rules",

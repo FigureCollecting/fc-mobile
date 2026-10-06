@@ -1,5 +1,6 @@
 import dns from 'node:dns';
 import { isDeepStrictEqual } from 'node:util';
+import vm from 'node:vm';
 import type { APIRequestContext, BrowserContext, Request } from '@playwright/test';
 
 /**
@@ -185,6 +186,22 @@ export function refuseRoundTheRules(env: Record<string, string | undefined>, con
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
 }
 
+/** Object.prototype's own names in a fresh realm: what Node puts there before any code runs. */
+const NODE_PROTOTYPE = new Set(vm.runInNewContext('Object.getOwnPropertyNames(Object.prototype)') as string[]);
+
+/**
+ * Throws if Object.prototype carries a name Node does not put there: every
+ * options object inherits it, and Playwright reads launch and context options
+ * by name, inherited ones included (ignoreDefaultArgs there takes the resolver
+ * rules off every browser launched after).
+ */
+export function refuseInheritedOptions(prototype: object = Object.prototype): void {
+  const added = Object.getOwnPropertyNames(prototype).filter((name) => !NODE_PROTOTYPE.has(name));
+  if (added.length > 0) {
+    throw new Error(`hands-off: Object.prototype carries ${added.join(', ')}, which every options object inherits: Playwright would read each as an option of every launch or context`);
+  }
+}
+
 /** The browser-type members that start a browser: each checks the environment first. */
 const LAUNCHERS = ['launch', 'launchPersistentContext', 'launchServer'];
 /** The browser-type members that connect to a browser already running, with launch args of its own: each is refused. */
@@ -211,6 +228,7 @@ export function refuseRoundTheRulesAtEachLaunch(
       const start = members[name] as (...args: unknown[]) => Promise<unknown>;
       members[name] = async function (this: unknown, ...args: unknown[]) {
         refuseRoundTheRules(env(), connectOptions);
+        refuseInheritedOptions();
         return start.apply(this, args);
       };
     }
@@ -268,6 +286,7 @@ export interface HandsOffGuard {
  * the API guard, which e2e/handsOffScan.ts stops.
  */
 export async function blockHandsOff(context: Guardable, blocked: string[] = [], baseURL?: string): Promise<HandsOffGuard> {
+  refuseInheritedOptions();
   const sent: Request[] = [];
   const aborted = new Set<Request>();
   context.on('request', (request) => {

@@ -10,7 +10,10 @@ vi.mock('../alphaMargin', async (importOriginal) => ({
   getAlphaMask: vi.fn(() => undefined),
 }));
 
-import { CaseShelf, PLATE_ZONE_PX, DEFAULT_DYNAMIC_COMPARTMENT_MM, DETOLF_PROFILE } from '../CaseShelf';
+import * as CaseShelfModule from '../CaseShelf';
+import { CaseShelf, PLATE_ZONE_PX, DEFAULT_DYNAMIC_COMPARTMENT_MM } from '../CaseShelf';
+import { IKEA_DETOLF } from '../cabinetPresets';
+import { checkCabinetProfile, fixedModeCompartmentMm } from '../cabinetProfile';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META, getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { useBottomMarginFrac, getAlphaMask, computeAlphaMask } from '../alphaMargin';
@@ -971,27 +974,28 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     it('accepts caseMode="fixed" and a caseProfile without crashing', () => {
       expect(() =>
         renderWithProviders(
-          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={DETOLF_PROFILE} />,
+          <CaseShelf figures={FIXTURE_FIGURES} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={IKEA_DETOLF} />,
         ),
       ).not.toThrow();
     });
 
-    it("fixed mode anchors sizing to the real caseProfile's innerHeightMm, not the dynamic default — genuinely wired, not a stub", () => {
+    it("fixed mode anchors sizing to the cabinet profile's smallest compartment, not the dynamic default — genuinely wired, not a stub", () => {
       const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!; // 260mm
       const { container: dynamic } = renderWithProviders(
         <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
       );
       const { container: fixed } = renderWithProviders(
-        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={DETOLF_PROFILE} />,
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={IKEA_DETOLF} />,
       );
       const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
       const fixedHeight = parseFloat((fixed.querySelector('.shelf-figure') as HTMLElement).style.height);
-      // DETOLF_PROFILE.innerHeightMm (370) != DEFAULT_DYNAMIC_COMPARTMENT_MM
-      // (470) — same figure, different anchor, must render at a different
-      // (larger, since 370 < 470) size in fixed mode.
+      // The Detolf's smallest compartment (378 mm, via the thin adapter) !=
+      // DEFAULT_DYNAMIC_COMPARTMENT_MM (470) — same figure, different anchor,
+      // must render at a different (larger, since 378 < 470) size in fixed mode.
       expect(fixedHeight).toBeGreaterThan(dynamicHeight);
       expect(dynamicHeight).toBe(Math.round((260 / DEFAULT_DYNAMIC_COMPARTMENT_MM) * SHELF_BAND.compact));
-      expect(fixedHeight).toBe(Math.round((260 / DETOLF_PROFILE.innerHeightMm) * SHELF_BAND.compact));
+      expect(fixedModeCompartmentMm(IKEA_DETOLF)).toBe(378);
+      expect(fixedHeight).toBe(Math.round((260 / 378) * SHELF_BAND.compact));
     });
 
     it('falls back to the dynamic anchor if caseMode="fixed" is passed without a caseProfile — degrades gracefully, never crashes', () => {
@@ -1005,6 +1009,56 @@ describe('CaseShelf (Display A — virtual cases)', () => {
       const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
       const fixedNoProfileHeight = parseFloat((fixedNoProfile.querySelector('.shelf-figure') as HTMLElement).style.height);
       expect(fixedNoProfileHeight).toBe(dynamicHeight);
+    });
+
+    it('dynamic mode ignores a caseProfile (it only anchors fixed mode)', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const { container: dynamic } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: dynamicWithProfile } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseProfile={IKEA_DETOLF} />,
+      );
+      const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
+      const withProfileHeight = parseFloat((dynamicWithProfile.querySelector('.shelf-figure') as HTMLElement).style.height);
+      expect(withProfileHeight).toBe(dynamicHeight);
+    });
+
+    it('falls back to the dynamic anchor for a profile with no compartments (a top-only unit)', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      const topOnly = { ...IKEA_DETOLF, surfaces: IKEA_DETOLF.surfaces.slice(-1) };
+      const { container: dynamic } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: fixedTopOnly } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={topOnly} />,
+      );
+      const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
+      const topOnlyHeight = parseFloat((fixedTopOnly.querySelector('.shelf-figure') as HTMLElement).style.height);
+      expect(topOnlyHeight).toBe(dynamicHeight);
+    });
+
+    it('falls back to the dynamic anchor for a valid profile whose smallest compartment is zero (flush shelves)', () => {
+      const darkAngel = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+      // glass shelf 3 sits one pane above shelf 2: clear heights 396 / 0 / 774 / 378, every check passes
+      const flush = {
+        ...IKEA_DETOLF,
+        surfaces: IKEA_DETOLF.surfaces.map((s) => (s.name === 'glass shelf 3' ? { ...s, topMm: 439 } : s)),
+      };
+      expect(checkCabinetProfile(flush)).toEqual([]);
+      const { container: dynamic } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" />,
+      );
+      const { container: fixedFlush } = renderWithProviders(
+        <CaseShelf figures={[darkAngel]} motif="detolf-dark" density="compact" caseMode="fixed" caseProfile={flush} />,
+      );
+      const dynamicHeight = parseFloat((dynamic.querySelector('.shelf-figure') as HTMLElement).style.height);
+      const flushHeight = parseFloat((fixedFlush.querySelector('.shelf-figure') as HTMLElement).style.height);
+      expect(flushHeight).toBe(dynamicHeight);
+    });
+
+    it('no longer exports the old CaseProfile Detolf (cabinetProfile.ts replaces it)', () => {
+      expect('DETOLF_PROFILE' in CaseShelfModule).toBe(false);
     });
   });
 });

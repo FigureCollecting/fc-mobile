@@ -1,7 +1,7 @@
 // Every e2e test runs under the shipped CSP and fails on any violation the
 // page reports. The listener is installed before the app's first script.
 import { test as base, expect, type BrowserContext } from '@playwright/test';
-import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests, refuseRoundTheRules } from './handsOff';
+import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests, refuseRoundTheRules, refuseRoundTheRulesAtEachLaunch } from './handsOff';
 
 export { expect };
 
@@ -49,6 +49,14 @@ export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOff
       await use();
     },
     { scope: 'worker', auto: true },
+  ],
+  // And each launch in the worker, its own browser's and a spec's alike, checks again as it starts: the environment can change after the worker starts.
+  playwright: [
+    async ({ playwright, connectOptions }, use) => {
+      refuseRoundTheRulesAtEachLaunch(playwright, connectOptions);
+      await use(playwright);
+    },
+    { scope: 'worker', box: true },
   ],
   handsOffBlocked: async ({}, use) => {
     await use([]);

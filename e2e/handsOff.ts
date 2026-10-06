@@ -185,6 +185,44 @@ export function refuseRoundTheRules(env: Record<string, string | undefined>, con
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
 }
 
+/** The browser-type members that start a browser: each checks the environment first. */
+const LAUNCHERS = ['launch', 'launchPersistentContext', 'launchServer'];
+/** The browser-type members that connect to a browser already running, with launch args of its own: each is refused. */
+const CONNECTORS = ['connect', 'connectOverCDP'];
+const CHECKS_EACH_LAUNCH = Symbol.for('fc-mobile.e2e.checksEachLaunch');
+
+/**
+ * Makes every launch on these browser types (the worker's own browser's
+ * included: Playwright's browser fixture launches through them) run
+ * refuseRoundTheRules on the environment as it is when the launch starts, so a
+ * proxy or a connect variable written after the worker started is refused
+ * before anything launches; connect and connectOverCDP are refused outright.
+ * Installs once per browser type.
+ */
+export function refuseRoundTheRulesAtEachLaunch(
+  types: { chromium: object; firefox: object; webkit: object },
+  connectOptions: unknown,
+  env: () => Record<string, string | undefined> = () => process.env,
+): void {
+  for (const [engine, type] of [['chromium', types.chromium], ['firefox', types.firefox], ['webkit', types.webkit]] as const) {
+    const members = type as Record<string | symbol, unknown>;
+    if (CHECKS_EACH_LAUNCH in members) continue;
+    for (const name of LAUNCHERS) {
+      const start = members[name] as (...args: unknown[]) => Promise<unknown>;
+      members[name] = async function (this: unknown, ...args: unknown[]) {
+        refuseRoundTheRules(env(), connectOptions);
+        return start.apply(this, args);
+      };
+    }
+    for (const name of CONNECTORS) {
+      members[name] = async () => {
+        throw new Error(`hands-off: ${engine}.${name} connects this worker to a browser with launch args of its own`);
+      };
+    }
+    members[CHECKS_EACH_LAUNCH] = true;
+  }
+}
+
 /** Whether a hostname is a hands-off domain or under one, in any case and with any trailing dots (a look-alike is not). */
 export function isHandsOffHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.+$/, '');

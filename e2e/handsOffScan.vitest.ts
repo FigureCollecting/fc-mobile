@@ -477,6 +477,25 @@ describe('unguardedSites: the resolver rules under every Chromium', () => {
     ]);
   });
 
+  it("flags the worker's default launch options (a private API): the worker's browser and every launch in the worker start from them", () => {
+    expect(
+      scan(
+        'x.spec.ts',
+        'test.beforeAll(({ playwright }) => {',
+        "  playwright._defaultLaunchOptions.args = ['--host-resolver-rules=MAP * 127.0.0.1'];",
+        "  Object.assign(playwright['_defaultLaunchOptions'], options);",
+        '  const { _defaultLaunchOptions: defaults } = playwright;',
+        '  const { _defaultLaunchOptions } = pw;',
+        '});',
+      ),
+    ).toEqual([
+      'x.spec.ts:2: playwright._defaultLaunchOptions takes the launch options every browser in the worker starts from, a private API the scan cannot check',
+      "x.spec.ts:3: playwright['_defaultLaunchOptions'] takes the launch options every browser in the worker starts from, a private API the scan cannot check",
+      'x.spec.ts:4: _defaultLaunchOptions takes the launch options every browser in the worker starts from, a private API the scan cannot check',
+      'x.spec.ts:5: _defaultLaunchOptions takes the launch options every browser in the worker starts from, a private API the scan cannot check',
+    ]);
+  });
+
   it('fails closed on a member it cannot name: a computed key on a Playwright object, or in a destructuring', () => {
     const unnamed = 'takes a member by a name the scan cannot read';
     expect(

@@ -198,10 +198,11 @@ test('the probe images cover every hands-off domain', () => {
 test.describe('resolver rules (the network-level net under every Chromium)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', '--host-resolver-rules is a Chromium switch');
 
-  test('this project launches Chromium with them, built afresh here, and with frozen args no spec can add to', ({}, testInfo) => {
+  test('this project launches Chromium with them, built afresh here, and with frozen args and launch options no spec can change', ({}, testInfo) => {
     const args = testInfo.project.use.launchOptions?.args ?? [];
     expect(args.filter(goesRoundTheRules)).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
     expect(Object.isFrozen(args)).toBe(true);
+    expect(Object.isFrozen(testInfo.project.use.launchOptions)).toBe(true);
   });
 
   test('a test fails if anything reached the sentinel under its browser', async ({ page, net }) => {

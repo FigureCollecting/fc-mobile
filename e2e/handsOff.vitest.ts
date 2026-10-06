@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   HANDS_OFF_DOMAINS,
   HANDS_OFF_LAUNCH_ARGS,
+  HANDS_OFF_LAUNCH_OPTIONS,
   blockHandsOff,
   configBypasses,
   guardContext,
@@ -125,12 +126,23 @@ describe('the resolver rules every Chromium the suites launch gets', () => {
     expect(HANDS_OFF_LAUNCH_ARGS).toEqual([`--host-resolver-rules=${handsOffResolverRules()}`]);
     expect(HANDS_OFF_DOMAINS).toHaveLength(5);
   });
+
+  it('come in launch options that are frozen too, so no spec that imports a config can set its args or add a proxy', () => {
+    expect(HANDS_OFF_LAUNCH_OPTIONS.args).toBe(HANDS_OFF_LAUNCH_ARGS);
+    expect(Object.isFrozen(HANDS_OFF_LAUNCH_OPTIONS)).toBe(true);
+    expect(() => {
+      (HANDS_OFF_LAUNCH_OPTIONS as { args: string[] }).args = ['--host-resolver-rules=MAP * 127.0.0.1'];
+    }).toThrow(TypeError);
+    // A proxy written as an object literal would trip e2e/handsOffScan.ts.
+    expect(() => Object.assign(HANDS_OFF_LAUNCH_OPTIONS, Object.fromEntries([['proxy', { server: 'http://127.0.0.1:9' }]]))).toThrow(TypeError);
+    expect(HANDS_OFF_LAUNCH_OPTIONS).toEqual({ args: HANDS_OFF_LAUNCH_ARGS });
+  });
 });
 
 describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs are checked)', () => {
   /** A `use` from [option, value] pairs: these options written as an object literal would trip e2e/handsOffScan.ts. */
   const use = (...options: [string, unknown][]): ConfigUse => Object.fromEntries(options);
-  const rules: [string, unknown] = ['launchOptions', { args: HANDS_OFF_LAUNCH_ARGS }];
+  const rules: [string, unknown] = ['launchOptions', Object.freeze({ args: HANDS_OFF_LAUNCH_ARGS })];
 
   it('finds nothing when every Chromium project launches with the rules and each other browser is named', () => {
     const config = {
@@ -138,7 +150,7 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
       projects: [
         { name: 'chromium', use: use(['defaultBrowserType', 'chromium'], rules) },
         { name: 'plain', use: use(rules) },
-        { name: 'more', use: use(['launchOptions', { args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) }]) },
+        { name: 'more', use: use(['launchOptions', Object.freeze({ args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) })]) },
         { name: 'webkit', use: use(['defaultBrowserType', 'webkit']) },
       ],
     };
@@ -179,7 +191,7 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
   });
 
   it('wants HANDS_OFF_LAUNCH_ARGS as the only args that touch the resolver or a proxy, and no proxy or env in the launch options', () => {
-    const launch = (...options: [string, unknown][]) => ['launchOptions', Object.fromEntries(options)] as [string, unknown];
+    const launch = (...options: [string, unknown][]) => ['launchOptions', Object.freeze(Object.fromEntries(options))] as [string, unknown];
     const config = {
       projects: [
         { name: 'later-rules', use: use(launch(['args', [...HANDS_OFF_LAUNCH_ARGS, '--host-resolver-rules=MAP fc-canary.test 127.0.0.1']])) },
@@ -229,11 +241,26 @@ describe('configBypasses (a Playwright config, as the e2e, PWA and stack configs
         // Sealed is not frozen: an element can still be set, to another rule list.
         { name: 'sealed', use: use(['launchOptions', { args: Object.seal([...HANDS_OFF_LAUNCH_ARGS]) }]) },
         { name: 'itself', use: use(rules) },
-        { name: 'frozen-more', use: use(['launchOptions', { args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) }]) },
+        { name: 'frozen-more', use: use(['launchOptions', Object.freeze({ args: Object.freeze([...HANDS_OFF_LAUNCH_ARGS, '--disable-gpu']) })]) },
       ],
     };
     const notFrozen = 'launches Chromium with args a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_ARGS itself';
     expect(configBypasses(config)).toEqual([`copy: ${notFrozen}`, `sealed: ${notFrozen}`]);
+  });
+
+  it('wants the launch options frozen too: a spec that imports a config could set args or a proxy on an open object', () => {
+    const config = {
+      use: use(['launchOptions', { args: HANDS_OFF_LAUNCH_ARGS }]),
+      projects: [
+        { name: 'from-config' },
+        { name: 'open', use: use(['launchOptions', { args: HANDS_OFF_LAUNCH_ARGS }]) },
+        { name: 'sealed', use: use(['launchOptions', Object.seal({ args: HANDS_OFF_LAUNCH_ARGS })]) },
+        { name: 'export', use: use(['launchOptions', HANDS_OFF_LAUNCH_OPTIONS]) },
+        { name: 'frozen', use: use(rules) },
+      ],
+    };
+    const open = 'launches Chromium with launch options a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_OPTIONS itself';
+    expect(configBypasses(config)).toEqual([`from-config: ${open}`, `open: ${open}`, `sealed: ${open}`]);
   });
 
   it('flags a proxy or connectOptions in the config or in any project', () => {

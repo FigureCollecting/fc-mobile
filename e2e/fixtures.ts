@@ -42,7 +42,7 @@ export async function watchCsp(context: BrowserContext): Promise<CspViolation[]>
  * Specs that must not run under the CSP check (e2e/auth) take this one.
  */
 export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOffWorker: void }>({
-  // No worker starts with a proxy in its environment or a browser to connect to: either goes round the resolver rules.
+  // No worker starts with a proxy in its environment, a variable that sends a launch elsewhere, or a browser to connect to: each goes round the resolver rules.
   handsOffWorker: [
     async ({ connectOptions }, use) => {
       refuseRoundTheRules(process.env, connectOptions);

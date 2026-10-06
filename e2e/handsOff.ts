@@ -17,8 +17,13 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   them that takes them off or goes round them (configBypasses, against the
  *   rules built afresh); so does every Chromium a spec launches in a form
  *   e2e/handsOffScan.ts reads;
- * - no worker starts with a proxy in its environment or a browser to connect
- *   to (refuseRoundTheRules);
+ * - no worker starts with a proxy in its environment, a variable that sends
+ *   a launch to a browser elsewhere (SELENIUM_REMOTE_URL among them), or a
+ *   browser to connect to (refuseRoundTheRules), and each launch through the
+ *   worker's `playwright` fixture, its own browser's included, checks its
+ *   environment again as it starts (refuseRoundTheRulesAtEachLaunch); that
+ *   launch, and blockHandsOff, refuse while Object.prototype carries a name
+ *   Node does not put there (refuseInheritedOptions);
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts reads every e2e source's syntax for a way off these
  *   guards (syntax only: the README lists what it does not follow).

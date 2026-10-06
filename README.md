@@ -64,8 +64,20 @@ The e2e suites guard the rest:
   not read.
 - Each worker refuses to start with a proxy in its environment (`http_proxy`
   and the like: Chromium sends hosts to it unresolved, and the headless shell
-  does so even with `--no-proxy-server`) or a browser to connect to
-  (`connectOptions`, or `PW_TEST_CONNECT_WS_ENDPOINT`).
+  does so even with `--no-proxy-server`), a variable that sends a launch to a
+  browser elsewhere (`SELENIUM_REMOTE_URL`, `SELENIUM_REMOTE_CAPABILITIES`,
+  `SELENIUM_REMOTE_HEADERS`, `PW_TEST_CONNECT_WS_ENDPOINT`, or
+  `PWTEST_UNDER_TEST`, which lets a launch option name a Selenium grid), or a
+  browser to connect to (`connectOptions`). Each launch through the worker's
+  `playwright` fixture (its own browser's, and a spec's) checks the
+  environment again as it starts, so a variable written after the worker
+  started is refused before anything launches; `connect` and
+  `connectOverCDP` on its browser types are refused. This reads the worker's
+  own environment, not a launch's `env` option (the scan below refuses
+  that). Each such launch, and `blockHandsOff` (so every fixture context),
+  also refuses while `Object.prototype` carries a name Node does not put
+  there: every options object inherits it, and Playwright reads options such
+  as `ignoreDefaultArgs` from it.
 - Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
   `route.fetch()`) find no address for them.
 - `e2e/handsOffScan.ts` reads every e2e source's syntax tree and fails the
@@ -73,26 +85,29 @@ The e2e suites guard the rest:
   directly (an import, a require, any call given its module name, a path into
   `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS`, or a
   spread of it among string literals none of which is another rule list, a
-  proxy switch or `--`; `launchOptions` that replace them, or an `env` in
-  launch options; `ignoreDefaultArgs` as a key or a member and
-  `executablePath` as a key, wherever they are written; another browser
+  proxy switch or `--`; launch options (a launch's or `launchOptions`) that
+  are not an object literal, or that hold a spread or a computed name anywhere,
+  before the `args` too, since it cannot read what those carry; `launchOptions`
+  that replace the args, or an `env` in launch options; `ignoreDefaultArgs` as
+  a key or a member, and `executablePath` as a key; another browser
   (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`, a
   `firefox` or `webkit` launch), a `proxy` or `connectOptions`;
   `launchServer`, `connect`, `connectOverCDP`, `_android`, or a launcher
   passed around uncalled; `_defaultLaunchOptions` or `_browserOptions`
   (Playwright's private holds on the options every launch in a worker starts
   from) written anywhere, as a name or a string; a private (underscore-named)
-  fixture in `test.extend` or `test.use`, or one under a computed name it
-  cannot read; a member of a Playwright object, or a destructured one, taken
-  by a computed name; a context, page or API context that a guard does not
-  take before its first use, on every path; a route that continues, fetches,
-  or has a handler it cannot read; `unroute` or `unrouteAll` on anything but
-  `page`. It reads syntax only, so it does not follow values through variables
-  or spreads (launch options, fixtures or a device held in a `const` or spread
-  in, a launch option set by reflection such as `Reflect.set` or
-  `Object.fromEntries`), a name built at run time (a module, a member, a
-  private hold), or code that reaches the options without naming them (such as
-  a walk over the `playwright` object's values).
+  fixture, or one under a computed name it cannot read, in the object literal
+  written as `test.extend`'s or `test.use`'s first argument (read through
+  `as`, `satisfies`, `!`, a type assertion and parentheses); a member of a
+  Playwright object, or a destructured one, taken by a computed name; a
+  context, page or API context that a guard does not take before its first
+  use, on every path; a route that continues, fetches, or has a handler it
+  cannot read; `unroute` or `unrouteAll` on anything but `page`. A key is one
+  in an object literal or a class's member of that name. It reads syntax only,
+  so it does not follow values through variables: context options, fixtures
+  or a device held in a `const` (`test.use(fixtures)`), a name built at run
+  time (a module, a member, a private hold), or code that reaches the options
+  without naming them (such as a walk over the `playwright` object's values).
 
 A spike page is therefore an HTML file in this repo, opened from a spec on
 `e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;

@@ -233,16 +233,19 @@ function isAwaited(node: ts.Node): boolean {
  *   instead of from e2e/fixtures.ts, whose contexts are guarded;
  * - a launch whose args are not HANDS_OFF_LAUNCH_ARGS, or a spread of it among
  *   string literals none of which is another rule list, a proxy switch or `--`
- *   (goesRoundTheRules), or that a later spread or computed name could replace;
- *   launchOptions that do the same; an env in launch options (a proxy rides in
- *   it); a launcher, newContext or newPage taken without being called,
- *   launchServer, connect, connectOverCDP and _android / _electron;
- *   _defaultLaunchOptions or _browserOptions, where the worker's browser and
- *   every launch in the worker take their options from, named anywhere (an
- *   identifier or a string); a fixture test.extend or test.use overrides that
+ *   (goesRoundTheRules); launch options that are not an object literal, or
+ *   that hold a spread or a computed name anywhere (it cannot read what they
+ *   carry, before the args or after); launchOptions that do the same; an env
+ *   in launch options (a proxy rides in it); a launcher, newContext or newPage
+ *   taken without being called, launchServer, connect, connectOverCDP and
+ *   _android / _electron; _defaultLaunchOptions or _browserOptions, where the
+ *   worker's browser and every launch in the worker take their options from,
+ *   named anywhere (an identifier or a string); a fixture that the object
+ *   literal written as test.extend's or test.use's first argument (through
+ *   `as`, `satisfies`, `!`, a type assertion and parentheses) overrides, that
  *   is private (named with a leading underscore) or named by a computed key it
- *   cannot read; ignoreDefaultArgs as a key in any object or a member, before
- *   or after the args; executablePath as a key in any object;
+ *   cannot read; ignoreDefaultArgs as a key or a member, before or after the
+ *   args; executablePath as a key;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
  *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
  *   connectOptions: each leaves the resolver rules behind;
@@ -256,6 +259,7 @@ function isAwaited(node: ts.Node): boolean {
  *   the guard's routes off;
  * - a member taken by a computed name it cannot read: of a browser type, a
  *   context, `playwright`, `browser`, `page` or `request`, or in a destructuring.
+ * A key is one in an object literal or a class's member of that name.
  * A `hands-off-scan:` comment on a statement exempts it in hands-off.spec.ts
  * and handsOff.ts only.
  */

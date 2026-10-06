@@ -442,7 +442,7 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     expect(selenium.code).toBe(1);
   });
 
-  test("refuses, as each launch starts, a proxy or a grid written into its environment after it started: its own browser's launch and a spec's alike", async ({}, testInfo) => {
+  test("refuses, as each launch starts, a proxy or a grid written into its environment after it started, or an option on Object.prototype: its own browser's launch and a spec's alike", async ({}, testInfo) => {
     test.setTimeout(120_000);
     // Both point at a closed local port: a launch the check missed would fail on its own, but not with the check's error.
     const ownBrowser = [
@@ -459,8 +459,15 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
       '  await launched.close();',
       '});',
     ].join('\n');
-    const [own, spec] = await Promise.all(
-      [ownBrowser, specLaunch].map((code, i) => {
+    // An option on Object.prototype, which every options object inherits: Playwright reads ignoreDefaultArgs from it.
+    const inherited = [
+      `import { guardedTest } from ${JSON.stringify(fixtures)};`,
+      `import { HANDS_OFF_LAUNCH_ARGS } from ${JSON.stringify(handsOff)};`,
+      "guardedTest.beforeAll(() => { Reflect.set(Object.prototype, 'ignoreDefaultArgs', HANDS_OFF_LAUNCH_ARGS); });",
+      "guardedTest('launches', async ({ browser }) => { await browser.version(); });",
+    ].join('\n');
+    const [own, spec, proto] = await Promise.all(
+      [ownBrowser, specLaunch, inherited].map((code, i) => {
         const dir = testInfo.outputPath(`written-${i}`);
         mkdirSync(dir, { recursive: true });
         return childRun(dir, {}, `${code}\n`);
@@ -470,6 +477,8 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     expect(own.code).toBe(1);
     expect(spec.out).toContain("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
     expect(spec.code).toBe(1);
+    expect(proto.out).toContain('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
+    expect(proto.code).toBe(1);
   });
 });
 

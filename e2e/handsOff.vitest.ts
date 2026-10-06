@@ -12,6 +12,7 @@ import {
   isHandsOffUrl,
   refuseHandsOffLookups,
   refuseHandsOffRequests,
+  refuseInheritedOptions,
   refuseRoundTheRules,
   refuseRoundTheRulesAtEachLaunch,
   type ConfigUse,
@@ -495,6 +496,18 @@ describe('blockHandsOff', () => {
     expect(guard.escaped()).toEqual(['https://t.vndb.org/y.jpg']);
   });
 
+  it('refuses to guard a context while Object.prototype carries a name of its own: the context may already read it as an option (a proxy)', async () => {
+    const context = fakeContext();
+    Object.defineProperty(Object.prototype, 'proxy', { value: { server: 'http://127.0.0.1:9' }, configurable: true });
+    try {
+      await expect(blockHandsOff(context as never)).rejects.toThrow('hands-off: Object.prototype carries proxy, which every options object inherits');
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'proxy');
+    }
+    expect(context.route).not.toHaveBeenCalled();
+    await expect(blockHandsOff(context as never)).resolves.toMatchObject({ blocked: [] });
+  });
+
   it('lists nothing as escaped when it aborted every hands-off request sent', async () => {
     const context = fakeContext();
     const guard = await blockHandsOff(context as never);
@@ -772,6 +785,21 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     }
   });
 
+  it('refuses each launch while Object.prototype carries a name of its own: Playwright reads launch options inherited from it, ignoreDefaultArgs among them', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    Object.defineProperty(Object.prototype, 'ignoreDefaultArgs', { value: [...HANDS_OFF_LAUNCH_ARGS], configurable: true });
+    try {
+      for (const name of LAUNCHERS) {
+        await expect(start(pw.chromium, name)).rejects.toThrow('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
+      }
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'ignoreDefaultArgs');
+    }
+    await expect(start(pw.chromium, 'launch')).resolves.toBe('chromium.launch');
+    expect(pw.chromium.calls.map((c) => c.name)).toEqual(['launch']);
+  });
+
   it('installs once per browser type: a second call wraps nothing again, so each launch reads the environment once and launches once', async () => {
     const pw = fakePlaywright();
     let reads = 0;
@@ -781,6 +809,22 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     await start(pw.chromium, 'launch');
     expect(reads).toBe(1);
     expect(pw.chromium.calls).toHaveLength(1);
+  });
+});
+
+describe('refuseInheritedOptions (Object.prototype, which every options object inherits from)', () => {
+  it("passes Node's own Object.prototype", () => {
+    expect(() => refuseInheritedOptions()).not.toThrow();
+    expect(() => refuseInheritedOptions(Object.create(null))).not.toThrow();
+  });
+
+  it('refuses any name Node does not put there, by any name and enumerable or not, listing each', () => {
+    const prototype = Object.create(null, Object.getOwnPropertyDescriptors(Object.prototype));
+    Object.defineProperty(prototype, 'proxy', { value: { server: 'http://127.0.0.1:9' }, enumerable: true });
+    Object.defineProperty(prototype, 'ignoreDefaultArgs', { value: true });
+    expect(() => refuseInheritedOptions(prototype)).toThrow(
+      'hands-off: Object.prototype carries proxy, ignoreDefaultArgs, which every options object inherits: Playwright would read each as an option of every launch or context',
+    );
   });
 });
 

@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import { SHOT_VIEWPORTS } from './e2e/caseViewports';
-import { HANDS_OFF_LAUNCH_ARGS } from './e2e/handsOff';
+import { HANDS_OFF_LAUNCH_OPTIONS } from './e2e/handsOff';
 
 /**
  * E2E config: runs tests from ./e2e against a production build served by
@@ -28,11 +28,11 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], channel: 'chromium-headless-shell', launchOptions: { args: HANDS_OFF_LAUNCH_ARGS } },
+      use: { ...devices['Desktop Chrome'], channel: 'chromium-headless-shell', launchOptions: HANDS_OFF_LAUNCH_OPTIONS },
     },
     {
       name: 'mobile-chromium',
-      use: { ...devices['Pixel 7'], launchOptions: { args: HANDS_OFF_LAUNCH_ARGS } },
+      use: { ...devices['Pixel 7'], launchOptions: HANDS_OFF_LAUNCH_OPTIONS },
     },
     {
       // The route guard only (e2e/fixtures.ts): --host-resolver-rules is a Chromium switch. Not in CI.
@@ -50,7 +50,7 @@ export default defineConfig({
         deviceScaleFactor: v.deviceScaleFactor,
         isMobile: v.mobile,
         hasTouch: v.mobile,
-        launchOptions: { args: HANDS_OFF_LAUNCH_ARGS },
+        launchOptions: HANDS_OFF_LAUNCH_OPTIONS,
       },
     })),
   ],

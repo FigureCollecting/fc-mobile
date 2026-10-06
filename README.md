@@ -47,14 +47,16 @@ The e2e suites guard the rest:
   with or without trailing dots, no address, which also stops redirect hops
   and workers' WebSockets. `HANDS_OFF_LAUNCH_ARGS` and the domain list are
   frozen: a spec that pushes onto either, or sets an element, throws before
-  any browser launches with the change. A test reads each config as
-  Playwright merges it (a project's `use` over the config's), compares its
+  any browser launches with the change. The configs pass the args in
+  `HANDS_OFF_LAUNCH_OPTIONS`, frozen too, so a spec that imports a config and
+  sets the args or adds a proxy there throws as well. A test reads each config
+  as Playwright merges it (a project's `use` over the config's), compares its
   args with the rules built afresh (not with the export), and fails on a
   Chromium project whose args leave the rules out, add another rule list, a
   proxy switch or `--`, or are not frozen (a copy is an array a spec could
   push onto through its `launchOptions` fixture before the worker's browser
-  launches), and on a `proxy` (in `use` or in `contextOptions`),
-  `connectOptions`, or launch `proxy` or `env`.
+  launches) or sit in launch options that are not frozen, and on a `proxy` (in
+  `use` or in `contextOptions`), `connectOptions`, or launch `proxy` or `env`.
 - Each worker refuses to start with a proxy in its environment (`http_proxy`
   and the like: Chromium sends hosts to it unresolved, and the headless shell
   does so even with `--no-proxy-server`) or a browser to connect to
@@ -70,13 +72,14 @@ The e2e suites guard the rest:
   launch options; another browser (`browserName`, `defaultBrowserType`, a
   non-Chromium `devices[...]`, a `firefox` or `webkit` launch), a `proxy` or
   `connectOptions`; `launchServer`, `connect`, `connectOverCDP`, `_android`,
-  or a launcher passed around uncalled; a member of a Playwright object, or a
-  destructured one, taken by a computed name; a context, page or API context
-  that a guard does not take before its first use, on every path; a route
-  that continues, fetches, or has a handler it cannot read; `unroute` or
-  `unrouteAll` on anything but `page`. It does not follow values through
-  variables (launch options or a device held in a `const`, a module name
-  built at run time).
+  or a launcher passed around uncalled; `_defaultLaunchOptions` (Playwright's
+  private hold on the options every launch in a worker starts from); a member
+  of a Playwright object, or a destructured one, taken by a computed name; a
+  context, page or API context that a guard does not take before its first
+  use, on every path; a route that continues, fetches, or has a handler it
+  cannot read; `unroute` or `unrouteAll` on anything but `page`. It does not
+  follow values through variables (launch options or a device held in a
+  `const`, a module name built at run time).
 
 A spike page is therefore an HTML file in this repo, opened from a spec on
 `e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;

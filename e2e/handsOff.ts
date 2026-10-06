@@ -54,6 +54,14 @@ function handsOffLaunchArgs(): string[] {
  */
 export const HANDS_OFF_LAUNCH_ARGS: string[] = Object.freeze(handsOffLaunchArgs()) as string[];
 
+/**
+ * The launch options of every Chromium project in the three configs:
+ * HANDS_OFF_LAUNCH_ARGS, in an object frozen as they are. A spec that imports a
+ * config and sets the args or adds a proxy throws, as one that pushes onto the
+ * args does; the configs pass this object itself, never a copy.
+ */
+export const HANDS_OFF_LAUNCH_OPTIONS: { args: string[] } = Object.freeze({ args: HANDS_OFF_LAUNCH_ARGS });
+
 /** Chromium switches that replace the hands-off resolver rules, or send requests round them (a proxy looks hosts up itself). */
 const ROUND_THE_RULES = ['host-resolver-rules', 'host-rules', 'proxy-server', 'proxy-pac-url', 'proxy-auto-detect'];
 
@@ -91,7 +99,9 @@ function mergedUse(config: ConfigUse = {}, project: ConfigUse = {}): ConfigUse {
  * over the config's): a Chromium project whose launch args leave the rules out,
  * hold any other arg that could replace them or go round them, or are not
  * frozen (a spec could push onto them through its launchOptions fixture before
- * the worker's browser launches); a project on another browser that `others`
+ * the worker's browser launches), or launch options that are not frozen (a
+ * spec that imports the config could set args or a proxy on them); a project
+ * on another browser that `others`
  * (project name to its browser) does not name. The rules are built afresh for
  * the comparison, not read from HANDS_OFF_LAUNCH_ARGS.
  * Then, where each is written: a proxy, connectOptions, launch options with a
@@ -113,6 +123,8 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
       found.push(`${name}: launches Chromium with an arg that replaces or goes round the hands-off resolver rules`);
     } else if (!Object.isFrozen(args)) {
       found.push(`${name}: launches Chromium with args a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_ARGS itself`);
+    } else if (!Object.isFrozen(use.launchOptions)) {
+      found.push(`${name}: launches Chromium with launch options a spec can still change (not frozen): give it HANDS_OFF_LAUNCH_OPTIONS itself`);
     }
   }
   const proxied = 'sends requests through a proxy, which looks the hands-off hosts up itself';

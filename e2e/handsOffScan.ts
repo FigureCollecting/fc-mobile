@@ -37,6 +37,9 @@ const LAUNCH_OPTIONS_AT = new Map([
 const UNREADABLE_BROWSERS = new Set(['launchServer', 'connectOverCDP']);
 const BROWSER_TYPES = new Set(['chromium', 'firefox', 'webkit']);
 const EXPERIMENTAL_BROWSERS = new Set(['_android', '_electron']);
+/** Playwright's private hold on the launch options the worker's browser, and every launch in the worker, start from. */
+const DEFAULT_LAUNCH_OPTIONS = '_defaultLaunchOptions';
+const DEFAULTS_TAKEN = 'takes the launch options every browser in the worker starts from, a private API the scan cannot check';
 /** Members that open a context or a page: the scan follows them only when called. */
 const OPENERS = new Set(['newContext', 'newPage']);
 /** Route calls that send the request on. Routes run newest first, so a spec's own route runs ahead of the guard's. */
@@ -203,6 +206,8 @@ function isAwaited(node: ts.Node): boolean {
  *   launchOptions that do the same; an env in launch options (a proxy rides in
  *   it); a launcher, newContext or newPage taken without being called,
  *   launchServer, connect, connectOverCDP and _android / _electron;
+ *   _defaultLaunchOptions, where the worker's browser and every launch in the
+ *   worker take their options from;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
  *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
  *   connectOptions: each leaves the resolver rules behind;
@@ -366,6 +371,7 @@ export function unguardedSites({ file, code }: Source): string[] {
       flag(node, `${node.getText(source)} opens a browser the scan cannot check`);
       return;
     }
+    if (m.name === DEFAULT_LAUNCH_OPTIONS) flag(node, `${node.getText(source)} ${DEFAULTS_TAKEN}`);
     const called = ts.isCallExpression(node.parent) && node.parent.expression === node;
     if (!called && (LAUNCH_OPTIONS_AT.has(m.name) || opensUnreadable(m.name, m.receiver) || OPENERS.has(m.name))) {
       flag(node, `${node.getText(source)} is taken, not called, so the scan cannot check what it opens`);
@@ -380,6 +386,7 @@ export function unguardedSites({ file, code }: Source): string[] {
       return;
     }
     if (EXPERIMENTAL_BROWSERS.has(key)) flag(node, `${key} opens a browser the scan cannot check`);
+    else if (key === DEFAULT_LAUNCH_OPTIONS) flag(node, `${key} ${DEFAULTS_TAKEN}`);
     else if (LAUNCH_OPTIONS_AT.has(key) || UNREADABLE_BROWSERS.has(key) || OPENERS.has(key)) {
       flag(node, `${key} is taken, not called, so the scan cannot check what it opens`);
     }

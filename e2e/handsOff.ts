@@ -158,16 +158,29 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
 const PROXY_VARIABLES = new Set(['http_proxy', 'https_proxy', 'all_proxy', 'ftp_proxy', 'auto_proxy', 'socks_server', 'socks_proxy']);
 
 /**
+ * Where Playwright reads, at a launch, a browser to send it to instead (a
+ * Selenium grid, its capabilities and headers, a browser server), or the test
+ * hook that lets a launch option name a grid; by name in any case.
+ */
+const CONNECT_VARIABLES = new Set(['selenium_remote_url', 'selenium_remote_capabilities', 'selenium_remote_headers', 'pw_test_connect_ws_endpoint', 'pwtest_under_test']);
+
+/**
  * Throws if this worker would run its browsers round the hands-off resolver
  * rules: a proxy in its environment (Chromium sends hosts to it unresolved; the
- * headless shell does even with --no-proxy-server), or a browser to connect to
- * (connectOptions, which PW_TEST_CONNECT_WS_ENDPOINT sets), which has launch
- * args of its own. Every reason, in one error.
+ * headless shell does even with --no-proxy-server), a variable that sends a
+ * launch to a browser somewhere else (CONNECT_VARIABLES), or a browser to
+ * connect to (connectOptions, which PW_TEST_CONNECT_WS_ENDPOINT sets): a
+ * browser connected to has launch args of its own. Every reason, in one error.
  */
 export function refuseRoundTheRules(env: Record<string, string | undefined>, connectOptions: unknown): void {
   const reasons = Object.entries(env)
-    .filter(([name, value]) => PROXY_VARIABLES.has(name.toLowerCase()) && !!value)
-    .map(([name]) => `${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`);
+    .filter(([, value]) => !!value)
+    .flatMap(([name]) => {
+      const key = name.toLowerCase();
+      if (PROXY_VARIABLES.has(key)) return [`${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`];
+      if (CONNECT_VARIABLES.has(key)) return [`${name} in this worker's environment can connect it to a browser with launch args of its own`];
+      return [];
+    });
   if (connectOptions !== undefined) reasons.push('connectOptions connects this worker to a browser with launch args of its own');
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
 }

@@ -430,7 +430,9 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy 
     expect(neither.code).toBe(0);
     expect(proxied.out).toContain("hands-off: http_proxy in this worker's environment sends requests through a proxy");
     expect(proxied.code).toBe(1);
-    expect(connected.out).toContain('hands-off: connectOptions connects this worker to a browser with launch args of its own');
+    expect(connected.out).toContain(
+      "hands-off: PW_TEST_CONNECT_WS_ENDPOINT in this worker's environment can connect it to a browser with launch args of its own; connectOptions connects this worker to a browser with launch args of its own",
+    );
     expect(connected.code).toBe(1);
     expect(selenium.out).toContain("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
     expect(selenium.code).toBe(1);

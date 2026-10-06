@@ -391,16 +391,20 @@ test.describe('the route guard every e2e context gets', () => {
   });
 });
 
-test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy in its environment or a browser to connect to', () => {
-  /**
-   * Runs a spec on e2e/fixtures.ts in a Playwright run of its own, under `env`. Its one test asks for no browser,
-   * so nothing is launched or connected to either way: whether its worker started is all it shows.
-   */
-  async function childRun(dir: string, env: Record<string, string>): Promise<{ code: number | null; out: string }> {
-    const fixtures = fileURLToPath(new URL('./fixtures.ts', import.meta.url));
-    writeFileSync(path.join(dir, 'child.spec.ts'), `import { guardedTest } from ${JSON.stringify(fixtures)};\nguardedTest('starts', () => {});\n`);
+test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environment or a browser to connect to, as it starts and as each launch starts', () => {
+  const fixtures = fileURLToPath(new URL('./fixtures.ts', import.meta.url));
+  const handsOff = fileURLToPath(new URL('./handsOff.ts', import.meta.url));
+  /** A spec whose one test asks for no browser: nothing is launched or connected to either way, so whether its worker started is all it shows. */
+  const STARTS = `import { guardedTest } from ${JSON.stringify(fixtures)};\nguardedTest('starts', () => {});\n`;
+
+  /** Runs `spec` on e2e/fixtures.ts in a Playwright run of its own, under `env`, with the hands-off launch options. */
+  async function childRun(dir: string, env: Record<string, string>, spec = STARTS): Promise<{ code: number | null; out: string }> {
+    writeFileSync(path.join(dir, 'child.spec.ts'), spec);
     // Its own outputDir: by default the child would clean, and skip specs in, this run's test-results.
-    writeFileSync(path.join(dir, 'child.config.ts'), "export default { testDir: '.', outputDir: 'out', reporter: [['list']], workers: 1 };\n");
+    writeFileSync(
+      path.join(dir, 'child.config.ts'),
+      `import { HANDS_OFF_LAUNCH_OPTIONS } from ${JSON.stringify(handsOff)};\nexport default { testDir: '.', outputDir: 'out', reporter: [['list']], workers: 1, use: { launchOptions: HANDS_OFF_LAUNCH_OPTIONS } };\n`,
+    );
     // Without the runner's own variables, which would make the child take itself for one of this run's workers.
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(?:TEST_|PW_|PLAYWRIGHT_)/.test(k)));
     const cli = fileURLToPath(new URL('../node_modules/@playwright/test/cli.js', import.meta.url));
@@ -436,6 +440,36 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses to start with a proxy 
     expect(connected.code).toBe(1);
     expect(selenium.out).toContain("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
     expect(selenium.code).toBe(1);
+  });
+
+  test("refuses, as each launch starts, a proxy or a grid written into its environment after it started: its own browser's launch and a spec's alike", async ({}, testInfo) => {
+    test.setTimeout(120_000);
+    // Both point at a closed local port: a launch the check missed would fail on its own, but not with the check's error.
+    const ownBrowser = [
+      `import { guardedTest } from ${JSON.stringify(fixtures)};`,
+      "guardedTest.beforeAll(() => { process.env.http_proxy = 'http://127.0.0.1:9'; });",
+      "guardedTest('launches', async ({ browser }) => { await browser.version(); });",
+    ].join('\n');
+    const specLaunch = [
+      `import { guardedTest } from ${JSON.stringify(fixtures)};`,
+      `import { HANDS_OFF_LAUNCH_ARGS } from ${JSON.stringify(handsOff)};`,
+      "guardedTest('launches', async ({ playwright }) => {",
+      "  process.env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';",
+      '  const launched = await playwright.chromium.launch({ args: HANDS_OFF_LAUNCH_ARGS });',
+      '  await launched.close();',
+      '});',
+    ].join('\n');
+    const [own, spec] = await Promise.all(
+      [ownBrowser, specLaunch].map((code, i) => {
+        const dir = testInfo.outputPath(`written-${i}`);
+        mkdirSync(dir, { recursive: true });
+        return childRun(dir, {}, `${code}\n`);
+      }),
+    );
+    expect(own.out).toContain("hands-off: http_proxy in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself");
+    expect(own.code).toBe(1);
+    expect(spec.out).toContain("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
+    expect(spec.code).toBe(1);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   refuseHandsOffLookups,
   refuseHandsOffRequests,
   refuseRoundTheRules,
+  refuseRoundTheRulesAtEachLaunch,
   type ConfigUse,
 } from './handsOff';
 
@@ -677,6 +678,99 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
     expect(() => refuseRoundTheRules({ http_proxy: 'http://127.0.0.1:1', SELENIUM_REMOTE_URL: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1' }, {})).toThrow(
       /^hands-off: http_proxy .*; SELENIUM_REMOTE_URL .*; HTTPS_PROXY .*; connectOptions .*own$/,
     );
+  });
+});
+
+describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its own browser's included)", () => {
+  const LAUNCHERS = ['launch', 'launchPersistentContext', 'launchServer'];
+  const CONNECTORS = ['connect', 'connectOverCDP'];
+  const ENGINES = ['chromium', 'firefox', 'webkit'] as const;
+
+  /** A stand-in for Playwright's browser types: each launcher and connector records its call (name, `this`, arguments) and answers its name. */
+  function fakePlaywright() {
+    const made = (engine: string) => {
+      const calls: { name: string; self: unknown; args: unknown[] }[] = [];
+      const type: Record<string, unknown> = { engine, calls };
+      for (const name of [...LAUNCHERS, ...CONNECTORS]) {
+        type[name] = async function (this: unknown, ...args: unknown[]) {
+          calls.push({ name, self: this, args });
+          return `${engine}.${name}`;
+        };
+      }
+      return type as Record<string, (...args: unknown[]) => Promise<unknown>> & { calls: typeof calls };
+    };
+    return { chromium: made('chromium'), firefox: made('firefox'), webkit: made('webkit') };
+  }
+
+  /** Calls a member by a name held in a variable: written out, a launch here would trip e2e/handsOffScan.ts. */
+  const start = (type: Record<string, (...args: unknown[]) => Promise<unknown>>, name: string, ...args: unknown[]) => type[name]!(...args);
+
+  it('lets each launch through, with its own `this` and arguments, while the environment is clean', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({ PATH: '/usr/bin' }));
+    for (const engine of ENGINES) {
+      for (const name of LAUNCHERS) await expect(start(pw[engine], name, 'dir', { args: [] })).resolves.toBe(`${engine}.${name}`);
+      expect(pw[engine].calls).toEqual(LAUNCHERS.map((name) => ({ name, self: pw[engine], args: ['dir', { args: [] }] })));
+    }
+  });
+
+  it('reads the environment as each launch starts: a proxy or a connect variable written after the worker started is refused before anything launches', async () => {
+    const pw = fakePlaywright();
+    const env: Record<string, string | undefined> = {};
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => env);
+    await start(pw.chromium, 'launch');
+    env.HTTPS_PROXY = 'http://127.0.0.1:9';
+    for (const engine of ENGINES) {
+      for (const name of LAUNCHERS) {
+        await expect(start(pw[engine], name), `${engine}.${name}`).rejects.toThrow("hands-off: HTTPS_PROXY in this worker's environment sends requests through a proxy");
+      }
+    }
+    delete env.HTTPS_PROXY;
+    env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
+    await expect(start(pw.chromium, 'launch')).rejects.toThrow("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
+    expect(ENGINES.flatMap((engine) => pw[engine].calls.map((c) => `${engine}.${c.name}`))).toEqual(['chromium.launch']);
+  });
+
+  it("reads this worker's own process.env at each launch unless given another", async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined);
+    await expect(start(pw.chromium, 'launch')).resolves.toBe('chromium.launch');
+    vi.stubEnv('SELENIUM_REMOTE_URL', 'http://127.0.0.1:9/wd/hub');
+    try {
+      await expect(start(pw.chromium, 'launch')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(pw.chromium.calls).toHaveLength(1);
+  });
+
+  it('refuses every launch while the worker has a browser to connect to (connectOptions)', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, { wsEndpoint: 'ws://127.0.0.1:9' }, () => ({}));
+    await expect(start(pw.webkit, 'launchPersistentContext', 'dir')).rejects.toThrow('hands-off: connectOptions connects this worker to a browser with launch args of its own');
+    expect(pw.webkit.calls).toEqual([]);
+  });
+
+  it('refuses connect and connectOverCDP outright, on every browser type: a browser connected to has launch args of its own', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    for (const engine of ENGINES) {
+      for (const name of CONNECTORS) {
+        await expect(start(pw[engine], name, 'ws://127.0.0.1:9')).rejects.toThrow(`hands-off: ${engine}.${name} connects this worker to a browser with launch args of its own`);
+      }
+      expect(pw[engine].calls).toEqual([]);
+    }
+  });
+
+  it('installs once per browser type: a second call wraps nothing again, so each launch reads the environment once and launches once', async () => {
+    const pw = fakePlaywright();
+    let reads = 0;
+    const env = () => (reads++, {});
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, env);
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, env);
+    await start(pw.chromium, 'launch');
+    expect(reads).toBe(1);
+    expect(pw.chromium.calls).toHaveLength(1);
   });
 });
 

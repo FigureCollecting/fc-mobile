@@ -41,13 +41,14 @@ The e2e suites guard the rest:
   the abort and leaves only the layers below and the failing test, so the
   scan refuses such routes. `unroute` or `unrouteAll` on a context would take
   the guard's routes off, so the scan refuses them on anything but `page`.
-- Every Chromium project in the three Playwright configs, and every Chromium a
-  spec launches, gets `HANDS_OFF_LAUNCH_ARGS` (the hands-off spec's own: the
-  same rules, then a local sentinel): resolver rules that give those hosts,
-  with or without trailing dots, no address, which also stops redirect hops
-  and workers' WebSockets. `HANDS_OFF_LAUNCH_ARGS` and the domain list are
-  frozen: a spec that pushes onto either, or sets an element, throws before
-  any browser launches with the change. The configs pass the args in
+- Every Chromium project in the three Playwright configs gets
+  `HANDS_OFF_LAUNCH_ARGS`, and so does every Chromium a spec launches in a
+  form the scan below reads (the hands-off spec's own: the same rules, then a
+  local sentinel): resolver rules that give those hosts, with or without
+  trailing dots, no address, which also stops redirect hops and workers'
+  WebSockets. `HANDS_OFF_LAUNCH_ARGS` and the domain list are frozen: a spec
+  that pushes onto either, or sets an element, throws before any browser
+  launches with the change. The configs pass the args in
   `HANDS_OFF_LAUNCH_OPTIONS`, frozen too, so a spec that imports a config and
   sets the args or adds a proxy there throws as well. A test reads each config
   as Playwright merges it (a project's `use` over the config's), compares its
@@ -59,8 +60,8 @@ The e2e suites guard the rest:
   `use` or in `contextOptions`), `connectOptions`, or launch options with
   anything but `args`: a launch `proxy` or `env`, `ignoreDefaultArgs`
   (Playwright counts the args it is given among its defaults, so a list there
-  can take the rules off Chromium's command line), or any option the test
-  does not read.
+  can take the rules off Chromium's command line), or any option the test does
+  not read.
 - Each worker refuses to start with a proxy in its environment (`http_proxy`
   and the like: Chromium sends hosts to it unresolved, and the headless shell
   does so even with `--no-proxy-server`) or a browser to connect to

@@ -10,15 +10,17 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   and workers' requests to these hosts, closes its pages' WebSockets to them
  *   and refuses its API requests to them, and fails its test on one that got
  *   past (a redirect hop);
- * - every Chromium they launch gets HANDS_OFF_LAUNCH_ARGS (frozen, so no spec
- *   can change them), so its resolver has no address for them (which also
- *   stops a redirect hop), and no arg beside them that replaces them or goes
- *   round them (configBypasses for the configs, against the rules built
- *   afresh; e2e/handsOffScan.ts for the specs);
+ * - every Chromium project of the configs gets HANDS_OFF_LAUNCH_ARGS (frozen,
+ *   so no spec can change them), so its resolver has no address for them
+ *   (which also stops a redirect hop), and no arg or launch option beside
+ *   them that takes them off or goes round them (configBypasses, against the
+ *   rules built afresh); so does every Chromium a spec launches in a form
+ *   e2e/handsOffScan.ts reads;
  * - no worker starts with a proxy in its environment or a browser to connect
  *   to (refuseRoundTheRules);
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
- * - e2e/handsOffScan.ts keeps every spec on these guards.
+ * - e2e/handsOffScan.ts reads every e2e source's syntax for a way off these
+ *   guards (syntax only: the README lists what it does not follow).
  * The app's CSP and the vite dev server's refuse requests to them before they
  * are sent, as the route guard does; a CSP does not stop a navigation. Neither
  * stops the connection: for an https frame or form post the CSP refuses, or a

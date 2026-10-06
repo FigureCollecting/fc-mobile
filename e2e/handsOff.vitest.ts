@@ -818,6 +818,17 @@ describe('refuseInheritedOptions (Object.prototype, which every options object i
     expect(() => refuseInheritedOptions(Object.create(null))).not.toThrow();
   });
 
+  it('takes the names Node puts there from a fresh realm, so one added before e2e/handsOff.ts loads is refused too', async () => {
+    Object.defineProperty(Object.prototype, 'executablePath', { value: '/opt/chromium-wrapper', configurable: true });
+    try {
+      vi.resetModules();
+      const loaded = await import('./handsOff');
+      expect(() => loaded.refuseInheritedOptions()).toThrow('hands-off: Object.prototype carries executablePath, which every options object inherits');
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'executablePath');
+    }
+  });
+
   it('refuses any name Node does not put there, by any name and enumerable or not, listing each', () => {
     const prototype = Object.create(null, Object.getOwnPropertyDescriptors(Object.prototype));
     Object.defineProperty(prototype, 'proxy', { value: { server: 'http://127.0.0.1:9' }, enumerable: true });

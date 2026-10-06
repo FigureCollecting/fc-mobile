@@ -40,6 +40,9 @@ const EXPERIMENTAL_BROWSERS = new Set(['_android', '_electron']);
 /** Playwright's private hold on the launch options the worker's browser, and every launch in the worker, start from. */
 const DEFAULT_LAUNCH_OPTIONS = '_defaultLaunchOptions';
 const DEFAULTS_TAKEN = 'takes the launch options every browser in the worker starts from, a private API the scan cannot check';
+/** Launch options that take args off Chromium's command line, user args included (Playwright builds them all in defaultArgs). */
+const IGNORE_DEFAULT_ARGS = 'ignoreDefaultArgs';
+const IGNORES_ARGS = "can take the hands-off resolver rules off Chromium's command line";
 /** Members that open a context or a page: the scan follows them only when called. */
 const OPENERS = new Set(['newContext', 'newPage']);
 /** Route calls that send the request on. Routes run newest first, so a spec's own route runs ahead of the guard's. */
@@ -207,7 +210,8 @@ function isAwaited(node: ts.Node): boolean {
  *   it); a launcher, newContext or newPage taken without being called,
  *   launchServer, connect, connectOverCDP and _android / _electron;
  *   _defaultLaunchOptions, where the worker's browser and every launch in the
- *   worker take their options from;
+ *   worker take their options from; ignoreDefaultArgs as a key in any object
+ *   or a member, before or after the args;
  * - browserName or defaultBrowserType other than 'chromium', a devices[...]
  *   spread that is not a Chromium device, a firefox or webkit launch, proxy and
  *   connectOptions: each leaves the resolver rules behind;
@@ -372,6 +376,7 @@ export function unguardedSites({ file, code }: Source): string[] {
       return;
     }
     if (m.name === DEFAULT_LAUNCH_OPTIONS) flag(node, `${node.getText(source)} ${DEFAULTS_TAKEN}`);
+    if (m.name === IGNORE_DEFAULT_ARGS) flag(node, `${node.getText(source)} ${IGNORES_ARGS}`);
     const called = ts.isCallExpression(node.parent) && node.parent.expression === node;
     if (!called && (LAUNCH_OPTIONS_AT.has(m.name) || opensUnreadable(m.name, m.receiver) || OPENERS.has(m.name))) {
       flag(node, `${node.getText(source)} is taken, not called, so the scan cannot check what it opens`);
@@ -423,6 +428,9 @@ export function unguardedSites({ file, code }: Source): string[] {
         break;
       case 'proxy':
         flag(node, 'proxy sends requests through a proxy, which looks the hands-off hosts up itself');
+        break;
+      case IGNORE_DEFAULT_ARGS:
+        flag(node, `${IGNORE_DEFAULT_ARGS} ${IGNORES_ARGS}`);
         break;
       case 'connectOptions':
         flag(node, 'connectOptions opens a browser the scan cannot check');

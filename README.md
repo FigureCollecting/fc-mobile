@@ -56,7 +56,11 @@ The e2e suites guard the rest:
   proxy switch or `--`, or are not frozen (a copy is an array a spec could
   push onto through its `launchOptions` fixture before the worker's browser
   launches) or sit in launch options that are not frozen, and on a `proxy` (in
-  `use` or in `contextOptions`), `connectOptions`, or launch `proxy` or `env`.
+  `use` or in `contextOptions`), `connectOptions`, or launch options with
+  anything but `args`: a launch `proxy` or `env`, `ignoreDefaultArgs`
+  (Playwright counts the args it is given among its defaults, so a list there
+  can take the rules off Chromium's command line), or any option the test
+  does not read.
 - Each worker refuses to start with a proxy in its environment (`http_proxy`
   and the like: Chromium sends hosts to it unresolved, and the headless shell
   does so even with `--no-proxy-server`) or a browser to connect to
@@ -69,7 +73,8 @@ The e2e suites guard the rest:
   `node_modules`); a launch whose `args` are not `HANDS_OFF_LAUNCH_ARGS`, or a
   spread of it among string literals none of which is another rule list, a
   proxy switch or `--`; `launchOptions` that replace them, or an `env` in
-  launch options; another browser (`browserName`, `defaultBrowserType`, a
+  launch options; `ignoreDefaultArgs` as a key or a member, wherever it is
+  written; another browser (`browserName`, `defaultBrowserType`, a
   non-Chromium `devices[...]`, a `firefox` or `webkit` launch), a `proxy` or
   `connectOptions`; `launchServer`, `connect`, `connectOverCDP`, `_android`,
   or a launcher passed around uncalled; `_defaultLaunchOptions` (Playwright's

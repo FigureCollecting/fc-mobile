@@ -77,6 +77,12 @@ export function goesRoundTheRules(arg: string): boolean {
   return ROUND_THE_RULES.some((s) => name.startsWith(s));
 }
 
+/** The launch options configBypasses reads (the args, a proxy, an env): any other one a config gives is flagged. */
+const READ_LAUNCH_OPTIONS = new Set(['args', 'proxy', 'env']);
+
+/** ignoreDefaultArgs as an array takes each arg it names off Chromium's command line, user args included: Playwright builds them all in defaultArgs. */
+const IGNORES_ARGS = "can take the hands-off resolver rules off Chromium's command line";
+
 /** The options of a Playwright config's or project's `use` that decide its browser and how it reaches the network. */
 export interface ConfigUse {
   browserName?: string;
@@ -104,8 +110,9 @@ function mergedUse(config: ConfigUse = {}, project: ConfigUse = {}): ConfigUse {
  * on another browser that `others` (project name to its browser) does not
  * name. The rules are built afresh for the comparison, not read from
  * HANDS_OFF_LAUNCH_ARGS.
- * Then, where each is written: a proxy, connectOptions, launch options with a
- * proxy or an env of their own, or context options with a proxy.
+ * Then, where each is written: a proxy, connectOptions, context options with a
+ * proxy, or launch options with anything but args: a proxy or an env of their
+ * own, ignoreDefaultArgs, or an option the check does not read.
  */
 export function configBypasses(config: { use?: ConfigUse; projects: { name?: string; use?: ConfigUse }[] }, others: Record<string, string> = {}): string[] {
   const found: string[] = [];
@@ -136,6 +143,10 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
     if (use?.contextOptions?.proxy !== undefined) found.push(`${where}: contextOptions.proxy ${proxied}`);
     if (use?.launchOptions?.env !== undefined) {
       found.push(`${where}: launchOptions.env replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules`);
+    }
+    for (const [key, value] of Object.entries(use?.launchOptions ?? {})) {
+      if (value === undefined || READ_LAUNCH_OPTIONS.has(key)) continue;
+      found.push(`${where}: launchOptions.${key} ${key === 'ignoreDefaultArgs' ? IGNORES_ARGS : 'is a launch option the hands-off check does not read: pass HANDS_OFF_LAUNCH_OPTIONS itself'}`);
     }
   }
   return found;

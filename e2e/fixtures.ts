@@ -1,7 +1,7 @@
 // Every e2e test runs under the shipped CSP and fails on any violation the
 // page reports. The listener is installed before the app's first script.
 import { test as base, expect, type BrowserContext } from '@playwright/test';
-import { guardContext, refuseHandsOffLookups, refuseHandsOffRequests, refuseRoundTheRules, refuseRoundTheRulesAtEachLaunch } from './handsOff';
+import { guardContext, lockInheritedOptions, refuseHandsOffLookups, refuseHandsOffRequests, refuseRoundTheRules, refuseRoundTheRulesAtEachLaunch } from './handsOff';
 
 export { expect };
 
@@ -43,14 +43,16 @@ export async function watchCsp(context: BrowserContext): Promise<CspViolation[]>
  */
 export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOffWorker: void }>({
   // No worker starts with a proxy in its environment, a variable that sends a launch elsewhere, or a browser to connect to: each goes round the resolver rules.
+  // Nor with a name on Object.prototype, which then takes none for the rest of the worker: Playwright reads launch and context options inherited from it.
   handsOffWorker: [
     async ({ connectOptions }, use) => {
       refuseRoundTheRules(process.env, connectOptions);
+      lockInheritedOptions();
       await use();
     },
     { scope: 'worker', auto: true },
   ],
-  // And each launch in the worker, its own browser's and a spec's alike, checks the environment, Object.prototype and the options it starts from again as it starts (they can change after the worker starts); connecting to a browser, Electron and Android are refused.
+  // And each launch in the worker, its own browser's and a spec's alike, checks the environment, Object.prototype, the options it starts from and a Chromium's args as it is called, and the first two again as it resolves (refuseRoundTheRulesAtEachLaunch); connecting to a browser, Electron and Android are refused.
   playwright: [
     async ({ playwright, connectOptions }, use) => {
       refuseRoundTheRulesAtEachLaunch(playwright, connectOptions);

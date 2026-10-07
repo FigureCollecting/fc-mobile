@@ -219,6 +219,18 @@ export function refuseInheritedOptions(prototype: object = Object.prototype): vo
   }
 }
 
+/**
+ * Runs refuseInheritedOptions on the prototype, then stops any name being
+ * added to it for good (Object.preventExtensions, which nothing undoes):
+ * Playwright reads an inherited launch or context option a few ticks after
+ * the call, past any check made as it is called. Every e2e worker runs it as
+ * it starts (e2e/fixtures.ts).
+ */
+export function lockInheritedOptions(prototype: object = Object.prototype): void {
+  refuseInheritedOptions(prototype);
+  Object.preventExtensions(prototype);
+}
+
 /** Launch options that take the resolver rules off Chromium or send it round them, whatever its args: each with why. */
 const LAUNCH_BYPASSES = new Map([
   ['ignoreDefaultArgs', IGNORES_ARGS],
@@ -228,14 +240,25 @@ const LAUNCH_BYPASSES = new Map([
 ]);
 /** Playwright's own test hooks (__testHookSeleniumRemoteURL sends a launch to a Selenium grid). */
 const TEST_HOOK = '__testHook';
+/** Why an option under a getter or setter is refused, whatever its name. */
+const UNREADABLE = 'is a getter or setter, which the hands-off check cannot read as the launch will';
+
+/**
+ * Environments a launch check read and handed its launch, frozen: the one its
+ * browser starts with, which a launcher the launch hands its options on to
+ * (launchServer's) takes as checked.
+ */
+const CHECKED_ENVIRONMENTS = new WeakSet<object>();
 
 /**
  * Throws if the options a launch starts from (each of `sources`: the worker's
  * defaults, then the launch's own, which Playwright merges in that order)
- * carry a LAUNCH_BYPASSES option set to anything but undefined, or under an
- * accessor whatever it returns, or a Playwright test hook; or if one is a
- * Proxy, which this check cannot read as Playwright will. Every own property
- * counts, enumerable or not. Every reason, in one error.
+ * carry a LAUNCH_BYPASSES option set to anything but undefined (an env a
+ * launch check handed on excepted), or a Playwright test hook; or any option
+ * under a getter or setter, which can answer this check one thing and the
+ * launch another; or if one is a Proxy, which this check cannot read as
+ * Playwright will. Every own property counts, enumerable or not. Every
+ * reason, in one error.
  */
 export function refuseLaunchBypasses(sources: readonly unknown[]): void {
   const reasons: string[] = [];
@@ -246,10 +269,70 @@ export function refuseLaunchBypasses(sources: readonly unknown[]): void {
     }
     for (const [name, property] of Object.entries(Object.getOwnPropertyDescriptors(Object(options)))) {
       const why = LAUNCH_BYPASSES.get(name) ?? (name.startsWith(TEST_HOOK) ? 'is a Playwright test hook, which can send the launch to a browser elsewhere' : undefined);
-      if (why !== undefined && (!('value' in property) || property.value !== undefined)) reasons.push(`${name} in this launch's options ${why}`);
+      if (!('value' in property)) reasons.push(`${name} in this launch's options ${why ?? UNREADABLE}`);
+      else if (why !== undefined && property.value !== undefined && !(name === 'env' && CHECKED_ENVIRONMENTS.has(property.value as object))) {
+        reasons.push(`${name} in this launch's options ${why}`);
+      }
     }
   }
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
+}
+
+/** The switch the hands-off rules ride on: a Chromium launch's one arg. */
+const RULES_SWITCH = '--host-resolver-rules=';
+/** A first rule that sends every host to this machine (a spec's sentinel), hands-off hosts included. */
+const EVERY_HOST_TO_LOOPBACK = /^MAP \* 127\.0\.0\.1(?::\d+)?$/;
+/** The whitespace Chromium trims off a rule and its parts: ASCII only. */
+const ASCII_SPACE = /^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g;
+
+/** A rule as Chromium reads it: split at each space, each part trimmed, empty parts dropped. */
+function ruleParts(rule: string): string[] {
+  return rule
+    .split(' ')
+    .map((part) => part.replace(ASCII_SPACE, ''))
+    .filter((part) => part !== '');
+}
+
+/**
+ * Whether a rule after the hands-off ones (or after every host to 127.0.0.1)
+ * leaves every hands-off host where those put it: a MAP (the first MAP that
+ * matches a host wins), or an EXCLUDE of one named host that is not hands-off
+ * (an EXCLUDE that matches a host takes it off every MAP, those first).
+ */
+function keepsTheRules(rule: string): boolean {
+  const [kind = '', pattern = '', ...rest] = ruleParts(rule);
+  if (kind.toLowerCase() === 'map') return rest.length === 1;
+  return kind.toLowerCase() === 'exclude' && pattern !== '' && rest.length === 0 && !/[*?\\]/.test(pattern) && !isHandsOffHost(pattern);
+}
+
+/**
+ * Throws unless a Chromium launch's args (the worker's, or the launch's own
+ * over them, as Playwright merges them) are one --host-resolver-rules switch
+ * whose list starts with the hands-off rules (built afresh), or sends every
+ * host to 127.0.0.1 first (a spec's sentinel), and goes on only with rules
+ * that keep every hands-off host where those put it. Any other arg is
+ * refused, whatever it is: Chromium has switches enough that open another
+ * way out (a proxy, a debugging port).
+ */
+export function refuseLaunchArgs(args: unknown): void {
+  const refused = (why: string) => new Error(`hands-off: this Chromium launch's args ${why}`);
+  if (args === undefined || (Array.isArray(args) && args.length === 0)) throw refused('leave out the hands-off resolver rules');
+  if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) throw refused('are not an array of strings, which the hands-off check cannot read');
+  const other = (args as string[]).find((arg, i) => i > 0 || !arg.startsWith(RULES_SWITCH));
+  if (other !== undefined) throw refused(`hold ${JSON.stringify(other)}: a Chromium launch's args are one --host-resolver-rules switch and nothing else`);
+  const list = (args[0] as string).slice(RULES_SWITCH.length);
+  const rules = handsOffResolverRules();
+  let after: string[];
+  if (list === rules) after = [];
+  else if (list.startsWith(`${rules},`)) after = list.slice(rules.length + 1).split(',');
+  else if (EVERY_HOST_TO_LOOPBACK.test(list.split(',')[0]!)) after = list.split(',').slice(1);
+  else throw refused('do not start with the hands-off rules, or send every host to 127.0.0.1 first');
+  const loose = after.find((rule) => !keepsTheRules(rule));
+  if (loose !== undefined) {
+    throw refused(
+      `hold the rule ${JSON.stringify(loose.replace(ASCII_SPACE, ''))}, which could take a hands-off host off them: after the hands-off rules, or every host to 127.0.0.1, only MAP rules and EXCLUDE of a named host that is not hands-off may follow`,
+    );
+  }
 }
 
 /** The browser-type members that start a browser, by the index of their options: each is checked first. */
@@ -265,10 +348,33 @@ const OTHER_OPENERS = [
   ['_electron', ['launch']],
   ['_android', ['connect', 'devices', 'launchServer']],
 ] as const;
+/**
+ * Members of a browser that open a session on the whole browser, from which a
+ * context with a proxy of its own (CDP's Target.createBrowserContext) goes
+ * round the resolver rules and every guard: each refused.
+ */
+const BROWSER_SESSIONS = ['newBrowserCDPSession'];
 const CHECKS_EACH_LAUNCH = Symbol.for('fc-mobile.e2e.checksEachLaunch');
 
-// hands-off-scan: a browser type's link to its playwright object, and the options every launch in the worker starts from, which the launch check reads.
-type Launching = { _playwright?: { _defaultLaunchOptions?: unknown } };
+/** What a launch gives back: a browser, a persistent context (with its browser), or a browser server; each closes. */
+type Launched = { close?: () => unknown; browser?: () => unknown } | null | undefined;
+
+/**
+ * What a launch will read at `name` on `object` (or what it inherits there):
+ * refused if a getter or setter, which can answer this check one thing and
+ * the launch another, or if held in a Proxy, which this check cannot read as
+ * the launch will.
+ */
+function readAsLaunched(object: unknown, name: string): unknown {
+  for (let at = object; at !== null && (typeof at === 'object' || typeof at === 'function'); at = Object.getPrototypeOf(at)) {
+    if (valueTypes.isProxy(at)) throw new Error("hands-off: this launch's defaults are held in a Proxy, which the hands-off check cannot read");
+    const property = Object.getOwnPropertyDescriptor(at, name);
+    if (property === undefined) continue;
+    if (!('value' in property)) throw new Error(`hands-off: ${name} ${UNREADABLE}`);
+    return property.value;
+  }
+  return undefined;
+}
 
 /**
  * Replaces the member `name` where `object` takes it from (itself, or a
@@ -291,37 +397,84 @@ const refusing = (what: string) => () => async () => {
 };
 
 /**
+ * Refuses the BROWSER_SESSIONS on the browser a launch gave back (a
+ * persistent context's own), where its class keeps them: so on every browser
+ * of that class.
+ */
+function refuseBrowserSessions(launched: Launched): void {
+  const browser = typeof launched?.browser === 'function' ? launched.browser() : launched;
+  for (const name of BROWSER_SESSIONS) {
+    replaceMember(Object(browser), name, refusing(`${name} opens a session on the whole browser, which can make a context with a proxy of its own that goes round the hands-off resolver rules`));
+  }
+}
+
+/**
  * Makes every launch on these browser types (the worker's own browser's
  * included: Playwright's browser fixture launches through them), wherever it
- * is taken from, run refuseRoundTheRules on the environment as it is when the
- * launch starts, so a proxy or a connect variable written after the worker
- * started is refused before anything launches; refuseInheritedOptions; and
- * refuseLaunchBypasses on the options it starts from, the worker's defaults
- * as they are then and its own. Refuses outright the members that connect to
- * a browser (CONNECTORS) and Playwright's Electron and Android openers
- * (OTHER_OPENERS). Installs each once.
+ * is taken from, and on each one's own launcher (_serverLauncher, which
+ * launchServer hands on to), check as it is called: refuseRoundTheRules on the
+ * environment as it is then, refuseInheritedOptions, refuseLaunchBypasses on
+ * the options it starts from (the worker's defaults, read as the launch will,
+ * and its own), and for a Chromium launch (anything not Firefox's or
+ * WebKit's) refuseLaunchArgs on its args, its own over the worker's. The
+ * launch is handed a copy of its options with that environment, frozen, and a
+ * frozen copy of those args: what was checked is what it starts with, however
+ * either changes after the call. As the launch resolves, the environment and
+ * Object.prototype are checked again (Playwright reads both a few ticks after
+ * the call): on a refusal, what it launched is closed. The browser it gives
+ * back refuses BROWSER_SESSIONS. Refuses outright the members that connect to
+ * a browser (CONNECTORS), Playwright's Electron and Android openers
+ * (OTHER_OPENERS) and Android's own launcher. Installs each once.
  */
 export function refuseRoundTheRulesAtEachLaunch(
   types: { chromium: object; firefox: object; webkit: object; _electron?: object; _android?: object },
   connectOptions: unknown,
   env: () => Record<string, string | undefined> = () => process.env,
 ): void {
+  const launcherOf = (type: object | undefined): unknown => (type as { _serverLauncher?: unknown } | undefined)?._serverLauncher;
+  /** What launches a browser with no resolver rules to keep: Firefox and WebKit, and their launchers. Anything else is read as Chromium. */
+  const ruleless = new Set<unknown>([types.firefox, types.webkit, launcherOf(types.firefox), launcherOf(types.webkit)].filter((owner) => owner !== undefined));
+  const checking = (at: number) => (start: (...args: unknown[]) => Promise<unknown>) =>
+    async function (this: unknown, ...args: unknown[]) {
+      const environment = Object.freeze({ ...env() });
+      refuseRoundTheRules(environment, connectOptions);
+      refuseInheritedOptions();
+      // hands-off-scan: reads the options every launch in this worker starts from, as the launch will, to refuse what they carry.
+      const defaults = readAsLaunched(readAsLaunched(this, '_playwright'), '_defaultLaunchOptions');
+      const own = args[at];
+      refuseLaunchBypasses([defaults, own]);
+      const options: Record<string, unknown> = { ...Object(own), env: environment };
+      if (!ruleless.has(this)) {
+        const merged: unknown = { ...Object(defaults), ...Object(own) }.args;
+        options.args = Array.isArray(merged) ? Object.freeze([...merged]) : merged;
+        refuseLaunchArgs(options.args);
+      }
+      CHECKED_ENVIRONMENTS.add(environment);
+      const handed = [...args];
+      handed[at] = options;
+      const launched = (await start.apply(this, handed)) as Launched;
+      try {
+        refuseRoundTheRules(env(), connectOptions);
+        refuseInheritedOptions();
+      } catch (error) {
+        try {
+          await launched?.close?.();
+        } catch {
+          // The refusal is what the caller sees.
+        }
+        throw error;
+      }
+      refuseBrowserSessions(launched);
+      return launched;
+    };
   for (const type of [types.chromium, types.firefox, types.webkit]) {
-    for (const [name, at] of LAUNCHERS) {
-      replaceMember(type, name, (start) =>
-        async function (this: Launching, ...args: unknown[]) {
-          refuseRoundTheRules(env(), connectOptions);
-          refuseInheritedOptions();
-          // hands-off-scan: reads the options every launch in this worker starts from, to refuse what they carry.
-          refuseLaunchBypasses([this._playwright?._defaultLaunchOptions, args[at]]);
-          return start.apply(this, args);
-        },
-      );
-    }
+    for (const [name, at] of LAUNCHERS) replaceMember(type, name, checking(at));
+    replaceMember(Object(launcherOf(type)), 'launchServer', checking(0));
     for (const name of CONNECTORS) replaceMember(type, name, refusing(`${name} connects this worker to a browser with launch args of its own`));
   }
   for (const [key, names] of OTHER_OPENERS) {
     for (const name of names) replaceMember(Object(types[key]), name, refusing(`${key}.${name} opens a browser the hands-off resolver rules are not on`));
+    replaceMember(Object(launcherOf(types[key])), 'launchServer', refusing(`${key}._serverLauncher.launchServer opens a browser the hands-off resolver rules are not on`));
   }
 }
 

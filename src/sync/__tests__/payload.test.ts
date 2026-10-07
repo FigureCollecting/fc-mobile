@@ -134,6 +134,14 @@ describe('buildPayload refuses what the server would reject as payload_invalid',
     expect(() => buildPayload(family, fields as Record<string, unknown>, AT, 'UTC')).toThrow(PayloadInvalidError);
   });
 
+  it.each(['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'])('refuses an extra %s on write and on read', (name) => {
+    const fields = JSON.parse(`{"head_id":"${HEAD}","${name}":"x"}`) as Record<string, unknown>;
+    expect(() => buildPayload('occ/head', fields, AT, 'UTC')).toThrow(PayloadInvalidError);
+    const stored = JSON.stringify({ head_id: HEAD, edited_at: '2026-09-26T12:05:09.042-05:00', tz: 'America/Chicago' });
+    expect(readPayload('occ/head', stored)).toBeDefined();
+    expect(readPayload('occ/head', `${stored.slice(0, -1)},"${name}":"x"}`)).toBeUndefined();
+  });
+
   it('counts a note in code points, not UTF-16 units', () => {
     const emoji = '\u{1F600}'.repeat(10000);
     expect(emoji.length).toBe(20000);

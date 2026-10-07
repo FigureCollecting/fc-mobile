@@ -40,6 +40,15 @@ describe('compileSchema: the keywords the contract schemas use', () => {
     expect(ok({ additionalProperties: { type: 'string' } }, { c: 1 })).toBe(false);
   });
 
+  // `name in v` walks the prototype chain: every Object.prototype name looked declared, present
+  // or required. JSON.parse makes __proto__ an own property, as a payload off the wire would.
+  it.each(['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'])('treats %s as just another property name', (name) => {
+    const closed: Schema = { type: 'object', additionalProperties: false, properties: { a: { type: 'string' } } };
+    expect(compileSchema(closed)(JSON.parse(`{"a":"x","${name}":"y"}`))).toBe(`$: extra property ${name}`);
+    expect(compileSchema({ type: 'object', required: [name] })({})).toBe(`$: missing ${name}`);
+    expect(ok({ type: 'object', properties: { [name]: { type: 'integer' } } }, {})).toBe(true);
+  });
+
   it('applies object, string, number and array keywords only to their own type', () => {
     expect(ok({ required: ['a'], minLength: 2, minimum: 1, maxItems: 0, items: false, pattern: '^z$' }, true)).toBe(true);
     expect(ok({ required: ['a'], maxItems: 0, items: false, minimum: 1 }, 'x')).toBe(true);

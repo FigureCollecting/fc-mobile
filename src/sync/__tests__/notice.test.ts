@@ -1,8 +1,11 @@
 // The client-only 'replaced by another device' notice (GR 2026-09-26 D11): shown when a value this
 // device wrote is replaced by a different value another device wrote. It needs no wire change.
 import { describe, expect, it } from 'vitest';
+import { normaliseDeviceId } from '@figurecollecting/fc-api-contract';
 import type { UserStore } from '../../storage/userStore';
+import { replacedMine } from '../facetMerge';
 import {
+  DEVICE,
   OTHER_DEVICE,
   PushOutcome,
   SERVER_DEVICE,
@@ -142,5 +145,22 @@ describe("'replaced by another device'", () => {
     const { store: mine } = await landed();
     await mine.apply([ev(NOTE, token(T0 + 5_000, 0, OTHER_DEVICE), 'upsert', '{bad')]);
     expect(await notice(mine)).not.toBeNull();
+  });
+});
+
+describe("'replaced by another device' compares content, not its key order", () => {
+  const mine = (fields: Record<string, unknown>) => ({ version: token(T0, 0), op: 'upsert' as const, payload: JSON.stringify({ ...fields, ...STAMP }) });
+  const theirs = (fields: Record<string, unknown>) => ({ version: token(T0 + 5_000, 0, OTHER_DEVICE), op: 'upsert' as const, payload: JSON.stringify(fields) });
+  const replaced = (a: Record<string, unknown>, b: Record<string, unknown>) => replacedMine(mine(a), theirs(b), normaliseDeviceId(DEVICE));
+
+  it('does not show when another device wrote the same fields in another order, at any depth', () => {
+    expect(replaced({ reason: 'sold', on: '2026-09-01' }, { on: '2026-09-01', reason: 'sold', ...STAMP })).toBeNull();
+    const answer = { item: 'figure', rev: '1', choice: 'per_copy', copies: [{ occ_id: 'a', keep: true }] };
+    expect(replaced(answer, { copies: [{ keep: true, occ_id: 'a' }], choice: 'per_copy', rev: '1', item: 'figure' })).toBeNull();
+  });
+
+  it('still shows when the content differs, the order of an array included', () => {
+    expect(replaced({ reason: 'sold', on: '2026-09-01' }, { on: '2026-09-02', reason: 'sold' })).not.toBeNull();
+    expect(replaced({ copies: ['a', 'b'] }, { copies: ['b', 'a'] })).not.toBeNull();
   });
 });

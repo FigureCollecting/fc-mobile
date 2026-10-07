@@ -178,6 +178,18 @@ describe('mark arrived: status and filing in one group', () => {
     expect(await payloadOf(store, occFacetKey(occ, 'collection'))).toMatchObject({ collection: 'former/default' });
   });
 
+  it('files a status change into the collection asked for, and refuses one of another kind, writing nothing', async () => {
+    const { store } = await fresh();
+    const occ = await store.createCopy(HEAD[0], 'owned');
+    const grails = await store.createCollection('wished', 'Grails');
+    await store.setStatus(occ, 'wished', { collection: `wished/${grails}` });
+    expect(await payloadOf(store, occFacetKey(occ, 'collection'))).toMatchObject({ collection: `wished/${grails}` });
+    expect((await store.getView()).copies[0]).toMatchObject({ status: 'wished', shown_in: `wished/${grails}` });
+    const before = (await store.listOutbox()).length;
+    await expect(store.setStatus(occ, 'owned', { collection: `wished/${grails}` })).rejects.toMatchObject({ code: 'kind_mismatch' });
+    expect((await store.listOutbox()).length).toBe(before);
+  });
+
   it('refuses a status change for a copy it does not know or cannot show', async () => {
     const { store } = await fresh();
     await expect(store.setStatus('b0000000-0000-4000-8000-000000000000', 'owned')).rejects.toMatchObject({ code: 'no_copy' });
@@ -231,6 +243,29 @@ describe('move and re-point', () => {
     await store.repointCopy(headless, HEAD[2]);
     expect((await store.getView()).copies.find((c) => c.occ_id === headless)).toMatchObject({ hidden: null, shown_in: 'owned/default' });
     await expect(store.repointCopy('e0000000-0000-4000-8000-000000000000', HEAD[2])).rejects.toMatchObject({ code: 'no_copy' });
+  });
+});
+
+describe('an answered re-point that did not land', () => {
+  it.each([
+    ['REVIEW', PushOutcome.REVIEW],
+    ['REJECTED', PushOutcome.REJECTED],
+  ] as const)('%s leaves the by_head index on the head the copy reverts to', async (_name, outcome) => {
+    const { db, store } = await fresh();
+    await store.onStatus(status(T0), 0);
+    const occ = await store.createCopy(HEAD[0], 'owned');
+    let next = await store.nextBatch();
+    if (next.kind !== 'send') throw new Error(next.kind);
+    await store.recordPush(next.batch.clientId, { results: next.batch.request.events.map((e) => result(e.facetKey, PushOutcome.APPLIED, e)) });
+    await store.repointCopy(occ, HEAD[1]);
+    const byHead = async (head: string) =>
+      (await db.getAllFromIndex('facets', 'by_head', IDBKeyRange.only(['user-a', head]))).map((r) => r.facet_key);
+    expect(await byHead(HEAD[1])).toEqual([occFacetKey(occ, 'head')]);
+    next = await store.nextBatch();
+    if (next.kind !== 'send') throw new Error(next.kind);
+    await store.recordPush(next.batch.clientId, { results: [result(occFacetKey(occ, 'head'), outcome, undefined, 'payload_invalid')] });
+    expect(await byHead(HEAD[1])).toEqual([]);
+    expect(await byHead(HEAD[0])).toEqual([occFacetKey(occ, 'head')]);
   });
 });
 

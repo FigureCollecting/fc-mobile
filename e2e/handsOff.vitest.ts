@@ -1,9 +1,13 @@
+import fs from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import {
   HANDS_OFF_DOMAINS,
   HANDS_OFF_LAUNCH_ARGS,
   HANDS_OFF_LAUNCH_OPTIONS,
+  MANAGED_POLICY_DIRS,
   blockHandsOff,
   configBypasses,
   guardContext,
@@ -17,6 +21,7 @@ import {
   refuseInheritedOptions,
   refuseLaunchArgs,
   refuseLaunchBypasses,
+  refuseManagedPolicies,
   refuseRoundTheRules,
   refuseRoundTheRulesAtEachLaunch,
   type ConfigUse,
@@ -725,6 +730,23 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
     );
   });
 
+  it.each([
+    'PLAYWRIGHT_BROWSERS_PATH',
+    'npm_config_playwright_browsers_path',
+    'npm_package_config_playwright_browsers_path',
+    'XDG_CACHE_HOME',
+    'PLAYWRIGHT_HOST_PLATFORM_OVERRIDE',
+    'playwright_browsers_path',
+  ])("refuses %s in the environment, in any case, '0' included: it chooses the browser binary Playwright launches, which may leave out the args it is given", (name) => {
+    for (const value of ['/opt/browsers', '0']) {
+      expect(() => refuseRoundTheRules({ [name]: value }, undefined), value).toThrow(
+        `hands-off: ${name} in this worker's environment chooses the browser binary Playwright launches, which may leave out the args it is given`,
+      );
+    }
+    // Empty is unset to Playwright too.
+    expect(() => refuseRoundTheRules({ [name]: '' }, undefined)).not.toThrow();
+  });
+
   it('refuses a browser to connect to (connectOptions, or PW_TEST_CONNECT_WS_ENDPOINT): it has launch args of its own', () => {
     expect(() => refuseRoundTheRules({}, { wsEndpoint: 'ws://127.0.0.1:1' })).toThrow(
       'hands-off: connectOptions connects this worker to a browser with launch args of its own',
@@ -738,8 +760,81 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
   });
 });
 
+describe('refuseManagedPolicies (machine-wide Chromium policies, which outrank its command line)', () => {
+  /** A stand-in for a policy root such as /etc/opt/chrome_for_testing/policies, in a fresh directory; removed after `use`. */
+  function withPolicyRoot(use: (root: string) => void): void {
+    const base = fs.mkdtempSync(path.join(tmpdir(), 'hands-off-policies-'));
+    try {
+      use(path.join(base, 'policies'));
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }
+  const refusal = (file: string) => `hands-off: ${file} is a machine-wide Chromium policy, which outranks its command line (a proxy there goes round the hands-off resolver rules and --no-proxy-server)`;
+
+  it("names where Chrome for Testing (Playwright's chromium), Google Chrome, Chromium and Edge read them on Linux", () => {
+    expect(MANAGED_POLICY_DIRS).toEqual(['/etc/opt/chrome_for_testing/policies', '/etc/opt/chrome/policies', '/etc/chromium/policies', '/etc/opt/edge/policies']);
+    expect(Object.isFrozen(MANAGED_POLICY_DIRS)).toBe(true);
+  });
+
+  it('passes a root that is not there, an empty one, and one with only empty managed and recommended directories', () => {
+    withPolicyRoot((root) => {
+      expect(() => refuseManagedPolicies([root])).not.toThrow();
+      fs.mkdirSync(root);
+      expect(() => refuseManagedPolicies([root])).not.toThrow();
+      fs.mkdirSync(path.join(root, 'managed'));
+      fs.mkdirSync(path.join(root, 'recommended'));
+      expect(() => refuseManagedPolicies([root])).not.toThrow();
+    });
+  });
+
+  it.each(['managed', 'recommended', 'managed/deeper', '.'])('refuses a file anywhere under the root (in %s), whatever it is called or holds', (dir) => {
+    withPolicyRoot((root) => {
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
+      const file = path.join(root, dir, 'x.txt');
+      fs.writeFileSync(file, '');
+      expect(() => refuseManagedPolicies([root])).toThrow(refusal(file));
+    });
+  });
+
+  it('refuses a symbolic link under the root, even one that leads nowhere', () => {
+    withPolicyRoot((root) => {
+      fs.mkdirSync(path.join(root, 'managed'), { recursive: true });
+      const link = path.join(root, 'managed', 'p.json');
+      fs.symlinkSync('/nowhere/at/all.json', link);
+      expect(() => refuseManagedPolicies([root])).toThrow(refusal(link));
+    });
+  });
+
+  it('refuses a root it cannot read as a directory: it cannot say none is there', () => {
+    withPolicyRoot((root) => {
+      fs.mkdirSync(path.dirname(root), { recursive: true });
+      fs.writeFileSync(root, '{}');
+      expect(() => refuseManagedPolicies([root])).toThrow(`hands-off: ${root} cannot be read (ENOTDIR), so a machine-wide Chromium policy there cannot be ruled out`);
+    });
+  });
+
+  it('lists every reason at once, and reads MANAGED_POLICY_DIRS unless given others', () => {
+    withPolicyRoot((root) => {
+      fs.mkdirSync(path.join(root, 'managed'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'managed', 'a.json'), '{}');
+      fs.writeFileSync(path.join(root, 'b.json'), '{}');
+      expect(() => refuseManagedPolicies([root, root])).toThrow(/^hands-off: .*a\.json .*; .*b\.json .*; .*a\.json .*; .*b\.json .*$/);
+    });
+    const read = vi.spyOn(fs, 'readdirSync');
+    try {
+      refuseManagedPolicies();
+      expect(read.mock.calls.map(([dir]) => dir)).toEqual([...MANAGED_POLICY_DIRS]);
+    } finally {
+      read.mockRestore();
+    }
+  });
+});
+
 describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its own browser's included)", () => {
-  const LAUNCHERS = ['launch', 'launchPersistentContext', 'launchServer'];
+  const LAUNCHERS = ['launch', 'launchPersistentContext'];
+  /** launchServer, refused outright: its private _userDataDir option opens a profile directory. */
+  const SERVE = ['launch', 'Server'].join('');
   const CONNECTORS = ['connect', 'connectOverCDP', '_connect', '_connectToWorker'];
   const ENGINES = ['chromium', 'firefox', 'webkit'] as const;
   /** Playwright's experimental Electron and Android, and what each opens a browser with: as members, written out, either would trip e2e/handsOffScan.ts. */
@@ -850,7 +945,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     expect(close).toHaveBeenCalledOnce();
     delete env.SELENIUM_REMOTE_URL;
 
-    const serving = start(pw.webkit, 'launchServer');
+    const serving = start(pw.webkit, 'launch');
     Object.defineProperty(Object.prototype, 'ignoreDefaultArgs', { value: [RULES], configurable: true });
     try {
       finish();
@@ -968,9 +1063,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     expect(ENGINES.flatMap((engine) => pw[engine].calls)).toEqual([]);
   });
 
-  it("checks launchServer on each browser type's own launcher too (_serverLauncher, which the browser type's launchServer hands on to), and refuses Android's", async () => {
-    // Its name and Android's held in variables: written out, either would trip e2e/handsOffScan.ts in this file.
-    const SERVE = LAUNCHERS[2]!;
+  it("refuses launchServer outright, on every browser type and on each one's own launcher (_serverLauncher), Android's too: its private _userDataDir option opens a profile directory, whose own settings no check reads", async () => {
     const ANDROID = Object.keys(OTHER_OPENERS)[1]!;
     type Launcher = Record<string, (...args: unknown[]) => Promise<unknown>> & { calls: unknown[] };
     /** Playwright's launcher class: each instance records the options it was handed. */
@@ -988,32 +1081,51 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     const launchers = { chromium: new ServerLauncher() as Launcher, firefox: new ServerLauncher() as Launcher, webkit: new ServerLauncher() as Launcher };
     const android = new AndroidLauncher() as Launcher;
     const pw = fakePlaywright();
-    for (const engine of ENGINES) {
-      Object.assign(pw[engine], {
-        _serverLauncher: launchers[engine],
-        // As Playwright's: the worker's options, then its own, handed to its launcher.
-        [SERVE](this: { _serverLauncher: Launcher; _playwright: Record<string, object> }, options: object = {}) {
-          return start(this._serverLauncher, SERVE, { ...this._playwright[HOLD], ...options });
-        },
-      });
-    }
+    for (const engine of ENGINES) Object.assign(pw[engine], { [SERVE]: serve, _serverLauncher: launchers[engine] });
     Object.assign(pw.others[ANDROID]!, { _serverLauncher: android });
-    const env: Record<string, string | undefined> = { PATH: '/usr/bin' };
-    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => env);
-    // Checked on the browser type, then again on its launcher, which takes the environment the first check handed on.
-    await expect(start(pw.chromium, SERVE, { headless: true })).resolves.toBe('server');
-    expect(launchers.chromium.calls).toEqual([{ headless: true, args: [RULES, NO_PROXY], env: { PATH: '/usr/bin' } }]);
-    // Straight to a launcher: its own options only.
-    await expect(start(launchers.chromium, SERVE, { args: ['--remote-debugging-port=9334'] })).rejects.toThrow(`hands-off: this Chromium launch's args hold "--remote-debugging-port=9334"`);
-    // Firefox's and WebKit's launchers have no resolver rules to keep.
-    for (const engine of ['firefox', 'webkit'] as const) {
-      await expect(start(launchers[engine], SERVE, {}), engine).resolves.toBe('server');
-      expect(launchers[engine].calls).toEqual([{ env: { PATH: '/usr/bin' } }]);
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({ PATH: '/usr/bin' }));
+    for (const engine of ENGINES) {
+      for (const options of [{ args: HANDS_OFF_LAUNCH_ARGS }, { args: HANDS_OFF_LAUNCH_ARGS, ['_userData' + 'Dir']: '/tmp/profile' }]) {
+        await expect(start(pw[engine], SERVE, options), engine).rejects.toThrow(`hands-off: ${SERVE} opens a browser whose options (a profile directory among them) no hands-off check reads`);
+        await expect(start(launchers[engine], SERVE, options), `${engine} launcher`).rejects.toThrow(
+          `hands-off: ${engine}._serverLauncher.${SERVE} opens a browser whose options (a profile directory among them) no hands-off check reads`,
+        );
+      }
     }
-    env.http_proxy = 'http://127.0.0.1:9';
-    await expect(start(launchers.webkit, SERVE, {})).rejects.toThrow("hands-off: http_proxy in this worker's environment sends requests through a proxy");
-    await expect(start(android, SERVE, {})).rejects.toThrow('hands-off: _android._serverLauncher.launchServer opens a browser the hands-off resolver rules are not on');
-    expect([launchers.chromium.calls.length, launchers.webkit.calls.length, android.calls.length]).toEqual([1, 1, 0]);
+    await expect(start(android, SERVE, {})).rejects.toThrow(`hands-off: _android._serverLauncher.${SERVE} opens a browser the hands-off resolver rules are not on`);
+    expect([...ENGINES.map((engine) => launchers[engine].calls.length), android.calls.length]).toEqual([0, 0, 0, 0]);
+  });
+
+  it("hands a Chromium launch the rules arg as it first read it: an args array whose first element answers one thing to the check and another after", async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    let reads = 0;
+    const args: string[] = [];
+    Object.defineProperty(args, 0, { get: () => (reads++ === 0 ? RULES : '--host-resolver-rules=MAP fc-canary.test 127.0.0.1'), enumerable: true, configurable: true });
+    await expect(start(pw.chromium, 'launch', { args })).resolves.toBe('chromium.launch');
+    expect(handed(pw.chromium).args).toEqual([RULES, NO_PROXY]);
+    expect(reads).toBe(1);
+  });
+
+  it('refuses every launch, on every browser type, while a machine-wide Chromium policy is there (MANAGED_POLICY_DIRS): it outranks the command line', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    const policy = `${MANAGED_POLICY_DIRS[0]}/managed/proxy.json`;
+    const read = vi.spyOn(fs, 'readdirSync').mockImplementation(((dir: string) =>
+      dir === MANAGED_POLICY_DIRS[0] ? [{ name: 'proxy.json', parentPath: `${MANAGED_POLICY_DIRS[0]}/managed`, isDirectory: () => false }] : []) as never);
+    try {
+      for (const engine of ENGINES) {
+        for (const name of LAUNCHERS) {
+          await expect(launchWith(pw[engine], name, { args: HANDS_OFF_LAUNCH_ARGS }), `${engine}.${name}`).rejects.toThrow(
+            `hands-off: ${policy} is a machine-wide Chromium policy, which outranks its command line`,
+          );
+        }
+        expect(pw[engine].calls).toEqual([]);
+      }
+    } finally {
+      read.mockRestore();
+    }
+    await expect(start(pw.chromium, 'launch')).resolves.toBe('chromium.launch');
   });
 
   it('refuses newBrowserCDPSession on each browser a launch returns, wherever its class keeps it, and on the browser of a persistent context: a session on the whole browser can make a context with a proxy of its own', async () => {
@@ -1033,7 +1145,6 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     await expect(new FakeBrowser().newBrowserCDPSession()).rejects.toThrow(refused);
     await start(pw.webkit, 'launchPersistentContext', '');
     await expect(persistent.newBrowserCDPSession()).rejects.toThrow(refused);
-    await expect(start(pw.firefox, 'launchServer')).resolves.toEqual({ server: true });
   });
 
   it('refuses connect, connectOverCDP and the private _connect and _connectToWorker outright, on every browser type: a browser connected to has launch args of its own', async () => {
@@ -1093,7 +1204,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     expect(reads).toBe(2);
     env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
     await expect(startOn(BrowserType.prototype, types.webkit, 'launch')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
-    await expect(start(types.chromium as never, 'launchServer')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
+    await expect(start(types.chromium as never, SERVE)).rejects.toThrow(`hands-off: ${SERVE} opens a browser whose options (a profile directory among them) no hands-off check reads`);
     await expect(startOn(BrowserType.prototype, types.chromium, 'connect')).rejects.toThrow('hands-off: connect connects this worker');
     expect(calls).toEqual(['firefox.launch']);
   });
@@ -1108,7 +1219,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     const own = { ['executable' + 'Path']: '/opt/chromium-wrapper' };
     const binary = 'hands-off: executablePath in this launch\'s options launches a browser binary that may leave out the args it is given';
     await expect(start(pw.chromium, 'launch', own)).rejects.toThrow(binary);
-    await expect(start(pw.firefox, 'launchServer', own)).rejects.toThrow(binary);
+    await expect(start(pw.firefox, 'launch', own)).rejects.toThrow(binary);
     // launchPersistentContext takes its options second, after the profile directory.
     await expect(start(pw.webkit, 'launchPersistentContext', '', own)).rejects.toThrow(binary);
     defaults['ignoreDefault' + 'Args'] = true;

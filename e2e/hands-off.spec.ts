@@ -415,15 +415,17 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     });
   }
 
-  test('starts with neither, and refuses http_proxy, PW_TEST_CONNECT_WS_ENDPOINT or SELENIUM_REMOTE_URL', async ({}, testInfo) => {
+  test("starts with neither, and refuses http_proxy, PW_TEST_CONNECT_WS_ENDPOINT, SELENIUM_REMOTE_URL, or a desktop whose proxy settings Chromium would take", async ({}, testInfo) => {
     test.setTimeout(120_000);
     const runs: [string, Record<string, string>][] = [
       ['neither', {}],
       ['proxied', { http_proxy: 'http://127.0.0.1:9' }],
       ['connected', { PW_TEST_CONNECT_WS_ENDPOINT: 'ws://127.0.0.1:9' }],
       ['selenium', { SELENIUM_REMOTE_URL: 'http://127.0.0.1:9/wd/hub' }],
+      ['desktop', { XDG_CURRENT_DESKTOP: 'KDE', KDE_SESSION_VERSION: '5' }],
+      ['session', { DESKTOP_SESSION: 'gnome' }],
     ];
-    const [neither, proxied, connected, selenium] = await Promise.all(
+    const [neither, proxied, connected, selenium, desktop, session] = await Promise.all(
       runs.map(([name, env]) => {
         const dir = testInfo.outputPath(name);
         mkdirSync(dir, { recursive: true });
@@ -440,6 +442,11 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     expect(connected.code).toBe(1);
     expect(selenium.out).toContain("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
     expect(selenium.code).toBe(1);
+    const fromDesktop = "in this worker's environment can give Chromium a proxy from the desktop's settings, which looks the hands-off hosts up itself";
+    expect(desktop.out).toContain(`hands-off: XDG_CURRENT_DESKTOP ${fromDesktop}; KDE_SESSION_VERSION ${fromDesktop}`);
+    expect(desktop.code).toBe(1);
+    expect(session.out).toContain(`hands-off: DESKTOP_SESSION ${fromDesktop}`);
+    expect(session.code).toBe(1);
   });
 
   test("refuses, as each launch starts and again as it resolves, a proxy or a grid written into its environment after it started or after the launch was called, or an option on Object.prototype: its own browser's launch and a spec's alike", async ({}, testInfo) => {
@@ -527,8 +534,15 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
       `guardedTest.use(JSON.parse(${JSON.stringify('{"launchOptions":{"args":["--proxy-server=http://127.0.0.1:9"]}}')}));`,
       "guardedTest('launches', async ({ browser }) => { await browser.version(); });",
     ].join('\n');
-    const [worker, built, use] = await Promise.all(
-      [workerOptions, builtOptions, builtUse].map((code, i) => {
+    // The same, with a rule list Chromium would drop whole for one character outside ASCII (an exclusion of a host that is not hands-off).
+    const nonAscii = `{"launchOptions":{"args":["--host-resolver-rules=${handsOffResolverRules()}, EXCLUDE ex\u00e4mple.test"]}}`;
+    const builtNonAscii = [
+      ...imports,
+      `guardedTest.use(JSON.parse(${JSON.stringify(nonAscii)}));`,
+      "guardedTest('launches', async ({ browser }) => { await browser.version(); });",
+    ].join('\n');
+    const [worker, built, use, outside] = await Promise.all(
+      [workerOptions, builtOptions, builtUse, builtNonAscii].map((code, i) => {
         const dir = testInfo.outputPath(`options-${i}`);
         mkdirSync(dir, { recursive: true });
         return childRun(dir, {}, `${code}\n`);
@@ -540,6 +554,8 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     expect(built.code).toBe(1);
     expect(use.out).toContain(`hands-off: this Chromium launch's args hold "--proxy-server=http://127.0.0.1:9"`);
     expect(use.code).toBe(1);
+    expect(outside.out).toContain("hands-off: this Chromium launch's args hold a character outside ASCII, for which Chromium drops the whole --host-resolver-rules list, the hands-off rules too");
+    expect(outside.code).toBe(1);
   });
 
   test("refuses Playwright's private and experimental ways to a browser, a launch taken from the browser types' prototype, args off the rules, and a session on a whole browser", async ({}, testInfo) => {
@@ -551,6 +567,10 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     const ways = [
       `import { guardedTest } from ${JSON.stringify(fixtures)};`,
       `import { HANDS_OFF_LAUNCH_ARGS } from ${JSON.stringify(handsOff)};`,
+      "import { createRequire } from 'node:module';",
+      // A launch taken as the spec loads, before any worker fixture runs, from Playwright's core under a name built at run time (the scan reads syntax only).
+      "const core = createRequire(import.meta.url)(['playwright', 'core'].join('-'));",
+      "const early = Reflect.get(Object.getPrototypeOf(core.chromium), 'launch');",
       "guardedTest('opens', async ({ playwright }) => {",
       '  const type = playwright.chromium;',
       '  const ways = [',
@@ -564,6 +584,9 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
       '    }],',
       "    ['a rule list built at run time', () => { delete process.env.SELENIUM_REMOTE_URL; return type.launch(JSON.parse(" + JSON.stringify(offRules) + ')).then((b) => b.close()); }],',
       "    ['a debugging port beside the rules', () => type.launch(JSON.parse(" + JSON.stringify(debugPort) + ')).then((b) => b.close())],',
+      "    ['a launch taken as the spec loaded', () => early.call(type, { args: ['--proxy-server=http://127.0.0.1:9'] }).then((b) => b.close())],",
+      "    ['a profile directory', () => type.launchPersistentContext('profile', { args: HANDS_OFF_LAUNCH_ARGS }).then((c) => c.close())],",
+      "    ['a WebDriver BiDi channel', () => type.launch({ channel: 'bidi-chromium', args: HANDS_OFF_LAUNCH_ARGS }).then((b) => b.close())],",
       "    ['the browser type\\'s own launcher', () => Reflect.get(type, '_server' + 'Launcher')['launch' + 'Server']({ args: ['--remote-debugging-port=9334'] }).then((s) => s.close())],",
       "    ['a session on a whole browser', async () => {",
       '      const browser = await type.launch({ args: HANDS_OFF_LAUNCH_ARGS });',
@@ -595,6 +618,9 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
       "a prototype launch -> hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own",
       `a rule list built at run time -> hands-off: this Chromium launch's args hold the rule "EXCLUDE *.vndb.org", which could take a hands-off host off them`,
       `a debugging port beside the rules -> hands-off: this Chromium launch's args hold "--remote-debugging-port=9334": a Chromium launch's args are one --host-resolver-rules switch and nothing else`,
+      `a launch taken as the spec loaded -> hands-off: this Chromium launch's args hold "--proxy-server=http://127.0.0.1:9"`,
+      "a profile directory -> hands-off: launchPersistentContext is given a profile directory, whose own settings (a proxy among them) no hands-off check reads: give it '' for a fresh one",
+      "a WebDriver BiDi channel -> hands-off: channel bidi-chromium in this launch's options opens the browser over WebDriver BiDi, through a debugging port",
       `the browser type's own launcher -> hands-off: this Chromium launch's args hold "--remote-debugging-port=9334"`,
       'a session on a whole browser -> hands-off: newBrowserCDPSession opens a session on the whole browser',
       'Object.prototype written after a launch is called -> written: false',

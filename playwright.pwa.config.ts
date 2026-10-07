@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { HANDS_OFF_LAUNCH_OPTIONS } from './e2e/handsOff';
 
 /**
  * PWA acceptance against the fc-mobile-web IMAGE (not vite preview), behind
@@ -21,7 +22,7 @@ export default defineConfig({
     {
       name: 'chromium',
       // Full Chromium (new headless): installability is not reported by the headless shell.
-      use: { ...devices['Desktop Chrome'], channel: 'chromium' },
+      use: { ...devices['Desktop Chrome'], channel: 'chromium', launchOptions: HANDS_OFF_LAUNCH_OPTIONS },
     },
   ],
 });

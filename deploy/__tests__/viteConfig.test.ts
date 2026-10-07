@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { ProxyOptions, UserConfig } from 'vite';
 import { describe, expect, it } from 'vitest';
 import config from '../../vite.config';
-import { NGINX_CONF, previewHeaders } from '../securityHeaders';
+import { NGINX_CONF, devServerHeaders, previewHeaders } from '../securityHeaders';
 
 const resolve = (mode: string, env: Record<string, string> = {}): UserConfig => {
   const saved = { ...process.env };
@@ -20,6 +20,15 @@ describe('vite dev proxy', () => {
     expect(proxy.target).toBe('http://127.0.0.1:5052');
     expect(proxy.changeOrigin).toBe(false);
     expect(proxy.rewrite).toBeUndefined();
+  });
+
+  it("serves every response (the app, and any spike page) under the dev CSP for the mode's hosts", () => {
+    const conf = readFileSync(NGINX_CONF, 'utf8');
+    const headers = resolve('development').server?.headers;
+    expect(headers).toEqual(
+      devServerHeaders(conf, { VITE_API_URL: 'http://localhost:5080/api', VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' }),
+    );
+    expect(headers?.['Content-Security-Policy']).toMatch(/^default-src 'self';/);
   });
 
   it('can point at another coordinator', () => {

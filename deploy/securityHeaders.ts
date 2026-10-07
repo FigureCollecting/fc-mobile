@@ -57,3 +57,16 @@ export function previewHeaders(conf: string, env: Record<string, string | undefi
   add('img-src', crossOrigin(env['VITE_IMAGE_MANAGER_URL']));
   return { ...headers, 'Content-Security-Policy': formatCsp(csp) };
 }
+
+/**
+ * The vite dev server's headers, on every response it sends (the app and any
+ * spike page): the mode's preview CSP, so a page in dev loads nothing from a
+ * host the app does not use (none of the hands-off ones, e2e/handsOff.ts),
+ * with inline styles allowed because vite's dev client injects CSS as <style>
+ * elements. A CSP does not stop navigations; only the e2e fixtures do.
+ */
+export function devServerHeaders(conf: string, env: Record<string, string | undefined>): Headers {
+  const csp = parseCsp(previewHeaders(conf, env)['Content-Security-Policy'] as string);
+  (csp['style-src'] as string[]).push("'unsafe-inline'");
+  return { 'Content-Security-Policy': formatCsp(csp) };
+}

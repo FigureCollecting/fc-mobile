@@ -476,8 +476,9 @@ test('a crafted /callback link repeats nothing it says and offers a way back', a
 });
 
 // WK-08b: a newer build owns the local store. The stack serves one build, so a
-// same-origin page that opens the store at v3 stands in for the newer build.
-const NEWER_VERSION = 3;
+// same-origin page that opens the store one version above LOCAL_DB_VERSION stands
+// in for the newer build (pinned by e2e/storeVersion.vitest.ts).
+const NEWER_VERSION = 4;
 
 /**
  * The legacy screens' v1 opener (src/storage/db.ts) rejects unhandled on every OIDC page once

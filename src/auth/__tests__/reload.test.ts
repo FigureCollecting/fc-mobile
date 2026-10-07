@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { LocalDb } from '../../storage/localDb';
 import { ReloadRequiredError } from '../errors';
 import type { AuthSession, AuthStatus } from '../session';
-import { SUB_A } from './fakes';
+import { IDP_ORIGIN, SUB_A } from './fakes';
 import { World, compareInit, compareUrl } from './world';
 
 const settle = <T>(req: IDBRequest<T>) =>
@@ -23,7 +23,11 @@ async function newerBuildUpgrades(world: World): Promise<void> {
  * A tab whose store a newer build upgrades the moment one chosen read or write on it has
  * settled: the session is still between that step and its next one when the upgrade lands.
  */
-function upgradedMidway(world: World): { tab: AuthSession; after: (method: 'get' | 'put', key: string) => void; seen: AuthStatus[] } {
+function upgradedMidway(world: World): {
+  tab: AuthSession;
+  after: (method: 'get' | 'put' | 'delete', key: string) => void;
+  seen: AuthStatus[];
+} {
   let armed: { method: string; key: string } | undefined;
   const tab = world.tab({
     db: async (open) => {
@@ -32,10 +36,10 @@ function upgradedMidway(world: World): { tab: AuthSession; after: (method: 'get'
         get(target, prop) {
           const value: unknown = Reflect.get(target, prop, target);
           if (typeof value !== 'function') return value;
-          if (prop !== 'get' && prop !== 'put') return value.bind(target);
+          if (prop !== 'get' && prop !== 'put' && prop !== 'delete') return value.bind(target);
           return async (...args: unknown[]) => {
             const out: unknown = await value.apply(target, args);
-            const key = prop === 'get' ? args[1] : args[2];
+            const key = prop === 'put' ? args[2] : args[1];
             if (armed?.method === prop && armed.key === key) {
               armed = undefined;
               await newerBuildUpgrades(world);
@@ -54,6 +58,19 @@ function upgradedMidway(world: World): { tab: AuthSession; after: (method: 'get'
 /** Once the tab heard of the newer build, nothing it was still doing may call it signed in. */
 const signedInAfterReload = (seen: AuthStatus[]): AuthStatus[] =>
   seen.slice(seen.indexOf('reload-required')).filter((s) => s === 'signed-in');
+
+/** A record as the newer build's store holds it (this build's code cannot open that store). */
+async function storedAfterUpgrade(world: World, key: string): Promise<unknown> {
+  const db = await settle(world.factory.open('fc-mobile'));
+  try {
+    return await settle(db.transaction('auth').objectStore('auth').get(key));
+  } finally {
+    db.close();
+  }
+}
+
+/** Every status the tab reported from the first reload-required on. */
+const fromReload = (seen: AuthStatus[]): AuthStatus[] => (seen.includes('reload-required') ? seen.slice(seen.indexOf('reload-required')) : []);
 
 describe('a newer build takes the local store', () => {
   it('moves a signed-in tab to reload-required at once, before any call fails', async () => {
@@ -155,6 +172,45 @@ describe('a newer build upgrades the store while this tab is between steps', () 
     expect(tab.status.value).toBe('reload-required');
     expect(seen).toContain('reload-required');
     expect(signedInAfterReload(seen)).toEqual([]);
+  });
+});
+
+describe('no status worked out before the upgrade replaces reload-required', () => {
+  it('a refresh still out when the upgrade lands, then failing on the network, is not reported offline', async () => {
+    const world = await World.create();
+    const { tab, seen } = upgradedMidway(world);
+    await world.signIn(tab);
+    world.t += 600_000;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      if (!(await req.clone().text()).includes('grant_type=refresh_token')) return world.idp.handler(req);
+      await newerBuildUpgrades(world);
+      throw new TypeError('Failed to fetch');
+    });
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toThrow();
+    expect(fromReload(seen)).toEqual(['reload-required']);
+  });
+
+  it('a refused refresh whose reauth mark lands just before the upgrade is not reported reauth-required', async () => {
+    const world = await World.create();
+    const { tab, after, seen } = upgradedMidway(world);
+    await world.signIn(tab);
+    world.idp.revokeAll(SUB_A);
+    world.t += 600_000;
+    after('put', `tokens:${SUB_A}`);
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ reason: 'reauth' });
+    expect(fromReload(seen)).toEqual(['reload-required']);
+    const held = await storedAfterUpgrade(world, `tokens:${SUB_A}`);
+    expect(held).toMatchObject({ reauth: true });
+    expect(held).not.toHaveProperty('refreshToken');
+  });
+
+  it('a sign-out whose last write lands just before the upgrade is not reported signed out', async () => {
+    const world = await World.create();
+    const { tab, after, seen } = upgradedMidway(world);
+    await world.signIn(tab);
+    after('delete', 'current');
+    await tab.signOut();
+    expect(fromReload(seen)).toEqual(['reload-required']);
   });
 });
 

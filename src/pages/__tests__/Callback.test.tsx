@@ -154,6 +154,25 @@ describe('Callback', () => {
     expect(screen.getByText(/needs a reload/i)).toBeInTheDocument();
   });
 
+  it('asks for a reload when a spent link meets a store this page can no longer open, leaving no unhandled rejection', async () => {
+    const s = {
+      ...session(async () => {
+        throw new LoginError('unknown_state');
+      }),
+      // A plain function: a vi.fn would itself handle the rejection it returns.
+      start: (): Promise<AuthStatus> => Promise.reject(new ReloadRequiredError()),
+    };
+    const reload = vi.fn();
+    const unhandled = await unhandledDuring(async () => {
+      renderWithProviders(<Callback session={s} url={URL_IN} reload={reload} />, { initialPath: '/callback' });
+      await screen.findByText(/sign-in did not finish/i);
+    });
+    expect(unhandled).toEqual([]);
+    expect(screen.getByText(/needs a reload/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('does nothing once the page has gone away', async () => {
     for (const outcome of ['ok', 'spent', 'failed'] as const) {
       let settle!: () => void;

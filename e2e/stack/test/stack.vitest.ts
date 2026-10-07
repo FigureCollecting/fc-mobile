@@ -2,6 +2,8 @@
 // the production build behind nginx, and a device that signs in, enrols and
 // reads through the entitlement path. Needs Docker and a built dist/.
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -160,6 +162,25 @@ describe('local full stack', () => {
       await control.edge.start();
     }
     expect((await request(`${stack.state.origin}/`)).status).toBe(200);
+  });
+
+  it("lets a web image's CSP, written for production Authentik, reach the mock issuer", async () => {
+    // The fc-mobile-web image's own nginx sends the shipped CSP; stand it in for the web container.
+    const image = http.createServer((_req, res) => {
+      res.setHeader('content-security-policy', "default-src 'self'; connect-src 'self' https://auth.mindsignals1.com");
+      res.end('<!doctype html>');
+    });
+    await new Promise<void>((resolve) => image.listen(0, '127.0.0.1', () => resolve()));
+    try {
+      stack.edge.setUpstream('web', `http://127.0.0.1:${(image.address() as AddressInfo).port}`);
+      const csp = String((await request(`${stack.state.origin}/`)).headers['content-security-policy']);
+      expect(csp).toBe(
+        `default-src 'self'; connect-src 'self' https://auth.mindsignals1.com ${new URL(stack.state.issuer.tokenEndpoint).origin}`,
+      );
+    } finally {
+      stack.edge.setUpstream('web', stack.web.url);
+      await new Promise<void>((resolve) => image.close(() => resolve()));
+    }
   });
 
   it('survives the web container being replaced', async () => {

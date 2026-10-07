@@ -63,6 +63,22 @@ describe('coordinator transport', () => {
     await expect(call()).resolves.toMatchObject({ coverage: { redacted: [] } });
   });
 
+  it('maps a store a newer build took to FailedPrecondition, never Unknown with the raw VersionError', async () => {
+    const world = await World.create();
+    const { tab, call } = compare(world);
+    await world.signIn(tab);
+    (await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = world.factory.open('fc-mobile', 3);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    })).close();
+    const err = await call().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectError);
+    expect(err).toMatchObject({ code: Code.FailedPrecondition });
+    expect((err as ConnectError).cause).toMatchObject({ name: 'ReloadRequiredError' });
+    expect(tab.status.value).toBe('reload-required');
+  });
+
   it('keeps a cancellation a cancellation', async () => {
     const world = await World.create();
     const { tab } = compare(world);

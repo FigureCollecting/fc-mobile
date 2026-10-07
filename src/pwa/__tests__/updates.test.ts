@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisterSWOptions } from 'vite-plugin-pwa/types';
-import { applyUpdate, startServiceWorker, updateReady, UPDATE_CHECK_MS } from '../updates';
+import { applyUpdate, reloadToLatest, startServiceWorker, updateReady, UPDATE_CHECK_MS } from '../updates';
 
 type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'update'>;
 
@@ -197,5 +197,26 @@ describe('defaults', () => {
     const f = fakeRegister();
     startServiceWorker({ register: f.register });
     expect(f.register).toHaveBeenCalledTimes('serviceWorker' in navigator ? 1 : 0);
+  });
+});
+
+describe('reloadToLatest', () => {
+  it('hands control to a waiting build, whose takeover reloads the page, instead of reloading the old shell', async () => {
+    const f = fakeRegister();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container: new EventTarget() });
+    updateReady.value = true;
+    const reload = vi.fn();
+    await reloadToLatest(reload);
+    expect(f.apply).toHaveBeenCalledWith(true);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('reloads the page when no newer build is waiting', async () => {
+    const f = fakeRegister();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container: new EventTarget() });
+    const reload = vi.fn();
+    await reloadToLatest(reload);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(f.apply).not.toHaveBeenCalled();
   });
 });

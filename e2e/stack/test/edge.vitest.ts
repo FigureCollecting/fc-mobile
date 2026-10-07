@@ -1,7 +1,7 @@
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { routeFor, startEdge, type Edge } from '../src/edge.js';
+import { routeFor, startEdge, widenConnectSrc, type Edge } from '../src/edge.js';
 import { request, startEcho, type Echo } from './helpers.js';
 
 describe('edge path split (the tunnel rule)', () => {
@@ -200,3 +200,56 @@ describe('edge listeners', () => {
     await echo.close();
   });
 });
+
+describe('edge CSP for the mock issuer (an image built for production Authentik)', () => {
+  const IMAGE_CSP = "default-src 'self'; connect-src 'self' https://auth.mindsignals1.com; img-src 'self' data:";
+
+  it('adds an origin to connect-src and changes nothing else', () => {
+    expect(widenConnectSrc(IMAGE_CSP, ['http://127.0.0.1:8481'])).toBe(
+      "default-src 'self'; connect-src 'self' https://auth.mindsignals1.com http://127.0.0.1:8481; img-src 'self' data:",
+    );
+  });
+
+  it('does not repeat an origin the policy already lists', () => {
+    expect(widenConnectSrc(IMAGE_CSP, ['https://auth.mindsignals1.com'])).toBe(IMAGE_CSP);
+  });
+
+  it('leaves a policy without connect-src as it is', () => {
+    expect(widenConnectSrc("default-src 'self'", ['http://127.0.0.1:8481'])).toBe("default-src 'self'");
+  });
+
+  async function cspServer(): Promise<{ url: string; close(): Promise<void> }> {
+    const server = http.createServer((req, res) => {
+      if (req.url !== '/bare') res.setHeader('content-security-policy', IMAGE_CSP);
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    return {
+      url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  it("widens the web route's CSP only, and only when asked", async () => {
+    const upstream = await cspServer();
+    const widened = await startEdge({ coordinator: upstream.url, web: upstream.url, webConnectSrc: ['http://127.0.0.1:8481'] });
+    const plain = await startEdge({ coordinator: upstream.url, web: upstream.url });
+    const csp = async (edge: Edge, p: string) =>
+      (await request(`http://127.0.0.1:${edge.port}${p}`)).headers['content-security-policy'];
+    expect(parseConnectSrc(await csp(widened, '/'))).toEqual(["'self'", 'https://auth.mindsignals1.com', 'http://127.0.0.1:8481']);
+    expect(await csp(widened, '/api/x')).toBe(IMAGE_CSP);
+    expect(await csp(widened, '/bare')).toBeUndefined();
+    expect(await csp(plain, '/')).toBe(IMAGE_CSP);
+    await widened.close();
+    await plain.close();
+    await upstream.close();
+  });
+});
+
+function parseConnectSrc(policy: string | string[] | undefined): string[] {
+  const directive = String(policy)
+    .split(';')
+    .map((d) => d.trim().split(/\s+/))
+    .find(([name]) => name === 'connect-src');
+  return directive?.slice(1) ?? [];
+}

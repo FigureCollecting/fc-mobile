@@ -472,3 +472,150 @@ test('a crafted /callback link repeats nothing it says and offers a way back', a
   await page.getByRole('button', { name: 'Back to your collection' }).click();
   await expect.poll(() => page.url()).toBe(HOME);
 });
+
+// WK-08b: a newer build owns the local store. The stack serves one build, so a
+// same-origin page that opens the store at v3 stands in for the newer build.
+const NEWER_VERSION = 3;
+
+/** Unhandled errors and rejections the page reports, and anything it logs about the store's version. */
+function pageProblems(page: Page): string[] {
+  const out: string[] = [];
+  page.on('pageerror', (err) => out.push(`pageerror ${err.name}: ${err.message}`));
+  page.on('console', (msg) => {
+    if (/VersionError|Uncaught|unhandled/i.test(msg.text())) out.push(`console ${msg.type()}: ${msg.text()}`);
+  });
+  return out;
+}
+
+/** Another tab of a newer build opens the store; `abandon` aborts its upgrade, leaving v2 as it was. */
+async function newerBuildOpensStore(context: ReturnType<Page['context']>, abandon = false): Promise<Page> {
+  const other = await context.newPage();
+  await other.goto('/favicon.svg');
+  const outcome = await other.evaluate(
+    ([version, abort]) =>
+      new Promise<string>((resolve) => {
+        const req = indexedDB.open('fc-mobile', version);
+        req.onupgradeneeded = () => {
+          if (abort) req.transaction!.abort();
+        };
+        req.onsuccess = () => {
+          req.result.close();
+          resolve(`opened v${req.result.version}`);
+        };
+        req.onerror = () => resolve(`error ${String(req.error?.name)}`);
+      }),
+    [NEWER_VERSION, abandon] as const,
+  );
+  expect(outcome).toBe(abandon ? 'error AbortError' : `opened v${NEWER_VERSION}`);
+  return other;
+}
+
+const reloadBanner = (page: Page) => page.getByRole('status').filter({ hasText: /reload/i });
+
+test('(reload) a newer build taking the store shows the reload banner at once, and calls fail cleanly', async ({
+  context,
+  page,
+}) => {
+  const problems = pageProblems(page);
+  await openSignedOut(page);
+  await signInThroughBanner(page);
+  expect(await compare(page)).toEqual({ ok: true, redacted: [] });
+
+  const newer = await newerBuildOpensStore(context);
+  // No call needed: the store's versionchange is enough.
+  await expect.poll(() => status(page)).toBe('reload-required');
+  await expect(reloadBanner(page)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in' })).toHaveCount(0);
+  const from = await stack.edge.cursor();
+  expect(await compare(page)).toMatchObject({ ok: false, code: 'FailedPrecondition' });
+  expect(await apiEntries(from)).toEqual([]);
+  expect(await status(page)).toBe('reload-required');
+
+  // The newer store goes away; Reload boots this build into a working app.
+  const deleted = await newer.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        const req = indexedDB.deleteDatabase('fc-mobile');
+        req.onsuccess = () => resolve('deleted');
+        req.onerror = () => resolve(`error ${String(req.error?.name)}`);
+      }),
+  );
+  expect(deleted).toBe('deleted');
+  const reloaded = page.waitForEvent('load');
+  await page.getByRole('button', { name: 'Reload' }).click();
+  await reloaded;
+  await hooks(page);
+  await expect.poll(() => status(page)).toBe('signed-out');
+  await expect(page.getByRole('status').filter({ hasText: /sign in to sync your collection/i })).toBeVisible();
+  expect(problems).toEqual([]);
+});
+
+test('(reload) Reload keeps the session, the device key and the outbox when the newer build abandons its upgrade', async ({
+  context,
+  page,
+}) => {
+  const problems = pageProblems(page);
+  await openSignedOut(page);
+  await signInThroughBanner(page);
+  await seedOutbox(page);
+  const before = await snapshot(page);
+
+  await newerBuildOpensStore(context, true);
+  await expect.poll(() => status(page)).toBe('reload-required');
+  await expect(reloadBanner(page)).toBeVisible();
+  const reloaded = page.waitForEvent('load');
+  await page.getByRole('button', { name: 'Reload' }).click();
+  await reloaded;
+  await hooks(page);
+  await expect.poll(() => status(page)).toBe('signed-in');
+  await expect(reloadBanner(page)).toHaveCount(0);
+  expect(await snapshot(page)).toEqual(before);
+  expect(await compare(page)).toEqual({ ok: true, redacted: [] });
+  expect(problems).toEqual([]);
+});
+
+test('(reload) a boot with a newer store present shows the reload banner, not loading forever, with no unhandled rejection', async ({
+  context,
+  page,
+}) => {
+  await newerBuildOpensStore(context);
+  const problems = pageProblems(page);
+  await page.goto('/');
+  await hooks(page);
+  await expect.poll(() => status(page)).toBe('reload-required');
+  await expect(reloadBanner(page)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in' })).toHaveCount(0);
+  expect(await compare(page)).toMatchObject({ ok: false, code: 'FailedPrecondition' });
+  expect(page.url()).toBe(HOME);
+  expect(problems).toEqual([]);
+});
+
+// Sign-off frames of the reload-required state on Ross's Fold8: the cover screen and the
+// open inner screen, full panel, at the phone's device pixel ratio.
+const FOLD8_SHOTS = [
+  { name: 'fold8-cover', width: 444, height: 701 },
+  { name: 'fold8-open', width: 870, height: 657 },
+] as const;
+
+for (const shot of FOLD8_SHOTS) {
+  test(`(reload) sign-off frame: the reload banner on the ${shot.name} screen`, async ({ browser }, testInfo) => {
+    const context = await browser.newContext({
+      baseURL: state.origin,
+      viewport: { width: shot.width, height: shot.height },
+      deviceScaleFactor: 2.8125,
+      isMobile: true,
+      hasTouch: true,
+    });
+    await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+    await newerBuildOpensStore(context);
+    const page = await context.newPage();
+    await page.goto('/');
+    await hooks(page);
+    await expect.poll(() => status(page)).toBe('reload-required');
+    await expect(reloadBanner(page)).toBeVisible();
+    const file = testInfo.outputPath(`reload-required-${shot.name}.png`);
+    await page.screenshot({ path: file });
+    await testInfo.attach(`reload-required-${shot.name}`, { path: file, contentType: 'image/png' });
+    await context.close();
+  });
+}

@@ -5,6 +5,9 @@ import { Callback } from '../Callback';
 import { renderWithProviders } from '../../test/testUtils';
 import { LoginError, ReloadRequiredError } from '../../auth/errors';
 import type { AuthStatus } from '../../auth/session';
+import { reloadToLatest } from '../../pwa/updates';
+
+vi.mock('../../pwa/updates', () => ({ reloadToLatest: vi.fn(async () => undefined) }));
 
 const URL_IN = 'http://localhost:8480/callback?code=c&state=s';
 
@@ -110,6 +113,15 @@ describe('Callback', () => {
     expect(s.signIn).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /back to your collection/i }));
     expect(view.history).toEqual(['/']);
+  });
+
+  it('reloads into the newest build when no reload is given', async () => {
+    const s = session(async () => {
+      throw new ReloadRequiredError();
+    });
+    renderWithProviders(<Callback session={s} url={URL_IN} />, { initialPath: '/callback' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));
+    expect(reloadToLatest).toHaveBeenCalledTimes(1);
   });
 
   it('offers no reload for a sign-in that only failed', async () => {

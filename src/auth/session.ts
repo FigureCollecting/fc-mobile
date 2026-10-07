@@ -61,6 +61,8 @@ export class AuthSession implements DpopCredentials {
   private readonly timeoutMs: number;
   private currentSub: string | undefined;
   private started: Promise<AuthStatus> | undefined;
+  /** Bumped by reloadRequired(): a status worked out before then no longer holds. */
+  private generation = 0;
   private readonly enrolling = new Map<string, Promise<DeviceKeyRecord>>();
 
   constructor(deps: AuthSessionDeps) {
@@ -79,13 +81,14 @@ export class AuthSession implements DpopCredentials {
 
   start(): Promise<AuthStatus> {
     this.started ??= (async () => {
+      const generation = this.generation;
       const store = await this.store();
       const sub = await store.getCurrentSub();
       const tokens = sub === undefined ? undefined : await store.getTokens(sub);
-      if (sub === undefined || tokens === undefined) return this.set('signed-out');
+      if (sub === undefined || tokens === undefined) return this.settle(generation, 'signed-out');
       this.currentSub = sub;
       const usable = tokens.reauth !== true && (tokens.refreshToken !== undefined || !this.expiring(tokens));
-      return this.set(usable ? 'signed-in' : 'reauth-required');
+      return this.settle(generation, usable ? 'signed-in' : 'reauth-required');
     })().catch((err: unknown) => {
       // Shared while pending; a failed start is not kept, so the next call retries it.
       this.started = undefined;
@@ -111,6 +114,7 @@ export class AuthSession implements DpopCredentials {
    * code cannot use it. The next call re-reads the store, so the status follows it if it clears.
    */
   reloadRequired(): void {
+    this.generation += 1;
     this.started = undefined;
     this.set('reload-required');
   }
@@ -161,11 +165,12 @@ export class AuthSession implements DpopCredentials {
       throw new LoginError('invalid_id_token', (err as Error).message, back);
     }
     // A fresh handle: the browser may have closed the store during the exchange.
+    const generation = this.generation;
     const store = await this.store();
     await store.putTokens(this.record(sub, tokens));
     await store.setCurrentSub(sub);
     this.currentSub = sub;
-    this.set('signed-in');
+    this.settle(generation, 'signed-in');
     try {
       await this.deviceKey(false);
     } catch {
@@ -221,9 +226,10 @@ export class AuthSession implements DpopCredentials {
       }
       // Stored first, through a fresh handle (the browser may have closed the store during the
       // request): the IdP has already retired the old refresh token.
+      const generation = this.generation;
       await (await this.store()).putTokens(this.record(sub, answer, tokens));
       if (answer.id_token !== undefined && !sameIdentity(this.config, answer.id_token, sub)) return this.reauth(tokens);
-      this.set('signed-in');
+      this.settle(generation, 'signed-in');
       return answer.access_token;
     });
   }
@@ -330,6 +336,11 @@ export class AuthSession implements DpopCredentials {
       this.reloadRequired();
       throw new ReloadRequiredError({ cause: err });
     }
+  }
+
+  /** Report `status` only if reloadRequired() has not run since `generation` was read; else leave the status alone. */
+  private settle(generation: number, status: AuthStatus): AuthStatus {
+    return generation === this.generation ? this.set(status) : this.status.value;
   }
 
   private set(status: AuthStatus): AuthStatus {

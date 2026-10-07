@@ -10,6 +10,8 @@ export interface SyncAuthBannerProps {
 }
 
 // In-place prompt: an auth problem never navigates away from what the user is looking at.
+// A sign-in that cannot start (a store this build cannot open) has already moved the status,
+// which this banner shows, so its rejection needs no handling beyond being caught.
 export function SyncAuthBanner({ session, reload }: SyncAuthBannerProps) {
   const [location] = useLocation();
   const status = session.status.value;
@@ -29,7 +31,7 @@ export function SyncAuthBanner({ session, reload }: SyncAuthBannerProps) {
           Reload
         </button>
       ) : (
-        <button type="button" class="sync-auth-banner__button" onClick={() => void session.signIn(location)}>
+        <button type="button" class="sync-auth-banner__button" onClick={() => void session.signIn(location).catch(() => undefined)}>
           Sign in
         </button>
       )}

@@ -81,6 +81,21 @@ describe('a newer build takes the local store', () => {
   });
 });
 
+describe('an open that fails for another reason', () => {
+  it('keeps its own error and no reload banner on a call: the next call retries it', async () => {
+    const world = await World.create();
+    await world.signIn(world.tab());
+    let broken = false;
+    const tab = world.tab({ db: (open) => (broken ? Promise.reject(new DOMException('racing delete', 'AbortError')) : open()) });
+    expect(await tab.start()).toBe('signed-in');
+    broken = true;
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ name: 'AbortError' });
+    expect(tab.status.value).toBe('signed-in');
+    broken = false;
+    expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+  });
+});
+
 describe('boot', () => {
   it('reports what start reports', async () => {
     const world = await World.create();

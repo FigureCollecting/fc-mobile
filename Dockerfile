@@ -2,7 +2,7 @@
 # fc-mobile-web: the production build on nginx-unprivileged.
 #   docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t fc-mobile-web .
 # Runs as uid 101 on :8080 with a read-only root; mount a writable /tmp
-# (pid file and temp paths). Base images are pinned by digest; the runtime
+# (pid file, temp paths, and the HOLDING switch). Base images are pinned by digest; the runtime
 # stage takes Alpine's package fixes at build time (apk upgrade).
 
 FROM node:24.21.0-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
@@ -29,5 +29,9 @@ RUN apk upgrade --no-cache
 # Root-owned and read-only to the nginx user: the server can serve, not modify.
 COPY --chown=root:root --chmod=0644 deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build --chown=root:root /app/dist /usr/share/nginx/html
+# R-1(b): HOLDING=1 serves the holding page instead of the app (deploy/nginx/40-fc-holding.sh).
+COPY --chown=root:root --chmod=0644 deploy/nginx/holding.html /usr/share/nginx/html/holding.html
+COPY --chown=root:root --chmod=0755 deploy/nginx/40-fc-holding.sh /docker-entrypoint.d/40-fc-holding.sh
+ENV HOLDING=0
 USER 101
 EXPOSE 8080

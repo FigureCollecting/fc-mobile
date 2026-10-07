@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, type Page } from '@playwright/test';
 import { guardedTest as test } from '../fixtures';
+import { blockHandsOff } from '../handsOff';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
 import type { StackUser } from '../stack/src/issuer.js';
@@ -656,6 +657,7 @@ for (const shot of FOLD8_SHOTS) {
       isMobile: true,
       hasTouch: true,
     });
+    const guard = await blockHandsOff(context);
     await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
     await newerBuildOpensStore(context);
     const page = await context.newPage();
@@ -668,6 +670,7 @@ for (const shot of FOLD8_SHOTS) {
     const file = testInfo.outputPath(`reload-required-${shot.name}.png`);
     await page.screenshot({ path: file });
     await testInfo.attach(`reload-required-${shot.name}`, { path: file, contentType: 'image/png' });
+    expect(guard.escaped()).toEqual([]);
     await context.close();
   });
 }

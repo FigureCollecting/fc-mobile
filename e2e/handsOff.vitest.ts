@@ -837,6 +837,14 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     }
     expect(close).toHaveBeenCalledTimes(2);
 
+    // What it launched failing to close does not hide the refusal.
+    const stuck = fakePlaywright(() => ({ close: async () => Promise.reject(new Error('already closed')) }));
+    refuseRoundTheRulesAtEachLaunch(stuck, undefined, () => env);
+    const closing = start(stuck.chromium, 'launch');
+    env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
+    await expect(closing).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
+    delete env.SELENIUM_REMOTE_URL;
+
     // One plain statement after the call, as a spec would write it: the launch has nothing to close, and still throws.
     const plain = fakePlaywright();
     refuseRoundTheRulesAtEachLaunch(plain, undefined, () => env);
@@ -877,6 +885,16 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     // The worker's count where the launch gives none of its own.
     Object.assign(pw.chromium, { _playwright: { [HOLD]: { args: ['--proxy-server=http://127.0.0.1:9'] } } });
     await expect(start(pw.chromium, 'launch', {})).rejects.toThrow(proxied);
+    expect(pw.chromium.calls).toEqual([]);
+  });
+
+  it('reads a launch on anything but the Firefox or WebKit browser type as Chromium: one called unbound, or on another object', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    const proxied = JSON.parse('{"args":["--proxy-server=http://127.0.0.1:9"]}');
+    const unbound = Reflect.get(pw.chromium, LAUNCHERS[0]!) as (...args: unknown[]) => Promise<unknown>;
+    await expect(unbound(proxied)).rejects.toThrow(`hands-off: this Chromium launch's args hold "--proxy-server=http://127.0.0.1:9"`);
+    await expect(startOn(pw.firefox, { engine: 'firefox' }, LAUNCHERS[0]!, proxied)).rejects.toThrow(`hands-off: this Chromium launch's args hold "--proxy-server=http://127.0.0.1:9"`);
     expect(pw.chromium.calls).toEqual([]);
   });
 
@@ -1123,6 +1141,7 @@ describe("refuseLaunchArgs (a Chromium launch's args: the worker's, or the launc
     ['an exclusion with an escape', `${RULES}, EXCLUDE vndb\\.org`, 'EXCLUDE vndb\\.org'],
     ['an empty rule', `${RULES},`, ''],
     ['a MAP with no target', `${RULES}, MAP vndb.org`, 'MAP vndb.org'],
+    ['an EXCLUDE with no host', `${RULES}, EXCLUDE`, 'EXCLUDE'],
     ['a rule Chromium does not know', `${RULES}, BYPASS vndb.org`, 'BYPASS vndb.org'],
   ])('refuses a rule after them that could take a hands-off host off them, or that it cannot read: %s', (_, list, rule) => {
     expect(() => refuseLaunchArgs([`--host-resolver-rules=${list}`])).toThrow(`hands-off: this Chromium launch's args hold the rule ${JSON.stringify(rule.trim())}, ${MAY_FOLLOW}`);

@@ -19,6 +19,7 @@ import {
   openStore,
   status,
   token,
+  write,
 } from './harness';
 
 interface Vectors {
@@ -98,9 +99,9 @@ async function replay(scenario: { localEdits: readonly (0 | 1 | 2)[]; pages: num
   const { db } = await freshDb();
   const store = await openStore(db, { clock: new FakeClock(LOCAL_WALL) });
   for (const which of scenario.localEdits) {
-    if (which === 0) await store.writeFacet(HEAD[0], 'status', 'owned');
-    if (which === 1) await store.writeFacet(HEAD[0], 'note', 'mine');
-    if (which === 2) await store.writeFacet(HEAD[1], 'score', 7);
+    if (which === 0) await write(store, 0, 'status', 'owned');
+    if (which === 1) await write(store, 0, 'note', 'mine');
+    if (which === 2) await write(store, 1, 'score', 7);
   }
   let i = 0;
   let page = 0;
@@ -123,13 +124,13 @@ describe('(a) apply is commutative and idempotent', () => {
         const b = await dump(two.db);
         expect(a).toEqual(b);
 
-        // And it is the right store: every facet holds the highest version seen.
+        // And it is the right store: the replica holds the highest remote version seen, and the
+        // display lays the unanswered outbox over it (sync.proto rule 6, THE IMPORT, ON A CLIENT).
         for (const facet of FACETS) {
           const remote = s.events.filter((e) => e.facet === facet).map((e) => e.version);
           const local = a.outbox.filter((e) => e.facet_key === facet).map((e) => e.edit_version);
-          const all = [...remote, ...local].sort(compareVersion);
           const row = a.facets.find((f) => f.facet_key === facet);
-          expect(row?.value?.version).toBe(all.at(-1));
+          expect(row?.value?.version).toBe(local.at(-1) ?? remote.sort(compareVersion).at(-1));
           expect(row?.known?.version).toBe(remote.sort(compareVersion).at(-1));
         }
 
@@ -229,37 +230,35 @@ describe('apply rule details', () => {
     const store = await openStore(db);
     const ahead = token(T0 + 60_000, 3, OTHER_DEVICE);
     await store.apply([ev(key(2, 'status'), ahead, 'upsert', '{"status":"owned"}')]);
-    const mine = await store.writeFacet(HEAD[0], 'status', 'owned');
+    const mine = await write(store, 0, 'status', 'owned');
     expect(compareVersion(mine.version, ahead)).toBe(1);
   });
 
-  it('marks a pending edit a newer remote beats as overwritten, and never sends it', async () => {
+  it('keeps showing a pending edit a newer remote event beats, and still sends it: the server decides (0.3.0)', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    const mine = await store.writeFacet(HEAD[0], 'note', 'mine');
+    const mine = await write(store, 0, 'note', 'mine');
     const theirs = token(T0 + 1_000, 0, OTHER_DEVICE);
 
-    await store.apply([ev(key(0, 'note'), theirs, 'upsert', '{"note":"theirs"}')]);
+    const report = await store.apply([ev(key(0, 'note'), theirs, 'upsert', '{"note":"theirs"}')]);
 
+    expect(report.applied).toBe(1);
     const facet = await store.getFacet(key(0, 'note'));
-    expect(facet!.value).toEqual({ version: theirs, op: 'upsert', payload: '{"note":"theirs"}' });
-    expect(facet!.pending_id).toBeNull();
-    expect(facet!.overwritten!.version).toBe(mine.version);
-    expect(JSON.parse(facet!.overwritten!.payload).note).toBe('mine');
+    expect(facet!.value!.version).toBe(mine.version);
+    expect(facet!.known).toEqual({ version: theirs, op: 'upsert', payload: '{"note":"theirs"}' });
+    expect(facet!.pending_id).toBe(mine.outbox_id);
+    expect(facet!.overwritten).toBeNull();
     const [entry] = await store.listOutbox();
-    expect(entry).toMatchObject({ state: 'STALE', superseded: true });
+    expect(entry.state).toBe('PENDING');
     await store.onStatus(status(T0), 0);
-    expect(await store.nextBatch()).toEqual({ kind: 'empty' });
-
-    // A new local edit clears the notice.
-    await store.writeFacet(HEAD[0], 'note', 'again');
-    expect((await store.getFacet(key(0, 'note')))!.overwritten).toBeNull();
+    const next = await store.nextBatch();
+    expect(next.kind === 'send' && next.batch.entryIds).toEqual([mine.outbox_id]);
   });
 
-  it('flags an in-flight edit a newer remote beats but leaves its frozen batch byte-identical', async () => {
+  it('leaves an in-flight edit a newer remote event beats in its frozen batch, byte-identical', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'note', 'mine');
+    await write(store, 0, 'note', 'mine');
     await store.onStatus(status(T0), 0);
     const sent = await store.nextBatch();
     if (sent.kind !== 'send') throw new Error('expected a batch');
@@ -268,7 +267,7 @@ describe('apply rule details', () => {
     await store.apply([ev(key(0, 'note'), token(T0 + 1_000, 0, OTHER_DEVICE), 'upsert', '{"note":"theirs"}')]);
 
     const [entry] = await store.listOutbox();
-    expect(entry).toMatchObject({ state: 'IN_FLIGHT', superseded: true });
+    expect(entry.state).toBe('IN_FLIGHT');
     const again = await store.nextBatch();
     if (again.kind !== 'send') throw new Error('expected the frozen batch again');
     expect(toBinary(PushRequestSchema, again.batch.request)).toEqual(bytes);

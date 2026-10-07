@@ -1,6 +1,6 @@
-// Row shapes of the v2 local store. Every row's key starts with the user's sub,
+// Row shapes of the v3 local store. Every row's key starts with the user's sub,
 // so a query bound to one sub can never range over another user's rows.
-import type { ProductCard, UserFacetField } from '@figurecollecting/fc-api-contract';
+import type { FacetFamily, ProductCard } from '@figurecollecting/fc-api-contract';
 
 export type FacetOp = 'upsert' | 'delete';
 
@@ -11,19 +11,27 @@ export interface FacetValue {
   payload: string;
 }
 
+// Every row stores whatever the server sent, but only a key form this client knows is
+// indexed and read (sync.proto rule 6, READERS). The derived fields are recomputed from
+// facet_key and value on every write and on every store upgrade (sync/facetIndex.ts).
 export interface FacetRecord {
   sub: string;
   facet_key: string;
-  /** Set only for the four user-owned keys; indexes the holding view. */
+  /** The key's family; absent for a key form this client does not know (stored, hidden). */
+  family?: FacetFamily;
+  /** occ/{occ}/...: the copy. Indexes by_occ. */
+  occ_id?: string;
+  /** The figure: from the key, or for occ/{occ}/head from its displayed payload. Indexes by_head. */
   head_id?: string;
-  field?: UserFacetField;
-  /** local[facet_key]: what the UI shows and what the merge rule compares. null holds nothing. */
+  /** occ/../tag/{tag}, uf/../tag/{tag}, uf/../ktag/../{tag} and tag/{tag}/name. Indexes by_tag. */
+  tag_id?: string;
+  /** What the UI shows: the replica with the unanswered outbox laid over it. null holds nothing. */
   value: FacetValue | null;
-  /** The newest value the server has reported, from Delta or a Push result's current. */
+  /** The replica: the newest value the server has reported, from Delta or a Push result's current. */
   known: FacetValue | null;
   /** Outbox id of the unanswered local edit that `value` is, or null. */
   pending_id: number | null;
-  /** The local edit a newer remote value replaced: shown as 'overwritten by another device'. */
+  /** A value this device wrote that another device replaced with a different one: 'replaced by another device'. */
   overwritten: FacetValue | null;
 }
 
@@ -40,6 +48,10 @@ export interface OutboxEntry {
   base_version: string | null;
   state: OutboxState;
   attempts: number;
+  /** The commit_cursor of the last server transaction applied when the edit was minted, or ''. Never changes. */
+  basis: string;
+  /** The id of the first entry written with it: one intent's writes travel in one Push batch. */
+  group?: number;
   /** The batch idempotency key, set once the entry is frozen into a batch. */
   client_id?: string;
   batch_pos?: number;
@@ -47,8 +59,6 @@ export interface OutboxEntry {
   /** The server's outcome as answered (DUPLICATE is kept distinct from APPLIED). */
   outcome?: string;
   reason?: string;
-  /** A newer remote value replaced this edit before it was answered. */
-  superseded?: boolean;
   /** REJECTED version_future: re-minted after the next Status's rebase, if still the facet's intent. */
   remint?: 'awaiting' | 'done' | 'skipped';
   reminted_as?: number;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/preact';
 import { IDBFactory } from 'fake-indexeddb';
 import { createBrowserSession } from '../../../auth';
+import { LOCAL_DB_VERSION } from '../../../storage/localDb';
 import type { AuthSession } from '../../../auth/session';
 import { renderWithProviders } from '../../../test/testUtils';
 import OidcSession from '../OidcSession';
@@ -42,7 +43,7 @@ describe('OidcSession', () => {
 
   it('boots into a reload banner, not loading forever, when a newer build owns the store', async () => {
     const factory = new IDBFactory();
-    (await settle(factory.open('fc-mobile', 3))).close();
+    (await settle(factory.open('fc-mobile', LOCAL_DB_VERSION + 1))).close();
     h.session = sessionOn(factory);
     renderWithProviders(<OidcSession />);
     await waitFor(() => expect(h.session!.status.value).toBe('reload-required'));
@@ -54,7 +55,7 @@ describe('OidcSession', () => {
 
   it('reloads into the newest build from the banner', async () => {
     const factory = new IDBFactory();
-    (await settle(factory.open('fc-mobile', 3))).close();
+    (await settle(factory.open('fc-mobile', LOCAL_DB_VERSION + 1))).close();
     h.session = sessionOn(factory);
     renderWithProviders(<OidcSession />);
     fireEvent.click(await screen.findByRole('button', { name: 'Reload' }));

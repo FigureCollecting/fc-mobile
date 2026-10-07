@@ -1,14 +1,12 @@
-// The per-facet LWW rule (sync.proto rule 5): a value replaces the local one
+// The per-facet LWW rule (sync.proto rule 5): a value replaces the replica's
 // only when its version is greater, compared bytewise through compareVersion.
-// Pure, so it is the same whatever order or how often events arrive.
-import {
-  SyncOp,
-  compareVersion,
-  isCanonicalVersion,
-  parseUserFacetKey,
-  type SyncEvent,
-} from '@figurecollecting/fc-api-contract';
+// What the user sees is the replica with the unanswered outbox laid over it
+// (rule 6, THE IMPORT, ON A CLIENT): a newer remote value never drops a pending
+// edit, which is still pushed for the server to decide. Pure, so it is the same
+// whatever order or how often events arrive.
+import { SERVER_DEVICE_ID, SyncOp, compareVersion, isCanonicalVersion, parseVersion, type SyncEvent } from '@figurecollecting/fc-api-contract';
 import type { FacetRecord, FacetValue } from '../storage/records';
+import { indexFacet } from './facetIndex';
 
 export type RemoteEvent = Pick<SyncEvent, 'facetKey' | 'version' | 'op' | 'payload'>;
 
@@ -24,34 +22,63 @@ export function isNewer(value: FacetValue, than: FacetValue | null): boolean {
   return than === null || compareVersion(value.version, than.version) > 0;
 }
 
+/** The higher of two versions, or undefined when neither is held: the facet floor for the next edit. */
+export function floorOf(rec: FacetRecord): string | undefined {
+  const versions = [rec.value?.version, rec.known?.version].filter((v): v is string => v !== undefined);
+  return versions.sort(compareVersion).at(-1);
+}
+
 export function emptyFacet(sub: string, facetKey: string): FacetRecord {
-  const user = parseUserFacetKey(facetKey);
-  return {
-    sub,
-    facet_key: facetKey,
-    ...(user && { head_id: user.headId, field: user.field }),
-    value: null,
-    known: null,
-    pending_id: null,
-    overwritten: null,
-  };
+  return indexFacet({ sub, facet_key: facetKey, value: null, known: null, pending_id: null, overwritten: null });
 }
 
-export interface MergeResult {
-  applied: boolean;
-  /** The unanswered local edit the value replaced; its outbox entries are superseded. */
-  superseded: boolean;
+const deviceOf = (value: FacetValue): string | undefined => parseVersion(value.version)?.deviceId ?? undefined;
+
+// Object keys sorted at every depth: the contract sets no key order, so another client may write
+// the same fields in any order. Array order is content and stays.
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (typeof v !== 'object' || v === null) return v;
+  return Object.fromEntries(
+    Object.keys(v)
+      .sort()
+      .map((k) => [k, canonical((v as Record<string, unknown>)[k])]),
+  );
 }
 
-/** Fold a value the server reported into the record, in place. */
-export function mergeRemote(rec: FacetRecord, value: FacetValue): MergeResult {
-  if (isNewer(value, rec.known)) rec.known = value;
-  if (!isNewer(value, rec.value)) return { applied: false, superseded: false };
-  const superseded = rec.pending_id !== null;
-  if (superseded) {
-    rec.overwritten = rec.value;
-    rec.pending_id = null;
+// A payload's content without its display stamp: two devices writing the same value differ only
+// there. A tombstone's empty payload is its own content, which no upsert's is ({} at least).
+function content(value: FacetValue): string {
+  try {
+    const { edited_at: _at, tz: _tz, ...rest } = JSON.parse(value.payload) as Record<string, unknown>;
+    return JSON.stringify(canonical(rest));
+  } catch {
+    return value.payload;
   }
+}
+
+/**
+ * 'Replaced by another device' (client-only, GR 2026-09-26 D11): the value this device wrote that
+ * `after` replaced, when another device (not the import's server device) wrote a different value.
+ */
+export function replacedMine(before: FacetValue | null, after: FacetValue | null, deviceId: string): FacetValue | null {
+  if (before === null || after === null || deviceOf(before) !== deviceId) return null;
+  const by = deviceOf(after);
+  if (by === undefined || by === deviceId || by === SERVER_DEVICE_ID) return null;
+  return content(before) !== content(after) ? before : null;
+}
+
+/** Fold a value the server reported into the replica, in place; the display follows unless an edit is pending. */
+export function mergeRemote(rec: FacetRecord, value: FacetValue, deviceId: string): boolean {
+  if (!isNewer(value, rec.known)) return false;
+  rec.known = value;
+  if (rec.pending_id === null) show(rec, value, deviceId);
+  return true;
+}
+
+/** Show `value`, recording the notice when it replaces this device's value with another device's. */
+export function show(rec: FacetRecord, value: FacetValue | null, deviceId: string): void {
+  rec.overwritten = replacedMine(rec.value, value, deviceId) ?? rec.overwritten;
   rec.value = value;
-  return { applied: true, superseded };
+  indexFacet(rec);
 }

@@ -26,6 +26,7 @@ async function seedOutbox(db: LocalDb, sub: string): Promise<number> {
     payload: '{"status":"owned"}',
     edit_version: 'v1',
     base_version: null,
+    basis: '',
     state: 'PENDING',
     attempts: 0,
     created_at: 1,

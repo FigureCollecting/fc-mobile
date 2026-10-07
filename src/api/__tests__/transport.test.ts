@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Code, ConnectError, createClient } from '@connectrpc/connect';
 import { CompareService } from '@figurecollecting/fc-api-contract';
 import { COORDINATOR_BASE_URL, createCoordinatorTransport } from '../transport';
+import { LOCAL_DB_VERSION } from '../../storage/localDb';
 import { World } from '../../auth/__tests__/world';
 import { APP_ORIGIN } from '../../auth/__tests__/fakes';
 
@@ -68,7 +69,7 @@ describe('coordinator transport', () => {
     const { tab, call } = compare(world);
     await world.signIn(tab);
     (await new Promise<IDBDatabase>((resolve, reject) => {
-      const req = world.factory.open('fc-mobile', 3);
+      const req = world.factory.open('fc-mobile', LOCAL_DB_VERSION + 1);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     })).close();

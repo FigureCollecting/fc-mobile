@@ -4,7 +4,6 @@ import { PushRequestSchema, type PushRequest, type PushResponse } from '@figurec
 import type { UserStore } from '../../storage/userStore';
 import {
   DEVICE,
-  HEAD,
   OTHER_DEVICE,
   PushOutcome,
   T0,
@@ -16,6 +15,7 @@ import {
   result,
   status,
   token,
+  write,
 } from './harness';
 
 async function send(store: UserStore, max = 100) {
@@ -28,9 +28,9 @@ describe('(b) a failed send loses nothing', () => {
   it('keeps all 3 entries recoverable when the transport throws after 1 of 3 sends', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'status', 'owned');
-    await store.writeFacet(HEAD[1], 'status', 'wished');
-    await store.writeFacet(HEAD[2], 'status', 'ordered');
+    await write(store, 0, 'status', 'owned');
+    await write(store, 1, 'status', 'wished');
+    await write(store, 2, 'status', 'ordered');
     await store.onStatus(status(T0), 0);
 
     let sends = 0;
@@ -82,9 +82,9 @@ describe('(b) a failed send loses nothing', () => {
   it('resends a whole frozen batch unchanged after a reload, counting attempts', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'status', 'owned');
-    await store.writeFacet(HEAD[0], 'note', 'boxed');
-    await store.writeFacet(HEAD[1], 'count', 2);
+    await write(store, 0, 'status', 'owned');
+    await write(store, 0, 'note', 'boxed');
+    await write(store, 1, 'wishability', 2);
     await store.onStatus(status(T0), 0);
     const batch = await send(store);
     const bytes = toBinary(PushRequestSchema, batch.request);
@@ -92,7 +92,7 @@ describe('(b) a failed send loses nothing', () => {
     expect(batch.request.clientId).toBe(batch.clientId);
 
     // A newer local edit after the send does not touch the frozen batch.
-    await store.writeFacet(HEAD[0], 'note', 'unboxed');
+    await write(store, 0, 'note', 'unboxed');
 
     const reloaded = await openStore(db);
     const again = await send(reloaded);
@@ -110,7 +110,7 @@ describe('(c) and the rest of the client rule', () => {
     const { db } = await freshDb();
     const store = await openStore(db);
     const edit =
-      field === 'note' ? await store.writeFacet(HEAD[0], 'note', 'mine') : await store.writeFacet(HEAD[0], 'status', 'owned');
+      field === 'note' ? await write(store, 0, 'note', 'mine') : await write(store, 0, 'status', 'owned');
     await store.onStatus(status(T0), 0);
     const batch = await send(store);
     return { db, store, edit, batch, fk: key(0, field) };
@@ -132,7 +132,7 @@ describe('(c) and the rest of the client rule', () => {
 
   it('(c) STALE after the facet moved on applies current only if it is newer', async () => {
     const { store, batch, fk } = await pushed();
-    const later = await store.writeFacet(HEAD[0], 'note', 'later');
+    const later = await write(store, 0, 'note', 'later');
     const older = ev(fk, token(T0 - 1_000, 0, OTHER_DEVICE), 'upsert', '{"note":"old"}');
 
     await store.recordPush(batch.clientId, { results: [result(fk, PushOutcome.STALE, older)] });
@@ -143,19 +143,21 @@ describe('(c) and the rest of the client rule', () => {
     expect(facet!.pending_id).toBe(later.outbox_id);
   });
 
-  it('a result for a facet that moved on is applied as a Delta event when current is newer', async () => {
+  it('a newer current for a facet with a later pending edit goes to the replica; the edit still shows and is still sent', async () => {
     const { store, batch, fk } = await pushed();
-    const later = await store.writeFacet(HEAD[0], 'note', 'later');
+    const later = await write(store, 0, 'note', 'later');
     const newest = ev(fk, token(T0 + 60_000, 0, OTHER_DEVICE), 'upsert', '{"note":"theirs"}');
 
     await store.recordPush(batch.clientId, { results: [result(fk, PushOutcome.STALE, newest)] });
 
     const facet = await store.getFacet(fk);
-    expect(facet!.value!.version).toBe(newest.version);
-    expect(facet!.pending_id).toBeNull();
-    expect(JSON.parse(facet!.overwritten!.payload).note).toBe('later');
+    expect(facet!.value!.version).toBe(later.version);
+    expect(facet!.known!.version).toBe(newest.version);
+    expect(facet!.pending_id).toBe(later.outbox_id);
+    expect(facet!.overwritten).toBeNull();
     const entries = await store.listOutbox();
-    expect(entries.find((e) => e.id === later.outbox_id)).toMatchObject({ state: 'STALE', superseded: true });
+    expect(entries.find((e) => e.id === later.outbox_id)).toMatchObject({ state: 'PENDING' });
+    expect((await send(store)).entryIds).toEqual([later.outbox_id]);
   });
 
   it('APPLIED converges on the echo and clears pending', async () => {
@@ -251,7 +253,7 @@ describe('batches', () => {
   it('needs the first Status of the session before it forms a new batch', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'status', 'owned');
+    await write(store, 0, 'status', 'owned');
     expect(await store.nextBatch()).toEqual({ kind: 'status_required' });
     await store.onStatus(status(T0), 0);
     expect((await send(store)).request.events).toHaveLength(1);
@@ -267,9 +269,9 @@ describe('batches', () => {
   it('takes the oldest entries first, up to the limit, as SyncEvents in order', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    const a = await store.writeFacet(HEAD[0], 'status', 'owned');
-    const b = await store.writeFacet(HEAD[0], 'status', null);
-    await store.writeFacet(HEAD[1], 'status', 'owned');
+    const a = await write(store, 0, 'status', 'owned');
+    const b = await write(store, 0, 'status', null);
+    await write(store, 1, 'status', 'owned');
     await store.onStatus(status(T0), 0);
 
     const batch = await send(store, 2);

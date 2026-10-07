@@ -1,5 +1,6 @@
 // Runs in the page (bundled by web.ts): queues edits through the app's own
-// v2 store and reads back what is still pending.
+// local store and reads back what is still pending.
+import { ufFacetKey } from '@figurecollecting/fc-api-contract';
 import { openLocalDb } from '../../src/storage/localDb';
 import { UserStore } from '../../src/storage/userStore';
 
@@ -8,7 +9,8 @@ export async function queueEdits(sub: string, deviceId: string, headIds: string[
   try {
     const store = await UserStore.open(db, { sub, deviceId });
     const versions: string[] = [];
-    for (const head of headIds) versions.push((await store.writeFacet(head, 'status', 'owned')).version);
+    // One user-owned facet per figure, so each queued edit is one outbox entry.
+    for (const head of headIds) versions.push((await store.writeFacet(ufFacetKey(head, 'score'), { score: 7 })).version);
     return versions;
   } finally {
     db.close();

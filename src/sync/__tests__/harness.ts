@@ -10,11 +10,11 @@ import {
   type PushResult,
   type StatusResponse,
   type SyncEvent,
-  type UserFacetField,
-  userFacetKey,
+  occFacetKey,
+  ufFacetKey,
 } from '@figurecollecting/fc-api-contract';
 import { openLocalDb, type LocalDb } from '../../storage/localDb';
-import { UserStore, type UserStoreOptions } from '../../storage/userStore';
+import { UserStore, type UserStoreOptions, type WriteResult } from '../../storage/userStore';
 
 export const DEVICE = '0f3a5c7e9b1d2f4a6c8e0b2d4f6a8c0e';
 export const OTHER_DEVICE = '9c1e3a5b7d9f1b3d5f7a9c1e3b5d7f9a';
@@ -24,6 +24,13 @@ export const HEAD = [
   '1b4e28ba-2fa1-11d2-883f-0016d3cca427',
   '6fa459ea-ee8a-3ca4-894e-db77e160355e',
   '886313e1-3b8a-5372-9b90-0c9aee199e5d',
+] as const;
+
+/** One copy per figure for the low-level outbox tests: OCC[i]'s status stands in for 0.2.x's per-figure status. */
+export const OCC = [
+  '2c5ea4c0-4067-11e9-8bad-9b1deb4d3b7d',
+  '7d444840-9dc0-11d1-b245-5ffdce74fad2',
+  'e902893a-9d22-3c7e-a7b8-d6e313b71d9f',
 ] as const;
 
 /** 2026-09-26T12:00:00Z. */
@@ -65,8 +72,16 @@ export function token(ms: number, counter: number, device: string = DEVICE): str
   return `${iso(ms)}#${String(counter).padStart(10, '0')}#${device}`;
 }
 
-export function key(head: number, field: UserFacetField): string {
-  return userFacetKey(HEAD[head], field);
+export type Field = 'status' | 'score' | 'note' | 'wishability';
+
+/** status is the copy OCC[i]'s; score, note and wishability are the figure HEAD[i]'s. */
+export function key(i: number, field: Field): string {
+  return field === 'status' ? occFacetKey(OCC[i], 'status') : ufFacetKey(HEAD[i], field);
+}
+
+/** Write one facet of key(i, field); null is a tombstone. */
+export function write(store: UserStore, i: number, field: Field, value: string | number | null): Promise<WriteResult> {
+  return store.writeFacet(key(i, field), value === null ? null : { [field]: value });
 }
 
 export function ev(facetKey: string, version: string, op: 'upsert' | 'delete' = 'upsert', payload?: string): SyncEvent {

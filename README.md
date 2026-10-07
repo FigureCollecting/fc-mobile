@@ -61,40 +61,53 @@ The e2e suites guard the rest:
   (Playwright counts the args it is given among its defaults, so a list there
   can take the rules off Chromium's command line), or any option the test does
   not read.
-- Each worker refuses to start with a proxy in its environment (`http_proxy`
-  and the like: Chromium sends hosts to it unresolved, and the headless shell
-  does so even with `--no-proxy-server`), a variable that sends a launch to a
-  browser elsewhere (`SELENIUM_REMOTE_URL`, `SELENIUM_REMOTE_CAPABILITIES`,
-  `SELENIUM_REMOTE_HEADERS`, `PW_TEST_CONNECT_WS_ENDPOINT`,
-  `PW_TEST_CONNECT_HEADERS`, `PW_TEST_CONNECT_EXPOSE_NETWORK`, or
-  `PWTEST_UNDER_TEST`, which lets a launch option name a Selenium grid), or a
-  browser to connect to (`connectOptions`), or with a name on
+- Each worker refuses to start with a proxy in its environment (any variable
+  whose name ends in `_proxy`, in any case, but `no_proxy`, and
+  `SOCKS_SERVER`: Chromium sends hosts to it unresolved), a desktop whose
+  proxy settings Chromium would take (`XDG_CURRENT_DESKTOP`,
+  `DESKTOP_SESSION`, `GNOME_DESKTOP_SESSION_ID`, `KDE_FULL_SESSION`,
+  `KDE_SESSION_VERSION`, `GSETTINGS_BACKEND` or `KDEHOME` set at all, even
+  empty: unset them to run the suites on a Linux desktop), a variable that
+  sends a launch to a browser elsewhere (`SELENIUM_REMOTE_URL`,
+  `SELENIUM_REMOTE_CAPABILITIES`, `SELENIUM_REMOTE_HEADERS`,
+  `PW_TEST_CONNECT_WS_ENDPOINT`, `PW_TEST_CONNECT_HEADERS`,
+  `PW_TEST_CONNECT_EXPOSE_NETWORK`, or `PWTEST_UNDER_TEST`, which lets a
+  launch option name a Selenium grid), or a browser to connect to
+  (`connectOptions`), or with a name on
   `Object.prototype` that Node does not put there. From then on
   `Object.prototype` takes no new name (`Object.preventExtensions`): every
   options object inherits it, and Playwright reads launch and context
   options such as `ignoreDefaultArgs` or `proxy` from it a few ticks after
   each call, so a name written even right after a call is never written.
   `blockHandsOff`, so every fixture context, checks it too.
-- Each `launch`, `launchPersistentContext` or `launchServer` on the worker's
-  `playwright` object (its own browser's and a spec's, called on a browser
+- Each `launch`, `launchPersistentContext` or `launchServer` on Playwright's
+  browser types (the worker's own browser's and a spec's, called on a browser
   type or taken from the prototype they share), and `launchServer` on each
   browser type's own launcher (`_serverLauncher`), is checked as it is
-  called: the environment; `Object.prototype`; and the options it starts
-  from, the worker's defaults (read as the launch will read them) and its
-  own, which must not hold `ignoreDefaultArgs`, `executablePath`, `proxy` or
-  `env` (set to anything but undefined), a Playwright test hook, or any
+  called, from when `e2e/fixtures.ts` loads: before the code of any spec
+  that imports it, so a launch a spec takes as it loads is checked too.
+  `launchPersistentContext` is refused on any profile directory (whose own
+  settings can name a proxy): only `''`, a fresh one Playwright makes and
+  removes, passes. Then the environment; `Object.prototype`; and the options
+  it starts from, the worker's defaults (read as the launch will read them)
+  and its own, which must not hold `ignoreDefaultArgs`, `executablePath`,
+  `proxy` or `env` (set to anything but undefined), a Playwright test hook, a
+  `channel` Playwright drives over WebDriver BiDi (`bidi-*`, `moz-*`), or any
   option under a getter or setter, or be a Proxy. A Chromium launch's args,
-  its own over the worker's as Playwright merges them, must be one
-  `--host-resolver-rules` switch whose list starts with the hands-off rules,
-  or sends every host to 127.0.0.1 first (the hands-off spec's sentinels),
-  and goes on only with `MAP` rules or an `EXCLUDE` of one named host that
-  is not hands-off; any other arg is refused (a proxy switch, a debugging
-  port). These hold however the options were built (`JSON.parse` given to
-  `test.use`, say). The launch starts with a copy of the environment it was
-  checked against and a frozen copy of the args, so a variable written after
-  the call never reaches the browser; as it resolves, the environment and
-  `Object.prototype` are checked again, and on a refusal what it launched is
-  closed. A launched browser, and every browser of its class after it,
+  its own over the worker's as Playwright merges them, must be all ASCII
+  (Chromium drops a rule list with any other character whole, the hands-off
+  rules too), and one `--host-resolver-rules` switch whose list starts with
+  the hands-off rules, or sends every host to 127.0.0.1 first (the hands-off
+  spec's sentinels), and goes on only with `MAP` rules or an `EXCLUDE` of
+  one named host that is not hands-off; any other arg is refused (a proxy
+  switch, a debugging port), but `--no-proxy-server` right after it. These
+  hold however the options were built (`JSON.parse` given to `test.use`,
+  say). The launch starts with a copy of the environment it was checked
+  against and a frozen copy of the rules arg, then `--no-proxy-server`, so a
+  variable written after the call never reaches the browser; as it
+  resolves, the environment and `Object.prototype` are checked again, and on
+  a refusal what it launched is closed. A launched browser, and every
+  browser of its class after it,
   refuses `newBrowserCDPSession`: a session on the whole browser can make a
   context with a proxy of its own. `connect`, `connectOverCDP`, `_connect`
   and `_connectToWorker` on the browser types, `_electron.launch`, and
@@ -134,14 +147,19 @@ The e2e suites guard the rest:
 None of these covers: a connect variable (`SELENIUM_REMOTE_URL` and the rest
 above) written after a launch is called and removed before it resolves,
 which Playwright reads in between (a proxy variable cannot get in that way:
-the browser starts with the environment checked at the call); a launch or
-connection made through Playwright's other private members, such as a
+the browser starts with the environment checked at the call); a launch taken
+from Playwright before `e2e/fixtures.ts` loads (by a module a spec imports
+ahead of it, under a module name the scan cannot read), which is never
+checked; a launch or connection made through Playwright's other private
+members, such as a
 browser type's `_channel` or `_connection`, which go round every check at
 run time; `browser.bind`, which Playwright's dashboard calls
 (`PLAYWRIGHT_DASHBOARD`) so that other clients can drive the browser; a
 proxy given to a context in a form the scan cannot read (a variable given to
-`test.use`, `newContext` options built at run time), since the run-time
-checks read no context options; and Node code a spec runs itself (a socket,
+`test.use`, `newContext` options built at run time, and a fresh
+`launchPersistentContext`, into which Playwright merges the test's context
+options after the launch check), since the run-time checks read no context
+options; and Node code a spec runs itself (a socket,
 a child process).
 
 A spike page is therefore an HTML file in this repo, opened from a spec on

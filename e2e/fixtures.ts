@@ -46,7 +46,7 @@ export async function watchCsp(context: BrowserContext): Promise<CspViolation[]>
  * Specs that must not run under the CSP check (e2e/auth) take this one.
  */
 export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOffWorker: void }>({
-  // No worker starts with a proxy in its environment, a variable that sends a launch elsewhere, or a browser to connect to: each goes round the resolver rules.
+  // No worker starts with a proxy in its environment, a desktop whose proxy settings Chromium would take, a variable that sends a launch elsewhere, or a browser to connect to: each goes round the resolver rules.
   // Nor with a name on Object.prototype, which then takes none for the rest of the worker: Playwright reads launch and context options inherited from it.
   handsOffWorker: [
     async ({ connectOptions }, use) => {

@@ -16,21 +16,25 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   address for them (which also stops a redirect hop), and no arg or launch
  *   option beside them that takes them off or goes round them
  *   (configBypasses, against the rules built afresh);
- * - no worker starts with a proxy in its environment, a variable that sends
- *   a launch to a browser elsewhere (SELENIUM_REMOTE_URL among them), or a
- *   browser to connect to (refuseRoundTheRules), or with a name on
- *   Object.prototype, which then takes no new name while the worker runs
- *   (lockInheritedOptions);
+ * - no worker starts with a proxy in its environment, a desktop whose proxy
+ *   settings Chromium would take, a variable that sends a launch to a browser
+ *   elsewhere (SELENIUM_REMOTE_URL among them), or a browser to connect to
+ *   (refuseRoundTheRules), or with a name on Object.prototype, which then
+ *   takes no new name while the worker runs (lockInheritedOptions);
  * - each launch in a worker (its own browser's and a spec's; on a browser
- *   type, through the prototype they share, or on a type's own launcher) is
- *   checked as it is called (refuseRoundTheRulesAtEachLaunch): the
+ *   type, through the prototype they share, or on a type's own launcher),
+ *   from when e2e/fixtures.ts loads (before the code of any spec that imports
+ *   it), is checked as it is called (refuseRoundTheRulesAtEachLaunch): the
  *   environment, Object.prototype, the options it starts from
- *   (refuseLaunchBypasses), and a Chromium's args, its own over the worker's
- *   (refuseLaunchArgs: the rules first, then nothing that undoes them);
- *   however the options were built. It starts with that environment and
- *   those args, copied, and the environment and Object.prototype are checked
- *   again as it resolves. Its browser refuses a session on the whole
- *   browser; connecting to a browser, Electron and Android are refused;
+ *   (refuseLaunchBypasses: a WebDriver BiDi channel among them), and a
+ *   Chromium's args, its own over the worker's (refuseLaunchArgs: all ASCII,
+ *   the rules first, then nothing that undoes them); however the options
+ *   were built. launchPersistentContext is refused on any profile directory:
+ *   only '', a fresh one Playwright makes, passes. A launch starts with that
+ *   environment and those args, copied, a Chromium's with --no-proxy-server
+ *   after them, and the environment and Object.prototype are checked again
+ *   as it resolves. Its browser refuses a session on the whole browser;
+ *   connecting to a browser, Electron and Android are refused;
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts reads every e2e source's syntax for a way off these
  *   guards (syntax only).
@@ -442,15 +446,19 @@ function refuseBrowserSessions(launched: Launched): void {
 /**
  * Makes every launch on these browser types (the worker's own browser's
  * included: Playwright's browser fixture launches through them), wherever it
- * is taken from, and on each one's own launcher (_serverLauncher, which
- * launchServer hands on to), check as it is called: refuseRoundTheRules on the
+ * is taken from after this runs (e2e/fixtures.ts runs it as it loads), and on
+ * each one's own launcher (_serverLauncher, which launchServer hands on to),
+ * check as it is called: a launchPersistentContext given anything but '' (a
+ * profile directory, whose own settings can name a proxy) is refused;
+ * refuseRoundTheRules on the
  * environment as it is then, refuseInheritedOptions, refuseLaunchBypasses on
  * the options it starts from (the worker's defaults, read as the launch will,
  * and its own), and for a Chromium launch (anything not Firefox's or
  * WebKit's) refuseLaunchArgs on its args, its own over the worker's. The
  * launch is handed a copy of its options with that environment, frozen, and a
- * frozen copy of those args: what was checked is what it starts with, however
- * either changes after the call. As the launch resolves, the environment and
+ * Chromium launch a frozen copy of the rules arg it checked, then
+ * --no-proxy-server: what was checked is what it starts with, however either
+ * changes after the call. As the launch resolves, the environment and
  * Object.prototype are checked again (Playwright reads both a few ticks after
  * the call): on a refusal, what it launched is closed. The browser it gives
  * back refuses BROWSER_SESSIONS. Refuses outright the members that connect to

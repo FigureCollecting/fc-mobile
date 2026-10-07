@@ -42,13 +42,12 @@ The e2e suites guard the rest:
   scan refuses such routes. `unroute` or `unrouteAll` on a context would take
   the guard's routes off, so the scan refuses them on anything but `page`.
 - Every Chromium project in the three Playwright configs gets
-  `HANDS_OFF_LAUNCH_ARGS`, and so does every Chromium a spec launches in a
-  form the scan below reads (the hands-off spec's own: the same rules, then a
-  local sentinel): resolver rules that give those hosts, with or without
-  trailing dots, no address, which also stops redirect hops and workers'
-  WebSockets. `HANDS_OFF_LAUNCH_ARGS` and the domain list are frozen: a spec
-  that pushes onto either, or sets an element, throws before any browser
-  launches with the change. The configs pass the args in
+  `HANDS_OFF_LAUNCH_ARGS`, and every Chromium launch in a worker is refused
+  unless its args keep them (below): resolver rules that give those hosts,
+  with or without trailing dots, no address, which also stops redirect hops
+  and workers' WebSockets. `HANDS_OFF_LAUNCH_ARGS` and the domain list are
+  frozen: a spec that pushes onto either, or sets an element, throws before
+  any browser launches with the change. The configs pass the args in
   `HANDS_OFF_LAUNCH_OPTIONS`, frozen too, so a spec that imports a config and
   sets the args or adds a proxy there throws as well. A test reads each config
   as Playwright merges it (a project's `use` over the config's), compares its
@@ -69,24 +68,38 @@ The e2e suites guard the rest:
   `SELENIUM_REMOTE_HEADERS`, `PW_TEST_CONNECT_WS_ENDPOINT`,
   `PW_TEST_CONNECT_HEADERS`, `PW_TEST_CONNECT_EXPOSE_NETWORK`, or
   `PWTEST_UNDER_TEST`, which lets a launch option name a Selenium grid), or a
-  browser to connect to (`connectOptions`).
+  browser to connect to (`connectOptions`), or with a name on
+  `Object.prototype` that Node does not put there. From then on
+  `Object.prototype` takes no new name (`Object.preventExtensions`): every
+  options object inherits it, and Playwright reads launch and context
+  options such as `ignoreDefaultArgs` or `proxy` from it a few ticks after
+  each call, so a name written even right after a call is never written.
+  `blockHandsOff`, so every fixture context, checks it too.
 - Each `launch`, `launchPersistentContext` or `launchServer` on the worker's
   `playwright` object (its own browser's and a spec's, called on a browser
-  type or taken from the prototype they share) checks again as it starts:
-  the environment as it is then, so a variable written after the worker
-  started is refused before anything launches; `Object.prototype`, which must
-  carry no name Node does not put there (every options object inherits it,
-  and Playwright reads options such as `ignoreDefaultArgs` from it;
-  `blockHandsOff`, so every fixture context, checks this too); and the
-  options the launch starts from, the worker's defaults as they are then and
-  its own, which must not hold `ignoreDefaultArgs`, `executablePath`, `proxy`
-  or `env` (set to anything but undefined, or as a getter or setter), or a
-  Playwright test hook, or be a Proxy. It reads those objects as the launch
-  starts, so it holds however they were built (the scan below cannot read a
-  name built at run time). It does not check the args (the config test and
-  the scan do). `connect`, `connectOverCDP`, `_connect` and
-  `_connectToWorker` on the browser types, `_electron.launch`, and
-  `_android`'s `connect`, `devices` and `launchServer` are refused outright.
+  type or taken from the prototype they share), and `launchServer` on each
+  browser type's own launcher (`_serverLauncher`), is checked as it is
+  called: the environment; `Object.prototype`; and the options it starts
+  from, the worker's defaults (read as the launch will read them) and its
+  own, which must not hold `ignoreDefaultArgs`, `executablePath`, `proxy` or
+  `env` (set to anything but undefined), a Playwright test hook, or any
+  option under a getter or setter, or be a Proxy. A Chromium launch's args,
+  its own over the worker's as Playwright merges them, must be one
+  `--host-resolver-rules` switch whose list starts with the hands-off rules,
+  or sends every host to 127.0.0.1 first (the hands-off spec's sentinels),
+  and goes on only with `MAP` rules or an `EXCLUDE` of one named host that
+  is not hands-off; any other arg is refused (a proxy switch, a debugging
+  port). These hold however the options were built (`JSON.parse` given to
+  `test.use`, say). The launch starts with a copy of the environment it was
+  checked against and a frozen copy of the args, so a variable written after
+  the call never reaches the browser; as it resolves, the environment and
+  `Object.prototype` are checked again, and on a refusal what it launched is
+  closed. A launched browser, and every browser of its class after it,
+  refuses `newBrowserCDPSession`: a session on the whole browser can make a
+  context with a proxy of its own. `connect`, `connectOverCDP`, `_connect`
+  and `_connectToWorker` on the browser types, `_electron.launch`, and
+  `_android`'s `connect`, `devices` and `launchServer` (its own launcher's
+  too) are refused outright.
 - Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
   `route.fetch()`) find no address for them.
 - `e2e/handsOffScan.ts` reads every e2e source's syntax tree and fails the
@@ -117,6 +130,19 @@ The e2e suites guard the rest:
   or a device held in a `const` (`test.use(fixtures)`), a name built at run
   time (a module, a member, a private hold), or code that reaches the options
   without naming them (such as a walk over the `playwright` object's values).
+
+None of these covers: a connect variable (`SELENIUM_REMOTE_URL` and the rest
+above) written after a launch is called and removed before it resolves,
+which Playwright reads in between (a proxy variable cannot get in that way:
+the browser starts with the environment checked at the call); a launch or
+connection made through Playwright's other private members, such as a
+browser type's `_channel` or `_connection`, which go round every check at
+run time; `browser.bind`, which Playwright's dashboard calls
+(`PLAYWRIGHT_DASHBOARD`) so that other clients can drive the browser; a
+proxy given to a context in a form the scan cannot read (a variable given to
+`test.use`, `newContext` options built at run time), since the run-time
+checks read no context options; and Node code a spec runs itself (a socket,
+a child process).
 
 A spike page is therefore an HTML file in this repo, opened from a spec on
 `e2e/fixtures.ts`. In any other browser `npm run dev` gives it the CSP only;

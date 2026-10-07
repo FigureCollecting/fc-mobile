@@ -11,25 +11,30 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   and workers' requests to these hosts, closes its pages' WebSockets to them
  *   and refuses its API requests to them, and fails its test on one that got
  *   past (a redirect hop);
- * - every Chromium project of the configs gets HANDS_OFF_LAUNCH_ARGS (frozen,
- *   so no spec can change them), so its resolver has no address for them
- *   (which also stops a redirect hop), and no arg or launch option beside
- *   them that takes them off or goes round them (configBypasses, against the
- *   rules built afresh); so does every Chromium a spec launches in a form
- *   e2e/handsOffScan.ts reads;
+ * - every Chromium project of the configs gets HANDS_OFF_LAUNCH_ARGS, frozen
+ *   (a spec cannot push onto them or set one), so its resolver has no
+ *   address for them (which also stops a redirect hop), and no arg or launch
+ *   option beside them that takes them off or goes round them
+ *   (configBypasses, against the rules built afresh);
  * - no worker starts with a proxy in its environment, a variable that sends
  *   a launch to a browser elsewhere (SELENIUM_REMOTE_URL among them), or a
- *   browser to connect to (refuseRoundTheRules);
- * - each launch on the worker's `playwright` object (its own browser's
- *   included; on a browser type or through the prototype they share) checks
- *   again as it starts (refuseRoundTheRulesAtEachLaunch): the environment,
- *   Object.prototype (refuseInheritedOptions, which blockHandsOff runs too)
- *   and the options it starts from (refuseLaunchBypasses: no
- *   ignoreDefaultArgs, executablePath, proxy, env or test hook, however they
- *   were built); connecting to a browser, Electron and Android are refused;
+ *   browser to connect to (refuseRoundTheRules), or with a name on
+ *   Object.prototype, which then takes no new name while the worker runs
+ *   (lockInheritedOptions);
+ * - each launch in a worker (its own browser's and a spec's; on a browser
+ *   type, through the prototype they share, or on a type's own launcher) is
+ *   checked as it is called (refuseRoundTheRulesAtEachLaunch): the
+ *   environment, Object.prototype, the options it starts from
+ *   (refuseLaunchBypasses), and a Chromium's args, its own over the worker's
+ *   (refuseLaunchArgs: the rules first, then nothing that undoes them);
+ *   however the options were built. It starts with that environment and
+ *   those args, copied, and the environment and Object.prototype are checked
+ *   again as it resolves. Its browser refuses a session on the whole
+ *   browser; connecting to a browser, Electron and Android are refused;
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts reads every e2e source's syntax for a way off these
- *   guards (syntax only: the README lists what it does not follow).
+ *   guards (syntax only).
+ * The README lists what none of these covers.
  * The app's CSP and the vite dev server's refuse requests to them before they
  * are sent, as the route guard does; a CSP does not stop a navigation. Neither
  * stops the connection: for an https frame or form post the CSP refuses, or a

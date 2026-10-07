@@ -72,7 +72,11 @@ The e2e suites guard the rest:
   `SELENIUM_REMOTE_CAPABILITIES`, `SELENIUM_REMOTE_HEADERS`,
   `PW_TEST_CONNECT_WS_ENDPOINT`, `PW_TEST_CONNECT_HEADERS`,
   `PW_TEST_CONNECT_EXPOSE_NETWORK`, or `PWTEST_UNDER_TEST`, which lets a
-  launch option name a Selenium grid), or a browser to connect to
+  launch option name a Selenium grid), a variable that chooses the browser
+  binary Playwright launches (`PLAYWRIGHT_BROWSERS_PATH`, `0` included, or as
+  `npm_config_playwright_browsers_path` or
+  `npm_package_config_playwright_browsers_path`; `XDG_CACHE_HOME`;
+  `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE`), or a browser to connect to
   (`connectOptions`), or with a name on
   `Object.prototype` that Node does not put there. From then on
   `Object.prototype` takes no new name (`Object.preventExtensions`): every
@@ -80,15 +84,19 @@ The e2e suites guard the rest:
   options such as `ignoreDefaultArgs` or `proxy` from it a few ticks after
   each call, so a name written even right after a call is never written.
   `blockHandsOff`, so every fixture context, checks it too.
-- Each `launch`, `launchPersistentContext` or `launchServer` on Playwright's
-  browser types (the worker's own browser's and a spec's, called on a browser
-  type or taken from the prototype they share), and `launchServer` on each
-  browser type's own launcher (`_serverLauncher`), is checked as it is
-  called, from when `e2e/fixtures.ts` loads: before the code of any spec
-  that imports it, so a launch a spec takes as it loads is checked too.
-  `launchPersistentContext` is refused on any profile directory (whose own
-  settings can name a proxy): only `''`, a fresh one Playwright makes and
-  removes, passes. Then the environment; `Object.prototype`; and the options
+- Each `launch` or `launchPersistentContext` on Playwright's browser types
+  (the worker's own browser's and a spec's, called on a browser type or taken
+  from the prototype they share) is checked as it is called, from when
+  `e2e/fixtures.ts` loads: before the code of any spec that imports it, so a
+  launch a spec takes as it loads is checked too. `launchPersistentContext`
+  is refused on any profile directory (whose own settings can name a proxy):
+  only `''`, a fresh one Playwright makes and removes, passes. Then the
+  environment; that no machine-wide Chromium policy is there (anything but a
+  directory under `/etc/opt/chrome_for_testing/policies`,
+  `/etc/opt/chrome/policies`, `/etc/chromium/policies` or
+  `/etc/opt/edge/policies`, or one of those that cannot be read: a managed
+  policy outranks the command line, `--no-proxy-server` too, so the launch
+  is refused, on every browser type); `Object.prototype`; and the options
   it starts from, the worker's defaults (read as the launch will read them)
   and its own, which must not hold `ignoreDefaultArgs`, `executablePath`,
   `proxy` or `env` (set to anything but undefined), a Playwright test hook, a
@@ -109,8 +117,10 @@ The e2e suites guard the rest:
   a refusal what it launched is closed. A launched browser, and every
   browser of its class after it,
   refuses `newBrowserCDPSession`: a session on the whole browser can make a
-  context with a proxy of its own. `connect`, `connectOverCDP`, `_connect`
-  and `_connectToWorker` on the browser types, `_electron.launch`, and
+  context with a proxy of its own. `launchServer` on the browser types and
+  on their own launcher (`_serverLauncher`), whose private options
+  (`_userDataDir`) open a profile directory, `connect`, `connectOverCDP`,
+  `_connect` and `_connectToWorker` on the browser types, `_electron.launch`, and
   `_android`'s `connect`, `devices` and `launchServer` (its own launcher's
   too) are refused outright.
 - Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
@@ -144,7 +154,10 @@ The e2e suites guard the rest:
   time (a module, a member, a private hold), or code that reaches the options
   without naming them (such as a walk over the `playwright` object's values).
 
-None of these covers: a connect variable (`SELENIUM_REMOTE_URL` and the rest
+None of these covers: a browser binary put where Playwright looks by
+default (`~/.cache/ms-playwright`), or a binary-choosing variable removed
+before the worker checks it (Playwright reads them once, as it loads); a
+connect variable (`SELENIUM_REMOTE_URL` and the rest
 above) written after a launch is called and removed before it resolves,
 which Playwright reads in between (a proxy variable cannot get in that way:
 the browser starts with the environment checked at the call); a launch taken

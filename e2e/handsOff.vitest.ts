@@ -819,7 +819,18 @@ describe('refuseManagedPolicies (machine-wide Chromium policies, which outrank i
       fs.mkdirSync(path.join(root, 'managed'), { recursive: true });
       fs.writeFileSync(path.join(root, 'managed', 'a.json'), '{}');
       fs.writeFileSync(path.join(root, 'b.json'), '{}');
-      expect(() => refuseManagedPolicies([root, root])).toThrow(/^hands-off: .*a\.json .*; .*b\.json .*; .*a\.json .*; .*b\.json .*$/);
+      const a = refusal(path.join(root, 'managed', 'a.json')).slice('hands-off: '.length);
+      const b = refusal(path.join(root, 'b.json')).slice('hands-off: '.length);
+      // In the order the directory gives them.
+      const message = (() => {
+        try {
+          refuseManagedPolicies([root, root]);
+        } catch (error) {
+          return (error as Error).message;
+        }
+      })();
+      expect(message?.startsWith('hands-off: ')).toBe(true);
+      expect(message?.slice('hands-off: '.length).split('; ').sort()).toEqual([a, a, b, b].sort());
     });
     const read = vi.spyOn(fs, 'readdirSync');
     try {
@@ -1088,7 +1099,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
       for (const options of [{ args: HANDS_OFF_LAUNCH_ARGS }, { args: HANDS_OFF_LAUNCH_ARGS, ['_userData' + 'Dir']: '/tmp/profile' }]) {
         await expect(start(pw[engine], SERVE, options), engine).rejects.toThrow(`hands-off: ${SERVE} opens a browser whose options (a profile directory among them) no hands-off check reads`);
         await expect(start(launchers[engine], SERVE, options), `${engine} launcher`).rejects.toThrow(
-          `hands-off: ${engine}._serverLauncher.${SERVE} opens a browser whose options (a profile directory among them) no hands-off check reads`,
+          `hands-off: _serverLauncher.${SERVE} opens a browser whose options (a profile directory among them) no hands-off check reads`,
         );
       }
     }

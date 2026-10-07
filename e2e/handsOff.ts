@@ -1,4 +1,6 @@
 import dns from 'node:dns';
+import fs from 'node:fs';
+import path from 'node:path';
 import { isDeepStrictEqual, types as valueTypes } from 'node:util';
 import vm from 'node:vm';
 import type { APIRequestContext, BrowserContext, Request } from '@playwright/test';
@@ -18,14 +20,16 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   (configBypasses, against the rules built afresh);
  * - no worker starts with a proxy in its environment, a desktop whose proxy
  *   settings Chromium would take, a variable that sends a launch to a browser
- *   elsewhere (SELENIUM_REMOTE_URL among them), or a browser to connect to
+ *   elsewhere (SELENIUM_REMOTE_URL among them) or chooses the browser binary
+ *   (PLAYWRIGHT_BROWSERS_PATH among them), or a browser to connect to
  *   (refuseRoundTheRules), or with a name on Object.prototype, which then
  *   takes no new name while the worker runs (lockInheritedOptions);
  * - each launch in a worker (its own browser's and a spec's; on a browser
- *   type, through the prototype they share, or on a type's own launcher),
- *   from when e2e/fixtures.ts loads (before the code of any spec that imports
- *   it), is checked as it is called (refuseRoundTheRulesAtEachLaunch): the
- *   environment, Object.prototype, the options it starts from
+ *   type, or through the prototype they share), from when e2e/fixtures.ts
+ *   loads (before the code of any spec that imports it), is checked as it is
+ *   called (refuseRoundTheRulesAtEachLaunch): the environment, no
+ *   machine-wide Chromium policy (refuseManagedPolicies: one outranks the
+ *   command line), Object.prototype, the options it starts from
  *   (refuseLaunchBypasses: a WebDriver BiDi channel among them), and a
  *   Chromium's args, its own over the worker's (refuseLaunchArgs: all ASCII,
  *   the rules first, then nothing that undoes them); however the options
@@ -34,6 +38,7 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   environment and those args, copied, a Chromium's with --no-proxy-server
  *   after them, and the environment and Object.prototype are checked again
  *   as it resolves. Its browser refuses a session on the whole browser;
+ *   launchServer (whose private options open a profile directory),
  *   connecting to a browser, Electron and Android are refused;
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts reads every e2e source's syntax for a way off these
@@ -203,12 +208,26 @@ const CONNECT_VARIABLES = new Set([
 ]);
 
 /**
+ * Where Playwright reads which browser binary to launch (its browsers'
+ * directory, given directly or through npm's config, the cache directory that
+ * holds it by default, the platform whose build it picks); by name in any case.
+ */
+const BINARY_VARIABLES = new Set([
+  'playwright_browsers_path',
+  'npm_config_playwright_browsers_path',
+  'npm_package_config_playwright_browsers_path',
+  'xdg_cache_home',
+  'playwright_host_platform_override',
+]);
+
+/**
  * Throws if this worker would run its browsers round the hands-off resolver
  * rules: a proxy in its environment (isProxyVariable: Chromium sends hosts to
  * it unresolved; the headless shell does even with --no-proxy-server), a
  * desktop whose proxy settings Chromium would take (DESKTOP_VARIABLES), a
  * variable that sends a launch to a browser somewhere else
- * (CONNECT_VARIABLES), or a browser to connect to (connectOptions, which
+ * (CONNECT_VARIABLES) or chooses the browser binary it launches
+ * (BINARY_VARIABLES), or a browser to connect to (connectOptions, which
  * PW_TEST_CONNECT_WS_ENDPOINT sets): a browser connected to has launch args
  * of its own. Every reason, in one error.
  */
@@ -221,9 +240,39 @@ export function refuseRoundTheRules(env: Record<string, string | undefined>, con
     if (!value) return [];
     if (isProxyVariable(key)) return [`${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`];
     if (CONNECT_VARIABLES.has(key)) return [`${name} in this worker's environment can connect it to a browser with launch args of its own`];
+    if (BINARY_VARIABLES.has(key)) return [`${name} in this worker's environment chooses the browser binary Playwright launches, which may leave out the args it is given`];
     return [];
   });
   if (connectOptions !== undefined) reasons.push('connectOptions connects this worker to a browser with launch args of its own');
+  if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
+}
+
+/**
+ * Where Chromium on Linux reads machine-wide policies (managed/ and
+ * recommended/ under each): Chrome for Testing's (Playwright's chromium, whose
+ * binary names this one), Google Chrome's, Chromium's and Edge's.
+ */
+export const MANAGED_POLICY_DIRS: readonly string[] = Object.freeze(['/etc/opt/chrome_for_testing/policies', '/etc/opt/chrome/policies', '/etc/chromium/policies', '/etc/opt/edge/policies']);
+
+/**
+ * Throws if anything but a directory is anywhere under one of `dirs`
+ * (a policy file, a symbolic link), or one is there but cannot be read as a
+ * directory: a managed policy outranks Chromium's command line, so a proxy
+ * there goes round the resolver rules and --no-proxy-server. Every reason,
+ * in one error.
+ */
+export function refuseManagedPolicies(dirs: readonly string[] = MANAGED_POLICY_DIRS): void {
+  const reasons = dirs.flatMap((dir) => {
+    try {
+      return fs
+        .readdirSync(dir, { recursive: true, withFileTypes: true })
+        .filter((entry) => !entry.isDirectory())
+        .map((entry) => `${path.join(entry.parentPath, entry.name)} is a machine-wide Chromium policy, which outranks its command line (a proxy there goes round the hands-off resolver rules and --no-proxy-server)`);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return code === 'ENOENT' ? [] : [`${dir} cannot be read (${code}), so a machine-wide Chromium policy there cannot be ruled out`];
+    }
+  });
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
 }
 
@@ -270,17 +319,9 @@ const BIDI_CHANNEL = /^(?:bidi|moz)-/i;
 const UNREADABLE = 'is a getter or setter, which the hands-off check cannot read as the launch will';
 
 /**
- * Environments a launch check read and handed its launch, frozen: the one its
- * browser starts with, which a launcher the launch hands its options on to
- * (launchServer's) takes as checked.
- */
-const CHECKED_ENVIRONMENTS = new WeakSet<object>();
-
-/**
  * Throws if the options a launch starts from (each of `sources`: the worker's
  * defaults, then the launch's own, which Playwright merges in that order)
- * carry a LAUNCH_BYPASSES option set to anything but undefined (an env a
- * launch check handed on excepted), a Playwright test hook, or a channel
+ * carry a LAUNCH_BYPASSES option set to anything but undefined, a Playwright test hook, or a channel
  * Playwright drives over WebDriver BiDi (BIDI_CHANNEL); or any option
  * under a getter or setter, which can answer this check one thing and the
  * launch another; or if one is a Proxy, which this check cannot read as
@@ -297,7 +338,7 @@ export function refuseLaunchBypasses(sources: readonly unknown[]): void {
     for (const [name, property] of Object.entries(Object.getOwnPropertyDescriptors(Object(options)))) {
       const why = LAUNCH_BYPASSES.get(name) ?? (name.startsWith(TEST_HOOK) ? 'is a Playwright test hook, which can send the launch to a browser elsewhere' : undefined);
       if (!('value' in property)) reasons.push(`${name} in this launch's options ${why ?? UNREADABLE}`);
-      else if (why !== undefined && property.value !== undefined && !(name === 'env' && CHECKED_ENVIRONMENTS.has(property.value as object))) {
+      else if (why !== undefined && property.value !== undefined) {
         reasons.push(`${name} in this launch's options ${why}`);
       } else if (name === 'channel' && typeof property.value === 'string' && BIDI_CHANNEL.test(property.value)) {
         reasons.push(`channel ${property.value} in this launch's options opens the browser over WebDriver BiDi, through a debugging port`);
@@ -374,8 +415,9 @@ export function refuseLaunchArgs(args: unknown): void {
 const LAUNCHERS = new Map([
   ['launch', 0],
   ['launchPersistentContext', 1],
-  ['launchServer', 0],
 ]);
+/** Why launchServer (a browser type's, and its own launcher's) is refused outright: Playwright reads private options there (_userDataDir opens a profile directory). */
+const SERVES_UNREAD = 'opens a browser whose options (a profile directory among them) no hands-off check reads';
 /** The browser-type members that connect to a browser already running, with launch args of its own (two private ones among them): each is refused. */
 const CONNECTORS = ['connect', 'connectOverCDP', '_connect', '_connectToWorker'];
 /** Playwright's experimental Electron and Android, and what each opens a browser with: neither browser gets the resolver rules, so each is refused. */
@@ -444,14 +486,13 @@ function refuseBrowserSessions(launched: Launched): void {
 }
 
 /**
- * Makes every launch on these browser types (the worker's own browser's
- * included: Playwright's browser fixture launches through them), wherever it
- * is taken from after this runs (e2e/fixtures.ts runs it as it loads), and on
- * each one's own launcher (_serverLauncher, which launchServer hands on to),
- * check as it is called: a launchPersistentContext given anything but '' (a
- * profile directory, whose own settings can name a proxy) is refused;
- * refuseRoundTheRules on the
- * environment as it is then, refuseInheritedOptions, refuseLaunchBypasses on
+ * Makes every launch and launchPersistentContext on these browser types (the
+ * worker's own browser's included: Playwright's browser fixture launches
+ * through them), wherever it is taken from after this runs (e2e/fixtures.ts
+ * runs it as it loads), check as it is called: a launchPersistentContext
+ * given anything but '' (a profile directory, whose own settings can name a
+ * proxy) is refused; refuseRoundTheRules on the environment as it is then,
+ * refuseManagedPolicies, refuseInheritedOptions, refuseLaunchBypasses on
  * the options it starts from (the worker's defaults, read as the launch will,
  * and its own), and for a Chromium launch (anything not Firefox's or
  * WebKit's) refuseLaunchArgs on its args, its own over the worker's. The
@@ -461,9 +502,11 @@ function refuseBrowserSessions(launched: Launched): void {
  * changes after the call. As the launch resolves, the environment and
  * Object.prototype are checked again (Playwright reads both a few ticks after
  * the call): on a refusal, what it launched is closed. The browser it gives
- * back refuses BROWSER_SESSIONS. Refuses outright the members that connect to
- * a browser (CONNECTORS), Playwright's Electron and Android openers
- * (OTHER_OPENERS) and Android's own launcher. Installs each once.
+ * back refuses BROWSER_SESSIONS. Refuses outright launchServer on each
+ * browser type and its own launcher (_serverLauncher; Playwright reads
+ * private options there, _userDataDir a profile directory), the members that
+ * connect to a browser (CONNECTORS), Playwright's Electron and Android
+ * openers (OTHER_OPENERS) and Android's own launcher. Installs each once.
  */
 export function refuseRoundTheRulesAtEachLaunch(
   types: { chromium: object; firefox: object; webkit: object; _electron?: object; _android?: object },
@@ -471,8 +514,8 @@ export function refuseRoundTheRulesAtEachLaunch(
   env: () => Record<string, string | undefined> = () => process.env,
 ): void {
   const launcherOf = (type: object | undefined): unknown => (type as { _serverLauncher?: unknown } | undefined)?._serverLauncher;
-  /** What launches a browser with no resolver rules to keep: Firefox and WebKit, and their launchers. Anything else is read as Chromium. */
-  const ruleless = new Set<unknown>([types.firefox, types.webkit, launcherOf(types.firefox), launcherOf(types.webkit)].filter((owner) => owner !== undefined));
+  /** What launches a browser with no resolver rules to keep: Firefox and WebKit. Anything else is read as Chromium. */
+  const ruleless = new Set<unknown>([types.firefox, types.webkit]);
   const checking = (name: string, at: number) => (start: (...args: unknown[]) => Promise<unknown>) =>
     async function (this: unknown, ...args: unknown[]) {
       if (name === 'launchPersistentContext' && args[0] !== '') {
@@ -480,6 +523,7 @@ export function refuseRoundTheRulesAtEachLaunch(
       }
       const environment = Object.freeze({ ...env() });
       refuseRoundTheRules(environment, connectOptions);
+      refuseManagedPolicies();
       refuseInheritedOptions();
       // hands-off-scan: reads the options every launch in this worker starts from, as the launch will, to refuse what they carry.
       const defaults = readAsLaunched(readAsLaunched(this, '_playwright'), '_defaultLaunchOptions');
@@ -492,7 +536,6 @@ export function refuseRoundTheRulesAtEachLaunch(
         refuseLaunchArgs(checked);
         options.args = Object.freeze([(checked as string[])[0], NO_PROXY_SWITCH]);
       }
-      CHECKED_ENVIRONMENTS.add(environment);
       const handed = [...args];
       handed[at] = options;
       const launched = (await start.apply(this, handed)) as Launched;
@@ -512,7 +555,8 @@ export function refuseRoundTheRulesAtEachLaunch(
     };
   for (const type of [types.chromium, types.firefox, types.webkit]) {
     for (const [name, at] of LAUNCHERS) replaceMember(type, name, checking(name, at));
-    replaceMember(Object(launcherOf(type)), 'launchServer', checking('launchServer', 0));
+    replaceMember(type, 'launchServer', refusing(`launchServer ${SERVES_UNREAD}`));
+    replaceMember(Object(launcherOf(type)), 'launchServer', refusing(`_serverLauncher.launchServer ${SERVES_UNREAD}`));
     for (const name of CONNECTORS) replaceMember(type, name, refusing(`${name} connects this worker to a browser with launch args of its own`));
   }
   for (const [key, names] of OTHER_OPENERS) {

@@ -212,6 +212,27 @@ describe('no status worked out before the upgrade replaces reload-required', () 
     await tab.signOut();
     expect(fromReload(seen)).toEqual(['reload-required']);
   });
+
+  it('a signed-out tab whose current-user read lands just before the upgrade is not reported signed out', async () => {
+    const world = await World.create();
+    const { tab, after, seen } = upgradedMidway(world);
+    expect(await tab.boot()).toBe('signed-out');
+    after('get', 'current');
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(fromReload(seen)).toEqual(['reload-required']);
+  });
+
+  it('a tab whose token read finds no record just before the upgrade is not reported signed out', async () => {
+    const world = await World.create();
+    const { tab, after, seen } = upgradedMidway(world);
+    await world.signIn(tab);
+    const db = await world.inspect();
+    await db.delete('auth', `tokens:${SUB_A}`);
+    db.close();
+    after('get', `tokens:${SUB_A}`);
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ reason: 'signed_out' });
+    expect(fromReload(seen)).toEqual(['reload-required']);
+  });
 });
 
 describe('an open that fails for another reason', () => {

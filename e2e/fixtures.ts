@@ -1,5 +1,6 @@
 // Every e2e test runs under the shipped CSP and fails on any violation the
 // page reports. The listener is installed before the app's first script.
+import * as playwrightLibrary from '@playwright/test';
 import { test as base, expect, type BrowserContext } from '@playwright/test';
 import { guardContext, lockInheritedOptions, refuseHandsOffLookups, refuseHandsOffRequests, refuseRoundTheRules, refuseRoundTheRulesAtEachLaunch } from './handsOff';
 
@@ -7,6 +8,9 @@ export { expect };
 
 // This worker's own DNS (Node's fetch and http, Playwright's API requests) has no address for a hands-off host.
 refuseHandsOffLookups();
+// Each launch in the worker, its own browser's and a spec's alike, from when this module loads: before the code of any spec that imports it, a launch taken as that spec loads included (the worker's playwright fixture is these same browser types).
+// It checks the environment, Object.prototype, the options it starts from and a Chromium's args as it is called, and the first two again as it resolves (refuseRoundTheRulesAtEachLaunch); connecting to a browser, Electron and Android are refused.
+refuseRoundTheRulesAtEachLaunch(playwrightLibrary, undefined);
 
 export interface CspViolation {
   directive: string;
@@ -51,14 +55,6 @@ export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOff
       await use();
     },
     { scope: 'worker', auto: true },
-  ],
-  // And each launch in the worker, its own browser's and a spec's alike, checks the environment, Object.prototype, the options it starts from and a Chromium's args as it is called, and the first two again as it resolves (refuseRoundTheRulesAtEachLaunch); connecting to a browser, Electron and Android are refused.
-  playwright: [
-    async ({ playwright, connectOptions }, use) => {
-      refuseRoundTheRulesAtEachLaunch(playwright, connectOptions);
-      await use(playwright);
-    },
-    { scope: 'worker', box: true },
   ],
   handsOffBlocked: async ({}, use) => {
     await use([]);

@@ -377,10 +377,10 @@ test('(d) img-src: same-origin and images.figurecollecting.com images load, a ho
   cspViolations.length = 0;
 });
 
-test('(e) Chrome finds the app installable and every icon URL resolves', async ({ playwright, request }, testInfo) => {
+test('(e) Chrome finds the app installable and every icon URL resolves', async ({ playwright, request }) => {
   const { origin } = stackState();
-  // A persistent profile: Chrome never offers install in an incognito-like context.
-  const context = await playwright.chromium.launchPersistentContext(testInfo.outputPath('profile'), { channel: 'chromium', args: HANDS_OFF_LAUNCH_ARGS });
+  // A persistent profile: Chrome never offers install in an incognito-like context. A fresh one ('', which Playwright makes): the harness refuses a profile directory.
+  const context = await playwright.chromium.launchPersistentContext('', { channel: 'chromium', args: HANDS_OFF_LAUNCH_ARGS });
   await blockHandsOff(context);
   const violations = await watchCsp(context);
   const page = await context.newPage();

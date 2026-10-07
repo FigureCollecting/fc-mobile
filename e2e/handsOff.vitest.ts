@@ -675,6 +675,10 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
     expect(() => refuseRoundTheRules({ PATH: '/usr/bin', no_proxy: 'localhost', NO_PROXY: '*', http_proxy: '' }, undefined)).not.toThrow();
     // Empty is unset to Playwright too; a name that only starts like one of its connect variables is not one.
     expect(() => refuseRoundTheRules({ SELENIUM_REMOTE_URL: '', PW_TEST_CONNECT_WS_ENDPOINT: '', SELENIUM_REMOTE_URLS: 'x', PW_TEST_REPORTER: 'list' }, undefined)).not.toThrow();
+    // A desktop variable that is not there at all; a name that only starts like one.
+    expect(() => refuseRoundTheRules({ XDG_CURRENT_DESKTOP: undefined, KDEHOMES: 'x', DESKTOP_SESSIONS: 'x' }, undefined)).not.toThrow();
+    // A name with _proxy in it that does not end so: no proxy Chromium or Node reads.
+    expect(() => refuseRoundTheRules({ GIT_PROXY_COMMAND: '/usr/bin/x' }, undefined)).not.toThrow();
   });
 
   it.each(['http_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'Ftp_Proxy', 'auto_proxy', 'SOCKS_SERVER', 'socks_proxy'])(
@@ -824,7 +828,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     env.HTTPS_PROXY = 'http://127.0.0.1:9';
     for (const engine of ENGINES) {
       for (const name of LAUNCHERS) {
-        await expect(start(pw[engine], name), `${engine}.${name}`).rejects.toThrow("hands-off: HTTPS_PROXY in this worker's environment sends requests through a proxy");
+        await expect(launchWith(pw[engine], name), `${engine}.${name}`).rejects.toThrow("hands-off: HTTPS_PROXY in this worker's environment sends requests through a proxy");
       }
     }
     delete env.HTTPS_PROXY;
@@ -1122,7 +1126,7 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     Object.defineProperty(Object.prototype, 'ignoreDefaultArgs', { value: [...HANDS_OFF_LAUNCH_ARGS], configurable: true });
     try {
       for (const name of LAUNCHERS) {
-        await expect(start(pw.chromium, name)).rejects.toThrow('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
+        await expect(launchWith(pw.chromium, name)).rejects.toThrow('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
       }
     } finally {
       Reflect.deleteProperty(Object.prototype, 'ignoreDefaultArgs');
@@ -1279,8 +1283,9 @@ describe("refuseLaunchBypasses (the options a launch starts from: the worker's d
     },
   );
 
-  it('passes every other channel, and one only mentioning bidi', () => {
-    for (const channel of ['chromium', 'chromium-headless-shell', 'chrome', 'msedge-beta', 'chrome-bidi-', undefined, 1]) expect(() => refuseLaunchBypasses([{ channel }])).not.toThrow();
+  it('passes every other channel, one only mentioning bidi, and another option that starts like one', () => {
+    for (const channel of ['chromium', 'chromium-headless-shell', 'chrome', 'msedge-beta', 'chrome-bidi-', 'bidichrome', undefined, 1]) expect(() => refuseLaunchBypasses([{ channel }])).not.toThrow();
+    expect(() => refuseLaunchBypasses([{ tracesDir: 'bidi-traces' }])).not.toThrow();
   });
 
   it('refuses a getter under one of those names whatever it returns now, and one set but not enumerable', () => {

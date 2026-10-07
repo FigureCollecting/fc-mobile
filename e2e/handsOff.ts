@@ -168,8 +168,19 @@ export function configBypasses(config: { use?: ConfigUse; projects: { name?: str
   return found;
 }
 
-/** Where Chromium and Node read a proxy from in the environment, by name in any case (no_proxy only lists hosts to skip one for). */
-const PROXY_VARIABLES = new Set(['http_proxy', 'https_proxy', 'all_proxy', 'ftp_proxy', 'auto_proxy', 'socks_server', 'socks_proxy']);
+/** Whether Chromium or Node could read a proxy from this environment variable: any name ending in _proxy, in any case, but no_proxy (which only lists hosts to skip one for), and socks_server. */
+function isProxyVariable(key: string): boolean {
+  return (key.endsWith('_proxy') && key !== 'no_proxy') || key === 'socks_server';
+}
+
+/**
+ * Where Chromium on Linux learns the desktop whose proxy settings it reads
+ * (GNOME's or KDE's: a proxy there sends it round the resolver rules, and
+ * --no-proxy-server does not stop it), or where those settings are read
+ * from; by name in any case, and set to anything, empty included (Chromium
+ * asks only whether some of them are set).
+ */
+const DESKTOP_VARIABLES = new Set(['xdg_current_desktop', 'desktop_session', 'gnome_desktop_session_id', 'kde_full_session', 'kde_session_version', 'gsettings_backend', 'kdehome']);
 
 /**
  * Where Playwright reads, at a launch, a browser to send it to instead (a
@@ -189,21 +200,25 @@ const CONNECT_VARIABLES = new Set([
 
 /**
  * Throws if this worker would run its browsers round the hands-off resolver
- * rules: a proxy in its environment (Chromium sends hosts to it unresolved; the
- * headless shell does even with --no-proxy-server), a variable that sends a
- * launch to a browser somewhere else (CONNECT_VARIABLES), or a browser to
- * connect to (connectOptions, which PW_TEST_CONNECT_WS_ENDPOINT sets): a
- * browser connected to has launch args of its own. Every reason, in one error.
+ * rules: a proxy in its environment (isProxyVariable: Chromium sends hosts to
+ * it unresolved; the headless shell does even with --no-proxy-server), a
+ * desktop whose proxy settings Chromium would take (DESKTOP_VARIABLES), a
+ * variable that sends a launch to a browser somewhere else
+ * (CONNECT_VARIABLES), or a browser to connect to (connectOptions, which
+ * PW_TEST_CONNECT_WS_ENDPOINT sets): a browser connected to has launch args
+ * of its own. Every reason, in one error.
  */
 export function refuseRoundTheRules(env: Record<string, string | undefined>, connectOptions: unknown): void {
-  const reasons = Object.entries(env)
-    .filter(([, value]) => !!value)
-    .flatMap(([name]) => {
-      const key = name.toLowerCase();
-      if (PROXY_VARIABLES.has(key)) return [`${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`];
-      if (CONNECT_VARIABLES.has(key)) return [`${name} in this worker's environment can connect it to a browser with launch args of its own`];
-      return [];
-    });
+  const reasons = Object.entries(env).flatMap(([name, value]) => {
+    const key = name.toLowerCase();
+    if (DESKTOP_VARIABLES.has(key) && value !== undefined) {
+      return [`${name} in this worker's environment can give Chromium a proxy from the desktop's settings, which looks the hands-off hosts up itself`];
+    }
+    if (!value) return [];
+    if (isProxyVariable(key)) return [`${name} in this worker's environment sends requests through a proxy, which looks the hands-off hosts up itself`];
+    if (CONNECT_VARIABLES.has(key)) return [`${name} in this worker's environment can connect it to a browser with launch args of its own`];
+    return [];
+  });
   if (connectOptions !== undefined) reasons.push('connectOptions connects this worker to a browser with launch args of its own');
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
 }
@@ -245,6 +260,8 @@ const LAUNCH_BYPASSES = new Map([
 ]);
 /** Playwright's own test hooks (__testHookSeleniumRemoteURL sends a launch to a Selenium grid). */
 const TEST_HOOK = '__testHook';
+/** Channels Playwright drives over WebDriver BiDi, through a debugging port: Chromium's bidi-*, Firefox's moz-*; in any case. */
+const BIDI_CHANNEL = /^(?:bidi|moz)-/i;
 /** Why an option under a getter or setter is refused, whatever its name. */
 const UNREADABLE = 'is a getter or setter, which the hands-off check cannot read as the launch will';
 
@@ -259,7 +276,8 @@ const CHECKED_ENVIRONMENTS = new WeakSet<object>();
  * Throws if the options a launch starts from (each of `sources`: the worker's
  * defaults, then the launch's own, which Playwright merges in that order)
  * carry a LAUNCH_BYPASSES option set to anything but undefined (an env a
- * launch check handed on excepted), or a Playwright test hook; or any option
+ * launch check handed on excepted), a Playwright test hook, or a channel
+ * Playwright drives over WebDriver BiDi (BIDI_CHANNEL); or any option
  * under a getter or setter, which can answer this check one thing and the
  * launch another; or if one is a Proxy, which this check cannot read as
  * Playwright will. Every own property counts, enumerable or not. Every
@@ -277,14 +295,20 @@ export function refuseLaunchBypasses(sources: readonly unknown[]): void {
       if (!('value' in property)) reasons.push(`${name} in this launch's options ${why ?? UNREADABLE}`);
       else if (why !== undefined && property.value !== undefined && !(name === 'env' && CHECKED_ENVIRONMENTS.has(property.value as object))) {
         reasons.push(`${name} in this launch's options ${why}`);
+      } else if (name === 'channel' && typeof property.value === 'string' && BIDI_CHANNEL.test(property.value)) {
+        reasons.push(`channel ${property.value} in this launch's options opens the browser over WebDriver BiDi, through a debugging port`);
       }
     }
   }
   if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
 }
 
-/** The switch the hands-off rules ride on: a Chromium launch's one arg. */
+/** The switch the hands-off rules ride on: a Chromium launch's first arg. */
 const RULES_SWITCH = '--host-resolver-rules=';
+/** What each Chromium launch is handed after the rules, and the one arg that may follow them: a direct connection, no proxy. */
+const NO_PROXY_SWITCH = '--no-proxy-server';
+/** A character outside ASCII: Chromium reads --host-resolver-rules as ASCII only, and drops the whole list, the hands-off rules too, for one such. */
+const NON_ASCII = /[^\x00-\x7f]/;
 /** A first rule that sends every host to this machine (a spec's sentinel), hands-off hosts included. */
 const EVERY_HOST_TO_LOOPBACK = /^MAP \* 127\.0\.0\.1(?::\d+)?$/;
 /** The whitespace Chromium trims off a rule and its parts: ASCII only. */
@@ -312,18 +336,20 @@ function keepsTheRules(rule: string): boolean {
 
 /**
  * Throws unless a Chromium launch's args (the worker's, or the launch's own
- * over them, as Playwright merges them) are one --host-resolver-rules switch
- * whose list starts with the hands-off rules (built afresh), or sends every
- * host to 127.0.0.1 first (a spec's sentinel), and goes on only with rules
- * that keep every hands-off host where those put it. Any other arg is
- * refused, whatever it is: Chromium has switches enough that open another
- * way out (a proxy, a debugging port).
+ * over them, as Playwright merges them) are all ASCII (NON_ASCII), and one
+ * --host-resolver-rules switch, then --no-proxy-server or nothing, whose list
+ * starts with the hands-off rules (built afresh), or sends every host to
+ * 127.0.0.1 first (a spec's sentinel), and goes on only with rules that keep
+ * every hands-off host where those put it. Any other arg is refused, whatever
+ * it is: Chromium has switches enough that open another way out (a proxy, a
+ * debugging port).
  */
 export function refuseLaunchArgs(args: unknown): void {
   const refused = (why: string) => new Error(`hands-off: this Chromium launch's args ${why}`);
   if (args === undefined || (Array.isArray(args) && args.length === 0)) throw refused('leave out the hands-off resolver rules');
   if (!Array.isArray(args) || !args.every((arg) => typeof arg === 'string')) throw refused('are not an array of strings, which the hands-off check cannot read');
-  const other = (args as string[]).find((arg, i) => i > 0 || !arg.startsWith(RULES_SWITCH));
+  if (args.some((arg: string) => NON_ASCII.test(arg))) throw refused('hold a character outside ASCII, for which Chromium drops the whole --host-resolver-rules list, the hands-off rules too');
+  const other = (args as string[]).find((arg, i) => (i === 0 ? !arg.startsWith(RULES_SWITCH) : i > 1 || arg !== NO_PROXY_SWITCH));
   if (other !== undefined) throw refused(`hold ${JSON.stringify(other)}: a Chromium launch's args are one --host-resolver-rules switch and nothing else`);
   const list = (args[0] as string).slice(RULES_SWITCH.length);
   const rules = handsOffResolverRules();
@@ -340,7 +366,7 @@ export function refuseLaunchArgs(args: unknown): void {
   }
 }
 
-/** The browser-type members that start a browser, by the index of their options: each is checked first. */
+/** The browser-type members that start a browser, by the index of their options: each is checked first (launchPersistentContext refused on any profile directory). */
 const LAUNCHERS = new Map([
   ['launch', 0],
   ['launchPersistentContext', 1],
@@ -439,8 +465,11 @@ export function refuseRoundTheRulesAtEachLaunch(
   const launcherOf = (type: object | undefined): unknown => (type as { _serverLauncher?: unknown } | undefined)?._serverLauncher;
   /** What launches a browser with no resolver rules to keep: Firefox and WebKit, and their launchers. Anything else is read as Chromium. */
   const ruleless = new Set<unknown>([types.firefox, types.webkit, launcherOf(types.firefox), launcherOf(types.webkit)].filter((owner) => owner !== undefined));
-  const checking = (at: number) => (start: (...args: unknown[]) => Promise<unknown>) =>
+  const checking = (name: string, at: number) => (start: (...args: unknown[]) => Promise<unknown>) =>
     async function (this: unknown, ...args: unknown[]) {
+      if (name === 'launchPersistentContext' && args[0] !== '') {
+        throw new Error("hands-off: launchPersistentContext is given a profile directory, whose own settings (a proxy among them) no hands-off check reads: give it '' for a fresh one");
+      }
       const environment = Object.freeze({ ...env() });
       refuseRoundTheRules(environment, connectOptions);
       refuseInheritedOptions();
@@ -451,8 +480,9 @@ export function refuseRoundTheRulesAtEachLaunch(
       const options: Record<string, unknown> = { ...Object(own), env: environment };
       if (!ruleless.has(this)) {
         const merged: unknown = { ...Object(defaults), ...Object(own) }.args;
-        options.args = Array.isArray(merged) ? Object.freeze([...merged]) : merged;
-        refuseLaunchArgs(options.args);
+        const checked = Array.isArray(merged) ? Object.freeze([...merged]) : merged;
+        refuseLaunchArgs(checked);
+        options.args = Object.freeze([(checked as string[])[0], NO_PROXY_SWITCH]);
       }
       CHECKED_ENVIRONMENTS.add(environment);
       const handed = [...args];
@@ -473,8 +503,8 @@ export function refuseRoundTheRulesAtEachLaunch(
       return launched;
     };
   for (const type of [types.chromium, types.firefox, types.webkit]) {
-    for (const [name, at] of LAUNCHERS) replaceMember(type, name, checking(at));
-    replaceMember(Object(launcherOf(type)), 'launchServer', checking(0));
+    for (const [name, at] of LAUNCHERS) replaceMember(type, name, checking(name, at));
+    replaceMember(Object(launcherOf(type)), 'launchServer', checking('launchServer', 0));
     for (const name of CONNECTORS) replaceMember(type, name, refusing(`${name} connects this worker to a browser with launch args of its own`));
   }
   for (const [key, names] of OTHER_OPENERS) {

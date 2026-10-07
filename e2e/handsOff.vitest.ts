@@ -1,3 +1,4 @@
+import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import {
   HANDS_OFF_DOMAINS,
@@ -10,9 +11,11 @@ import {
   handsOffResolverRules,
   isHandsOffHost,
   isHandsOffUrl,
+  lockInheritedOptions,
   refuseHandsOffLookups,
   refuseHandsOffRequests,
   refuseInheritedOptions,
+  refuseLaunchArgs,
   refuseLaunchBypasses,
   refuseRoundTheRules,
   refuseRoundTheRulesAtEachLaunch,
@@ -720,18 +723,27 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
   const ENGINES = ['chromium', 'firefox', 'webkit'] as const;
   /** Playwright's experimental Electron and Android, and what each opens a browser with: as members, written out, either would trip e2e/handsOffScan.ts. */
   const OTHER_OPENERS: Record<string, string[]> = { _electron: ['launch'], _android: ['connect', 'devices', 'launchServer'] };
+  /** Playwright's private hold on the options every launch in a worker starts from, spelled in two parts: whole, the name would trip e2e/handsOffScan.ts in this file. */
+  const HOLD = ['_default', 'LaunchOptions'].join('');
+  /** The hands-off rules arg, built afresh. */
+  const RULES = `--host-resolver-rules=${handsOffResolverRules()}`;
 
   type FakeType = Record<string, (...args: unknown[]) => Promise<unknown>> & { calls: { name: string; self: unknown; args: unknown[] }[] };
 
-  /** A stand-in for Playwright's object: each member that launches or connects records its call (name, `this`, arguments) and answers its name. */
-  function fakePlaywright() {
+  /**
+   * A stand-in for Playwright's object: each member that launches or connects
+   * records its call (name, `this`, arguments) and answers `answer(engine,
+   * name)`, its name unless given; each browser type's playwright object holds
+   * the worker's launch defaults, the hands-off args, as a worker's does.
+   */
+  function fakePlaywright(answer: (engine: string, name: string) => unknown = (engine, name) => `${engine}.${name}`) {
     const made = (engine: string, names: string[]) => {
       const calls: FakeType['calls'] = [];
-      const type: Record<string, unknown> = { engine, calls };
+      const type: Record<string, unknown> = { engine, calls, _playwright: { [HOLD]: { args: HANDS_OFF_LAUNCH_ARGS } } };
       for (const name of names) {
         type[name] = async function (this: unknown, ...args: unknown[]) {
           calls.push({ name, self: this, args });
-          return `${engine}.${name}`;
+          return answer(engine, name);
         };
       }
       return type as FakeType;
@@ -744,16 +756,45 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
   const start = (type: Record<string, (...args: unknown[]) => Promise<unknown>>, name: string, ...args: unknown[]) => type[name]!(...args);
   /** The same, with `this` given: a member taken from a prototype and called on an instance. */
   const startOn = (owner: object, self: unknown, name: string, ...args: unknown[]) => (owner as Record<string, (...a: unknown[]) => Promise<unknown>>)[name]!.call(self, ...args);
-  /** Playwright's private hold on the options every launch in a worker starts from, spelled in two parts: whole, the name would trip e2e/handsOffScan.ts in this file. */
-  const HOLD = ['_default', 'LaunchOptions'].join('');
+  /** Calls a launcher with `options` where it takes them: launchPersistentContext second, after the profile directory. */
+  const launchWith = (type: FakeType, name: string, options?: unknown) => (name === 'launchPersistentContext' ? start(type, name, 'dir', options) : start(type, name, options));
+  /** The options a fake launcher was handed on its `call`th call. */
+  const handed = (type: FakeType, call = 0) => {
+    const { name, args } = type.calls[call]!;
+    return args[name === 'launchPersistentContext' ? 1 : 0] as Record<string, unknown>;
+  };
 
-  it('lets each launch through, with its own `this` and arguments, while the environment is clean', async () => {
+  it('lets each launch through with its own `this`, handing it a copy of its options with the environment it checked, and a Chromium launch the args it checked', async () => {
     const pw = fakePlaywright();
     refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({ PATH: '/usr/bin' }));
     for (const engine of ENGINES) {
-      for (const name of LAUNCHERS) await expect(start(pw[engine], name, 'dir', { args: [] })).resolves.toBe(`${engine}.${name}`);
-      expect(pw[engine].calls).toEqual(LAUNCHERS.map((name) => ({ name, self: pw[engine], args: ['dir', { args: [] }] })));
+      for (const name of LAUNCHERS) {
+        const own = { headless: true, args: HANDS_OFF_LAUNCH_ARGS };
+        await expect(launchWith(pw[engine], name, own)).resolves.toBe(`${engine}.${name}`);
+        const options = handed(pw[engine], pw[engine].calls.length - 1);
+        expect(pw[engine].calls.at(-1)!.self).toBe(pw[engine]);
+        expect(options).not.toBe(own);
+        expect(options).toEqual({ headless: true, args: [RULES], env: { PATH: '/usr/bin' } });
+        expect(Object.isFrozen(options.env), `${engine}.${name}`).toBe(true);
+        // A copy no spec holds, so nothing changes it between the check and the launch.
+        if (engine === 'chromium') expect([options.args === HANDS_OFF_LAUNCH_ARGS, Object.isFrozen(options.args)]).toEqual([false, true]);
+      }
+      expect(pw[engine].calls.map((c) => c.name)).toEqual(LAUNCHERS);
+      expect(pw[engine].calls[1]!.args[0]).toBe('dir');
     }
+  });
+
+  it('hands each launch the environment as it was when the launch was called: a variable written after the call never reaches the browser', async () => {
+    const env: Record<string, string | undefined> = { PATH: '/usr/bin' };
+    let finish = () => {};
+    const pw = fakePlaywright((engine, name) => new Promise((resolve) => (finish = () => resolve(`${engine}.${name}`))));
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => env);
+    const launching = start(pw.chromium, 'launch');
+    env.HTTPS_PROXY = 'http://127.0.0.1:9';
+    expect(handed(pw.chromium).env).toEqual({ PATH: '/usr/bin' });
+    delete env.HTTPS_PROXY;
+    finish();
+    await expect(launching).resolves.toBe('chromium.launch');
   });
 
   it('reads the environment as each launch starts: a proxy or a connect variable written after the worker started is refused before anything launches', async () => {
@@ -771,6 +812,37 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
     await expect(start(pw.chromium, 'launch')).rejects.toThrow("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
     expect(ENGINES.flatMap((engine) => pw[engine].calls.map((c) => `${engine}.${c.name}`))).toEqual(['chromium.launch']);
+  });
+
+  it('reads the environment and Object.prototype again as each launch resolves: on a variable or a name written after the call it closes what it launched and throws', async () => {
+    const env: Record<string, string | undefined> = {};
+    const close = vi.fn(async () => {});
+    let finish = () => {};
+    const pw = fakePlaywright(() => new Promise((resolve) => (finish = () => resolve({ close }))));
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => env);
+    const launching = start(pw.chromium, 'launch');
+    env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
+    finish();
+    await expect(launching).rejects.toThrow("hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own");
+    expect(close).toHaveBeenCalledOnce();
+    delete env.SELENIUM_REMOTE_URL;
+
+    const serving = start(pw.webkit, 'launchServer');
+    Object.defineProperty(Object.prototype, 'ignoreDefaultArgs', { value: [RULES], configurable: true });
+    try {
+      finish();
+      await expect(serving).rejects.toThrow('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
+    } finally {
+      Reflect.deleteProperty(Object.prototype, 'ignoreDefaultArgs');
+    }
+    expect(close).toHaveBeenCalledTimes(2);
+
+    // One plain statement after the call, as a spec would write it: the launch has nothing to close, and still throws.
+    const plain = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(plain, undefined, () => env);
+    const launched = start(plain.chromium, 'launchPersistentContext', 'dir');
+    env.http_proxy = 'http://127.0.0.1:9';
+    await expect(launched).rejects.toThrow("hands-off: http_proxy in this worker's environment sends requests through a proxy");
   });
 
   it("reads this worker's own process.env at each launch unless given another", async () => {
@@ -791,6 +863,106 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     refuseRoundTheRulesAtEachLaunch(pw, { wsEndpoint: 'ws://127.0.0.1:9' }, () => ({}));
     await expect(start(pw.webkit, 'launchPersistentContext', 'dir')).rejects.toThrow('hands-off: connectOptions connects this worker to a browser with launch args of its own');
     expect(pw.webkit.calls).toEqual([]);
+  });
+
+  it("refuses a Chromium launch whose args, its own over the worker's as Playwright merges them, are anything but the hands-off rules, however they were built", async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    const proxied = `hands-off: this Chromium launch's args hold "--proxy-server=http://127.0.0.1:9"`;
+    for (const name of LAUNCHERS) {
+      await expect(launchWith(pw.chromium, name, JSON.parse('{"args":["--proxy-server=http://127.0.0.1:9"]}')), name).rejects.toThrow(proxied);
+      // Its own args set to undefined take the worker's away, as in Playwright's merge.
+      await expect(launchWith(pw.chromium, name, { args: undefined }), name).rejects.toThrow("hands-off: this Chromium launch's args leave out the hands-off resolver rules");
+    }
+    // The worker's count where the launch gives none of its own.
+    Object.assign(pw.chromium, { _playwright: { [HOLD]: { args: ['--proxy-server=http://127.0.0.1:9'] } } });
+    await expect(start(pw.chromium, 'launch', {})).rejects.toThrow(proxied);
+    expect(pw.chromium.calls).toEqual([]);
+  });
+
+  it('reads no args on a Firefox or WebKit launch: neither has resolver rules to keep', async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    for (const engine of ['firefox', 'webkit'] as const) {
+      for (const name of LAUNCHERS) await expect(launchWith(pw[engine], name, { args: ['--no-remote'] }), `${engine}.${name}`).resolves.toBe(`${engine}.${name}`);
+    }
+  });
+
+  it("refuses a launch while the worker's options are held where it cannot read them as the launch will: a getter for the hold, or for the playwright object", async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    Object.defineProperty(pw.chromium._playwright, HOLD, { get: () => ({ args: HANDS_OFF_LAUNCH_ARGS }) });
+    await expect(start(pw.chromium, 'launch')).rejects.toThrow(`hands-off: ${HOLD} is a getter or setter, which the hands-off check cannot read as the launch will`);
+    Object.defineProperty(pw.firefox, '_playwright', { get: () => ({}) });
+    await expect(start(pw.firefox, 'launch')).rejects.toThrow('hands-off: _playwright is a getter or setter, which the hands-off check cannot read as the launch will');
+    Object.assign(pw.webkit, { _playwright: new Proxy({}, {}) });
+    await expect(start(pw.webkit, 'launch')).rejects.toThrow("hands-off: this launch's defaults are held in a Proxy, which the hands-off check cannot read");
+    expect(ENGINES.flatMap((engine) => pw[engine].calls)).toEqual([]);
+  });
+
+  it("checks launchServer on each browser type's own launcher too (_serverLauncher, which the browser type's launchServer hands on to), and refuses Android's", async () => {
+    // Its name and Android's held in variables: written out, either would trip e2e/handsOffScan.ts in this file.
+    const SERVE = LAUNCHERS[2]!;
+    const ANDROID = Object.keys(OTHER_OPENERS)[1]!;
+    type Launcher = Record<string, (...args: unknown[]) => Promise<unknown>> & { calls: unknown[] };
+    /** Playwright's launcher class: each instance records the options it was handed. */
+    class ServerLauncher {
+      readonly calls: unknown[] = [];
+    }
+    const serve = async function (this: Launcher, options: unknown) {
+      this.calls.push(options);
+      return 'server';
+    };
+    Object.defineProperty(ServerLauncher.prototype, SERVE, { value: serve, writable: true });
+    /** Android's, a class of its own. */
+    class AndroidLauncher extends ServerLauncher {}
+    Object.defineProperty(AndroidLauncher.prototype, SERVE, { value: serve, writable: true });
+    const launchers = { chromium: new ServerLauncher() as Launcher, firefox: new ServerLauncher() as Launcher, webkit: new ServerLauncher() as Launcher };
+    const android = new AndroidLauncher() as Launcher;
+    const pw = fakePlaywright();
+    for (const engine of ENGINES) {
+      Object.assign(pw[engine], {
+        _serverLauncher: launchers[engine],
+        // As Playwright's: the worker's options, then its own, handed to its launcher.
+        [SERVE](this: { _serverLauncher: Launcher; _playwright: Record<string, object> }, options: object = {}) {
+          return start(this._serverLauncher, SERVE, { ...this._playwright[HOLD], ...options });
+        },
+      });
+    }
+    Object.assign(pw.others[ANDROID]!, { _serverLauncher: android });
+    const env: Record<string, string | undefined> = { PATH: '/usr/bin' };
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => env);
+    // Checked on the browser type, then again on its launcher, which takes the environment the first check handed on.
+    await expect(start(pw.chromium, SERVE, { headless: true })).resolves.toBe('server');
+    expect(launchers.chromium.calls).toEqual([{ headless: true, args: [RULES], env: { PATH: '/usr/bin' } }]);
+    // Straight to a launcher: its own options only.
+    await expect(start(launchers.chromium, SERVE, { args: ['--remote-debugging-port=9334'] })).rejects.toThrow(`hands-off: this Chromium launch's args hold "--remote-debugging-port=9334"`);
+    await expect(start(launchers.firefox, SERVE, {})).resolves.toBe('server');
+    expect(launchers.firefox.calls).toEqual([{ env: { PATH: '/usr/bin' } }]);
+    env.http_proxy = 'http://127.0.0.1:9';
+    await expect(start(launchers.webkit, SERVE, {})).rejects.toThrow("hands-off: http_proxy in this worker's environment sends requests through a proxy");
+    await expect(start(android, SERVE, {})).rejects.toThrow('hands-off: _android._serverLauncher.launchServer opens a browser the hands-off resolver rules are not on');
+    expect([launchers.chromium.calls.length, launchers.webkit.calls.length, android.calls.length]).toEqual([1, 0, 0]);
+  });
+
+  it('refuses newBrowserCDPSession on each browser a launch returns, wherever its class keeps it, and on the browser of a persistent context: a session on the whole browser can make a context with a proxy of its own', async () => {
+    class FakeBrowser {
+      async newBrowserCDPSession() {
+        return 'session';
+      }
+    }
+    class PersistentBrowser extends FakeBrowser {}
+    Object.defineProperty(PersistentBrowser.prototype, 'newBrowserCDPSession', { value: FakeBrowser.prototype.newBrowserCDPSession, writable: true });
+    const persistent = new PersistentBrowser();
+    const pw = fakePlaywright((_, name) => (name === 'launch' ? new FakeBrowser() : name === 'launchPersistentContext' ? { browser: () => persistent } : { server: true }));
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    const refused = 'hands-off: newBrowserCDPSession opens a session on the whole browser, which can make a context with a proxy of its own that goes round the hands-off resolver rules';
+    const browser = (await start(pw.chromium, 'launch')) as FakeBrowser;
+    await expect(browser.newBrowserCDPSession()).rejects.toThrow(refused);
+    await expect(new FakeBrowser().newBrowserCDPSession()).rejects.toThrow(refused);
+    await start(pw.webkit, 'launchPersistentContext', 'dir');
+    await expect(persistent.newBrowserCDPSession()).rejects.toThrow(refused);
+    await expect(start(pw.firefox, 'launchServer')).resolves.toEqual({ server: true });
   });
 
   it('refuses connect, connectOverCDP and the private _connect and _connectToWorker outright, on every browser type: a browser connected to has launch args of its own', async () => {
@@ -846,7 +1018,8 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     refuseRoundTheRulesAtEachLaunch(types, undefined, () => (reads++, env));
     expect(Object.keys(types.chromium)).toEqual(['engine']);
     await expect(startOn(BrowserType.prototype, types.firefox, 'launch')).resolves.toBe('launched');
-    expect(reads).toBe(1);
+    // Once as it starts, once as it resolves.
+    expect(reads).toBe(2);
     env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
     await expect(startOn(BrowserType.prototype, types.webkit, 'launch')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
     await expect(start(types.chromium as never, 'launchServer')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
@@ -891,15 +1064,68 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     expect(pw.chromium.calls.map((c) => c.name)).toEqual(['launch']);
   });
 
-  it('installs once per browser type: a second call wraps nothing again, so each launch reads the environment once and launches once', async () => {
+  it('installs once per browser type: a second call wraps nothing again, so each launch reads the environment once as it starts and once as it resolves, and launches once', async () => {
     const pw = fakePlaywright();
     let reads = 0;
     const env = () => (reads++, {});
     refuseRoundTheRulesAtEachLaunch(pw, undefined, env);
     refuseRoundTheRulesAtEachLaunch(pw, undefined, env);
     await start(pw.chromium, 'launch');
-    expect(reads).toBe(1);
+    expect(reads).toBe(2);
     expect(pw.chromium.calls).toHaveLength(1);
+  });
+});
+
+describe("refuseLaunchArgs (a Chromium launch's args: the worker's, or the launch's own over them)", () => {
+  const RULES = handsOffResolverRules();
+  /** What the hands-off spec's browsers add: every other host to a local sentinel. */
+  const SENTINEL = 'MAP * 127.0.0.1:9, EXCLUDE localhost, EXCLUDE 127.0.0.1';
+  const OFF = 'do not start with the hands-off rules, or send every host to 127.0.0.1 first';
+  const ONE = "a Chromium launch's args are one --host-resolver-rules switch and nothing else";
+  const MAY_FOLLOW = 'which could take a hands-off host off them: after the hands-off rules, or every host to 127.0.0.1, only MAP rules and EXCLUDE of a named host that is not hands-off may follow';
+
+  it.each([
+    ['the hands-off rules alone', [`--host-resolver-rules=${RULES}`]],
+    ['the hands-off rules, then every other host to a local sentinel', [`--host-resolver-rules=${RULES}, ${SENTINEL}`]],
+    ['every host to a local sentinel first', [`--host-resolver-rules=${SENTINEL}`]],
+    ['every host to 127.0.0.1, on its own port', ['--host-resolver-rules=MAP * 127.0.0.1']],
+    ['more rules after the hands-off ones, spaced and cased as Chromium reads them', [`--host-resolver-rules=${RULES},map example.test 127.0.0.1 ,  exclude  example.test`]],
+  ])('passes %s', (_, args) => {
+    expect(() => refuseLaunchArgs(args)).not.toThrow();
+  });
+
+  it.each([
+    ['none', undefined, 'leave out the hands-off resolver rules'],
+    ['an empty list', [], 'leave out the hands-off resolver rules'],
+    ['a string', `--host-resolver-rules=${RULES}`, 'are not an array of strings, which the hands-off check cannot read'],
+    ['a number among them', [`--host-resolver-rules=${RULES}`, 1], 'are not an array of strings, which the hands-off check cannot read'],
+    ['a proxy switch beside the rules', [`--host-resolver-rules=${RULES}`, '--proxy-server=http://127.0.0.1:9'], `hold "--proxy-server=http://127.0.0.1:9": ${ONE}`],
+    ['a debugging port before them', ['--remote-debugging-port=9334', `--host-resolver-rules=${RULES}`], `hold "--remote-debugging-port=9334": ${ONE}`],
+    ['the switch with one dash', [`-host-resolver-rules=${RULES}`], `hold "-host-resolver-rules=${RULES}": ${ONE}`],
+    ['the switch in capitals', [`--HOST-RESOLVER-RULES=${RULES}`], `hold "--HOST-RESOLVER-RULES=${RULES}": ${ONE}`],
+    ['the switch with no list', ['--host-resolver-rules'], `hold "--host-resolver-rules": ${ONE}`],
+    ['a lone --', ['--'], `hold "--": ${ONE}`],
+    ['another rule list', ['--host-resolver-rules=MAP vndb.org ~NOTFOUND'], OFF],
+    ['the hands-off rules with one left out', [`--host-resolver-rules=${RULES.replace(', MAP *.vndb.org ~NOTFOUND', '')}`], OFF],
+    ['the hands-off rules run on into another', [`--host-resolver-rules=${RULES}x`], OFF],
+    ['every host to another address', ['--host-resolver-rules=MAP * 10.0.0.1'], OFF],
+    ['every host to 127.0.0.1 run on into an exclusion Chromium cannot read', ['--host-resolver-rules=MAP * 127.0.0.1:9 EXCLUDE localhost'], OFF],
+    ['every host to 127.0.0.1 spaced twice', ['--host-resolver-rules=MAP  * 127.0.0.1'], OFF],
+  ])('refuses %s', (_, args, why) => {
+    expect(() => refuseLaunchArgs(args)).toThrow(`hands-off: this Chromium launch's args ${why}`);
+  });
+
+  it.each([
+    ['a wildcard exclusion', `${RULES}, EXCLUDE *.vndb.org`, 'EXCLUDE *.vndb.org'],
+    ['an exclusion of a hands-off host, in any case', `${SENTINEL}, exclude VNDB.ORG`, 'exclude VNDB.ORG'],
+    ['an exclusion of a hands-off host with a trailing dot', `${RULES}, EXCLUDE static.myfigurecollection.net.`, 'EXCLUDE static.myfigurecollection.net.'],
+    ['an exclusion with a one-character wildcard', `${RULES}, EXCLUDE vndb.or?`, 'EXCLUDE vndb.or?'],
+    ['an exclusion with an escape', `${RULES}, EXCLUDE vndb\\.org`, 'EXCLUDE vndb\\.org'],
+    ['an empty rule', `${RULES},`, ''],
+    ['a MAP with no target', `${RULES}, MAP vndb.org`, 'MAP vndb.org'],
+    ['a rule Chromium does not know', `${RULES}, BYPASS vndb.org`, 'BYPASS vndb.org'],
+  ])('refuses a rule after them that could take a hands-off host off them, or that it cannot read: %s', (_, list, rule) => {
+    expect(() => refuseLaunchArgs([`--host-resolver-rules=${list}`])).toThrow(`hands-off: this Chromium launch's args hold the rule ${JSON.stringify(rule.trim())}, ${MAY_FOLLOW}`);
   });
 });
 
@@ -914,7 +1140,18 @@ describe("refuseLaunchBypasses (the options a launch starts from: the worker's d
     const worker = { handleSIGINT: false, args: HANDS_OFF_LAUNCH_ARGS, tracesDir: '/tmp/traces', headless: true, channel: 'chromium-headless-shell' };
     const own = Object.fromEntries([['ignoreDefaultArgs', undefined], ['executablePath', undefined], ['slowMo', 1], ['proxyServer', 'x'], ['envs', {}], ['x__testHook', 1]]);
     expect(() => refuseLaunchBypasses([worker, own])).not.toThrow();
-    expect(() => refuseLaunchBypasses([undefined, null, 'dir', Object.defineProperty({}, 'args', { get: () => [], enumerable: true })])).not.toThrow();
+    expect(() => refuseLaunchBypasses([undefined, null, 'dir', {}])).not.toThrow();
+  });
+
+  it('refuses a getter or setter under any name: it can answer the check one thing and the launch another (args among them)', () => {
+    const args = Object.defineProperty({}, 'args', { get: () => HANDS_OFF_LAUNCH_ARGS, enumerable: true });
+    expect(() => refuseLaunchBypasses([{}, args])).toThrow("hands-off: args in this launch's options is a getter or setter, which the hands-off check cannot read as the launch will");
+    const headless = Object.defineProperty({}, 'headless', { set: () => undefined });
+    expect(() => refuseLaunchBypasses([headless])).toThrow("hands-off: headless in this launch's options is a getter or setter");
+  });
+
+  it("refuses an env handed to a launch by anything but the launch check itself, even one equal to the worker's", () => {
+    expect(() => refuseLaunchBypasses([{ env: { ...process.env } }])).toThrow(`hands-off: env in this launch's options ${ENVIRONED}`);
   });
 
   it.each([
@@ -946,6 +1183,24 @@ describe("refuseLaunchBypasses (the options a launch starts from: the worker's d
     expect(() => refuseLaunchBypasses([new Proxy({}, {})])).toThrow("hands-off: this launch's options are a Proxy, which the hands-off check cannot read");
     const both = Object.fromEntries([['proxy', {}], ['env', {}]]);
     expect(() => refuseLaunchBypasses([new Proxy({}, {}), both])).toThrow(/^hands-off: this launch's options are a Proxy, [^;]*; proxy in [^;]*; env in [^;]*$/);
+  });
+});
+
+describe('lockInheritedOptions (Object.prototype, from when an e2e worker starts)', () => {
+  it('refuses the prototype, then stops any name being added to it for the rest of the worker, by any means: Playwright reads an inherited option a few ticks after a launch or context is called', () => {
+    const prototype = vm.runInNewContext('Object.prototype') as object;
+    lockInheritedOptions(prototype);
+    expect(Object.isExtensible(prototype)).toBe(false);
+    expect(Reflect.set(prototype, 'ignoreDefaultArgs', [])).toBe(false);
+    expect(Reflect.defineProperty(prototype, 'executablePath', { value: '/opt/chromium-wrapper' })).toBe(false);
+    expect(() => Object.assign(prototype, Object.fromEntries([['env', {}]]))).toThrow(TypeError);
+    expect(Object.getOwnPropertyNames(prototype).filter((name) => ['ignoreDefaultArgs', 'executablePath', 'env'].includes(name))).toEqual([]);
+  });
+
+  it('refuses, before locking it, a prototype that already carries a name Node does not put there', () => {
+    const prototype = vm.runInNewContext("Object.defineProperty(Object.prototype, 'ignoreDefaultArgs', { value: [] })") as object;
+    expect(() => lockInheritedOptions(prototype)).toThrow('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
+    expect(Object.isExtensible(prototype)).toBe(true);
   });
 });
 

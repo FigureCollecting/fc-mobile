@@ -50,7 +50,7 @@ export const guardedTest = base.extend<{ handsOffBlocked: string[] }, { handsOff
     },
     { scope: 'worker', auto: true },
   ],
-  // And each launch in the worker, its own browser's and a spec's alike, checks again as it starts: the environment can change after the worker starts.
+  // And each launch in the worker, its own browser's and a spec's alike, checks the environment, Object.prototype and the options it starts from again as it starts (they can change after the worker starts); connecting to a browser, Electron and Android are refused.
   playwright: [
     async ({ playwright, connectOptions }, use) => {
       refuseRoundTheRulesAtEachLaunch(playwright, connectOptions);

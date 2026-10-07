@@ -66,18 +66,27 @@ The e2e suites guard the rest:
   and the like: Chromium sends hosts to it unresolved, and the headless shell
   does so even with `--no-proxy-server`), a variable that sends a launch to a
   browser elsewhere (`SELENIUM_REMOTE_URL`, `SELENIUM_REMOTE_CAPABILITIES`,
-  `SELENIUM_REMOTE_HEADERS`, `PW_TEST_CONNECT_WS_ENDPOINT`, or
+  `SELENIUM_REMOTE_HEADERS`, `PW_TEST_CONNECT_WS_ENDPOINT`,
+  `PW_TEST_CONNECT_HEADERS`, `PW_TEST_CONNECT_EXPOSE_NETWORK`, or
   `PWTEST_UNDER_TEST`, which lets a launch option name a Selenium grid), or a
-  browser to connect to (`connectOptions`). Each launch through the worker's
-  `playwright` fixture (its own browser's, and a spec's) checks the
-  environment again as it starts, so a variable written after the worker
-  started is refused before anything launches; `connect` and
-  `connectOverCDP` on its browser types are refused. This reads the worker's
-  own environment, not a launch's `env` option (the scan below refuses
-  that). Each such launch, and `blockHandsOff` (so every fixture context),
-  also refuses while `Object.prototype` carries a name Node does not put
-  there: every options object inherits it, and Playwright reads options such
-  as `ignoreDefaultArgs` from it.
+  browser to connect to (`connectOptions`).
+- Each `launch`, `launchPersistentContext` or `launchServer` on the worker's
+  `playwright` object (its own browser's and a spec's, called on a browser
+  type or taken from the prototype they share) checks again as it starts:
+  the environment as it is then, so a variable written after the worker
+  started is refused before anything launches; `Object.prototype`, which must
+  carry no name Node does not put there (every options object inherits it,
+  and Playwright reads options such as `ignoreDefaultArgs` from it;
+  `blockHandsOff`, so every fixture context, checks this too); and the
+  options the launch starts from, the worker's defaults as they are then and
+  its own, which must not hold `ignoreDefaultArgs`, `executablePath`, `proxy`
+  or `env` (set to anything but undefined, or as a getter or setter), or a
+  Playwright test hook, or be a Proxy. It reads those objects as the launch
+  starts, so it holds however they were built (the scan below cannot read a
+  name built at run time). It does not check the args (the config test and
+  the scan do). `connect`, `connectOverCDP`, `_connect` and
+  `_connectToWorker` on the browser types, `_electron.launch`, and
+  `_android`'s `connect`, `devices` and `launchServer` are refused outright.
 - Each worker's Node DNS lookups (Node's `fetch`, Playwright's API requests,
   `route.fetch()`) find no address for them.
 - `e2e/handsOffScan.ts` reads every e2e source's syntax tree and fails the
@@ -92,8 +101,8 @@ The e2e suites guard the rest:
   a key or a member, and `executablePath` as a key; another browser
   (`browserName`, `defaultBrowserType`, a non-Chromium `devices[...]`, a
   `firefox` or `webkit` launch), a `proxy` or `connectOptions`;
-  `launchServer`, `connect`, `connectOverCDP`, `_android`, or a launcher
-  passed around uncalled; `_defaultLaunchOptions` or `_browserOptions`
+  `launchServer`, `connect`, `connectOverCDP`, `_android`, `_electron`, or a
+  launcher passed around uncalled; `_defaultLaunchOptions` or `_browserOptions`
   (Playwright's private holds on the options every launch in a worker starts
   from) written anywhere, as a name or a string; a private (underscore-named)
   fixture, or one under a computed name it cannot read, in the object literal

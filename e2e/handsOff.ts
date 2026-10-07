@@ -19,11 +19,14 @@ import type { APIRequestContext, BrowserContext, Request } from '@playwright/tes
  *   e2e/handsOffScan.ts reads;
  * - no worker starts with a proxy in its environment, a variable that sends
  *   a launch to a browser elsewhere (SELENIUM_REMOTE_URL among them), or a
- *   browser to connect to (refuseRoundTheRules), and each launch through the
- *   worker's `playwright` fixture, its own browser's included, checks its
- *   environment again as it starts (refuseRoundTheRulesAtEachLaunch); that
- *   launch, and blockHandsOff, refuse while Object.prototype carries a name
- *   Node does not put there (refuseInheritedOptions);
+ *   browser to connect to (refuseRoundTheRules);
+ * - each launch on the worker's `playwright` object (its own browser's
+ *   included; on a browser type or through the prototype they share) checks
+ *   again as it starts (refuseRoundTheRulesAtEachLaunch): the environment,
+ *   Object.prototype (refuseInheritedOptions, which blockHandsOff runs too)
+ *   and the options it starts from (refuseLaunchBypasses: no
+ *   ignoreDefaultArgs, executablePath, proxy, env or test hook, however they
+ *   were built); connecting to a browser, Electron and Android are refused;
  * - each worker's Node DNS has none either (refuseHandsOffLookups);
  * - e2e/handsOffScan.ts reads every e2e source's syntax for a way off these
  *   guards (syntax only: the README lists what it does not follow).

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { create } from '@bufbuild/protobuf';
-import { ProductCardSchema, compareVersion, parseVersion } from '@figurecollecting/fc-api-contract';
+import { ProductCardSchema, compareVersion, occFacetKey, parseVersion } from '@figurecollecting/fc-api-contract';
 import { LocalWriteError, UnsyncedEditsError, UserStore } from '../userStore';
 import { PayloadInvalidError } from '../../sync/payload';
 import {
@@ -9,6 +9,7 @@ import {
   FakeClock,
   HEAD,
   HOUR,
+  OCC,
   OTHER_DEVICE,
   PushOutcome,
   T0,
@@ -20,7 +21,9 @@ import {
   result,
   status,
   token,
+  write,
 } from '../../sync/__tests__/harness';
+import { STAMP } from '../../sync/__tests__/viewFixtures';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -29,15 +32,15 @@ describe('writeFacet', () => {
     const { db } = await freshDb();
     const store = await openStore(db);
 
-    const res = await store.writeFacet(HEAD[0], 'status', 'owned');
+    const res = await write(store, 0, 'status', 'owned');
 
     expect(res.facet_key).toBe(key(0, 'status'));
     expect(res.version).toBe(token(T0, 0, DEVICE));
     const facet = await store.getFacet(key(0, 'status'));
     expect(facet).toMatchObject({
       sub: 'user-a',
-      head_id: HEAD[0],
-      field: 'status',
+      family: 'occ/status',
+      occ_id: OCC[0],
       value: { version: res.version, op: 'upsert' },
       known: null,
       pending_id: res.outbox_id,
@@ -55,6 +58,8 @@ describe('writeFacet', () => {
       state: 'PENDING',
       attempts: 0,
       created_at: T0,
+      basis: '',
+      group: res.outbox_id,
     });
     const meta = await store.getMeta();
     expect(meta.hlc).toEqual({ micros: String(parseVersion(res.version)!.micros), counter: 0 });
@@ -67,7 +72,7 @@ describe('writeFacet', () => {
     const remote = token(T0 + HOUR, 4, OTHER_DEVICE);
     await store.apply([ev(key(0, 'note'), remote)]);
 
-    const res = await store.writeFacet(HEAD[0], 'note', 'mine');
+    const res = await write(store, 0, 'note', 'mine');
 
     expect(compareVersion(res.version, remote)).toBe(1);
     const [entry] = await store.listOutbox();
@@ -82,7 +87,7 @@ describe('writeFacet', () => {
     await store.apply([ev(key(0, 'status'), theirs, 'upsert', '{"status":"wished"}')]);
     expect((await store.onStatus({ cursor: '', serverNowIso: '2026-09-26T12:00:00.000000Z', pendingReview: 0n }, 0)).rebased).toBe(true);
 
-    const mine = await store.writeFacet(HEAD[0], 'status', 'owned');
+    const mine = await write(store, 0, 'status', 'owned');
 
     expect(compareVersion(mine.version, theirs)).toBe(1);
     expect((await store.getFacet(key(0, 'status')))!.value!.version).toBe(mine.version);
@@ -91,9 +96,9 @@ describe('writeFacet', () => {
   it('writes a tombstone as a delete with an empty payload and keeps the row', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'status', 'owned');
+    await write(store, 0, 'status', 'owned');
 
-    await store.writeFacet(HEAD[0], 'status', null);
+    await write(store, 0, 'status', null);
 
     const facet = await store.getFacet(key(0, 'status'));
     expect(facet!.value).toMatchObject({ op: 'delete', payload: '' });
@@ -106,19 +111,34 @@ describe('writeFacet', () => {
     const { db } = await freshDb();
     const store = await openStore(db);
 
-    await expect(store.writeFacet(HEAD[0], 'score', 11)).rejects.toThrow(PayloadInvalidError);
-    await expect(store.writeFacet('not-a-head', 'score', 5)).rejects.toThrow(TypeError);
+    await expect(write(store, 0, 'score', 11)).rejects.toThrow(PayloadInvalidError);
+    await expect(store.writeFacet('uf/not-a-head/score', { score: 5 })).rejects.toThrow(/not a user-owned facet key/);
+    await expect(store.writeFacet(`holding/${HEAD[0]}/status`, { status: 'owned' })).rejects.toThrow(/not a user-owned facet key/);
+    await expect(store.writeFacet(`occ/${OCC[0]}/origin`, { site: 'mfc', native_id: '1', ordinal: 1 })).rejects.toThrow(/not a user-owned facet key/);
 
     expect(await store.listOutbox()).toEqual([]);
     expect(await store.listFacets()).toEqual([]);
   });
 
+  it('mints above the replica too when a pending edit is older than a remote value a rebase put ahead of the clock', async () => {
+    const { db } = await freshDb();
+    const store = await openStore(db);
+    await write(store, 0, 'note', 'mine');
+    const theirs = token(T0 + 120_000, 0, OTHER_DEVICE);
+    await store.apply([ev(key(0, 'note'), theirs, 'upsert', '{"note":"theirs"}')]);
+    expect((await store.onStatus({ cursor: '', serverNowIso: '2026-09-26T12:00:00.000000Z', pendingReview: 0n }, 0)).rebased).toBe(true);
+
+    const again = await write(store, 0, 'note', 'again');
+
+    expect(compareVersion(again.version, theirs)).toBe(1);
+  });
+
   it('continues past the last issued version after a reload with the clock an hour behind', async () => {
     const { db } = await freshDb();
-    const first = await (await openStore(db)).writeFacet(HEAD[0], 'status', 'owned');
+    const first = await write(await openStore(db), 0, 'status', 'owned');
 
     const reloaded = await openStore(db, { clock: new FakeClock(T0 - HOUR) });
-    const next = await reloaded.writeFacet(HEAD[1], 'status', 'wished');
+    const next = await write(reloaded, 1, 'status', 'wished');
 
     expect(compareVersion(next.version, first.version)).toBe(1);
   });
@@ -129,7 +149,7 @@ describe('writeFacet', () => {
     await (await openStore(db)).apply([ev(key(0, 'note'), remote)]);
 
     const reloaded = await openStore(db, { clock: new FakeClock(T0 - HOUR) });
-    const next = await reloaded.writeFacet(HEAD[2], 'score', 4);
+    const next = await write(reloaded, 2, 'score', 4);
 
     expect(compareVersion(next.version, remote)).toBe(1);
   });
@@ -137,7 +157,7 @@ describe('writeFacet', () => {
   it('aborts the whole write on QuotaExceededError and leaves no optimistic overlay', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    const before = await store.writeFacet(HEAD[0], 'note', 'first');
+    const before = await write(store, 0, 'note', 'first');
     const metaBefore = await store.getMeta();
     const realAdd = IDBObjectStore.prototype.add;
     vi.spyOn(IDBObjectStore.prototype, 'add').mockImplementation(function (this: IDBObjectStore, ...args) {
@@ -145,7 +165,7 @@ describe('writeFacet', () => {
       return realAdd.apply(this, args as Parameters<typeof realAdd>);
     });
 
-    const err = await store.writeFacet(HEAD[0], 'note', 'second').catch((e: unknown) => e);
+    const err = await write(store, 0, 'note', 'second').catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(LocalWriteError);
     expect((err as LocalWriteError).quota).toBe(true);
@@ -156,20 +176,20 @@ describe('writeFacet', () => {
     expect(await store.listOutbox()).toHaveLength(1);
     expect(await store.getMeta()).toEqual(metaBefore);
     // The store stays usable once space is back.
-    await expect(store.writeFacet(HEAD[0], 'note', 'third')).resolves.toBeDefined();
+    await expect(write(store, 0, 'note', 'third')).resolves.toBeDefined();
   });
 
   it('rolls back the facet and outbox rows already written when the last write hits the quota', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'note', 'first');
+    await write(store, 0, 'note', 'first');
     const realPut = IDBObjectStore.prototype.put;
     vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args) {
       if (this.name === 'sync_meta') throw new DOMException('quota', 'QuotaExceededError');
       return realPut.apply(this, args as Parameters<typeof realPut>);
     });
 
-    await expect(store.writeFacet(HEAD[1], 'status', 'owned')).rejects.toMatchObject({ name: 'LocalWriteError', quota: true });
+    await expect(write(store, 1, 'status', 'owned')).rejects.toMatchObject({ name: 'LocalWriteError', quota: true });
 
     vi.restoreAllMocks();
     expect(await store.getFacet(key(1, 'status'))).toBeUndefined();
@@ -179,7 +199,7 @@ describe('writeFacet', () => {
   it('aborts the whole write when a request fails inside the transaction', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
-    const first = await store.writeFacet(HEAD[0], 'count', 1);
+    const first = await write(store, 0, 'wishability', 1);
     const realAdd = IDBObjectStore.prototype.add;
     vi.spyOn(IDBObjectStore.prototype, 'add').mockImplementation(function (this: IDBObjectStore, value, ...rest) {
       // Collide with the existing entry: the request fails asynchronously with ConstraintError.
@@ -187,12 +207,12 @@ describe('writeFacet', () => {
       return realAdd.call(this, value, ...rest);
     });
 
-    const err = await store.writeFacet(HEAD[1], 'count', 2).catch((e: unknown) => e);
+    const err = await write(store, 1, 'wishability', 2).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(LocalWriteError);
     expect((err as LocalWriteError).quota).toBe(false);
     vi.restoreAllMocks();
-    expect(await store.getFacet(key(1, 'count'))).toBeUndefined();
+    expect(await store.getFacet(key(1, 'wishability'))).toBeUndefined();
     expect(await store.listOutbox()).toHaveLength(1);
   });
 });
@@ -202,7 +222,7 @@ describe('defaults', () => {
     const { db } = await freshDb();
     const store = await UserStore.open(db, { sub: 'user-a', deviceId: '0F3A5C7E-9B1D-2F4A-6C8E-0B2D4F6A8C0E' });
     const before = Date.now();
-    const res = await store.writeFacet(HEAD[0], 'status', 'owned');
+    const res = await write(store, 0, 'status', 'owned');
     const micros = parseVersion(res.version)!.micros;
     expect(Number(micros / 1000n)).toBeGreaterThanOrEqual(before);
     expect(res.version.endsWith(DEVICE)).toBe(true);
@@ -212,46 +232,24 @@ describe('defaults', () => {
   });
 });
 
-describe('holding view', () => {
-  it('shows count, score and note only beside a live status, and keeps them for a re-add', async () => {
-    const { db } = await freshDb();
-    const store = await openStore(db);
-    await store.writeFacet(HEAD[0], 'status', 'owned');
-    await store.writeFacet(HEAD[0], 'count', 2);
-    await store.writeFacet(HEAD[0], 'score', 8);
-    await store.writeFacet(HEAD[0], 'note', 'boxed');
-    await store.writeFacet(HEAD[1], 'score', 3); // no status: not a holding
-    await store.writeFacet(HEAD[2], 'status', 'wished');
-    await store.writeFacet(HEAD[2], 'note', 'gone soon');
-    await store.writeFacet(HEAD[2], 'note', null);
-
-    const held = await store.getHolding(HEAD[0]);
-    expect(held!.status.field).toBe('status');
-    expect(held!.count!.field).toBe('count');
-    expect(held!.score!.field).toBe('score');
-    expect(held!.note!.field).toBe('note');
-    expect(await store.getHolding(HEAD[1])).toBeUndefined();
-    expect((await store.getHolding(HEAD[2]))!.note).toBeUndefined();
-    expect((await store.listHoldings()).map((h) => h.head_id).sort()).toEqual([HEAD[0], HEAD[2]].sort());
-
-    await store.writeFacet(HEAD[0], 'status', null);
-    expect(await store.getHolding(HEAD[0])).toBeUndefined();
-    expect(await store.getFacet(key(0, 'score'))).toBeDefined();
-
-    await store.writeFacet(HEAD[0], 'status', 'ordered');
-    expect((await store.getHolding(HEAD[0]))!.score!.value!.op).toBe('upsert');
-  });
-
-  it('treats a status the server told us about like a local one', async () => {
+describe('the view over the store', () => {
+  it('reads the displayed values: a remote copy, the local edits laid over it, and keys it cannot read hidden', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
     await store.apply([
-      ev(key(1, 'status'), token(T0, 0, OTHER_DEVICE), 'upsert', '{"status":"owned"}'),
-      ev('identity/' + HEAD[1], '2026-09-26T11:00:00.000000Z', 'upsert', '{"title":"x"}'),
+      ev(occFacetKey(OCC[1], 'head'), token(T0, 0, OTHER_DEVICE), 'upsert', JSON.stringify({ head_id: HEAD[1], ...STAMP })),
+      ev(key(1, 'status'), token(T0, 1, OTHER_DEVICE), 'upsert', JSON.stringify({ status: 'owned', ...STAMP })),
+      ev('identity/' + HEAD[2], '2026-09-26T11:00:00.000000Z', 'upsert', '{"title":"x"}'),
     ]);
-    const held = await store.getHolding(HEAD[1]);
-    expect(held!.status.known!.version).toBe(token(T0, 0, OTHER_DEVICE));
-    expect(await store.listHoldings()).toHaveLength(1);
+    await write(store, 0, 'note', 'boxed');
+
+    const view = await store.getView();
+
+    expect(view.copies.map((c) => [c.occ_id, c.head_id, c.status, c.shown_in])).toEqual([[OCC[1], HEAD[1], 'owned', 'owned/default']]);
+    expect([...view.library].sort()).toEqual([HEAD[0], HEAD[1]].sort());
+
+    await write(store, 1, 'status', null);
+    expect((await store.getView()).copies[0]).toMatchObject({ status: null, shown_in: null });
   });
 });
 
@@ -283,15 +281,14 @@ describe('per-user partitioning', () => {
     const { db } = await freshDb();
     const a = await openStore(db, { sub: 'user-a' });
     const b = await openStore(db, { sub: 'user-b' });
-    await a.writeFacet(HEAD[0], 'status', 'owned');
+    await write(a, 0, 'status', 'owned');
     await a.apply([ev(key(1, 'status'), token(T0, 0, OTHER_DEVICE), 'upsert', '{"status":"wished"}')], { cursor: 'a-1' });
     await a.putProducts([create(ProductCardSchema, { headId: HEAD[0] })]);
     await a.onStatus({ cursor: 'a-head', serverNowIso: '2026-09-26T12:00:00.000000Z', pendingReview: 0n }, 0);
 
     expect(await b.listFacets()).toEqual([]);
     expect(await b.getFacet(key(0, 'status'))).toBeUndefined();
-    expect(await b.getHolding(HEAD[0])).toBeUndefined();
-    expect(await b.listHoldings()).toEqual([]);
+    expect((await b.getView()).copies).toEqual([]);
     expect(await b.listOutbox()).toEqual([]);
     expect(await b.listProducts()).toEqual([]);
     expect(await b.getProduct(HEAD[0])).toBeUndefined();
@@ -304,26 +301,27 @@ describe('per-user partitioning', () => {
     expect((await a.getMeta()).cursor).toBe('a-1');
   });
 
-  it("never marks user B's pending edit superseded when user A's facet takes a newer remote value", async () => {
+  it("never touches user B's facet when user A's facet takes a newer remote value", async () => {
     const { db } = await freshDb();
     const a = await openStore(db, { sub: 'user-a' });
     const b = await openStore(db, { sub: 'user-b' });
-    const bEdit = await b.writeFacet(HEAD[0], 'note', 'b-mine');
-    await a.writeFacet(HEAD[0], 'note', 'a-mine');
+    const bEdit = await write(b, 0, 'note', 'b-mine');
+    await write(a, 0, 'note', 'a-mine');
 
     await a.apply([ev(key(0, 'note'), token(T0 + HOUR, 0, OTHER_DEVICE), 'upsert', '{"note":"a-remote"}')]);
 
-    expect((await a.listOutbox())[0]).toMatchObject({ state: 'STALE', superseded: true });
+    expect((await a.getFacet(key(0, 'note')))!.known!.version).toBe(token(T0 + HOUR, 0, OTHER_DEVICE));
     const [bEntry] = await b.listOutbox();
     expect(bEntry).toMatchObject({ state: 'PENDING', edit_version: bEdit.version });
-    expect(bEntry.superseded).toBeUndefined();
-    expect((await b.getFacet(key(0, 'note')))!.value!.version).toBe(bEdit.version);
+    const bFacet = await b.getFacet(key(0, 'note'));
+    expect(bFacet!.value!.version).toBe(bEdit.version);
+    expect(bFacet!.known).toBeNull();
   });
 
   it("never re-mints user B's edits in user A's first-Status rebase", async () => {
     const { db } = await freshDb();
-    const bEdit = await (await openStore(db, { sub: 'user-b', clock: new FakeClock(T0 + DAY) })).writeFacet(HEAD[0], 'note', 'b-ahead');
-    const aEdit = await (await openStore(db, { sub: 'user-a', clock: new FakeClock(T0 + DAY) })).writeFacet(HEAD[1], 'note', 'a-ahead');
+    const bEdit = await write(await openStore(db, { sub: 'user-b', clock: new FakeClock(T0 + DAY) }), 0, 'note', 'b-ahead');
+    const aEdit = await write(await openStore(db, { sub: 'user-a', clock: new FakeClock(T0 + DAY) }), 1, 'note', 'a-ahead');
     const a = await openStore(db, { sub: 'user-a', clock: new FakeClock(T0 + 1_000) });
 
     expect(await a.onStatus(status(T0 + 1_000), 0)).toEqual({ rebased: true, reminted: 1 });
@@ -340,12 +338,12 @@ describe('removeLocalData', () => {
     const { db } = await freshDb();
     const a = await openStore(db, { sub: 'user-a' });
     const b = await openStore(db, { sub: 'user-b' });
-    await a.writeFacet(HEAD[0], 'status', 'owned');
+    await write(a, 0, 'status', 'owned');
     await a.putProducts([create(ProductCardSchema, { headId: HEAD[0] })]);
     await db.put('device_key', { sub: 'user-a', key: 'a-key' });
     await db.put('device_key', { sub: 'user-b', key: 'b-key' });
     await db.put('legacy_pending', { type: 'update' });
-    await b.writeFacet(HEAD[1], 'status', 'wished');
+    await write(b, 1, 'status', 'wished');
 
     await expect(a.removeLocalData()).rejects.toThrow(UnsyncedEditsError);
     expect(await a.listOutbox()).toHaveLength(1);
@@ -376,7 +374,7 @@ describe('removeLocalData', () => {
     const clock = new FakeClock(T0);
     const store = await openStore(db, { clock });
     await store.onStatus({ cursor: '', serverNowIso: '2026-09-26T12:00:00.000000Z', pendingReview: 0n }, 0);
-    await store.writeFacet(HEAD[0], 'score', 7);
+    await write(store, 0, 'score', 7);
     const batch = await store.nextBatch();
     if (batch.kind !== 'send') throw new Error('expected a batch');
     await store.recordPush(batch.batch.clientId, {

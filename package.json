@@ -21,7 +21,7 @@
     "@bufbuild/protobuf": "^2.15.0",
     "@connectrpc/connect": "^2.2.0",
     "@connectrpc/connect-web": "^2.2.0",
-    "@figurecollecting/fc-api-contract": "^0.2.0",
+    "@figurecollecting/fc-api-contract": "^0.3.0",
     "@figurecollecting/fc-shared": "^1.6.0",
     "@preact/signals": "^2.8.2",
     "@tanstack/react-query": "^5.102.8",

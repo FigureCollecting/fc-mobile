@@ -44,7 +44,7 @@ async function seedV1(factory: IDBFactory): Promise<void> {
 describe('openLocalDb', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('creates the v2 stores on a fresh install', async () => {
+  it('creates the v3 stores on a fresh install', async () => {
     const factory = new IDBFactory();
     const db = await openLocalDb({ factory });
     expect(db.version).toBe(LOCAL_DB_VERSION);
@@ -53,7 +53,10 @@ describe('openLocalDb', () => {
     );
     const tx = db.transaction(['facets', 'outbox', 'products', 'sync_meta', 'device_key', 'auth', 'legacy_pending']);
     expect(tx.objectStore('facets').keyPath).toEqual(['sub', 'facet_key']);
+    expect([...tx.objectStore('facets').indexNames].sort()).toEqual(['by_head', 'by_occ', 'by_tag']);
     expect(tx.objectStore('facets').index('by_head').keyPath).toEqual(['sub', 'head_id']);
+    expect(tx.objectStore('facets').index('by_occ').keyPath).toEqual(['sub', 'occ_id']);
+    expect(tx.objectStore('facets').index('by_tag').keyPath).toEqual(['sub', 'tag_id']);
     expect(tx.objectStore('outbox').keyPath).toBe('id');
     expect(tx.objectStore('outbox').autoIncrement).toBe(true);
     expect([...tx.objectStore('outbox').indexNames].sort()).toEqual(['by_sub', 'by_sub_client', 'by_sub_state']);
@@ -72,7 +75,7 @@ describe('openLocalDb', () => {
 
     const db = await openLocalDb({ factory });
 
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(LOCAL_DB_VERSION);
     const names = [...db.objectStoreNames];
     expect(names).not.toContain('figures');
     expect(names).not.toContain('metadata');
@@ -142,17 +145,18 @@ describe('openLocalDb', () => {
     const onVersionChange = vi.fn();
     const db = await openLocalDb({ factory, onVersionChange });
 
-    // A newer build in another tab opens v3; it must not be blocked by this page.
-    const req = factory.open(LOCAL_DB_NAME, 3);
-    const v3 = await new Promise<IDBDatabase>((resolve, reject) => {
+    // A newer build in another tab opens the next version; it must not be blocked by this page.
+    const req = factory.open(LOCAL_DB_NAME, LOCAL_DB_VERSION + 1);
+    const newer = await new Promise<IDBDatabase>((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
 
     expect(onVersionChange).toHaveBeenCalledTimes(1);
-    expect(v3.version).toBe(3);
+    expect(onVersionChange).toHaveBeenCalledWith(LOCAL_DB_VERSION + 1);
+    expect(newer.version).toBe(LOCAL_DB_VERSION + 1);
     expect(() => db.transaction('facets')).toThrow();
-    v3.close();
+    newer.close();
   });
 
   it('reports a connection the browser closed (site data cleared, storage evicted)', async () => {
@@ -173,7 +177,7 @@ describe('openLocalDb', () => {
     const db = await openLocalDb({ factory, onBlocked });
 
     expect(onBlocked).toHaveBeenCalledTimes(1);
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(LOCAL_DB_VERSION);
     db.close();
   });
 

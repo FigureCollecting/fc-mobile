@@ -2,7 +2,7 @@
 // session asks for a reload instead of reporting 'signed-in' while every call
 // fails, and a page that boots into that state never stays 'loading'.
 import { describe, expect, it } from 'vitest';
-import type { LocalDb } from '../../storage/localDb';
+import { LOCAL_DB_VERSION, type LocalDb } from '../../storage/localDb';
 import { ReloadRequiredError } from '../errors';
 import type { AuthSession, AuthStatus } from '../session';
 import { IDP_ORIGIN, SUB_A } from './fakes';
@@ -14,9 +14,9 @@ const settle = <T>(req: IDBRequest<T>) =>
     req.onerror = () => reject(req.error);
   });
 
-/** A newer build opens the store at v3 and closes it again. */
+/** A newer build opens the store at the next version and closes it again. */
 async function newerBuildUpgrades(world: World): Promise<void> {
-  (await settle(world.factory.open('fc-mobile', 3))).close();
+  (await settle(world.factory.open('fc-mobile', LOCAL_DB_VERSION + 1))).close();
 }
 
 /**
@@ -120,7 +120,7 @@ describe('a newer build takes the local store', () => {
     const world = await World.create();
     const tab = world.tab();
     await world.signIn(tab);
-    const up = world.factory.open('fc-mobile', 3);
+    const up = world.factory.open('fc-mobile', LOCAL_DB_VERSION + 1);
     up.onupgradeneeded = () => up.transaction!.abort();
     await settle(up).catch(() => undefined);
     expect(tab.status.value).toBe('reload-required');

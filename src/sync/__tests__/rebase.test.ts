@@ -4,7 +4,6 @@ import type { UserStore } from '../../storage/userStore';
 import {
   DAY,
   FakeClock,
-  HEAD,
   HOUR,
   OTHER_DEVICE,
   PushOutcome,
@@ -16,6 +15,7 @@ import {
   result,
   status,
   token,
+  write,
 } from './harness';
 
 async function send(store: UserStore) {
@@ -56,12 +56,12 @@ describe("rebase after each session's first Status", () => {
     await s1.onStatus(status(T0), 0);
     // The wall jumps a day ahead mid-session; the Hlc trusts it.
     clock.wall += DAY;
-    const flying = await s1.writeFacet(HEAD[2], 'status', 'owned');
+    const flying = await write(s1, 2, 'status', 'owned');
     const sent = await send(s1);
-    const e1 = await s1.writeFacet(HEAD[0], 'note', 'one');
-    const e2 = await s1.writeFacet(HEAD[0], 'note', 'two');
-    const e3 = await s1.writeFacet(HEAD[1], 'status', 'wished');
-    const e4 = await s1.writeFacet(HEAD[2], 'status', 'ordered');
+    const e1 = await write(s1, 0, 'note', 'one');
+    const e2 = await write(s1, 0, 'note', 'two');
+    const e3 = await write(s1, 1, 'status', 'wished');
+    const e4 = await write(s1, 2, 'status', 'ordered');
     expect(e1.version).toBe(token(T0 + DAY, 1));
 
     // Reload with the wall corrected.
@@ -87,14 +87,14 @@ describe("rebase after each session's first Status", () => {
     expect((await s2.getFacet(key(0, 'note')))!.value!.version).toBe(r2.edit_version);
     expect((await s2.getFacet(key(1, 'status')))!.value!.version).toBe(r3.edit_version);
     // A later edit takes the re-minted version as its base.
-    const e5 = await s2.writeFacet(HEAD[0], 'note', 'three');
+    const e5 = await write(s2, 0, 'note', 'three');
     expect((await byId(s2, e5.outbox_id)).base_version).toBe(r2.edit_version);
   });
 
   it('is a no-op when the clock is not ahead', async () => {
     const { db } = await freshDb();
     const s1 = await openStore(db);
-    const e = await s1.writeFacet(HEAD[0], 'status', 'owned');
+    const e = await write(s1, 0, 'status', 'owned');
     const s2 = await openStore(db, { clock: new FakeClock(T0 + 10_000) });
 
     const report = await s2.onStatus(status(T0 + 10_000), 0);
@@ -109,7 +109,7 @@ describe("rebase after each session's first Status", () => {
     const store = await openStore(db, { clock });
     await store.onStatus(status(T0), 0);
     clock.wall += DAY;
-    const e = await store.writeFacet(HEAD[0], 'status', 'owned');
+    const e = await write(store, 0, 'status', 'owned');
     clock.advance(2_000);
 
     const report = await store.onStatus(status(T0 + 2_000), 0);
@@ -124,7 +124,7 @@ describe("rebase after each session's first Status", () => {
     const s1 = await openStore(db, { clock });
     await s1.onStatus(status(T0), 0);
     clock.wall += DAY;
-    await s1.writeFacet(HEAD[0], 'status', 'owned');
+    await write(s1, 0, 'status', 'owned');
     const clock2 = new FakeClock(T0 + 1_000, 50);
     const s2 = await openStore(db, { clock: clock2 });
     expect((await s2.onStatus(status(T0 + 1_000), 0)).rebased).toBe(true);
@@ -143,7 +143,7 @@ describe("rebase after each session's first Status", () => {
     expect(meta).toMatchObject({ offset_ms: 600_000, server_cursor: 'head-7', pending_review: 2, status_at: T0 });
 
     const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000) });
-    const e = await s2.writeFacet(HEAD[0], 'status', 'owned');
+    const e = await write(s2, 0, 'status', 'owned');
     expect(e.version).toBe(token(T0 + 601_000, 0));
   });
 
@@ -153,12 +153,12 @@ describe("rebase after each session's first Status", () => {
     const s1 = await openStore(db, { clock });
     await s1.onStatus(status(T0), 0);
     clock.wall += DAY;
-    await s1.writeFacet(HEAD[0], 'status', 'owned');
+    await write(s1, 0, 'status', 'owned');
     const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000, 5) });
     await s2.onStatus(status(T0 + 1_000), 0);
 
     const s3 = await openStore(db, { clock: new FakeClock(T0 + 2_000, 5) });
-    const next = await s3.writeFacet(HEAD[1], 'note', 'x');
+    const next = await write(s3, 1, 'note', 'x');
 
     expect(next.version).toBe(token(T0 + 2_000, 0));
   });
@@ -169,7 +169,7 @@ describe("rebase after each session's first Status", () => {
     const s1 = await openStore(db, { clock });
     await s1.onStatus(status(T0), 0);
     clock.wall += DAY;
-    const ahead = await s1.writeFacet(HEAD[0], 'note', 'ahead');
+    const ahead = await write(s1, 0, 'note', 'ahead');
     const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000, 50) });
     quotaOnce('sync_meta');
     await expect(s2.onStatus(status(T0 + 1_000), 0)).rejects.toMatchObject({ name: 'LocalWriteError', quota: true });
@@ -195,15 +195,15 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const store = await openStore(db, { clock });
     const known = token(T0 - HOUR, 0, OTHER_DEVICE);
     await store.apply([ev(key(0, 'note'), known, 'upsert', '{"note":"server"}')]);
-    const early = await store.writeFacet(HEAD[2], 'count', 1);
+    const early = await write(store, 2, 'wishability', 1);
     await store.onStatus(status(T0), 0);
     const first = await send(store);
     await store.recordPush(first.clientId, { results: first.request.events.map((e) => result(e.facetKey, PushOutcome.APPLIED, e)) });
-    const kept = await store.writeFacet(HEAD[2], 'count', 2);
+    const kept = await write(store, 2, 'wishability', 2);
     clock.wall += DAY;
-    const edit = await store.writeFacet(HEAD[0], 'note', 'future');
+    const edit = await write(store, 0, 'note', 'future');
     const batch = await send(store);
-    const later = await store.writeFacet(HEAD[1], 'status', 'owned');
+    const later = await write(store, 1, 'status', 'owned');
     clock.advance(5_000);
     return { db, store, clock, known, early, kept, edit, batch, later };
   }
@@ -212,7 +212,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const { store, edit, batch, later, kept, known } = await aheadAndSent();
     expect(batch.entryIds).toEqual([kept.outbox_id, edit.outbox_id]);
     const results = [
-      result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+      result(key(2, 'wishability'), PushOutcome.APPLIED, batch.request.events[0]),
       result(key(0, 'note'), PushOutcome.REJECTED, ev(key(0, 'note'), known, 'upsert', '{"note":"server"}'), 'payload_invalid: bad'),
     ];
     await store.recordPush(batch.clientId, { results });
@@ -220,7 +220,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     expect((await store.getMeta()).rejected_past).toBe(edit.version);
     expect(await store.nextBatch()).toEqual({ kind: 'status_required' });
     // Minting is still possible offline; the Status re-mints it if it lands past the present.
-    const offline = await store.writeFacet(HEAD[1], 'score', 4);
+    const offline = await write(store, 1, 'score', 4);
 
     const report = await store.onStatus(status(T0 + 5_000), 0);
 
@@ -239,7 +239,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const { store, edit, batch, later, known } = await aheadAndSent();
     await store.recordPush(batch.clientId, {
       results: [
-        result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+        result(key(2, 'wishability'), PushOutcome.APPLIED, batch.request.events[0]),
         result(key(0, 'note'), PushOutcome.REJECTED, ev(key(0, 'note'), known, 'upsert', '{"note":"server"}'), 'payload_invalid: bad'),
       ],
     });
@@ -261,7 +261,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const { store, batch, early, kept } = await aheadAndSent();
     await store.recordPush(batch.clientId, {
       results: [
-        result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+        result(key(2, 'wishability'), PushOutcome.APPLIED, batch.request.events[0]),
         result(key(0, 'note'), PushOutcome.REJECTED, undefined, 'device_mismatch'),
       ],
     });
@@ -275,7 +275,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const current = ev(key(0, 'note'), known, 'upsert', '{"note":"server"}');
     await store.recordPush(batch.clientId, {
       results: [
-        result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+        result(key(2, 'wishability'), PushOutcome.APPLIED, batch.request.events[0]),
         result(key(0, 'note'), PushOutcome.REJECTED, current, 'version_future'),
       ],
     });
@@ -307,11 +307,11 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const { store, edit, batch, known } = await aheadAndSent();
     await store.recordPush(batch.clientId, {
       results: [
-        result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+        result(key(2, 'wishability'), PushOutcome.APPLIED, batch.request.events[0]),
         result(key(0, 'note'), PushOutcome.REJECTED, ev(key(0, 'note'), known, 'upsert', '{"note":"server"}'), 'version_future: too far'),
       ],
     });
-    const newer = await store.writeFacet(HEAD[0], 'note', 'newer');
+    const newer = await write(store, 0, 'note', 'newer');
 
     await store.onStatus(status(T0 + 5_000), 0);
 
@@ -323,7 +323,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const { store, edit, batch, known } = await aheadAndSent();
     await store.recordPush(batch.clientId, {
       results: [
-        result(key(2, 'count'), PushOutcome.APPLIED, batch.request.events[0]),
+        result(key(2, 'wishability'), PushOutcome.APPLIED, batch.request.events[0]),
         result(key(0, 'note'), PushOutcome.REJECTED, ev(key(0, 'note'), known, 'upsert', '{"note":"server"}'), 'version_future'),
       ],
     });
@@ -341,7 +341,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     const clock = new FakeClock(T0);
     const store = await openStore(db, { clock });
     await store.onStatus(status(T0), 0);
-    const e = await store.writeFacet(HEAD[0], 'score', 5);
+    const e = await write(store, 0, 'score', 5);
     const batch = await send(store);
     await store.recordPush(batch.clientId, { results: [result(key(0, 'score'), PushOutcome.REJECTED, undefined, 'payload_invalid')] });
     clock.advance(10_000);
@@ -361,7 +361,7 @@ describe('after a REJECTED edit, a fresh Status before minting', () => {
     expect(retry.clientId).toBe(batch.clientId);
     await s2.recordPush(retry.clientId, {
       results: [
-        result(key(2, 'count'), PushOutcome.DUPLICATE, retry.request.events[0]),
+        result(key(2, 'wishability'), PushOutcome.DUPLICATE, retry.request.events[0]),
         result(key(0, 'note'), PushOutcome.REJECTED, ev(key(0, 'note'), known, 'upsert', '{"note":"server"}'), 'version_future'),
       ],
     });
@@ -380,10 +380,10 @@ describe('rebase edge cases', () => {
   it("leaves an edit minted before another tab's clock ran ahead untouched", async () => {
     const { db } = await freshDb();
     const tabA = await openStore(db, { clock: new FakeClock(T0) });
-    const early = await tabA.writeFacet(HEAD[0], 'status', 'owned');
+    const early = await write(tabA, 0, 'status', 'owned');
     // Another tab with a clock a day fast writes; the stored clock keeps the higher state.
     const tabB = await openStore(db, { clock: new FakeClock(T0 + DAY) });
-    const ahead = await tabB.writeFacet(HEAD[1], 'status', 'wished');
+    const ahead = await write(tabB, 1, 'status', 'wished');
 
     const reloaded = await openStore(db, { clock: new FakeClock(T0 + 1_000) });
     const report = await reloaded.onStatus(status(T0 + 1_000), 0);
@@ -396,7 +396,7 @@ describe('rebase edge cases', () => {
   it("leaves another tab's edit that is not past the present alone when the rebase moves nothing", async () => {
     const { db } = await freshDb();
     const tabA = await openStore(db, { clock: new FakeClock(T0) });
-    const fromB = await (await openStore(db, { clock: new FakeClock(T0 + 60_000) })).writeFacet(HEAD[1], 'status', 'wished');
+    const fromB = await write(await openStore(db, { clock: new FakeClock(T0 + 60_000) }), 1, 'status', 'wished');
     const stored = (await tabA.getMeta()).hlc;
 
     const report = await tabA.onStatus(status(T0 + 120_000), 0);
@@ -412,7 +412,7 @@ describe('rebase edge cases', () => {
     const store = await openStore(db, { clock });
     await store.onStatus(status(T0), 0);
     clock.wall += DAY;
-    const edit = await store.writeFacet(HEAD[0], 'score', 9);
+    const edit = await write(store, 0, 'score', 9);
     const batch = await send(store);
     await store.recordPush(batch.clientId, { results: [result(key(0, 'score'), PushOutcome.REJECTED, undefined, 'version_future')] });
     expect(await byId(store, edit.outbox_id)).toMatchObject({ remint: 'awaiting', adopted_version: null });
@@ -432,9 +432,9 @@ describe('rebase edge cases', () => {
     const store = await openStore(db, { clock });
     await store.onStatus(status(T0), 0);
     clock.wall += DAY;
-    const edit = await store.writeFacet(HEAD[0], 'score', 9);
+    const edit = await write(store, 0, 'score', 9);
     const batch = await send(store);
-    const newer = await store.writeFacet(HEAD[0], 'score', 10);
+    const newer = await write(store, 0, 'score', 10);
 
     await store.recordPush(batch.clientId, { results: [result(key(0, 'score'), PushOutcome.REJECTED, undefined, 'version_future')] });
 
@@ -450,10 +450,10 @@ describe('rebase edge cases', () => {
     const s1 = await openStore(db, { clock });
     await s1.onStatus(status(T0), 0);
     clock.wall += DAY;
-    await s1.writeFacet(HEAD[0], 'status', 'owned');
+    await write(s1, 0, 'status', 'owned');
     const flying = await send(s1);
-    const chained = await s1.writeFacet(HEAD[0], 'status', 'wished');
-    await s1.writeFacet(HEAD[1], 'status', 'owned');
+    const chained = await write(s1, 0, 'status', 'wished');
+    await write(s1, 1, 'status', 'owned');
     // Reload corrected: the chained edit stays above the in-flight one, the other comes back to the present.
     const s2 = await openStore(db, { clock: new FakeClock(T0 + 1_000, 7) });
     await s2.onStatus(status(T0 + 1_000), 0);

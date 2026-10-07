@@ -7,7 +7,7 @@ import { configuredOidc } from '../config';
 import { defaultLocks, InTabLocks } from '../locks';
 import { NetworkError } from '../errors';
 import { AuthStore } from '../store';
-import { openLocalDb } from '../../storage/localDb';
+import { LOCAL_DB_VERSION, openLocalDb } from '../../storage/localDb';
 import { World } from './world';
 import { APP_ORIGIN, SUB_A } from './fakes';
 
@@ -131,7 +131,7 @@ describe('browser wiring: the store closed by another page', () => {
     const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
     expect(await session.start()).toBe('signed-in');
     // A newer build upgrades the store: this build cannot open it, and asks for a reload.
-    (await settle(factory.open('fc-mobile', 3))).close();
+    (await settle(factory.open('fc-mobile', LOCAL_DB_VERSION + 1))).close();
     expect(session.status.value).toBe('reload-required');
     await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({
       name: 'ReloadRequiredError',
@@ -146,7 +146,7 @@ describe('browser wiring: the store closed by another page', () => {
 
   it('createBrowserSession recovers a page loaded while a newer build owns the store, once that store is gone', async () => {
     const factory = new IDBFactory();
-    (await settle(factory.open('fc-mobile', 3))).close();
+    (await settle(factory.open('fc-mobile', LOCAL_DB_VERSION + 1))).close();
     const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
     const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
     await expect(session.start()).rejects.toMatchObject({ name: 'ReloadRequiredError' });

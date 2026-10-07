@@ -955,12 +955,15 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     expect(launchers.chromium.calls).toEqual([{ headless: true, args: [RULES], env: { PATH: '/usr/bin' } }]);
     // Straight to a launcher: its own options only.
     await expect(start(launchers.chromium, SERVE, { args: ['--remote-debugging-port=9334'] })).rejects.toThrow(`hands-off: this Chromium launch's args hold "--remote-debugging-port=9334"`);
-    await expect(start(launchers.firefox, SERVE, {})).resolves.toBe('server');
-    expect(launchers.firefox.calls).toEqual([{ env: { PATH: '/usr/bin' } }]);
+    // Firefox's and WebKit's launchers have no resolver rules to keep.
+    for (const engine of ['firefox', 'webkit'] as const) {
+      await expect(start(launchers[engine], SERVE, {}), engine).resolves.toBe('server');
+      expect(launchers[engine].calls).toEqual([{ env: { PATH: '/usr/bin' } }]);
+    }
     env.http_proxy = 'http://127.0.0.1:9';
     await expect(start(launchers.webkit, SERVE, {})).rejects.toThrow("hands-off: http_proxy in this worker's environment sends requests through a proxy");
     await expect(start(android, SERVE, {})).rejects.toThrow('hands-off: _android._serverLauncher.launchServer opens a browser the hands-off resolver rules are not on');
-    expect([launchers.chromium.calls.length, launchers.webkit.calls.length, android.calls.length]).toEqual([1, 0, 0]);
+    expect([launchers.chromium.calls.length, launchers.webkit.calls.length, android.calls.length]).toEqual([1, 1, 0]);
   });
 
   it('refuses newBrowserCDPSession on each browser a launch returns, wherever its class keeps it, and on the browser of a persistent context: a session on the whole browser can make a context with a proxy of its own', async () => {
@@ -1119,6 +1122,7 @@ describe("refuseLaunchArgs (a Chromium launch's args: the worker's, or the launc
     ['a number among them', [`--host-resolver-rules=${RULES}`, 1], 'are not an array of strings, which the hands-off check cannot read'],
     ['a proxy switch beside the rules', [`--host-resolver-rules=${RULES}`, '--proxy-server=http://127.0.0.1:9'], `hold "--proxy-server=http://127.0.0.1:9": ${ONE}`],
     ['a debugging port before them', ['--remote-debugging-port=9334', `--host-resolver-rules=${RULES}`], `hold "--remote-debugging-port=9334": ${ONE}`],
+    ['a second rule list, which Chromium keeps over the first', [`--host-resolver-rules=${RULES}`, '--host-resolver-rules=MAP * 10.0.0.1'], `hold "--host-resolver-rules=MAP * 10.0.0.1": ${ONE}`],
     ['the switch with one dash', [`-host-resolver-rules=${RULES}`], `hold "-host-resolver-rules=${RULES}": ${ONE}`],
     ['the switch in capitals', [`--HOST-RESOLVER-RULES=${RULES}`], `hold "--HOST-RESOLVER-RULES=${RULES}": ${ONE}`],
     ['the switch with no list', ['--host-resolver-rules'], `hold "--host-resolver-rules": ${ONE}`],
@@ -1142,6 +1146,8 @@ describe("refuseLaunchArgs (a Chromium launch's args: the worker's, or the launc
     ['an empty rule', `${RULES},`, ''],
     ['a MAP with no target', `${RULES}, MAP vndb.org`, 'MAP vndb.org'],
     ['an EXCLUDE with no host', `${RULES}, EXCLUDE`, 'EXCLUDE'],
+    ['an EXCLUDE of two hosts', `${RULES}, EXCLUDE localhost example.test`, 'EXCLUDE localhost example.test'],
+    ['an exclusion of a hands-off host with a tab after it, which Chromium trims', `${RULES}, EXCLUDE vndb.org\t`, 'EXCLUDE vndb.org'],
     ['a rule Chromium does not know', `${RULES}, BYPASS vndb.org`, 'BYPASS vndb.org'],
   ])('refuses a rule after them that could take a hands-off host off them, or that it cannot read: %s', (_, list, rule) => {
     expect(() => refuseLaunchArgs([`--host-resolver-rules=${list}`])).toThrow(`hands-off: this Chromium launch's args hold the rule ${JSON.stringify(rule.trim())}, ${MAY_FOLLOW}`);

@@ -2,7 +2,7 @@
 // the device key and its enrolment. A token or network failure never navigates and never
 // removes data: it only moves `status` to 'offline' or 'reauth-required'. A local store this
 // page's code cannot use (a newer build upgraded it) moves it to 'reload-required'.
-import { signal, type Signal } from '@preact/signals';
+import type { ReadonlySignal } from '@preact/signals';
 import type { LocalDb } from '../storage/localDb';
 import { ServerClock } from './clock';
 import { postLogoutUriFor, redirectUriFor, type OidcConfig } from './config';
@@ -22,9 +22,10 @@ import {
   type TokenResponse,
 } from './oidc';
 import { createPkcePair, randomToken } from './pkce';
+import { StatusGate, type AuthStatus, type Ticket } from './statusGate';
 import { AuthStore, type TokenRecord } from './store';
 
-export type AuthStatus = 'loading' | 'signed-out' | 'signed-in' | 'offline' | 'reauth-required' | 'reload-required';
+export type { AuthStatus } from './statusGate';
 
 export interface AuthSessionDeps {
   /** The open local store, asked for on every use: its owner reopens it once its connection is lost. */
@@ -50,8 +51,12 @@ const DEFAULT_EXPIRES_IN_S = 300;
 /** Only a same-origin path, so /callback can never be turned into an open redirect. */
 const safeReturnTo = (target: string): string => (/^\/(?![/\\])/.test(target) ? target : '/');
 
+// Every status write goes through the gate with the ticket its public operation took first,
+// so a newer build taking the store mid-operation is never overwritten by what that operation
+// worked out before it (sessionStatusWrites.test.ts holds this file to that).
 export class AuthSession implements DpopCredentials {
-  readonly status: Signal<AuthStatus> = signal<AuthStatus>('loading');
+  private readonly gate = new StatusGate();
+  readonly status: ReadonlySignal<AuthStatus> = this.gate.status;
   readonly clock: ServerClock;
   readonly config: OidcConfig;
   readonly fetch: DpopFetch;
@@ -61,8 +66,6 @@ export class AuthSession implements DpopCredentials {
   private readonly timeoutMs: number;
   private currentSub: string | undefined;
   private started: Promise<AuthStatus> | undefined;
-  /** Bumped by reloadRequired(): a status worked out before then no longer holds. */
-  private generation = 0;
   private readonly enrolling = new Map<string, Promise<DeviceKeyRecord>>();
 
   constructor(deps: AuthSessionDeps) {
@@ -81,14 +84,14 @@ export class AuthSession implements DpopCredentials {
 
   start(): Promise<AuthStatus> {
     this.started ??= (async () => {
-      const generation = this.generation;
+      const ticket = this.gate.ticket();
       const store = await this.store();
       const sub = await store.getCurrentSub();
       const tokens = sub === undefined ? undefined : await store.getTokens(sub);
-      if (sub === undefined || tokens === undefined) return this.settle(generation, 'signed-out');
+      if (sub === undefined || tokens === undefined) return this.gate.settle(ticket, 'signed-out');
       this.currentSub = sub;
       const usable = tokens.reauth !== true && (tokens.refreshToken !== undefined || !this.expiring(tokens));
-      return this.settle(generation, usable ? 'signed-in' : 'reauth-required');
+      return this.gate.settle(ticket, usable ? 'signed-in' : 'reauth-required');
     })().catch((err: unknown) => {
       // Shared while pending; a failed start is not kept, so the next call retries it.
       this.started = undefined;
@@ -102,10 +105,11 @@ export class AuthSession implements DpopCredentials {
    * 'reload-required' instead of 'loading' with an unhandled rejection; the next call retries it.
    */
   async boot(): Promise<AuthStatus> {
+    const ticket = this.gate.ticket();
     try {
       return await this.start();
     } catch {
-      return this.set('reload-required');
+      return this.gate.settle(ticket, 'reload-required');
     }
   }
 
@@ -114,9 +118,8 @@ export class AuthSession implements DpopCredentials {
    * code cannot use it. The next call re-reads the store, so the status follows it if it clears.
    */
   reloadRequired(): void {
-    this.generation += 1;
     this.started = undefined;
-    this.set('reload-required');
+    this.gate.reloadRequired();
   }
 
   async signIn(returnTo = '/', loginHint?: string): Promise<void> {
@@ -132,6 +135,7 @@ export class AuthSession implements DpopCredentials {
   }
 
   async completeSignIn(callbackUrl: string): Promise<{ sub: string; returnTo: string }> {
+    const ticket = this.gate.ticket();
     await this.start();
     const params = new URL(callbackUrl).searchParams;
     const state = params.get('state');
@@ -165,12 +169,11 @@ export class AuthSession implements DpopCredentials {
       throw new LoginError('invalid_id_token', (err as Error).message, back);
     }
     // A fresh handle: the browser may have closed the store during the exchange.
-    const generation = this.generation;
     const store = await this.store();
     await store.putTokens(this.record(sub, tokens));
     await store.setCurrentSub(sub);
     this.currentSub = sub;
-    this.settle(generation, 'signed-in');
+    this.gate.settle(ticket, 'signed-in');
     try {
       await this.deviceKey(false);
     } catch {
@@ -180,6 +183,7 @@ export class AuthSession implements DpopCredentials {
   }
 
   async signOut(): Promise<void> {
+    const ticket = this.gate.ticket();
     await this.start();
     const store = await this.store();
     const sub = await store.getCurrentSub();
@@ -192,7 +196,7 @@ export class AuthSession implements DpopCredentials {
     }
     await store.setCurrentSub(undefined);
     this.currentSub = undefined;
-    this.set('signed-out');
+    this.gate.settle(ticket, 'signed-out');
     this.deps.navigate(
       endSessionUrl(this.config, {
         postLogoutRedirectUri: postLogoutUriFor(this.deps.origin),
@@ -204,43 +208,50 @@ export class AuthSession implements DpopCredentials {
   // ------------------------------------------------------------ DpopCredentials
 
   async accessToken(): Promise<string> {
-    const sub = await this.requireSub();
-    const tokens = await this.requireTokens(sub);
-    return this.expiring(tokens) ? this.refreshAfterReject(tokens.accessToken) : tokens.accessToken;
+    const ticket = this.gate.ticket();
+    const sub = await this.requireSub(ticket);
+    const tokens = await this.requireTokens(sub, ticket);
+    return this.expiring(tokens) ? this.refresh(tokens.accessToken, ticket) : tokens.accessToken;
   }
 
   async refreshAfterReject(rejected: string): Promise<string> {
-    const sub = await this.requireSub();
+    const ticket = this.gate.ticket();
+    return this.refresh(rejected, ticket);
+  }
+
+  private async refresh(rejected: string, ticket: Ticket): Promise<string> {
+    const sub = await this.requireSub(ticket);
     return this.locks.request(this.refreshLock(sub), async () => {
-      const tokens = await this.requireTokens(sub);
+      const tokens = await this.requireTokens(sub, ticket);
       // Another tab or call refreshed while this one waited for the lock.
       if (tokens.accessToken !== rejected && !this.expiring(tokens)) return tokens.accessToken;
-      if (tokens.reauth === true || tokens.refreshToken === undefined) return this.reauth(tokens);
+      if (tokens.reauth === true || tokens.refreshToken === undefined) return this.reauth(tokens, ticket);
       let answer: TokenResponse;
       try {
         answer = await refreshGrant(this.config, this.deps.fetch, tokens.refreshToken, this.timeoutMs);
       } catch (err) {
-        if (err instanceof TokenError && err.error === 'invalid_grant') return this.reauth(tokens);
-        if (err instanceof NetworkError) this.set('offline');
+        if (err instanceof TokenError && err.error === 'invalid_grant') return this.reauth(tokens, ticket);
+        if (err instanceof NetworkError) this.gate.settle(ticket, 'offline');
         throw err;
       }
       // Stored first, through a fresh handle (the browser may have closed the store during the
       // request): the IdP has already retired the old refresh token.
-      const generation = this.generation;
       await (await this.store()).putTokens(this.record(sub, answer, tokens));
-      if (answer.id_token !== undefined && !sameIdentity(this.config, answer.id_token, sub)) return this.reauth(tokens);
-      this.settle(generation, 'signed-in');
+      if (answer.id_token !== undefined && !sameIdentity(this.config, answer.id_token, sub)) return this.reauth(tokens, ticket);
+      this.gate.settle(ticket, 'signed-in');
       return answer.access_token;
     });
   }
 
   async requireReauth(): Promise<void> {
-    const sub = await this.requireSub();
-    await this.reauth(await this.requireTokens(sub)).catch(() => undefined);
+    const ticket = this.gate.ticket();
+    const sub = await this.requireSub(ticket);
+    await this.reauth(await this.requireTokens(sub, ticket), ticket).catch(() => undefined);
   }
 
   async deviceKey(enrolment: boolean): Promise<DeviceKeyRecord> {
-    const sub = await this.requireSub();
+    const ticket = this.gate.ticket();
+    const sub = await this.requireSub(ticket);
     const store = await this.store();
     const key = (await store.getDeviceKey(sub)) ?? (await store.addDeviceKey(await generateDeviceKey(sub, this.now())));
     if (enrolment || key.deviceId !== undefined) return key;
@@ -274,10 +285,10 @@ export class AuthSession implements DpopCredentials {
   }
 
   /** The refresh token is dead: keep everything else, and wait for an interactive sign-in. */
-  private async reauth(tokens: TokenRecord): Promise<never> {
+  private async reauth(tokens: TokenRecord, ticket: Ticket): Promise<never> {
     const { refreshToken: _dropped, ...rest } = tokens;
     await (await this.store()).putTokens({ ...rest, reauth: true });
-    this.set('reauth-required');
+    this.gate.settle(ticket, 'reauth-required');
     throw new AuthRequiredError('reauth');
   }
 
@@ -295,21 +306,21 @@ export class AuthSession implements DpopCredentials {
     };
   }
 
-  private async requireSub(): Promise<string> {
+  private async requireSub(ticket: Ticket): Promise<string> {
     await this.start();
     const sub = await (await this.store()).getCurrentSub();
     this.currentSub = sub;
     if (sub === undefined) {
-      this.set('signed-out');
+      this.gate.settle(ticket, 'signed-out');
       throw new AuthRequiredError('signed_out');
     }
     return sub;
   }
 
-  private async requireTokens(sub: string): Promise<TokenRecord> {
+  private async requireTokens(sub: string, ticket: Ticket): Promise<TokenRecord> {
     const tokens = await (await this.store()).getTokens(sub);
     if (tokens === undefined) {
-      this.set('signed-out');
+      this.gate.settle(ticket, 'signed-out');
       throw new AuthRequiredError('signed_out');
     }
     return tokens;
@@ -336,15 +347,5 @@ export class AuthSession implements DpopCredentials {
       this.reloadRequired();
       throw new ReloadRequiredError({ cause: err });
     }
-  }
-
-  /** Report `status` only if reloadRequired() has not run since `generation` was read; else leave the status alone. */
-  private settle(generation: number, status: AuthStatus): AuthStatus {
-    return generation === this.generation ? this.set(status) : this.status.value;
-  }
-
-  private set(status: AuthStatus): AuthStatus {
-    this.status.value = status;
-    return status;
   }
 }

@@ -48,12 +48,20 @@ export function Callback({ session, url = window.location.href, reload = reloadL
         const { returnTo } = await session.completeSignIn(url);
         if (live) setLocation(returnTo, { replace: true });
       } catch (err) {
+        let failed = err;
         // A reload of /callback after it already worked: the state is spent, the session is fine.
-        if (err instanceof LoginError && err.code === 'unknown_state' && (await session.start()) === 'signed-in') {
-          if (live) setLocation('/', { replace: true });
-          return;
+        if (err instanceof LoginError && err.code === 'unknown_state') {
+          try {
+            if ((await session.start()) === 'signed-in') {
+              if (live) setLocation('/', { replace: true });
+              return;
+            }
+          } catch (startErr) {
+            // The session cannot start (a newer build took the store): that is what to show.
+            failed = startErr;
+          }
         }
-        if (live) setFailure(failureOf(err));
+        if (live) setFailure(failureOf(failed));
       }
     })();
     return () => {

@@ -480,6 +480,73 @@ test.describe('every e2e worker (e2e/fixtures.ts) refuses a proxy in its environ
     expect(proto.out).toContain('hands-off: Object.prototype carries ignoreDefaultArgs, which every options object inherits');
     expect(proto.code).toBe(1);
   });
+
+  test("refuses a launch whose options, the worker's or its own, carry one that takes the rules off or goes round them, however they were built", async ({}, testInfo) => {
+    test.setTimeout(120_000);
+    const imports = [`import { guardedTest } from ${JSON.stringify(fixtures)};`, `import { HANDS_OFF_LAUNCH_ARGS } from ${JSON.stringify(handsOff)};`];
+    // The worker's own browser, under launch options that would take the rules off its command line.
+    const workerOptions = [
+      ...imports,
+      'guardedTest.use({ launchOptions: { args: HANDS_OFF_LAUNCH_ARGS, ignoreDefaultArgs: HANDS_OFF_LAUNCH_ARGS } });',
+      "guardedTest('launches', async ({ browser }) => { await browser.version(); });",
+    ].join('\n');
+    // A spec's launch, with options built at run time, which no scan reads: /bin/false would fail on its own, but not with the check's error.
+    const builtOptions = [
+      ...imports,
+      "guardedTest('launches', async ({ playwright }) => {",
+      "  const options = Object.fromEntries([['executable' + 'Path', '/bin/false'], ['args', HANDS_OFF_LAUNCH_ARGS]]);",
+      '  const launched = await playwright.chromium.launch(options);',
+      '  await launched.close();',
+      '});',
+    ].join('\n');
+    const [worker, built] = await Promise.all(
+      [workerOptions, builtOptions].map((code, i) => {
+        const dir = testInfo.outputPath(`options-${i}`);
+        mkdirSync(dir, { recursive: true });
+        return childRun(dir, {}, `${code}\n`);
+      }),
+    );
+    expect(worker.out).toContain("hands-off: ignoreDefaultArgs in this launch's options can take the hands-off resolver rules off Chromium's command line");
+    expect(worker.code).toBe(1);
+    expect(built.out).toContain("hands-off: executablePath in this launch's options launches a browser binary that may leave out the args it is given");
+    expect(built.code).toBe(1);
+  });
+
+  test("refuses Playwright's private and experimental ways to a browser, and a launch taken from the browser types' prototype", async ({}, testInfo) => {
+    test.setTimeout(120_000);
+    // Each points at a closed local port, or at nothing installed: one the guard missed would fail on its own, but not with its error.
+    const ways = [
+      `import { guardedTest } from ${JSON.stringify(fixtures)};`,
+      `import { HANDS_OFF_LAUNCH_ARGS } from ${JSON.stringify(handsOff)};`,
+      "guardedTest('opens', async ({ playwright }) => {",
+      '  const type = playwright.chromium;',
+      '  const ways = [',
+      "    ['_connect', () => type._connect({ endpoint: 'ws://127.0.0.1:9' })],",
+      "    ['_connectToWorker', () => type._connectToWorker('ws://127.0.0.1:9')],",
+      "    ['_electron.launch', () => playwright._electron.launch({})],",
+      "    ['_android.devices', () => playwright._android.devices()],",
+      "    ['a prototype launch', () => {",
+      "      process.env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';",
+      '      return Object.getPrototypeOf(type).launch.call(type, { args: HANDS_OFF_LAUNCH_ARGS });',
+      '    }],',
+      '  ];',
+      "  for (const [name, open] of ways) console.log(`${name} -> ${await open().then(() => 'opened', (e) => String(e.message).split('\\n')[0])}`);",
+      '});',
+    ].join('\n');
+    const dir = testInfo.outputPath('ways');
+    mkdirSync(dir, { recursive: true });
+    const run = await childRun(dir, {}, `${ways}\n`);
+    expect(run.code).toBe(0);
+    for (const line of [
+      '_connect -> hands-off: _connect connects this worker to a browser with launch args of its own',
+      '_connectToWorker -> hands-off: _connectToWorker connects this worker to a browser with launch args of its own',
+      '_electron.launch -> hands-off: _electron.launch opens a browser the hands-off resolver rules are not on',
+      '_android.devices -> hands-off: _android.devices opens a browser the hands-off resolver rules are not on',
+      "a prototype launch -> hands-off: SELENIUM_REMOTE_URL in this worker's environment can connect it to a browser with launch args of its own",
+    ]) {
+      expect(run.out).toContain(line);
+    }
+  });
 });
 
 test.describe("API requests and this worker's own DNS (sent from Node: no route or resolver rule sees them)", () => {

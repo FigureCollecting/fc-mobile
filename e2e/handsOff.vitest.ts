@@ -13,6 +13,7 @@ import {
   refuseHandsOffLookups,
   refuseHandsOffRequests,
   refuseInheritedOptions,
+  refuseLaunchBypasses,
   refuseRoundTheRules,
   refuseRoundTheRulesAtEachLaunch,
   type ConfigUse,
@@ -682,7 +683,16 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
     },
   );
 
-  it.each(['SELENIUM_REMOTE_URL', 'selenium_remote_url', 'SELENIUM_REMOTE_CAPABILITIES', 'SELENIUM_REMOTE_HEADERS', 'PW_TEST_CONNECT_WS_ENDPOINT', 'PWTEST_UNDER_TEST'])(
+  it.each([
+    'SELENIUM_REMOTE_URL',
+    'selenium_remote_url',
+    'SELENIUM_REMOTE_CAPABILITIES',
+    'SELENIUM_REMOTE_HEADERS',
+    'PW_TEST_CONNECT_WS_ENDPOINT',
+    'PW_TEST_CONNECT_HEADERS',
+    'pw_test_connect_expose_network',
+    'PWTEST_UNDER_TEST',
+  ])(
     "refuses %s in the environment, in any case: Playwright reads it at a launch, and it can send the launch to a browser with launch args of its own (a Selenium grid, a browser server, or a test hook that names one)",
     (name) => {
       expect(() => refuseRoundTheRules({ [name]: 'http://127.0.0.1:4444/wd/hub' }, undefined)).toThrow(
@@ -706,27 +716,36 @@ describe('refuseRoundTheRules (what every e2e worker checks before it starts)', 
 
 describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its own browser's included)", () => {
   const LAUNCHERS = ['launch', 'launchPersistentContext', 'launchServer'];
-  const CONNECTORS = ['connect', 'connectOverCDP'];
+  const CONNECTORS = ['connect', 'connectOverCDP', '_connect', '_connectToWorker'];
   const ENGINES = ['chromium', 'firefox', 'webkit'] as const;
+  /** Playwright's experimental Electron and Android, and what each opens a browser with: as members, written out, either would trip e2e/handsOffScan.ts. */
+  const OTHER_OPENERS: Record<string, string[]> = { _electron: ['launch'], _android: ['connect', 'devices', 'launchServer'] };
 
-  /** A stand-in for Playwright's browser types: each launcher and connector records its call (name, `this`, arguments) and answers its name. */
+  type FakeType = Record<string, (...args: unknown[]) => Promise<unknown>> & { calls: { name: string; self: unknown; args: unknown[] }[] };
+
+  /** A stand-in for Playwright's object: each member that launches or connects records its call (name, `this`, arguments) and answers its name. */
   function fakePlaywright() {
-    const made = (engine: string) => {
-      const calls: { name: string; self: unknown; args: unknown[] }[] = [];
+    const made = (engine: string, names: string[]) => {
+      const calls: FakeType['calls'] = [];
       const type: Record<string, unknown> = { engine, calls };
-      for (const name of [...LAUNCHERS, ...CONNECTORS]) {
+      for (const name of names) {
         type[name] = async function (this: unknown, ...args: unknown[]) {
           calls.push({ name, self: this, args });
           return `${engine}.${name}`;
         };
       }
-      return type as Record<string, (...args: unknown[]) => Promise<unknown>> & { calls: typeof calls };
+      return type as FakeType;
     };
-    return { chromium: made('chromium'), firefox: made('firefox'), webkit: made('webkit') };
+    const others: Record<string, FakeType> = Object.fromEntries(Object.entries(OTHER_OPENERS).map(([key, names]) => [key, made(key, names)]));
+    return { chromium: made('chromium', [...LAUNCHERS, ...CONNECTORS]), firefox: made('firefox', [...LAUNCHERS, ...CONNECTORS]), webkit: made('webkit', [...LAUNCHERS, ...CONNECTORS]), others, ...others };
   }
 
   /** Calls a member by a name held in a variable: written out, a launch here would trip e2e/handsOffScan.ts. */
   const start = (type: Record<string, (...args: unknown[]) => Promise<unknown>>, name: string, ...args: unknown[]) => type[name]!(...args);
+  /** The same, with `this` given: a member taken from a prototype and called on an instance. */
+  const startOn = (owner: object, self: unknown, name: string, ...args: unknown[]) => (owner as Record<string, (...a: unknown[]) => Promise<unknown>>)[name]!.call(self, ...args);
+  /** Playwright's private hold on the options every launch in a worker starts from, spelled in two parts: whole, the name would trip e2e/handsOffScan.ts in this file. */
+  const HOLD = ['_default', 'LaunchOptions'].join('');
 
   it('lets each launch through, with its own `this` and arguments, while the environment is clean', async () => {
     const pw = fakePlaywright();
@@ -774,15 +793,87 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     expect(pw.webkit.calls).toEqual([]);
   });
 
-  it('refuses connect and connectOverCDP outright, on every browser type: a browser connected to has launch args of its own', async () => {
+  it('refuses connect, connectOverCDP and the private _connect and _connectToWorker outright, on every browser type: a browser connected to has launch args of its own', async () => {
     const pw = fakePlaywright();
     refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
     for (const engine of ENGINES) {
       for (const name of CONNECTORS) {
-        await expect(start(pw[engine], name, 'ws://127.0.0.1:9')).rejects.toThrow(`hands-off: ${engine}.${name} connects this worker to a browser with launch args of its own`);
+        await expect(start(pw[engine], name, 'ws://127.0.0.1:9')).rejects.toThrow(`hands-off: ${name} connects this worker to a browser with launch args of its own`);
       }
       expect(pw[engine].calls).toEqual([]);
     }
+  });
+
+  it("refuses Playwright's experimental Electron and Android openers outright: neither browser gets the resolver rules", async () => {
+    const pw = fakePlaywright();
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    for (const [key, names] of Object.entries(OTHER_OPENERS)) {
+      for (const name of names) {
+        await expect(start(pw.others[key]!, name), `${key}.${name}`).rejects.toThrow(`hands-off: ${key}.${name} opens a browser the hands-off resolver rules are not on`);
+      }
+      expect(pw.others[key]!.calls).toEqual([]);
+    }
+    // A Playwright object without them (another version) is still guarded where it has browser types.
+    const bare = fakePlaywright();
+    expect(() => refuseRoundTheRulesAtEachLaunch({ chromium: bare.chromium, firefox: bare.firefox, webkit: bare.webkit }, undefined, () => ({}))).not.toThrow();
+    await expect(start(bare.chromium, 'connect')).rejects.toThrow('hands-off: connect connects this worker');
+  });
+
+  it('replaces each member where the browser type takes it from: a launch or a connect through the prototype the three share is checked too, and the prototype is wrapped once', async () => {
+    const calls: string[] = [];
+    class BrowserType {
+      readonly engine: string;
+      constructor(engine: string) {
+        this.engine = engine;
+      }
+      async launch() {
+        calls.push(`${this.engine}.launch`);
+        return 'launched';
+      }
+      async launchPersistentContext() {
+        calls.push(`${this.engine}.launchPersistentContext`);
+      }
+      async launchServer() {
+        calls.push(`${this.engine}.launchServer`);
+      }
+      async connect() {
+        calls.push(`${this.engine}.connect`);
+      }
+    }
+    const types = { chromium: new BrowserType('chromium'), firefox: new BrowserType('firefox'), webkit: new BrowserType('webkit') };
+    const env: Record<string, string> = {};
+    let reads = 0;
+    refuseRoundTheRulesAtEachLaunch(types, undefined, () => (reads++, env));
+    expect(Object.keys(types.chromium)).toEqual(['engine']);
+    await expect(startOn(BrowserType.prototype, types.firefox, 'launch')).resolves.toBe('launched');
+    expect(reads).toBe(1);
+    env.SELENIUM_REMOTE_URL = 'http://127.0.0.1:9/wd/hub';
+    await expect(startOn(BrowserType.prototype, types.webkit, 'launch')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
+    await expect(start(types.chromium as never, 'launchServer')).rejects.toThrow('hands-off: SELENIUM_REMOTE_URL');
+    await expect(startOn(BrowserType.prototype, types.chromium, 'connect')).rejects.toThrow('hands-off: connect connects this worker');
+    expect(calls).toEqual(['firefox.launch']);
+  });
+
+  it("checks the options each launch starts from, as Playwright merges them: the worker's defaults on its playwright object, read as the launch starts, then the launch's own", async () => {
+    const pw = fakePlaywright();
+    const defaults: Record<string, unknown> = { handleSIGINT: false, args: HANDS_OFF_LAUNCH_ARGS, headless: true };
+    for (const engine of ENGINES) Object.assign(pw[engine], { _playwright: { [HOLD]: defaults } });
+    refuseRoundTheRulesAtEachLaunch(pw, undefined, () => ({}));
+    await expect(start(pw.chromium, 'launch', { channel: 'chromium' })).resolves.toBe('chromium.launch');
+    await expect(start(pw.chromium, 'launchPersistentContext', 'dir', { channel: 'chromium' })).resolves.toBe('chromium.launchPersistentContext');
+    const own = { ['executable' + 'Path']: '/opt/chromium-wrapper' };
+    const binary = 'hands-off: executablePath in this launch\'s options launches a browser binary that may leave out the args it is given';
+    await expect(start(pw.chromium, 'launch', own)).rejects.toThrow(binary);
+    await expect(start(pw.firefox, 'launchServer', own)).rejects.toThrow(binary);
+    // launchPersistentContext takes its options second, after the profile directory.
+    await expect(start(pw.webkit, 'launchPersistentContext', 'dir', own)).rejects.toThrow(binary);
+    defaults['ignoreDefault' + 'Args'] = true;
+    for (const engine of ENGINES) {
+      for (const name of LAUNCHERS) {
+        await expect(start(pw[engine], name, 'dir', {}), `${engine}.${name}`).rejects.toThrow("hands-off: ignoreDefaultArgs in this launch's options can take the hands-off resolver rules off Chromium's command line");
+      }
+    }
+    expect(ENGINES.flatMap((engine) => pw[engine].calls.map((c) => `${engine}.${c.name}`))).toEqual(['chromium.launch', 'chromium.launchPersistentContext']);
   });
 
   it('refuses each launch while Object.prototype carries a name of its own: Playwright reads launch options inherited from it, ignoreDefaultArgs among them', async () => {
@@ -809,6 +900,52 @@ describe("refuseRoundTheRulesAtEachLaunch (every launch in an e2e worker, its ow
     await start(pw.chromium, 'launch');
     expect(reads).toBe(1);
     expect(pw.chromium.calls).toHaveLength(1);
+  });
+});
+
+describe("refuseLaunchBypasses (the options a launch starts from: the worker's defaults, then its own)", () => {
+  const IGNORES = "can take the hands-off resolver rules off Chromium's command line";
+  const BINARY = 'launches a browser binary that may leave out the args it is given';
+  const PROXIED = 'sends requests through a proxy, which looks the hands-off hosts up itself';
+  const ENVIRONED = "replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules";
+  const HOOKED = 'is a Playwright test hook, which can send the launch to a browser elsewhere';
+
+  it('passes options that carry none of them: args, headless, a channel and the like, one set to undefined, a name that only starts like one, or none at all', () => {
+    const worker = { handleSIGINT: false, args: HANDS_OFF_LAUNCH_ARGS, tracesDir: '/tmp/traces', headless: true, channel: 'chromium-headless-shell' };
+    const own = Object.fromEntries([['ignoreDefaultArgs', undefined], ['executablePath', undefined], ['slowMo', 1], ['proxyServer', 'x'], ['envs', {}], ['x__testHook', 1]]);
+    expect(() => refuseLaunchBypasses([worker, own])).not.toThrow();
+    expect(() => refuseLaunchBypasses([undefined, null, 'dir', Object.defineProperty({}, 'args', { get: () => [], enumerable: true })])).not.toThrow();
+  });
+
+  it.each([
+    ['ignoreDefaultArgs', true, IGNORES],
+    ['ignoreDefaultArgs', false, IGNORES],
+    ['ignoreDefaultArgs', null, IGNORES],
+    ['ignoreDefaultArgs', [...HANDS_OFF_LAUNCH_ARGS], IGNORES],
+    ['executablePath', '/opt/chromium-wrapper', BINARY],
+    ['proxy', { server: 'http://127.0.0.1:3128' }, PROXIED],
+    ['env', { HTTPS_PROXY: 'http://127.0.0.1:3128' }, ENVIRONED],
+    ['env', {}, ENVIRONED],
+    ['__testHookSeleniumRemoteURL', 'http://127.0.0.1:4444/wd/hub', HOOKED],
+  ])("refuses %s set to %j, in the worker's defaults or the launch's own: anything but undefined", (name, value, why) => {
+    for (const sources of [[{ [name]: value }, {}], [undefined, { [name]: value }]]) {
+      expect(() => refuseLaunchBypasses(sources)).toThrow(`hands-off: ${name} in this launch's options ${why}`);
+    }
+  });
+
+  it('refuses a getter under one of those names whatever it returns now, and one set but not enumerable', () => {
+    const getter = Object.defineProperty({}, 'ignoreDefaultArgs', { get: () => undefined, enumerable: true });
+    expect(() => refuseLaunchBypasses([getter])).toThrow(`hands-off: ignoreDefaultArgs in this launch's options ${IGNORES}`);
+    const setter = Object.defineProperty({}, 'proxy', { set: () => undefined });
+    expect(() => refuseLaunchBypasses([{}, setter])).toThrow(`hands-off: proxy in this launch's options ${PROXIED}`);
+    const hidden = Object.defineProperty({}, 'executablePath', { value: '/opt/chromium-wrapper' });
+    expect(() => refuseLaunchBypasses([hidden])).toThrow(`hands-off: executablePath in this launch's options ${BINARY}`);
+  });
+
+  it('refuses options in a Proxy, which it cannot read as Playwright will, and lists every reason at once', () => {
+    expect(() => refuseLaunchBypasses([new Proxy({}, {})])).toThrow("hands-off: this launch's options are a Proxy, which the hands-off check cannot read");
+    const both = Object.fromEntries([['proxy', {}], ['env', {}]]);
+    expect(() => refuseLaunchBypasses([new Proxy({}, {}), both])).toThrow(/^hands-off: this launch's options are a Proxy, [^;]*; proxy in [^;]*; env in [^;]*$/);
   });
 });
 

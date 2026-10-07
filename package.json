@@ -13,6 +13,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:stack": "playwright test -c playwright.stack.config.ts",
+    "test:e2e:shots": "playwright test --project='*-full' --project=desktop",
     "stack:up": "npm --prefix e2e/stack run up --",
     "stack:down": "npm --prefix e2e/stack run down"
   },

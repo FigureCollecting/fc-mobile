@@ -2,7 +2,10 @@
 // session asks for a reload instead of reporting 'signed-in' while every call
 // fails, and a page that boots into that state never stays 'loading'.
 import { describe, expect, it } from 'vitest';
+import type { LocalDb } from '../../storage/localDb';
 import { ReloadRequiredError } from '../errors';
+import type { AuthSession, AuthStatus } from '../session';
+import { SUB_A } from './fakes';
 import { World, compareInit, compareUrl } from './world';
 
 const settle = <T>(req: IDBRequest<T>) =>
@@ -15,6 +18,42 @@ const settle = <T>(req: IDBRequest<T>) =>
 async function newerBuildUpgrades(world: World): Promise<void> {
   (await settle(world.factory.open('fc-mobile', 3))).close();
 }
+
+/**
+ * A tab whose store a newer build upgrades the moment one chosen read or write on it has
+ * settled: the session is still between that step and its next one when the upgrade lands.
+ */
+function upgradedMidway(world: World): { tab: AuthSession; after: (method: 'get' | 'put', key: string) => void; seen: AuthStatus[] } {
+  let armed: { method: string; key: string } | undefined;
+  const tab = world.tab({
+    db: async (open) => {
+      const db = await open();
+      return new Proxy(db, {
+        get(target, prop) {
+          const value: unknown = Reflect.get(target, prop, target);
+          if (typeof value !== 'function') return value;
+          if (prop !== 'get' && prop !== 'put') return value.bind(target);
+          return async (...args: unknown[]) => {
+            const out: unknown = await value.apply(target, args);
+            const key = prop === 'get' ? args[1] : args[2];
+            if (armed?.method === prop && armed.key === key) {
+              armed = undefined;
+              await newerBuildUpgrades(world);
+            }
+            return out;
+          };
+        },
+      }) as LocalDb;
+    },
+  });
+  const seen: AuthStatus[] = [];
+  tab.status.subscribe((s) => seen.push(s));
+  return { tab, after: (method, key) => (armed = { method, key }), seen };
+}
+
+/** Once the tab heard of the newer build, nothing it was still doing may call it signed in. */
+const signedInAfterReload = (seen: AuthStatus[]): AuthStatus[] =>
+  seen.slice(seen.indexOf('reload-required')).filter((s) => s === 'signed-in');
 
 describe('a newer build takes the local store', () => {
   it('moves a signed-in tab to reload-required at once, before any call fails', async () => {
@@ -78,6 +117,44 @@ describe('a newer build takes the local store', () => {
     await world.signIn(tab);
     await world.deleteStore();
     expect(tab.status.value).toBe('signed-in');
+  });
+});
+
+describe('a newer build upgrades the store while this tab is between steps', () => {
+  it.each([
+    ['signed in, after the current-user read', true, 'current'],
+    ['signed in, after the token read', true, `tokens:${SUB_A}`],
+    ['signed out, after the current-user read', false, 'current'],
+  ])('boot ends reload-required: %s', async (_, signedIn, key) => {
+    const world = await World.create();
+    if (signedIn) await world.signIn(world.tab());
+    const { tab, after, seen } = upgradedMidway(world);
+    after('get', key);
+    expect(await tab.boot()).toBe('reload-required');
+    expect(tab.status.value).toBe('reload-required');
+    expect(seen).toEqual(['loading', 'reload-required']);
+  });
+
+  it('a sign-in whose last write lands just before the upgrade keeps its tokens but is not reported signed in', async () => {
+    const world = await World.create();
+    const { tab, after, seen } = upgradedMidway(world);
+    after('put', 'current');
+    expect(await world.signIn(tab)).toEqual({ sub: SUB_A, returnTo: '/' });
+    expect(tab.status.value).toBe('reload-required');
+    expect(seen).toContain('reload-required');
+    expect(signedInAfterReload(seen)).toEqual([]);
+  });
+
+  it('a refresh whose rotated tokens land just before the upgrade is not reported signed in', async () => {
+    const world = await World.create();
+    const { tab, after, seen } = upgradedMidway(world);
+    await world.signIn(tab);
+    world.t += 600_000;
+    after('put', `tokens:${SUB_A}`);
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toBeInstanceOf(ReloadRequiredError);
+    expect(tab.status.value).toBe('reload-required');
+    expect(seen).toContain('reload-required');
+    expect(signedInAfterReload(seen)).toEqual([]);
   });
 });
 

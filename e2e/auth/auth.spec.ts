@@ -599,6 +599,46 @@ test('(reload) a boot with a newer store present shows the reload banner, not lo
   expect(problems).toEqual([]);
 });
 
+test('(reload) a newer build upgrading the store while boot is still reading it leaves the page reload-required', async ({
+  page,
+}) => {
+  const problems = pageProblems(page);
+  await openSignedOut(page);
+  await signInThroughBanner(page);
+  // Armed for the next load only: a newer build opens the store the moment boot starts its first auth read.
+  await page.addInitScript((version) => {
+    if (sessionStorage.getItem('e2e-upgrade-mid-boot') !== 'armed') return;
+    sessionStorage.setItem('e2e-upgrade-mid-boot', 'fired');
+    const transaction = IDBDatabase.prototype.transaction;
+    let fired = false;
+    IDBDatabase.prototype.transaction = function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+      const tx = transaction.apply(this, args);
+      const names = typeof args[0] === 'string' ? [args[0]] : Array.from(args[0]);
+      if (!fired && this.name === 'fc-mobile' && names.includes('auth')) {
+        fired = true;
+        const req = indexedDB.open('fc-mobile', version);
+        req.onsuccess = () => {
+          req.result.close();
+          sessionStorage.setItem('e2e-upgrade-mid-boot', 'opened');
+        };
+      }
+      return tx;
+    };
+  }, NEWER_VERSION);
+  await page.evaluate(() => sessionStorage.setItem('e2e-upgrade-mid-boot', 'armed'));
+  await page.reload();
+  await hooks(page);
+  // The upgrade only opens once boot's connection has closed, after its reads have settled.
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem('e2e-upgrade-mid-boot'))).toBe('opened');
+  await expect.poll(() => status(page)).not.toBe('loading');
+  expect(await status(page)).toBe('reload-required');
+  await expect(reloadBanner(page)).toBeVisible();
+  const from = await stack.edge.cursor();
+  expect(await compare(page)).toMatchObject({ ok: false, code: 'FailedPrecondition' });
+  expect(await apiEntries(from)).toEqual([]);
+  expect(problems).toEqual([]);
+});
+
 // Sign-off frames of the reload-required state on Ross's Fold8: the cover screen and the
 // open inner screen, full panel, at the phone's device pixel ratio.
 const FOLD8_SHOTS = [

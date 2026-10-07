@@ -375,6 +375,10 @@ describe('refresh', () => {
     world.t += TEN_MIN;
     await expect(tab.fetch(compareUrl, compareInit())).rejects.toBeInstanceOf(AuthRequiredError);
     expect(tab.status.value).toBe('reauth-required');
+    // B's refresh token is not left under A: A's record is marked for sign-in and holds none.
+    const stored = (await authRows(db))[`tokens:${SUB_A}`] as Record<string, unknown>;
+    expect(stored['reauth']).toBe(true);
+    expect(stored).not.toHaveProperty('refreshToken');
   });
 });
 
@@ -551,6 +555,26 @@ describe('the local store force-closed while a token request is out', () => {
     world.t += TEN_MIN;
     expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
     expect(world.idp.tokenCalls.filter((c) => c.grantType === 'refresh_token').map((c) => c.outcome)).toEqual(['ok', 'ok']);
+  });
+
+  it('marks the session for sign-in when the IdP refuses the refresh: that write takes a fresh handle too', async () => {
+    const world = await World.create();
+    const { tab, forceClose } = forceClosable(world);
+    await world.signIn(tab);
+    world.idp.revokeAll(SUB_A);
+    world.t += TEN_MIN;
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      const body = await req.clone().text();
+      if (body.includes('grant_type=refresh_token')) await forceClose();
+      return idp(req);
+    });
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toBeInstanceOf(AuthRequiredError);
+    expect(tab.status.value).toBe('reauth-required');
+    const stored = (await authRows(await world.inspect()))[`tokens:${SUB_A}`] as Record<string, unknown>;
+    expect(stored['reauth']).toBe(true);
+    expect(stored).not.toHaveProperty('refreshToken');
+    expect(world.idp.tokenCalls.filter((c) => c.grantType === 'refresh_token').map((c) => c.outcome)).toEqual(['invalid_grant']);
   });
 
   it('keeps the tokens of a sign-in whose code exchange outlived the connection', async () => {

@@ -647,6 +647,9 @@ export class UserStore {
     const chain = new Map(flying.map((e) => [e.facet_key, e.edit_version]));
     const chainedLast = (e: OutboxEntry) => (chain.has(e.facet_key) ? 1 : 0);
     const order = [...rejected, ...pending].sort((a, b) => chainedLast(a) - chainedLast(b) || a.id! - b.id!);
+    // A re-minted intent stays one group (a kind change keeps its filing in its batch): each
+    // original group maps to the id of its first re-mint.
+    const regrouped = new Map<number, number>();
     let count = 0;
     for (const e of order) {
       const rec = await this.facet(tx, e.facet_key);
@@ -657,7 +660,9 @@ export class UserStore {
           e.remint = 'skipped';
         } else {
           const version = this.hlc.tick(base);
-          const id = await outbox.add({
+          const origin = e.group ?? e.id!;
+          const group = regrouped.get(origin);
+          const entry: OutboxEntry = {
             sub: this.sub,
             facet_key: e.facet_key,
             op: e.op,
@@ -669,7 +674,13 @@ export class UserStore {
             state: 'PENDING',
             attempts: 0,
             created_at: this.clock.wallMs(),
-          });
+            ...(group !== undefined && { group }),
+          };
+          const id = await outbox.add(entry);
+          if (group === undefined) {
+            regrouped.set(origin, id);
+            await outbox.put({ ...entry, id, group: id });
+          }
           rec.value = { version, op: e.op, payload: e.payload };
           rec.pending_id = id;
           await tx.objectStore('facets').put(rec);

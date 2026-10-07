@@ -34,12 +34,24 @@ export function emptyFacet(sub: string, facetKey: string): FacetRecord {
 
 const deviceOf = (value: FacetValue): string | undefined => parseVersion(value.version)?.deviceId ?? undefined;
 
+// Object keys sorted at every depth: the contract sets no key order, so another client may write
+// the same fields in any order. Array order is content and stays.
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (typeof v !== 'object' || v === null) return v;
+  return Object.fromEntries(
+    Object.keys(v)
+      .sort()
+      .map((k) => [k, canonical((v as Record<string, unknown>)[k])]),
+  );
+}
+
 // A payload's content without its display stamp: two devices writing the same value differ only
 // there. A tombstone's empty payload is its own content, which no upsert's is ({} at least).
 function content(value: FacetValue): string {
   try {
     const { edited_at: _at, tz: _tz, ...rest } = JSON.parse(value.payload) as Record<string, unknown>;
-    return JSON.stringify(rest);
+    return JSON.stringify(canonical(rest));
   } catch {
     return value.payload;
   }

@@ -110,10 +110,31 @@ describe('groups', () => {
     expect(note.group).toBe(note.id);
 
     const batches: string[][] = [];
-    for (let next = await store.nextBatch(3); next.kind === 'send'; next = await store.nextBatch(3)) {
+    for (let next = await store.nextBatch(2); next.kind === 'send'; next = await store.nextBatch(2)) {
       batches.push(next.batch.request.events.map((e) => e.facetKey));
       await store.recordPush(next.batch.clientId, { results: next.batch.request.events.map((e) => result(e.facetKey, PushOutcome.APPLIED, e)) });
     }
     expect(batches).toEqual([[note.facet_key], [s0.facet_key, c0.facet_key], [s1.facet_key, c1.facet_key]]);
+  });
+
+  it('re-mints each ungrouped edit kept from v2 as a group of its own', async () => {
+    const { db } = await freshDb();
+    const store = await openStore(db);
+    await write(store, 0, 'score', 7);
+    await write(store, 1, 'score', 8);
+    // A v2 edit carried into v3 has no group.
+    for (const e of await store.listOutbox()) {
+      delete e.group;
+      await db.put('outbox', e);
+    }
+    await store.onStatus(status(T0), 0);
+    const batch = await send(store);
+    await store.recordPush(batch.clientId, { results: batch.request.events.map((e) => result(e.facetKey, PushOutcome.REJECTED, undefined, 'version_future')) });
+    expect((await store.onStatus(status(T0), 0)).reminted).toBe(2);
+    const reminted = (await store.listOutbox()).filter((e) => e.state === 'PENDING');
+    expect(reminted.map((e) => [e.facet_key, e.group])).toEqual([
+      [key(0, 'score'), reminted[0].id],
+      [key(1, 'score'), reminted[1].id],
+    ]);
   });
 });

@@ -154,7 +154,7 @@ describe("'replaced by another device' compares content, not its key order", () 
   const replaced = (a: Record<string, unknown>, b: Record<string, unknown>) => replacedMine(mine(a), theirs(b), normaliseDeviceId(DEVICE));
 
   it('does not show when another device wrote the same fields in another order, at any depth', () => {
-    expect(replaced({ reason: 'sold', on: '2026-09-01' }, { on: '2026-09-01', reason: 'sold', ...STAMP })).toBeNull();
+    expect(replaced({ reason: 'sold', on: '2026-09-01', note: null }, { note: null, on: '2026-09-01', reason: 'sold', ...STAMP })).toBeNull();
     const answer = { item: 'figure', rev: '1', choice: 'per_copy', copies: [{ occ_id: 'a', keep: true }] };
     expect(replaced(answer, { copies: [{ keep: true, occ_id: 'a' }], choice: 'per_copy', rev: '1', item: 'figure' })).toBeNull();
   });
@@ -162,5 +162,6 @@ describe("'replaced by another device' compares content, not its key order", () 
   it('still shows when the content differs, the order of an array included', () => {
     expect(replaced({ reason: 'sold', on: '2026-09-01' }, { on: '2026-09-02', reason: 'sold' })).not.toBeNull();
     expect(replaced({ copies: ['a', 'b'] }, { copies: ['b', 'a'] })).not.toBeNull();
+    expect(replaced({ copies: ['a'] }, { copies: { 0: 'a' } })).not.toBeNull();
   });
 });

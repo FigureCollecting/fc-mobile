@@ -83,18 +83,19 @@ export function compileSchema(schema: Schema, path = '$'): Check {
   const required = schema.required ?? [];
   if (!Array.isArray(required)) throw new SchemaError(`${path}: required is not an array`);
   const extra = 'additionalProperties' in schema ? compileSchema(schema.additionalProperties as Schema, `${path}.*`) : null;
+  // Own properties only: `in` would find Object.prototype's names (constructor, __proto__, ...).
   checks.push((v) => {
     if (!isObject(v)) return null;
-    for (const name of required) if (!(name in v)) return `${path}: missing ${String(name)}`;
+    for (const name of required) if (!Object.hasOwn(v, name)) return `${path}: missing ${String(name)}`;
     for (const [name, check] of propChecks) {
-      if (name in v) {
+      if (Object.hasOwn(v, name)) {
         const err = check(v[name]);
         if (err) return err;
       }
     }
     if (extra) {
       for (const name of Object.keys(v)) {
-        if (name in props) continue;
+        if (Object.hasOwn(props, name)) continue;
         const err = extra(v[name]);
         if (err) return `${path}: extra property ${name}`;
       }

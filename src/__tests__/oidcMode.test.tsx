@@ -21,6 +21,7 @@ function fakeSession(status: AuthStatus) {
       session.status.value = status;
       return status;
     }),
+    boot: vi.fn(async () => session.start()),
     signIn: vi.fn(async () => undefined),
     completeSignIn: vi.fn(async () => ({ sub: 's', returnTo: '/discover' })),
   };
@@ -34,7 +35,7 @@ describe('OIDC mode', () => {
     localStorage.setItem('onboarding_complete', '1');
     const { currentPath } = renderWithProviders(<App />, { initialPath: '/' });
     await screen.findByRole('button', { name: /sign in/i });
-    expect(session.start).toHaveBeenCalled();
+    expect(session.boot).toHaveBeenCalled();
     expect(currentPath()).toBe('/');
   });
 

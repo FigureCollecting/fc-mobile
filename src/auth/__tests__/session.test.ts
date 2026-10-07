@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SignJWT } from 'jose';
+import { unwrap } from 'idb';
+import { forceCloseDatabase } from 'fake-indexeddb';
 import { AuthRequiredError, LoginError, NetworkError } from '../errors';
 import { sha256Base64url } from '../pkce';
 import { TokenError } from '../oidc';
@@ -228,8 +230,9 @@ describe('start', () => {
     await world.signIn(world.tab());
     let blocked = true;
     const tab = world.tab({ db: (open) => (blocked ? Promise.reject(new DOMException('newer store', 'VersionError')) : open()) });
-    await expect(tab.start()).rejects.toMatchObject({ name: 'VersionError' });
-    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ name: 'VersionError' });
+    await expect(tab.start()).rejects.toMatchObject({ name: 'ReloadRequiredError' });
+    expect(tab.status.value).toBe('reload-required');
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ name: 'ReloadRequiredError' });
     blocked = false;
     const res = await tab.fetch(compareUrl, compareInit()).catch((err: unknown) => err);
     expect(res).toBeInstanceOf(Response);
@@ -372,6 +375,10 @@ describe('refresh', () => {
     world.t += TEN_MIN;
     await expect(tab.fetch(compareUrl, compareInit())).rejects.toBeInstanceOf(AuthRequiredError);
     expect(tab.status.value).toBe('reauth-required');
+    // B's refresh token is not left under A: A's record is marked for sign-in and holds none.
+    const stored = (await authRows(db))[`tokens:${SUB_A}`] as Record<string, unknown>;
+    expect(stored['reauth']).toBe(true);
+    expect(stored).not.toHaveProperty('refreshToken');
   });
 });
 
@@ -505,6 +512,86 @@ describe('the local store closed under the session', () => {
     await expect(tab.fetch(compareUrl, compareInit())).rejects.toMatchObject({ reason: 'signed_out' });
     expect(tab.status.value).toBe('signed-out');
     expect(await world.tab().start()).toBe('signed-out');
+  });
+});
+
+/** A tab whose current connection the browser can force-close, e.g. Chrome's backing-store error or iOS 'connection lost'. */
+function forceClosable(world: World): { tab: ReturnType<World['tab']>; forceClose: () => Promise<void> } {
+  let latest: LocalDb | undefined;
+  const tab = world.tab({
+    db: async (open) => {
+      latest = await open();
+      return latest;
+    },
+  });
+  const forceClose = async (): Promise<void> => {
+    const raw = unwrap(latest!) as IDBDatabase;
+    const closed = new Promise<void>((resolve) => raw.addEventListener('close', () => resolve()));
+    forceCloseDatabase(raw as never);
+    await closed;
+  };
+  return { tab, forceClose };
+}
+
+describe('the local store force-closed while a token request is out', () => {
+  it('keeps the rotated refresh token: the write after a refresh takes a fresh handle', async () => {
+    const world = await World.create();
+    const { tab, forceClose } = forceClosable(world);
+    await world.signIn(tab);
+    const before = (await authRows(await world.inspect()))[`tokens:${SUB_A}`] as { refreshToken: string };
+    world.t += TEN_MIN;
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      const body = await req.clone().text();
+      if (body.includes('grant_type=refresh_token')) await forceClose();
+      return idp(req);
+    });
+    expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+    const after = (await authRows(await world.inspect()))[`tokens:${SUB_A}`] as { refreshToken: string; reauth?: boolean };
+    expect(after.refreshToken).not.toBe(before.refreshToken);
+    expect(after.reauth).toBeUndefined();
+    expect(tab.status.value).toBe('signed-in');
+    // The stored token is the live one: the next refresh is accepted, not invalid_grant.
+    world.t += TEN_MIN;
+    expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+    expect(world.idp.tokenCalls.filter((c) => c.grantType === 'refresh_token').map((c) => c.outcome)).toEqual(['ok', 'ok']);
+  });
+
+  it('marks the session for sign-in when the IdP refuses the refresh: that write takes a fresh handle too', async () => {
+    const world = await World.create();
+    const { tab, forceClose } = forceClosable(world);
+    await world.signIn(tab);
+    world.idp.revokeAll(SUB_A);
+    world.t += TEN_MIN;
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      const body = await req.clone().text();
+      if (body.includes('grant_type=refresh_token')) await forceClose();
+      return idp(req);
+    });
+    await expect(tab.fetch(compareUrl, compareInit())).rejects.toBeInstanceOf(AuthRequiredError);
+    expect(tab.status.value).toBe('reauth-required');
+    const stored = (await authRows(await world.inspect()))[`tokens:${SUB_A}`] as Record<string, unknown>;
+    expect(stored['reauth']).toBe(true);
+    expect(stored).not.toHaveProperty('refreshToken');
+    expect(world.idp.tokenCalls.filter((c) => c.grantType === 'refresh_token').map((c) => c.outcome)).toEqual(['invalid_grant']);
+  });
+
+  it('keeps the tokens of a sign-in whose code exchange outlived the connection', async () => {
+    const world = await World.create();
+    const { tab, forceClose } = forceClosable(world);
+    await tab.signIn('/');
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      await forceClose();
+      return idp(req);
+    });
+    const callback = world.idp.authorize(world.navigations.at(-1)!, SUB_A);
+    expect(await tab.completeSignIn(callback)).toEqual({ sub: SUB_A, returnTo: '/' });
+    const rows = await authRows(await world.inspect());
+    expect(rows['current']).toEqual({ sub: SUB_A });
+    expect(rows[`tokens:${SUB_A}`]).toMatchObject({ sub: SUB_A, refreshToken: expect.stringMatching(/^rt-/) });
+    expect(tab.status.value).toBe('signed-in');
   });
 });
 

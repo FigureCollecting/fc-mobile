@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { forceCloseDatabase, IDBFactory } from 'fake-indexeddb';
 import { createE2eHooks, installE2eHooks } from '../e2eHooks';
-import { createBrowserSession, getAuthSession } from '../index';
+import { createBrowserSession, getAuthSession, localDbOwner } from '../index';
+import { unwrap } from 'idb';
 import { configuredOidc } from '../config';
 import { defaultLocks, InTabLocks } from '../locks';
 import { NetworkError } from '../errors';
@@ -129,9 +130,13 @@ describe('browser wiring: the store closed by another page', () => {
     const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
     const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
     expect(await session.start()).toBe('signed-in');
-    // A newer build upgrades the store: this build cannot open it.
+    // A newer build upgrades the store: this build cannot open it, and asks for a reload.
     (await settle(factory.open('fc-mobile', 3))).close();
-    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ name: 'VersionError' });
+    expect(session.status.value).toBe('reload-required');
+    await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({
+      name: 'ReloadRequiredError',
+      cause: expect.objectContaining({ name: 'VersionError' }),
+    });
     // The newer store goes away: the next call opens a fresh one.
     await settle(factory.deleteDatabase('fc-mobile'));
     await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
@@ -144,7 +149,8 @@ describe('browser wiring: the store closed by another page', () => {
     (await settle(factory.open('fc-mobile', 3))).close();
     const fetchFn = vi.fn(async () => new Response(null, { status: 500 }));
     const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: fetchFn, indexedDB: factory });
-    await expect(session.start()).rejects.toMatchObject({ name: 'VersionError' });
+    await expect(session.start()).rejects.toMatchObject({ name: 'ReloadRequiredError' });
+    expect(session.status.value).toBe('reload-required');
     await settle(factory.deleteDatabase('fc-mobile'));
     await expect(session.fetch(`${APP_ORIGIN}/api/auth/session`)).rejects.toMatchObject({ reason: 'signed_out' });
     expect(await session.start()).toBe('signed-out');
@@ -181,6 +187,24 @@ describe('browser wiring: the store closed by another page', () => {
     expect(session.status.value).toBe('signed-out');
     expect(opened).toHaveLength(2);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('localDbOwner: only the memoised connection clears the memo', () => {
+  it('ignores a late close from a connection it already dropped, and keeps the newer one', async () => {
+    const factory = new IDBFactory();
+    await seedSignedIn(factory);
+    const opened = recordOpens(factory);
+    const owner = localDbOwner(factory);
+    const a = await owner();
+    // Another page deletes the store: a gets versionchange, closes itself, and is dropped.
+    await settle(factory.deleteDatabase('fc-mobile'));
+    const b = await owner();
+    expect(b).not.toBe(a);
+    // The browser then reports a forced close of a, the connection already gone.
+    forceCloseDatabase(unwrap(a) as never);
+    expect(await owner()).toBe(b);
+    expect(opened).toHaveLength(2);
   });
 });
 

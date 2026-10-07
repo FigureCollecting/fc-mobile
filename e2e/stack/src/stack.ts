@@ -257,7 +257,13 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
     });
     cleanups.push(() => coordinator.stop());
 
-    const edge = await startEdge({ port: ports.edge, coordinator: coordinator.url, web: web.url });
+    // A web image's CSP names production Authentik; a build for the stack calls the mock issuer.
+    const edge = await startEdge({
+      port: ports.edge,
+      coordinator: coordinator.url,
+      web: web.url,
+      webConnectSrc: [new URL(issuer.tokenEndpoint).origin],
+    });
     cleanups.push(() => edge.close());
 
     const stateFile = path.join(stateDir, 'stack.json');

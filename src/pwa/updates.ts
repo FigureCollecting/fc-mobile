@@ -63,6 +63,16 @@ export function applyUpdate(): Promise<void> {
   return apply?.(true) ?? Promise.resolve();
 }
 
+/**
+ * Reload into the newest build. A build already waiting takes over instead (its takeover
+ * reloads the page), so the reload does not bring back the old shell from the precache.
+ */
+export function reloadToLatest(reload: () => void = () => window.location.reload()): Promise<void> {
+  if (updateReady.value) return applyUpdate();
+  reload();
+  return Promise.resolve();
+}
+
 function watchForUpdates(
   swUrl: string,
   registration: Pick<ServiceWorkerRegistration, 'installing' | 'update'>,

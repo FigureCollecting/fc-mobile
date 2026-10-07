@@ -7,8 +7,9 @@ import type { AuthStatus } from '../../../auth/session';
 
 function setup(status: AuthStatus, path = '/') {
   const session = { status: signal<AuthStatus>(status), signIn: vi.fn(async () => undefined) };
-  const view = renderWithProviders(<SyncAuthBanner session={session} />, { initialPath: path });
-  return { session, view };
+  const reload = vi.fn();
+  const view = renderWithProviders(<SyncAuthBanner session={session} reload={reload} />, { initialPath: path });
+  return { session, reload, view };
 }
 
 describe('SyncAuthBanner', () => {
@@ -31,5 +32,46 @@ describe('SyncAuthBanner', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/kept on this device/i);
     session.status.value = 'signed-in';
     await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  });
+
+  it('asks for a reload, not a sign-in, when this page cannot use the local store', async () => {
+    const { session, reload } = setup('reload-required', '/figure/7');
+    expect(screen.getByRole('status')).toHaveTextContent(/reload/i);
+    expect(screen.getByRole('status')).toHaveTextContent(/kept on this device/i);
+    expect(screen.queryByRole('button', { name: /sign in/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(session.signIn).not.toHaveBeenCalled();
+    session.status.value = 'signed-in';
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+  });
+
+  it('leaves no unhandled rejection when the sign-in cannot start: the status shows why', async () => {
+    // A plain function: a vi.fn would itself handle the rejection it returns.
+    const calls: (string | undefined)[] = [];
+    const session = {
+      status: signal<AuthStatus>('signed-out'),
+      signIn: (returnTo?: string): Promise<void> => {
+        calls.push(returnTo);
+        return Promise.reject(new Error('this page needs a reload'));
+      },
+    };
+    renderWithProviders(<SyncAuthBanner session={session} reload={vi.fn()} />, { initialPath: '/figure/7' });
+    const seen: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void seen.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(calls).toEqual(['/figure/7']);
+    expect(seen).toEqual([]);
+  });
+
+  it('offers no reload for a session that only needs signing in again', () => {
+    setup('reauth-required');
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull();
   });
 });

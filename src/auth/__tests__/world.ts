@@ -44,9 +44,11 @@ export class World {
   }
 
   tab(options: TabOptions = {}): AuthSession {
-    // The page's own store owner, so every tab here loses and reopens its store as a page does.
-    const open = localDbOwner(this.factory);
-    return new AuthSession({
+    // The page's own store owner, so every tab here loses and reopens its store as a page does,
+    // and learns of a newer build taking the store as createBrowserSession's tab does.
+    let tab: AuthSession | undefined;
+    const open = localDbOwner(this.factory, () => tab?.reloadRequired());
+    tab = new AuthSession({
       db: options.db === undefined ? open : () => options.db!(open),
       config: this.idp.config,
       origin: APP_ORIGIN,
@@ -56,6 +58,7 @@ export class World {
       now: () => this.t + (options.skewMs ?? 0),
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
+    return tab;
   }
 
   /** Sign in through the IdP the way the browser would: navigate, authorize, come back to /callback. */

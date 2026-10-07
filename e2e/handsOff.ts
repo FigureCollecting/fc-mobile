@@ -1,5 +1,5 @@
 import dns from 'node:dns';
-import { isDeepStrictEqual } from 'node:util';
+import { isDeepStrictEqual, types as valueTypes } from 'node:util';
 import vm from 'node:vm';
 import type { APIRequestContext, BrowserContext, Request } from '@playwright/test';
 
@@ -165,10 +165,19 @@ const PROXY_VARIABLES = new Set(['http_proxy', 'https_proxy', 'all_proxy', 'ftp_
 
 /**
  * Where Playwright reads, at a launch, a browser to send it to instead (a
- * Selenium grid, its capabilities and headers, a browser server), or the test
- * hook that lets a launch option name a grid; by name in any case.
+ * Selenium grid, its capabilities and headers; a browser server, its headers
+ * and the network it may reach), or the test hook that lets a launch option
+ * name a grid; by name in any case.
  */
-const CONNECT_VARIABLES = new Set(['selenium_remote_url', 'selenium_remote_capabilities', 'selenium_remote_headers', 'pw_test_connect_ws_endpoint', 'pwtest_under_test']);
+const CONNECT_VARIABLES = new Set([
+  'selenium_remote_url',
+  'selenium_remote_capabilities',
+  'selenium_remote_headers',
+  'pw_test_connect_ws_endpoint',
+  'pw_test_connect_headers',
+  'pw_test_connect_expose_network',
+  'pwtest_under_test',
+]);
 
 /**
  * Throws if this worker would run its browsers round the hands-off resolver
@@ -207,42 +216,109 @@ export function refuseInheritedOptions(prototype: object = Object.prototype): vo
   }
 }
 
-/** The browser-type members that start a browser: each checks the environment first. */
-const LAUNCHERS = ['launch', 'launchPersistentContext', 'launchServer'];
-/** The browser-type members that connect to a browser already running, with launch args of its own: each is refused. */
-const CONNECTORS = ['connect', 'connectOverCDP'];
+/** Launch options that take the resolver rules off Chromium or send it round them, whatever its args: each with why. */
+const LAUNCH_BYPASSES = new Map([
+  ['ignoreDefaultArgs', IGNORES_ARGS],
+  ['executablePath', 'launches a browser binary that may leave out the args it is given'],
+  ['proxy', 'sends requests through a proxy, which looks the hands-off hosts up itself'],
+  ['env', "replaces the browser's environment, which can carry a proxy that goes round the hands-off resolver rules"],
+]);
+/** Playwright's own test hooks (__testHookSeleniumRemoteURL sends a launch to a Selenium grid). */
+const TEST_HOOK = '__testHook';
+
+/**
+ * Throws if the options a launch starts from (each of `sources`: the worker's
+ * defaults, then the launch's own, which Playwright merges in that order)
+ * carry a LAUNCH_BYPASSES option set to anything but undefined, or under an
+ * accessor whatever it returns, or a Playwright test hook; or if one is a
+ * Proxy, which this check cannot read as Playwright will. Every own property
+ * counts, enumerable or not. Every reason, in one error.
+ */
+export function refuseLaunchBypasses(sources: readonly unknown[]): void {
+  const reasons: string[] = [];
+  for (const options of sources) {
+    if (valueTypes.isProxy(options)) {
+      reasons.push("this launch's options are a Proxy, which the hands-off check cannot read");
+      continue;
+    }
+    for (const [name, property] of Object.entries(Object.getOwnPropertyDescriptors(Object(options)))) {
+      const why = LAUNCH_BYPASSES.get(name) ?? (name.startsWith(TEST_HOOK) ? 'is a Playwright test hook, which can send the launch to a browser elsewhere' : undefined);
+      if (why !== undefined && (!('value' in property) || property.value !== undefined)) reasons.push(`${name} in this launch's options ${why}`);
+    }
+  }
+  if (reasons.length > 0) throw new Error(`hands-off: ${reasons.join('; ')}`);
+}
+
+/** The browser-type members that start a browser, by the index of their options: each is checked first. */
+const LAUNCHERS = new Map([
+  ['launch', 0],
+  ['launchPersistentContext', 1],
+  ['launchServer', 0],
+]);
+/** The browser-type members that connect to a browser already running, with launch args of its own (two private ones among them): each is refused. */
+const CONNECTORS = ['connect', 'connectOverCDP', '_connect', '_connectToWorker'];
+/** Playwright's experimental Electron and Android, and what each opens a browser with: neither browser gets the resolver rules, so each is refused. */
+const OTHER_OPENERS = [
+  ['_electron', ['launch']],
+  ['_android', ['connect', 'devices', 'launchServer']],
+] as const;
 const CHECKS_EACH_LAUNCH = Symbol.for('fc-mobile.e2e.checksEachLaunch');
+
+// hands-off-scan: a browser type's link to its playwright object, and the options every launch in the worker starts from, which the launch check reads.
+type Launching = { _playwright?: { _defaultLaunchOptions?: unknown } };
+
+/**
+ * Replaces the member `name` where `object` takes it from (itself, or a
+ * prototype it may share with others), so a call through that prototype is
+ * replaced too; once (a member this file put there is left), and only where
+ * there is one to replace.
+ */
+function replaceMember(object: object, name: string, make: (original: (...args: unknown[]) => Promise<unknown>) => (...args: unknown[]) => Promise<unknown>): void {
+  for (let owner: object | null = object; owner !== null; owner = Object.getPrototypeOf(owner) as object | null) {
+    if (!Object.hasOwn(owner, name)) continue;
+    const members = owner as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    if (!(CHECKS_EACH_LAUNCH in members[name]!)) members[name] = Object.assign(make(members[name]!), { [CHECKS_EACH_LAUNCH]: true });
+    return;
+  }
+}
+
+/** A member that throws as it is called, never calling what it replaced. */
+const refusing = (what: string) => () => async () => {
+  throw new Error(`hands-off: ${what}`);
+};
 
 /**
  * Makes every launch on these browser types (the worker's own browser's
- * included: Playwright's browser fixture launches through them) run
- * refuseRoundTheRules on the environment as it is when the launch starts, so a
- * proxy or a connect variable written after the worker started is refused
- * before anything launches; connect and connectOverCDP are refused outright.
- * Installs once per browser type.
+ * included: Playwright's browser fixture launches through them), wherever it
+ * is taken from, run refuseRoundTheRules on the environment as it is when the
+ * launch starts, so a proxy or a connect variable written after the worker
+ * started is refused before anything launches; refuseInheritedOptions; and
+ * refuseLaunchBypasses on the options it starts from, the worker's defaults
+ * as they are then and its own. Refuses outright the members that connect to
+ * a browser (CONNECTORS) and Playwright's Electron and Android openers
+ * (OTHER_OPENERS). Installs each once.
  */
 export function refuseRoundTheRulesAtEachLaunch(
-  types: { chromium: object; firefox: object; webkit: object },
+  types: { chromium: object; firefox: object; webkit: object; _electron?: object; _android?: object },
   connectOptions: unknown,
   env: () => Record<string, string | undefined> = () => process.env,
 ): void {
-  for (const [engine, type] of [['chromium', types.chromium], ['firefox', types.firefox], ['webkit', types.webkit]] as const) {
-    const members = type as Record<string | symbol, unknown>;
-    if (CHECKS_EACH_LAUNCH in members) continue;
-    for (const name of LAUNCHERS) {
-      const start = members[name] as (...args: unknown[]) => Promise<unknown>;
-      members[name] = async function (this: unknown, ...args: unknown[]) {
-        refuseRoundTheRules(env(), connectOptions);
-        refuseInheritedOptions();
-        return start.apply(this, args);
-      };
+  for (const type of [types.chromium, types.firefox, types.webkit]) {
+    for (const [name, at] of LAUNCHERS) {
+      replaceMember(type, name, (start) =>
+        async function (this: Launching, ...args: unknown[]) {
+          refuseRoundTheRules(env(), connectOptions);
+          refuseInheritedOptions();
+          // hands-off-scan: reads the options every launch in this worker starts from, to refuse what they carry.
+          refuseLaunchBypasses([this._playwright?._defaultLaunchOptions, args[at]]);
+          return start.apply(this, args);
+        },
+      );
     }
-    for (const name of CONNECTORS) {
-      members[name] = async () => {
-        throw new Error(`hands-off: ${engine}.${name} connects this worker to a browser with launch args of its own`);
-      };
-    }
-    members[CHECKS_EACH_LAUNCH] = true;
+    for (const name of CONNECTORS) replaceMember(type, name, refusing(`${name} connects this worker to a browser with launch args of its own`));
+  }
+  for (const [key, names] of OTHER_OPENERS) {
+    for (const name of names) replaceMember(Object(types[key]), name, refusing(`${key}.${name} opens a browser the hands-off resolver rules are not on`));
   }
 }
 

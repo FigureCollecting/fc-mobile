@@ -1,20 +1,25 @@
-// The four user-owned facet payloads (sync.proto rule 6). The client checks a
-// write before it mints, so the server's payload_invalid never drops an edit
-// the user saw land. The bounds mirror the contract's shipped JSON Schemas.
-import { HOLDING_STATUSES, type HoldingStatus, type UserFacetField } from '@figurecollecting/fc-api-contract';
-
-export const COUNT_MIN = 1;
-export const COUNT_MAX = 9999;
-export const SCORE_MIN = 1;
-export const SCORE_MAX = 10;
-export const NOTE_MAX_CODE_POINTS = 10000;
-
-export interface FieldValues {
-  status: HoldingStatus;
-  count: number;
-  score: number;
-  note: string;
-}
+// Facet payloads (sync.proto rule 6, PAYLOADS). The client checks a write
+// against the contract's shipped JSON Schema before it mints, so the server's
+// payload_invalid never drops an edit the user saw land, and it reads a stored
+// payload through the same schema: one it cannot read (a kind, status or
+// reason a later release added) is hidden, never guessed at.
+import type { FacetFamily, UserFacetFamily } from '@figurecollecting/fc-api-contract';
+import occHead from '@figurecollecting/fc-api-contract/schemas/occ-head.schema.json?raw';
+import occStatus from '@figurecollecting/fc-api-contract/schemas/occ-status.schema.json?raw';
+import occCollection from '@figurecollecting/fc-api-contract/schemas/occ-collection.schema.json?raw';
+import occDisposal from '@figurecollecting/fc-api-contract/schemas/occ-disposal.schema.json?raw';
+import occTag from '@figurecollecting/fc-api-contract/schemas/occ-tag.schema.json?raw';
+import occOrigin from '@figurecollecting/fc-api-contract/schemas/occ-origin.schema.json?raw';
+import ufScore from '@figurecollecting/fc-api-contract/schemas/uf-score.schema.json?raw';
+import ufNote from '@figurecollecting/fc-api-contract/schemas/uf-note.schema.json?raw';
+import ufWishability from '@figurecollecting/fc-api-contract/schemas/uf-wishability.schema.json?raw';
+import ufTag from '@figurecollecting/fc-api-contract/schemas/uf-tag.schema.json?raw';
+import ufKtag from '@figurecollecting/fc-api-contract/schemas/uf-ktag.schema.json?raw';
+import collName from '@figurecollecting/fc-api-contract/schemas/coll-name.schema.json?raw';
+import tagName from '@figurecollecting/fc-api-contract/schemas/tag-name.schema.json?raw';
+import resAnswer from '@figurecollecting/fc-api-contract/schemas/res-answer.schema.json?raw';
+import prefImport from '@figurecollecting/fc-api-contract/schemas/pref-import.schema.json?raw';
+import { compileSchema, type Check } from './schemaCheck';
 
 export class PayloadInvalidError extends Error {
   constructor(message: string) {
@@ -22,6 +27,28 @@ export class PayloadInvalidError extends Error {
     this.name = 'PayloadInvalidError';
   }
 }
+
+const USER: Record<UserFacetFamily, string> = {
+  'occ/head': occHead,
+  'occ/status': occStatus,
+  'occ/collection': occCollection,
+  'occ/disposal': occDisposal,
+  'occ/tag': occTag,
+  'uf/score': ufScore,
+  'uf/note': ufNote,
+  'uf/wishability': ufWishability,
+  'uf/tag': ufTag,
+  'uf/ktag': ufKtag,
+  'coll/name': collName,
+  'tag/name': tagName,
+  'res/answer': resAnswer,
+  'pref/import': prefImport,
+};
+
+const compile = (text: string): Check => compileSchema(JSON.parse(text));
+const WRITE = new Map<string, Check>(Object.entries(USER).map(([family, text]) => [family, compile(text)]));
+// The server-owned families a view reads; the import's items are read by the import screen.
+const READ = new Map<string, Check>([...WRITE, ['occ/origin', compile(occOrigin)]]);
 
 // Same grammar as the schemas' tz pattern, with its 64-character cap.
 const TZ_RE = /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/;
@@ -46,28 +73,30 @@ export function deviceTimeZone(read: () => string | undefined = intlZone): strin
   return zone && zone.length <= TZ_MAX && TZ_RE.test(zone) ? zone : 'UTC';
 }
 
-function isIntIn(v: unknown, min: number, max: number): v is number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
-}
-
-function checkValue(field: UserFacetField, value: unknown): void {
-  const ok =
-    field === 'status'
-      ? (HOLDING_STATUSES as readonly unknown[]).includes(value)
-      : field === 'count'
-        ? isIntIn(value, COUNT_MIN, COUNT_MAX)
-        : field === 'score'
-          ? isIntIn(value, SCORE_MIN, SCORE_MAX)
-          : field === 'note'
-            ? typeof value === 'string' && [...value].length <= NOTE_MAX_CODE_POINTS
-            : false;
-  if (!ok) throw new PayloadInvalidError(`invalid ${String(field)}: ${JSON.stringify(value)?.slice(0, 80)}`);
-}
-
-/** The UPSERT payload for one field: the value plus edited_at and tz, as JSON text. */
-export function buildPayload<F extends UserFacetField>(field: F, value: FieldValues[F], at: Date, tz: string): string {
-  checkValue(field, value);
+/**
+ * The UPSERT payload of a user-owned facet: `fields` plus edited_at and tz, as JSON text,
+ * checked against the family's shipped schema. edited_at and tz are the store's to stamp.
+ */
+export function buildPayload(family: UserFacetFamily, fields: Record<string, unknown>, at: Date, tz: string): string {
+  const check = WRITE.get(family);
+  if (check === undefined) throw new PayloadInvalidError(`not a family a client writes: ${String(family)}`);
+  if ('edited_at' in fields || 'tz' in fields) throw new PayloadInvalidError('edited_at and tz are stamped by the store');
   if (Number.isNaN(at.getTime())) throw new PayloadInvalidError('invalid edit time');
-  if (tz.length > TZ_MAX || !TZ_RE.test(tz)) throw new PayloadInvalidError(`invalid tz: ${tz}`);
-  return JSON.stringify({ [field]: value, edited_at: formatEditedAt(at), tz });
+  const payload = { ...fields, edited_at: formatEditedAt(at), tz };
+  const err = check(payload);
+  if (err !== null) throw new PayloadInvalidError(`invalid ${family} payload: ${err}`);
+  return JSON.stringify(payload);
+}
+
+/** A stored payload as its family's schema reads it, or undefined when this client cannot read it. */
+export function readPayload(family: FacetFamily, text: string): Record<string, unknown> | undefined {
+  const check = READ.get(family);
+  if (check === undefined) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  return check(value) === null ? (value as Record<string, unknown>) : undefined;
 }

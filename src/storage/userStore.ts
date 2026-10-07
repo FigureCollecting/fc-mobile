@@ -1,4 +1,4 @@
-// One signed-in user's view of the v2 local store. Every key starts with the
+// One signed-in user's view of the v3 local store. Every key starts with the
 // sub bound here, so nothing this object does can read or write another
 // user's rows. Network-free: Status and Push answers are handed in.
 import { create } from '@bufbuild/protobuf';
@@ -8,23 +8,33 @@ import {
   PushRequestSchema,
   SyncEventSchema,
   SyncOp,
+  collNameKey,
   compareVersion,
   normaliseDeviceId,
-  userFacetKey,
+  occFacetKey,
+  occTagKey,
+  parseCollectionRef,
+  parseUserFacetKey,
+  tagNameKey,
+  ufKindTagKey,
+  ufTagKey,
+  type CollectionKind,
   type HlcClock,
+  type OccurrenceStatus,
   type ProductCard,
   type PushRequest,
   type PushResponse,
   type PushResult,
   type StatusResponse,
-  type UserFacetField,
 } from '@figurecollecting/fc-api-contract';
 import type { LocalDb } from './localDb';
 import type { FacetRecord, FacetValue, OutboxEntry, OutboxState, ProductRecord, SyncMeta } from './records';
 import { runTx, type WriteTx } from './tx';
-import { buildPayload, deviceTimeZone, type FieldValues } from '../sync/payload';
-import { emptyFacet, isNewer, mergeRemote, toFacetValue, type RemoteEvent } from '../sync/facetMerge';
+import { buildPayload, deviceTimeZone } from '../sync/payload';
+import { emptyFacet, floorOf, isNewer, mergeRemote, show, toFacetValue, type RemoteEvent } from '../sync/facetMerge';
+import { indexFacet } from '../sync/facetIndex';
 import { ZERO_HLC, isPast, maxHlc, toHlcRecord, toHlcState } from '../sync/hlcState';
+import { buildView, pickCopy, type CopyView, type LocalView } from '../sync/occurrences';
 
 export { LocalWriteError } from './tx';
 export type { RemoteEvent } from '../sync/facetMerge';
@@ -36,7 +46,18 @@ export interface UserStoreOptions {
   clock?: HlcClock;
   timeZone?: () => string | undefined;
   newClientId?: () => string;
+  /** Mints occurrence, collection and tag ids: lowercase dashed uuids. */
+  newId?: () => string;
 }
+
+/** One facet write of an intent: the payload's own fields, or null for a tombstone. */
+export interface FacetWrite {
+  key: string;
+  fields: Record<string, unknown> | null;
+}
+
+/** A copy named by its id, or one of a figure's identical copies of a kind, optionally where it is shown. */
+export type CopyTarget = { occ_id: string } | { head_id: string; kind: OccurrenceStatus; shown_in?: string };
 
 export interface WriteResult {
   facet_key: string;
@@ -66,12 +87,17 @@ export interface StatusReport {
   reminted: number;
 }
 
-export interface HoldingView {
-  head_id: string;
-  status: FacetRecord;
-  count?: FacetRecord;
-  score?: FacetRecord;
-  note?: FacetRecord;
+export type IntentErrorCode = 'no_copy' | 'kind_mismatch' | 'no_collection' | 'no_tag';
+
+/** An intent this store's view cannot carry out; nothing of it was written. */
+export class IntentError extends Error {
+  readonly code: IntentErrorCode;
+
+  constructor(code: IntentErrorCode, message: string) {
+    super(message);
+    this.name = 'IntentError';
+    this.code = code;
+  }
 }
 
 /** A Push answer that does not match the batch it claims to answer; nothing of it was applied. */
@@ -105,17 +131,49 @@ const STATE_FOR: Partial<Record<PushOutcome, OutboxState>> = {
 
 const CARD_TEXTS = ['title', 'manufacturer', 'series', 'character', 'scale', 'releaseYm', 'contentLevel'] as const;
 
-const isLive = (rec: FacetRecord | undefined): rec is FacetRecord => rec?.value?.op === 'upsert';
+// A collection a copy of `kind` may be filed in: one that exists and holds that kind.
+function checkFiling(view: LocalView, ref: string, kind: OccurrenceStatus): void {
+  const parsed = parseCollectionRef(ref);
+  if (parsed !== undefined && parsed.kind !== kind) throw new IntentError('kind_mismatch', `${ref} does not hold ${kind} copies`);
+  if (parsed === undefined || !view.collections.some((c) => c.ref === ref)) throw new IntentError('no_collection', `no collection ${ref}`);
+}
+
+const shownCopy = (view: LocalView, occId: string): CopyView | undefined =>
+  view.copies.find((c) => c.occ_id === occId && c.shown_in !== null);
+
+function knownCopy(view: LocalView, occId: string): CopyView {
+  const copy = view.copies.find((c) => c.occ_id === occId);
+  if (copy === undefined) throw new IntentError('no_copy', `no copy ${occId}`);
+  return copy;
+}
+
+function needTag(view: LocalView, tagId: string, on: boolean): void {
+  if (on && !view.tags.has(tagId)) throw new IntentError('no_tag', `no tag ${tagId}`);
+}
+
+// The writes that give a copy `status`: the status, and the filing whenever the kind changes
+// (a removed copy's kind is its filing's, so an undo restores it whole) or a filing is asked for.
+function statusWrites(view: LocalView, copy: CopyView, status: OccurrenceStatus, collection?: string): FacetWrite[] {
+  const writes: FacetWrite[] = [{ key: occFacetKey(copy.occ_id, 'status'), fields: { status } }];
+  const was = copy.status ?? (copy.filed === null ? null : parseCollectionRef(copy.filed)!.kind);
+  if (collection !== undefined) checkFiling(view, collection, status);
+  if (collection !== undefined || was !== status) {
+    writes.push({ key: occFacetKey(copy.occ_id, 'collection'), fields: { collection: collection ?? `${status}/default` } });
+  }
+  return writes;
+}
 
 type Stores = WriteTx<('facets' | 'outbox' | 'sync_meta')[]>;
 
 export class UserStore {
   readonly sub: string;
+  readonly deviceId: string;
   private readonly db: LocalDb;
   private readonly hlc: Hlc;
   private readonly clock: HlcClock;
   private readonly timeZone?: () => string | undefined;
   private readonly newClientId: () => string;
+  private readonly newId: () => string;
   private statusSeen = false;
   // rebase() lowers the in-memory clock at once. Until a Status transaction that
   // carries it commits, its re-mint and exact save stay owed, so an abort cannot drop them.
@@ -124,9 +182,11 @@ export class UserStore {
   private constructor(db: LocalDb, opts: UserStoreOptions, meta: SyncMeta) {
     this.db = db;
     this.sub = opts.sub;
+    this.deviceId = meta.device_id;
     this.clock = opts.clock ?? systemClock;
     this.timeZone = opts.timeZone;
     this.newClientId = opts.newClientId ?? (() => crypto.randomUUID());
+    this.newId = opts.newId ?? (() => crypto.randomUUID());
     // Restored so a reload keeps minting above every version already issued.
     this.hlc = new Hlc({ deviceId: meta.device_id, clock: this.clock, state: toHlcState(meta.hlc), offsetMs: meta.offset_ms });
   }
@@ -146,37 +206,186 @@ export class UserStore {
 
   // ---------------------------------------------------------------- writes
 
-  // The facet, its outbox entry and the HLC state commit together: a reload never
-  // sees one without the others, and a failure (quota included) leaves no edit
-  // that looks applied.
-  async writeFacet<F extends UserFacetField>(headId: string, field: F, value: FieldValues[F] | null): Promise<WriteResult> {
-    const facetKey = userFacetKey(headId, field);
-    const at = new Date(this.clock.wallMs());
-    const op = value === null ? 'delete' : 'upsert';
-    const payload = value === null ? '' : buildPayload(field, value, at, deviceTimeZone(this.timeZone));
-    return runTx(this.db, ['facets', 'outbox', 'sync_meta'], async (tx) => {
-      const meta = await this.readMeta(tx);
-      const rec = (await tx.objectStore('facets').get([this.sub, facetKey])) ?? emptyFacet(this.sub, facetKey);
-      const base = rec.value?.version;
-      // The facet floor: the edit lands above the version it was made on.
-      const version = this.hlc.tick(base);
-      const id = await tx.objectStore('outbox').add({
-        sub: this.sub,
-        facet_key: facetKey,
-        op,
-        payload,
-        edit_version: version,
-        base_version: base ?? null,
-        state: 'PENDING',
-        attempts: 0,
-        created_at: at.getTime(),
-      });
-      rec.value = { version, op, payload };
-      rec.pending_id = id;
+  /** Write one user-owned facet: the payload's own fields, or null for a tombstone. */
+  async writeFacet(facetKey: string, fields: Record<string, unknown> | null): Promise<WriteResult> {
+    const [res] = await this.mutate(() => [{ key: facetKey, fields }]);
+    return res;
+  }
+
+  // ---------------------------------------------------------------- intents
+  // Each intent reads the view and writes in one transaction, as one outbox group
+  // that one Push batch carries whole. Picks go by occurrence id alone.
+
+  /** A new copy: its head written with its first status, and its filing when one is given. */
+  async createCopy(headId: string, status: OccurrenceStatus, opts: { collection?: string } = {}): Promise<string> {
+    const occ = this.newId();
+    await this.mutate((view) => {
+      const writes: FacetWrite[] = [
+        { key: occFacetKey(occ, 'head'), fields: { head_id: headId } },
+        { key: occFacetKey(occ, 'status'), fields: { status } },
+      ];
+      if (opts.collection !== undefined) {
+        checkFiling(view, opts.collection, status);
+        writes.push({ key: occFacetKey(occ, 'collection'), fields: { collection: opts.collection } });
+      }
+      return writes;
+    });
+    return occ;
+  }
+
+  /** Remove a copy (soft: its status is tombstoned; head and filing stay for an undo). The highest of N. */
+  async removeCopy(target: CopyTarget): Promise<string | undefined> {
+    let picked: string | undefined;
+    await this.mutate((view) => {
+      const copy = 'occ_id' in target ? shownCopy(view, target.occ_id) : pickCopy(view, target, 'remove');
+      picked = copy?.occ_id;
+      return copy === undefined ? [] : [{ key: occFacetKey(copy.occ_id, 'status'), fields: null }];
+    });
+    return picked;
+  }
+
+  /** Give a copy a status (an undo of a removal included), with its filing when the kind changes. */
+  async setStatus(occId: string, status: OccurrenceStatus, opts: { collection?: string } = {}): Promise<void> {
+    await this.mutate((view) => {
+      const copy = knownCopy(view, occId);
+      if (copy.hidden !== null || copy.head_id === null) throw new IntentError('no_copy', `copy ${occId} is not shown`);
+      return statusWrites(view, copy, status, opts.collection);
+    });
+  }
+
+  /** An ordered copy arrived: status owned and its filing, in one batch. The lowest of N. */
+  async markArrived(target: { occ_id: string } | { head_id: string; shown_in?: string }, opts: { collection?: string } = {}): Promise<string | undefined> {
+    let picked: string | undefined;
+    await this.mutate((view) => {
+      let copy: CopyView | undefined;
+      if ('occ_id' in target) {
+        copy = shownCopy(view, target.occ_id);
+        if (copy === undefined) throw new IntentError('no_copy', `no copy ${target.occ_id}`);
+        if (copy.status !== 'ordered') throw new IntentError('kind_mismatch', `copy ${target.occ_id} is ${copy.status}, not ordered`);
+      } else {
+        copy = pickCopy(view, { ...target, kind: 'ordered' }, 'receive');
+      }
+      picked = copy?.occ_id;
+      return copy === undefined ? [] : statusWrites(view, copy, 'owned', opts.collection);
+    });
+    return picked;
+  }
+
+  /** File a shown copy in another collection of its kind. */
+  async moveCopy(occId: string, collection: string): Promise<void> {
+    await this.mutate((view) => {
+      const copy = shownCopy(view, occId);
+      if (copy === undefined) throw new IntentError('no_copy', `copy ${occId} is not shown`);
+      checkFiling(view, collection, copy.status!);
+      return [{ key: occFacetKey(occId, 'collection'), fields: { collection } }];
+    });
+  }
+
+  /** Point a copy at another figure (a wrong-variant fix, an un-merge) with one write of its head. */
+  async repointCopy(occId: string, headId: string): Promise<void> {
+    await this.mutate((view) => {
+      knownCopy(view, occId);
+      return [{ key: occFacetKey(occId, 'head'), fields: { head_id: headId } }];
+    });
+  }
+
+  /** A new user collection of a kind. */
+  async createCollection(kind: CollectionKind, name: string): Promise<string> {
+    const id = this.newId();
+    await this.writeFacet(collNameKey(kind, id), { name });
+    return id;
+  }
+
+  /** A new tag. */
+  async createTag(name: string): Promise<string> {
+    const id = this.newId();
+    await this.writeFacet(tagNameKey(id), { name });
+    return id;
+  }
+
+  /** Tag (or untag) one copy. */
+  async tagCopy(occId: string, tagId: string, on = true): Promise<void> {
+    await this.mutate((view) => {
+      knownCopy(view, occId);
+      needTag(view, tagId, on);
+      return [{ key: occTagKey(occId, tagId), fields: on ? {} : null }];
+    });
+  }
+
+  /** Tag (or untag) a figure as a whole, with or without copies. */
+  async tagFigure(headId: string, tagId: string, on = true): Promise<void> {
+    await this.mutate((view) => {
+      needTag(view, tagId, on);
+      return [{ key: ufTagKey(headId, tagId), fields: on ? {} : null }];
+    });
+  }
+
+  /** Tag (or untag) every copy of a figure whose status is `kind`, evaluated when read. */
+  async tagFigureKind(headId: string, kind: CollectionKind, tagId: string, on = true): Promise<void> {
+    await this.mutate((view) => {
+      needTag(view, tagId, on);
+      return [{ key: ufKindTagKey(headId, kind, tagId), fields: on ? {} : null }];
+    });
+  }
+
+  /** The user has seen the 'replaced by another device' notice on this facet. */
+  async dismissReplaced(facetKey: string): Promise<void> {
+    await runTx(this.db, ['facets'], async (tx) => {
+      const rec = await tx.objectStore('facets').get([this.sub, facetKey]);
+      if (rec === undefined) return;
       rec.overwritten = null;
       await tx.objectStore('facets').put(rec);
+    });
+  }
+
+  // The facets, their outbox entries (one group) and the HLC state commit together:
+  // a reload never sees one without the others, and a failure (quota, a refused
+  // payload or intent included) leaves no edit that looks applied.
+  private async mutate(plan: (view: LocalView) => FacetWrite[]): Promise<WriteResult[]> {
+    const at = new Date(this.clock.wallMs());
+    const tz = deviceTimeZone(this.timeZone);
+    return runTx(this.db, ['facets', 'outbox', 'sync_meta'], async (tx) => {
+      const meta = await this.readMeta(tx);
+      // A plain write needs no view; an intent reads every row of this user.
+      const rows = plan.length === 0 ? [] : await tx.objectStore('facets').getAll(this.subRange());
+      const writes = plan(buildView(rows));
+      const out: WriteResult[] = [];
+      let group: number | undefined;
+      for (const { key, fields } of writes) {
+        const parsed = parseUserFacetKey(key);
+        if (parsed === undefined) throw new TypeError(`not a user-owned facet key: ${JSON.stringify(key)}`);
+        const op = fields === null ? 'delete' : 'upsert';
+        const payload = fields === null ? '' : buildPayload(parsed.family, fields, at, tz);
+        const rec = await this.facet(tx, key);
+        const base = floorOf(rec);
+        // The facet floor: the edit lands above every version this device holds for it.
+        const version = this.hlc.tick(base);
+        const entry: OutboxEntry = {
+          sub: this.sub,
+          facet_key: key,
+          op,
+          payload,
+          edit_version: version,
+          base_version: base ?? null,
+          basis: meta.cursor,
+          state: 'PENDING',
+          attempts: 0,
+          created_at: at.getTime(),
+          ...(group !== undefined && { group }),
+        };
+        const id = await tx.objectStore('outbox').add(entry);
+        if (group === undefined) {
+          group = id;
+          await tx.objectStore('outbox').put({ ...entry, id, group });
+        }
+        rec.value = { version, op, payload };
+        rec.pending_id = id;
+        rec.overwritten = null;
+        await tx.objectStore('facets').put(indexFacet(rec));
+        out.push({ facet_key: key, version, outbox_id: id });
+      }
       await this.saveClock(tx, meta);
-      return { facet_key: facetKey, version, outbox_id: id };
+      return out;
     });
   }
 
@@ -219,10 +428,11 @@ export class UserStore {
         }
         return { kind: 'send', batch: this.toBatch(flying.client_id!, entries, true) };
       }
-      const pending = await outbox.index('by_sub_state').getAll(this.stateRange('PENDING'), max);
-      if (pending.length === 0) return { kind: 'empty' };
+      const queued = await outbox.index('by_sub_state').getAll(this.stateRange('PENDING'));
+      if (queued.length === 0) return { kind: 'empty' };
       const meta = (await tx.objectStore('sync_meta').get(this.sub))!;
       if (!this.statusSeen || meta.rejected_past !== null) return { kind: 'status_required' };
+      const pending = queued.slice(0, batchEnd(queued, max));
       const clientId = this.newClientId();
       for (const [i, e] of pending.entries()) {
         Object.assign(e, { state: 'IN_FLIGHT', client_id: clientId, batch_pos: i, attempts: e.attempts + 1 });
@@ -297,17 +507,9 @@ export class UserStore {
     return this.db.getAll('facets', this.subRange());
   }
 
-  /** A holding exists while its status is live; count, score and note show only beside it. */
-  async getHolding(headId: string): Promise<HoldingView | undefined> {
-    const rows = await this.db.getAllFromIndex('facets', 'by_head', IDBKeyRange.only([this.sub, headId]));
-    return toHolding(headId, rows);
-  }
-
-  async listHoldings(): Promise<HoldingView[]> {
-    const rows = await this.db.getAllFromIndex('facets', 'by_head', this.subRange());
-    const byHead = new Map<string, FacetRecord[]>();
-    for (const r of rows) byHead.set(r.head_id!, [...(byHead.get(r.head_id!) ?? []), r]);
-    return [...byHead].flatMap(([head, group]) => toHolding(head, group) ?? []);
+  /** The derived view (occurrences, collections, tags, library) over what the UI shows. */
+  async getView(): Promise<LocalView> {
+    return buildView(await this.listFacets());
   }
 
   listOutbox(): Promise<OutboxEntry[]> {
@@ -385,26 +587,13 @@ export class UserStore {
     return (await tx.objectStore('facets').get([this.sub, facetKey])) ?? emptyFacet(this.sub, facetKey);
   }
 
+  // A newer remote value goes to the replica; an unanswered edit on the facet stays
+  // shown and is still pushed, for the server to decide (sync.proto rule 6).
   private async mergeInto(tx: Stores, facetKey: string, value: FacetValue): Promise<boolean> {
     const rec = await this.facet(tx, facetKey);
-    const { applied, superseded } = mergeRemote(rec, value);
-    if (superseded) await this.supersede(tx, facetKey);
+    const applied = mergeRemote(rec, value, this.deviceId);
     await tx.objectStore('facets').put(rec);
     return applied;
-  }
-
-  // A newer remote value replaced the facet's unanswered edits: an unsent one is
-  // STALE and never sent; a sent one stays in its frozen batch, flagged.
-  private async supersede(tx: Stores, facetKey: string): Promise<void> {
-    const outbox = tx.objectStore('outbox');
-    for (const state of ['PENDING', 'IN_FLIGHT'] as const) {
-      for (const e of await outbox.index('by_sub_state').getAll(this.stateRange(state))) {
-        if (e.facet_key !== facetKey) continue;
-        e.superseded = true;
-        if (state === 'PENDING') e.state = 'STALE';
-        await outbox.put(e);
-      }
-    }
   }
 
   private async answer(tx: Stores, meta: SyncMeta, entry: OutboxEntry, result: PushResult, current: FacetValue | null): Promise<void> {
@@ -413,13 +602,16 @@ export class UserStore {
     const holds = rec.value?.version === entry.edit_version;
     if (current) this.hlc.observe(current.version);
     if (holds) {
+      // The answered edit leaves the overlay: the display is the replica, `current` folded in.
       if (current && isNewer(current, rec.known)) rec.known = current;
-      // The server holds another write than this edit: it was overwritten.
-      if (current && current.version !== entry.edit_version && (state === 'APPLIED' || state === 'STALE')) {
-        rec.overwritten = rec.value;
-      }
-      rec.value = current;
       rec.pending_id = null;
+      // A REVIEW or REJECTED edit was not lost to another device: no notice.
+      if (state === 'APPLIED' || state === 'STALE') {
+        show(rec, rec.known, this.deviceId);
+      } else {
+        rec.value = rec.known;
+        indexFacet(rec);
+      }
       await tx.objectStore('facets').put(rec);
     } else if (current) {
       await this.mergeInto(tx, entry.facet_key, current);
@@ -472,6 +664,8 @@ export class UserStore {
             payload: e.payload,
             edit_version: version,
             base_version: base ?? null,
+            // The basis the edit was made on, whatever was pulled since.
+            basis: e.basis,
             state: 'PENDING',
             attempts: 0,
             created_at: this.clock.wallMs(),
@@ -509,20 +703,21 @@ export class UserStore {
         version: e.edit_version,
         op: e.op === 'upsert' ? SyncOp.UPSERT : SyncOp.DELETE,
         payload: e.payload,
+        basis: e.basis,
       }),
     );
     return { clientId, request: create(PushRequestSchema, { clientId, events }), entryIds: entries.map((e) => e.id!), retry };
   }
 }
 
-function toHolding(headId: string, rows: FacetRecord[]): HoldingView | undefined {
-  const by = new Map(rows.map((r) => [r.field, r]));
-  const status = by.get('status');
-  if (!isLive(status)) return undefined;
-  const view: HoldingView = { head_id: headId, status };
-  for (const field of ['count', 'score', 'note'] as const) {
-    const rec = by.get(field);
-    if (isLive(rec)) view[field] = rec;
-  }
-  return view;
+// How many queued entries the next batch takes: up to `max`, never splitting a group. A
+// group the limit would cut goes to the next batch, or whole and alone when it is first.
+function batchEnd(queued: OutboxEntry[], max: number): number {
+  let end = Math.min(max, queued.length);
+  const group = queued[end]?.group;
+  if (group === undefined) return end;
+  while (end > 0 && queued[end - 1].group === group) end -= 1;
+  if (end > 0) return end;
+  while (end < queued.length && queued[end].group === group) end += 1;
+  return end;
 }

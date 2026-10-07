@@ -5,24 +5,34 @@ import { Style } from '../../styles/Style';
 
 export interface SyncAuthBannerProps {
   session: { status: ReadonlySignal<AuthStatus>; signIn(returnTo?: string): Promise<void> };
+  /** Reload the page into the newest build. */
+  reload: () => void;
 }
 
 // In-place prompt: an auth problem never navigates away from what the user is looking at.
-export function SyncAuthBanner({ session }: SyncAuthBannerProps) {
+export function SyncAuthBanner({ session, reload }: SyncAuthBannerProps) {
   const [location] = useLocation();
   const status = session.status.value;
-  if (status !== 'signed-out' && status !== 'reauth-required') return null;
+  if (status !== 'signed-out' && status !== 'reauth-required' && status !== 'reload-required') return null;
 
   return (
     <div class="sync-auth-banner" role="status" aria-live="polite">
       <span>
-        {status === 'reauth-required'
-          ? 'Sign in to sync. Your changes are kept on this device until then.'
-          : 'Sign in to sync your collection.'}
+        {status === 'reload-required'
+          ? 'This page needs a reload to keep syncing. Your changes are kept on this device.'
+          : status === 'reauth-required'
+            ? 'Sign in to sync. Your changes are kept on this device until then.'
+            : 'Sign in to sync your collection.'}
       </span>
-      <button type="button" class="sync-auth-banner__button" onClick={() => void session.signIn(location)}>
-        Sign in
-      </button>
+      {status === 'reload-required' ? (
+        <button type="button" class="sync-auth-banner__button" onClick={reload}>
+          Reload
+        </button>
+      ) : (
+        <button type="button" class="sync-auth-banner__button" onClick={() => void session.signIn(location)}>
+          Sign in
+        </button>
+      )}
 
       <Style css={`
         .sync-auth-banner {

@@ -37,6 +37,11 @@ export interface EdgeLogEntry {
 export interface EdgeOptions {
   coordinator: string;
   web: string;
+  /**
+   * Origins added to connect-src of a CSP the web route sends: an fc-mobile-web image's CSP
+   * names production Authentik, and a build for this stack calls the mock issuer instead.
+   */
+  webConnectSrc?: string[];
   port?: number;
   /** Oldest entries are dropped past this many. Default 2000. */
   logLimit?: number;
@@ -55,6 +60,19 @@ export interface Edge {
   start(): Promise<void>;
   running(): boolean;
   close(): Promise<void>;
+}
+
+/** `policy` with each origin it lacks added to connect-src; a policy without connect-src is returned as is. */
+export function widenConnectSrc(policy: string, origins: string[]): string {
+  return policy
+    .split(';')
+    .map((part) => {
+      const sources = part.trim().split(/\s+/);
+      if (sources[0] !== 'connect-src') return part;
+      const missing = origins.filter((o) => !sources.includes(o));
+      return [part.trimEnd(), ...missing].join(' ');
+    })
+    .join(';');
 }
 
 const HOP_BY_HOP = new Set([
@@ -141,7 +159,12 @@ export async function startEdge(options: EdgeOptions): Promise<Edge> {
           });
           return;
         }
-        res.writeHead(upstreamRes.statusCode as number, forwardable(upstreamRes.headers));
+        const replyHeaders = forwardable(upstreamRes.headers);
+        const csp = upstreamRes.headers['content-security-policy'];
+        if (route === 'web' && typeof csp === 'string' && options.webConnectSrc !== undefined) {
+          replyHeaders['content-security-policy'] = widenConnectSrc(csp, options.webConnectSrc);
+        }
+        res.writeHead(upstreamRes.statusCode as number, replyHeaders);
         upstreamRes.pipe(res);
         upstreamRes.on('end', () => done(upstreamRes.statusCode));
         // An upstream that dies mid-reply must cut ours too, or the client waits forever.

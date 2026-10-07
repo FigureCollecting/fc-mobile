@@ -9,6 +9,17 @@ export class AuthRequiredError extends Error {
   }
 }
 
+/**
+ * This page's code cannot use the local store: a newer build upgraded it, or it would not open
+ * at boot. Nothing in the store was touched; a reload (into the newest build) continues.
+ */
+export class ReloadRequiredError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('this page needs a reload', options);
+    this.name = 'ReloadRequiredError';
+  }
+}
+
 /** The request never got an answer (offline, DNS, connection reset). Nothing about the session changed. */
 export class NetworkError extends Error {
   constructor(cause: unknown) {

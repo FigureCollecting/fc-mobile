@@ -1,13 +1,14 @@
 // OIDC code + PKCE login, tokens per sub in IndexedDB, single-flight refresh across tabs,
 // the device key and its enrolment. A token or network failure never navigates and never
-// removes data: it only moves `status` to 'offline' or 'reauth-required'.
+// removes data: it only moves `status` to 'offline' or 'reauth-required'. A local store this
+// page's code cannot use (a newer build upgraded it) moves it to 'reload-required'.
 import { signal, type Signal } from '@preact/signals';
 import type { LocalDb } from '../storage/localDb';
 import { ServerClock } from './clock';
 import { postLogoutUriFor, redirectUriFor, type OidcConfig } from './config';
 import { generateDeviceKey, type DeviceKeyRecord } from './deviceKey';
 import { createDpopFetch, ENROL_PATH, type DpopCredentials, type DpopFetch } from './dpopFetch';
-import { AuthRequiredError, EnrolmentError, LoginError, NetworkError } from './errors';
+import { AuthRequiredError, EnrolmentError, LoginError, NetworkError, ReloadRequiredError } from './errors';
 import { defaultLocks, type LockManagerLike } from './locks';
 import {
   authorizeUrl,
@@ -23,7 +24,7 @@ import {
 import { createPkcePair, randomToken } from './pkce';
 import { AuthStore, type TokenRecord } from './store';
 
-export type AuthStatus = 'loading' | 'signed-out' | 'signed-in' | 'offline' | 'reauth-required';
+export type AuthStatus = 'loading' | 'signed-out' | 'signed-in' | 'offline' | 'reauth-required' | 'reload-required';
 
 export interface AuthSessionDeps {
   /** The open local store, asked for on every use: its owner reopens it once its connection is lost. */
@@ -93,6 +94,27 @@ export class AuthSession implements DpopCredentials {
     return this.started;
   }
 
+  /**
+   * start() for the page's boot: never rejects. A store that will not open leaves the page
+   * 'reload-required' instead of 'loading' with an unhandled rejection; the next call retries it.
+   */
+  async boot(): Promise<AuthStatus> {
+    try {
+      return await this.start();
+    } catch {
+      return this.set('reload-required');
+    }
+  }
+
+  /**
+   * A newer build is taking the local store (its owner heard the versionchange): this page's
+   * code cannot use it. The next call re-reads the store, so the status follows it if it clears.
+   */
+  reloadRequired(): void {
+    this.started = undefined;
+    this.set('reload-required');
+  }
+
   async signIn(returnTo = '/', loginHint?: string): Promise<void> {
     const { verifier, challenge } = await createPkcePair();
     const state = randomToken();
@@ -108,9 +130,8 @@ export class AuthSession implements DpopCredentials {
   async completeSignIn(callbackUrl: string): Promise<{ sub: string; returnTo: string }> {
     await this.start();
     const params = new URL(callbackUrl).searchParams;
-    const store = await this.store();
     const state = params.get('state');
-    const pending = state === null ? undefined : await store.takePending(state);
+    const pending = state === null ? undefined : await (await this.store()).takePending(state);
     // No login of ours: a spent or crafted link, so nothing it says is repeated on screen.
     if (pending === undefined) throw new LoginError('unknown_state');
     const back = pending.returnTo;
@@ -139,6 +160,8 @@ export class AuthSession implements DpopCredentials {
     } catch (err) {
       throw new LoginError('invalid_id_token', (err as Error).message, back);
     }
+    // A fresh handle: the browser may have closed the store during the exchange.
+    const store = await this.store();
     await store.putTokens(this.record(sub, tokens));
     await store.setCurrentSub(sub);
     this.currentSub = sub;
@@ -184,22 +207,22 @@ export class AuthSession implements DpopCredentials {
   async refreshAfterReject(rejected: string): Promise<string> {
     const sub = await this.requireSub();
     return this.locks.request(this.refreshLock(sub), async () => {
-      const store = await this.store();
       const tokens = await this.requireTokens(sub);
       // Another tab or call refreshed while this one waited for the lock.
       if (tokens.accessToken !== rejected && !this.expiring(tokens)) return tokens.accessToken;
-      if (tokens.reauth === true || tokens.refreshToken === undefined) return this.reauth(store, tokens);
+      if (tokens.reauth === true || tokens.refreshToken === undefined) return this.reauth(tokens);
       let answer: TokenResponse;
       try {
         answer = await refreshGrant(this.config, this.deps.fetch, tokens.refreshToken, this.timeoutMs);
       } catch (err) {
-        if (err instanceof TokenError && err.error === 'invalid_grant') return this.reauth(store, tokens);
+        if (err instanceof TokenError && err.error === 'invalid_grant') return this.reauth(tokens);
         if (err instanceof NetworkError) this.set('offline');
         throw err;
       }
-      // Stored first: the IdP has already retired the old refresh token.
-      await store.putTokens(this.record(sub, answer, tokens));
-      if (answer.id_token !== undefined && !sameIdentity(this.config, answer.id_token, sub)) return this.reauth(store, tokens);
+      // Stored first, through a fresh handle (the browser may have closed the store during the
+      // request): the IdP has already retired the old refresh token.
+      await (await this.store()).putTokens(this.record(sub, answer, tokens));
+      if (answer.id_token !== undefined && !sameIdentity(this.config, answer.id_token, sub)) return this.reauth(tokens);
       this.set('signed-in');
       return answer.access_token;
     });
@@ -207,7 +230,7 @@ export class AuthSession implements DpopCredentials {
 
   async requireReauth(): Promise<void> {
     const sub = await this.requireSub();
-    await this.reauth(await this.store(), await this.requireTokens(sub)).catch(() => undefined);
+    await this.reauth(await this.requireTokens(sub)).catch(() => undefined);
   }
 
   async deviceKey(enrolment: boolean): Promise<DeviceKeyRecord> {
@@ -245,9 +268,9 @@ export class AuthSession implements DpopCredentials {
   }
 
   /** The refresh token is dead: keep everything else, and wait for an interactive sign-in. */
-  private async reauth(store: AuthStore, tokens: TokenRecord): Promise<never> {
+  private async reauth(tokens: TokenRecord): Promise<never> {
     const { refreshToken: _dropped, ...rest } = tokens;
-    await store.putTokens({ ...rest, reauth: true });
+    await (await this.store()).putTokens({ ...rest, reauth: true });
     this.set('reauth-required');
     throw new AuthRequiredError('reauth');
   }
@@ -298,8 +321,15 @@ export class AuthSession implements DpopCredentials {
     return `fc-auth-refresh:${sub}`;
   }
 
+  /** A VersionError is a newer build's store: no retry of this code opens it, only a reload. */
   private async store(): Promise<AuthStore> {
-    return new AuthStore(await this.deps.db());
+    try {
+      return new AuthStore(await this.deps.db());
+    } catch (err) {
+      if ((err as { name?: unknown } | null)?.name !== 'VersionError') throw err;
+      this.reloadRequired();
+      throw new ReloadRequiredError({ cause: err });
+    }
   }
 
   private set(status: AuthStatus): AuthStatus {

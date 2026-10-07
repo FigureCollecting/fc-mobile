@@ -206,6 +206,13 @@ docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t fc-mobile-web .
 docker run --rm --read-only --tmpfs /tmp -p 8080:8080 fc-mobile-web
 ```
 
+The image signs in through Authentik (OIDC + PKCE + DPoP, `src/auth`):
+`ARG VITE_AUTH_MODE=oidc` in the `Dockerfile`, and `web-image.yml` passes it
+explicitly, then checks the built bundle (`scripts/assert-bundle-auth-mode.sh`).
+The legacy `/login` redirect, which no deployed backend serves, is an explicit
+opt-out: `--build-arg VITE_AUTH_MODE=legacy`. Any other value fails the build.
+`npm run dev` and `npm run build` stay legacy unless `VITE_AUTH_MODE=oidc` is set.
+
 `vite preview` sends the same headers, so the e2e suite runs under the CSP and
 fails on any `securitypolicyviolation`. Component CSS therefore goes through
 `<Style css={...} />` (constructed stylesheets), never a `<style>` element or

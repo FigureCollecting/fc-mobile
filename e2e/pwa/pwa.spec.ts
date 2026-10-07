@@ -46,6 +46,14 @@ async function shellInstalled(page: Page): Promise<void> {
   });
 }
 
+/**
+ * The image is the OIDC build (Dockerfile VITE_AUTH_MODE=oidc): a signed-out visit shows the
+ * sign-in-to-sync banner over the collection, where the legacy build redirects to /login.
+ * Both the banner and the update prompt are role=status, so each is found by its text.
+ */
+const signInBanner = (page: Page) => page.getByRole('status').filter({ hasText: /sign in to sync your collection/i });
+const updatePrompt = (page: Page) => page.getByRole('status').filter({ hasText: /new version/i });
+
 const buildOf = (page: Page) => page.locator('meta[name="fc-build"]').getAttribute('content');
 /** Null while the page is between documents. */
 const buildNow = (page: Page) => buildOf(page).catch(() => null);
@@ -57,7 +65,7 @@ const controlledAtLoad = (page: Page) => page.evaluate(() => (window as unknown 
 async function promptForUpdate(page: Page): Promise<void> {
   await expect(async () => {
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-    await expect(page.getByRole('status')).toContainText(/new version/i, { timeout: 2_000 });
+    await expect(updatePrompt(page)).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 30_000 });
 }
 
@@ -77,7 +85,7 @@ test('(a) after one online visit, a true outage still cold-starts /, a figure de
   const { origin } = stackState();
   const first = await context.newPage();
   await first.goto(`${origin}/`);
-  await expect(first.getByPlaceholder(/email address/i)).toBeVisible();
+  await expect(signInBanner(first)).toBeVisible();
   await shellInstalled(first);
 
   await stack.edge.stop();
@@ -92,7 +100,7 @@ test('(a) after one online visit, a true outage still cold-starts /, a figure de
       const res = await page.goto(`${origin}${path}`);
       expect(res?.status(), path).toBe(200);
       expect(res?.fromServiceWorker(), path).toBe(true);
-      await expect(page.getByPlaceholder(/email address/i), path).toBeVisible();
+      await expect(signInBanner(page), path).toBeVisible();
       await expect(page.locator('#pre-splash')).toHaveCount(0);
       await page.close();
     }
@@ -248,7 +256,7 @@ test.describe('(c) build N+1 ships while 2 edits are pending', () => {
     for (const [i, tab] of [from, ...others].entries()) {
       await expect.poll(() => buildNow(tab), { timeout: 30_000, message: i === 0 ? 'the tab that took it' : `other tab ${i}` }).toBe(buildNext);
     }
-    await expect(from.getByRole('status')).toHaveCount(0);
+    await expect(updatePrompt(from)).toHaveCount(0);
   }
 
   // Whether a page had a controller when it registered decides whether the

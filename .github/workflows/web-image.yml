@@ -64,6 +64,7 @@ jobs:
             DOCKER_BUILDKIT=1 docker build \
               --secret id=node_auth_token,env=NODE_AUTH_TOKEN \
               --build-arg "VITE_BUILD_ID=${pair#*=}" \
+              --build-arg "VITE_AUTH_MODE=oidc" \
               -t "${pair%%=*}" .
           done
         env:
@@ -77,6 +78,15 @@ jobs:
             echo "::error::fc-mobile-web runs as root"
             exit 1
           fi
+
+      - name: Verify the image bundle is the OIDC build
+        # The legacy /login redirect signs in against no deployed backend.
+        run: |
+          set -euo pipefail
+          cid=$(docker create "${FC_WEB_IMAGE}")
+          docker cp "${cid}:/usr/share/nginx/html/assets" "${RUNNER_TEMP}/assets"
+          docker rm "${cid}" >/dev/null
+          sh scripts/assert-bundle-auth-mode.sh "${RUNNER_TEMP}/assets" oidc
 
       - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
         # publish needs this job, so a finding here stops the push.
@@ -149,6 +159,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VITE_BUILD_ID=${{ steps.meta.outputs.version }}
+            VITE_AUTH_MODE=oidc
           secrets: |
             node_auth_token=${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -164,6 +175,15 @@ jobs:
             echo "::error::the published fc-mobile-web image runs as root"
             exit 1
           fi
+
+      - name: Verify the PUBLISHED image bundle is the OIDC build
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/figurecollecting/fc-mobile-web@${{ steps.publish.outputs.digest }}"
+          cid=$(docker create "${ref}")
+          docker cp "${cid}:/usr/share/nginx/html/assets" "${RUNNER_TEMP}/published-assets"
+          docker rm "${cid}" >/dev/null
+          sh scripts/assert-bundle-auth-mode.sh "${RUNNER_TEMP}/published-assets" oidc
 
       - name: Report the digest
         run: |

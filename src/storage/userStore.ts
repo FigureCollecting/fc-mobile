@@ -411,7 +411,61 @@ export class UserStore {
     });
   }
 
+  /**
+   * A replay from an empty cursor (sync.proto rule 7: the recovery for an unreadable cursor): the
+   * replica becomes exactly what the replayed events give by LWW over nothing, a facet the replay
+   * does not carry holds nothing, and every unanswered edit stays laid over it. One transaction, so
+   * nothing in between is ever shown; a replay presents nothing again, so it records no notice.
+   */
+  async replaceReplica(events: RemoteEvent[], cursor: string): Promise<ApplyReport> {
+    return runTx(this.db, ['facets', 'outbox', 'sync_meta'], async (tx) => {
+      const meta = await this.readMeta(tx);
+      const report: ApplyReport = { applied: 0, dropped: 0, refused: [] };
+      const replica = new Map<string, FacetValue>();
+      for (const event of events) {
+        const value = toFacetValue(event);
+        if (value === undefined) {
+          report.refused.push(event);
+          continue;
+        }
+        this.hlc.observe(value.version);
+        if (isNewer(value, replica.get(event.facetKey) ?? null)) {
+          replica.set(event.facetKey, value);
+          report.applied += 1;
+        } else {
+          report.dropped += 1;
+        }
+      }
+      const facets = tx.objectStore('facets');
+      for (const rec of await facets.getAll(this.subRange())) {
+        rec.known = replica.get(rec.facet_key) ?? null;
+        replica.delete(rec.facet_key);
+        if (rec.pending_id === null) rec.value = rec.known;
+        await facets.put(indexFacet(rec));
+      }
+      for (const [facetKey, value] of replica) {
+        await facets.put(indexFacet({ ...emptyFacet(this.sub, facetKey), known: value, value }));
+      }
+      meta.cursor = cursor;
+      await this.saveClock(tx, meta);
+      return report;
+    });
+  }
+
   // ---------------------------------------------------------------- outbox
+
+  /** The user has seen these REJECTED edits: they stay in the outbox, marked dismissed. */
+  async dismissRejected(ids: number[]): Promise<void> {
+    await runTx(this.db, ['outbox'], async (tx) => {
+      const outbox = tx.objectStore('outbox');
+      for (const id of ids) {
+        const entry = await outbox.get(id);
+        if (entry?.sub !== this.sub || entry.state !== 'REJECTED') continue;
+        entry.dismissed = true;
+        await outbox.put(entry);
+      }
+    });
+  }
 
   // An unanswered frozen batch always comes back first, same client_id and events.
   // A new batch waits for the session's first Status and for the fresh Status

@@ -63,6 +63,8 @@ export interface OutboxEntry {
   remint?: 'awaiting' | 'done' | 'skipped';
   reminted_as?: number;
   adopted_version?: string | null;
+  /** A REJECTED edit the user has been shown and dismissed; kept, never deleted. */
+  dismissed?: boolean;
 }
 
 /** Hlc state as stored: micros as decimal text, so no store needs BigInt support. */

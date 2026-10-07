@@ -9,6 +9,7 @@ import {
   GetProductsResponseSchema,
   MAX_FUTURE_SKEW_MS,
   ProductCardSchema,
+  ProductRefSchema,
   PushOutcome,
   PushResponseSchema,
   PushResultSchema,
@@ -215,7 +216,10 @@ export class FakeCoordinator {
       if (card === undefined) unresolved.push({ ref: { case: 'headId' as const, value: h } });
       else
         products.push(
-          create(ProductCardSchema, { ...card, requestedAs: [...card.requestedAs, ...(card.headId === h ? [] : [{ ref: { case: 'headId' as const, value: h } }])] }),
+          create(ProductCardSchema, {
+            ...card,
+            requestedAs: [...card.requestedAs, ...(card.headId === h ? [] : [create(ProductRefSchema, { ref: { case: 'headId', value: h } })])],
+          }),
         );
     }
     return create(GetProductsResponseSchema, { products, unresolved });

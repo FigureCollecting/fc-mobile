@@ -23,6 +23,7 @@ import {
   WRITE_DELAY_MS,
   backoffDelay,
   classify,
+  type SyncCalls,
 } from '../engine';
 import { FakeCoordinator } from './fakeCoordinator';
 import { DEVICE, FakeClock, T0, iso } from './harness';
@@ -135,7 +136,7 @@ describe('hydrate: Delta to has_more=false in pages of 500, then GetProducts in 
       create(GetProductsResponseSchema, { products: [create(ProductCardSchema, { headId: headOf(0), requestedAs: [{ ref: { case: 'headId', value: headOf(0) } }] })], nextPageToken: 'p2' }),
       create(GetProductsResponseSchema, { products: [create(ProductCardSchema, { headId: headOf(1), requestedAs: [{ ref: { case: 'headId', value: headOf(1) } }] })] }),
     ];
-    const getProducts = vi.fn(async () => pages.shift()!);
+    const getProducts = vi.fn(async (_req: { pageToken?: string }) => pages.shift()!);
     const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: { getProducts }, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
     await engine.trigger('start');
     expect(getProducts.mock.calls.map((c) => (c[0] as { pageToken: string }).pageToken)).toEqual(['', 'p2']);
@@ -193,7 +194,7 @@ describe('drain: frozen Push batches of at most 100 under a stable client_id', (
     // The server answers REJECTED payload_invalid for this push only.
     const real = r.server.sync.push;
     let first = true;
-    const push = vi.fn(async (req: PushRequest, opts?: { signal?: AbortSignal }) => {
+    const push = vi.fn(async (req: Parameters<SyncCalls['push']>[0], opts?: { signal?: AbortSignal }) => {
       const res = await real(req, opts);
       if (first) {
         first = false;
@@ -216,7 +217,7 @@ describe('drain: frozen Push batches of at most 100 under a stable client_id', (
     await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'a' });
     // The server's clock steps back after the Status: the edit lands past its bound, REJECTED version_future.
     const real = r.server.sync.push;
-    const push = vi.fn(async (req: PushRequest, opts?: { signal?: AbortSignal }) => {
+    const push = vi.fn(async (req: Parameters<SyncCalls['push']>[0], opts?: { signal?: AbortSignal }) => {
       if (push.mock.calls.length === 1) r.server.now = T0 - 10 * 60_000;
       return real(req, opts);
     });
@@ -465,6 +466,9 @@ describe('recovery and auth', () => {
     await engine.trigger('start');
     expect(engine.state.value).toMatchObject({ phase: 'idle', lastError: 'no store' });
     expect(r.timers.delays()).toEqual([1000]);
+    const odd = new SyncEngine({ store: () => Promise.reject(undefined), sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers });
+    await odd.trigger('start');
+    expect(odd.state.value.lastError).toBe('undefined');
   });
 });
 
@@ -476,5 +480,74 @@ describe('device identity', () => {
     expect(pushes(r.server)[0]!.events[0]!.version.endsWith(`#${DEVICE}`)).toBe(true);
     expect(pushes(r.server)[0]!.events[0]!.basis).toBe('');
     expect(occFacetKey(occOf(0), 'head')).toMatch(/^occ\//);
+  });
+});
+
+describe('defaults', () => {
+  it('uses the system timers and clock when none are given, and stop() cancels a scheduled pass', async () => {
+    vi.useFakeTimers();
+    try {
+      const engine = new SyncEngine({ store: () => Promise.reject(new Error('unused')), sync: {} as SyncCalls, catalog: {} as never });
+      const trigger = vi.spyOn(engine, 'trigger').mockResolvedValue();
+      engine.notifyWrite();
+      vi.advanceTimersByTime(WRITE_DELAY_MS - 1);
+      expect(trigger).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(trigger).toHaveBeenCalledWith('write');
+      engine.notifyWrite();
+      engine.stop();
+      vi.advanceTimersByTime(WRITE_DELAY_MS);
+      expect(trigger).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('edges', () => {
+  it('treats a call whose bound has already passed as unreachable without waiting for it', async () => {
+    const r = await rig({ deps: { timeoutSignal: () => AbortSignal.abort(new DOMException('late', 'TimeoutError')) } });
+    await r.engine.trigger('start');
+    expect(r.engine.state.value).toMatchObject({ reachability: 'unreachable', lastError: 'late' });
+  });
+
+  it('schedules no retry for a pass that fails after stop()', async () => {
+    const r = await rig();
+    r.server.fault('status', { kind: 'hang' });
+    const run = r.engine.trigger('start');
+    await vi.waitFor(() => expect(r.timeouts.made.length).toBe(1));
+    r.engine.stop();
+    r.timeouts.expireAll();
+    await run;
+    expect(r.timers.pending.size).toBe(0);
+  });
+
+  it('reads only head_id refs of a card as the heads it answers for', async () => {
+    const r = await rig();
+    seedCopies(r.server, 1);
+    const card = create(ProductCardSchema, {
+      headId: headOf(0),
+      requestedAs: [{ ref: { case: 'gtin14', value: '04925176739041' } }, { ref: { case: 'headId', value: headOf(0) } }],
+    });
+    const getProducts = vi.fn(async () => create(GetProductsResponseSchema, { products: [card] }));
+    const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: { getProducts }, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+    await engine.trigger('start');
+    await engine.trigger('manual');
+    expect(getProducts).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a REJECTED edit that came with no reason', async () => {
+    const r = await rig();
+    await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'a' });
+    const real = r.server.sync.push;
+    const push = vi.fn(async (req: Parameters<SyncCalls['push']>[0], opts?: { signal?: AbortSignal }) => {
+      const res = await real(req, opts);
+      res.results[0]!.outcome = PushOutcome.REJECTED;
+      res.results[0]!.reason = '';
+      return res;
+    });
+    const engine = new SyncEngine({ store: async () => r.store, sync: { ...r.server.sync, push }, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+    await engine.trigger('start');
+    expect(engine.state.value.rejected).toEqual([expect.objectContaining({ reason: '' })]);
   });
 });

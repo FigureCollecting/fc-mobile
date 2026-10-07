@@ -1,5 +1,4 @@
 // Shared pieces of the engine tests: manual timers, uuids, server-side copies, a store + engine.
-import { IDBFactory } from 'fake-indexeddb';
 import { SyncOp, occFacetKey } from '@figurecollecting/fc-api-contract';
 import type { LocalDb } from '../../storage/localDb';
 import type { UserStore } from '../../storage/userStore';

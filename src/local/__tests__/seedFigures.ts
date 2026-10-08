@@ -24,7 +24,7 @@ const AS_OF = '2026-10-01T09:30:00.000000Z';
 export async function seedFigures(r: LocalRig, figs: SeedFigure[]): Promise<{ heads: string[]; occs: string[][] }> {
   let counter = 0;
   let occN = 0;
-  const events = [];
+  const events: Parameters<LocalRig['server']['write']>[0] = [];
   const occs: string[][] = [];
   figs.forEach((f, i) => {
     const head = headOf(i);

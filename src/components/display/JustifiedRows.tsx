@@ -9,6 +9,8 @@ import { useElementWidth } from '../../hooks/useElementWidth';
 import { useVirtualizer } from '../../hooks/useVirtualizer';
 import { useScrollParent } from '../../hooks/useScrollParent';
 import { Style } from '../../styles/Style';
+import { SyncBadge } from '../sync/SyncBadge';
+import type { LocalMeta } from '../../local/figures';
 
 const ROW_GAP_PX = 2;
 
@@ -20,13 +22,19 @@ interface JustifiedRowsProps {
   labels?: boolean;
   /** Watermark pinned to the bottom-right of the whole rows container. */
   watermark?: ComponentChildren;
+  /** Select mode: whether a figure is selected (each tile then reports aria-pressed). */
+  isSelected?: (figure: Figure) => boolean;
 }
+
+/** The local-store state of an item (src/local/figures.ts); fixture figures have none. */
+const localOf = (figure: Figure): Pick<LocalMeta, 'kind' | 'sync' | 'asOf'> | undefined =>
+  (figure as Figure & { local?: LocalMeta }).local;
 
 /**
  * Display B — justified rows: fixed row height, native-aspect widths,
  * edge-to-edge, always uncropped.
  */
-export function JustifiedRows({ figures, density, onSelect, labels, watermark }: JustifiedRowsProps) {
+export function JustifiedRows({ figures, density, onSelect, labels, watermark, isSelected }: JustifiedRowsProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const rows = packJustified(figures, width, ROW_HEIGHT[density]);
@@ -72,30 +80,53 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
             class="jrows__row"
             style={{ height: `${row.height}px`, transform: `translateY(${vRow.start}px)` }}
           >
-            {row.items.map((item) => (
-              <button
-                key={item.figure._id}
-                class="jrows__item"
-                style={{ width: `${item.w}px` }}
-                type="button"
-                onClick={onSelect ? () => onSelect(item.figure, item.index) : undefined}
-              >
-                {item.figure.imageUrl ? (
-                  <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" />
-                ) : (
-                  <span class="jrows__placeholder" aria-hidden="true" />
-                )}
-                {labels && (
-                  <span class="jrows__caption" aria-hidden="true">
-                    <span class="jrows__caption-name">{item.figure.name}</span>
-                    {item.figure.manufacturer && (
-                      <span class="jrows__caption-mfr">{item.figure.manufacturer}</span>
-                    )}
-                  </span>
-                )}
-                <span class="sr-only">{item.figure.name}</span>
-              </button>
-            ))}
+            {row.items.map((item) => {
+              const local = localOf(item.figure);
+              const quantity = item.figure.quantity ?? 1;
+              const badgeId = local === undefined ? undefined : `sync-${item.figure._id}-${local.kind}`;
+              return (
+                <button
+                  key={item.figure._id}
+                  class={`jrows__item ${isSelected?.(item.figure) ? 'jrows__item--selected' : ''}`}
+                  style={{ width: `${item.w}px` }}
+                  type="button"
+                  data-sync={local?.sync}
+                  data-quantity={local === undefined ? undefined : quantity}
+                  aria-describedby={badgeId}
+                  aria-pressed={isSelected === undefined ? undefined : isSelected(item.figure)}
+                  onClick={onSelect ? () => onSelect(item.figure, item.index) : undefined}
+                >
+                  {item.figure.imageUrl ? (
+                    <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" />
+                  ) : (
+                    // A placeholder plate (MG-2): no image anywhere, so the figure's name.
+                    <span class="jrows__plate" aria-hidden="true">
+                      <span class="jrows__plate-name">{item.figure.name}</span>
+                      {item.figure.manufacturer && <span class="jrows__plate-mfr">{item.figure.manufacturer}</span>}
+                    </span>
+                  )}
+                  {labels && item.figure.imageUrl && (
+                    <span class="jrows__caption" aria-hidden="true">
+                      <span class="jrows__caption-name">{item.figure.name}</span>
+                      {item.figure.manufacturer && (
+                        <span class="jrows__caption-mfr">{item.figure.manufacturer}</span>
+                      )}
+                    </span>
+                  )}
+                  {quantity > 1 && (
+                    <span class="jrows__count" aria-hidden="true">
+                      ×{quantity}
+                    </span>
+                  )}
+                  {local !== undefined && (
+                    <span class="jrows__sync" aria-hidden="true">
+                      <SyncBadge sync={local.sync} asOf={local.asOf} id={badgeId!} />
+                    </span>
+                  )}
+                  <span class="sr-only">{item.figure.name}</span>
+                </button>
+              );
+            })}
           </div>
         );
       })}
@@ -155,10 +186,61 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark }:
           object-fit: contain;
         }
 
-        .jrows__placeholder {
+        .jrows__plate {
           position: absolute;
           inset: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          gap: 2px;
+          padding: 6px;
+          text-align: left;
           background: linear-gradient(180deg, var(--surface-tertiary), var(--surface-secondary));
+          overflow: hidden;
+        }
+
+        .jrows__plate-name {
+          font-size: var(--font-xs, 11px);
+          font-weight: 600;
+          color: var(--text-primary);
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
+        .jrows__plate-mfr {
+          font-size: 10px;
+          color: var(--text-tertiary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .jrows__count {
+          position: absolute;
+          top: 4px;
+          right: 4px;
+          z-index: 2;
+          padding: 0 5px;
+          border-radius: 999px;
+          background: var(--brand-500);
+          color: #fff;
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 16px;
+        }
+
+        .jrows__sync {
+          position: absolute;
+          top: 4px;
+          left: 4px;
+          z-index: 2;
+        }
+
+        .jrows__item--selected {
+          outline: 3px solid var(--brand-500);
+          outline-offset: -3px;
         }
 
         /* ── Nameplate: bottom-gradient caption over the image ────────────── */

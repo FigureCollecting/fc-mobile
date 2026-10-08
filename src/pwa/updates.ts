@@ -33,6 +33,7 @@ export function startServiceWorker({
   // newer build taking over (from this tab or another) and the old precache is
   // gone: reload. The plugin reloads only pages that had a controller at load.
   let armed = false;
+  let registered: Pick<ServiceWorkerRegistration, 'active'> | undefined;
   const reloadOnTakeover = (): void => {
     if (armed) return;
     armed = true;
@@ -41,6 +42,9 @@ export function startServiceWorker({
   apply = register({
     immediate: true,
     onNeedRefresh() {
+      // The plugin also calls this for a worker another page registered, even the first install,
+      // which waits for nothing and claims this page: not an update, and no reload mid-sign-in.
+      if (registered !== undefined && registered.active === null) return;
       updateReady.value = true;
       reloadOnTakeover();
     },
@@ -48,6 +52,7 @@ export function startServiceWorker({
     onNeedReload() {},
     onRegisteredSW(swUrl, registration) {
       if (registration === undefined) return;
+      registered = registration;
       // With no active build yet, the first install's claim of this page is not an update.
       if (registration.active !== null) reloadOnTakeover();
       watchForUpdates(swUrl, registration, fetchImpl);

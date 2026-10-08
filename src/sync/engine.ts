@@ -264,6 +264,9 @@ export class SyncEngine {
       this.again = false;
       outcome = await this.pass();
     } while (this.again && !this.stopped);
+    // Only the session holds sync. A refusal it did not turn into a held status (a proof the
+    // browser replayed on its own and the server refused as a replay) is retried like any failure.
+    if (outcome === 'paused' && this.deps.blocked?.() !== true) outcome = 'error';
     this.set({ phase: outcome === 'paused' ? 'paused' : 'idle' });
     if (outcome === 'ok') this.attempt = 0;
     else if (outcome !== 'paused') this.scheduleRetry();

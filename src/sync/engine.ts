@@ -228,6 +228,11 @@ export class SyncEngine {
     return out;
   }
 
+  /** Read through the signed-in user's store. */
+  async read<T>(fn: (store: UserStore) => Promise<T>): Promise<T> {
+    return fn(await this.deps.store());
+  }
+
   /** The user has read the REJECTED edits shown; they stay in the store, marked seen. */
   async dismissRejected(): Promise<void> {
     const store = await this.deps.store();

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { signal } from '@preact/signals';
 import { ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { NetworkError } from '../../auth/errors';
 import type { AuthStatus } from '../../auth/statusGate';
 import type { LocalDb } from '../../storage/localDb';
+import { UserStore } from '../../storage/userStore';
 import { HELD_STATUSES, NotEnrolledError, createBrowserSync, startBrowserSync, storeProvider, type SyncSession } from '../browser';
 import { FakeCoordinator } from './fakeCoordinator';
 import { DEVICE, OTHER_DEVICE, T0, freshDb } from './harness';
@@ -15,8 +17,9 @@ function session(db: LocalDb, status: AuthStatus = 'signed-in') {
   let current = db;
   return {
     status: state,
-    fetch: vi.fn(async () => {
-      throw new TypeError('Failed to fetch');
+    // The DPoP fetch reports a request that never got an answer as a NetworkError.
+    fetch: vi.fn(async (_input: string, _init?: RequestInit) => {
+      throw new NetworkError(new TypeError('Failed to fetch'));
     }),
     sub: () => sub,
     deviceKey: vi.fn(async () => (deviceId === undefined ? {} : { deviceId })),
@@ -60,6 +63,28 @@ describe('storeProvider', () => {
     s.set.device(DEVICE);
     s.set.sub(undefined);
     await expect(storeProvider(s)()).rejects.toThrow('not enrolled');
+  });
+
+  it('keeps a newer store when an older open fails after it', async () => {
+    const { db } = await freshDb();
+    const { db: other } = await freshDb();
+    const s = session(db);
+    s.localDb.mockResolvedValueOnce(db).mockResolvedValue(other);
+    let fail!: (err: Error) => void;
+    const real = UserStore.open.bind(UserStore);
+    const open = vi
+      .spyOn(UserStore, 'open')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)))
+      .mockImplementation(real);
+    const provide = storeProvider(s);
+    const older = provide();
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    const newer = await provide();
+    fail(new Error('the old connection closed'));
+    await expect(older).rejects.toThrow('closed');
+    expect(await provide()).toBe(newer);
+    expect(open).toHaveBeenCalledTimes(2);
+    open.mockRestore();
   });
 
   it('forgets a store that failed to open, so the next call tries again', async () => {

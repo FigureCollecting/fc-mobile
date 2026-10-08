@@ -97,7 +97,7 @@ describe('OidcSession', () => {
     h.startBrowserSync.mockImplementation(() => sync);
     renderWithProviders(<OidcSession />);
     expect(await screen.findByText(/Can't reach server\. 4 changes waiting to sync\./)).toBeInTheDocument();
-    expect(h.startBrowserSync).toHaveBeenCalledWith(h.session);
+    expect(h.startBrowserSync.mock.calls[0]![0]).toBe(h.session);
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(sync.engine.dismissRejected).toHaveBeenCalledTimes(1);
     expect(document.querySelector('.toast')).toBeNull();

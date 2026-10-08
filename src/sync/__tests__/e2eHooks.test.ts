@@ -33,6 +33,9 @@ describe('sync e2e hooks', () => {
     r.server.now -= 10 * 60_000; // the device's clock runs 10 min ahead of the server's
     const hooks = createSyncHooks(r.engine);
     await hooks.writeNote(headOf(0), 'x');
+    expect(await hooks.outbox()).toEqual([{ facet_key: ufFacetKey(headOf(0), 'note'), state: 'PENDING' }]);
+    // This session's first Status has been taken (from a clock far ahead, so it rebased nothing):
+    // the edit goes out as minted and the server answers version_future.
     await r.store.onStatus({ cursor: '', serverNowIso: '2099-01-01T00:00:00.000000Z', pendingReview: 0n }, 0);
     await hooks.syncNow();
     expect((await hooks.outbox())[0]).toMatchObject({ state: 'REJECTED', reason: 'version_future' });

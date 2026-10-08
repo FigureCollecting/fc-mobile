@@ -210,7 +210,10 @@ function seededInIdb(page: Page, sub: string): Promise<{ copies: number; product
   }, sub);
 }
 
-/** Raw IndexedDB, in the page: the facet keys user `sub` has PENDING in the outbox. */
+/**
+ * Raw IndexedDB, in the page: the facet keys of user `sub`'s unanswered edits. A failed Push leaves
+ * an edit PENDING or, once frozen into a batch, IN_FLIGHT (retried as sent): queued either way.
+ */
 function pendingInIdb(page: Page, sub: string): Promise<string[]> {
   return page.evaluate(async (who) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -219,12 +222,12 @@ function pendingInIdb(page: Page, sub: string): Promise<string[]> {
       req.onerror = () => reject(req.error);
     });
     try {
-      const req = db.transaction('outbox').objectStore('outbox').index('by_sub_state').getAll(IDBKeyRange.bound([who, 'PENDING'], [who, 'PENDING', Infinity]));
-      const rows = await new Promise<Array<{ facet_key: string }>>((resolve, reject) => {
+      const req = db.transaction('outbox').objectStore('outbox').index('by_sub').getAll(IDBKeyRange.bound([who], [who, Infinity]));
+      const rows = await new Promise<Array<{ facet_key: string; state: string }>>((resolve, reject) => {
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
       });
-      return rows.map((e) => e.facet_key);
+      return rows.filter((e) => e.state === 'PENDING' || e.state === 'IN_FLIGHT').map((e) => e.facet_key);
     } finally {
       db.close();
     }

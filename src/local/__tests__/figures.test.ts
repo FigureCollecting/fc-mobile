@@ -146,6 +146,16 @@ describe('buildFigures', () => {
     expect(buildFigures(inputs(facets, [product(survivor)]))[0]).toMatchObject({ rating: 8, local: { ufTarget: { score: H[0] } } });
   });
 
+  it("dates an item's as-of by this device's last sync, the card's facts by the card", () => {
+    const synced = Date.parse('2026-10-07T19:05:00Z');
+    const [f] = buildFigures({ ...inputs(copy(O[0], H[0], 'owned'), [product(card(H[0]))], true), syncedAt: synced });
+    expect(f!.local).toMatchObject({ sync: 'offline-stale', asOf: '2026-10-07T19:05:00.000Z', factsAsOf: AS_OF });
+    const [never] = buildFigures({ ...inputs(copy(O[0], H[0], 'owned'), [product(card(H[0]))], true), syncedAt: null });
+    expect(never!.local).toMatchObject({ asOf: AS_OF, factsAsOf: AS_OF });
+    const [bare] = buildFigures({ ...inputs(copy(O[0], H[0], 'owned')), syncedAt: null });
+    expect(bare!.local).toMatchObject({ asOf: null, factsAsOf: null });
+  });
+
   it('carries the wishability', () => {
     const facets = [...copy(O[0], H[0], 'wished'), row(ufFacetKey(H[0], 'wishability'), { wishability: 4 })];
     expect(buildFigures(inputs(facets))[0]).toMatchObject({ wishRating: 4 });

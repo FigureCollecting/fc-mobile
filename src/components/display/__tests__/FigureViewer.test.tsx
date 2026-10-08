@@ -57,8 +57,8 @@ describe('FigureViewer (Display D)', () => {
       expect(first.width).toBe(meta.width);
       expect(first.height).toBe(meta.height);
     } else {
-      // gitignored fixture images absent (CI): html fallback slide
-      expect(first.html).toContain('No image');
+      // gitignored fixture images absent (CI): html fallback slide, a plate naming the figure
+      expect(first.html).toContain(FIXTURE_FIGURES[0].name);
     }
     expect(pswp.options.initialZoomLevel).toBe('fit');
   });
@@ -68,9 +68,30 @@ describe('FigureViewer (Display D)', () => {
     renderWithProviders(<FigureViewer figures={noImage} index={0} onClose={() => {}} />);
     await waitFor(() => expect(instances).toHaveLength(1));
     const slide = instances[0].options.dataSource[0];
-    expect(slide.html).toContain('No image');
     expect(slide.html).not.toMatch(/style=/);
     expect(slide.html).toContain('class="figure-viewer__no-image"');
+  });
+
+  it('draws a placeholder plate naming the figure and its maker, its text escaped', async () => {
+    const figure = { ...FIXTURE_FIGURES[0]!, imageUrl: undefined, name: 'Rem <b>&</b> Ram', manufacturer: 'A "Co"' };
+    renderWithProviders(<FigureViewer figures={[figure]} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const html: string = instances[0].options.dataSource[0].html;
+    expect(html).toContain('Rem &lt;b&gt;&amp;&lt;/b&gt; Ram');
+    expect(html).toContain('A &quot;Co&quot;');
+    expect(html).not.toContain('<b>');
+  });
+
+  it('closes itself before it opens the full detail of a local figure', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const local = { ...FIXTURE_FIGURES[0]!, imageUrl: undefined, local: { headId: 'h1', kind: 'owned', sync: 'known', asOf: null } } as never;
+    const { currentPath } = renderWithProviders(<FigureViewer figures={[local]} index={0} onClose={onClose} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    await user.click(screen.getByRole('button', { name: 'Copies and actions' }));
+    expect(instances[0]!.destroyed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(currentPath()).toBe('/figure/h1');
   });
 
   it('shows the tapped figure data in the pull-up sheet', async () => {

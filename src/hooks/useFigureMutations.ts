@@ -118,8 +118,8 @@ export interface CopyActions {
   /** Bulk 'Move N copies to…' a collection (a tab is its kind's default). */
   moveCopies(occIds: string[], collection: string): Promise<void>;
   removeCopy(occId: string): Promise<string | undefined>;
-  /** Keep the lowest of N identical copies. */
-  dedupe(headId: string, kind: OccurrenceStatus): Promise<string[]>;
+  /** Keep the lowest of N identical copies, across every head of the figure (LocalMeta.heads). */
+  dedupe(heads: readonly string[], kind: OccurrenceStatus): Promise<string[]>;
   /** 'Mark sold/traded/gifted/…': former, with the disposal, in one batch. */
   markFormer(occIds: string[], disposal: Disposal): Promise<void>;
   /** A new copy of a figure (from a search result or a barcode lookup). */
@@ -133,7 +133,7 @@ export function useCopyActions(): CopyActions {
       markArrived: (occId) => run((s) => s.markArrived({ occ_id: occId })),
       moveCopies: (occIds, collection) => run((s) => s.moveCopies(occIds, collection)),
       removeCopy: (occId) => run((s) => s.removeCopy({ occ_id: occId })),
-      dedupe: (headId, kind) => run((s) => s.dedupe(headId, kind)),
+      dedupe: (heads, kind) => run((s) => s.dedupe(heads, kind)),
       markFormer: (occIds, disposal) => run((s) => s.markFormer(occIds, disposal)),
       addToCollection: (headId, kind) => run((s) => s.createCopy(headId, kind)),
     };

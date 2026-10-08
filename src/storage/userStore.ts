@@ -315,11 +315,15 @@ export class UserStore {
     );
   }
 
-  /** Dedupe: remove every shown copy of a figure and kind but the lowest (the one PICKS keeps). */
-  async dedupe(headId: string, kind: OccurrenceStatus): Promise<string[]> {
+  /**
+   * Dedupe: remove every shown copy of a figure and kind but the lowest (the one PICKS keeps). The
+   * figure is its head set (an ER merge's requested_as, sync.proto rule 6), as LocalMeta.heads names it.
+   */
+  async dedupe(heads: readonly string[], kind: OccurrenceStatus): Promise<string[]> {
     let removed: string[] = [];
     await this.mutate((view) => {
-      removed = shownCopies(view, { head_id: headId, kind })
+      removed = shownCopies(view, { kind })
+        .filter((c) => heads.includes(c.head_id!))
         .slice(1)
         .map((c) => c.occ_id);
       return removed.map((occ) => ({ key: occFacetKey(occ, 'status'), fields: null }));

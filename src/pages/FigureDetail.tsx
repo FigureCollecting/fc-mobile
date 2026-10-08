@@ -182,7 +182,7 @@ export function FigureDetail() {
           onMove={setMoving}
           onDispose={setDisposing}
           onRemove={(occ) => void actions.removeCopy(occ).catch(failed('remove the copy'))}
-          onDedupe={(kind: OccurrenceStatus) => void actions.dedupe(local.headId, kind).catch(failed('dedupe'))}
+          onDedupe={(kind: OccurrenceStatus) => void actions.dedupe(local.heads, kind).catch(failed('dedupe'))}
         />
 
         {figure.rating !== undefined && (

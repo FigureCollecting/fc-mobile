@@ -201,7 +201,7 @@ test('(1) a cold start hydrates all 1,200 holdings and their products', async ({
 
 // ------------------------------------------------------------------ (2) offline reload
 
-test('(2) offline, by setOffline and by killing the servers, a reload still renders the app with the collection and a deep link', async ({ context, browserName }) => {
+test('(2) offline, by setOffline and by killing the servers, a reload still renders the app with the collection and a deep link', async ({ context, browserName }, testInfo) => {
   test.setTimeout(240_000);
   const page = await openApp(context, USER_A);
   await expect.poll(() => seededShown(page), { timeout: 120_000 }).toBe(SEED);
@@ -226,9 +226,15 @@ test('(2) offline, by setOffline and by killing the servers, a reload still rend
     await hooksReady(page);
   };
 
-  await context.setOffline(true);
-  await offlineChecks();
-  await context.setOffline(false);
+  // Playwright's WebKit cannot reload a page under context.setOffline (it reports an internal
+  // error at the navigation, service worker or not), so there it takes the true outage only.
+  if (browserName === 'webkit') {
+    testInfo.annotations.push({ type: 'webkit', description: 'setOffline reload not expressible; true outage only' });
+  } else {
+    await context.setOffline(true);
+    await offlineChecks();
+    await context.setOffline(false);
+  }
 
   await stack.edge.stop(); // a true outage: every request to the origin is refused
   await offlineChecks();
@@ -246,6 +252,24 @@ interface EditRun {
   secondDevice: { statuses: string[]; note: string | undefined };
 }
 
+/**
+ * Reload while offline. Playwright's WebKit cannot navigate under context.setOffline, so there the
+ * reload happens in a true outage (the edge stopped) and the context goes back offline after it.
+ */
+async function reloadOffline(context: BrowserContext, page: Page, testInfo: TestInfo): Promise<void> {
+  const webkit = testInfo.project.use.defaultBrowserType === 'webkit';
+  if (webkit) {
+    await stack.edge.stop();
+    await context.setOffline(false);
+  }
+  await page.reload();
+  await hooksReady(page);
+  if (webkit) {
+    await context.setOffline(true);
+    await stack.edge.start();
+  }
+}
+
 /** Change the status of 3 items and a note on 1 offline, reload offline, reconnect, and read it on a second device. */
 async function offlineEdits(context: BrowserContext, browser: Browser, testInfo: TestInfo): Promise<EditRun> {
   const page = await openApp(context, USER_B);
@@ -259,8 +283,7 @@ async function offlineEdits(context: BrowserContext, browser: Browser, testInfo:
   await expect.poll(async () => (await syncState(page)).pending).toBe(4);
   const pendingOffline = (await syncState(page)).pending;
 
-  await page.reload();
-  await hooksReady(page);
+  await reloadOffline(context, page, testInfo);
   await expect.poll(async () => (await syncState(page)).pending, { timeout: 15_000 }).toBe(4);
   await expect(statusLine(page)).toContainText('4 changes waiting to sync', { timeout: 15_000 });
   const lineAfterReload = (await statusLine(page).innerText()).trim();
@@ -320,28 +343,47 @@ test('(8) with window.SyncManager deleted (the iOS path), every result of (3) is
 
 // ------------------------------------------------------------------ (4) captive Wi-Fi
 
-test("(4) captive Wi-Fi: /api hangs while onLine stays true; edits queue, no error toast, the status reads 'can't reach server', and releasing drains", async ({ context }) => {
+test("(4) captive Wi-Fi: /api hangs while onLine stays true; edits queue, no error toast, the status reads 'can't reach server', and releasing drains", async ({ context, browserName }, testInfo) => {
   test.setTimeout(120_000);
   const page = await openApp(context, USER_B);
   await settled(page);
   const [copy] = await freshCopies(page, 1, nextOffset());
   const held: Array<() => Promise<void>> = [];
   let captive = true;
-  await page.route('**/api/**', async (route) => {
-    if (!captive) return route.fallback();
-    // Never answered while captive: the request just hangs, as behind a captive portal.
-    held.push(() => route.fallback().catch(() => undefined));
-  });
+  let release: () => Promise<void>;
+  if (browserName === 'webkit') {
+    // Playwright's WebKit does not route a page's requests while a service worker controls it, so
+    // the hang is made one hop later, at the edge: the request is accepted and never answered.
+    testInfo.annotations.push({ type: 'webkit', description: 'captive /api made by an edge hang, not page.route' });
+    await stack.edge.fault({ match: '^/api/', action: 'hang', times: 0 });
+    release = async () => {
+      await stack.edge.clearFaults();
+      await stack.edge.releaseHung();
+    };
+  } else {
+    await page.route('**/api/**', async (route) => {
+      if (!captive) return route.fallback();
+      // Never answered while captive: the request just hangs, as behind a captive portal.
+      held.push(() => route.fallback().catch(() => undefined));
+    });
+    release = async () => {
+      captive = false;
+      for (const r of held.splice(0)) await r();
+    };
+  }
+  const from = await stack.edge.cursor();
   await page.evaluate(([occ]) => window.__fcSync!.setStatus(occ!, 'owned'), [copy!.occ]);
   await page.evaluate(([h]) => window.__fcSync!.writeNote(h!, 'captive'), [copy!.head]);
   await expect(statusLine(page)).toContainText("Can't reach server", { timeout: 20_000 });
   expect(await page.evaluate(() => navigator.onLine)).toBe(true);
   expect((await syncState(page)).pending).toBe(2);
   await expect(page.locator('.toast-item')).toHaveCount(0);
-  expect(held.length).toBeGreaterThan(0);
+  // Something was asked of /api and left hanging, and nothing was pushed.
+  if (browserName === 'webkit') expect((await stack.edge.log(from)).some((e) => e.fault === 'hang')).toBe(true);
+  else expect(held.length).toBeGreaterThan(0);
+  expect((await stack.edge.log(from)).filter((e) => e.path === PUSH_PATH && e.status === 200)).toEqual([]);
 
-  captive = false;
-  for (const release of held.splice(0)) await release();
+  await release();
   await expect
     .poll(async () => (await page.evaluate(() => window.__fcSync!.outbox())).filter((e) => e.state !== 'APPLIED').length, { timeout: 60_000 })
     .toBe(0);

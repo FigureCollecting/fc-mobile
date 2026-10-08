@@ -19,13 +19,14 @@ export default function OidcSession() {
   useEffect(() => {
     // boot() never rejects: a store this build cannot open shows the reload banner.
     void session.boot();
+    const e2e = import.meta.env.VITE_E2E_HOOKS === 'true';
+    if (e2e) void import('../../auth/e2eHooks').then((m) => m.installE2eHooks(session));
+    // The stack's auth suite counts the edge's requests exactly and turns sync off; only an e2e build reads the switch.
+    if (e2e && localStorage.getItem('fc.e2e.sync') === 'off') return;
     // Sync holds until the session can sync, and queues edits meanwhile.
     const started = startBrowserSync(session);
     setSync(started);
-    if (import.meta.env.VITE_E2E_HOOKS === 'true') {
-      void import('../../auth/e2eHooks').then((m) => m.installE2eHooks(session));
-      void import('../../sync/e2eHooks').then((m) => m.installSyncHooks(started.engine));
-    }
+    if (e2e) void import('../../sync/e2eHooks').then((m) => m.installSyncHooks(started.engine));
   }, [session]);
 
   if (location === '/callback') return null;

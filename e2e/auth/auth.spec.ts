@@ -150,6 +150,8 @@ const TWENTY_MIN = 20 * 60_000;
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+  // This suite counts the edge's requests exactly: the sync engine's own calls (e2e/sync) stay off.
+  await context.addInitScript(() => localStorage.setItem('fc.e2e.sync', 'off'));
   await stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
   await stack.issuer.loginAs(USER_A.sub);
 });

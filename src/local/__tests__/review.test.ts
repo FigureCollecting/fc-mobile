@@ -3,7 +3,7 @@
 // export is about 1,144 rows, so that is the scale it must answer at on the main thread.
 import { describe, expect, it, vi } from 'vitest';
 import { create } from '@bufbuild/protobuf';
-import { ProductCardSchema, importItemKey } from '@figurecollecting/fc-api-contract';
+import { ProductCardSchema, importItemKey, occFacetKey } from '@figurecollecting/fc-api-contract';
 import type { ProductRecord } from '../../storage/records';
 import { copy, row } from '../../sync/__tests__/viewFixtures';
 
@@ -62,6 +62,26 @@ describe('buildReview cost', () => {
     // One copy (head 0) and two items: head 1's figure has no copy left.
     const set = buildReview(store(1, 2));
     expect(set.divergences[1]).toMatchObject({ headId: head(1), name: 'A figure no longer in your collection', parts: [{ label: 'Owned', app: '1', appEditedAt: null, mfc: '2' }] });
+  });
+
+  it('dates each kind part from that kind\'s own copy when one figure is held in two kinds', () => {
+    const edited = (o: string, status: string, at: string) => row(occFacetKey(o, 'status'), { status, edited_at: at, tz: 'America/Chicago' }, { stamp: false });
+    const itemCounts = { owned: { app: 1, mfc: 2 }, ordered: { app: 0, mfc: 0 }, wished: { app: 1, mfc: 0 } };
+    const facets = [
+      row(occFacetKey(occ(0), 'head'), { head_id: head(0) }),
+      edited(occ(0), 'owned', '2026-09-01T10:00:00.000-05:00'),
+      row(occFacetKey(occ(1), 'head'), { head_id: head(0) }),
+      edited(occ(1), 'wished', '2026-10-01T10:00:00.000-05:00'),
+      row(importItemKey('mfc', 'figure', head(0)), { rev: 'r0', kind: 'conflict', import: 1, counts: itemCounts, fields }, { stamp: false }),
+    ];
+    const card = create(ProductCardSchema, { headId: head(0), requestedAs: [{ ref: { case: 'headId', value: head(0) } }], title: { value: 'Two kinds', asOf: '2026-10-01T09:30:00.000000Z' } });
+    const products: ProductRecord[] = [{ sub: 'user-a', head_id: head(0), card, as_of: '2026-10-01T09:30:00.000000Z', fetched_at: 0 }];
+    const inputs = { sub: 'user-a', facets, products, stale: false };
+    const view = buildView(facets);
+    const figures = buildFigures(inputs, view);
+    expect(figures.map((f) => [f.local.kind, f.createdAt])).toEqual([['owned', '2026-09-01T10:00:00.000-05:00'], ['wished', '2026-10-01T10:00:00.000-05:00']]);
+    const set = buildReview({ ...inputs, view, figures });
+    expect(set.conflicts[0]!.parts.map((p) => [p.label, p.appEditedAt])).toEqual([['Owned', '2026-09-01T10:00:00.000-05:00'], ['Wished', '2026-10-01T10:00:00.000-05:00']]);
   });
 
   it('answers 1,144 review items over 1,200 copies in under 100 ms', () => {

@@ -115,6 +115,14 @@ describe('useSearch', () => {
     expect(result.current.results).toEqual([]);
   });
 
+  it("counts two Latin characters as a search: 'sp' finds Spike Spiegel", async () => {
+    await seeded();
+    const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
+    await search(result, 'sp');
+    expect(result.current.hasSearched).toBe(true);
+    expect(result.current.results.map((r) => r.id)).toEqual([headOf(2)]);
+  });
+
   it('follows the store: a figure added later is found', async () => {
     const r = await seeded();
     const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
@@ -134,6 +142,8 @@ describe('useSearch', () => {
     const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
     await search(result, 'miku');
     expect(result.current.results.map((x) => x.id)).toEqual([headOf(0)]);
+    // As its first kind (owned, ordered, wished, former), the tab it is held in.
+    expect(result.current.figures.map((f) => [f.local.kind, f.collectionStatus])).toEqual([['owned', 'owned']]);
   });
 
   it('still searches where performance marks throw', async () => {

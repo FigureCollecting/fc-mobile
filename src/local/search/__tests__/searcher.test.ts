@@ -3,7 +3,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LocalSearcher, WORKER_THRESHOLD_MS, browserWorker, type WorkerLike } from '../searcher';
 import { createWorkerHandler, type FromWorker, type ToWorker } from '../workerHandler';
-import type { SearchDoc } from '../ngram';
+import { NgramIndex, type SearchDoc } from '../ngram';
 
 const DOCS: SearchDoc[] = [
   { id: 'a', fields: ['Hatsune Miku'] },
@@ -104,6 +104,38 @@ describe('LocalSearcher', () => {
     s.update(DOCS);
     s.dispose();
     expect(worker.terminate).toHaveBeenCalled();
+    expect(await s.search('miku')).toEqual([]);
+  });
+});
+
+describe('LocalSearcher after dispose (the page unmounted)', () => {
+  it('builds nothing and starts no worker on a later update, however slow a build would be', async () => {
+    const makeWorker = vi.fn(fakeWorker);
+    const build = vi.spyOn(NgramIndex, 'build');
+    const s = new LocalSearcher({ now: clockTaking(99), makeWorker });
+    s.dispose();
+    s.update(DOCS);
+    expect(build).not.toHaveBeenCalled();
+    expect(makeWorker).not.toHaveBeenCalled();
+    expect(s.mode).toBe('main');
+    expect(await s.search('miku')).toEqual([]);
+  });
+
+  it('does no work on the page when the worker it terminated reports an error', async () => {
+    let fail: ((e: unknown) => void) | undefined;
+    const worker: WorkerLike = {
+      postMessage: () => undefined,
+      addEventListener: (type, fn) => {
+        if (type === 'error') fail = fn as never;
+      },
+      terminate: vi.fn(),
+    };
+    const s = new LocalSearcher({ now: clockTaking(99), makeWorker: () => worker });
+    s.update(DOCS);
+    s.dispose();
+    const build = vi.spyOn(NgramIndex, 'build');
+    fail!(new Event('error'));
+    expect(build).not.toHaveBeenCalled();
     expect(await s.search('miku')).toEqual([]);
   });
 });

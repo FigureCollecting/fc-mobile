@@ -16,6 +16,11 @@ describe('normalize', () => {
   it('folds width (NFKC), case and katakana to hiragana, and collapses white space', () => {
     expect(normalize('  ＭＩＫＵ  ﾐｸ\tミク ')).toBe('miku みく みく');
   });
+
+  it('folds the whole katakana block that has hiragana, its first (ァ) and last (ヶ) included', () => {
+    expect(normalize('ァイヶ')).toBe('ぁいゖ');
+    expect(normalize('ヷ')).toBe('ヷ');
+  });
 });
 
 describe('grams', () => {

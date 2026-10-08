@@ -113,6 +113,17 @@ describe('markFormer: no longer owned, with its disposal, in one batch', () => {
   });
 });
 
+describe('moveCopies: a collection that does not exist', () => {
+  it('refuses it for copies of its kind as for any other, writing nothing', async () => {
+    const store = await fresh();
+    const o1 = await store.createCopy(HEAD[0], 'owned');
+    const before = (await store.listOutbox()).length;
+    await expect(store.moveCopies([o1], 'owned/0c0c0c0c-0000-4000-8000-000000000000')).rejects.toMatchObject({ code: 'no_collection' });
+    expect((await store.listOutbox()).length).toBe(before);
+    expect(shownCopies(await store.getView())[0]!.shown_in).toBe('owned/default');
+  });
+});
+
 describe('dedupe: keep the lowest of N identical copies', () => {
   it('tombstones every shown copy of the figure and kind but the lowest, in one group, and returns them', async () => {
     const store = await fresh();

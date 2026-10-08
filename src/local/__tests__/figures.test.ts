@@ -173,6 +173,20 @@ describe('buildFigures', () => {
     expect(f).toMatchObject({ createdAt: '2026-10-05T08:00:00.000-05:00', updatedAt: '2026-10-05T08:00:00.000-05:00', tags: ['Shelf A'] });
   });
 
+  it("keeps a figure's tags out of its uf values: score, note and wishability only", () => {
+    const t = 'e1000000-0000-4000-8000-0000000000e1';
+    const facets = [
+      ...copy(O[0], H[0], 'owned'),
+      row(`tag/${t}/name`, { name: 'Shelf A' }),
+      row(`uf/${H[0]}/tag/${t}`, {}),
+      row(`uf/${H[0]}/owned/tag/${t}`, {}),
+      note(H[0], 'boxed'),
+    ];
+    const [f] = buildFigures(inputs(facets));
+    expect(Object.keys(f!.local.uf)).toEqual(['note']);
+    expect(f).toMatchObject({ note: 'boxed', tags: ['Shelf A'] });
+  });
+
   it('files a copy in a user collection without making it another item', () => {
     const facets = [collection('owned', C[0], 'Shelf'), ...copy(O[0], H[0], 'owned', `owned/${C[0]}`), ...copy(O[1], H[0], 'owned')];
     expect(buildFigures(inputs(facets)).map((f) => [f.quantity, f.local.copies.map((c) => c.shown_in)])).toEqual([[2, [`owned/${C[0]}`, 'owned/default']]]);

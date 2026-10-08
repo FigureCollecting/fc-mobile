@@ -14,13 +14,9 @@ import { AuthRequiredError, ReloadRequiredError } from '../../auth/errors';
 import {
   BACKOFF_MAX_MS,
   BACKOFF_MIN_MS,
-  DELTA_PAGE,
-  PROBE_TIMEOUT_MS,
   PRODUCT_BATCH,
-  PRODUCT_TTL_MS,
   PUSH_BATCH,
   SyncEngine,
-  WRITE_DELAY_MS,
   backoffDelay,
   classify,
   type SyncCalls,
@@ -43,7 +39,7 @@ describe('hydrate: Delta to has_more=false in pages of 500, then GetProducts in 
     expect(await shown(r)).toBe(1200);
     expect((await r.store.listProducts()).length).toBe(1200);
     const deltas = r.server.calls.filter((c) => c.rpc === 'delta').map((c) => c.request as { cursor: string; limit: number });
-    expect(deltas.map((d) => d.limit)).toEqual([DELTA_PAGE, DELTA_PAGE, DELTA_PAGE, DELTA_PAGE, DELTA_PAGE]);
+    expect(deltas.map((d) => d.limit)).toEqual([500, 500, 500, 500, 500]);
     expect(deltas[0]!.cursor).toBe('');
     const batches = r.server.calls.filter((c) => c.rpc === 'getProducts').map((c) => (c.request as { refs: unknown[] }).refs.length);
     expect(batches).toEqual([200, 200, 200, 200, 200, 200]);
@@ -110,7 +106,7 @@ describe('hydrate: Delta to has_more=false in pages of 500, then GetProducts in 
     await r.engine.trigger('start');
     const asked = () => r.server.calls.filter((c) => c.rpc === 'getProducts').flatMap((c) => (c.request as { refs: Array<{ ref: { value: string } }> }).refs.map((x) => x.ref.value));
     expect(asked().sort()).toEqual([headOf(0), headOf(1), headOf(2), headOf(10)].sort());
-    clock.advance(PRODUCT_TTL_MS - 1);
+    clock.advance(24 * 60 * 60 * 1000 - 1);
     await r.engine.trigger('manual');
     expect(asked()).toHaveLength(4);
     clock.advance(1);
@@ -155,6 +151,8 @@ describe('drain: frozen Push batches of at most 100 under a stable client_id', (
     expect(sizes).toEqual([100, 100, 50]);
     expect(Math.max(...sizes)).toBe(PUSH_BATCH);
     expect(new Set(pushes(r.server).map((p) => p.clientId)).size).toBe(3);
+    // The probe is bounded at 3 s; every other call (3 Pushes, a Delta, 2 GetProducts) at 30 s.
+    expect(r.timeouts.made.map((t) => t.ms)).toEqual([3_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000]);
     expect((await r.store.listOutbox()).every((e) => e.state === 'APPLIED')).toBe(true);
     expect(r.engine.state.value.pending).toBe(0);
   });
@@ -272,7 +270,7 @@ describe('reachability: a Status probe bounded at 3 s, never navigator.onLine', 
     await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'queued' });
     const run = r.engine.trigger('start');
     await vi.waitFor(() => expect(r.timeouts.made.length).toBe(1));
-    expect(r.timeouts.made[0]!.ms).toBe(PROBE_TIMEOUT_MS);
+    expect(r.timeouts.made[0]!.ms).toBe(3_000);
     r.timeouts.expireAll();
     await run;
     expect(r.engine.state.value).toMatchObject({ reachability: 'unreachable', pending: 1 });
@@ -286,7 +284,7 @@ describe('reachability: a Status probe bounded at 3 s, never navigator.onLine', 
     timeout.mockReturnValue(controller.signal);
     const engine = new SyncEngine({ store: async () => r.store, sync: { ...r.server.sync, status: () => new Promise(() => {}) }, catalog: r.server.catalog, clock: r.clock, timers: r.timers });
     const run = engine.trigger('start');
-    await vi.waitFor(() => expect(timeout).toHaveBeenCalledWith(PROBE_TIMEOUT_MS));
+    await vi.waitFor(() => expect(timeout).toHaveBeenCalledWith(3_000));
     controller.abort(new DOMException('signal timed out', 'TimeoutError'));
     await run;
     expect(engine.state.value.reachability).toBe('unreachable');
@@ -324,7 +322,7 @@ describe('reachability: a Status probe bounded at 3 s, never navigator.onLine', 
     await engine.trigger('start');
     step = 60_000;
     await engine.trigger('manual');
-    expect(onStatus.mock.calls.map((c) => c[1])).toEqual([0, PROBE_TIMEOUT_MS]);
+    expect(onStatus.mock.calls.map((c) => c[1])).toEqual([0, 3_000]);
   });
 
   it('refuses a Status whose server_now_iso it cannot read', async () => {
@@ -388,7 +386,7 @@ describe('triggers', () => {
     const trigger = vi.spyOn(r.engine, 'trigger').mockResolvedValue();
     await r.engine.write((s) => s.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'a' }));
     await r.engine.write((s) => s.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'b' }));
-    expect(r.timers.delays()).toEqual([WRITE_DELAY_MS]);
+    expect(r.timers.delays()).toEqual([1_000]);
     expect(trigger).not.toHaveBeenCalled();
     expect(r.engine.state.value.pending).toBe(2);
     r.timers.fireAll();
@@ -530,7 +528,7 @@ describe('recovery and auth', () => {
     await r.engine.trigger('start');
     expect(r.server.calls).toEqual([]);
     expect(r.engine.state.value).toMatchObject({ phase: 'paused', pending: 1 });
-    expect(r.timers.delays()).toEqual([WRITE_DELAY_MS]);
+    expect(r.timers.delays()).toEqual([1_000]);
     blocked = false;
     await r.engine.trigger('auth');
     expect(r.engine.state.value).toMatchObject({ phase: 'idle', pending: 0 });
@@ -609,13 +607,13 @@ describe('defaults', () => {
       const engine = new SyncEngine({ store: () => Promise.reject(new Error('unused')), sync: {} as SyncCalls, catalog: {} as never });
       const trigger = vi.spyOn(engine, 'trigger').mockResolvedValue();
       engine.notifyWrite();
-      vi.advanceTimersByTime(WRITE_DELAY_MS - 1);
+      vi.advanceTimersByTime(999);
       expect(trigger).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1);
       expect(trigger).toHaveBeenCalledWith('write');
       engine.notifyWrite();
       engine.stop();
-      vi.advanceTimersByTime(WRITE_DELAY_MS);
+      vi.advanceTimersByTime(1_000);
       expect(trigger).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();

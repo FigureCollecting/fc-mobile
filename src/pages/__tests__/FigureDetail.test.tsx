@@ -150,6 +150,38 @@ describe('FigureDetail page', () => {
     expect(new Set(outbox.map((e) => e.group)).size).toBe(1);
   });
 
+  it('opens the disposal sheet blank for the next copy, and saves only what was entered for it', async () => {
+    const r = await open([{ ...MIKU, copies: 2 }]);
+    const user = userEvent.setup();
+    const fields = (sheet: HTMLElement) =>
+      ['How it left', 'Date', 'To or from', 'Price', 'Currency', 'Note'].map((l) => (within(sheet).getByLabelText(l) as HTMLInputElement).value);
+    await user.click(screen.getAllByRole('button', { name: 'Mark sold, traded, gifted…' })[0]!);
+    let sheet = await screen.findByRole('form', { name: 'No longer owned' });
+    await user.selectOptions(within(sheet).getByLabelText('How it left'), 'traded');
+    await user.type(within(sheet).getByLabelText('Date'), '2026-10-01');
+    await user.type(within(sheet).getByLabelText('To or from'), 'Kai');
+    await user.type(within(sheet).getByLabelText('Price'), '120.50');
+    await user.selectOptions(within(sheet).getByLabelText('Currency'), 'JPY');
+    await user.type(within(sheet).getByLabelText('Note'), 'box dented');
+    await user.click(within(sheet).getByRole('button', { name: 'Save' }));
+    await waitFor(async () => expect(await statuses(r)).toEqual(['former', 'owned']));
+    await waitFor(() => expect(screen.queryByRole('form', { name: 'No longer owned' })).toBeNull());
+    // The list shows the first copy as former: the one button left is the second copy's.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Mark sold, traded, gifted…' })).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: 'Mark sold, traded, gifted…' }));
+    sheet = await screen.findByRole('form', { name: 'No longer owned' });
+    expect(fields(sheet)).toEqual(['sold', '', '', '', 'USD', '']);
+    await user.selectOptions(within(sheet).getByLabelText('How it left'), 'gifted');
+    await user.click(within(sheet).getByRole('button', { name: 'Save' }));
+    await waitFor(async () => expect(await statuses(r)).toEqual(['former', 'former']));
+    const copies = shownCopies(await r.store.getView());
+    const [a, b] = ['traded', 'gifted'].map((reason) => copies.find((c) => c.disposal?.['reason'] === reason));
+    expect(a!.disposal).toMatchObject({ reason: 'traded', on: '2026-10-01', counterparty: 'Kai', note: 'box dented', price: { amount: '120.50', currency: 'JPY' } });
+    expect(b!.disposal).toMatchObject({ reason: 'gifted' });
+    for (const k of ['on', 'counterparty', 'price', 'note']) expect(b!.disposal).not.toHaveProperty(k);
+  });
+
   it('edits status, count, score and note through the edit sheet', async () => {
     const r = await open([MIKU]);
     const user = userEvent.setup();

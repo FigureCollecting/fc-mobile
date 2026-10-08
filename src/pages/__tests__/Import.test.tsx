@@ -1,7 +1,7 @@
 // The Import screen (WK-15): the MFC export CSV goes to ImportService (online only, after the
 // outbox has drained), and the screen shows the counts the server returned.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook, screen, waitFor, within } from '@testing-library/preact';
+import { act, renderHook, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';

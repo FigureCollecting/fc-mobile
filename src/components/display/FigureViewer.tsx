@@ -6,6 +6,18 @@ import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
 
+/**
+ * PhotoSwipe's destroy() only closes a gallery whose opening animation has finished; one still
+ * opening keeps its element and listeners. Take them down here either way.
+ */
+function dispose(pswp: PhotoSwipe): void {
+  pswp.destroy();
+  if (pswp.element?.isConnected === true) {
+    pswp.events.removeAll();
+    pswp.element.remove();
+  }
+}
+
 const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!);
 
@@ -87,8 +99,9 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
       cancelled = true;
       if (pswpRef.current) {
         closingRef.current = true;
-        pswpRef.current.destroy();
+        const pswp = pswpRef.current;
         pswpRef.current = null;
+        dispose(pswp);
       }
     };
     // The viewer is mounted per open; result set and start index are fixed.
@@ -112,7 +125,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           const pswp = pswpRef.current;
           closingRef.current = true;
           pswpRef.current = null;
-          pswp?.destroy();
+          if (pswp) dispose(pswp);
           onCloseRef.current();
         }}
       />

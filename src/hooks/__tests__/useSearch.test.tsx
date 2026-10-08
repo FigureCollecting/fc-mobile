@@ -76,6 +76,25 @@ describe('useSearch', () => {
     expect(r.server.calls.length).toBe(calls);
   });
 
+  it('answers nothing, and keeps loading, until the local index exists', async () => {
+    const r = await seeded();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const read = r.engine.read.bind(r.engine);
+    vi.spyOn(r.engine, 'read').mockImplementation(async (fn) => {
+      await gate;
+      return read(fn);
+    });
+    const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
+    act(() => result.current.updateQuery('spiegel'));
+    await new Promise((res) => setTimeout(res, 20));
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.debouncedQuery).toBe('');
+    release();
+    await waitFor(() => expect(result.current.results.map((x) => x.id)).toEqual([headOf(2)]));
+    expect(result.current.isLoading).toBe(false);
+  });
+
   it('times every search with a performance measure', async () => {
     await seeded();
     const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });

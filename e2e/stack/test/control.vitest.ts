@@ -184,6 +184,7 @@ describe('control API and client', () => {
     for (const bad of [{ user: "x' OR '1'='1" }, { user, clientId: "a'b" }, { user, prefix: 'occ/%' }]) {
       await expect(client.sync.counts(bad)).rejects.toThrow(/400/);
     }
+    expect((await request(`${control.url}/sync/counts`)).status).toBe(400);
   });
 
   it('answers 400 for a bad request and 404 for an unknown route', async () => {

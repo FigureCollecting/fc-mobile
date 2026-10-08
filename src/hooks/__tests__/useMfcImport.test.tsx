@@ -37,6 +37,17 @@ describe('runImport', () => {
     expect(statusesBefore()).toBe(6);
   });
 
+  it('stops pulling once the marker reaches the import', async () => {
+    const r = await localRig();
+    r.clients.importMfcExport.mockImplementation(async () => {
+      r.server.write([{ facetKey: importMarkerKey('mfc'), version: serverVersion(T0, 3, '00000000000000000000000000000000'), op: SyncOp.UPSERT, payload: JSON.stringify({ import: 2, export_date: '2026-10-05' }) }]);
+      return create(ImportMfcExportResponseSchema, { importNumber: 2 });
+    });
+    await runImport(r.session, 'ID,Status\n', '2026-10-05');
+    // One sync before the import, one pull that applies its marker.
+    expect(r.server.count('status')).toBe(2);
+  });
+
   it('reads an unreadable marker as no import yet', async () => {
     const r = await localRig();
     r.server.write([{ facetKey: importMarkerKey('mfc'), version: serverVersion(T0, 1, '00000000000000000000000000000000'), op: SyncOp.UPSERT, payload: '{not json' }]);

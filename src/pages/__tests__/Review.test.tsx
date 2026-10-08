@@ -124,6 +124,32 @@ describe('Review', () => {
     await waitFor(async () => expect(await answer(r, headOf(2))).toMatchObject({ rev: 'r-spike', choice: 'keep' }));
   });
 
+  it('treats an answer to an older rev as no answer', async () => {
+    const r = await seeded();
+    await r.engine.write((s) => s.writeFacet(answerKey('mfc', headOf(0)), { item: 'figure', rev: 'r-older', choice: 'take' }));
+    renderWithProviders(<Review />, { initialPath: '/review' });
+    const miku = (await screen.findByText('Conflicted Miku')).closest('li')!;
+    expect(within(miku).getByRole('button', { name: 'Keep app' })).toBeInTheDocument();
+  });
+
+  it('shows on a conflict only the parts it disputes, not one only MFC changed', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Partly' }]);
+    r.server.write([
+      {
+        facetKey: importItemKey('mfc', 'figure', headOf(0)),
+        version: serverVersion(T0, 9, SERVER),
+        op: SyncOp.UPSERT,
+        payload: item('r-p', 'conflict', counts([1, 1, 2]), { note: { status: 'apply', base: 'x', app: 'x', mfc: 'y' } }),
+      },
+    ]);
+    await r.engine.trigger('manual');
+    renderWithProviders(<Review />, { initialPath: '/review' });
+    const partly = (await screen.findByText('Partly')).closest('li')!;
+    expect(partly).toHaveTextContent('Owned');
+    expect(partly).not.toHaveTextContent('Note');
+  });
+
   it('drops an item the server has settled (its facet tombstoned), and says when nothing is left', async () => {
     const r = await localRig();
     renderWithProviders(<Review />, { initialPath: '/review' });

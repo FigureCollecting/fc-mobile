@@ -156,6 +156,7 @@ describe('Discover: barcode lookup through Compare (online only)', () => {
     await user.type(screen.getByLabelText('Barcode'), '4580416940986');
     await user.click(screen.getByRole('button', { name: 'Look up' }));
     expect(await screen.findByText('No figure carries this barcode.')).toBeInTheDocument();
+    expect(r.clients.getProducts).not.toHaveBeenCalled();
   });
 
   it('reports a lookup that failed', async () => {

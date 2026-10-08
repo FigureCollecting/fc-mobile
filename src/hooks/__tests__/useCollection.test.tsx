@@ -85,6 +85,19 @@ describe('useCollection', () => {
     await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('offline-stale'));
   });
 
+  it('marks settled items offline-stale while sync is held (sign in to sync)', async () => {
+    let held = false;
+    const r = await localRig({ deps: { blocked: () => held } });
+    seedCopies(r.server, 1);
+    await r.engine.trigger('start');
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('known'));
+    held = true;
+    await act(() => r.engine.trigger('manual'));
+    expect(r.engine.state.value.phase).toBe('paused');
+    await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('offline-stale'));
+  });
+
   it('surfaces a failed read as an error', async () => {
     const r = await localRig();
     vi.spyOn(r.engine, 'read').mockRejectedValue(new Error('store closed'));

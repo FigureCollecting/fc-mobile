@@ -7,6 +7,7 @@ import { create } from '@bufbuild/protobuf';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { CompareResponseSchema, GetProductImagesResponseSchema, ImportMfcExportResponseSchema } from '@figurecollecting/fc-api-contract';
 import type { AuthStatus } from '../../auth/statusGate';
+import type { SyncEngineDeps } from '../../sync/engine';
 import { makeTestQueryClient } from '../../test/testUtils';
 import { localSession, type LocalSession, type OnlineClients } from '../session';
 import { rig, type Rig } from '../../sync/__tests__/engineSupport';
@@ -22,8 +23,8 @@ export interface LocalRig extends Rig {
   };
 }
 
-export async function localRig(opts: { status?: AuthStatus; publish?: boolean } = {}): Promise<LocalRig> {
-  const r = await rig();
+export async function localRig(opts: { status?: AuthStatus; publish?: boolean; deps?: Partial<SyncEngineDeps> } = {}): Promise<LocalRig> {
+  const r = await rig(opts.deps === undefined ? {} : { deps: opts.deps });
   const status = signal<AuthStatus>(opts.status ?? 'signed-in');
   const clients = {
     compare: vi.fn(async () => create(CompareResponseSchema, { resultJson: JSON.stringify({ heads: [] }) })),

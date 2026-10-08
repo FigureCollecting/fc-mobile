@@ -139,6 +139,13 @@ describe('buildFigures', () => {
     expect(f!.local.uf.note).toMatchObject({ value: 'newer', head: H[1], editedAt: STAMP.edited_at });
   });
 
+  it('keeps the lower head on a tie whichever row comes first', () => {
+    const survivor = card(H[2], { requestedAs: [{ ref: { case: 'headId', value: H[0] } }, { ref: { case: 'headId', value: H[1] } }] });
+    const v = `2026-09-26T12:00:00.000000Z#${'7'.padStart(10, '0')}#00000000000000000000000000000000`;
+    const facets = [...copy(O[0], H[0], 'owned'), ufAt(H[0], 'score', 8, v), ufAt(H[1], 'score', 6, v)];
+    expect(buildFigures(inputs(facets, [product(survivor)]))[0]).toMatchObject({ rating: 8, local: { ufTarget: { score: H[0] } } });
+  });
+
   it('carries the wishability', () => {
     const facets = [...copy(O[0], H[0], 'wished'), row(ufFacetKey(H[0], 'wishability'), { wishability: 4 })];
     expect(buildFigures(inputs(facets))[0]).toMatchObject({ wishRating: 4 });
@@ -192,5 +199,6 @@ describe('jan13', () => {
     expect(jan13('04580416940986')).toBe('4580416940986');
     expect(jan13('14580416940983')).toBe('14580416940983');
     expect(jan13('12345')).toBe('12345');
+    expect(jan13('0123456789012')).toBe('0123456789012'); // 13 digits: already a JAN
   });
 });

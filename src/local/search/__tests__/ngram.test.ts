@@ -65,7 +65,9 @@ describe('NgramIndex', () => {
 
   it('scans for a query too short for a gram, and finds nothing for a blank one', () => {
     expect(index.search('mi')).toEqual(['miku']);
-    expect(index.search('レ')).toEqual(['rem']);
+    expect(index.search('鹿')).toEqual(['madoka']);
+    // れ: the maker アニプレックス (field 1) ranks before the character レム (field 2).
+    expect(index.search('レ')).toEqual(['madoka', 'rem']);
     expect(index.search('   ')).toEqual([]);
   });
 

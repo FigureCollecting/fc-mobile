@@ -398,6 +398,54 @@ describe('triggers', () => {
     expect(backoffDelay(2, () => 0)).toBe(0);
   });
 
+  it('takes the pass a trigger asked for during a held pass (signed in while boot was still loading)', async () => {
+    let blocked = true;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const r = await rig();
+    const engine = new SyncEngine({
+      store: async () => {
+        await gate;
+        return r.store;
+      },
+      sync: r.server.sync,
+      catalog: r.server.catalog,
+      blocked: () => blocked,
+      clock: r.clock,
+      timers: r.timers,
+      timeoutSignal: r.timeouts.signal,
+    });
+    const first = engine.trigger('start');
+    blocked = false;
+    const auth = engine.trigger('auth');
+    release();
+    await Promise.all([first, auth]);
+    expect(engine.state.value).toMatchObject({ phase: 'idle', reachability: 'reachable' });
+    expect(r.server.count('status')).toBe(1);
+  });
+
+  it('takes the pass a trigger asked for during a failing pass at once, not after the backoff', async () => {
+    const r = await rig();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const status = r.server.sync.status;
+    const flaky = vi.fn(async (req: object, opts?: { signal?: AbortSignal }) => {
+      if (flaky.mock.calls.length === 1) {
+        await gate;
+        throw new ConnectError('offline', Code.Unavailable);
+      }
+      return status(req, opts);
+    });
+    const engine = new SyncEngine({ store: async () => r.store, sync: { ...r.server.sync, status: flaky }, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+    const first = engine.trigger('start');
+    const online = engine.trigger('online');
+    release();
+    await Promise.all([first, online]);
+    expect(flaky).toHaveBeenCalledTimes(2);
+    expect(engine.state.value.reachability).toBe('reachable');
+    expect(r.timers.pending.size).toBe(0);
+  });
+
   it('runs one sync at a time: a trigger during a run asks for one more pass', async () => {
     const r = await rig();
     let release!: () => void;

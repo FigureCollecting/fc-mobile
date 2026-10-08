@@ -42,7 +42,9 @@ describe('useFigure', () => {
     const occ = await r.engine.write((s) => s.createCopy(headOf(1), 'ordered'));
     const { result } = renderHook(() => useFigure(headOf(1)), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.data?.collectionStatus).toBe('ordered'));
-    await act(() => r.engine.write((s) => s.markArrived({ occ_id: occ })));
+    await act(async () => {
+      await r.engine.write((s) => s.markArrived({ occ_id: occ }));
+    });
     await waitFor(() => expect(result.current.data?.collectionStatus).toBe('owned'));
   });
 });

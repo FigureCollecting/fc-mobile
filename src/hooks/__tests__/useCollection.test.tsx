@@ -66,7 +66,9 @@ describe('useCollection', () => {
     await r.engine.trigger('start');
     const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.data?.total).toBe(0));
-    await act(() => r.engine.write((s) => s.createCopy(headOf(3), 'ordered')));
+    await act(async () => {
+      await r.engine.write((s) => s.createCopy(headOf(3), 'ordered'));
+    });
     await waitFor(() => expect(result.current.data?.data.map((f) => f.local.sync)).toEqual(['pending']));
     await act(() => r.engine.trigger('manual'));
     await waitFor(() => expect(result.current.data?.data.map((f) => f.local.sync)).toEqual(['known']));

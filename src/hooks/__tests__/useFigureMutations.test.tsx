@@ -51,6 +51,10 @@ describe('useUpdateFigure', () => {
     await act(() => result.current.mutateAsync({ id: headOf(1), data: { note: '', rating: null } }));
     expect((await r.store.getFacet(ufFacetKey(headOf(1), 'note')))!.value).toMatchObject({ op: 'delete' });
     expect((await r.store.getFacet(ufFacetKey(headOf(1), 'score')))!.value).toMatchObject({ op: 'delete' });
+    // Clearing what no head holds writes nothing.
+    const before = (await r.store.listOutbox()).length;
+    await act(() => result.current.mutateAsync({ id: headOf(1), data: { note: '', wishRating: undefined } }));
+    expect((await r.store.listOutbox()).length).toBe(before);
   });
 
   it('sets the count of copies of the shown kind: adds copies, and removes the highest', async () => {
@@ -114,6 +118,15 @@ describe('useDeleteFigure and the bulk hooks', () => {
     ]);
   });
 
+  it('writes nothing when every copy already has the status', async () => {
+    const r = await localRig();
+    await r.engine.write((s) => s.createCopy(headOf(0), 'owned'));
+    const before = (await r.store.listOutbox()).length;
+    const { result } = renderHook(() => useBulkUpdateStatus(), { wrapper: queryWrapper() });
+    await act(() => result.current.mutateAsync({ ids: [headOf(0), headOf(9)], status: 'owned' }));
+    expect((await r.store.listOutbox()).length).toBe(before);
+  });
+
   it('bulk-removes figures', async () => {
     const r = await localRig();
     await r.engine.write(async (s) => {
@@ -130,26 +143,35 @@ describe('useCopyActions', () => {
   it('marks an ordered copy arrived, moves, removes, dedupes, marks sold, and adds to the collection', async () => {
     const r = await localRig();
     const { result } = renderHook(() => useCopyActions(), { wrapper: queryWrapper() });
-    const occ = await act(() => result.current.addToCollection(headOf(4), 'ordered'));
+    const call = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      let out: T;
+      await act(async () => {
+        out = await fn();
+      });
+      return out!;
+    };
+    const occ = await call(() => result.current.addToCollection(headOf(4), 'ordered'));
     expect(await copiesOf(r, headOf(4))).toEqual(['ordered']);
-    await act(() => result.current.markArrived(occ));
+    await call(() => result.current.markArrived(occ));
     expect(await copiesOf(r, headOf(4))).toEqual(['owned']);
-    const second = await act(() => result.current.addToCollection(headOf(4), 'owned'));
-    await act(() => result.current.dedupe(headOf(4), 'owned'));
+    const second = await call(() => result.current.addToCollection(headOf(4), 'owned'));
+    // Dedupe keeps the lowest occurrence id of the two (ids are random here).
+    const removed = await call(() => result.current.dedupe(headOf(4), 'owned'));
+    const kept = [occ, second].sort()[0]!;
+    expect(removed).toEqual([[occ, second].sort()[1]]);
     expect(await copiesOf(r, headOf(4))).toEqual(['owned']);
-    await act(() => result.current.moveCopies([occ], 'wished/default'));
+    await call(() => result.current.moveCopies([kept], 'wished/default'));
     expect(await copiesOf(r, headOf(4))).toEqual(['wished']);
-    await act(() => result.current.markFormer([occ], { reason: 'traded', counterparty: 'Ana' }));
+    await call(() => result.current.markFormer([kept], { reason: 'traded', counterparty: 'Ana' }));
     expect(await copiesOf(r, headOf(4))).toEqual(['former']);
-    await act(() => result.current.removeCopy(occ));
+    await call(() => result.current.removeCopy(kept));
     expect(await copiesOf(r, headOf(4))).toEqual([]);
-    expect(second).not.toBe(occ);
   });
 
   it('reports a refused action as an error and writes nothing', async () => {
     const r = await localRig();
     const { result } = renderHook(() => useCopyActions(), { wrapper: queryWrapper() });
-    const occ = await act(() => result.current.addToCollection(headOf(4), 'wished'));
+    const occ = await result.current.addToCollection(headOf(4), 'wished');
     const before = (await r.store.listOutbox()).length;
     await expect(result.current.markArrived(occ)).rejects.toMatchObject({ code: 'kind_mismatch' });
     expect((await r.store.listOutbox()).length).toBe(before);
@@ -159,7 +181,9 @@ describe('useCopyActions', () => {
     const r = await localRig();
     const { result } = renderHook(() => useCopyActions(), { wrapper: queryWrapper() });
     const before = r.engine.changes.value;
-    await act(() => result.current.addToCollection(headOf(4), 'wished'));
+    await act(async () => {
+      await result.current.addToCollection(headOf(4), 'wished');
+    });
     await waitFor(() => expect(r.engine.changes.value).toBe(before + 1));
   });
 });

@@ -1,6 +1,6 @@
 // useSearch on the device (WK-15): an n-gram index over the user's own figures (title, maker,
 // character, series, JAN), queried locally, offline included, timed with performance marks.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
 import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
@@ -101,7 +101,9 @@ describe('useSearch', () => {
     const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
     await search(result, 'Figure');
     expect(result.current.results).toEqual([]);
-    await act(() => r.engine.write((s) => s.createCopy(headOf(7), 'wished')));
+    await act(async () => {
+      await r.engine.write((s) => s.createCopy(headOf(7), 'wished'));
+    });
     r.server.seedProducts([headOf(7)]);
     await act(() => r.engine.trigger('manual'));
     await waitFor(() => expect(result.current.results.map((x) => x.id)).toEqual([headOf(7)]));
@@ -113,6 +115,27 @@ describe('useSearch', () => {
     const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
     await search(result, 'miku');
     expect(result.current.results.map((x) => x.id)).toEqual([headOf(0)]);
+  });
+
+  it('still searches where performance marks throw', async () => {
+    await seeded();
+    const spy = vi.spyOn(performance, 'mark').mockImplementation(() => {
+      throw new Error('no marks here');
+    });
+    const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
+    await search(result, 'spike');
+    expect(result.current.results.map((x) => x.id)).toEqual([headOf(2)]);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it('reads unreadable recent searches as none, and survives a storage that throws', () => {
+    localStorage.setItem('fc-recent-searches', '{not json');
+    const { result } = renderHook(() => useSearch(), { wrapper: queryWrapper() });
+    expect(result.current.getRecentSearches()).toEqual([]);
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    expect(() => result.current.clearRecentSearches()).not.toThrow();
   });
 
   it('keeps recent searches, newest first, ten at most, and clears them', () => {

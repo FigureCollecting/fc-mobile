@@ -450,7 +450,7 @@ test('(f) importing a fixture CSV shows the counts the server returned', async (
   // The conflict review (GR-Q1): 'keep app' is a res/mfc write that syncs like any edit.
   const conflicts = body.conflictsPending ?? 0;
   testInfo.annotations.push({ type: 'conflicts-pending', description: String(conflicts) });
-  if (conflicts === 0) return;
+  expect(conflicts, 'the fixture raises a conflict on the coordinator').toBeGreaterThanOrEqual(1);
   await expect(count('Conflicts to review')).toHaveText(String(conflicts));
   await result.getByRole('button', { name: `Review ${conflicts} ${conflicts === 1 ? 'conflict' : 'conflicts'}` }).click();
   const list = page.getByRole('list', { name: 'Conflicts' });

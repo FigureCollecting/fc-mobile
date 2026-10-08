@@ -24,9 +24,9 @@ import {
   type Signaller,
 } from './procs.js';
 
-// develop 3818c48: SyncService and CatalogService on contract 0.3.0, with WK-05c (#20, dc77344):
-// commit_cursor on Delta (sync.proto rule 7), basis required on Push, HELD.
-export const DEFAULT_COORDINATOR_REF = '3818c48e781b508591674d0afd461e29e6028510';
+// develop c7723a3 (WK-14a, #21): SyncService and CatalogService on contract 0.3.0, with WK-05c
+// (#20, dc77344): commit_cursor on Delta (sync.proto rule 7), basis required on Push, HELD.
+export const DEFAULT_COORDINATOR_REF = 'c7723a32522f58fb3f8a06145218c47f60a840c4';
 export const DEFAULT_COORDINATOR_REPO = 'https://github.com/FigureCollecting/fc-coordinator.git';
 
 export type Env = Record<string, string | undefined>;

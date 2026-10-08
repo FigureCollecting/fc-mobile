@@ -35,7 +35,7 @@ stack left behind.
 |---|---|---|
 | edge | `http://localhost:8480` | the fc-app tunnel rule: `^/api(/.*)?$` to the coordinator, unrewritten; everything else to nginx |
 | web | container | `nginxinc/nginx-unprivileged` serving `dist/` with `nginx/default.conf` (a stand-in until WK-09 ships the fc-mobile-web image; set `FC_STACK_WEB_IMAGE` to use that image) |
-| coordinator | `127.0.0.1:8482` | the real fc-coordinator via tsx, `COORDINATOR_PUBLIC_ORIGIN` = the edge origin, route prefix `/api` |
+| coordinator | `127.0.0.1:8482` | the real fc-coordinator via tsx, `COORDINATOR_PUBLIC_ORIGIN` = the edge origin, route prefix `/api`, a fixed test `IMPORT_OCC_ID_KEY` so `ImportService` answers |
 | mock issuer | `127.0.0.1:8481` | Authentik's `fc-coordinator` provider layout: auth code + PKCE (S256 only), strict redirect URIs, 1-min codes, 10-min access tokens, rotating 30-day refresh tokens; login auto-completes |
 | fake SpineRead | `127.0.0.1:8483` gRPC/h2c, `:8484` Connect/h1 | read.v1 Compare, GetProducts (paged, redirect-resolving), GetProductImages (empty), over a seeded catalog of 1,200 products |
 | fake OpenFGA | `127.0.0.1:8485` | gRPC Check on h2c, preshared key; user A holds `inventory_levels`, user B does not |
@@ -112,8 +112,11 @@ long-lived stack. Every entry carries a `seq` that is never reused.
 `src/device.ts` signs a Node-side device in, enrols it and makes DPoP calls, for
 seeding or for a second device in a sync test.
 
-The browser auth suite (`e2e/auth`) needs the OIDC build, whose issuer is the
-mock on the default ports: `npm run build:stack && npm run test:e2e:stack`.
+The browser suites (`e2e/auth`, `e2e/sync` and `e2e/screens`) need the stack
+build, whose issuer is the mock on the default ports:
+`npm run build:stack && npm run test:e2e:stack`. `e2e/screens` (WK-15) also
+writes sign-off PNGs of the screens at the Fold8 cover and open panels to
+`test-results/signoff/screens-chromium-fold8-{cover,open}/`.
 
 Edge faults: `drop-response` forwards the request and cuts the reply after the
 upstream has answered; `hang` holds it until `releaseHung`; `status` answers at

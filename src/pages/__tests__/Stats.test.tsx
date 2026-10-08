@@ -1,64 +1,40 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/preact';
-
-vi.mock('@figurecollecting/fc-shared', async () => {
-  const actual = await vi.importActual<typeof import('@figurecollecting/fc-shared')>(
-    '@figurecollecting/fc-shared',
-  );
-  return { ...actual, getFigureStats: vi.fn() };
-});
-
-vi.mock('../../api/client', () => ({
-  api: { get: vi.fn() },
-}));
-
-import { getFigureStats } from '@figurecollecting/fc-shared';
-import { api } from '../../api/client';
+// Stats from the local store (WK-15): copies per kind and the top makers, offline too.
+import { afterEach, describe, expect, it } from 'vitest';
+import { screen, waitFor } from '@testing-library/preact';
 import { Stats } from '../Stats';
 import { renderWithProviders } from '../../test/testUtils';
-import { useAuthStore } from '../../stores/auth';
+import { localRig } from '../../local/__tests__/localHarness';
+import { seedFigures } from '../../local/__tests__/seedFigures';
+import { localSession } from '../../local/session';
 
-const mockedStats = getFigureStats as unknown as ReturnType<typeof vi.fn>;
-const mockedGet = api.get as unknown as ReturnType<typeof vi.fn>;
-
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1', username: 'tester', email: 'a@b.co', isAdmin: false,
-      token: 'tok', tokenExpiresAt: Date.now() + 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
-  });
-}
-
-beforeEach(() => {
-  mockedStats.mockReset();
-  mockedGet.mockReset();
+afterEach(() => {
+  localSession.value = undefined;
 });
 
+const tile = (label: string) => screen.getByText(label, { selector: '.page-stats__label' }).previousElementSibling?.textContent;
+
 describe('Stats page', () => {
-  it('prompts sign-in for guests', () => {
-    useAuthStore.setState({ user: null, isAuthenticated: false, lastActivity: 0, twoFactorPending: null });
-    renderWithProviders(<Stats />);
-    expect(screen.getByText(/sign in to see your stats/i)).toBeInTheDocument();
+  it('counts copies per kind and lists the top makers, from the local store', async () => {
+    const r = await localRig();
+    await seedFigures(r, [
+      { title: 'A', manufacturer: 'Alter', copies: 2 },
+      { title: 'B', manufacturer: 'Alter', status: 'ordered' },
+      { title: 'C', manufacturer: 'Max Factory', status: 'wished' },
+      { title: 'D', manufacturer: 'Alter', status: 'former', disposal: { reason: 'sold' } },
+    ]);
+    renderWithProviders(<Stats />, { initialPath: '/stats' });
+    await waitFor(() => expect(tile('Total')).toBe('4'));
+    expect(tile('Owned')).toBe('2');
+    expect(tile('Ordered')).toBe('1');
+    expect(tile('Wished')).toBe('1');
+    expect(screen.getByText('Top manufacturers')).toBeInTheDocument();
+    const makers = [...document.querySelectorAll('.page-stats__bar-label')].map((e) => e.textContent);
+    expect(makers).toEqual(['Alter', 'Max Factory']);
   });
 
-  it('renders status tiles without fetching the dead manufacturer-breakdown endpoint', async () => {
-    signIn();
-    mockedStats.mockResolvedValue({
-      totalCount: 42,
-      statusCounts: { owned: 30, ordered: 7, wished: 5 },
-    });
-
-    renderWithProviders(<Stats />);
-
-    expect(await screen.findByText('42')).toBeInTheDocument();
-    expect(screen.getByText('30')).toBeInTheDocument();
-    expect(screen.getByText('7')).toBeInTheDocument();
-    expect(screen.getByText('5')).toBeInTheDocument();
-    // /analytics/collection/breakdown has no backend by default — no call.
-    expect(mockedGet).not.toHaveBeenCalled();
+  it('asks a signed-out visitor to sign in', async () => {
+    await localRig({ status: 'signed-out' });
+    renderWithProviders(<Stats />, { initialPath: '/stats' });
+    expect(screen.getByText('Sign in to see your stats')).toBeInTheDocument();
   });
 });

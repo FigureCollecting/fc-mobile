@@ -16,8 +16,8 @@ export interface StartOptions {
   register?: (options: RegisterSWOptions) => (reloadPage?: boolean) => Promise<void>;
   fetchImpl?: typeof fetch;
   supported?: boolean;
-  /** Fires controllerchange: navigator.serviceWorker in the app. */
-  container?: Pick<EventTarget, 'addEventListener'>;
+  /** Fires controllerchange and names the controller: navigator.serviceWorker in the app. */
+  container?: Pick<EventTarget, 'addEventListener'> & { readonly controller?: ServiceWorker | null };
   reload?: () => void;
 }
 
@@ -33,14 +33,29 @@ export function startServiceWorker({
   // newer build taking over (from this tab or another) and the old precache is
   // gone: reload. The plugin reloads only pages that had a controller at load.
   let armed = false;
+  let registered: Pick<ServiceWorkerRegistration, 'active'> | undefined;
+  // A page loaded with no controller came from the network: the build active as it registered,
+  // still activating, then claims it with that same build. That claim is not a takeover.
+  // (The default container is absent where navigator.serviceWorker is, as in jsdom.)
+  const loadedUncontrolled = (container?.controller ?? null) === null;
+  let ownClaim: ServiceWorker | null = null;
   const reloadOnTakeover = (): void => {
     if (armed) return;
     armed = true;
-    container.addEventListener('controllerchange', () => reload(), { once: true });
+    let reloaded = false;
+    container.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      if (ownClaim !== null && container.controller === ownClaim) return;
+      reloaded = true;
+      reload();
+    });
   };
   apply = register({
     immediate: true,
     onNeedRefresh() {
+      // The plugin also calls this for a worker another page registered, even the first install,
+      // which waits for nothing and claims this page: not an update, and no reload mid-sign-in.
+      if (registered !== undefined && registered.active === null) return;
       updateReady.value = true;
       reloadOnTakeover();
     },
@@ -48,8 +63,12 @@ export function startServiceWorker({
     onNeedReload() {},
     onRegisteredSW(swUrl, registration) {
       if (registration === undefined) return;
+      registered = registration;
       // With no active build yet, the first install's claim of this page is not an update.
-      if (registration.active !== null) reloadOnTakeover();
+      if (registration.active !== null) {
+        if (loadedUncontrolled) ownClaim = registration.active;
+        reloadOnTakeover();
+      }
       watchForUpdates(swUrl, registration, fetchImpl);
     },
     onRegisterError(error) {

@@ -75,10 +75,10 @@ jobs:
       - name: Build the app for the stack's auth suite
         run: npm run build:stack
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright Chromium and WebKit
+        run: npx playwright install --with-deps chromium webkit
 
-      - name: Auth e2e on the stack (mobile-chromium)
+      - name: Auth and sync e2e on the stack (mobile-chromium; sync at the Fold8 sizes, Chromium and WebKit)
         run: npm run test:e2e:stack
 
       - name: Upload stack logs

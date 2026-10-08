@@ -113,6 +113,61 @@ describe('taking the new build', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it("does not treat another page's first install as an update: no prompt and no reload when it installs with no active build", () => {
+    // The plugin raises onNeedRefresh for a worker another page registered (isExternal), even the
+    // first one, which activates at once and claims this page: a sign-in callback reloaded mid-exchange.
+    const { f, reload, takeOver } = started();
+    const reg = registration({ installing: {} as ServiceWorker });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    f.options().onNeedRefresh?.();
+    takeOver();
+    expect(updateReady.value).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('still takes a later build that waits behind the active one in the same page', () => {
+    const { f, reload, takeOver } = started();
+    const reg = registration({ installing: {} as ServiceWorker });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    Object.assign(reg, { installing: null, active: {} as ServiceWorker });
+    f.options().onNeedRefresh?.();
+    takeOver();
+    expect(updateReady.value).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  /** A container whose controller the test moves, as a claim or a takeover does. */
+  function startedWith(controllerAtLoad: ServiceWorker | null) {
+    const f = fakeRegister();
+    const container = Object.assign(new EventTarget(), { controller: controllerAtLoad });
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const controlBy = (worker: ServiceWorker) => {
+      container.controller = worker;
+      container.dispatchEvent(new Event('controllerchange'));
+    };
+    return { f, reload, controlBy };
+  }
+  const worker = (name: string) => ({ name }) as unknown as ServiceWorker;
+
+  it('does not reload a page it loaded uncontrolled when the build active as it registered claims it (the first install, mid-sign-in)', () => {
+    const { f, reload, controlBy } = startedWith(null);
+    const first = worker('first');
+    f.options().onRegisteredSW?.('/sw.js', registration({ active: first }) as unknown as ServiceWorkerRegistration);
+    controlBy(first);
+    expect(reload).not.toHaveBeenCalled();
+    controlBy(worker('newer'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads a page that a build controlled at load when the build active as it registered takes over', () => {
+    const { f, reload, controlBy } = startedWith(worker('old'));
+    const next = worker('next');
+    f.options().onRegisteredSW?.('/sw.js', registration({ active: next }) as unknown as ServiceWorkerRegistration);
+    controlBy(next);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('owns the reload: the plugin reloads only pages controlled at load, and never twice', () => {
     const { f, reload } = started();
     expect(f.options().onNeedReload).toBeTypeOf('function');

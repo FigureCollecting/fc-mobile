@@ -82,6 +82,11 @@ export class AuthSession implements DpopCredentials {
     return this.currentSub;
   }
 
+  /** The local store this session keeps its rows in, for the sync engine; reopened once the browser closes it. */
+  localDb(): Promise<LocalDb> {
+    return this.deps.db();
+  }
+
   start(): Promise<AuthStatus> {
     this.started ??= (async () => {
       const ticket = this.gate.ticket();

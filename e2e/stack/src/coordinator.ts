@@ -24,7 +24,9 @@ import {
   type Signaller,
 } from './procs.js';
 
-export const DEFAULT_COORDINATOR_REF = 'c0db861c7cc7d775f5f05a9e1acc8e41201c6a43';
+// develop c7723a3 (WK-14a, #21): SyncService and CatalogService on contract 0.3.0, with WK-05c
+// (#20, dc77344): commit_cursor on Delta (sync.proto rule 7), basis required on Push, HELD.
+export const DEFAULT_COORDINATOR_REF = 'c7723a32522f58fb3f8a06145218c47f60a840c4';
 export const DEFAULT_COORDINATOR_REPO = 'https://github.com/FigureCollecting/fc-coordinator.git';
 
 export type Env = Record<string, string | undefined>;

@@ -7,6 +7,7 @@ import type { Edge, FaultRule } from './edge.js';
 import { readBody, sendJson } from './http.js';
 import type { IssuerSettings, MockIssuer } from './issuer.js';
 import type { FakeOpenFga, Tuple } from './openfga.js';
+import type { StackPostgres } from './postgres.js';
 import type { FakeSpine } from './spine.js';
 import type { StackWeb } from './web.js';
 
@@ -19,7 +20,37 @@ export interface ControlTarget {
   issuer: Pick<MockIssuer, 'log' | 'loginAs' | 'revokeUser' | 'configure' | 'settings'>;
   spine: Pick<FakeSpine, 'calls'>;
   openfga: Pick<FakeOpenFga, 'calls' | 'tuples' | 'write' | 'remove'>;
+  postgres: Pick<StackPostgres, 'psql'>;
   stop(): Promise<void>;
+}
+
+export interface SyncCounts {
+  /** Push receipts of the user, or of one client_id when asked. */
+  receipts: number;
+  feedEvents: number;
+  /** facet_state rows of the user whose key starts with the prefix asked for (all when none). */
+  facets: number;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CLIENT_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const KEY_PREFIX = /^[a-z0-9/-]{0,64}$/;
+
+/** Counts read straight from the coordinator database, for idempotency and seeding checks. Every input is checked before it reaches SQL. */
+async function syncCounts(pg: Pick<StackPostgres, 'psql'>, query: URLSearchParams): Promise<SyncCounts> {
+  const user = query.get('user') ?? '';
+  const clientId = query.get('client_id');
+  const prefix = query.get('prefix') ?? '';
+  if (!UUID.test(user)) throw new Error(`bad user ${JSON.stringify(user)}`);
+  if (clientId !== null && !CLIENT_ID.test(clientId)) throw new Error(`bad client_id ${JSON.stringify(clientId)}`);
+  if (!KEY_PREFIX.test(prefix)) throw new Error(`bad prefix ${JSON.stringify(prefix)}`);
+  const byClient = clientId === null ? '' : ` AND client_id = '${clientId}'`;
+  const sql =
+    `SELECT (SELECT count(*) FROM mutation_receipt WHERE user_id = '${user}'${byClient})` +
+    ` || '|' || (SELECT count(*) FROM feed_event WHERE user_id = '${user}')` +
+    ` || '|' || (SELECT count(*) FROM facet_state WHERE user_id = '${user}' AND facet_key LIKE '${prefix}%')`;
+  const [receipts, feedEvents, facets] = (await pg.psql(sql, 'superuser')).trim().split('|').map(Number);
+  return { receipts: receipts!, feedEvents: feedEvents!, facets: facets! };
 }
 
 export interface Control {
@@ -68,6 +99,7 @@ export async function startControl(target: ControlTarget, port: number, host = '
     'POST /openfga/tuples': (body) => (target.openfga.write(body as Tuple), ok),
     'DELETE /openfga/tuples': (body) => (target.openfga.remove(body as Tuple), ok),
     'GET /openfga/calls': () => target.openfga.calls,
+    'GET /sync/counts': (_body, query) => syncCounts(target.postgres, query),
   };
 
   const server = http.createServer((req, res) => {

@@ -102,6 +102,7 @@ await stack.issuer.configure({ accessTokenTtlSeconds: 5 });
 await stack.issuer.revokeUser(state.users[0].sub);         // next refresh is invalid_grant
 const mark = await stack.edge.cursor();                    // then act, then:
 const seen = await stack.edge.log(mark);                   // only what the edge logged since
+await stack.sync.counts({ user: sub, clientId });          // Push receipts, feed events, facets, from Postgres
 ```
 
 Read the edge and issuer logs from a cursor, never by array index: the edge

@@ -2,6 +2,7 @@
 // run in a different process from the stack.
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { SyncCounts } from './control.js';
 import type { FaultRule, EdgeLogEntry } from './edge.js';
 import type { IssuerEvent, IssuerSettings } from './issuer.js';
 import type { FgaCall, Tuple } from './openfga.js';
@@ -40,6 +41,10 @@ export interface StackClient {
     write(tuple: Tuple): Promise<void>;
     remove(tuple: Tuple): Promise<void>;
     calls(): Promise<FgaCall[]>;
+  };
+  sync: {
+    /** A user's Push receipts (of one client_id when given), feed events, and facets under a key prefix. */
+    counts(query: { user: string; clientId?: string; prefix?: string }): Promise<SyncCounts>;
   };
 }
 
@@ -91,6 +96,14 @@ export function stackClient(controlUrl: string): StackClient {
       write: (tuple) => done('POST', '/openfga/tuples', tuple),
       remove: (tuple) => done('DELETE', '/openfga/tuples', tuple),
       calls: () => call('GET', '/openfga/calls'),
+    },
+    sync: {
+      counts: ({ user, clientId, prefix }) => {
+        const query = new URLSearchParams({ user });
+        if (clientId !== undefined) query.set('client_id', clientId);
+        if (prefix !== undefined) query.set('prefix', prefix);
+        return call('GET', `/sync/counts?${query.toString()}`);
+      },
     },
   };
 }

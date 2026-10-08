@@ -43,6 +43,8 @@ export class AuthStore {
   /** Read and delete in one transaction: a state is good for one callback only. */
   async takePending(state: string): Promise<PendingLogin | undefined> {
     const tx = this.db.transaction('auth', 'readwrite');
+    // Watched from the start: a transaction the browser aborts must not leave an unhandled rejection.
+    tx.done.catch(() => {});
     const found = (await tx.store.get(pendingKey(state))) as PendingLogin | undefined;
     if (found !== undefined) await tx.store.delete(pendingKey(state));
     await tx.done;
@@ -77,6 +79,7 @@ export class AuthStore {
   /** First writer wins, so two tabs creating a key at once end up signing with the same one. */
   async addDeviceKey(rec: DeviceKeyRecord): Promise<DeviceKeyRecord> {
     const tx = this.db.transaction('device_key', 'readwrite');
+    tx.done.catch(() => {});
     const existing = (await tx.store.get(rec.sub)) as DeviceKeyRecord | undefined;
     if (existing === undefined) await tx.store.add(rec as unknown as { sub: string });
     await tx.done;

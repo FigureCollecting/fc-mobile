@@ -48,6 +48,13 @@ describe('e2e hooks', () => {
 });
 
 describe('browser wiring', () => {
+  it("lends the session's local store to the sync engine: one connection while it lives", async () => {
+    const session = createBrowserSession({ location: { origin: APP_ORIGIN, assign: vi.fn() }, fetch: vi.fn(), indexedDB: new IDBFactory() });
+    const db = await session.localDb();
+    expect(db.version).toBe(LOCAL_DB_VERSION);
+    expect(await session.localDb()).toBe(db);
+  });
+
   it('getAuthSession is one session per page, on the configured IdP, that opens nothing until used', () => {
     const session = getAuthSession();
     expect(getAuthSession()).toBe(session);

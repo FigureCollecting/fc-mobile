@@ -101,6 +101,26 @@ describe('scripts/assert-bundle-auth.sh', () => {
     expect(res.status).toBe(0);
   });
 
+  // The lazy exemption trusts the chunk's name, so it takes the exact names only: the module name
+  // anchored at the start and followed by the hash. A longer name (SyncBadge, MySync) is a chunk
+  // the shell may well load at boot, and its dynamic import is followed like any other.
+  it('exempts a lazy chunk by its exact module name and hash, whatever characters the hash has', () => {
+    const chunks = { 'index-a.js': 'import(`./Sync-a_b-c9.js`);', 'Sync-a_b-c9.js': 'import{api}from"./client-c.js";', 'client-c.js': LEGACY, 'auth-d.js': OIDC };
+    const res = run(html(chunks, ['index-a.js']));
+    expect(res.stderr).toBe('');
+    expect(res.status).toBe(0);
+  });
+
+  it.each(['SyncBadge-x.js', 'MySync-x.js', 'SyncStatusLine-x.js', 'OidcClient-x.js', 'clientele-x.js', 'Export_-x.js'])(
+    'does not exempt %s: a boot-time dynamic import of it that carries the legacy sign-in fails',
+    (name) => {
+      const res = run(html({ 'index-a.js': `import(\`./${name}\`);`, [name]: LEGACY, 'auth-d.js': OIDC }, ['index-a.js']));
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain('legacy sign-in loads at boot: ');
+      expect(res.stderr).toContain(name);
+    },
+  );
+
   it('ends on an import cycle (a lazy page imports the entry back)', () => {
     const chunks = { 'index-a.js': 'import(`./FigureDetail-b.js`);', 'FigureDetail-b.js': 'import{h}from"./index-a.js";', 'auth-d.js': OIDC };
     const res = spawnSync('sh', [SCRIPT, html(chunks, ['index-a.js'])], { encoding: 'utf8', timeout: 10_000 });

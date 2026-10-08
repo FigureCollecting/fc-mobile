@@ -9,11 +9,11 @@ describe('formatAsOf', () => {
   it('gives the time and the zone for today, and the date too for another day', () => {
     expect(formatAsOf('2026-10-07T19:05:00.000000Z', { now: NOW, timeZone: 'America/Chicago' })).toBe('as of 14:05 CDT');
     expect(formatAsOf('2026-10-03T19:05:00Z', { now: NOW, timeZone: 'America/Chicago' })).toBe('as of Oct 3, 14:05 CDT');
-    expect(formatAsOf('2026-10-07T19:05:00Z', { now: NOW, timeZone: 'Asia/Tokyo' })).toBe('as of Oct 8, 04:05 GMT+9');
+    expect(formatAsOf('2026-10-07T19:05:00Z', { now: NOW, timeZone: 'Asia/Tokyo' })).toBe('as of 04:05 GMT+9') // same day in Tokyo;
   });
 
   it('reads epoch milliseconds too, and says nothing for an unreadable time', () => {
-    expect(formatAsOf(Date.parse('2026-10-07T19:05:00Z'), { now: NOW, timeZone: 'UTC' })).toBe('as of Oct 7, 19:05 UTC');
+    expect(formatAsOf(Date.parse('2026-10-07T19:05:00Z'), { now: NOW, timeZone: 'UTC' })).toBe('as of 19:05 UTC');
     expect(formatAsOf('not a time', { now: NOW })).toBe('as of an unknown time');
   });
 });
@@ -26,7 +26,7 @@ describe('SyncBadge', () => {
 
   it('shows offline-stale with its as-of', () => {
     render(<SyncBadge sync="offline-stale" asOf="2026-10-07T19:05:00Z" id="b2" now={NOW} timeZone="America/Chicago" />);
-    expect(screen.getByText('as of Oct 7, 14:05 CDT')).toHaveAttribute('data-sync', 'offline-stale');
+    expect(screen.getByText('as of 14:05 CDT')).toHaveAttribute('data-sync', 'offline-stale');
   });
 
   it('shows an offline-stale item with no as-of as offline', () => {

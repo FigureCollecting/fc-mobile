@@ -64,6 +64,8 @@ export function useSearch() {
 
   useEffect(() => {
     const q = query.trim();
+    // No index yet: no answer at all, rather than a false 'nothing matches'.
+    if (snapshot.data === undefined) return;
     if (!searchable(q)) {
       setAnswer({ q, ids: [] });
       return;
@@ -119,7 +121,7 @@ export function useSearch() {
     updateQuery: setQuery,
     results,
     figures,
-    isLoading: searchable(query.trim()) && answer.q !== query.trim(),
+    isLoading: (snapshot.data === undefined && query.trim() !== '') || (searchable(query.trim()) && answer.q !== query.trim()),
     isError: snapshot.isError,
     refetch: snapshot.refetch,
     hasSearched: searchable(answer.q),

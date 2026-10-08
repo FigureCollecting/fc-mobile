@@ -17,7 +17,7 @@ import { localSession } from '../local/session';
 
 const SIGNED_IN_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
   { path: '/', unique: /collection/i },
-  { path: '/discover', unique: /discover/i },
+  { path: '/discover', unique: /search/i },
   { path: '/profile', unique: /profile/i },
   { path: '/settings', unique: /settings/i },
   { path: '/import', unique: /import/i },

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 // WK-15: OIDC is the only sign-in, so the image has no auth-mode switch; the gate asserts the
-// bundle carries the OIDC sign-in and that nothing loaded at boot carries the legacy one.
+// bundle carries the OIDC sign-in and that no chunk of the boot import graph carries the legacy one.
 const ROOT = path.resolve(__dirname, '../..');
 const read = (f: string) => readFileSync(path.join(ROOT, f), 'utf8');
 const SCRIPT = path.join(ROOT, 'scripts/assert-bundle-auth.sh');
@@ -63,6 +63,48 @@ describe('scripts/assert-bundle-auth.sh', () => {
       expect(res.status).toBe(1);
       expect(res.stderr).toMatch(/legacy sign-in loads at boot: .*index-a\.js/);
     }
+  });
+
+  // The boot graph: the entry and the preloads, every chunk they import statically, and every
+  // chunk they import dynamically but the legacy screens and the legacy client (lazy: a tap loads them).
+  it('fails when a chunk the shell imports dynamically at boot imports the legacy client (OidcSession)', () => {
+    const chunks = { 'index-a.js': 'const S=lazy(()=>import(`./OidcSession-b.js`));', 'OidcSession-b.js': 'import{a as legacy}from"./client-c.js";globalThis.l=legacy;', 'client-c.js': LEGACY, 'auth-d.js': OIDC };
+    const res = run(html(chunks, ['index-a.js']));
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/legacy sign-in loads at boot: .*client-c\.js/);
+  });
+
+  it('fails on the legacy sign-in in a chunk reached by static imports alone, and in an eager dynamic chunk itself', () => {
+    const viaStatic = { 'index-a.js': 'import"./shell-b.js";', 'shell-b.js': 'import{x}from"./util-c.js";', 'util-c.js': LEGACY, 'auth-d.js': OIDC };
+    const inDynamic = { 'index-a.js': "import('./OidcSession-b.js');", 'OidcSession-b.js': LEGACY, 'auth-d.js': OIDC };
+    for (const [chunks, culprit] of [[viaStatic, 'util-c.js'], [inDynamic, 'OidcSession-b.js']] as const) {
+      const res = run(html(chunks, ['index-a.js']));
+      expect(res.status).toBe(1);
+      expect(res.stderr).toContain(`legacy sign-in loads at boot: `);
+      expect(res.stderr).toContain(culprit);
+    }
+  });
+
+  it('passes a legacy client the boot graph reaches only through the lazy legacy screens', () => {
+    const chunks = {
+      'index-a.js': 'import"./shell-b.js";import(`./Sync-e.js`);import(`./Export-f.js`);import(`./Notifications-g.js`);import(`./client-c.js`);',
+      'shell-b.js': 'import(`./OidcSession-h.js`)',
+      'OidcSession-h.js': 'import{a}from"./auth-d.js";',
+      'auth-d.js': OIDC,
+      'Sync-e.js': 'import{api}from"./client-c.js";',
+      'Export-f.js': 'import{api}from"./client-c.js";',
+      'Notifications-g.js': 'import{api}from"./client-c.js";',
+      'client-c.js': LEGACY,
+    };
+    const res = run(html(chunks, ['index-a.js']));
+    expect(res.stderr).toBe('');
+    expect(res.status).toBe(0);
+  });
+
+  it('fails when a chunk the boot graph imports is missing', () => {
+    const res = run(html({ 'index-a.js': 'import"./gone-b.js";', 'auth-d.js': OIDC }, ['index-a.js']));
+    expect(res.status).toBe(1);
+    expect(res.stderr).toMatch(/missing: .*gone-b\.js/);
   });
 
   it('fails on a missing html root or index.html, and without an argument', () => {

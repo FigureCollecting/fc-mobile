@@ -2,7 +2,7 @@
 // derivative only when GetProductImages returns one, never figure.imageUrl or a spine image claim),
 // the user's copies with their actions, and the edit sheet. Every edit is a local write.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/preact';
+import { act, renderHook, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { create } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema, ufFacetKey } from '@figurecollecting/fc-api-contract';
@@ -16,6 +16,7 @@ import { seedFigures, type SeedFigure } from '../../local/__tests__/seedFigures'
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { shownCopies } from '../../sync/occurrences';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 
 afterEach(() => {
   localSession.value = undefined;
@@ -40,7 +41,7 @@ describe('FigureDetail page', () => {
   it('shows the product card facts and a placeholder plate, with no image', async () => {
     const r = await open([MIKU]);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Hatsune Miku: Deep Sea Girl');
-    expect(screen.getByText('Good Smile Company')).toBeInTheDocument();
+    expect(screen.getByText('Good Smile Company', { selector: '.figure-detail__manufacturer' })).toBeInTheDocument();
     expect(screen.getByText('初音ミク')).toBeInTheDocument();
     expect(screen.getByText('Vocaloid')).toBeInTheDocument();
     expect(screen.getByText('4580416940986')).toBeInTheDocument();
@@ -63,11 +64,21 @@ describe('FigureDetail page', () => {
   });
 
   it('asks for no image offline, and draws the plate', async () => {
-    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
-    const r = await open([MIKU]);
-    await new Promise((res) => setTimeout(res, 20));
-    expect(r.clients.getProductImages).not.toHaveBeenCalled();
-    expect(document.querySelector('.figure-detail__plate')).not.toBeNull();
+    // The page's online signal follows the window's online and offline events.
+    renderHook(() => useOnlineStatus());
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    try {
+      const r = await open([MIKU]);
+      await new Promise((res) => setTimeout(res, 20));
+      expect(r.clients.getProductImages).not.toHaveBeenCalled();
+      expect(document.querySelector('.figure-detail__plate')).not.toBeNull();
+    } finally {
+      act(() => {
+        window.dispatchEvent(new Event('online'));
+      });
+    }
   });
 
   it('says so for a figure the user holds no copy of', async () => {

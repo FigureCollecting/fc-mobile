@@ -1,23 +1,17 @@
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import { BottomSheet } from '../ui/BottomSheet';
-import type { Figure, CollectionStatus } from '@figurecollecting/fc-shared';
+import type { CollectionStatus } from '@figurecollecting/fc-shared';
+import type { FigureEdit } from '../../hooks/useFigureMutations';
+import type { LocalFigure } from '../../local/figures';
 import { hapticLight } from '../../utils/haptics';
 import { Style } from '../../styles/Style';
 
 interface EditFigureSheetProps {
   open: boolean;
   onClose: () => void;
-  figure: Figure;
-  onSave: (data: EditFormData) => void;
+  figure: LocalFigure;
+  onSave: (data: FigureEdit) => void;
   isSaving?: boolean;
-}
-
-export interface EditFormData {
-  collectionStatus?: CollectionStatus;
-  note?: string;
-  purchasePrice?: number;
-  purchaseCurrency?: string;
-  purchaseDate?: string;
 }
 
 const STATUS_OPTIONS: { value: CollectionStatus; label: string; cssClass: string }[] = [
@@ -26,159 +20,139 @@ const STATUS_OPTIONS: { value: CollectionStatus; label: string; cssClass: string
   { value: 'wished', label: 'Wished', cssClass: 'edit-sheet__status-btn--wished' },
 ];
 
-const CURRENCY_OPTIONS = ['JPY', 'USD', 'EUR', 'GBP', 'CAD', 'AUD'];
+const SCORES = Array.from({ length: 10 }, (_, i) => i + 1);
 
+/** Status, count, score and note: each a local write (WK-15); nothing here needs the network. */
 export function EditFigureSheet({ open, onClose, figure, onSave, isSaving }: EditFigureSheetProps) {
   const [status, setStatus] = useState<CollectionStatus | undefined>(figure.collectionStatus);
+  const [count, setCount] = useState(String(figure.quantity ?? 1));
+  const [score, setScore] = useState(figure.rating === undefined ? '' : String(figure.rating));
   const [note, setNote] = useState(figure.note ?? '');
-  const [price, setPrice] = useState(figure.purchaseInfo?.price?.toString() ?? '');
-  const [currency, setCurrency] = useState(figure.purchaseInfo?.currency ?? 'JPY');
-  const [purchaseDate, setPurchaseDate] = useState(figure.purchaseInfo?.date?.split('T')[0] ?? '');
 
-  // Reset form when figure changes
+  // Reset the form when the figure changes.
   useEffect(() => {
     setStatus(figure.collectionStatus);
+    setCount(String(figure.quantity ?? 1));
+    setScore(figure.rating === undefined ? '' : String(figure.rating));
     setNote(figure.note ?? '');
-    setPrice(figure.purchaseInfo?.price?.toString() ?? '');
-    setCurrency(figure.purchaseInfo?.currency ?? 'JPY');
-    setPurchaseDate(figure.purchaseInfo?.date?.split('T')[0] ?? '');
   }, [figure._id]);
 
-  const handleStatusToggle = useCallback((value: CollectionStatus) => {
-    hapticLight();
-    setStatus(value);
-  }, []);
+  const countValue = Number(count);
+  const countValid = Number.isInteger(countValue) && countValue >= 1;
 
   const handleSave = useCallback(() => {
     hapticLight();
-    const data: EditFormData = {};
-
-    if (status !== figure.collectionStatus) data.collectionStatus = status;
+    const data: FigureEdit = {};
+    if (status !== undefined && status !== figure.collectionStatus) data.collectionStatus = status;
+    if (countValid && countValue !== (figure.quantity ?? 1)) data.quantity = countValue;
+    const nextScore = score === '' ? undefined : Number(score);
+    if (nextScore !== figure.rating) data.rating = nextScore ?? null;
     if (note !== (figure.note ?? '')) data.note = note;
-
-    const priceNum = price ? parseFloat(price) : undefined;
-    if (priceNum !== figure.purchaseInfo?.price) data.purchasePrice = priceNum;
-    if (currency !== (figure.purchaseInfo?.currency ?? 'JPY')) data.purchaseCurrency = currency;
-    if (purchaseDate !== (figure.purchaseInfo?.date?.split('T')[0] ?? '')) data.purchaseDate = purchaseDate || undefined;
-
     onSave(data);
-  }, [status, note, price, currency, purchaseDate, figure, onSave]);
+  }, [status, countValid, countValue, score, note, figure, onSave]);
 
   return (
     <BottomSheet open={open} onClose={onClose} snapPoint="half">
-      <div class="edit-sheet">
+      <form
+        class="edit-sheet"
+        aria-label="Edit figure"
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSave();
+        }}
+      >
         <div class="edit-sheet__header">
           <h2 class="edit-sheet__title">Edit Figure</h2>
           <p class="edit-sheet__subtitle">{figure.name}</p>
         </div>
 
-        {/* Collection Status */}
-        <section class="edit-sheet__section">
-          <label class="edit-sheet__label">Collection Status</label>
-          <div class="edit-sheet__status-row">
-            {STATUS_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                class={`edit-sheet__status-btn ${opt.cssClass} ${status === opt.value ? 'edit-sheet__status-btn--active' : ''}`}
-                onClick={() => handleStatusToggle(opt.value)}
-                type="button"
-                aria-pressed={status === opt.value}
-              >
-                {opt.label}
-              </button>
-            ))}
+        {figure.collectionStatus !== undefined && (
+          <section class="edit-sheet__section">
+            <span class="edit-sheet__label">Collection Status</span>
+            <div class="edit-sheet__status-row">
+              {STATUS_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  class={`edit-sheet__status-btn ${opt.cssClass} ${status === opt.value ? 'edit-sheet__status-btn--active' : ''}`}
+                  onClick={() => {
+                    hapticLight();
+                    setStatus(opt.value);
+                  }}
+                  type="button"
+                  aria-pressed={status === opt.value}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section class="edit-sheet__section edit-sheet__row">
+          <div class="edit-sheet__field">
+            <label class="edit-sheet__label" for="edit-count">Copies</label>
+            <input
+              id="edit-count"
+              class="edit-sheet__input"
+              type="number"
+              inputMode="numeric"
+              min="1"
+              step="1"
+              value={count}
+              aria-invalid={!countValid}
+              onInput={(e) => setCount((e.target as HTMLInputElement).value)}
+            />
+          </div>
+          <div class="edit-sheet__field">
+            <label class="edit-sheet__label" for="edit-score">Score</label>
+            <select id="edit-score" class="edit-sheet__input" value={score} onChange={(e) => setScore((e.target as HTMLSelectElement).value)}>
+              <option value="">None</option>
+              {SCORES.map((n) => (
+                <option key={n} value={String(n)}>
+                  {n}
+                </option>
+              ))}
+            </select>
           </div>
         </section>
 
-        {/* Notes */}
         <section class="edit-sheet__section">
-          <label class="edit-sheet__label" for="edit-note">Notes</label>
-          <textarea
-            id="edit-note"
-            class="edit-sheet__textarea"
-            value={note}
-            onInput={(e) => setNote((e.target as HTMLTextAreaElement).value)}
-            placeholder="Add a note..."
-            rows={3}
-          />
-        </section>
-
-        {/* Purchase Price + Currency */}
-        <section class="edit-sheet__section">
-          <label class="edit-sheet__label" for="edit-price">Purchase Price</label>
-          <div class="edit-sheet__price-row">
-            <select
-              class="edit-sheet__currency-select"
-              value={currency}
-              onChange={(e) => setCurrency((e.target as HTMLSelectElement).value)}
-              aria-label="Currency"
-            >
-              {CURRENCY_OPTIONS.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <input
-              id="edit-price"
-              class="edit-sheet__input"
-              type="number"
-              inputMode="decimal"
-              value={price}
-              onInput={(e) => setPrice((e.target as HTMLInputElement).value)}
-              placeholder="0"
-              min="0"
-              step="0.01"
+          <div class="edit-sheet__field">
+            <label class="edit-sheet__label" for="edit-note">Notes</label>
+            <textarea
+              id="edit-note"
+              class="edit-sheet__textarea"
+              value={note}
+              onInput={(e) => setNote((e.target as HTMLTextAreaElement).value)}
+              placeholder="Add a note..."
+              rows={3}
+              maxLength={10000}
             />
           </div>
         </section>
 
-        {/* Purchase Date */}
-        <section class="edit-sheet__section">
-          <label class="edit-sheet__label" for="edit-date">Purchase Date</label>
-          <input
-            id="edit-date"
-            class="edit-sheet__input"
-            type="date"
-            value={purchaseDate}
-            onInput={(e) => setPurchaseDate((e.target as HTMLInputElement).value)}
-          />
-        </section>
-
-        {/* Actions */}
         <div class="edit-sheet__actions">
-          <button
-            class="edit-sheet__btn edit-sheet__btn--cancel"
-            onClick={onClose}
-            type="button"
-            disabled={isSaving}
-          >
+          <button class="edit-sheet__btn edit-sheet__btn--cancel" onClick={onClose} type="button" disabled={isSaving}>
             Cancel
           </button>
-          <button
-            class="edit-sheet__btn edit-sheet__btn--save"
-            onClick={handleSave}
-            type="button"
-            disabled={isSaving}
-          >
+          <button class="edit-sheet__btn edit-sheet__btn--save" type="submit" disabled={isSaving || !countValid}>
             {isSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
-      </div>
+      </form>
 
       <Style css={`
         .edit-sheet {
           padding-bottom: var(--space-4);
         }
-
         .edit-sheet__header {
           margin-bottom: var(--space-5);
         }
-
         .edit-sheet__title {
           font-size: var(--font-lg);
           font-weight: var(--font-weight-bold);
           color: var(--text-primary);
         }
-
         .edit-sheet__subtitle {
           font-size: var(--font-sm);
           color: var(--text-secondary);
@@ -187,11 +161,18 @@ export function EditFigureSheet({ open, onClose, figure, onSave, isSaving }: Edi
           overflow: hidden;
           text-overflow: ellipsis;
         }
-
         .edit-sheet__section {
           margin-bottom: var(--space-5);
         }
-
+        .edit-sheet__row {
+          display: flex;
+          gap: var(--space-3);
+        }
+        .edit-sheet__field {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+        }
         .edit-sheet__label {
           display: block;
           font-size: var(--font-xs);
@@ -201,152 +182,55 @@ export function EditFigureSheet({ open, onClose, figure, onSave, isSaving }: Edi
           letter-spacing: 0.05em;
           margin-bottom: var(--space-2);
         }
-
-        /* Status toggle row */
         .edit-sheet__status-row {
           display: flex;
           gap: var(--space-2);
         }
-
         .edit-sheet__status-btn {
           flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
           min-height: var(--touch-min);
           border-radius: var(--radius-md);
-          font-size: var(--font-sm);
-          font-weight: var(--font-weight-semibold);
+          border: 1.5px solid var(--border-default);
+          background: var(--surface-secondary);
           color: var(--text-secondary);
-          background: var(--surface-tertiary);
-          border: 2px solid transparent;
-          transition: all var(--transition-fast);
+          font-weight: var(--font-weight-semibold);
         }
-
-        .edit-sheet__status-btn--owned.edit-sheet__status-btn--active {
-          background: rgba(34, 197, 94, 0.15);
-          border-color: var(--accent-success);
-          color: var(--accent-success);
+        .edit-sheet__status-btn--active {
+          border-color: var(--brand-500);
+          background: var(--brand-500);
+          color: #fff;
         }
-
-        .edit-sheet__status-btn--ordered.edit-sheet__status-btn--active {
-          background: rgba(245, 158, 11, 0.15);
-          border-color: var(--accent-warning);
-          color: var(--accent-warning);
-        }
-
-        .edit-sheet__status-btn--wished.edit-sheet__status-btn--active {
-          background: rgba(59, 130, 246, 0.15);
-          border-color: var(--accent-info);
-          color: var(--accent-info);
-        }
-
-        /* Textarea */
+        .edit-sheet__input,
         .edit-sheet__textarea {
           width: 100%;
-          min-height: 80px;
-          padding: var(--space-3);
-          background: var(--surface-tertiary);
-          border: 1px solid var(--border-subtle);
-          border-radius: var(--radius-md);
-          color: var(--text-primary);
-          font-size: var(--font-sm);
-          font-family: inherit;
-          resize: vertical;
-          line-height: var(--line-height-normal);
-        }
-
-        .edit-sheet__textarea:focus {
-          outline: none;
-          border-color: var(--brand-500);
-        }
-
-        .edit-sheet__textarea::placeholder {
-          color: var(--text-tertiary);
-        }
-
-        /* Price row */
-        .edit-sheet__price-row {
-          display: flex;
-          gap: var(--space-2);
-        }
-
-        .edit-sheet__currency-select {
-          width: 80px;
           min-height: var(--touch-min);
           padding: var(--space-2) var(--space-3);
-          background: var(--surface-tertiary);
-          border: 1px solid var(--border-subtle);
           border-radius: var(--radius-md);
+          border: 1px solid var(--border-default);
+          background: var(--surface-secondary);
           color: var(--text-primary);
-          font-size: var(--font-sm);
-          appearance: none;
-          -webkit-appearance: none;
+          font-size: var(--font-base);
         }
-
-        .edit-sheet__currency-select:focus {
-          outline: none;
-          border-color: var(--brand-500);
-        }
-
-        /* Input */
-        .edit-sheet__input {
-          flex: 1;
-          min-height: var(--touch-min);
-          padding: var(--space-2) var(--space-3);
-          background: var(--surface-tertiary);
-          border: 1px solid var(--border-subtle);
-          border-radius: var(--radius-md);
-          color: var(--text-primary);
-          font-size: var(--font-sm);
-          font-family: inherit;
-        }
-
-        .edit-sheet__input:focus {
-          outline: none;
-          border-color: var(--brand-500);
-        }
-
-        .edit-sheet__input::placeholder {
-          color: var(--text-tertiary);
-        }
-
-        /* Actions */
         .edit-sheet__actions {
           display: flex;
           gap: var(--space-3);
-          margin-top: var(--space-6);
         }
-
         .edit-sheet__btn {
           flex: 1;
           min-height: var(--touch-min);
           border-radius: var(--radius-md);
-          font-size: var(--font-sm);
           font-weight: var(--font-weight-semibold);
-          transition: all var(--transition-fast);
         }
-
-        .edit-sheet__btn:disabled {
-          opacity: 0.5;
-        }
-
         .edit-sheet__btn--cancel {
           background: var(--surface-tertiary);
-          color: var(--text-secondary);
+          color: var(--text-primary);
         }
-
-        .edit-sheet__btn--cancel:active:not(:disabled) {
-          background: var(--surface-elevated);
-        }
-
         .edit-sheet__btn--save {
           background: var(--brand-500);
-          color: white;
+          color: #fff;
         }
-
-        .edit-sheet__btn--save:active:not(:disabled) {
-          background: var(--brand-600);
+        .edit-sheet__btn:disabled {
+          opacity: 0.5;
         }
       `} />
     </BottomSheet>

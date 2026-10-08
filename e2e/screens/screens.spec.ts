@@ -370,7 +370,8 @@ test("(c) a pending edit turns known after the drain, and offline-stale tiles sh
   await expect(page.locator('.figure-detail img')).toHaveCount(0);
   await shot(page, testInfo, 'detail');
   const copies = page.getByRole('list', { name: 'Your copies' });
-  await expect(copies.getByRole('listitem')).toHaveCount(1);
+  // B may hold other copies of the figure from the sync suite on the same stack: the wished one is here.
+  await expect(copies.getByRole('listitem').filter({ hasText: 'Wished' }).first()).toBeVisible();
   await copies.scrollIntoViewIfNeeded();
   await shot(page, testInfo, 'detail-copies');
 });

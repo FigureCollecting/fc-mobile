@@ -9,7 +9,8 @@
 //   (d) user B on the same browser sees none of A's items; A's pending edit stays queued under A.
 //   (e) every request of the suite went to the app origin or the IdP; no script loaded at boot or
 //       later carries the legacy sign-in (/auth/login, /auth/refresh).
-//   (f) importing a fixture CSV shows the counts the server returned.
+//   (f) importing a fixture CSV shows the counts the server returned, and the note conflict it
+//       raises goes through the review (GR-Q1): both values with their dates, 'keep app' synced.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
@@ -420,13 +421,24 @@ test("(d) user B signing in on the same browser sees none of A's items, and A's 
 
 // ------------------------------------------------------------------ (f)
 
-test('(f) importing a fixture CSV shows the counts the server returned', async ({ context }, testInfo) => {
+test('(f) importing a fixture CSV shows the counts the server returned, and its conflict goes through the review', async ({ context }, testInfo) => {
   test.setTimeout(180_000);
   const page = await openApp(context, USER_A);
   await settled(page, 120_000);
-  // Two rows A already holds as MFC says, one MFC says A wishes for while A owns it, one unknown id.
-  const rows = [...[HEADS[10]!, HEADS[11]!].map((h) => `${h.mfcId},Owned,1`), `${HEADS[12]!.mfcId},Wished,1`];
-  const csv = ['ID,Status,Count', ...rows, '999999999,Owned,1', ''].join('\n');
+  // A note both sides changed since the last import is a conflict on the coordinator. A fresh app
+  // note and a fresh, different MFC note raise one on every run, on a new stack or a reused one.
+  // Each Fold8 project takes its own head (a held figure with a unique ASCII title).
+  const unique = HEADS.filter((h, i) => i >= 40 && h.mfcId !== undefined && /^[\x20-\x7e]+$/.test(h.name) && HEADS.filter((o) => o.name === h.name).length === 1);
+  const disputed = unique[testInfo.project.name.endsWith('-open') ? 1 : 0]!;
+  const stamp = Date.now();
+  const appNote = `app: boxed ${stamp}`;
+  const mfcNote = `mfc: loose ${stamp}`;
+  await page.evaluate(([h, n]) => window.__fcSync!.writeNote(h!, n!), [disputed.headId, appNote]);
+  await settled(page);
+  // Two rows A already holds as MFC says, one MFC says A wishes for while A owns it, the disputed
+  // note, and one unknown id.
+  const rows = [...[HEADS[10]!, HEADS[11]!].map((h) => `${h.mfcId},Owned,1,`), `${HEADS[12]!.mfcId},Wished,1,`, `${disputed.mfcId},Owned,1,${mfcNote}`];
+  const csv = ['ID,Status,Count,Note', ...rows, '999999999,Owned,1,', ''].join('\n');
   await navigate(page, '/import');
   await page.getByLabel('MFC export (CSV)').setInputFiles({ name: 'mfc-export.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByLabel('Export date').fill('2026-10-05');
@@ -434,13 +446,20 @@ test('(f) importing a fixture CSV shows the counts the server returned', async (
   await page.getByRole('button', { name: 'Import' }).click();
   const res = await answered;
   expect(res.status()).toBe(200);
-  const body = (await res.json()) as { resolved?: number; added?: number; unresolved?: unknown[]; importNumber?: number; conflictsPending?: number };
+  const body = (await res.json()) as {
+    resolved?: number;
+    added?: number;
+    unresolved?: unknown[];
+    importNumber?: number;
+    conflictsPending?: number;
+    review?: Array<{ kind: string; items: Array<{ headId: string; rev: string }> }>;
+  };
   const result = page.getByRole('region', { name: 'Import result' });
   await expect(result).toBeVisible({ timeout: 30_000 });
   const count = (label: string) => result.locator('.page-import__count', { has: page.getByText(label, { exact: true }) }).locator('dd');
   await expect(count('Rows found')).toHaveText(String(body.resolved ?? 0));
   await expect(count('Not found')).toHaveText(String(body.unresolved?.length ?? 0));
-  expect(body.resolved).toBe(3);
+  expect(body.resolved).toBe(4);
   expect(body.unresolved).toHaveLength(1);
   if ((body.added ?? 0) > 0) await expect(count('New figures')).toHaveText(String(body.added));
   await expect(result.getByText(`Import ${body.importNumber} done`)).toBeVisible();
@@ -455,18 +474,21 @@ test('(f) importing a fixture CSV shows the counts the server returned', async (
   await result.getByRole('button', { name: `Review ${conflicts} ${conflicts === 1 ? 'conflict' : 'conflicts'}` }).click();
   const list = page.getByRole('list', { name: 'Conflicts' });
   await expect(list).toBeVisible({ timeout: 15_000 });
-  const item = list.getByRole('listitem').filter({ hasText: HEADS[12]!.name }).first();
-  await expect(item).toContainText('App: ');
-  await expect(item).toContainText('MFC: ');
-  await expect(item).toContainText('export of Oct 5, 2026');
+  const raised = body.review?.find((g) => g.kind === 'IMPORT_REVIEW_KIND_CONFLICT')?.items.find((i) => i.headId === disputed.headId);
+  expect(raised, `the import raised ${disputed.headId} as a conflict`).toBeDefined();
+  const item = list.getByRole('listitem').filter({ hasText: disputed.name });
+  await expect(item).toHaveCount(1);
+  await expect(item.locator('dt')).toHaveText(['Note']);
+  await expect(item).toContainText(`App: ${appNote} (`);
+  await expect(item).toContainText(`MFC: ${mfcNote} (export of Oct 5, 2026)`);
   await shot(page, testInfo, 'review');
-  const chose = item.getByText(/^You chose: keep app/);
-  if ((await chose.count()) === 0) await item.getByRole('button', { name: 'Keep app' }).click();
-  await expect(chose).toBeVisible();
+  await item.getByRole('button', { name: 'Keep app' }).click();
+  await expect(item.getByText(/^You chose: keep app/)).toBeVisible();
   await settled(page);
-  const facet = await page.evaluate((h) => window.__fcSync!.facet(`res/mfc/${h}`), HEADS[12]!.headId);
+  const facet = await page.evaluate((h) => window.__fcSync!.facet(`res/mfc/${h}`), disputed.headId);
   expect(facet?.pending_id ?? null).toBeNull();
-  expect(JSON.parse(facet!.value!.payload)).toMatchObject({ item: 'figure', choice: 'keep' });
+  expect(JSON.parse(facet!.value!.payload)).toMatchObject({ item: 'figure', rev: raised!.rev, choice: 'keep' });
+  testInfo.annotations.push({ type: 'review-answer', description: facet!.value!.payload });
 });
 
 // ------------------------------------------------------------------ (e)

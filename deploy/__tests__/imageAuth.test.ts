@@ -101,6 +101,13 @@ describe('scripts/assert-bundle-auth.sh', () => {
     expect(res.status).toBe(0);
   });
 
+  it('ends on an import cycle (a lazy page imports the entry back)', () => {
+    const chunks = { 'index-a.js': 'import(`./FigureDetail-b.js`);', 'FigureDetail-b.js': 'import{h}from"./index-a.js";', 'auth-d.js': OIDC };
+    const res = spawnSync('sh', [SCRIPT, html(chunks, ['index-a.js'])], { encoding: 'utf8', timeout: 10_000 });
+    expect(res.error).toBeUndefined();
+    expect(res.status).toBe(0);
+  });
+
   it('fails when a chunk the boot graph imports is missing', () => {
     const res = run(html({ 'index-a.js': 'import"./gone-b.js";', 'auth-d.js': OIDC }, ['index-a.js']));
     expect(res.status).toBe(1);

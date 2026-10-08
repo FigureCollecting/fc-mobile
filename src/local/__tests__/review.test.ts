@@ -58,6 +58,12 @@ describe('buildReview cost', () => {
     expect(calls.buildView).toBe(1);
   });
 
+  it('shows the counts of an item whose figure is no longer held, with no app date', () => {
+    // One copy (head 0) and two items: head 1's figure has no copy left.
+    const set = buildReview(store(1, 2));
+    expect(set.divergences[1]).toMatchObject({ headId: head(1), name: 'A figure no longer in your collection', parts: [{ label: 'Owned', app: '1', appEditedAt: null, mfc: '2' }] });
+  });
+
   it('answers 1,144 review items over 1,200 copies in under 100 ms', () => {
     const snapshot = store(1200, 1144);
     performance.mark('fc-review:start');

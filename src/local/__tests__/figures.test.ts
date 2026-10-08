@@ -2,7 +2,7 @@
 // pages already bind to. One item per figure and kind (a tab), its copies stacked xN, product
 // facts from the card, and never an image: no figure.imageUrl and no displayMeta, ever (MG-2).
 import { describe, expect, it } from 'vitest';
-import { create } from '@bufbuild/protobuf';
+import { create, type MessageInitShape } from '@bufbuild/protobuf';
 import { ProductCardSchema, ufFacetKey, type ProductCard } from '@figurecollecting/fc-api-contract';
 import type { FacetRecord, ProductRecord } from '../../storage/records';
 import { indexFacet } from '../../sync/facetIndex';
@@ -11,8 +11,8 @@ import { buildFigures, figureOf, jan13, type FigureInputs } from '../figures';
 
 const AS_OF = '2026-10-01T09:30:00.000000Z';
 
-function card(head: string, extra: Partial<Parameters<typeof create<typeof ProductCardSchema>>[1]> = {}): ProductCard {
-  return create(ProductCardSchema, {
+function card(head: string, extra: Record<string, unknown> = {}): ProductCard {
+  const init = {
     headId: head,
     requestedAs: [{ ref: { case: 'headId', value: head } }],
     title: { value: `Figure ${head.slice(0, 4)}`, asOf: AS_OF },
@@ -24,7 +24,8 @@ function card(head: string, extra: Partial<Parameters<typeof create<typeof Produ
     gtin14s: ['04580416940986'],
     heightMm: 250,
     ...extra,
-  });
+  };
+  return create(ProductCardSchema, init as MessageInitShape<typeof ProductCardSchema>);
 }
 
 const product = (c: ProductCard, asOf: string | null = AS_OF): ProductRecord => ({ sub: 'user-a', head_id: c.headId, card: c, as_of: asOf, fetched_at: 0 });

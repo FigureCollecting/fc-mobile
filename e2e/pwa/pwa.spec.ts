@@ -47,8 +47,8 @@ async function shellInstalled(page: Page): Promise<void> {
 }
 
 /**
- * The image is the OIDC build (Dockerfile VITE_AUTH_MODE=oidc): a signed-out visit shows the
- * sign-in-to-sync banner over the collection, where the legacy build redirects to /login.
+ * The image signs in through OIDC only: a signed-out visit shows the sign-in-to-sync banner over
+ * the collection.
  * Both the banner and the update prompt are role=status, so each is found by its text.
  */
 const signInBanner = (page: Page) => page.getByRole('status').filter({ hasText: /sign in to sync your collection/i });
@@ -351,19 +351,6 @@ test('(d) img-src: same-origin and images.figurecollecting.com images load, a ho
     derivative: 'https://images.figurecollecting.com/serve/1@2',
     hotlinked: 'https://static.myfigurecollection.net/upload/items/1/12345-abcde.jpg',
   };
-  const at = '2026-01-01T00:00:00Z';
-  const figures = Object.entries(src).map(([id, imageUrl]) => ({
-    _id: id, name: id, manufacturer: 'Maker', imageUrl, collectionStatus: 'owned', userId: 'u1', createdAt: at, updatedAt: at,
-  }));
-  // Signed in against a legacy-shaped API on this origin (connect-src 'self').
-  await context.addInitScript((o) => {
-    localStorage.setItem('fc.apiUrl', `${o}/legacy-api`);
-    const user = { _id: 'u1', username: 'u', email: 'u@example.com', token: 't', refreshToken: 'r', tokenExpiresAt: Date.now() + 3.6e6 };
-    localStorage.setItem('auth-storage', JSON.stringify({ state: { user, isAuthenticated: true, lastActivity: Date.now() }, version: 0 }));
-  }, origin);
-  await context.route(/\/legacy-api\//, (route) =>
-    route.fulfill({ json: /\/figures(\?|$)/.test(route.request().url()) ? { success: true, data: figures, count: 3, page: 1, pages: 1, total: 3 } : { success: true, data: {} } }),
-  );
   const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
   const fetched: string[] = [];
   await context.route(/^https:\/\/(images\.figurecollecting\.com|static\.myfigurecollection\.net)\//, (route) => {
@@ -371,7 +358,17 @@ test('(d) img-src: same-origin and images.figurecollecting.com images load, a ho
     return route.fulfill({ status: 200, contentType: 'image/png', body: png });
   });
 
+  // The app shows no image from a figure record any more (WK-15: a derivative only from
+  // GetProductImages), so the page asks for the three itself: the shipped CSP decides.
   await page.goto(`${origin}/`);
+  await page.evaluate((urls) => {
+    for (const url of urls) {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = '';
+      document.body.appendChild(img);
+    }
+  }, Object.values(src));
   const loaded = (url: string) =>
     page.locator(`img[src="${url}"]`).first().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
   await expect.poll(() => loaded(src.self)).toBe(true);

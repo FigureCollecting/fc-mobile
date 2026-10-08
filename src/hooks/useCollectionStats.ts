@@ -1,51 +1,33 @@
-import { useQuery } from '@tanstack/react-query';
-import { getFigureStats } from '@figurecollecting/fc-shared';
-import type { StatsData } from '@figurecollecting/fc-shared';
-import { api } from '../api/client';
-import { useAuthStore } from '../stores/auth';
-import { getCachedFigures } from '../storage/figureCache';
+// Collection counts from the local store (WK-15): copies per kind (a stack of three is three), and
+// the makers of the held figures. Offline too; no request.
+import { useCallback } from 'preact/hooks';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { useSnapshot, type Snapshot } from '../local/useLocal';
 
-interface CollectionCounts {
+export interface CollectionCounts {
   owned: number;
   ordered: number;
   wished: number;
   total: number;
+  /** Held figures (owned, ordered, wished) per maker, most first. */
+  makers: Array<{ name: string; count: number }>;
 }
 
-/**
- * Fetch collection stats from the API.
- * Falls back to counting cached figures when offline.
- */
-export function useCollectionStats() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+function countCopies(s: Snapshot): CollectionCounts {
+  const out = { owned: 0, ordered: 0, wished: 0 };
+  const makers = new Map<string, number>();
+  for (const f of s.figures) {
+    if (f.local.kind === 'former') continue;
+    out[f.local.kind] += f.local.copies.length;
+    if (f.manufacturer) makers.set(f.manufacturer, (makers.get(f.manufacturer) ?? 0) + 1);
+  }
+  return {
+    ...out,
+    total: out.owned + out.ordered + out.wished,
+    makers: [...makers.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+  };
+}
 
-  return useQuery<CollectionCounts>({
-    queryKey: ['collectionStats'],
-    queryFn: async () => {
-      try {
-        const stats: StatsData = await getFigureStats(api);
-        return {
-          owned: stats.statusCounts.owned,
-          ordered: stats.statusCounts.ordered,
-          wished: stats.statusCounts.wished,
-          total: stats.totalCount,
-        };
-      } catch {
-        // Fallback: count from IndexedDB cache
-        const [owned, ordered, wished] = await Promise.all([
-          getCachedFigures('owned'),
-          getCachedFigures('ordered'),
-          getCachedFigures('wished'),
-        ]);
-        return {
-          owned: owned.length,
-          ordered: ordered.length,
-          wished: wished.length,
-          total: owned.length + ordered.length + wished.length,
-        };
-      }
-    },
-    enabled: isAuthenticated,
-    staleTime: 120_000, // 2 minutes
-  });
+export function useCollectionStats(): UseQueryResult<CollectionCounts> {
+  return useSnapshot(useCallback(countCopies, []));
 }

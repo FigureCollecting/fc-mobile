@@ -1,8 +1,6 @@
 import { SlimHeader } from '../components/layout/SlimHeader';
 import { useCollectionStats } from '../hooks/useCollectionStats';
-import { useCollectionBreakdown } from '../hooks/useAnalytics';
-import { useAuthStore } from '../stores/auth';
-import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { useAuthPhase } from '../local/useLocal';
 import { Style } from '../styles/Style';
 
 /**
@@ -10,13 +8,11 @@ import { Style } from '../styles/Style';
  * gated until its own mobile condensation pass; this stays intentionally slim.
  */
 export function Stats() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const phase = useAuthPhase();
+  // From the local store: every copy, offline too.
   const { data: counts } = useCollectionStats();
-  // Breakdown has no backend by default — don't fetch a dead endpoint just
-  // to power the "top manufacturers" list (src/config/features.ts).
-  const { data: manufacturers } = useCollectionBreakdown('manufacturer', LEGACY_SCREENS_ENABLED);
 
-  if (!isAuthenticated) {
+  if (phase === 'signed-out') {
     return (
       <div class="page-stats">
         <p class="page-stats__empty">Sign in to see your stats</p>
@@ -32,7 +28,7 @@ export function Stats() {
     { label: 'Wished', value: counts?.wished ?? 0, tone: 'var(--accent-warning)' },
   ];
 
-  const topMakers = (manufacturers ?? []).slice(0, 8);
+  const topMakers = (counts?.makers ?? []).slice(0, 8);
   const maxCount = topMakers[0]?.count ?? 1;
 
   return (
@@ -52,8 +48,8 @@ export function Stats() {
         <section class="page-stats__section">
           <h3 class="page-stats__section-title">Top manufacturers</h3>
           {topMakers.map((m) => (
-            <div key={m._id} class="page-stats__bar-row">
-              <span class="page-stats__bar-label">{m.label ?? m._id}</span>
+            <div key={m.name} class="page-stats__bar-row">
+              <span class="page-stats__bar-label">{m.name}</span>
               <div class="page-stats__bar-track">
                 <div
                   class="page-stats__bar-fill"

@@ -1,22 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
-// Exercises the LEGACY_SCREENS_ENABLED=true path: notifications, export, MFC
-// sync, and push-notification quick actions all reappear.
+// Exercises the LEGACY_SCREENS_ENABLED=true path: the notifications, export and push quick actions
+// reappear. The MFC cookie sync is gone for good: the MFC export import replaces it (WK-15).
 vi.mock('../../config/features', () => ({ LEGACY_SCREENS_ENABLED: true }));
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
-
-vi.mock('../../api/client', async () => {
-  const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client');
-  return { ...actual, api: { get: vi.fn(), put: vi.fn(), post: vi.fn(), delete: vi.fn() } };
-});
-
-const unreadState = vi.hoisted(() => ({ count: 12 }));
-vi.mock('../../hooks/useNotifications', () => ({
-  useUnreadCount: () => ({ data: unreadState.count }),
-}));
 
 vi.mock('../../hooks/usePushNotifications', () => ({
   usePushNotifications: () => ({
@@ -31,34 +21,25 @@ vi.mock('../../hooks/usePushNotifications', () => ({
 
 import { Profile } from '../Profile';
 import { renderWithProviders } from '../../test/testUtils';
-import { useAuthStore } from '../../stores/auth';
+import { localRig } from '../../local/__tests__/localHarness';
+import { localSession } from '../../local/session';
 
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1', username: 'tester', email: 'a@b.co', isAdmin: false,
-      token: 'tok', tokenExpiresAt: Date.now() + 60 * 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
-  });
-}
+afterEach(() => {
+  localSession.value = undefined;
+});
 
 describe('Profile page (LEGACY_SCREENS_ENABLED=true)', () => {
-  it('shows the notifications, export, MFC sync and push quick actions', () => {
-    signIn();
+  it('shows the notifications, export and push quick actions, and no MFC cookie sync', async () => {
+    await localRig();
     renderWithProviders(<Profile />, { initialPath: '/profile' });
-
     expect(screen.getByText(/^notifications$/i)).toBeInTheDocument();
-    expect(screen.getByText('9+')).toBeInTheDocument(); // unreadCount=12, badge caps at 9+
     expect(screen.getByText(/export & share/i)).toBeInTheDocument();
-    expect(screen.getByText(/^mfc sync$/i)).toBeInTheDocument();
     expect(screen.getByText(/push notifications/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^mfc sync$/i)).not.toBeInTheDocument();
   });
 
   it('navigates to /notifications from the quick action', async () => {
-    signIn();
+    await localRig();
     const user = userEvent.setup();
     const { currentPath } = renderWithProviders(<Profile />, { initialPath: '/profile' });
     await user.click(screen.getByText(/^notifications$/i));
@@ -66,38 +47,10 @@ describe('Profile page (LEGACY_SCREENS_ENABLED=true)', () => {
   });
 
   it('navigates to /export from the quick action', async () => {
-    signIn();
+    await localRig();
     const user = userEvent.setup();
     const { currentPath } = renderWithProviders(<Profile />, { initialPath: '/profile' });
     await user.click(screen.getByText(/export & share/i));
     expect(currentPath()).toBe('/export');
-  });
-
-  it('opens the MFC Sync bottom sheet from the quick action', async () => {
-    signIn();
-    const user = userEvent.setup();
-    renderWithProviders(<Profile />, { initialPath: '/profile' });
-    await user.click(screen.getByText(/^mfc sync$/i));
-    expect(await screen.findByRole('heading', { name: /mfc sync/i })).toBeInTheDocument();
-  });
-});
-
-describe('Profile page (LEGACY_SCREENS_ENABLED=true, no unread notifications)', () => {
-  it('hides the unread badge when the count is zero', () => {
-    unreadState.count = 0;
-    signIn();
-    renderWithProviders(<Profile />, { initialPath: '/profile' });
-    expect(screen.getByText(/^notifications$/i)).toBeInTheDocument();
-    expect(screen.queryByText('9+')).not.toBeInTheDocument();
-  });
-});
-
-describe('Profile page (LEGACY_SCREENS_ENABLED=true, single-digit unread count)', () => {
-  it('shows the raw count under 10, not the "9+" cap', () => {
-    unreadState.count = 3;
-    signIn();
-    renderWithProviders(<Profile />, { initialPath: '/profile' });
-    expect(screen.getByText('3')).toBeInTheDocument();
-    expect(screen.queryByText('9+')).not.toBeInTheDocument();
   });
 });

@@ -9,6 +9,8 @@ import { HANDS_OFF_LAUNCH_OPTIONS } from './e2e/handsOff';
 // - e2e/auth (WK-08): mobile-chromium.
 // - e2e/sync (WK-13): Chromium at the Fold8's cover and open panels (the shots harness sizes),
 //   and WebKit at the cover panel; a case WebKit cannot express says so where it skips.
+// - e2e/screens (WK-15): the screens on the local store, Chromium at the Fold8's cover and open
+//   panels, with their sign-off PNGs.
 process.env['FC_STACK_WEB_DIST'] ??= fileURLToPath(new URL('./dist-stack', import.meta.url));
 
 const fold8 = (name: string) => {
@@ -38,6 +40,16 @@ export default defineConfig({
     {
       name: 'sync-chromium-fold8-open',
       testDir: './e2e/sync',
+      use: { ...devices['Pixel 7'], ...fold8('fold8-open-full'), launchOptions: HANDS_OFF_LAUNCH_OPTIONS },
+    },
+    {
+      name: 'screens-chromium-fold8-cover',
+      testDir: './e2e/screens',
+      use: { ...devices['Pixel 7'], ...fold8('fold8-cover-full'), launchOptions: HANDS_OFF_LAUNCH_OPTIONS },
+    },
+    {
+      name: 'screens-chromium-fold8-open',
+      testDir: './e2e/screens',
       use: { ...devices['Pixel 7'], ...fold8('fold8-open-full'), launchOptions: HANDS_OFF_LAUNCH_OPTIONS },
     },
     // The route guard only (e2e/fixtures.ts): --host-resolver-rules is a Chromium switch.

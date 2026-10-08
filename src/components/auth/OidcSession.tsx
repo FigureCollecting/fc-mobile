@@ -3,14 +3,14 @@ import { useLocation } from 'wouter';
 import { getAuthSession } from '../../auth';
 import { reloadToLatest } from '../../pwa/updates';
 import { startBrowserSync, type BrowserSync } from '../../sync/browser';
+import { publishLocalSession } from '../../local/publish';
 import { SyncStatusLine } from '../sync/SyncStatusLine';
 import { SyncAuthBanner } from './SyncAuthBanner';
 
 const reload = (): void => void reloadToLatest();
 
-// The OIDC build's stand-in for the legacy /login redirect: start the session and the page's
-// sync, and show the sign-in-to-sync banner and what sync is doing. Lazy-loaded, so legacy
-// builds never ship it.
+// Sign-in in place (no /login screen): start the session and the page's sync, publish them to the
+// screens, and show the sign-in-to-sync banner and what sync is doing.
 export default function OidcSession() {
   const session = getAuthSession();
   const [location] = useLocation();
@@ -26,6 +26,7 @@ export default function OidcSession() {
     // Sync holds until the session can sync, and queues edits meanwhile.
     const started = startBrowserSync(session);
     setSync(started);
+    publishLocalSession(session, started.engine);
     if (e2e) void import('../../sync/e2eHooks').then((m) => m.installSyncHooks(started.engine));
   }, [session]);
 

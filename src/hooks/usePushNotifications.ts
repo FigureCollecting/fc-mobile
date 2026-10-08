@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { api } from '../api/client';
+// The legacy API client loads only when push is used (legacy screens): never in the running app.
+const legacyApi = async () => (await import('../api/client')).api;
 
 /**
  * Hook for managing Web Push notification subscriptions.
@@ -38,7 +39,7 @@ export function usePushNotifications() {
     setLoading(true);
     try {
       // Fetch VAPID public key from backend
-      const { data: vapidData } = await api.get<{ success: boolean; vapidPublicKey: string }>(
+      const { data: vapidData } = await (await legacyApi()).get<{ success: boolean; vapidPublicKey: string }>(
         '/push/vapid-key',
       );
 
@@ -61,7 +62,7 @@ export function usePushNotifications() {
       const subscriptionJson = pushSubscription.toJSON();
 
       // Send subscription to backend
-      await api.post('/push/subscribe', {
+      await (await legacyApi()).post('/push/subscribe', {
         endpoint: subscriptionJson.endpoint,
         keys: {
           p256dh: subscriptionJson.keys?.p256dh,
@@ -104,7 +105,7 @@ export function usePushNotifications() {
         await subscription.unsubscribe();
 
         // Remove from backend (axios DELETE with body requires { data })
-        await api.delete('/push/unsubscribe', { data: { endpoint } });
+        await (await legacyApi()).delete('/push/unsubscribe', { data: { endpoint } });
       }
 
       setIsSubscribed(false);

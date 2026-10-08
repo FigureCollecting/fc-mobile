@@ -1,120 +1,136 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/preact';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-
-vi.mock('@figurecollecting/fc-shared', async () => {
-  const actual = await vi.importActual<typeof import('@figurecollecting/fc-shared')>(
-    '@figurecollecting/fc-shared',
-  );
-  return { ...actual, getFigures: vi.fn() };
-});
-
-import { getFigures } from '@figurecollecting/fc-shared';
+// useCollection on the local store (WK-15): the whole collection from IndexedDB, no page cap and no
+// request, re-read whenever the engine says the store changed; the same PaginatedResponse shape.
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook, waitFor } from '@testing-library/preact';
+import { Code, ConnectError } from '@connectrpc/connect';
+import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
+import { headOf, seedCopies } from '../../sync/__tests__/engineSupport';
+import { localSession } from '../../local/session';
+import { useAuthPhase, useLastSynced } from '../../local/useLocal';
 import { useCollection } from '../useCollection';
-import { useAuthStore } from '../../stores/auth';
-import { cacheFigures } from '../../storage/figureCache';
 
 const pwaStorage = vi.hoisted(() => ({ markHydrated: vi.fn(async () => undefined) }));
 vi.mock('../../pwa/storage', () => ({ markHydrated: pwaStorage.markHydrated }));
 
-const mockedGetFigures = getFigures as unknown as ReturnType<typeof vi.fn>;
-
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1',
-      username: 't',
-      email: 'a@b.co',
-      isAdmin: false,
-      token: 'tok',
-      tokenExpiresAt: Date.now() + 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
-  });
-}
-
-function wrapper() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
-  });
-  return ({ children }: { children: unknown }) => (
-    <QueryClientProvider client={client}>{children as any}</QueryClientProvider>
-  );
-}
-
-function makeFigure(id: string) {
-  return {
-    _id: id,
-    user: 'u1',
-    manufacturer: 'GSC',
-    name: `Figure ${id}`,
-  } as any;
-}
+afterEach(() => {
+  localSession.value = undefined;
+});
 
 describe('useCollection', () => {
-  beforeEach(() => {
-    mockedGetFigures.mockReset();
-    pwaStorage.markHydrated.mockClear();
+  it('waits, fetching nothing, while no session is published', () => {
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.fetchStatus).toBe('idle');
   });
 
-  it('requests persistent storage once the collection has hydrated into IndexedDB', async () => {
-    signIn();
-    mockedGetFigures.mockResolvedValueOnce({ success: true, data: [makeFigure('p1')], count: 1, page: 1, pages: 1, total: 1 });
-    const { result } = renderHook(() => useCollection(), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(pwaStorage.markHydrated).toHaveBeenCalledTimes(1);
+  it('reads nothing while signed out', async () => {
+    const r = await localRig({ status: 'signed-out' });
+    const read = vi.spyOn(r.engine, 'read');
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
+    expect(result.current.fetchStatus).toBe('idle');
+    expect(read).not.toHaveBeenCalled();
   });
 
-  it('does not request it when the fetch failed and nothing new was stored', async () => {
-    signIn();
-    mockedGetFigures.mockRejectedValueOnce(new Error('offline'));
-    const { result } = renderHook(() => useCollection({ status: 'ordered' as any }), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isFetching).toBe(false));
-    expect(pwaStorage.markHydrated).not.toHaveBeenCalled();
+  it('returns every held figure, 250 of them, with no page cap and no network call', async () => {
+    const r = await localRig();
+    seedCopies(r.server, 250);
+    r.server.seedProducts(Array.from({ length: 250 }, (_, i) => headOf(i)));
+    await r.engine.trigger('start');
+    const calls = r.server.calls.length;
+    const { result } = renderHook(() => useCollection({ limit: 20 }), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data?.data).toHaveLength(250));
+    expect(result.current.data).toMatchObject({ success: true, total: 250, count: 250, page: 1, pages: 1 });
+    expect(result.current.data!.data[0]).toMatchObject({ collectionStatus: 'owned', name: `Figure ${headOf(0).slice(0, 8)}` });
+    expect(r.server.calls.length).toBe(calls);
+    expect(pwaStorage.markHydrated).toHaveBeenCalled();
   });
 
-  it('returns API data and caches it to IndexedDB', async () => {
-    signIn();
-    const figures = [makeFigure('1'), makeFigure('2')];
-    mockedGetFigures.mockResolvedValueOnce({
-      success: true,
-      data: figures,
-      count: 2,
-      page: 1,
-      pages: 1,
-      total: 2,
+  it('filters by tab, the No longer owned tab included, and leaves former copies out of the whole collection', async () => {
+    const r = await localRig();
+    seedCopies(r.server, 2, 100, 'wished');
+    await r.engine.trigger('start');
+    const occ = await r.engine.write((s) => s.createCopy(headOf(9), 'owned'));
+    await r.engine.write((s) => s.markFormer([occ], { reason: 'sold' }));
+    const wrapper = queryWrapper();
+    const wished = renderHook(() => useCollection({ status: 'wished' }), { wrapper });
+    const former = renderHook(() => useCollection({ status: 'former' }), { wrapper });
+    const all = renderHook(() => useCollection(), { wrapper });
+    await waitFor(() => expect(former.result.current.data?.total).toBe(1));
+    await waitFor(() => expect(wished.result.current.data?.total).toBe(2));
+    await waitFor(() => expect(all.result.current.data?.total).toBe(2));
+    expect(former.result.current.data!.data[0]!.local.copies[0]!.disposal).toMatchObject({ reason: 'sold' });
+  });
+
+  it('shows a local write at once as pending, and as known once the engine has synced it', async () => {
+    const r = await localRig();
+    await r.engine.trigger('start');
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data?.total).toBe(0));
+    await act(async () => {
+      await r.engine.write((s) => s.createCopy(headOf(3), 'ordered'));
     });
-
-    const { result } = renderHook(() => useCollection(), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.data).toHaveLength(2);
-
-    // Cache should now contain those figures.
-    const { getCachedFigures } = await import('../../storage/figureCache');
-    const cached = await getCachedFigures();
-    expect(cached).toHaveLength(2);
+    await waitFor(() => expect(result.current.data?.data.map((f) => f.local.sync)).toEqual(['pending']));
+    await act(() => r.engine.trigger('manual'));
+    await waitFor(() => expect(result.current.data?.data.map((f) => f.local.sync)).toEqual(['known']));
   });
 
-  it('falls back to cached figures when the API fails', async () => {
-    signIn();
-    // Pre-seed the cache.
-    await cacheFigures([makeFigure('cached-a'), makeFigure('cached-b')]);
-
-    mockedGetFigures.mockRejectedValueOnce(new Error('boom'));
-
-    const { result } = renderHook(() => useCollection(), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    const names = (result.current.data?.data ?? []).map((f) => f.name).sort();
-    expect(names).toEqual(['Figure cached-a', 'Figure cached-b']);
+  it('marks settled items offline-stale while the server cannot be reached', async () => {
+    const r = await localRig();
+    seedCopies(r.server, 1);
+    await r.engine.trigger('start');
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('known'));
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+    await act(() => r.engine.trigger('manual'));
+    await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('offline-stale'));
   });
 
-  it('propagates the error when the API fails AND the cache is empty', async () => {
-    signIn();
-    mockedGetFigures.mockRejectedValueOnce(new Error('nope'));
+  it('marks settled items offline-stale while sync is held (sign in to sync)', async () => {
+    let held = false;
+    const r = await localRig({ deps: { blocked: () => held } });
+    seedCopies(r.server, 1);
+    await r.engine.trigger('start');
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('known'));
+    held = true;
+    await act(() => r.engine.trigger('manual'));
+    expect(r.engine.state.value.phase).toBe('paused');
+    await waitFor(() => expect(result.current.data?.data[0]?.local.sync).toBe('offline-stale'));
+  });
 
-    const { result } = renderHook(() => useCollection(), { wrapper: wrapper() });
+  it('surfaces a failed read as an error', async () => {
+    const r = await localRig();
+    vi.spyOn(r.engine, 'read').mockRejectedValue(new Error('store closed'));
+    const { result } = renderHook(() => useCollection(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+});
+
+describe('useLastSynced', () => {
+  it('reads the last Status from sync_meta, and is null before any', async () => {
+    const r = await localRig();
+    const { result } = renderHook(() => useLastSynced(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current).toBeNull());
+    await act(() => r.engine.trigger('start'));
+    await waitFor(() => expect(result.current).toBe(r.clock.wallMs()));
+  });
+});
+
+describe('useAuthPhase', () => {
+  it('is loading with no session, then follows the session: signed-out, or signed-in for any status with a user', async () => {
+    const { result } = renderHook(() => useAuthPhase(), { wrapper: queryWrapper() });
+    expect(result.current).toBe('loading');
+    const r = await localRig({ status: 'loading' });
+    await waitFor(() => expect(result.current).toBe('loading'));
+    act(() => {
+      r.status.value = 'signed-out';
+    });
+    expect(result.current).toBe('signed-out');
+    for (const s of ['signed-in', 'offline', 'reauth-required', 'reload-required'] as const) {
+      act(() => {
+        r.status.value = s;
+      });
+      expect(result.current).toBe('signed-in');
+    }
   });
 });

@@ -1,14 +1,22 @@
 import { useState, useCallback } from 'preact/hooks';
 import { useRoute, useLocation } from 'wouter';
+import type { OccurrenceStatus } from '@figurecollecting/fc-api-contract';
 import { useFigure } from '../hooks/useFigure';
-import { useUpdateFigure, useDeleteFigure } from '../hooks/useFigureMutations';
+import { useCollections } from '../hooks/useCollection';
+import { useCopyActions, useDeleteFigure, useUpdateFigure, type FigureEdit } from '../hooks/useFigureMutations';
+import { useProductImage } from '../hooks/useProductImage';
+import { useAuthPhase } from '../local/useLocal';
+import { jan13 } from '../local/figures';
 import { StatusBadge } from '../components/ui/StatusBadge';
-import { ImageGallery } from '../components/ui/ImageGallery';
 import { EditFigureSheet } from '../components/collection/EditFigureSheet';
-import { StatusSheet } from '../components/collection/StatusSheet';
 import { DeleteSheet } from '../components/collection/DeleteSheet';
-import type { EditFormData } from '../components/collection/EditFigureSheet';
-import type { CollectionStatus } from '@figurecollecting/fc-shared';
+import { DisposalSheet } from '../components/collection/DisposalSheet';
+import { MoveSheet, type MoveTarget } from '../components/collection/MoveSheet';
+import { CopyList } from '../components/collection/CopyList';
+import { TAB_LABEL } from '../components/collection/CollectionTabs';
+import { SyncBadge, formatAsOf } from '../components/sync/SyncBadge';
+import { showToast } from '../stores/toast';
+import type { Disposal } from '../storage/userStore';
 import { Style } from '../styles/Style';
 
 function SkeletonDetail() {
@@ -27,67 +35,55 @@ function SkeletonDetail() {
   );
 }
 
-function formatPrice(price: number | undefined, currency: string | undefined): string {
-  if (price == null) return '';
-  const cur = currency ?? 'JPY';
-  try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(price);
-  } catch {
-    return `${cur} ${price}`;
-  }
+function formatRelease(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  if (y === undefined || m === undefined || Number.isNaN(y) || Number.isNaN(m)) return ym;
+  return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', timeZone: 'UTC' }).format(Date.UTC(y, m - 1, 1));
 }
 
-function formatDate(dateStr: string | undefined): string {
-  if (!dateStr) return '';
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  } catch {
-    return dateStr;
-  }
+const copiesLabel = (n: number): string => (n === 1 ? '1 copy' : `${n} copies`);
+const failed = (what: string) => (err: unknown) => showToast(`Could not ${what}: ${(err as Error).message}`, 'error');
+
+function BackIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 12H5" />
+      <path d="M12 19l-7-7 7-7" />
+    </svg>
+  );
 }
 
-function formatDimension(mm: number | undefined): string {
-  if (mm == null) return '';
-  return `${mm}mm`;
-}
-
+/** One figure from the local store (WK-15): its card facts, its copies and every edit, offline too. */
 export function FigureDetail() {
   const [, params] = useRoute('/figure/:id');
   const [, setLocation] = useLocation();
+  const phase = useAuthPhase();
   const { data: figure, isLoading, isError } = useFigure(params?.id);
+  const image = useProductImage(figure?.local.headId);
+  const collections = useCollections();
   const updateMutation = useUpdateFigure();
   const deleteMutation = useDeleteFigure();
+  const actions = useCopyActions();
   const [editOpen, setEditOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [moving, setMoving] = useState<string[] | null>(null);
+  const [disposing, setDisposing] = useState<string[] | null>(null);
+  // Each opening of the disposal sheet is a fresh form: one copy's buyer and price never carry to the next.
+  const [disposal, setDisposal] = useState(0);
+  const dispose = (occIds: string[]) => {
+    setDisposal((n) => n + 1);
+    setDisposing(occIds);
+  };
 
   const handleBack = useCallback(() => {
-    if (window.history.length > 1) {
-      window.history.back();
-    } else {
-      setLocation('/');
-    }
+    if (window.history.length > 1) window.history.back();
+    else setLocation('/');
   }, [setLocation]);
 
   const handleEditSave = useCallback(
-    (data: EditFormData) => {
+    (data: FigureEdit) => {
       if (!figure) return;
-      updateMutation.mutate(
-        { id: figure._id, data },
-        { onSuccess: () => setEditOpen(false) },
-      );
-    },
-    [figure, updateMutation],
-  );
-
-  const handleStatusChange = useCallback(
-    (status: CollectionStatus) => {
-      if (!figure) return;
-      updateMutation.mutate(
-        { id: figure._id, data: { collectionStatus: status } },
-        { onSuccess: () => setStatusOpen(false) },
-      );
+      updateMutation.mutate({ id: figure._id, data }, { onSuccess: () => setEditOpen(false), onError: failed('save') });
     },
     [figure, updateMutation],
   );
@@ -97,193 +93,111 @@ export function FigureDetail() {
     deleteMutation.mutate(figure._id, {
       onSuccess: () => {
         setDeleteOpen(false);
-        if (window.history.length > 1) {
-          window.history.back();
-        } else {
-          setLocation('/');
-        }
+        handleBack();
       },
+      onError: failed('remove'),
     });
-  }, [figure, deleteMutation, setLocation]);
+  }, [figure, deleteMutation, handleBack]);
 
-  if (isLoading) return <SkeletonDetail />;
+  if (phase === 'loading' || isLoading) return <SkeletonDetail />;
 
   if (isError || !figure) {
     return (
       <div class="figure-detail">
         <div class="figure-detail__header-bar">
-          <button
-            class="figure-detail__back-btn"
-            onClick={handleBack}
-            aria-label="Go back"
-            type="button"
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 12H5" />
-              <path d="M12 19l-7-7 7-7" />
-            </svg>
+          <button class="figure-detail__back-btn" onClick={handleBack} aria-label="Go back" type="button">
+            <BackIcon />
           </button>
         </div>
         <div class="figure-detail__error">
-          <p>Failed to load figure details.</p>
-          <button class="figure-detail__retry-btn" onClick={() => window.location.reload()} type="button">
-            Retry
-          </button>
+          <p>{phase === 'signed-out' ? 'Sign in to see this figure.' : 'This figure is not in your collection.'}</p>
         </div>
         <Style css={styles} />
       </div>
     );
   }
 
-  // Build images array — for now just the single imageUrl
-  const images = figure.imageUrl ? [figure.imageUrl] : [];
-
-  // Primary release info
-  const primaryRelease = figure.releases?.[0];
-  const releaseDate = primaryRelease?.date;
-  const releasePrice = primaryRelease?.price;
-  const releaseCurrency = primaryRelease?.currency;
-
-  // Dimensions string
+  const local = figure.local;
+  const movingKind = moving === null ? undefined : local.copies.find((c) => c.occ_id === moving[0])?.status;
+  const moveTargets: MoveTarget[] = collections
+    .filter((c) => c.kind !== 'former' && !(c.coll_id === 'default' && c.kind === movingKind))
+    .map((c) => ({ ref: c.ref, label: c.coll_id === 'default' ? (c.name ?? TAB_LABEL[c.kind]) : `${TAB_LABEL[c.kind]}: ${c.name}` }));
   const dims = figure.dimensions;
-  const dimensionParts: string[] = [];
-  if (dims?.heightMm) dimensionParts.push(`H: ${formatDimension(dims.heightMm)}`);
-  if (dims?.widthMm) dimensionParts.push(`W: ${formatDimension(dims.widthMm)}`);
-  if (dims?.depthMm) dimensionParts.push(`D: ${formatDimension(dims.depthMm)}`);
-  const dimensionsStr = dimensionParts.join(' / ');
+  const dimensionParts = [
+    dims?.heightMm ? `H: ${dims.heightMm}mm` : undefined,
+    dims?.widthMm ? `W: ${dims.widthMm}mm` : undefined,
+    dims?.depthMm ? `D: ${dims.depthMm}mm` : undefined,
+  ].filter(Boolean);
+  const facts: Array<[string, string]> = [
+    ['Character', local.character ?? ''],
+    ['Series', local.series ?? ''],
+    ['Scale', figure.scale],
+    ['Release', figure.releases?.[0]?.date ? formatRelease(figure.releases[0].date) : ''],
+    ['JAN', local.gtin14s.map(jan13).join(', ')],
+    ['Dimensions', dimensionParts.join(' / ')],
+  ];
 
   return (
     <div class="figure-detail">
-      {/* Hero image */}
       <div class="figure-detail__hero">
-        <button
-          class="figure-detail__back-btn figure-detail__back-btn--floating"
-          onClick={handleBack}
-          aria-label="Go back"
-          type="button"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 12H5" />
-            <path d="M12 19l-7-7 7-7" />
-          </svg>
+        <button class="figure-detail__back-btn figure-detail__back-btn--floating" onClick={handleBack} aria-label="Go back" type="button">
+          <BackIcon />
         </button>
-
-        {images.length > 0 ? (
-          <ImageGallery images={images} alt={figure.name} />
+        {image.data ? (
+          <img class="figure-detail__image" src={image.data.url} alt={figure.name} />
         ) : (
-          <div class="figure-detail__hero-placeholder">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="M21 15l-5-5L5 21" />
-            </svg>
+          // The placeholder plate (MG-2): no derivative, so no image of any kind.
+          <div class="figure-detail__plate" aria-hidden="true">
+            <span class="figure-detail__plate-name">{figure.name}</span>
+            {figure.manufacturer && <span class="figure-detail__plate-mfr">{figure.manufacturer}</span>}
           </div>
         )}
       </div>
 
-      {/* Content card overlapping hero */}
       <div class="figure-detail__card">
-        {/* Name + manufacturer */}
         <div class="figure-detail__header">
           <h1 class="figure-detail__name">{figure.name}</h1>
-          <p class="figure-detail__manufacturer">{figure.manufacturer}</p>
-          {figure.collectionStatus && (
-            <div class="figure-detail__status">
-              <StatusBadge status={figure.collectionStatus} size="md" />
-            </div>
-          )}
+          {figure.manufacturer && <p class="figure-detail__manufacturer">{figure.manufacturer}</p>}
+          <div class="figure-detail__status">
+            {figure.collectionStatus && <StatusBadge status={figure.collectionStatus} size="md" />}
+            <SyncBadge sync={local.sync} asOf={local.asOf} id={`sync-${figure._id}`} />
+          </div>
+          <p class="figure-detail__as-of">{local.hasCard ? `Facts ${local.factsAsOf === null ? 'of unknown date' : formatAsOf(local.factsAsOf)}` : 'Details arrive with the next sync.'}</p>
         </div>
 
-        {/* Release info */}
-        {(releaseDate || releasePrice || figure.scale) && (
-          <section class="figure-detail__section">
-            <h2 class="figure-detail__section-title">Release Info</h2>
-            <div class="figure-detail__info-grid">
-              {releaseDate && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Release Date</span>
-                  <span class="figure-detail__info-value">{formatDate(releaseDate)}</span>
-                </div>
-              )}
-              {releasePrice != null && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Price</span>
-                  <span class="figure-detail__info-value">{formatPrice(releasePrice, releaseCurrency)}</span>
-                </div>
-              )}
-              {figure.scale && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Scale</span>
-                  <span class="figure-detail__info-value">{figure.scale}</span>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* Details */}
-        {(figure.materials || dimensionsStr || figure.origin || figure.category) && (
+        {facts.some(([, v]) => v !== '') && (
           <section class="figure-detail__section">
             <h2 class="figure-detail__section-title">Details</h2>
             <div class="figure-detail__info-grid">
-              {figure.origin && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Series</span>
-                  <span class="figure-detail__info-value">{figure.origin}</span>
-                </div>
-              )}
-              {figure.category && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Category</span>
-                  <span class="figure-detail__info-value">{figure.category}</span>
-                </div>
-              )}
-              {figure.materials && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Materials</span>
-                  <span class="figure-detail__info-value">{figure.materials}</span>
-                </div>
-              )}
-              {dimensionsStr && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Dimensions</span>
-                  <span class="figure-detail__info-value">{dimensionsStr}</span>
-                </div>
-              )}
+              {facts
+                .filter(([, v]) => v !== '')
+                .map(([label, value]) => (
+                  <div key={label} class="figure-detail__info-item">
+                    <span class="figure-detail__info-label">{label}</span>
+                    <span class="figure-detail__info-value">{value}</span>
+                  </div>
+                ))}
             </div>
           </section>
         )}
 
-        {/* Purchase info */}
-        {figure.purchaseInfo && (figure.purchaseInfo.date || figure.purchaseInfo.price != null) && (
+        <CopyList
+          figure={figure}
+          collections={collections}
+          onArrived={(occ) => void actions.markArrived(occ).catch(failed('mark it arrived'))}
+          onMove={setMoving}
+          onDispose={dispose}
+          onRemove={(occ) => void actions.removeCopy(occ).catch(failed('remove the copy'))}
+          onDedupe={(kind: OccurrenceStatus) => void actions.dedupe(local.heads, kind).catch(failed('dedupe'))}
+        />
+
+        {figure.rating !== undefined && (
           <section class="figure-detail__section">
-            <h2 class="figure-detail__section-title">Purchase Info</h2>
-            <div class="figure-detail__info-grid">
-              {figure.purchaseInfo.date && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Purchased</span>
-                  <span class="figure-detail__info-value">{formatDate(figure.purchaseInfo.date)}</span>
-                </div>
-              )}
-              {figure.purchaseInfo.price != null && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Paid</span>
-                  <span class="figure-detail__info-value">
-                    {formatPrice(figure.purchaseInfo.price, figure.purchaseInfo.currency)}
-                  </span>
-                </div>
-              )}
-              {figure.merchant?.name && (
-                <div class="figure-detail__info-item">
-                  <span class="figure-detail__info-label">Merchant</span>
-                  <span class="figure-detail__info-value">{figure.merchant.name}</span>
-                </div>
-              )}
-            </div>
+            <h2 class="figure-detail__section-title">Score</h2>
+            <p class="figure-detail__notes">{`${figure.rating} / 10`}</p>
           </section>
         )}
 
-        {/* Notes */}
         {figure.note && (
           <section class="figure-detail__section">
             <h2 class="figure-detail__section-title">Notes</h2>
@@ -291,73 +205,57 @@ export function FigureDetail() {
           </section>
         )}
 
-        {/* Tags */}
         {figure.tags && figure.tags.length > 0 && (
           <section class="figure-detail__section">
             <h2 class="figure-detail__section-title">Tags</h2>
             <div class="figure-detail__tags">
               {figure.tags.map((tag) => (
-                <span key={tag} class="figure-detail__tag">{tag}</span>
+                <span key={tag} class="figure-detail__tag">
+                  {tag}
+                </span>
               ))}
             </div>
           </section>
         )}
 
-        {/* Spacer for bottom action bar */}
         <div class="figure-detail__bottom-spacer" />
       </div>
 
-      {/* Bottom action bar */}
       <div class="figure-detail__action-bar">
         <button class="figure-detail__action-btn" type="button" onClick={() => setEditOpen(true)}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
           <span>Edit</span>
         </button>
-        <button class="figure-detail__action-btn figure-detail__action-btn--status" type="button" onClick={() => setStatusOpen(true)}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
-            <path d="M12 6v6l4 2" />
-          </svg>
-          <span>Status</span>
-        </button>
         <button class="figure-detail__action-btn figure-detail__action-btn--danger" type="button" onClick={() => setDeleteOpen(true)}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 6h18" />
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          </svg>
           <span>Delete</span>
         </button>
       </div>
 
-      {/* Edit sheet */}
-      <EditFigureSheet
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        figure={figure}
-        onSave={handleEditSave}
-        isSaving={updateMutation.isPending}
+      <EditFigureSheet open={editOpen} onClose={() => setEditOpen(false)} figure={figure} onSave={handleEditSave} isSaving={updateMutation.isPending} />
+
+      <DeleteSheet open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={handleDelete} isDeleting={deleteMutation.isPending} figureName={figure.name} />
+
+      <MoveSheet
+        open={moving !== null}
+        title={`Move ${copiesLabel(moving?.length ?? 0)} to`}
+        targets={moveTargets}
+        onPick={(t) => {
+          const occs = moving ?? [];
+          setMoving(null);
+          void actions.moveCopies(occs, t.ref).catch(failed('move'));
+        }}
+        onClose={() => setMoving(null)}
       />
 
-      {/* Status sheet */}
-      <StatusSheet
-        open={statusOpen}
-        onClose={() => setStatusOpen(false)}
-        currentStatus={figure.collectionStatus}
-        onSelect={handleStatusChange}
-        isUpdating={updateMutation.isPending}
-      />
-
-      {/* Delete sheet */}
-      <DeleteSheet
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        onConfirm={handleDelete}
-        isDeleting={deleteMutation.isPending}
-        figureName={figure.name}
-        imageUrl={figure.imageUrl}
+      <DisposalSheet
+        key={disposal}
+        open={disposing !== null}
+        what={copiesLabel(disposing?.length ?? 0)}
+        onClose={() => setDisposing(null)}
+        onSave={(disposal: Disposal) => {
+          const occs = disposing ?? [];
+          setDisposing(null);
+          void actions.markFormer(occs, disposal).catch(failed('save'));
+        }}
       />
 
       <Style css={styles} />
@@ -387,6 +285,42 @@ const styles = `
     height: 100%;
     background: var(--surface-tertiary);
     animation: fd-pulse 1.5s ease-in-out infinite;
+  }
+
+  .figure-detail__plate {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-6);
+    text-align: center;
+    background: linear-gradient(180deg, var(--surface-tertiary), var(--surface-secondary));
+  }
+
+  .figure-detail__plate-name {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .figure-detail__plate-mfr {
+    font-size: var(--font-sm);
+    color: var(--text-tertiary);
+  }
+
+  .figure-detail__image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .figure-detail__as-of {
+    margin-top: var(--space-1);
+    font-size: var(--font-xs);
+    color: var(--text-tertiary);
   }
 
   .figure-detail__hero-placeholder {

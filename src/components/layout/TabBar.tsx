@@ -1,8 +1,6 @@
 import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { hapticLight } from '../../utils/haptics';
-import { Badge } from '../ui/Badge';
-import { useUnreadCount } from '../../hooks/useNotifications';
 import { useChromeStore } from '../../stores/chrome';
 import { BottomSheet } from '../ui/BottomSheet';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
@@ -64,7 +62,7 @@ function TabIcon({ icon, active }: { icon: string; active: boolean }) {
   }
 }
 
-function Tab({ item, unread }: { item: TabItem; unread?: number }) {
+function Tab({ item }: { item: TabItem }) {
   const [location, setLocation] = useLocation();
   const active = location === item.path;
   return (
@@ -77,7 +75,6 @@ function Tab({ item, unread }: { item: TabItem; unread?: number }) {
     >
       <span class="tab-bar__icon">
         <TabIcon icon={item.icon} active={active} />
-        {item.icon === 'user' && <Badge count={unread ?? 0} />}
       </span>
       <span class="tab-bar__label">{item.label}</span>
     </button>
@@ -106,7 +103,13 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
             <polyline points="17 8 12 3 7 8" />
             <line x1="12" y1="3" x2="12" y2="15" />
           </svg>
-          <span>Import from CSV</span>
+          <span>Import your MFC export</span>
+        </button>
+        <button class="add-sheet__option" type="button" onClick={() => go('/discover')}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6v12M8 6v12M11 6v12M15 6v12M19 6v12" />
+          </svg>
+          <span>Look up a barcode</span>
         </button>
         <Style css={`
           .add-sheet { display: flex; flex-direction: column; gap: var(--space-1); padding-bottom: var(--space-4); }
@@ -132,7 +135,6 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 }
 
 export function TabBar() {
-  const { data: unreadCount = 0 } = useUnreadCount(LEGACY_SCREENS_ENABLED);
   const hidden = useChromeStore((s) => s.hidden);
   const [addOpen, setAddOpen] = useState(false);
 
@@ -157,7 +159,7 @@ export function TabBar() {
             </svg>
           </button>
         </div>
-        {RIGHT_TABS.map((t) => <Tab key={t.path} item={t} unread={unreadCount} />)}
+        {RIGHT_TABS.map((t) => <Tab key={t.path} item={t} />)}
 
         <Style css={`
           .tab-bar {

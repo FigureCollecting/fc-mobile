@@ -1,175 +1,194 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+// Search and add (WK-15): on-device search over the user's figures (offline too), 'add to
+// collection' from a result, and a barcode lookup through Compare, which is online only.
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
+import { create } from '@bufbuild/protobuf';
+import { CompareResponseSchema } from '@figurecollecting/fc-api-contract';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 
-const pswpInstances: any[] = [];
-class FakePswp {
-  options: any;
-  handlers: Record<string, () => void> = {};
-  currIndex: number;
-  constructor(options: any) {
-    this.options = options;
-    this.currIndex = options.index ?? 0;
-    pswpInstances.push(this);
-  }
-  on(event: string, cb: () => void) { this.handlers[event] = cb; }
-  init() {}
-  destroy() { this.handlers['destroy']?.(); }
-}
-vi.mock('photoswipe', () => ({ default: FakePswp }));
-vi.mock('photoswipe/style.css', () => ({}));
-
-vi.mock('@figurecollecting/fc-shared', async () => {
-  const actual = await vi.importActual<typeof import('@figurecollecting/fc-shared')>(
-    '@figurecollecting/fc-shared',
-  );
-  return {
-    ...actual,
-    searchFigures: vi.fn(),
-    getFigures: vi.fn().mockResolvedValue({
-      success: true, data: [], count: 0, page: 1, pages: 0, total: 0,
-    }),
-  };
-});
-
-vi.mock('../../api/client', async () => {
-  const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client');
-  return {
-    ...actual,
-    api: {
-      get: vi.fn().mockResolvedValue({ data: { breakdown: [] } }),
-      post: vi.fn(), put: vi.fn(), delete: vi.fn(),
-    },
-  };
-});
-
-import { searchFigures } from '@figurecollecting/fc-shared';
-import { api } from '../../api/client';
 import { Discover } from '../Discover';
 import { renderWithProviders } from '../../test/testUtils';
-import { useAuthStore } from '../../stores/auth';
+import { localRig, type LocalRig } from '../../local/__tests__/localHarness';
+import { seedFigures } from '../../local/__tests__/seedFigures';
+import { localSession } from '../../local/session';
+import { headOf } from '../../sync/__tests__/engineSupport';
+import { shownCopies } from '../../sync/occurrences';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { toGtin14 } from '../../hooks/useBarcodeLookup';
 
-const mockedSearch = searchFigures as unknown as ReturnType<typeof vi.fn>;
-const mockedGet = api.get as unknown as ReturnType<typeof vi.fn>;
+afterEach(() => {
+  localSession.value = undefined;
+});
 
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1',
-      username: 't',
-      email: 'a@b.co',
-      isAdmin: false,
-      token: 'tok',
-      tokenExpiresAt: Date.now() + 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
+async function seeded(): Promise<LocalRig> {
+  const r = await localRig();
+  await seedFigures(r, [
+    { title: 'Hatsune Miku: Deep Sea Girl', manufacturer: 'Good Smile Company', character: '初音ミク', gtin: '04580416940986' },
+    { title: 'Spike Spiegel', manufacturer: 'Bandai Spirits', status: 'wished' },
+  ]);
+  return r;
+}
+
+async function searchFor(q: string) {
+  const user = userEvent.setup();
+  await user.type(screen.getByPlaceholderText(/search your figures/i), q);
+  return user;
+}
+
+const kinds = async (r: LocalRig, head: string) =>
+  shownCopies(await r.store.getView())
+    .filter((c) => c.head_id === head)
+    .map((c) => c.status)
+    .sort();
+
+function goOffline() {
+  renderHook(() => useOnlineStatus());
+  act(() => {
+    window.dispatchEvent(new Event('offline'));
   });
 }
 
-function makeResult(id: string, extra: Record<string, unknown> = {}) {
-  return {
-    id,
-    name: `Figure ${id}`,
-    manufacturer: 'Good Smile',
-    scale: '1/7',
-    mfcLink: '',
-    imageUrl: `https://example.com/${id}.png`,
-    ...extra,
-  };
+function goOnline() {
+  act(() => {
+    window.dispatchEvent(new Event('online'));
+  });
 }
 
-describe('Discover page', () => {
-  beforeEach(() => {
-    pswpInstances.length = 0;
+describe('Discover: search on the device', () => {
+  it('shows the search field and what it searches', async () => {
+    await seeded();
+    renderWithProviders(<Discover />);
+    expect(screen.getByPlaceholderText(/search your figures/i)).toBeInTheDocument();
+    expect(screen.getByText(/search your collection by name, maker, character, series or JAN/i)).toBeInTheDocument();
   });
 
-  afterEach(() => localStorage.clear());
-
-  it('renders the search field and a default placeholder', () => {
-    signIn();
-    renderWithProviders(<Discover />, { initialPath: '/discover' });
-    expect(screen.getByPlaceholderText(/search figures/i)).toBeInTheDocument();
-    expect(screen.getByText(/browse the catalog/i)).toBeInTheDocument();
+  it('lists local hits, each with what the user holds of it, and makes no request', async () => {
+    const r = await seeded();
+    const calls = r.server.calls.length;
+    renderWithProviders(<Discover />);
+    await searchFor('miku');
+    const results = await screen.findByRole('list', { name: 'Search results' });
+    const items = within(results).getAllByRole('listitem');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent('Hatsune Miku: Deep Sea Girl');
+    expect(items[0]).toHaveTextContent('Owned ×1');
+    expect(r.server.calls.length).toBe(calls);
   });
 
-  it('does not fetch the dead manufacturer-breakdown endpoint by default', () => {
-    signIn();
-    mockedGet.mockClear();
-    renderWithProviders(<Discover />, { initialPath: '/discover' });
-    expect(mockedGet).not.toHaveBeenCalled();
+  it('searches offline', async () => {
+    await seeded();
+    goOffline();
+    try {
+      renderWithProviders(<Discover />);
+      await searchFor('spiegel');
+      expect(await screen.findByText('Spike Spiegel')).toBeInTheDocument();
+    } finally {
+      goOnline();
+    }
   });
 
-  it('shows a retry error state when search fails', async () => {
+  it('says so when nothing matches', async () => {
+    await seeded();
+    renderWithProviders(<Discover />);
+    await searchFor('zzzz');
+    expect(await screen.findByText(/no figure in your collection matches/i)).toBeInTheDocument();
+  });
+
+  it('adds another copy to a tab from a search result', async () => {
+    const r = await seeded();
+    renderWithProviders(<Discover />);
+    const user = await searchFor('spike');
+    const item = (await screen.findByText('Spike Spiegel')).closest('li')!;
+    await user.click(within(item).getByRole('button', { name: 'Add to collection' }));
+    await user.click(await screen.findByRole('button', { name: 'Add to Owned' }));
+    await waitFor(async () => expect(await kinds(r, headOf(1))).toEqual(['owned', 'wished']));
+  });
+
+  it('opens a result in the full detail', async () => {
+    await seeded();
+    const { currentPath } = renderWithProviders(<Discover />);
+    const user = await searchFor('spike');
+    await user.click(await screen.findByRole('button', { name: 'Spike Spiegel' }));
+    expect(currentPath()).toBe(`/figure/${headOf(1)}`);
+    expect(JSON.parse(localStorage.getItem('fc-recent-searches') ?? '[]')).toContain('spike');
+  });
+});
+
+describe('Discover: barcode lookup through Compare (online only)', () => {
+  it('reads a JAN as a GTIN-14 and refuses what is not a barcode', () => {
+    expect(toGtin14('4580416940986')).toBe('04580416940986');
+    expect(toGtin14(' 4580-4169-40986 ')).toBe('04580416940986');
+    expect(toGtin14('012345678905')).toBe('00012345678905');
+    expect(toGtin14('96385074')).toBe('00000096385074');
+    expect(toGtin14('04580416940986')).toBe('04580416940986');
+    expect(toGtin14('12345')).toBeNull();
+    expect(toGtin14('abc')).toBeNull();
+  });
+
+  it('finds the figure a barcode names and adds it, its card kept for offline', async () => {
+    const r = await seeded();
+    const head = headOf(7);
+    r.server.seedProducts([head]);
+    r.clients.compare.mockResolvedValue(create(CompareResponseSchema, { resultJson: JSON.stringify({ heads: [{ head }], related: [] }) }));
+    renderWithProviders(<Discover />);
     const user = userEvent.setup();
-    signIn();
-    mockedSearch.mockRejectedValue(new Error('boom'));
-
-    renderWithProviders(<Discover />, { initialPath: '/discover' });
-    const input = screen.getByPlaceholderText(/search figures/i);
-    await user.click(input);
-    await user.type(input, 'abc');
-
-    expect(await screen.findByText(/search failed/i)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Barcode'), '4580416940986');
+    await user.click(screen.getByRole('button', { name: 'Look up' }));
+    const hit = await screen.findByRole('region', { name: 'Barcode result' });
+    expect(r.clients.compare).toHaveBeenCalledWith(
+      expect.objectContaining({ seed: { case: 'gtin14', value: '04580416940986' } }),
+      expect.anything(),
+    );
+    expect(within(hit).getByText(`Figure ${head.slice(0, 8)}`)).toBeInTheDocument();
+    await user.click(within(hit).getByRole('button', { name: 'Add to Ordered' }));
+    await waitFor(async () => expect(await kinds(r, head)).toEqual(['ordered']));
+    expect((await r.store.getProduct(head))?.card.title?.value).toBe(`Figure ${head.slice(0, 8)}`);
+    expect(await within(hit).findByText('In your collection: Ordered ×1')).toBeInTheDocument();
   });
 
-  it('shows empty state when the search returns no matches', async () => {
+  it('says so when no figure carries the barcode', async () => {
+    const r = await seeded();
+    r.clients.compare.mockResolvedValue(create(CompareResponseSchema, { resultJson: JSON.stringify({ heads: [] }) }));
+    renderWithProviders(<Discover />);
     const user = userEvent.setup();
-    signIn();
-    mockedSearch.mockResolvedValue([]);
-
-    renderWithProviders(<Discover />, { initialPath: '/discover' });
-    const input = screen.getByPlaceholderText(/search figures/i);
-    await user.click(input);
-    await user.type(input, 'nothing-like-this-exists');
-
-    expect(await screen.findByText(/no results found/i)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Barcode'), '4580416940986');
+    await user.click(screen.getByRole('button', { name: 'Look up' }));
+    expect(await screen.findByText('No figure carries this barcode.')).toBeInTheDocument();
+    expect(r.clients.getProducts).not.toHaveBeenCalled();
   });
 
-  it('renders matches as condensed justified rows', async () => {
+  it('reports a lookup that failed', async () => {
+    const r = await seeded();
+    r.clients.compare.mockRejectedValue(new Error('unavailable'));
+    renderWithProviders(<Discover />);
     const user = userEvent.setup();
-    signIn();
-    mockedSearch.mockResolvedValue([makeResult('1'), makeResult('2')]);
-
-    const { container } = renderWithProviders(<Discover />, { initialPath: '/discover' });
-    const input = screen.getByPlaceholderText(/search figures/i);
-    await user.click(input);
-    await user.type(input, 'figure');
-
-    await screen.findByRole('button', { name: 'Figure 1' });
-    expect(container.querySelector('.jrows')).not.toBeNull();
+    await user.type(screen.getByLabelText('Barcode'), '4580416940986');
+    await user.click(screen.getByRole('button', { name: 'Look up' }));
+    expect(await screen.findByText(/lookup failed/i)).toBeInTheDocument();
   });
 
-  it('opens the full-screen viewer on tap, over the current result set', async () => {
+  it('asks for a barcode it can read', async () => {
+    const r = await seeded();
+    renderWithProviders(<Discover />);
     const user = userEvent.setup();
-    signIn();
-    mockedSearch.mockResolvedValue([makeResult('1'), makeResult('2'), makeResult('3')]);
-
-    renderWithProviders(<Discover />, { initialPath: '/discover' });
-    const input = screen.getByPlaceholderText(/search figures/i);
-    await user.click(input);
-    await user.type(input, 'figure');
-
-    await user.click(await screen.findByRole('button', { name: 'Figure 2' }));
-    await waitFor(() => expect(pswpInstances).toHaveLength(1));
-    expect(pswpInstances[0].options.index).toBe(1);
-    expect(pswpInstances[0].options.dataSource).toHaveLength(3);
+    await user.type(screen.getByLabelText('Barcode'), '123');
+    await user.click(screen.getByRole('button', { name: 'Look up' }));
+    expect(await screen.findByText('Enter the 8, 12, 13 or 14 digits under the barcode.')).toBeInTheDocument();
+    expect(r.clients.compare).not.toHaveBeenCalled();
   });
 
-  it('saves the query as a recent search when a result is tapped', async () => {
-    const user = userEvent.setup();
-    signIn();
-    mockedSearch.mockResolvedValue([makeResult('1')]);
-
-    renderWithProviders(<Discover />, { initialPath: '/discover' });
-    const input = screen.getByPlaceholderText(/search figures/i);
-    await user.click(input);
-    await user.type(input, 'figure');
-    await user.click(await screen.findByRole('button', { name: 'Figure 1' }));
-
-    expect(JSON.parse(localStorage.getItem('fc-recent-searches') ?? '[]')).toContain('figure');
+  it('is off while offline', async () => {
+    const r = await seeded();
+    goOffline();
+    try {
+      renderWithProviders(<Discover />);
+      expect(screen.getByRole('button', { name: 'Look up' })).toBeDisabled();
+      expect(screen.getByText('Barcode lookup needs a connection.')).toBeInTheDocument();
+      expect(r.clients.compare).not.toHaveBeenCalled();
+    } finally {
+      goOnline();
+    }
   });
 });

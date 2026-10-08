@@ -1,38 +1,24 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getFigureById } from '@figurecollecting/fc-shared';
-import type { Figure, PaginatedResponse } from '@figurecollecting/fc-shared';
-import { api } from '../api/client';
-import { useAuthStore } from '../stores/auth';
-import { getCachedFigure } from '../storage/figureCache';
+// One figure from the local store (WK-15): every shown copy of every kind, through its card.
+import { useCallback } from 'preact/hooks';
+import type { UseQueryResult } from '@tanstack/react-query';
+import { figureOf, type LocalFigure } from '../local/figures';
+import { useSnapshot, type Snapshot } from '../local/useLocal';
 
-export function useFigure(id: string | undefined) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const queryClient = useQueryClient();
+export class FigureNotFoundError extends Error {
+  constructor(id: string) {
+    super(`no copy of figure ${id} in this collection`);
+    this.name = 'FigureNotFoundError';
+  }
+}
 
-  return useQuery<Figure>({
-    queryKey: ['figure', id],
-    queryFn: async () => {
-      try {
-        return await getFigureById(api, id!);
-      } catch (error) {
-        // Fall back to IndexedDB cache if API fetch fails
-        const cached = await getCachedFigure(id!);
-        if (cached) return cached;
-        throw error;
-      }
+export function useFigure(id: string | undefined): UseQueryResult<LocalFigure> {
+  const select = useCallback(
+    (s: Snapshot): LocalFigure => {
+      const figure = figureOf(s, id!);
+      if (figure === undefined) throw new FigureNotFoundError(id!);
+      return figure;
     },
-    enabled: isAuthenticated && !!id,
-    staleTime: 60_000,
-    placeholderData: () => {
-      // Check if this figure is already in a collection query cache
-      const queries = queryClient.getQueriesData<PaginatedResponse<Figure>>({
-        queryKey: ['collection'],
-      });
-      for (const [, data] of queries) {
-        const match = data?.data?.find((f) => f._id === id);
-        if (match) return match;
-      }
-      return undefined;
-    },
-  });
+    [id],
+  );
+  return useSnapshot(select, id !== undefined);
 }

@@ -34,7 +34,7 @@ import { buildPayload, deviceTimeZone } from '../sync/payload';
 import { emptyFacet, floorOf, isNewer, mergeRemote, show, toFacetValue, type RemoteEvent } from '../sync/facetMerge';
 import { indexFacet } from '../sync/facetIndex';
 import { ZERO_HLC, isPast, maxHlc, toHlcRecord, toHlcState } from '../sync/hlcState';
-import { buildView, pickCopy, type CopyView, type LocalView } from '../sync/occurrences';
+import { buildView, pickCopy, shownCopies, type CopyView, type LocalView } from '../sync/occurrences';
 
 export { LocalWriteError } from './tx';
 export type { RemoteEvent } from '../sync/facetMerge';
@@ -57,6 +57,15 @@ export interface FacetWrite {
 }
 
 /** A copy named by its id, or one of a figure's identical copies of a kind, optionally where it is shown. */
+/** Why and when a copy left (occ-disposal.schema.json); edited_at and tz are the store's to stamp. */
+export interface Disposal {
+  reason: 'sold' | 'traded' | 'gifted' | 'damaged' | 'lost' | 'stolen' | 'other';
+  on?: string;
+  note?: string;
+  counterparty?: string;
+  price?: { amount: string; currency: string };
+}
+
 export type CopyTarget = { occ_id: string } | { head_id: string; kind: OccurrenceStatus; shown_in?: string };
 
 export interface WriteResult {
@@ -279,6 +288,47 @@ export class UserStore {
       checkFiling(view, collection, copy.status!);
       return [{ key: occFacetKey(occId, 'collection'), fields: { collection } }];
     });
+  }
+
+  /** Bulk 'Move N copies to…': file each shown copy in `collection`, changing its status when the kind differs. */
+  async moveCopies(occIds: string[], collection: string): Promise<void> {
+    await this.mutate((view) => {
+      const kind = parseCollectionRef(collection)?.kind;
+      if (kind === undefined) throw new IntentError('no_collection', `no collection ${collection}`);
+      checkFiling(view, collection, kind);
+      return occIds.flatMap((occId) => {
+        const copy = shownCopy(view, occId);
+        if (copy === undefined) throw new IntentError('no_copy', `copy ${occId} is not shown`);
+        return copy.status === kind ? [{ key: occFacetKey(occId, 'collection'), fields: { collection } }] : statusWrites(view, copy, kind, collection);
+      });
+    });
+  }
+
+  /** 'Mark sold/traded/gifted/…': status former, its filing and the disposal of each shown copy. */
+  async markFormer(occIds: string[], disposal: Disposal): Promise<void> {
+    await this.mutate((view) =>
+      occIds.flatMap((occId) => {
+        const copy = shownCopy(view, occId);
+        if (copy === undefined) throw new IntentError('no_copy', `copy ${occId} is not shown`);
+        return [...statusWrites(view, copy, 'former'), { key: occFacetKey(occId, 'disposal'), fields: { ...disposal } }];
+      }),
+    );
+  }
+
+  /**
+   * Dedupe: remove every shown copy of a figure and kind but the lowest (the one PICKS keeps). The
+   * figure is its head set (an ER merge's requested_as, sync.proto rule 6), as LocalMeta.heads names it.
+   */
+  async dedupe(heads: readonly string[], kind: OccurrenceStatus): Promise<string[]> {
+    let removed: string[] = [];
+    await this.mutate((view) => {
+      removed = shownCopies(view, { kind })
+        .filter((c) => heads.includes(c.head_id!))
+        .slice(1)
+        .map((c) => c.occ_id);
+      return removed.map((occ) => ({ key: occFacetKey(occ, 'status'), fields: null }));
+    });
+    return removed;
   }
 
   /** Point a copy at another figure (a wrong-variant fix, an un-merge) with one write of its head. */

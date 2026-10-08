@@ -206,12 +206,15 @@ docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t fc-mobile-web .
 docker run --rm --read-only --tmpfs /tmp -p 8080:8080 fc-mobile-web
 ```
 
-The image signs in through Authentik (OIDC + PKCE + DPoP, `src/auth`):
-`ARG VITE_AUTH_MODE=oidc` in the `Dockerfile`, and `web-image.yml` passes it
-explicitly, then checks the built bundle (`scripts/assert-bundle-auth-mode.sh`).
-The legacy `/login` redirect, which no deployed backend serves, is an explicit
-opt-out: `--build-arg VITE_AUTH_MODE=legacy`. Any other value fails the build.
-`npm run dev` and `npm run build` stay legacy unless `VITE_AUTH_MODE=oidc` is set.
+The app signs in through Authentik only (OIDC + PKCE + DPoP, `src/auth`); the
+legacy login, register and 2FA screens are gone (WK-15) and `/login`, `/register`
+and `/2fa` land on the collection. `web-image.yml` checks every built bundle with
+`scripts/assert-bundle-auth.sh`: it carries the OIDC sign-in, and no chunk of the
+boot import graph carries the legacy one. That graph is the entry script, its
+modulepreloads and every chunk they import, statically or dynamically (the
+shell's `OidcSession` included); only a dynamic import of the legacy screens
+(Sync, Export, Notifications) or of the legacy client (push settings, on a tap)
+is left out as lazy.
 
 `vite preview` sends the same headers, so the e2e suite runs under the CSP and
 fails on any `securitypolicyviolation`. Component CSS therefore goes through

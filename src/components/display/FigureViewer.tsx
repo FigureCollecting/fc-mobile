@@ -6,6 +6,21 @@ import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
 
+/**
+ * PhotoSwipe's destroy() only closes a gallery whose opening animation has finished; one still
+ * opening keeps its element and listeners. Take them down here either way.
+ */
+function dispose(pswp: PhotoSwipe): void {
+  pswp.destroy();
+  if (pswp.element?.isConnected === true) {
+    pswp.events.removeAll();
+    pswp.element.remove();
+  }
+}
+
+const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!);
+
 interface FigureViewerProps {
   /** The CURRENT RESULT SET — swiping left/right moves through it. */
   figures: Figure[];
@@ -41,8 +56,11 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         const meta = getDisplayMeta(f);
         if (!f.imageUrl) {
           return {
-            // A class, not a style attribute: the CSP blocks inline styles in injected HTML.
-            html: '<div class="figure-viewer__no-image">No image</div>',
+            // A placeholder plate naming the figure (MG-2). A class, not a style attribute: the CSP
+            // blocks inline styles in injected HTML; the text is escaped, it is catalog data.
+            html: `<div class="figure-viewer__no-image"><span class="figure-viewer__plate-name">${escapeHtml(f.name)}</span>${
+              f.manufacturer ? `<span class="figure-viewer__plate-mfr">${escapeHtml(f.manufacturer)}</span>` : ''
+            }</div>`,
           };
         }
         return {
@@ -81,8 +99,9 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
       cancelled = true;
       if (pswpRef.current) {
         closingRef.current = true;
-        pswpRef.current.destroy();
+        const pswp = pswpRef.current;
         pswpRef.current = null;
+        dispose(pswp);
       }
     };
     // The viewer is mounted per open; result set and start index are fixed.
@@ -98,7 +117,18 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   // viewer no matter how high it is.
   return createPortal(
     <div class="figure-viewer-sheet">
-      <FigureDetailContent figure={figure} index={current} total={figures.length} />
+      <FigureDetailContent
+        figure={figure}
+        index={current}
+        total={figures.length}
+        onBeforeOpen={() => {
+          const pswp = pswpRef.current;
+          closingRef.current = true;
+          pswpRef.current = null;
+          if (pswp) dispose(pswp);
+          onCloseRef.current();
+        }}
+      />
 
       <Style css={`
         .figure-viewer-sheet {
@@ -117,11 +147,25 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
 
         .figure-viewer__no-image {
           display: flex;
+          flex-direction: column;
           align-items: center;
           justify-content: center;
+          gap: 8px;
+          width: 100%;
           height: 100%;
-          color: #889;
+          padding: 24px;
+          text-align: center;
+          color: #ccd;
+        }
+
+        .figure-viewer__plate-name {
+          font-size: 20px;
+          font-weight: 700;
+        }
+
+        .figure-viewer__plate-mfr {
           font-size: 13px;
+          color: #889;
         }
       `} />
     </div>,

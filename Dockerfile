@@ -14,15 +14,6 @@ RUN --mount=type=secret,id=node_auth_token \
 COPY . .
 ARG VITE_BUILD_ID=dev
 ENV VITE_BUILD_ID=${VITE_BUILD_ID}
-# The image signs in through Authentik (OIDC + PKCE + DPoP, src/auth). Unset, the build falls back to
-# the legacy /login redirect (src/config/features.ts), which no deployed backend serves, so oidc is
-# the default and `--build-arg VITE_AUTH_MODE=legacy` is the only way back. Anything else fails the build.
-ARG VITE_AUTH_MODE=oidc
-ENV VITE_AUTH_MODE=${VITE_AUTH_MODE}
-RUN case "$VITE_AUTH_MODE" in \
-      oidc|legacy) ;; \
-      *) echo "VITE_AUTH_MODE must be oidc or legacy, got '$VITE_AUTH_MODE'" >&2; exit 1 ;; \
-    esac
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.30.5-alpine3.24-slim@sha256:e28dcf0a161ddcbf228c7364b4a14f9bad4763ae8f5317c437b896afa3df4b84 AS web

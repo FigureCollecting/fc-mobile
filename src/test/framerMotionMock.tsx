@@ -56,9 +56,17 @@ function makeTag(tag: string) {
   };
 }
 
+// One component per tag, so a re-render keeps the same component (and its DOM) like the real one.
+const tags = new Map<string, ReturnType<typeof makeTag>>();
 export const motion = new Proxy(
   {},
-  { get: (_, prop: string) => makeTag(prop) },
+  {
+    get: (_, prop: string) => {
+      let tag = tags.get(prop);
+      if (tag === undefined) tags.set(prop, (tag = makeTag(prop)));
+      return tag;
+    },
+  },
 ) as unknown as Record<string, (props: unknown) => unknown>;
 
 export function AnimatePresence({ children }: { children?: ComponentChildren }) {

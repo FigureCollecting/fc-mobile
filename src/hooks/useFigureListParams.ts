@@ -16,6 +16,9 @@ import type { Density } from '../components/display/density';
 import type { CaseMotif } from '../components/display/CaseShelf';
 
 export type LayoutMode = 'case' | 'rows';
+/** The collection's tabs over the default collections (GR 2026-09-26). */
+export type CollectionTab = 'owned' | 'ordered' | 'wished' | 'former';
+export const COLLECTION_TABS: readonly CollectionTab[] = ['owned', 'ordered', 'wished', 'former'];
 
 export interface ListFilters {
   status: string[];
@@ -76,7 +79,13 @@ function parseDefaultedList(params: URLSearchParams, key: string, fallback: stri
   return value.split('|').filter(Boolean);
 }
 
-export function useFigureListParams() {
+export interface ListParamOptions {
+  /** Labels (nameplates) when the URL says nothing: on where there are no images to show. */
+  labelsDefault?: boolean;
+}
+
+export function useFigureListParams(options: ListParamOptions = {}) {
+  const labelsDefault = options.labelsDefault ?? false;
   const [params, setParams] = useSearchParams();
 
   const layout = useMemo((): LayoutMode => {
@@ -122,7 +131,16 @@ export function useFigureListParams() {
 
   // Nameplate overlay toggle. Absent (or anything but '1') means off — no
   // localStorage persistence, the URL is the only source of truth.
-  const labels = useMemo((): boolean => params.get('labels') === '1', [params]);
+  const labels = useMemo((): boolean => {
+    const value = params.get('labels');
+    if (value === null) return labelsDefault;
+    return value === '1';
+  }, [params, labelsDefault]);
+
+  const tab = useMemo((): CollectionTab => {
+    const value = params.get('tab') as CollectionTab;
+    return COLLECTION_TABS.includes(value) ? value : 'owned';
+  }, [params]);
 
   const update = useCallback(
     (updates: Record<string, string | null>) => {
@@ -199,7 +217,14 @@ export function useFigureListParams() {
 
   const setLabels = useCallback(
     (next: boolean) => {
-      update({ labels: next ? '1' : null });
+      update({ labels: next === labelsDefault ? null : next ? '1' : '0' });
+    },
+    [update, labelsDefault],
+  );
+
+  const setTab = useCallback(
+    (next: CollectionTab) => {
+      update({ tab: next === 'owned' ? null : next });
     },
     [update],
   );
@@ -225,6 +250,8 @@ export function useFigureListParams() {
     sort: sortState.sort,
     order: sortState.order,
     labels,
+    tab,
+    setTab,
     setLayout,
     setDensity,
     setMotif,

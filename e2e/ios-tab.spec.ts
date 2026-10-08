@@ -2,22 +2,17 @@ import { devices } from '@playwright/test';
 import { expect, test } from './fixtures';
 
 // An iPhone 15 Safari tab (not the installed app), in whichever engine the
-// project runs: the install banner shows, and must not cover the auth controls.
+// project runs: the install banner shows before the first sign-in, and must
+// not cover the sign-in control (the sign-in-to-sync banner's).
 const { defaultBrowserType: _engine, ...iphone } = devices['iPhone 15'];
 test.use(iphone);
 
-test('the iOS install banner leaves every sign-in and register control reachable', async ({ page }) => {
+test('the iOS install banner leaves the sign-in control reachable', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
-  await page.goto('/login');
+  await page.goto('/');
   const banner = page.getByRole('note').filter({ hasText: 'Install to keep offline data' });
   await expect(banner).toBeVisible();
-
-  // A trial click fails if anything else would receive the tap.
-  for (const name of [/^sign in$/i, /forgot password/i, /create account/i]) {
-    await page.getByRole('button', { name }).click({ trial: true, timeout: 2_000 });
-  }
-  await page.getByRole('button', { name: /create account/i }).click();
-  await expect(page).toHaveURL(/\/register/);
+  // A trial click fails if anything else would receive the tap; it never leaves for the IdP.
+  await page.getByRole('button', { name: 'Sign in' }).click({ trial: true, timeout: 5_000 });
   await expect(banner).toBeVisible();
-  await page.getByRole('button', { name: /create account/i }).click({ trial: true, timeout: 2_000 });
 });

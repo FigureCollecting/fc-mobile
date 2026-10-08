@@ -101,6 +101,13 @@ export interface CoordinatorWiring {
   extra?: Record<string, string>;
 }
 
+/**
+ * The MFC import's occurrence-id key (IMPORT_OCC_ID_KEY: 32 bytes as 64 hex digits). Without one the
+ * coordinator answers every ImportMfcExport UNAVAILABLE. A fixed test key, so a re-import into a
+ * reused stack names the same occurrences; never a deployed key.
+ */
+export const STACK_IMPORT_OCC_ID_KEY = '5eed1e57'.repeat(8);
+
 /** A clean environment: only PATH/HOME/TMPDIR are inherited, never a database or collector. */
 export function coordinatorEnv(w: CoordinatorWiring, parent: Env = process.env): Record<string, string> {
   const inherited: Record<string, string> = {};
@@ -127,6 +134,7 @@ export function coordinatorEnv(w: CoordinatorWiring, parent: Env = process.env):
     OPENFGA_API_TOKEN: w.openfga.token,
     ENTITLEMENT_SIGNING_KEY_PEM: w.entitlement.pem,
     ENTITLEMENT_SIGNING_KID: w.entitlement.kid,
+    IMPORT_OCC_ID_KEY: STACK_IMPORT_OCC_ID_KEY,
     ...(w.extra ?? {}),
   };
 }

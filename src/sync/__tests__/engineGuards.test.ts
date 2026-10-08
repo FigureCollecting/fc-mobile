@@ -5,7 +5,7 @@ import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { DeltaResponseSchema, GetProductsResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine, type CatalogCalls, type SyncCalls } from '../engine';
-import { rig, seedCopies, type Rig } from './engineSupport';
+import { headOf, rig, seedCopies, type Rig } from './engineSupport';
 
 /** Answers by call number; past `escape` calls it throws, so a missing guard fails instead of hanging. */
 function paging<T>(escape: number, answer: (n: number) => T) {
@@ -79,6 +79,26 @@ describe('GetProducts paging guard', () => {
     await engine.trigger('start');
     expect(getProducts).toHaveBeenCalledTimes(1_000);
     expect(engine.state.value.lastError).toBeNull();
+    expect(r.timers.pending.size).toBe(0);
+  });
+
+  it('scopes the sent-token guard to one batch of 200: two batches that both page with p2 both hydrate', async () => {
+    const r = await rig();
+    seedCopies(r.server, 250);
+    r.server.seedProducts(Array.from({ length: 250 }, (_, i) => headOf(i)));
+    // Offset-style paging: the first page answers half the refs and 'p2', the second the rest and ''.
+    const getProducts = vi.fn(async (req: Parameters<CatalogCalls['getProducts']>[0]) => {
+      const refs = req.refs ?? [];
+      const half = Math.ceil(refs.length / 2);
+      const part = req.pageToken === 'p2' ? refs.slice(half) : refs.slice(0, half);
+      const page = await r.server.catalog.getProducts({ refs: part });
+      return create(GetProductsResponseSchema, { products: page.products, nextPageToken: req.pageToken === 'p2' ? '' : 'p2' });
+    });
+    const engine = withProducts(r, getProducts);
+    await engine.trigger('start');
+    expect(getProducts.mock.calls.map((c) => [c[0].refs?.length, c[0].pageToken])).toEqual([[200, ''], [200, 'p2'], [50, ''], [50, 'p2']]);
+    expect(engine.state.value.lastError).toBeNull();
+    expect((await r.store.listProducts()).map((p) => p.head_id).sort()).toEqual(Array.from({ length: 250 }, (_, i) => headOf(i)).sort());
     expect(r.timers.pending.size).toBe(0);
   });
 });

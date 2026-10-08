@@ -13,8 +13,8 @@ import { HANDS_OFF_LAUNCH_OPTIONS } from './e2e/handsOff';
 export default defineConfig({
   testDir: './e2e',
   // Image-level PWA acceptance has its own config (playwright.pwa.config.ts).
-  // e2e/auth and e2e/sync need the local full stack; they run from playwright.stack.config.ts.
-  testIgnore: ['pwa/**', 'auth/**', 'sync/**', '**/*.shots.spec.ts'],
+  // e2e/auth, e2e/sync and e2e/screens need the local full stack; they run from playwright.stack.config.ts.
+  testIgnore: ['pwa/**', 'auth/**', 'sync/**', 'screens/**', '**/*.shots.spec.ts'],
   timeout: 30_000,
   retries: 0,
   fullyParallel: false,
@@ -42,7 +42,7 @@ export default defineConfig({
     ...SHOT_VIEWPORTS.map((v) => ({
       name: v.name,
       testMatch: '**/*.shots.spec.ts',
-      testIgnore: ['pwa/**', 'auth/**', 'sync/**'],
+      testIgnore: ['pwa/**', 'auth/**', 'sync/**', 'screens/**'],
       use: {
         ...devices['Desktop Chrome'],
         channel: 'chromium-headless-shell',

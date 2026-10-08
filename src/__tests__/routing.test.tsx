@@ -1,140 +1,70 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/preact';
 
 vi.mock('framer-motion', () => import('../test/framerMotionMock'));
 
-vi.mock('../api/client', async () => {
-  const actual = await vi.importActual<typeof import('../api/client')>('../api/client');
-  return {
-    ...actual,
-    api: {
-      get: vi.fn().mockResolvedValue({ data: {} }),
-      post: vi.fn().mockResolvedValue({ data: {} }),
-      put: vi.fn().mockResolvedValue({ data: {} }),
-      delete: vi.fn().mockResolvedValue({ data: {} }),
-    },
-    scraperApi: {
-      get: vi.fn().mockResolvedValue({ data: {} }),
-    },
-  };
-});
-
-vi.mock('@figurecollecting/fc-shared', async () => {
-  const actual = await vi.importActual<typeof import('@figurecollecting/fc-shared')>(
-    '@figurecollecting/fc-shared',
-  );
-  return {
-    ...actual,
-    getFigures: vi.fn().mockResolvedValue({
-      success: true, data: [], count: 0, page: 1, pages: 0, total: 0,
-    }),
-    getFigureById: vi.fn().mockResolvedValue(null),
-    searchFigures: vi.fn().mockResolvedValue([]),
-  };
-});
+const fake = vi.hoisted(() => ({ session: undefined as unknown, sync: undefined as unknown }));
+vi.mock('../auth', () => ({ getAuthSession: () => fake.session }));
+vi.mock('../sync/browser', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../sync/browser')>()),
+  startBrowserSync: () => fake.sync,
+}));
 
 import { App } from '../app';
 import { renderWithProviders } from '../test/testUtils';
-import { useAuthStore } from '../stores/auth';
+import { fakeAuthSession, fakeBrowserSync } from '../test/appSession';
+import { localSession } from '../local/session';
 
-const AUTHENTICATED_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
+const SIGNED_IN_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
   { path: '/', unique: /collection/i },
-  { path: '/discover', unique: /discover/i },
+  { path: '/discover', unique: /search/i },
   { path: '/profile', unique: /profile/i },
   { path: '/settings', unique: /settings/i },
   { path: '/import', unique: /import/i },
+  { path: '/stats', unique: /stats/i },
+  { path: '/review', unique: /review import/i },
 ];
 
 // No backend anywhere (src/config/features.ts) — off by default, deep links
 // land back on the collection instead of a dead screen.
-const DEAD_ROUTES = [
-  '/prices',
-  '/prices/fig-1',
-  '/analytics',
-  '/export',
-  '/notifications',
-  '/calendar',
-  '/collection-dna',
-  '/sync',
-];
+const DEAD_ROUTES = ['/prices', '/prices/fig-1', '/analytics', '/export', '/notifications', '/calendar', '/collection-dna', '/sync'];
 
-const PUBLIC_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
-  { path: '/login', unique: /welcome back/i },
-  { path: '/register', unique: /create your account/i },
-];
+// Authentik owns sign-in, registration and second factors (WK-15): the legacy screens are gone.
+const HIDDEN_ROUTES = ['/login', '/register', '/2fa'];
 
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1',
-      username: 'tester',
-      email: 'a@b.co',
-      isAdmin: false,
-      token: 'tok',
-      tokenExpiresAt: Date.now() + 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
-  });
-  // Skip onboarding for this mount.
+beforeEach(async () => {
+  fake.session = fakeAuthSession('signed-in');
+  fake.sync = await fakeBrowserSync();
   localStorage.setItem('onboarding_complete', '1');
-}
+});
+
+afterEach(() => {
+  localSession.value = undefined;
+});
 
 describe('routing reachability', () => {
-  for (const { path, unique } of AUTHENTICATED_ROUTES) {
-    it(`mounts ${path} as an authenticated route`, async () => {
-      signIn();
+  for (const { path, unique } of SIGNED_IN_ROUTES) {
+    it(`mounts ${path}`, async () => {
       renderWithProviders(<App />, { initialPath: path });
-      // We render the route's component; the matcher is intentionally loose —
-      // we only care that something identifying the page appears, not its full
-      // content.
-      await waitFor(() => {
-        expect(screen.getAllByText(unique).length).toBeGreaterThan(0);
-      });
+      await waitFor(() => expect(screen.getAllByText(unique).length).toBeGreaterThan(0));
     });
   }
 
   for (const path of DEAD_ROUTES) {
     it(`redirects ${path} to the collection`, async () => {
-      signIn();
       const { currentPath } = renderWithProviders(<App />, { initialPath: path });
       await waitFor(() => expect(currentPath()).toBe('/'));
-      await waitFor(() => {
-        expect(screen.getAllByText(/collection/i).length).toBeGreaterThan(0);
-      });
     });
   }
 
-  for (const { path, unique } of PUBLIC_ROUTES) {
-    it(`mounts ${path} as a public route`, async () => {
-      // Make sure we're signed out so the AuthRedirect doesn't bounce us home.
-      useAuthStore.setState({
-        user: null,
-        isAuthenticated: false,
-        lastActivity: 0,
-        twoFactorPending: null,
-      });
-      localStorage.setItem('onboarding_complete', '1');
-      renderWithProviders(<App />, { initialPath: path });
-      await waitFor(() => {
-        expect(screen.getAllByText(unique).length).toBeGreaterThan(0);
-      });
+  for (const path of HIDDEN_ROUTES) {
+    it(`hides ${path}: it lands on the collection, with no legacy sign-in, register or 2FA form`, async () => {
+      fake.session = fakeAuthSession('signed-out');
+      const { currentPath } = renderWithProviders(<App />, { initialPath: path });
+      await waitFor(() => expect(currentPath()).toBe('/'));
+      expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument(); // the banner's, the only one
+      expect(screen.queryByText(/welcome back|create your account|two-factor authentication/i)).toBeNull();
+      expect(screen.queryByPlaceholderText(/email address|password/i)).toBeNull();
     });
   }
-
-  it('mounts /2fa after login indicates 2FA required', async () => {
-    // Needs the auth store to have a pending 2FA session so the page renders.
-    useAuthStore.setState({
-      user: null,
-      isAuthenticated: false,
-      lastActivity: 0,
-      twoFactorPending: { sessionId: 'sess-1', methods: ['totp'] },
-    });
-    localStorage.setItem('onboarding_complete', '1');
-    renderWithProviders(<App />, { initialPath: '/2fa' });
-    await waitFor(() => {
-      expect(screen.getByText(/two-factor authentication/i)).toBeInTheDocument();
-    });
-  });
 });

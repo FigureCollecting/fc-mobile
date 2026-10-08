@@ -27,36 +27,14 @@ async function mockBackend(page: Page) {
   });
 }
 
-async function seedSignedIn(page: Page) {
-  await page.addInitScript(() => {
-    localStorage.setItem('onboarding_complete', '1');
-    localStorage.setItem(
-      'auth-storage',
-      JSON.stringify({
-        state: {
-          user: {
-            _id: 'u-e2e',
-            username: 'e2e-user',
-            email: 'e2e@example.com',
-            isAdmin: false,
-            token: 'e2e-token',
-            refreshToken: 'e2e-refresh',
-            tokenExpiresAt: Date.now() + 60 * 60_000,
-          },
-          isAuthenticated: true,
-          lastActivity: Date.now(),
-          twoFactorPending: null,
-        },
-        version: 0,
-      }),
-    );
-  });
+async function seedVisitor(page: Page) {
+  await page.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
 }
 
 test('idle app makes no requests to dead endpoints, and /analytics redirects to the collection', async ({ page }) => {
   test.setTimeout(90_000);
   await mockBackend(page);
-  await seedSignedIn(page);
+  await seedVisitor(page);
 
   // page.on('request') never fires for a WebSocket handshake (Playwright has
   // no request event for it), so the socket.io client's /ws traffic needs its
@@ -97,7 +75,7 @@ test('idle app makes no requests to dead endpoints, and /analytics redirects to 
 test.describe('real production build', () => {
   test.use({ baseURL: 'http://localhost:4174' });
 
-  test('ignores fc-fixture-mode=on and still redirects to sign-in', async ({ page }) => {
+  test('ignores fc-fixture-mode=on and still asks to sign in', async ({ page }) => {
     await page.route('https://figurecollecting.com/api/**', (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
     );
@@ -108,7 +86,9 @@ test.describe('real production build', () => {
     });
 
     await page.goto('/');
-    await expect(page).toHaveURL(/\/login$/, { timeout: 15_000 });
+    await expect(page.getByRole('status').filter({ hasText: /sign in to sync your collection/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Sign in to see your collection')).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
   });
 
   test('ships no dev fixture art (real cut-outs or synthetic stand-ins) in its precache', async ({ request }) => {

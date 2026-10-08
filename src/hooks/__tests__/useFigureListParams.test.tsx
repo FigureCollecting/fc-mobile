@@ -110,3 +110,50 @@ describe('useFigureListParams', () => {
     expect(screen.getByTestId('labels').textContent).toBe('false');
   });
 });
+
+function TabProbe({ labelsDefault }: { labelsDefault?: boolean }) {
+  const p = useFigureListParams(labelsDefault === undefined ? {} : { labelsDefault });
+  return (
+    <div>
+      <span data-testid="tab">{p.tab}</span>
+      <span data-testid="labels">{String(p.labels)}</span>
+      <button type="button" onClick={() => p.setTab('former')}>tab-former</button>
+      <button type="button" onClick={() => p.setTab('owned')}>tab-owned</button>
+      <button type="button" onClick={() => p.setLabels(false)}>labels-off</button>
+      <button type="button" onClick={() => p.setLabels(true)}>labels-on</button>
+    </div>
+  );
+}
+
+describe('useFigureListParams: the collection tab and the labels default (WK-15)', () => {
+  it('defaults the tab to owned, reads a valid one from the URL and ignores any other', () => {
+    renderWithProviders(<TabProbe />);
+    expect(screen.getByTestId('tab').textContent).toBe('owned');
+    renderWithProviders(<TabProbe />, { initialPath: '/?tab=wished' });
+    expect(screen.getAllByTestId('tab')[1]!.textContent).toBe('wished');
+    renderWithProviders(<TabProbe />, { initialPath: '/?tab=bogus' });
+    expect(screen.getAllByTestId('tab')[2]!.textContent).toBe('owned');
+  });
+
+  it('writes the tab to the URL, and leaves it out for owned', async () => {
+    const user = userEvent.setup();
+    const { currentPath } = renderWithProviders(<TabProbe />);
+    await user.click(screen.getByText('tab-former'));
+    expect(screen.getByTestId('tab').textContent).toBe('former');
+    expect(currentPath()).toContain('tab=former');
+    await user.click(screen.getByText('tab-owned'));
+    expect(currentPath()).not.toContain('tab=');
+  });
+
+  it('shows labels by default where asked (no images to show), and an explicit 0 turns them off', async () => {
+    const user = userEvent.setup();
+    const { currentPath } = renderWithProviders(<TabProbe labelsDefault />);
+    expect(screen.getByTestId('labels').textContent).toBe('true');
+    await user.click(screen.getByText('labels-off'));
+    expect(screen.getByTestId('labels').textContent).toBe('false');
+    expect(currentPath()).toContain('labels=0');
+    await user.click(screen.getByText('labels-on'));
+    expect(screen.getByTestId('labels').textContent).toBe('true');
+    expect(currentPath()).not.toContain('labels=');
+  });
+});

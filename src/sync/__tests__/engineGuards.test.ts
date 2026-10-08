@@ -2,6 +2,7 @@
 // backoff, never a hang, and the next trigger runs a fresh pass.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { create } from '@bufbuild/protobuf';
+import { Code, ConnectError } from '@connectrpc/connect';
 import { DeltaResponseSchema, GetProductsResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine, type CatalogCalls, type SyncCalls } from '../engine';
 import { rig, seedCopies, type Rig } from './engineSupport';
@@ -126,5 +127,16 @@ describe('Delta paging guard', () => {
     await engine.trigger('start');
     expect(delta).toHaveBeenCalledTimes(10_000);
     expect(engine.state.value.lastError).toBeNull();
+  });
+});
+
+describe('the pass log', () => {
+  it('logs nothing for a server it cannot reach: only an error is logged', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await rig();
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+    await r.engine.trigger('start');
+    expect(r.engine.state.value).toMatchObject({ reachability: 'unreachable', lastError: expect.stringMatching(/down/) });
+    expect(warn).not.toHaveBeenCalled();
   });
 });

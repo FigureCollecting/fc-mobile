@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { SyncOp, importItemKey } from '@figurecollecting/fc-api-contract';
 
@@ -67,7 +67,8 @@ describe('Profile page', () => {
     const user = userEvent.setup();
     renderWithProviders(<Profile />, { initialPath: '/profile' });
     await user.click(screen.getByRole('button', { name: /sign out/i }));
-    await user.click(await screen.findByRole('button', { name: /^sign out$/i }));
+    const confirm = (await screen.findByText('Sign Out?')).closest('.sign-out-confirm') as HTMLElement;
+    await user.click(within(confirm).getByRole('button', { name: /^sign out$/i }));
     await waitFor(() => expect(r.session.signOut).toHaveBeenCalled());
   });
 });

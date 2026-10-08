@@ -4,11 +4,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Header } from '../components/layout/Header';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { CollectionStats } from '../components/profile/CollectionStats';
-import { SyncDashboard } from '../components/sync/SyncDashboard';
-import { useAuthStore } from '../stores/auth';
+import { localSession } from '../local/session';
+import { useAuthPhase } from '../local/useLocal';
+import { useReview } from '../hooks/useReview';
 import { clearCache } from '../storage/figureCache';
 import { usePushNotifications } from '../hooks/usePushNotifications';
-import { useUnreadCount } from '../hooks/useNotifications';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
 import { Style } from '../styles/Style';
 
@@ -27,19 +27,17 @@ export function Profile() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
 
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const user = useAuthStore((s) => s.user);
+  const isAuthenticated = useAuthPhase() === 'signed-in';
+  const sub = localSession.value?.sub();
+  const review = useReview().data;
+  const toReview = review === undefined ? 0 : [...review.conflicts, ...review.divergences].filter((i) => i.answered === null).length;
 
-  const [syncSheetOpen, setSyncSheetOpen] = useState(false);
   const [signOutSheetOpen, setSignOutSheetOpen] = useState(false);
   const [cacheClearing, setCacheClearing] = useState(false);
   const [cacheCleared, setCacheCleared] = useState(false);
   const push = usePushNotifications();
-  const { data: unreadCount = 0 } = useUnreadCount(LEGACY_SCREENS_ENABLED);
-
-  const initials = user?.username
-    ? user.username.slice(0, 2).toUpperCase()
-    : '??';
+  // Authentik holds the account's name; the device holds only its subject.
+  const initials = 'ME';
 
   const handleClearCache = useCallback(async () => {
     setCacheClearing(true);
@@ -54,17 +52,13 @@ export function Profile() {
   }, [queryClient]);
 
   const handleSignOut = useCallback(() => {
-    useAuthStore.getState().logout();
+    // Signs out at Authentik; this user's local data stays on the device, partitioned by subject.
+    void localSession.peek()?.signOut().catch(() => undefined);
     clearCache().catch(() => {});
     queryClient.clear();
     setSignOutSheetOpen(false);
     setLocation('/');
   }, [queryClient, setLocation]);
-
-  const handleViewCollection = useCallback(() => {
-    setSyncSheetOpen(false);
-    setLocation('/');
-  }, [setLocation]);
 
   // Not authenticated: simple sign-in prompt
   if (!isAuthenticated) {
@@ -120,8 +114,8 @@ export function Profile() {
             <span class="profile__initials">{initials}</span>
           </div>
           <div class="profile__user-info">
-            <h2 class="profile__name">{user?.username}</h2>
-            <p class="profile__email">{user?.email}</p>
+            <h2 class="profile__name">Signed in</h2>
+            <p class="profile__email">{sub === undefined ? '' : `Account ${sub.slice(0, 8)}`}</p>
           </div>
         </div>
 
@@ -141,10 +135,7 @@ export function Profile() {
                 </svg>
                 <span>Notifications</span>
               </div>
-              <div class="profile__item-right">
-                {unreadCount > 0 && <span class="profile__notif-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>}
-                <ChevronRight />
-              </div>
+              <ChevronRight />
             </button>
           )}
 
@@ -155,10 +146,23 @@ export function Profile() {
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
-              <span>Import Collection</span>
+              <span>Import your MFC export</span>
             </div>
             <ChevronRight />
           </button>
+
+          {toReview > 0 && (
+            <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/review')}>
+              <div class="profile__item-left">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 9v4M12 17h.01" />
+                  <circle cx="12" cy="12" r="10" />
+                </svg>
+                <span>{`Review import (${toReview})`}</span>
+              </div>
+              <ChevronRight />
+            </button>
+          )}
 
           {LEGACY_SCREENS_ENABLED && (
             <button class="profile__item profile__item--action" type="button" onClick={() => setLocation('/export')}>
@@ -169,18 +173,6 @@ export function Profile() {
                   <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
                 <span>Export & Share</span>
-              </div>
-              <ChevronRight />
-            </button>
-          )}
-
-          {LEGACY_SCREENS_ENABLED && (
-            <button class="profile__item profile__item--action" type="button" onClick={() => setSyncSheetOpen(true)}>
-              <div class="profile__item-left">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--brand-400)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 12a9 9 0 0 1-9 9m9-9a9 9 0 0 0-9-9m9 9H3m9 9a9 9 0 0 1-9-9m9 9c1.66 0 3-4.03 3-9s-1.34-9-3-9m0 18c-1.66 0-3-4.03-3-9s1.34-9 3-9m-9 9a9 9 0 0 1 9-9" />
-                </svg>
-                <span>MFC Sync</span>
               </div>
               <ChevronRight />
             </button>
@@ -312,11 +304,6 @@ export function Profile() {
           <p class="profile__footer-text">Mobile App</p>
         </div>
       </div>
-
-      {/* Sync bottom sheet */}
-      <BottomSheet open={syncSheetOpen} onClose={() => setSyncSheetOpen(false)} snapPoint="full">
-        <SyncDashboard onViewCollection={handleViewCollection} />
-      </BottomSheet>
 
       {/* Sign out confirmation sheet */}
       <BottomSheet open={signOutSheetOpen} onClose={() => setSignOutSheetOpen(false)} snapPoint="half">

@@ -1,58 +1,41 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Collection counts from the local store (WK-15): copies per kind, makers by held figures.
+import { afterEach, describe, expect, it } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/preact';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
+import { seedFigures } from '../../local/__tests__/seedFigures';
+import { localSession } from '../../local/session';
+import { useCollectionStats } from '../useCollectionStats';
 
-vi.mock('@figurecollecting/fc-shared', async () => {
-  const actual = await vi.importActual<typeof import('@figurecollecting/fc-shared')>(
-    '@figurecollecting/fc-shared',
-  );
-  return { ...actual, getFigureStats: vi.fn() };
+afterEach(() => {
+  localSession.value = undefined;
 });
 
-import { getFigureStats } from '@figurecollecting/fc-shared';
-import { useCollectionStats } from '../useCollectionStats';
-import { useAuthStore } from '../../stores/auth';
-
-const mockedStats = getFigureStats as unknown as ReturnType<typeof vi.fn>;
-
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1', username: 't', email: 'a@b.co', isAdmin: false,
-      token: 'tok', tokenExpiresAt: Date.now() + 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
-  });
-}
-
-function wrapper() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return ({ children }: { children: unknown }) => (
-    <QueryClientProvider client={client}>{children as any}</QueryClientProvider>
-  );
-}
-
 describe('useCollectionStats', () => {
-  beforeEach(() => mockedStats.mockReset());
-
-  it('returns counts when the API succeeds', async () => {
-    signIn();
-    mockedStats.mockResolvedValueOnce({
-      totalCount: 10,
-      statusCounts: { owned: 5, ordered: 3, wished: 2 },
+  it('counts every copy per kind, leaves former copies out, and ranks makers', async () => {
+    const r = await localRig();
+    await seedFigures(r, [
+      { title: 'A', manufacturer: 'Alter', copies: 3 },
+      { title: 'B', manufacturer: 'Kotobukiya', status: 'ordered' },
+      { title: 'C', manufacturer: 'Alter', status: 'wished' },
+      { title: 'D', manufacturer: '', status: 'wished' },
+      { title: 'E', manufacturer: 'Max', status: 'former', disposal: { reason: 'lost' } },
+    ]);
+    const { result } = renderHook(() => useCollectionStats(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data).toEqual({
+      owned: 3,
+      ordered: 1,
+      wished: 2,
+      total: 6,
+      makers: [
+        { name: 'Alter', count: 2 },
+        { name: 'Kotobukiya', count: 1 },
+      ],
     });
-    const { result } = renderHook(() => useCollectionStats(), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.total).toBe(10);
   });
 
-  it('falls back to zero-count cache when API fails', async () => {
-    signIn();
-    mockedStats.mockRejectedValueOnce(new Error('offline'));
-    const { result } = renderHook(() => useCollectionStats(), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.total).toBe(0);
+  it('is empty-handed before a session', () => {
+    const { result } = renderHook(() => useCollectionStats(), { wrapper: queryWrapper() });
+    expect(result.current.data).toBeUndefined();
   });
 });

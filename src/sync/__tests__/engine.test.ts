@@ -176,6 +176,31 @@ describe('drain: frozen Push batches of at most 100 under a stable client_id', (
     expect((await r.store.listOutbox())[0]).toMatchObject({ state: 'APPLIED', outcome: 'DUPLICATE' });
   });
 
+  it('counts a batch whose Push reply was lost as waiting: IN_FLIGHT is still pending', async () => {
+    const r = await rig();
+    await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'one' });
+    r.server.fault('push', { kind: 'drop' });
+    await r.engine.trigger('start');
+    expect((await r.store.listOutbox()).map((e) => e.state)).toEqual(['IN_FLIGHT']);
+    expect(r.engine.state.value).toMatchObject({ reachability: 'unreachable', pending: 1 });
+  });
+
+  it('counts an edit owed a re-mint (REJECTED version_future) as waiting, not as rejected', async () => {
+    const r = await rig();
+    await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'a' });
+    // The server's clock steps back after the Status, and the Status the re-mint needs never answers.
+    const real = r.server.sync.push;
+    const push = vi.fn(async (req: Parameters<SyncCalls['push']>[0], opts?: { signal?: AbortSignal }) => {
+      r.server.now = T0 - 10 * 60_000;
+      return real(req, opts);
+    });
+    r.server.fault('status', { kind: 'pass' }, { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+    const engine = new SyncEngine({ store: async () => r.store, sync: { ...r.server.sync, push }, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+    await engine.trigger('start');
+    expect(await r.store.listOutbox()).toEqual([expect.objectContaining({ state: 'REJECTED', remint: 'awaiting' })]);
+    expect(engine.state.value).toMatchObject({ reachability: 'unreachable', pending: 1, rejected: [] });
+  });
+
   it('adopts current on STALE: version and payload together', async () => {
     const r = await rig();
     await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'mine' });

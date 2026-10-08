@@ -1,96 +1,48 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/preact';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+// useFigure on the local store (WK-15): one figure, every copy of every kind, from IndexedDB.
+import { afterEach, describe, expect, it } from 'vitest';
+import { act, renderHook, waitFor } from '@testing-library/preact';
+import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
+import { headOf, seedCopies } from '../../sync/__tests__/engineSupport';
+import { localSession } from '../../local/session';
+import { useFigure } from '../useFigure';
 
-vi.mock('@figurecollecting/fc-shared', async () => {
-  const actual = await vi.importActual<typeof import('@figurecollecting/fc-shared')>(
-    '@figurecollecting/fc-shared',
-  );
-  return { ...actual, getFigureById: vi.fn() };
+afterEach(() => {
+  localSession.value = undefined;
 });
 
-import { getFigureById } from '@figurecollecting/fc-shared';
-import { useFigure } from '../useFigure';
-import { useAuthStore } from '../../stores/auth';
-import { cacheFigures } from '../../storage/figureCache';
-
-const mockedGet = getFigureById as unknown as ReturnType<typeof vi.fn>;
-
-function signIn() {
-  useAuthStore.setState({
-    user: {
-      _id: 'u1',
-      username: 't',
-      email: 'a@b.co',
-      isAdmin: false,
-      token: 'tok',
-      tokenExpiresAt: Date.now() + 60_000,
-    },
-    isAuthenticated: true,
-    lastActivity: Date.now(),
-    twoFactorPending: null,
-  });
-}
-
-function wrapper() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 0 } },
-  });
-  return ({ children }: { children: unknown }) => (
-    <QueryClientProvider client={client}>{children as any}</QueryClientProvider>
-  );
-}
-
 describe('useFigure', () => {
-  beforeEach(() => mockedGet.mockReset());
-
-  it('returns the fetched figure when the API succeeds', async () => {
-    signIn();
-    mockedGet.mockResolvedValueOnce({ _id: 'f1', name: 'Api Figure', manufacturer: 'GSC' });
-
-    const { result } = renderHook(() => useFigure('f1'), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.name).toBe('Api Figure');
+  it('is idle without an id', async () => {
+    await localRig();
+    const { result } = renderHook(() => useFigure(undefined), { wrapper: queryWrapper() });
+    expect(result.current.fetchStatus).toBe('idle');
   });
 
-  it('falls back to the IndexedDB cache when the API fails', async () => {
-    signIn();
-    await cacheFigures([
-      { _id: 'f2', name: 'Cached Figure', manufacturer: 'Alter' } as any,
-    ]);
-
-    mockedGet.mockRejectedValueOnce(new Error('offline'));
-
-    const { result } = renderHook(() => useFigure('f2'), { wrapper: wrapper() });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.name).toBe('Cached Figure');
+  it('reads the figure with its card and every copy, its status the first held kind', async () => {
+    const r = await localRig();
+    seedCopies(r.server, 1, 100, 'wished');
+    r.server.seedProducts([headOf(0)]);
+    await r.engine.trigger('start');
+    await r.engine.write((s) => s.createCopy(headOf(0), 'ordered'));
+    const { result } = renderHook(() => useFigure(headOf(0)), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data).toMatchObject({ _id: headOf(0), name: `Figure ${headOf(0).slice(0, 8)}`, collectionStatus: 'ordered', quantity: 1 });
+    expect(result.current.data!.local.copies.map((c) => c.status).sort()).toEqual(['ordered', 'wished']);
+    expect(result.current.data!.imageUrl).toBeUndefined();
   });
 
-  it('stays disabled and empty when unauthenticated', async () => {
-    const { result } = renderHook(() => useFigure('f3'), { wrapper: wrapper() });
-    // Not authenticated → query is disabled, never fetches.
-    expect(mockedGet).not.toHaveBeenCalled();
+  it('errors for a figure the user holds no copy of', async () => {
+    await localRig();
+    const { result } = renderHook(() => useFigure(headOf(5)), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
   });
 
-  it('uses collection placeholderData when the figure is already in a collection query', async () => {
-    signIn();
-    mockedGet.mockResolvedValue({ _id: 'f4', name: 'Api Figure', manufacturer: 'X' });
-
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 5 * 60_000 } } });
-    client.setQueryData(['collection', { page: 1 }], {
-      success: true,
-      data: [{ _id: 'f4', name: 'Placeholder Figure', manufacturer: 'X' }],
-      count: 1, page: 1, pages: 1, total: 1,
-    });
-    const Wrapper = ({ children }: { children: unknown }) => (
-      <QueryClientProvider client={client}>{children as any}</QueryClientProvider>
-    );
-
-    const { result } = renderHook(() => useFigure('f4'), { wrapper: Wrapper });
-    // Initially placeholderData returns the match from the collection cache.
-    expect(result.current.data?.name).toBe('Placeholder Figure');
-    // Eventually the real fetch wins.
-    await waitFor(() => expect(result.current.data?.name).toBe('Api Figure'));
+  it('follows an edit', async () => {
+    const r = await localRig();
+    const occ = await r.engine.write((s) => s.createCopy(headOf(1), 'ordered'));
+    const { result } = renderHook(() => useFigure(headOf(1)), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.data?.collectionStatus).toBe('ordered'));
+    await act(() => r.engine.write((s) => s.markArrived({ occ_id: occ })));
+    await waitFor(() => expect(result.current.data?.collectionStatus).toBe('owned'));
   });
 });

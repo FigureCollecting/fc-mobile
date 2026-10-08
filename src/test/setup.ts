@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/preact';
+import { options } from 'preact';
 
 // Install DOM polyfills BEFORE any modules that read them at import-time
 // (e.g. stores/theme.ts subscribes to matchMedia on load). jsdom stubs these
@@ -38,6 +39,23 @@ class NoopResizeObserver {
   disconnect() {}
 }
 (globalThis as unknown as { ResizeObserver: typeof NoopResizeObserver }).ResizeObserver = NoopResizeObserver;
+
+// preact/hooks flushes effects after paint through options.requestAnimationFrame when it is set.
+// Its default pairs window.requestAnimationFrame with a 35 ms timer whose callback calls the global
+// cancelAnimationFrame. A render late in a file leaves that timer pending past the jsdom teardown,
+// which deletes the window globals, so it threw 'cancelAnimationFrame is not defined' and the run
+// exited 1 with every test passed. The same pairing, touching the frame globals only while they
+// exist (act() swaps its own in and restores this one).
+options.requestAnimationFrame = (flush) => {
+  let frame: number | undefined;
+  const done = () => {
+    clearTimeout(timer);
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame!);
+    setTimeout(flush);
+  };
+  const timer = setTimeout(done, 35);
+  if (typeof requestAnimationFrame === 'function') frame = requestAnimationFrame(done);
+};
 
 // Dynamic import AFTER polyfills are in place.
 const { useAuthStore } = await import('../stores/auth');

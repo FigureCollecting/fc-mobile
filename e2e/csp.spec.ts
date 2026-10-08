@@ -15,13 +15,13 @@ test('first-run onboarding slides animate without an inline style', async ({ pag
 
 test('component styles apply under the CSP (adopted sheets, not <style> elements)', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
-  await page.goto('/login');
-  await expect(page.getByPlaceholder(/email address/i)).toBeVisible();
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
   const probe = await page.evaluate(() => ({
     styleElements: document.querySelectorAll('style').length,
     adopted: document.adoptedStyleSheets.length,
-    // .auth-btn--primary is styled only by Login's component CSS.
-    buttonBackground: getComputedStyle(document.querySelector('.auth-btn--primary') as Element).backgroundColor,
+    // .sync-auth-banner is styled only by its component CSS.
+    buttonBackground: getComputedStyle(document.querySelector('.sync-auth-banner') as Element).backgroundColor,
   }));
   expect(probe.styleElements).toBe(0);
   expect(probe.adopted).toBeGreaterThan(0);

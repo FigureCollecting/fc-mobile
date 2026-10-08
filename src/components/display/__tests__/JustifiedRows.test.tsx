@@ -47,6 +47,11 @@ describe('JustifiedRows (Display B)', () => {
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_FIGURES[4], 4);
   });
 
+  it('marks each tile with its flat index, so the last one can be found', () => {
+    renderWithProviders(<JustifiedRows figures={FIXTURE_FIGURES} density="compact" />);
+    expect(screen.getByRole('button', { name: FIXTURE_FIGURES[6]!.name })).toHaveAttribute('data-index', '6');
+  });
+
   describe('nameplate labels (off by default)', () => {
     it('renders no captions when labels is not set', () => {
       const { container } = renderWithProviders(<JustifiedRows figures={FIXTURE_FIGURES} density="compact" />);

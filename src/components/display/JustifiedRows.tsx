@@ -90,6 +90,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
                   class={`jrows__item ${isSelected?.(item.figure) ? 'jrows__item--selected' : ''}`}
                   style={{ width: `${item.w}px` }}
                   type="button"
+                  data-index={item.index}
                   data-sync={local?.sync}
                   data-quantity={local === undefined ? undefined : quantity}
                   aria-describedby={badgeId}

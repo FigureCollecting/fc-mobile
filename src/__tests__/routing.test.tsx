@@ -22,6 +22,7 @@ const SIGNED_IN_ROUTES: Array<{ path: string; unique: RegExp | string }> = [
   { path: '/settings', unique: /settings/i },
   { path: '/import', unique: /import/i },
   { path: '/stats', unique: /stats/i },
+  { path: '/review', unique: /review import/i },
 ];
 
 // No backend anywhere (src/config/features.ts) — off by default, deep links

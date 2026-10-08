@@ -19,16 +19,18 @@ describe('useCollectionStats', () => {
       { title: 'C', manufacturer: 'Alter', status: 'wished' },
       { title: 'D', manufacturer: '', status: 'wished' },
       { title: 'E', manufacturer: 'Max', status: 'former', disposal: { reason: 'lost' } },
+      { title: 'F', manufacturer: 'Good Smile', status: 'ordered' },
     ]);
     const { result } = renderHook(() => useCollectionStats(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data).toEqual({
       owned: 3,
-      ordered: 1,
+      ordered: 2,
       wished: 2,
-      total: 6,
+      total: 7,
       makers: [
         { name: 'Alter', count: 2 },
+        { name: 'Good Smile', count: 1 },
         { name: 'Kotobukiya', count: 1 },
       ],
     });

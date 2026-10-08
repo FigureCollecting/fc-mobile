@@ -18,7 +18,7 @@ function countCopies(s: Snapshot): CollectionCounts {
   const makers = new Map<string, number>();
   for (const f of s.figures) {
     if (f.local.kind === 'former') continue;
-    out[f.local.kind] += f.quantity ?? 1;
+    out[f.local.kind] += f.local.copies.length;
     if (f.manufacturer) makers.set(f.manufacturer, (makers.get(f.manufacturer) ?? 0) + 1);
   }
   return {

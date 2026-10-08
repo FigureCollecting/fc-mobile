@@ -45,3 +45,32 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
     expect(nowExpanded).toHaveLength(1);
   });
 });
+
+describe('FigureDetailContent on a local figure (WK-15)', () => {
+  const local = {
+    _id: 'h1',
+    name: 'Local one',
+    manufacturer: 'Alter',
+    scale: '1/7',
+    userId: 'u',
+    createdAt: '',
+    updatedAt: '',
+    collectionStatus: 'owned',
+    quantity: 2,
+    local: { headId: 'h1', kind: 'owned', sync: 'pending', asOf: null },
+  } as never;
+
+  it('shows its stack, its sync badge, and a way to the full detail with its actions', async () => {
+    const user = userEvent.setup();
+    const { currentPath } = renderWithProviders(<FigureDetailContent figure={local} index={0} total={1} />);
+    expect(screen.getByText('×2')).toBeInTheDocument();
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Copies and actions' }));
+    expect(currentPath()).toBe('/figure/h1');
+  });
+
+  it('offers no detail link for a fixture figure', () => {
+    renderWithProviders(<FigureDetailContent figure={FIXTURE_FIGURES[0]!} index={0} total={7} />);
+    expect(screen.queryByRole('button', { name: 'Copies and actions' })).toBeNull();
+  });
+});

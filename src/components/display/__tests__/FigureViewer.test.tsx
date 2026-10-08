@@ -82,6 +82,20 @@ describe('FigureViewer (Display D)', () => {
     expect(html).not.toContain('<b>');
   });
 
+  it('takes down a gallery still opening, whose destroy() would only close a fully open one', async () => {
+    const onClose = vi.fn();
+    const { unmount } = renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    const pswp = instances[0]!;
+    const element = document.createElement('div');
+    document.body.appendChild(element);
+    const removeAll = vi.fn();
+    Object.assign(pswp, { element, events: { removeAll }, destroy: () => undefined });
+    unmount();
+    expect(element.isConnected).toBe(false);
+    expect(removeAll).toHaveBeenCalled();
+  });
+
   it('closes itself before it opens the full detail of a local figure', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

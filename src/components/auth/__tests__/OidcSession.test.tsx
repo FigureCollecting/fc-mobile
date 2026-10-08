@@ -110,4 +110,29 @@ describe('OidcSession', () => {
     await waitFor(() => expect(h.startBrowserSync).toHaveBeenCalled());
     expect(screen.queryByText(/Can't reach server/)).toBeNull();
   });
+
+  it("leaves sync off in an e2e build when the suite asks (the auth suite counts the edge's requests exactly)", async () => {
+    vi.stubEnv('VITE_E2E_HOOKS', 'true');
+    localStorage.setItem('fc.e2e.sync', 'off');
+    try {
+      h.session = sessionOn(new IDBFactory());
+      renderWithProviders(<OidcSession />);
+      await waitFor(() => expect(h.session!.status.value).toBe('signed-out'));
+      expect(h.startBrowserSync).not.toHaveBeenCalled();
+    } finally {
+      localStorage.removeItem('fc.e2e.sync');
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('ignores that switch in any other build', async () => {
+    localStorage.setItem('fc.e2e.sync', 'off');
+    try {
+      h.session = sessionOn(new IDBFactory());
+      renderWithProviders(<OidcSession />);
+      await waitFor(() => expect(h.startBrowserSync).toHaveBeenCalled());
+    } finally {
+      localStorage.removeItem('fc.e2e.sync');
+    }
+  });
 });

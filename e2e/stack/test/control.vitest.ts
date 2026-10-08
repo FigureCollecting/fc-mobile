@@ -7,6 +7,7 @@ import { request } from './helpers.js';
 
 function stubTarget() {
   const called: string[] = [];
+  const sql: string[] = [];
   const faults: FaultRule[] = [];
   const tuples: Tuple[] = [];
   const settings = { accessTokenTtlSeconds: 600, offlineAccess: true, reuseRevokesFamily: false };
@@ -79,9 +80,15 @@ function stubTarget() {
         if (i >= 0) tuples.splice(i, 1);
       },
     },
+    postgres: {
+      psql: async (text, role) => {
+        sql.push(`${role}: ${text}`);
+        return '1|7|2400\n';
+      },
+    },
     stop: note('stack.stop'),
   };
-  return { target, called, faults };
+  return { target, called, faults, sql };
 }
 
 describe('control API and client', () => {
@@ -161,6 +168,22 @@ describe('control API and client', () => {
     await client.openfga.remove(t);
     expect(await client.openfga.tuples()).toEqual([]);
     expect(await client.openfga.calls()).toEqual([]);
+  });
+
+  it("counts a user's Push receipts, feed events and facets in the coordinator database", async () => {
+    const user = '22222222-2222-4222-8222-222222222222';
+    expect(await client.sync.counts({ user, clientId: 'b1d4a6e2-0c1f-4c7e-9a8b-3d2e1f0a9b8c', prefix: 'occ/5eed0000-' })).toEqual({ receipts: 1, feedEvents: 7, facets: 2400 });
+    const last = stub.sql.at(-1)!;
+    expect(last).toMatch(/^superuser: SELECT/);
+    expect(last).toContain(`FROM mutation_receipt WHERE user_id = '${user}' AND client_id = 'b1d4a6e2-0c1f-4c7e-9a8b-3d2e1f0a9b8c'`);
+    expect(last).toContain(`FROM feed_event WHERE user_id = '${user}'`);
+    expect(last).toContain(`FROM facet_state WHERE user_id = '${user}' AND facet_key LIKE 'occ/5eed0000-%'`);
+    await client.sync.counts({ user });
+    expect(stub.sql.at(-1)).not.toContain('client_id');
+    expect(stub.sql.at(-1)).toContain("LIKE '%'");
+    for (const bad of [{ user: "x' OR '1'='1" }, { user, clientId: "a'b" }, { user, prefix: 'occ/%' }]) {
+      await expect(client.sync.counts(bad)).rejects.toThrow(/400/);
+    }
   });
 
   it('answers 400 for a bad request and 404 for an unknown route', async () => {

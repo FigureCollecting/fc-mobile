@@ -1,7 +1,7 @@
 // The searcher builds the index on the page while a build is quick, and in a worker once a build
 // takes more than 50 ms (WK-15), answering queries from wherever the index lives.
 import { describe, expect, it, vi } from 'vitest';
-import { LocalSearcher, WORKER_THRESHOLD_MS, type WorkerLike } from '../searcher';
+import { LocalSearcher, WORKER_THRESHOLD_MS, browserWorker, type WorkerLike } from '../searcher';
 import { createWorkerHandler, type FromWorker, type ToWorker } from '../workerHandler';
 import type { SearchDoc } from '../ngram';
 
@@ -33,7 +33,9 @@ function fakeWorker() {
       received.push(msg as ToWorker);
       handle(msg as ToWorker);
     },
-    addEventListener: (_type, fn) => void listeners.push(fn as never),
+    addEventListener: (type, fn) => {
+      if (type === 'message') listeners.push(fn as never);
+    },
     terminate: vi.fn(),
   };
   return worker;
@@ -83,7 +85,7 @@ describe('LocalSearcher', () => {
       },
       terminate: vi.fn(),
     };
-    const s = new LocalSearcher({ now: clockTaking(99, 1), makeWorker: () => worker });
+    const s = new LocalSearcher({ now: clockTaking(99), makeWorker: () => worker });
     s.update(DOCS);
     const pending = s.search('miku');
     fail!(new Event('error'));
@@ -91,6 +93,8 @@ describe('LocalSearcher', () => {
     expect(worker.terminate).toHaveBeenCalled();
     expect(await pending).toEqual(['a']);
     expect(await s.search('rem')).toEqual(['b']);
+    s.update(DOCS); // however slow, never a worker again
+    expect(s.mode).toBe('main');
   });
 
   it('finds nothing before any build, and nothing after dispose', async () => {
@@ -115,5 +119,26 @@ describe('the worker handler', () => {
       { type: 'result', id: 1, ids: [] },
       { type: 'result', id: 2, ids: ['a'] },
     ]);
+  });
+});
+
+describe('browserWorker', () => {
+  it('is absent where no Worker exists, and makes a module worker where one does', () => {
+    vi.stubGlobal('Worker', undefined);
+    expect(browserWorker()).toBeUndefined();
+    const made: Array<[URL, WorkerOptions]> = [];
+    vi.stubGlobal(
+      'Worker',
+      class {
+        constructor(url: URL, opts: WorkerOptions) {
+          made.push([url, opts]);
+        }
+      },
+    );
+    browserWorker()!();
+    expect(made).toHaveLength(1);
+    expect(String(made[0]![0])).toMatch(/\/searchWorker\.ts\b/);
+    expect(made[0]![1]).toEqual({ type: 'module' });
+    vi.unstubAllGlobals();
   });
 });

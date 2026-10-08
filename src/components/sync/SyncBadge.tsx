@@ -37,12 +37,13 @@ export function SyncBadge({ sync, asOf, id, now, timeZone }: SyncBadgeProps) {
       <Style css={`
         .sync-badge {
           display: inline-block;
+          max-width: 100%;
           padding: 1px 6px;
-          border-radius: var(--radius-full, 999px);
+          border-radius: 8px;
           font-size: 10px;
-          line-height: 14px;
+          line-height: 13px;
           font-weight: 600;
-          white-space: nowrap;
+          overflow-wrap: anywhere;
         }
         .sync-badge--pending {
           background: var(--accent-warning, #d97706);

@@ -30,7 +30,7 @@ export interface Snapshot extends FigureInputs {
 
 export async function readSnapshot(store: UserStore, stale: boolean): Promise<Snapshot> {
   const [facets, products, meta] = await Promise.all([store.listFacets(), store.listProducts(), store.getMeta()]);
-  const inputs = { sub: store.sub, facets, products, stale };
+  const inputs = { sub: store.sub, facets, products, stale, syncedAt: meta.status_at ?? null };
   const view = buildView(facets);
   return { ...inputs, meta, figures: buildFigures(inputs, view), collections: view.collections };
 }

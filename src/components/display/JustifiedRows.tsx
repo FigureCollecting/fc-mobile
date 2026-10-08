@@ -236,7 +236,9 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
           position: absolute;
           top: 4px;
           left: 4px;
+          right: 28px; /* clear of the xN count */
           z-index: 2;
+          text-align: left;
         }
 
         .jrows__item--selected {

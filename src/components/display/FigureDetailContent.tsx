@@ -10,6 +10,8 @@ interface FigureDetailContentProps {
   figure: Figure;
   index: number;
   total: number;
+  /** Runs before the full detail opens: a full-screen viewer closes itself first. */
+  onBeforeOpen?: () => void;
 }
 
 /**
@@ -18,7 +20,7 @@ interface FigureDetailContentProps {
  * sheet (Display D, < 640px) and the Fold-open dual-pane (>= 640px, Display
  * D'): same content component either way, just hosted differently.
  */
-export function FigureDetailContent({ figure, index, total }: FigureDetailContentProps) {
+export function FigureDetailContent({ figure, index, total, onBeforeOpen }: FigureDetailContentProps) {
   const [expanded, setExpanded] = useState(false);
   const [, setLocation] = useLocation();
   // The local store's state of the item; fixture figures have none.
@@ -53,7 +55,10 @@ export function FigureDetailContent({ figure, index, total }: FigureDetailConten
       </div>
 
       {local !== undefined && (
-        <button type="button" class="figure-viewer-sheet__open" onClick={() => setLocation(`/figure/${local.headId}`)}>
+        <button type="button" class="figure-viewer-sheet__open" onClick={() => {
+            onBeforeOpen?.();
+            setLocation(`/figure/${local.headId}`);
+          }}>
           Copies and actions
         </button>
       )}

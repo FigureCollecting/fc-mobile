@@ -34,8 +34,13 @@ export interface LocalMeta {
   /** Shown copies, by occurrence id. */
   copies: CopyView[];
   sync: ItemSync;
-  /** The card's newest as_of, for the offline-stale badge; null without a card. */
+  /**
+   * How current the item is, for the offline-stale badge: when this device last heard from the
+   * server (sync_meta), else the card's facts' as_of; null with neither.
+   */
   asOf: string | null;
+  /** The card's newest as_of: how current its product facts are. */
+  factsAsOf: string | null;
   hasCard: boolean;
   character: string | null;
   series: string | null;
@@ -55,6 +60,8 @@ export interface FigureInputs {
   products: readonly ProductRecord[];
   /** The server is out of reach (or sync is held): settled items are offline-stale. */
   stale: boolean;
+  /** Wall-clock ms of this device's last Status from the server (sync_meta.status_at). */
+  syncedAt?: number | null;
 }
 
 const KINDS: readonly OccurrenceStatus[] = ['owned', 'ordered', 'wished', 'former'];
@@ -82,6 +89,7 @@ interface Model {
   uf: Map<string, LocalMeta['uf']>;
   statusAt: Map<string, string>;
   stale: boolean;
+  syncedAt: string | null;
   sub: string;
 }
 
@@ -138,7 +146,8 @@ function model(input: FigureInputs, built?: LocalView): Model {
 
   const view = built ?? buildView(input.facets as FacetRecord[]);
   for (const c of view.copies) if (c.head_id !== null) addHead(c.head_id);
-  return { view, display, product: (d) => byId.get(d), heads, pendingOcc, pendingHead, uf, statusAt, stale: input.stale, sub: input.sub };
+  const syncedAt = input.syncedAt === undefined || input.syncedAt === null ? null : new Date(input.syncedAt).toISOString();
+  return { view, display, product: (d) => byId.get(d), heads, pendingOcc, pendingHead, uf, statusAt, stale: input.stale, syncedAt, sub: input.sub };
 }
 
 function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[], counted: CopyView[]): LocalFigure {
@@ -169,7 +178,8 @@ function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[
       kind,
       copies,
       sync: pending ? 'pending' : m.stale ? 'offline-stale' : 'known',
-      asOf: product?.as_of ?? null,
+      asOf: m.syncedAt ?? product?.as_of ?? null,
+      factsAsOf: product?.as_of ?? null,
       hasCard: card !== undefined,
       character: card?.character?.value || null,
       series: card?.series?.value || null,

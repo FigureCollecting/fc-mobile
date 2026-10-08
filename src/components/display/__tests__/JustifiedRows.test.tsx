@@ -101,3 +101,59 @@ describe('JustifiedRows (Display B)', () => {
     });
   });
 });
+
+describe('JustifiedRows on local figures (WK-15)', () => {
+  const local = (id: string, extra: Record<string, unknown> = {}) =>
+    ({
+      _id: id,
+      name: `Figure ${id}`,
+      manufacturer: 'Alter',
+      scale: '',
+      userId: 'u',
+      createdAt: '',
+      updatedAt: '',
+      quantity: 1,
+      local: { headId: id, kind: 'owned', sync: 'known', asOf: null },
+      ...extra,
+    }) as never;
+
+  it('draws a placeholder plate with the name and maker where there is no image', () => {
+    const { container } = renderWithProviders(<JustifiedRows figures={[local('a')]} density="compact" />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('.jrows__plate')).toHaveTextContent('Figure aAlter');
+    expect(screen.getByRole('button', { name: 'Figure a' })).toBeInTheDocument();
+  });
+
+  it('stacks: xN for more than one copy, nothing for one', () => {
+    renderWithProviders(<JustifiedRows figures={[local('a', { quantity: 3 }), local('b')]} density="compact" />);
+    expect(screen.getByRole('button', { name: 'Figure a' })).toHaveAttribute('data-quantity', '3');
+    expect(screen.getByText('×3')).toBeInTheDocument();
+    expect(screen.queryByText('×1')).toBeNull();
+  });
+
+  it('carries one sync badge per item, as the item description', () => {
+    renderWithProviders(
+      <JustifiedRows
+        figures={[local('a', { local: { headId: 'a', kind: 'owned', sync: 'pending', asOf: null } }), local('b')]}
+        density="compact"
+      />,
+    );
+    const a = screen.getByRole('button', { name: 'Figure a' });
+    expect(a).toHaveAttribute('data-sync', 'pending');
+    expect(a).toHaveAccessibleDescription('Pending');
+    expect(screen.getByRole('button', { name: 'Figure b' })).toHaveAccessibleDescription('Synced');
+  });
+
+  it('shows selection in select mode', () => {
+    renderWithProviders(<JustifiedRows figures={[local('a'), local('b')]} density="compact" isSelected={(f) => f._id === 'b'} />);
+    expect(screen.getByRole('button', { name: 'Figure a' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Figure b' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('marks nothing on a fixture figure, which has no local state', () => {
+    renderWithProviders(<JustifiedRows figures={FIXTURE_FIGURES.slice(0, 1)} density="compact" />);
+    const b = screen.getByRole('button', { name: FIXTURE_FIGURES[0]!.name });
+    expect(b).not.toHaveAttribute('data-sync');
+    expect(b).not.toHaveAttribute('aria-pressed');
+  });
+});

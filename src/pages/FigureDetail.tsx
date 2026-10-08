@@ -68,6 +68,12 @@ export function FigureDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [moving, setMoving] = useState<string[] | null>(null);
   const [disposing, setDisposing] = useState<string[] | null>(null);
+  // Each opening of the disposal sheet is a fresh form: one copy's buyer and price never carry to the next.
+  const [disposal, setDisposal] = useState(0);
+  const dispose = (occIds: string[]) => {
+    setDisposal((n) => n + 1);
+    setDisposing(occIds);
+  };
 
   const handleBack = useCallback(() => {
     if (window.history.length > 1) window.history.back();
@@ -180,7 +186,7 @@ export function FigureDetail() {
           collections={collections}
           onArrived={(occ) => void actions.markArrived(occ).catch(failed('mark it arrived'))}
           onMove={setMoving}
-          onDispose={setDisposing}
+          onDispose={dispose}
           onRemove={(occ) => void actions.removeCopy(occ).catch(failed('remove the copy'))}
           onDedupe={(kind: OccurrenceStatus) => void actions.dedupe(local.heads, kind).catch(failed('dedupe'))}
         />
@@ -241,6 +247,7 @@ export function FigureDetail() {
       />
 
       <DisposalSheet
+        key={disposal}
         open={disposing !== null}
         what={copiesLabel(disposing?.length ?? 0)}
         onClose={() => setDisposing(null)}

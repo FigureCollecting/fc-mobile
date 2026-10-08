@@ -10,7 +10,7 @@
 import type { CollectionStatus, Figure } from '@figurecollecting/fc-shared';
 import { compareVersion, type OccurrenceStatus } from '@figurecollecting/fc-api-contract';
 import type { FacetRecord, ProductRecord } from '../storage/records';
-import { buildView, effectiveTags, shownCopies, type CopyView } from '../sync/occurrences';
+import { buildView, effectiveTags, shownCopies, type CopyView, type LocalView } from '../sync/occurrences';
 import { readPayload } from '../sync/payload';
 
 export type ItemSync = 'known' | 'pending' | 'offline-stale';
@@ -73,7 +73,7 @@ const time = (iso: string): number => {
 };
 
 interface Model {
-  view: ReturnType<typeof buildView>;
+  view: LocalView;
   display: (head: string) => string;
   product: (display: string) => ProductRecord | undefined;
   heads: Map<string, Set<string>>;
@@ -85,7 +85,7 @@ interface Model {
   sub: string;
 }
 
-function model(input: FigureInputs): Model {
+function model(input: FigureInputs, built?: LocalView): Model {
   const byId = new Map<string, ProductRecord>();
   for (const p of input.products) {
     byId.set(p.head_id, p);
@@ -136,7 +136,7 @@ function model(input: FigureInputs): Model {
     uf.set(d, shown);
   }
 
-  const view = buildView(input.facets as FacetRecord[]);
+  const view = built ?? buildView(input.facets as FacetRecord[]);
   for (const c of view.copies) if (c.head_id !== null) addHead(c.head_id);
   return { view, display, product: (d) => byId.get(d), heads, pendingOcc, pendingHead, uf, statusAt, stale: input.stale, sub: input.sub };
 }
@@ -191,8 +191,8 @@ function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[
 }
 
 /** One item per displayed figure and kind, by head then kind (owned, ordered, wished, former). */
-export function buildFigures(input: FigureInputs): LocalFigure[] {
-  const m = model(input);
+export function buildFigures(input: FigureInputs, view?: LocalView): LocalFigure[] {
+  const m = model(input, view);
   const groups = new Map<string, Map<OccurrenceStatus, CopyView[]>>();
   for (const c of shownCopies(m.view)) {
     const d = m.display(c.head_id!);

@@ -65,14 +65,14 @@ describe('Collection page (rebuilt display layer)', () => {
   it('renders the virtual case by default with figures standing on shelves', async () => {
     await respondWith([makeFigure('1'), makeFigure('2')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByText('Figure 1');
+    await screen.findByRole('button', { name: 'Figure 1' });
     expect(container.querySelector('.case[data-motif="detolf-dark"]')).not.toBeNull();
   });
 
   it('honors the layout URL param for Display B', async () => {
     await respondWith([makeFigure('1')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
-    await screen.findByText('Figure 1');
+    await screen.findByRole('button', { name: 'Figure 1' });
     expect(container.querySelector('.jrows')).not.toBeNull();
     expect(container.querySelector('.case')).toBeNull();
   });
@@ -81,7 +81,7 @@ describe('Collection page (rebuilt display layer)', () => {
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByText('Figure 1');
+    await screen.findByRole('button', { name: 'Figure 1' });
     await user.click(screen.getByRole('button', { name: /case motif/i }));
     await waitFor(() => {
       expect(container.querySelector('.case[data-motif="glass-clear"]')).not.toBeNull();
@@ -92,7 +92,7 @@ describe('Collection page (rebuilt display layer)', () => {
     await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByText('Figure 2');
+    await screen.findByRole('button', { name: 'Figure 2' });
     await user.click(drawnPart('Figure 2'));
     await waitFor(() => expect(instances).toHaveLength(1));
     expect(instances[0].options.index).toBe(1);
@@ -105,7 +105,7 @@ describe('Collection page (rebuilt display layer)', () => {
     await respondWith([makeFigure('1', { manufacturer: 'Alter' }), makeFigure('2', { manufacturer: 'Kotobukiya' })]);
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/?mfr=Alter' });
-    await screen.findByText('Figure 1');
+    await screen.findByRole('button', { name: 'Figure 1' });
     // default chips visible
     expect(screen.getByRole('listitem', { name: /remove filter prepainted/i })).toBeInTheDocument();
     // the maker chip filters the set
@@ -122,7 +122,7 @@ describe('Collection page (rebuilt display layer)', () => {
     ]);
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByText('Figure 1');
+    await screen.findByRole('button', { name: 'Figure 1' });
     await user.click(screen.getByRole('button', { name: /filter/i }));
     await user.click(await screen.findByRole('button', { name: 'Alter1' }));
     await user.click(screen.getByRole('button', { name: /show 1/i }));
@@ -138,7 +138,7 @@ describe('Collection page (rebuilt display layer)', () => {
         await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
       const user = userEvent.setup();
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-      await screen.findByText('Figure 2');
+      await screen.findByRole('button', { name: 'Figure 2' });
       await user.click(drawnPart('Figure 2'));
 
       await waitFor(() => {
@@ -156,7 +156,7 @@ describe('Collection page (rebuilt display layer)', () => {
         await respondWith([makeFigure('1'), makeFigure('2')]);
       const user = userEvent.setup();
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-      await screen.findByText('Figure 1');
+      await screen.findByRole('button', { name: 'Figure 1' });
       await user.click(drawnPart('Figure 1'));
 
       await waitFor(() => expect(instances).toHaveLength(1));
@@ -168,7 +168,7 @@ describe('Collection page (rebuilt display layer)', () => {
         await respondWith([makeFigure('1'), makeFigure('2')]);
       const user = userEvent.setup();
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-      await screen.findByText('Figure 1');
+      await screen.findByRole('button', { name: 'Figure 1' });
       await user.click(drawnPart('Figure 1'));
       await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
 

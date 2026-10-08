@@ -4,6 +4,7 @@
 import { useCallback, useEffect } from 'preact/hooks';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { CollectionStatus, PaginatedResponse } from '@figurecollecting/fc-shared';
+import type { CollectionView } from '../sync/occurrences';
 import type { LocalFigure } from '../local/figures';
 import { useSnapshot, type Snapshot } from '../local/useLocal';
 import { markHydrated } from '../pwa/storage';
@@ -35,4 +36,22 @@ export function useCollection(options: UseCollectionOptions = {}): UseQueryResul
     if (any) void markHydrated();
   }, [any]);
   return query;
+}
+
+const countKinds = (s: Snapshot): Record<CollectionTab, number> => {
+  const counts: Record<CollectionTab, number> = { owned: 0, ordered: 0, wished: 0, former: 0 };
+  for (const f of s.figures) counts[f.local.kind] += 1;
+  return counts;
+};
+
+/** Items per tab, for the tab bar. */
+export function useCollectionCounts(): Record<CollectionTab, number> | undefined {
+  return useSnapshot(countKinds).data;
+}
+
+const listCollections = (s: Snapshot): CollectionView[] => s.collections;
+
+/** The collections a copy can be filed in: the four defaults and every live user collection. */
+export function useCollections(): CollectionView[] {
+  return useSnapshot(listCollections).data ?? [];
 }

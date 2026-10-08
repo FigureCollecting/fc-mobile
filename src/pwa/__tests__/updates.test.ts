@@ -113,6 +113,29 @@ describe('taking the new build', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it("does not treat another page's first install as an update: no prompt and no reload when it installs with no active build", () => {
+    // The plugin raises onNeedRefresh for a worker another page registered (isExternal), even the
+    // first one, which activates at once and claims this page: a sign-in callback reloaded mid-exchange.
+    const { f, reload, takeOver } = started();
+    const reg = registration({ installing: {} as ServiceWorker });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    f.options().onNeedRefresh?.();
+    takeOver();
+    expect(updateReady.value).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('still takes a later build that waits behind the active one in the same page', () => {
+    const { f, reload, takeOver } = started();
+    const reg = registration({ installing: {} as ServiceWorker });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    Object.assign(reg, { installing: null, active: {} as ServiceWorker });
+    f.options().onNeedRefresh?.();
+    takeOver();
+    expect(updateReady.value).toBe(true);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('owns the reload: the plugin reloads only pages controlled at load, and never twice', () => {
     const { f, reload } = started();
     expect(f.options().onNeedReload).toBeTypeOf('function');

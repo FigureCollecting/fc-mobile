@@ -136,6 +136,38 @@ describe('taking the new build', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  /** A container whose controller the test moves, as a claim or a takeover does. */
+  function startedWith(controllerAtLoad: ServiceWorker | null) {
+    const f = fakeRegister();
+    const container = Object.assign(new EventTarget(), { controller: controllerAtLoad });
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const controlBy = (worker: ServiceWorker) => {
+      container.controller = worker;
+      container.dispatchEvent(new Event('controllerchange'));
+    };
+    return { f, reload, controlBy };
+  }
+  const worker = (name: string) => ({ name }) as unknown as ServiceWorker;
+
+  it('does not reload a page it loaded uncontrolled when the build active as it registered claims it (the first install, mid-sign-in)', () => {
+    const { f, reload, controlBy } = startedWith(null);
+    const first = worker('first');
+    f.options().onRegisteredSW?.('/sw.js', registration({ active: first }) as unknown as ServiceWorkerRegistration);
+    controlBy(first);
+    expect(reload).not.toHaveBeenCalled();
+    controlBy(worker('newer'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads a page that a build controlled at load when the build active as it registered takes over', () => {
+    const { f, reload, controlBy } = startedWith(worker('old'));
+    const next = worker('next');
+    f.options().onRegisteredSW?.('/sw.js', registration({ active: next }) as unknown as ServiceWorkerRegistration);
+    controlBy(next);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('owns the reload: the plugin reloads only pages controlled at load, and never twice', () => {
     const { f, reload } = started();
     expect(f.options().onNeedReload).toBeTypeOf('function');

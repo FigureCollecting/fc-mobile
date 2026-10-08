@@ -29,7 +29,7 @@ import {
 } from '@figurecollecting/fc-api-contract';
 import type { LocalDb } from './localDb';
 import type { FacetRecord, FacetValue, OutboxEntry, OutboxState, ProductRecord, SyncMeta } from './records';
-import { runTx, type WriteTx } from './tx';
+import { readTx, runTx, type WriteTx } from './tx';
 import { buildPayload, deviceTimeZone } from '../sync/payload';
 import { emptyFacet, floorOf, isNewer, mergeRemote, show, toFacetValue, type RemoteEvent } from '../sync/facetMerge';
 import { indexFacet } from '../sync/facetIndex';
@@ -554,11 +554,11 @@ export class UserStore {
   // ---------------------------------------------------------------- reads
 
   getFacet(facetKey: string): Promise<FacetRecord | undefined> {
-    return this.db.get('facets', [this.sub, facetKey]);
+    return readTx(this.db, ['facets'], (tx) => tx.objectStore('facets').get([this.sub, facetKey]));
   }
 
   listFacets(): Promise<FacetRecord[]> {
-    return this.db.getAll('facets', this.subRange());
+    return readTx(this.db, ['facets'], (tx) => tx.objectStore('facets').getAll(this.subRange()));
   }
 
   /** The derived view (occurrences, collections, tags, library) over what the UI shows. */
@@ -567,11 +567,11 @@ export class UserStore {
   }
 
   listOutbox(): Promise<OutboxEntry[]> {
-    return this.db.getAllFromIndex('outbox', 'by_sub', this.subRange());
+    return readTx(this.db, ['outbox'], (tx) => tx.objectStore('outbox').index('by_sub').getAll(this.subRange()));
   }
 
   async getMeta(): Promise<SyncMeta> {
-    return (await this.db.get('sync_meta', this.sub))!;
+    return (await readTx(this.db, ['sync_meta'], (tx) => tx.objectStore('sync_meta').get(this.sub)))!;
   }
 
   async putProducts(cards: ProductCard[]): Promise<void> {
@@ -585,11 +585,11 @@ export class UserStore {
   }
 
   getProduct(headId: string): Promise<ProductRecord | undefined> {
-    return this.db.get('products', [this.sub, headId]);
+    return readTx(this.db, ['products'], (tx) => tx.objectStore('products').get([this.sub, headId]));
   }
 
   listProducts(): Promise<ProductRecord[]> {
-    return this.db.getAll('products', this.subRange());
+    return readTx(this.db, ['products'], (tx) => tx.objectStore('products').getAll(this.subRange()));
   }
 
   // Refuses while any edit is unsynced: this device holds its only copy. The auth

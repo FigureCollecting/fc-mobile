@@ -40,3 +40,14 @@ export async function runTx<S extends StoreNames<LocalDbSchema>[], T>(
     throw err;
   }
 }
+
+export type ReadTx<S extends StoreNames<LocalDbSchema>[]> = IDBPTransaction<LocalDbSchema, S, 'readonly'>;
+
+// One readonly transaction whose done promise is always watched: idb's shortcut reads leave it
+// unwatched, so a transaction the browser aborts (site data cleared, a forced close) became an
+// unhandled rejection. The read's own request reports the failure to the caller.
+export function readTx<S extends StoreNames<LocalDbSchema>[], T>(db: LocalDb, stores: S, fn: (tx: ReadTx<S>) => Promise<T>): Promise<T> {
+  const tx = db.transaction(stores, 'readonly');
+  tx.done.catch(() => {});
+  return fn(tx);
+}

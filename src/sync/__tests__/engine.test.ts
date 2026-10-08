@@ -510,14 +510,26 @@ describe('recovery and auth', () => {
     expect(r.timers.pending.size).toBe(0);
   });
 
-  it('pauses without a retry timer when a call answers Unauthenticated or the store needs a reload', async () => {
+  it('pauses without a retry timer when a call answers Unauthenticated or the store needs a reload, and the session now holds sync', async () => {
     for (const error of [new ConnectError('sign in', Code.Unauthenticated), new AuthRequiredError('reauth'), new ReloadRequiredError(), new ConnectError('reload', Code.FailedPrecondition)]) {
-      const r = await rig();
+      // The session moved to 'sign in to sync' or 'reload required' as the call failed.
+      const blocked = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+      const r = await rig({ deps: { blocked } });
       r.server.fault('status', { kind: 'throw', error });
       await r.engine.trigger('start');
       expect(r.engine.state.value.phase).toBe('paused');
       expect(r.timers.pending.size).toBe(0);
     }
+  });
+
+  it('retries on the backoff when a call is refused but the session still reads signed in (a proof the browser replayed)', async () => {
+    const r = await rig({ deps: { blocked: () => false } });
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('jti_replayed', Code.Unauthenticated) });
+    await r.engine.trigger('start');
+    expect(r.engine.state.value).toMatchObject({ phase: 'idle', lastError: '[unauthenticated] jti_replayed' });
+    expect(r.timers.delays()).toEqual([1000]);
+    r.timers.fireAll();
+    await vi.waitFor(() => expect(r.engine.state.value).toMatchObject({ reachability: 'reachable', lastError: null }));
   });
 
   it('classifies what a call can throw', () => {

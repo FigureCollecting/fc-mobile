@@ -216,6 +216,11 @@ shell's `OidcSession` included); only a dynamic import of the legacy screens
 (Sync, Export, Notifications) or of the legacy client (push settings, on a tap)
 is left out as lazy.
 
+`HOLDING=1` (container env, default `0`) serves `deploy/nginx/holding.html` for
+every navigation except under `/api`; `/api` stays 404 and a non-navigation
+fetch of an unknown path stays 404. Any other value stops the container.
+`deploy/nginx/40-fc-holding.sh` writes the rewrite to `/tmp/fc-mode` at start.
+
 `vite preview` sends the same headers, so the e2e suite runs under the CSP and
 fails on any `securitypolicyviolation`. Component CSS therefore goes through
 `<Style css={...} />` (constructed stylesheets), never a `<style>` element or

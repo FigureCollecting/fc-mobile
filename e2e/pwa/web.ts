@@ -1,7 +1,7 @@
 // The fc-mobile-web image as production runs it (uid 101, read-only root,
 // tmpfs /tmp, no capabilities), plus an edge that routes /api to the stack's
 // coordinator and can be repointed to a newer image at the same origin.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { build } from 'vite';
 import { startEdge, type Edge } from '../stack/src/edge.js';
 
@@ -20,14 +20,19 @@ export function requireImage(name: string): string {
   return image;
 }
 
-export async function runWeb(image: string): Promise<WebContainer> {
-  const id = docker(
-    'run', '-d', '--rm',
-    '--read-only', '--tmpfs', '/tmp:rw,size=16m',
-    '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-    '-p', '127.0.0.1::8080',
-    image,
-  );
+/** The production container flags: uid from the image, read-only root, tmpfs /tmp, no capabilities. */
+const RUN_FLAGS = ['--read-only', '--tmpfs', '/tmp:rw,size=16m', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges'];
+
+const envFlags = (env: Record<string, string>): string[] => Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+
+/** A container that is expected to stop by itself: its exit code and output, not a server. */
+export function runToExit(image: string, env: Record<string, string>): { code: number; out: string } {
+  const r = spawnSync('docker', ['run', '--rm', ...RUN_FLAGS, ...envFlags(env), image], { encoding: 'utf8', timeout: 30_000 });
+  return { code: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
+}
+
+export async function runWeb(image: string, env: Record<string, string> = {}): Promise<WebContainer> {
+  const id = docker('run', '-d', '--rm', ...RUN_FLAGS, ...envFlags(env), '-p', '127.0.0.1::8080', image);
   const port = docker('port', id, '8080/tcp').split('\n')[0]?.split(':').pop();
   const url = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 20_000;

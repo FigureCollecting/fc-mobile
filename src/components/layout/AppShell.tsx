@@ -15,6 +15,7 @@ import { Stats } from '../../pages/Stats';
 import { Profile } from '../../pages/Profile';
 import { Settings } from '../../pages/Settings';
 import { Import } from '../../pages/Import';
+import { Review } from '../../pages/Review';
 import { Style } from '../../styles/Style';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
@@ -92,6 +93,7 @@ export function AppShell() {
             <Route path="/profile" component={Profile} />
             <Route path="/settings" component={Settings} />
             <Route path="/import" component={Import} />
+            <Route path="/review" component={Review} />
             {/* No backend anywhere (src/config/features.ts): off by default,
                 deep links land back on the collection instead of a dead screen. */}
             {LEGACY_SCREENS_ENABLED ? (

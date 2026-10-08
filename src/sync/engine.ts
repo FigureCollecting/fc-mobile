@@ -39,6 +39,10 @@ export const BACKOFF_MIN_MS = 2_000;
 export const BACKOFF_MAX_MS = 5 * 60 * 1000;
 /** Push rounds in one pass, a guard against a store that never empties. */
 const MAX_ROUNDS = 10_000;
+/** Delta pages in one walk (5 M events), a guard against a feed that never ends; the next pass resumes from the commit. */
+const MAX_DELTA_PAGES = 10_000;
+/** GetProducts pages for one batch of 200 refs, a guard against a token that never ends. */
+const MAX_PRODUCT_PAGES = 1_000;
 
 export type SyncCalls = Pick<Client<typeof SyncService>, 'status' | 'delta' | 'push'>;
 export type CatalogCalls = Pick<Client<typeof CatalogService>, 'getProducts'>;
@@ -302,6 +306,7 @@ export class SyncEngine {
       return 'ok';
     } catch (err) {
       const kind = classify(err);
+      if (kind === 'error') console.warn('[sync] pass failed:', message(err));
       this.set({ lastError: message(err), ...(kind === 'unreachable' ? { reachability: 'unreachable' as const } : {}) });
       return kind;
     } finally {
@@ -368,7 +373,10 @@ export class SyncEngine {
   private async walk(from: string, take: (events: SyncEvent[], commit: string) => Promise<void>): Promise<void> {
     let cursor = from;
     let staged: SyncEvent[] = [];
+    const sent = new Set<string>();
     for (;;) {
+      if (sent.size === MAX_DELTA_PAGES) throw new ProtocolError(`Delta still has_more after ${MAX_DELTA_PAGES} pages`);
+      sent.add(cursor);
       const page = await this.call((signal) => this.deps.sync.delta({ cursor, limit: DELTA_PAGE }, { signal }));
       const complete: SyncEvent[] = [];
       let commit: string | undefined;
@@ -381,7 +389,8 @@ export class SyncEngine {
         }
       }
       if (commit !== undefined) await take(complete, commit);
-      if (!page.hasMore || page.nextCursor === cursor) return;
+      if (!page.hasMore) return;
+      if (sent.has(page.nextCursor)) throw new ProtocolError(`Delta has_more on an already walked next_cursor ${JSON.stringify(page.nextCursor)}`);
       cursor = page.nextCursor;
     }
   }
@@ -401,10 +410,14 @@ export class SyncEngine {
     for (let i = 0; i < due.length; i += PRODUCT_BATCH) {
       const refs = due.slice(i, i + PRODUCT_BATCH).map((value) => ({ ref: { case: 'headId' as const, value } }));
       let pageToken = '';
+      const sent = new Set<string>();
       do {
+        if (sent.size === MAX_PRODUCT_PAGES) throw new ProtocolError(`GetProducts still paging after ${MAX_PRODUCT_PAGES} pages`);
+        sent.add(pageToken);
         const page = await this.call((signal) => this.deps.catalog.getProducts({ refs, pageToken }, { signal }));
         await store.putProducts(page.products);
         pageToken = page.nextPageToken;
+        if (pageToken !== '' && sent.has(pageToken)) throw new ProtocolError(`GetProducts repeated next_page_token ${JSON.stringify(pageToken)}`);
       } while (pageToken !== '');
     }
   }

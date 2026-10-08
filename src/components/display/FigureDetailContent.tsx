@@ -1,4 +1,7 @@
 import { useState } from 'preact/hooks';
+import { useLocation } from 'wouter';
+import type { LocalMeta } from '../../local/figures';
+import { SyncBadge } from '../sync/SyncBadge';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
 import { Style } from '../../styles/Style';
@@ -17,6 +20,10 @@ interface FigureDetailContentProps {
  */
 export function FigureDetailContent({ figure, index, total }: FigureDetailContentProps) {
   const [expanded, setExpanded] = useState(false);
+  const [, setLocation] = useLocation();
+  // The local store's state of the item; fixture figures have none.
+  const local = (figure as Figure & { local?: Pick<LocalMeta, 'headId' | 'kind' | 'sync' | 'asOf'> }).local;
+  const quantity = figure.quantity ?? 1;
 
   return (
     <>
@@ -41,7 +48,15 @@ export function FigureDetailContent({ figure, index, total }: FigureDetailConten
         {figure.scale && <span class="figure-viewer-sheet__scale">{figure.scale}</span>}
         {figure.manufacturer && <span class="figure-viewer-sheet__maker">{figure.manufacturer}</span>}
         {figure.collectionStatus && <StatusBadge status={figure.collectionStatus} size="sm" />}
+        {quantity > 1 && <span class="figure-viewer-sheet__count">×{quantity}</span>}
+        {local !== undefined && <SyncBadge sync={local.sync} asOf={local.asOf} id={`viewer-sync-${figure._id}`} />}
       </div>
+
+      {local !== undefined && (
+        <button type="button" class="figure-viewer-sheet__open" onClick={() => setLocation(`/figure/${local.headId}`)}>
+          Copies and actions
+        </button>
+      )}
 
       {expanded && (
         <div class="figure-viewer-sheet__more">
@@ -69,6 +84,21 @@ export function FigureDetailContent({ figure, index, total }: FigureDetailConten
       )}
 
       <Style css={`
+        .figure-viewer-sheet__count {
+          font-size: var(--font-xs);
+          font-weight: 700;
+          color: var(--brand-400);
+        }
+
+        .figure-viewer-sheet__open {
+          margin-top: var(--space-2);
+          min-height: 36px;
+          padding: 0 var(--space-3);
+          border-radius: var(--radius-full);
+          background: var(--surface-tertiary);
+          font-size: var(--font-sm);
+        }
+
         .figure-viewer-sheet__handle {
           display: flex;
           justify-content: center;

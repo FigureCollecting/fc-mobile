@@ -258,10 +258,12 @@ export class SyncEngine {
 
   private async loop(): Promise<void> {
     let outcome: 'ok' | FailureKind;
+    // A trigger during a pass gets one more pass whatever this one came to: a sign-in that lands
+    // while boot still held sync, or 'online' during a pass that found the network down.
     do {
       this.again = false;
       outcome = await this.pass();
-    } while (this.again && outcome === 'ok' && !this.stopped);
+    } while (this.again && !this.stopped);
     this.set({ phase: outcome === 'paused' ? 'paused' : 'idle' });
     if (outcome === 'ok') this.attempt = 0;
     else if (outcome !== 'paused') this.scheduleRetry();

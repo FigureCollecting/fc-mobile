@@ -30,4 +30,26 @@ describe('legacy v1 connection', () => {
       req.onsuccess = () => resolve();
     });
   });
+
+  it('opens one connection for concurrent callers, so none is left open to block the upgrade (WebKit boot)', async () => {
+    // Start from no legacy connection: a v3 open makes the cached one yield, then the store goes.
+    (await openLocalDb()).close();
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase('fc-mobile');
+      req.onsuccess = () => resolve();
+    });
+    // A legacy page's first callers ask at once (AppShell and its banners at boot).
+    const [a, b, c] = await Promise.all([getDb(), getDb(), getDb()]);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+    const v3 = await Promise.race([openLocalDb(), hung(2_000)]);
+    expect(v3).not.toBe('hung');
+    if (v3 === 'hung') return;
+    expect(v3.version).toBe(LOCAL_DB_VERSION);
+    v3.close();
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase('fc-mobile');
+      req.onsuccess = () => resolve();
+    });
+  });
 });

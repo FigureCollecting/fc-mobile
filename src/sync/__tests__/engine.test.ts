@@ -341,6 +341,14 @@ describe('triggers', () => {
     expect(r.server.calls).toEqual([]);
   });
 
+  it('counts what waits by the change the user made, not by facet entry', async () => {
+    const r = await rig();
+    vi.spyOn(r.engine, 'trigger').mockResolvedValue();
+    await r.engine.write((s) => s.createCopy(headOf(0), 'ordered')); // head + status: one change
+    expect((await r.store.listOutbox()).length).toBe(2);
+    expect(r.engine.state.value.pending).toBe(1);
+  });
+
   it('syncs 1 s after a local write, once for a burst of writes', async () => {
     const r = await rig();
     const trigger = vi.spyOn(r.engine, 'trigger').mockResolvedValue();

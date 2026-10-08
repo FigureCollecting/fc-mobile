@@ -11,7 +11,8 @@ describe('sync e2e hooks', () => {
     const occ = await hooks.createCopy(headOf(0), 'ordered');
     await hooks.writeNote(headOf(0), 'hello');
     const shelf = await hooks.createCollection('owned', 'Shelf');
-    expect(hooks.state().pending).toBe(4);
+    // Three changes the user made (a copy is its head and status written together), four entries.
+    expect(hooks.state().pending).toBe(3);
     expect(await hooks.counts()).toMatchObject({ shown: 1, products: 0, cursor: '', outbox: { PENDING: 4 } });
     const after = await hooks.syncNow();
     expect(after).toMatchObject({ pending: 0, reachability: 'reachable' });

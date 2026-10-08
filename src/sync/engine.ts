@@ -56,7 +56,7 @@ export interface RejectedEdit {
 export interface SyncState {
   reachability: Reachability;
   phase: 'idle' | 'syncing' | 'paused';
-  /** Edits not yet answered by the server (pending, in flight, or owed a re-mint). */
+  /** Changes not yet answered by the server (pending, in flight, or owed a re-mint), one per intent. */
   pending: number;
   /** REJECTED edits the server would not take and the user has not dismissed. */
   rejected: RejectedEdit[];
@@ -278,7 +278,14 @@ export class SyncEngine {
   }
 
   private async pass(): Promise<'ok' | FailureKind> {
-    if (this.deps.blocked?.() === true) return 'paused';
+    if (this.deps.blocked?.() === true) {
+      // Nothing goes out, but what waits is still shown (after a reload into 'sign in to sync').
+      await this.deps
+        .store()
+        .then((store) => this.refresh(store))
+        .catch(() => undefined);
+      return 'paused';
+    }
     let store: UserStore | undefined;
     try {
       store = await this.deps.store();
@@ -403,7 +410,8 @@ export class SyncEngine {
     const outbox = await store.listOutbox();
     const facets = await store.listFacets();
     this.set({
-      pending: outbox.filter((e) => e.state === 'PENDING' || e.state === 'IN_FLIGHT' || e.remint === 'awaiting').length,
+      // One change the user made is one intent (its group), however many facets it wrote.
+      pending: new Set(outbox.filter((e) => e.state === 'PENDING' || e.state === 'IN_FLIGHT' || e.remint === 'awaiting').map((e) => e.group ?? e.id)).size,
       rejected: outbox
         .filter((e) => e.state === 'REJECTED' && e.remint === undefined && e.dismissed !== true)
         .map((e) => ({ id: e.id!, facet_key: e.facet_key, reason: e.reason ?? '' })),

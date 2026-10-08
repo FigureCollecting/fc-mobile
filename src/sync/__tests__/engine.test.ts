@@ -349,6 +349,15 @@ describe('triggers', () => {
     expect(r.engine.state.value.pending).toBe(1);
   });
 
+  it('counts an entry kept from before intents were grouped (a v2 upgrade) as its own change', async () => {
+    const r = await rig({ deps: { blocked: () => true } });
+    const base = { sub: 'user-a', op: 'upsert' as const, payload: '{}', base_version: null, basis: '', state: 'PENDING' as const, attempts: 0, created_at: T0 };
+    await r.db.add('outbox', { ...base, facet_key: ufFacetKey(headOf(0), 'note'), edit_version: serverVersion(T0, 1, DEVICE) });
+    await r.db.add('outbox', { ...base, facet_key: ufFacetKey(headOf(1), 'note'), edit_version: serverVersion(T0, 2, DEVICE) });
+    await r.engine.trigger('start');
+    expect(r.engine.state.value.pending).toBe(2);
+  });
+
   it('syncs 1 s after a local write, once for a burst of writes', async () => {
     const r = await rig();
     const trigger = vi.spyOn(r.engine, 'trigger').mockResolvedValue();
@@ -443,6 +452,14 @@ describe('recovery and auth', () => {
     blocked = false;
     await r.engine.trigger('auth');
     expect(r.engine.state.value).toMatchObject({ phase: 'idle', pending: 0 });
+  });
+
+  it('pauses quietly while held even when there is no store to read (signed out)', async () => {
+    const r = await rig();
+    const engine = new SyncEngine({ store: () => Promise.reject(new AuthRequiredError('signed_out')), sync: r.server.sync, catalog: r.server.catalog, blocked: () => true, timers: r.timers });
+    await engine.trigger('start');
+    expect(engine.state.value).toMatchObject({ phase: 'paused', pending: 0, lastError: null });
+    expect(r.timers.pending.size).toBe(0);
   });
 
   it('pauses without a retry timer when a call answers Unauthenticated or the store needs a reload', async () => {

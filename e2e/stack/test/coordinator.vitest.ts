@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   coordinatorEnv,
+  STACK_IMPORT_OCC_ID_KEY,
   DEFAULT_COORDINATOR_REF,
   detectSpineWire,
   holderOrigin,
@@ -129,6 +130,11 @@ describe('coordinator environment', () => {
       PATH: '/usr/bin',
       HOME: '/home/x',
     });
+  });
+
+  it("keys the MFC import's occurrence ids (IMPORT_OCC_ID_KEY), so ImportService answers instead of UNAVAILABLE", () => {
+    expect(env['IMPORT_OCC_ID_KEY']).toMatch(/^[0-9a-f]{64}$/);
+    expect(env['IMPORT_OCC_ID_KEY']).toBe(STACK_IMPORT_OCC_ID_KEY);
   });
 
   it('never inherits a database or telemetry target from the parent shell', () => {

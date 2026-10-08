@@ -321,11 +321,12 @@ test("(c) a pending edit turns known after the drain, and offline-stale tiles sh
   test.setTimeout(180_000);
   const page = await openApp(context, USER_B);
   await settled(page);
-  // Two figures with a barcode and a name no other figure has (names repeat in the catalog).
-  const unique = HEADS.filter((h) => h.gtin14s.length > 0 && HEADS.filter((o) => o.name === h.name).length === 1);
-  const offset = Date.now() % Math.max(1, unique.length - 400);
-  const [first, second] = [unique[offset]!, unique[offset + 200]!];
-
+  // Two figures with a barcode, a name no other figure has, and no copy B holds yet (the sync suite
+  // and earlier runs on the same stack leave B copies), so each is a fresh tile of one copy.
+  const held = new Set((await page.evaluate(() => window.__fcSync!.copies())).map((c) => c.head_id));
+  const fresh = HEADS.filter((h) => h.gtin14s.length > 0 && !held.has(h.headId) && HEADS.filter((o) => o.name === h.name).length === 1);
+  const offset = Date.now() % Math.max(1, fresh.length - 1);
+  const [first, second] = [fresh[offset]!, fresh[(offset + Math.floor(fresh.length / 2)) % fresh.length]!];
   // A tile by its figure: its sync badge is named for the head and the tab.
   const tile = (name: string) => page.locator(`.jrows__item[aria-describedby="sync-${HEADS.find((h) => h.name === name)!.headId}-wished"]`);
   const lookUp = async (head: CatalogHead) => {

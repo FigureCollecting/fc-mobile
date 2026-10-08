@@ -391,6 +391,15 @@ describe('triggers', () => {
     await vi.waitFor(() => expect(r.server.count('status')).toBe(11));
   });
 
+  it('schedules no retry for a pass that fails while the page is hidden', async () => {
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'hidden' as DocumentVisibilityState });
+    const r = await rig({ deps: { document: doc } });
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+    await r.engine.trigger('write');
+    expect(r.engine.state.value.reachability).toBe('unreachable');
+    expect(r.timers.pending.size).toBe(0);
+  });
+
   it('computes the backoff window per attempt', () => {
     expect(backoffDelay(0, () => 1)).toBe(BACKOFF_MIN_MS);
     expect(backoffDelay(3, () => 0.5)).toBe(8000);

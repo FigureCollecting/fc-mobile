@@ -128,6 +128,20 @@ describe('createBrowserSync', () => {
     expect(server.count('status')).toBe(2);
   });
 
+  it('runs no pass when the session moves into a status that holds sync', async () => {
+    const { db } = await freshDb();
+    const s = session(db);
+    const server = new FakeCoordinator(T0);
+    const { engine, dispose } = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await vi.waitFor(() => expect(engine.state.value.phase).toBe('idle'));
+    const trigger = vi.spyOn(engine, 'trigger');
+    for (const held of ['reauth-required', 'reload-required', 'signed-out', 'loading'] as const) s.status.value = held;
+    expect(trigger).not.toHaveBeenCalled();
+    s.status.value = 'offline';
+    expect(trigger).toHaveBeenCalledWith('auth');
+    dispose();
+  });
+
   it('calls the coordinator through the session DPoP fetch under /api when no clients are given', async () => {
     const { db } = await freshDb();
     const s = session(db);

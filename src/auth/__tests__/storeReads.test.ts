@@ -1,5 +1,7 @@
 // The sync engine reads the session's rows on every pass, so a connection the browser force-closes
-// (site data cleared) can abort an auth read mid-flight: the read fails, and nothing else does.
+// (site data cleared) can abort an auth transaction mid-flight: it fails, and nothing else does.
+// The two read-then-write transactions are covered here; the single-row gets go through idb's
+// shortcut (reload.test.ts instruments those calls), so they are left as they are.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { unwrap } from 'idb';
@@ -30,17 +32,11 @@ describe('AuthStore reads on a connection the browser closes', () => {
       made.push(tx);
       return tx;
     }) as IDBDatabase['transaction'];
-    const reads = [
-      store.getCurrentSub(),
-      store.getTokens('user-a'),
-      store.getDeviceKey('user-a'),
-      store.takePending('s'),
-      store.addDeviceKey({ sub: 'user-a' } as never),
-    ];
+    const reads = [store.takePending('s'), store.addDeviceKey({ sub: 'user-a' } as never)];
     for (const tx of made) tx.abort();
     const settled = await Promise.allSettled(reads);
-    expect(made).toHaveLength(5);
-    expect(settled.map((s) => s.status)).toEqual(Array(5).fill('rejected'));
+    expect(made).toHaveLength(2);
+    expect(settled.map((s) => s.status)).toEqual(['rejected', 'rejected']);
     await new Promise((r) => setTimeout(r, 20));
     expect(unhandled).toEqual([]);
   });

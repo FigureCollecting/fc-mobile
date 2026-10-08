@@ -61,7 +61,7 @@ describe('routing reachability', () => {
       fake.session = fakeAuthSession('signed-out');
       const { currentPath } = renderWithProviders(<App />, { initialPath: path });
       await waitFor(() => expect(currentPath()).toBe('/'));
-      expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument(); // the banner's, the only one
       expect(screen.queryByText(/welcome back|create your account|two-factor authentication/i)).toBeNull();
       expect(screen.queryByPlaceholderText(/email address|password/i)).toBeNull();
     });

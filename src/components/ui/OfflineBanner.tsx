@@ -1,32 +1,11 @@
-import { useState, useEffect } from 'preact/hooks';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
-import { getPendingOpsCount } from '../../storage/pendingOps';
+import { localSession } from '../../local/session';
 import { Style } from '../../styles/Style';
 
 export function OfflineBanner() {
   const online = useOnlineStatus();
-  const [pendingCount, setPendingCount] = useState(0);
-
-  useEffect(() => {
-    if (online.value) return;
-
-    let cancelled = false;
-
-    const check = async () => {
-      const count = await getPendingOpsCount();
-      if (!cancelled) setPendingCount(count);
-    };
-
-    void check();
-
-    // Re-check periodically while offline
-    const interval = setInterval(() => void check(), 5000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [online.value]);
+  // The sync engine's waiting edits: the one outbox.
+  const pendingCount = localSession.value?.engine.state.value.pending ?? 0;
 
   if (online.value) return null;
 

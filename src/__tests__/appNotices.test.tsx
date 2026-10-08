@@ -58,6 +58,9 @@ describe('app-level PWA notices', () => {
     expect(shell).toHaveClass('app-shell');
     const main = shell.querySelector(':scope > main') as HTMLElement;
     expect(banner.compareDocumentPosition(main) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(await within(main).findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    // The one Sign in control (the sign-in-to-sync banner) is never under the install banner.
+    const signIn = await screen.findByRole('button', { name: 'Sign in' });
+    expect(banner.contains(signIn)).toBe(false);
+    expect(within(main).getByText('Sign in to see your collection')).toBeInTheDocument();
   });
 });

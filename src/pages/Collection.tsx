@@ -18,7 +18,7 @@ import { useCollection } from '../hooks/useCollection';
 import { useFigureListParams } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useElementWidth } from '../hooks/useElementWidth';
-import { useAuthStore } from '../stores/auth';
+import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, countActiveFilters } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
 import { getFixtureFigures, isFixtureMode } from '../dev-fixtures/fixtures';
@@ -72,7 +72,7 @@ function SkeletonShelves() {
 }
 
 export function Collection() {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const phase = useAuthPhase();
   const {
     layout,
     density,
@@ -151,10 +151,11 @@ export function Collection() {
   );
 
   // Signed out (and not running on fixtures)
-  if (!isAuthenticated && !fixtureMode) {
+  if (phase === 'signed-out' && !fixtureMode) {
     return (
       <div class="page-collection" data-density={density} ref={pageRef}>
         <SlimHeader context={<span>Collection</span>} />
+        {/* The sign-in-to-sync banner above carries the one Sign in button. */}
         <p class="page-collection__empty">Sign in to see your collection</p>
         <Style css={styles} />
       </div>

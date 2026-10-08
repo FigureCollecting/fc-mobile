@@ -1,13 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 
+const auth = vi.hoisted(() => ({ signIn: vi.fn(async () => undefined) }));
+vi.mock('../../auth', async () => {
+  const { fakeAuthSession } = await import('../../test/appSession');
+  const session = { ...fakeAuthSession('signed-out'), signIn: auth.signIn };
+  return { getAuthSession: () => session };
+});
+vi.mock('../../sync/browser', async () => {
+  const { fakeBrowserSync } = await import('../../test/appSession');
+  const sync = await fakeBrowserSync();
+  return { startBrowserSync: () => sync };
+});
+
 import { Onboarding } from '../Onboarding';
 import { App } from '../../app';
 import { renderWithProviders } from '../../test/testUtils';
-import { useAuthStore } from '../../stores/auth';
 
 describe('Onboarding page', () => {
   it('renders the first screen with a Skip button', () => {
@@ -57,28 +68,23 @@ describe('Onboarding page', () => {
     expect(onComplete).toHaveBeenCalledWith('guest');
   });
 
-  it('is NOT shown when the user already has a token', () => {
-    // Seed the auth store with a logged-in user.
-    useAuthStore.setState({
-      user: {
-        _id: 'u1',
-        username: 'x',
-        email: 'x@y.z',
-        isAdmin: false,
-        token: 'preexisting-token',
-        tokenExpiresAt: Date.now() + 60_000,
-      },
-      isAuthenticated: true,
-      lastActivity: Date.now(),
-      twoFactorPending: null,
-    });
-
-    renderWithProviders(<App />, { initialPath: '/' });
-    // Onboarding's title should NOT be on the page; instead we should see
-    // AppShell chrome. The onboarding copy is the most distinctive string.
+  it('is not shown once completed, and its sign-in and create-account choices start the Authentik sign-in', async () => {
+    localStorage.setItem('onboarding_complete', '1');
+    const first = renderWithProviders(<App />, { initialPath: '/' });
     expect(screen.queryByText(/your collection, anywhere/i)).not.toBeInTheDocument();
-    // Also the "onboarding complete" flag should have been persisted as a
-    // side effect so the user doesn't see it on next launch.
-    expect(localStorage.getItem('onboarding_complete')).toBe('1');
+    first.unmount();
+
+    for (const choice of [/^sign in$/i, /create account/i]) {
+      localStorage.removeItem('onboarding_complete');
+      auth.signIn.mockClear();
+      const user = userEvent.setup();
+      const view = renderWithProviders(<App />, { initialPath: '/discover' });
+      await user.click(screen.getAllByRole('tab')[3]!);
+      await user.click(await screen.findByRole('button', { name: choice }));
+      await waitFor(() => expect(auth.signIn).toHaveBeenCalledWith('/'));
+      expect(view.currentPath()).toBe('/');
+      expect(localStorage.getItem('onboarding_complete')).toBe('1');
+      view.unmount();
+    }
   });
 });

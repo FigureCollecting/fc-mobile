@@ -399,7 +399,7 @@ test('(5) a Push whose reply is dropped is retried with the same client_id and a
   const [copy] = await freshCopies(page, 1, nextOffset());
   const before = await stack.sync.counts({ user: USER_B.sub });
   // The edge forwards the next Push, lets the coordinator commit it, and cuts the reply.
-  await stack.edge.fault({ match: `^${PUSH_PATH.replace(/\./g, '\\.')}$`, action: 'drop-response', times: 1 });
+  await stack.edge.fault({ match: `^${PUSH_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, action: 'drop-response', times: 1 });
   const from = await stack.edge.cursor();
   await page.evaluate(([h]) => window.__fcSync!.writeNote(h!, 'dropped once'), [copy!.head]);
   const mine = async () => (await page.evaluate(() => window.__fcSync!.outbox())).find((e) => e.facet_key === `uf/${copy!.head}/note`)!;

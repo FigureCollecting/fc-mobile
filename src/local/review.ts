@@ -4,7 +4,8 @@
 // what the server raised and writes the answer the user gives (contract 0.3.0, knowing keep).
 import { answerKey, importMarkerKey, type FacetFamily } from '@figurecollecting/fc-api-contract';
 import type { FacetRecord } from '../storage/records';
-import { figureOf, type FigureInputs, type LocalFigure } from './figures';
+import type { LocalView } from '../sync/occurrences';
+import { figureLookup, type FigureInputs, type LocalFigure } from './figures';
 
 export type ReviewKind = 'conflict' | 'divergence';
 export type ReviewChoice = 'keep' | 'take' | 'per_copy';
@@ -85,13 +86,17 @@ export function readFigureItem(payload: Record<string, unknown> | undefined): Fi
 
 const show = (v: unknown): string => (v === undefined || v === null || v === '' ? 'none' : String(v));
 
-function parts(item: FigureItem, figures: readonly LocalFigure[], figure: LocalFigure | undefined): ReviewPart[] {
+/** The list items (one per figure and kind), by display head and kind. */
+type Held = Map<string, LocalFigure>;
+const heldKey = (headId: string, kind: string): string => `${headId} ${kind}`;
+
+function parts(item: FigureItem, held: Held, figure: LocalFigure | undefined): ReviewPart[] {
   const out: ReviewPart[] = [];
   for (const k of KINDS) {
     const c = item.counts[k];
     if (c.app === c.mfc) continue;
-    const held = figures.find((f) => f.local.headId === figure?.local.headId && f.local.kind === k);
-    out.push({ label: KIND_LABEL[k], app: String(c.app), appEditedAt: held?.createdAt || null, mfc: String(c.mfc) });
+    const kept = figure === undefined ? undefined : held.get(heldKey(figure.local.headId, k));
+    out.push({ label: KIND_LABEL[k], app: String(c.app), appEditedAt: kept?.createdAt || null, mfc: String(c.mfc) });
   }
   for (const f of FIELDS) {
     const side = item.fields[f];
@@ -102,9 +107,14 @@ function parts(item: FigureItem, figures: readonly LocalFigure[], figure: LocalF
   return out;
 }
 
-/** The pending figure items of the MFC import, conflicts and divergences, each in head order. */
-export function buildReview(input: FigureInputs & { figures: readonly LocalFigure[] }): ReviewSet {
+/**
+ * The pending figure items of the MFC import, conflicts and divergences, each in head order. One
+ * figure model per call (the snapshot's view when it carries one), each item looked up in it.
+ */
+export function buildReview(input: FigureInputs & { figures: readonly LocalFigure[]; view?: LocalView }): ReviewSet {
   const byKey = new Map(input.facets.map((r) => [r.facet_key, r]));
+  const figureOf = figureLookup(input, input.view);
+  const held: Held = new Map(input.figures.map((f) => [heldKey(f.local.headId, f.local.kind), f]));
   const marker = payloadOf(byKey.get(importMarkerKey('mfc')));
   const set: ReviewSet = { conflicts: [], divergences: [] };
   const items = input.facets.filter((r) => r.family === FIGURE_FAMILY && r.facet_key.startsWith('imp/mfc/figure/')).sort((a, b) => (a.facet_key < b.facet_key ? -1 : 1));
@@ -112,7 +122,7 @@ export function buildReview(input: FigureInputs & { figures: readonly LocalFigur
     const item = readFigureItem(payloadOf(rec));
     if (item === undefined) continue;
     const headId = rec.head_id ?? rec.facet_key.slice('imp/mfc/figure/'.length);
-    const figure = figureOf(input, headId);
+    const figure = figureOf(headId);
     const answer = payloadOf(byKey.get(answerKey('mfc', headId)));
     const entry: ReviewItem = {
       headId,
@@ -121,7 +131,7 @@ export function buildReview(input: FigureInputs & { figures: readonly LocalFigur
       kind: item.kind,
       importNumber: item.import,
       exportDate: marker?.['import'] === item.import && typeof marker['export_date'] === 'string' ? marker['export_date'] : null,
-      parts: parts(item, input.figures, figure),
+      parts: parts(item, held, figure),
       answered: answer?.['item'] === 'figure' && answer['rev'] === item.rev ? (answer['choice'] as ReviewChoice) : null,
     };
     (item.kind === 'conflict' ? set.conflicts : set.divergences).push(entry);

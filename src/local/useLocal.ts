@@ -4,7 +4,7 @@ import { useCallback } from 'preact/hooks';
 import { keepPreviousData, useQuery, type UseQueryResult } from '@tanstack/react-query';
 import type { FacetRecord, ProductRecord, SyncMeta } from '../storage/records';
 import type { UserStore } from '../storage/userStore';
-import { buildView, type CollectionView } from '../sync/occurrences';
+import { buildView, type CollectionView, type LocalView } from '../sync/occurrences';
 import { buildFigures, type FigureInputs, type LocalFigure } from './figures';
 import { localSession } from './session';
 
@@ -26,13 +26,15 @@ export interface Snapshot extends FigureInputs {
   figures: LocalFigure[];
   /** The four defaults and every user collection with a live name. */
   collections: CollectionView[];
+  /** The occurrence view this change built, for the selects that need more than `figures`. */
+  view: LocalView;
 }
 
 export async function readSnapshot(store: UserStore, stale: boolean): Promise<Snapshot> {
   const [facets, products, meta] = await Promise.all([store.listFacets(), store.listProducts(), store.getMeta()]);
   const inputs = { sub: store.sub, facets, products, stale, syncedAt: meta.status_at ?? null };
   const view = buildView(facets);
-  return { ...inputs, meta, figures: buildFigures(inputs, view), collections: view.collections };
+  return { ...inputs, meta, figures: buildFigures(inputs, view), collections: view.collections, view };
 }
 
 /** The snapshot, narrowed by `select` (keep it stable: useCallback), re-read on every engine change. */

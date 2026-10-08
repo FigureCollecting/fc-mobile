@@ -221,12 +221,30 @@ export function buildFigures(input: FigureInputs, view?: LocalView): LocalFigure
   return out;
 }
 
+/**
+ * The details of the figures, from one model: build it once per store change, then look each head
+ * up (the review asks for one per item). A head answers for its card's figure: every shown copy of
+ * every head the card groups, of every kind; undefined when it has none.
+ */
+export function figureLookup(input: FigureInputs, view?: LocalView): (headId: string) => LocalFigure | undefined {
+  const m = model(input, view);
+  const byDisplay = new Map<string, CopyView[]>();
+  for (const c of shownCopies(m.view)) {
+    const d = m.display(c.head_id!);
+    const copies = byDisplay.get(d);
+    if (copies === undefined) byDisplay.set(d, [c]);
+    else copies.push(c);
+  }
+  return (headId) => {
+    const d = m.display(headId);
+    const copies = byDisplay.get(d);
+    if (copies === undefined) return undefined;
+    const kind = KINDS.find((k) => copies.some((c) => c.status === k))!;
+    return toFigure(m, d, kind, copies, copies.filter((c) => c.status === kind));
+  };
+}
+
 /** The detail of the figure `headId` names (through its card): every shown copy, of every kind. */
 export function figureOf(input: FigureInputs, headId: string): LocalFigure | undefined {
-  const m = model(input);
-  const d = m.display(headId);
-  const copies = shownCopies(m.view).filter((c) => m.display(c.head_id!) === d);
-  if (copies.length === 0) return undefined;
-  const kind = KINDS.find((k) => copies.some((c) => c.status === k))!;
-  return toFigure(m, d, kind, copies, copies.filter((c) => c.status === kind));
+  return figureLookup(input)(headId);
 }

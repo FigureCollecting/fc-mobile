@@ -221,8 +221,15 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
   });
 
   test('every Chromium project of every Playwright config (e2e, PWA, stack) launches with them, and none goes round them', async () => {
-    /** The one project on another browser: WebKit, with the route guard only, not in CI (README). */
-    const others = { '../playwright.config.ts': { webkit: 'webkit' }, '../playwright.pwa.config.ts': {}, '../playwright.stack.config.ts': {} };
+    /**
+     * The projects on another browser, WebKit, with the route guard only: the root config's (not in
+     * CI, README) and the stack's sync acceptance at the Fold8 cover size (WK-13).
+     */
+    const others = {
+      '../playwright.config.ts': { webkit: 'webkit' },
+      '../playwright.pwa.config.ts': {},
+      '../playwright.stack.config.ts': { 'sync-webkit-fold8-cover': 'webkit' },
+    };
     for (const [file, other] of Object.entries(others)) {
       const { default: config } = (await import(file)) as { default: Parameters<typeof configBypasses>[0] };
       expect(config.projects.length, file).toBeGreaterThan(0);

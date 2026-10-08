@@ -158,6 +158,9 @@ export class SyncEngine {
     lastError: null,
   });
   readonly state: ReadonlySignal<SyncState> = this.#state;
+  readonly #changes = signal(0);
+  /** Moves whenever what the local store shows may have changed: a pass, a write, a dismissal. */
+  readonly changes: ReadonlySignal<number> = this.#changes;
   private running: Promise<void> | undefined;
   private again = false;
   private attempt = 0;
@@ -229,6 +232,7 @@ export class SyncEngine {
     const out = await fn(store);
     this.notifyWrite();
     await this.refresh(store);
+    this.changed();
     return out;
   }
 
@@ -242,6 +246,11 @@ export class SyncEngine {
     const store = await this.deps.store();
     await store.dismissRejected(this.#state.peek().rejected.map((r) => r.id));
     await this.refresh(store);
+    this.changed();
+  }
+
+  private changed(): void {
+    this.#changes.value += 1;
   }
 
   private visible(): boolean {
@@ -293,6 +302,7 @@ export class SyncEngine {
         .store()
         .then((store) => this.refresh(store))
         .catch(() => undefined);
+      this.changed();
       return 'paused';
     }
     let store: UserStore | undefined;
@@ -311,6 +321,7 @@ export class SyncEngine {
       return kind;
     } finally {
       if (store !== undefined) await this.refresh(store).catch(() => undefined);
+      this.changed();
     }
   }
 

@@ -156,7 +156,7 @@ describe('useCopyActions', () => {
     expect(await copiesOf(r, headOf(4))).toEqual(['owned']);
     const second = await call(() => result.current.addToCollection(headOf(4), 'owned'));
     // Dedupe keeps the lowest occurrence id of the two (ids are random here).
-    const removed = await call(() => result.current.dedupe(headOf(4), 'owned'));
+    const removed = await call(() => result.current.dedupe([headOf(4)], 'owned'));
     const kept = [occ, second].sort()[0]!;
     expect(removed).toEqual([[occ, second].sort()[1]]);
     expect(await copiesOf(r, headOf(4))).toEqual(['owned']);

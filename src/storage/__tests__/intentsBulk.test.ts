@@ -118,17 +118,26 @@ describe('dedupe: keep the lowest of N identical copies', () => {
     const store = await fresh();
     const [o1, o2, o3] = [await store.createCopy(HEAD[0], 'owned'), await store.createCopy(HEAD[0], 'owned'), await store.createCopy(HEAD[0], 'owned')];
     const w1 = await store.createCopy(HEAD[0], 'wished');
-    expect(await store.dedupe(HEAD[0], 'owned')).toEqual([o2, o3]);
+    expect(await store.dedupe([HEAD[0]], 'owned')).toEqual([o2, o3]);
     expect(await lastGroup(store)).toEqual([occFacetKey(o2, 'status'), occFacetKey(o3, 'status')]);
     expect(shownCopies(await store.getView()).map((c) => c.occ_id)).toEqual([o1, w1]);
+  });
+
+  it("keeps one copy across every head of the figure (an ER merge's requested_as), not the display head's alone", async () => {
+    const store = await fresh();
+    const [o1, o2] = [await store.createCopy(HEAD[0], 'owned'), await store.createCopy(HEAD[0], 'owned')];
+    const o3 = await store.createCopy(HEAD[1], 'owned');
+    const other = await store.createCopy(HEAD[2], 'owned');
+    expect(await store.dedupe([HEAD[1], HEAD[0]], 'owned')).toEqual([o2, o3]);
+    expect(shownCopies(await store.getView()).map((c) => c.occ_id)).toEqual([o1, other]);
   });
 
   it('writes nothing when there is one copy or none', async () => {
     const store = await fresh();
     await store.createCopy(HEAD[0], 'owned');
     const before = (await store.listOutbox()).length;
-    expect(await store.dedupe(HEAD[0], 'owned')).toEqual([]);
-    expect(await store.dedupe(HEAD[1], 'owned')).toEqual([]);
+    expect(await store.dedupe([HEAD[0]], 'owned')).toEqual([]);
+    expect(await store.dedupe([HEAD[1]], 'owned')).toEqual([]);
     expect((await store.listOutbox()).length).toBe(before);
   });
 });

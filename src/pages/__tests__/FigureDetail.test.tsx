@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 import { create } from '@bufbuild/protobuf';
-import { GetProductImagesResponseSchema, ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { GetProductImagesResponseSchema, ProductCardSchema, ufFacetKey } from '@figurecollecting/fc-api-contract';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 
@@ -113,6 +113,19 @@ describe('FigureDetail page', () => {
 
   it('dedupes N identical copies down to one', async () => {
     const r = await open([{ ...MIKU, copies: 3 }]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Keep 1 of 3 owned' }));
+    await waitFor(async () => expect(await statuses(r)).toEqual(['owned']));
+  });
+
+  it('dedupes the copies of every merged head the figure shows, down to one', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ ...MIKU, copies: 2 }, { title: 'Miku (other listing)', copies: 1 }]);
+    // An ER merge: head 1's card answers for head 0 too, so the item shows all three copies.
+    const merged = { ref: { case: 'headId' as const, value: headOf(0) } };
+    await r.store.putProducts([create(ProductCardSchema, { headId: headOf(1), requestedAs: [merged, { ref: { case: 'headId', value: headOf(1) } }], title: { value: 'Miku merged', asOf: '2026-10-01T09:30:00.000000Z' } })]);
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await screen.findByRole('heading', { level: 1, name: 'Miku merged' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Keep 1 of 3 owned' }));
     await waitFor(async () => expect(await statuses(r)).toEqual(['owned']));

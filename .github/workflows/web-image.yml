@@ -64,7 +64,6 @@ jobs:
             DOCKER_BUILDKIT=1 docker build \
               --secret id=node_auth_token,env=NODE_AUTH_TOKEN \
               --build-arg "VITE_BUILD_ID=${pair#*=}" \
-              --build-arg "VITE_AUTH_MODE=oidc" \
               -t "${pair%%=*}" .
           done
         env:
@@ -79,14 +78,14 @@ jobs:
             exit 1
           fi
 
-      - name: Verify the image bundle is the OIDC build
-        # The legacy /login redirect signs in against no deployed backend.
+      - name: Verify the image bundle signs in through OIDC only
+        # Authentik is the only sign-in (WK-15); the legacy client never loads at boot.
         run: |
           set -euo pipefail
           cid=$(docker create "${FC_WEB_IMAGE}")
-          docker cp "${cid}:/usr/share/nginx/html/assets" "${RUNNER_TEMP}/assets"
+          docker cp "${cid}:/usr/share/nginx/html" "${RUNNER_TEMP}/html"
           docker rm "${cid}" >/dev/null
-          sh scripts/assert-bundle-auth-mode.sh "${RUNNER_TEMP}/assets" oidc
+          sh scripts/assert-bundle-auth.sh "${RUNNER_TEMP}/html"
 
       - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
         # publish needs this job, so a finding here stops the push.
@@ -159,7 +158,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VITE_BUILD_ID=${{ steps.meta.outputs.version }}
-            VITE_AUTH_MODE=oidc
           secrets: |
             node_auth_token=${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -176,14 +174,14 @@ jobs:
             exit 1
           fi
 
-      - name: Verify the PUBLISHED image bundle is the OIDC build
+      - name: Verify the PUBLISHED image bundle signs in through OIDC only
         run: |
           set -euo pipefail
           ref="ghcr.io/figurecollecting/fc-mobile-web@${{ steps.publish.outputs.digest }}"
           cid=$(docker create "${ref}")
-          docker cp "${cid}:/usr/share/nginx/html/assets" "${RUNNER_TEMP}/published-assets"
+          docker cp "${cid}:/usr/share/nginx/html" "${RUNNER_TEMP}/published-html"
           docker rm "${cid}" >/dev/null
-          sh scripts/assert-bundle-auth-mode.sh "${RUNNER_TEMP}/published-assets" oidc
+          sh scripts/assert-bundle-auth.sh "${RUNNER_TEMP}/published-html"
 
       - name: Report the digest
         run: |

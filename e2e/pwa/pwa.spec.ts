@@ -47,8 +47,8 @@ async function shellInstalled(page: Page): Promise<void> {
 }
 
 /**
- * The image is the OIDC build (Dockerfile VITE_AUTH_MODE=oidc): a signed-out visit shows the
- * sign-in-to-sync banner over the collection, where the legacy build redirects to /login.
+ * The image signs in through OIDC only: a signed-out visit shows the sign-in-to-sync banner over
+ * the collection.
  * Both the banner and the update prompt are role=status, so each is found by its text.
  */
 const signInBanner = (page: Page) => page.getByRole('status').filter({ hasText: /sign in to sync your collection/i });

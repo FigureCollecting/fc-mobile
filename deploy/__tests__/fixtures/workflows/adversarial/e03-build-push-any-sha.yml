@@ -1,0 +1,13 @@
+# D10 (wk-09b-i2): the token-bearing build action at a SHA that is not the pinned release.
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and push
+        uses: docker/build-push-action@0123456789abcdef0123456789abcdef01234567
+        with:
+          secret-envs: |
+            node_auth_token=NODE_AUTH_TOKEN
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

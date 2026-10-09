@@ -52,16 +52,16 @@ describe('workflow token guard on fixtures', () => {
     expect(fixture('token-in-run.yml')).toEqual(['run-value']);
   });
 
-  it('fails on the token anywhere else (a container env, an if:)', () => {
-    expect(fixture('token-elsewhere.yml')).toEqual(['elsewhere', 'elsewhere']);
+  it('fails on the token anywhere else (a container env, an if:, the run name)', () => {
+    expect(fixture('token-elsewhere.yml')).toEqual(['elsewhere', 'elsewhere', 'elsewhere']);
   });
 
   it('fails on an npm ci that runs install scripts while the token is in the step env', () => {
     expect(fixture('npm-ci-scripts.yml')).toEqual(['npm-ci-scripts']);
   });
 
-  it('fails on aquasecurity/trivy-action referenced by tag instead of a full SHA', () => {
-    expect(fixture('trivy-tag.yml')).toEqual(['trivy-unpinned']);
+  it('fails on aquasecurity/trivy-action referenced by tag or short SHA instead of a full SHA', () => {
+    expect(fixture('trivy-tag.yml')).toEqual(['trivy-unpinned', 'trivy-unpinned']);
   });
 
   it('flags every token-bearing step, and a by-name with:, once the steps are not allow-listed', () => {

@@ -8,3 +8,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
+      - name: Scan by short SHA
+        uses: aquasecurity/trivy-action@ed142fd
+        with:
+          scan-type: fs

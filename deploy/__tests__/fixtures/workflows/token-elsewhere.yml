@@ -1,4 +1,5 @@
-name: token in a container env
+name: 'token in a container env, an if: and the run name'
+run-name: build ${{ secrets.NODE_AUTH_TOKEN }}
 on: [push]
 jobs:
   build:

@@ -32,6 +32,8 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           image-ref: app:ci
+      - name: Install without the token
+        run: npm ci
       - name: Test
         run: npm test
   reusable:

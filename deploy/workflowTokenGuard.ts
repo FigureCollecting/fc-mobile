@@ -1,20 +1,19 @@
 // Token-scope guard for .github/workflows (run by deploy/__tests__/workflowTokenGuard.test.ts).
-// NODE_AUTH_TOKEN reads @figurecollecting packages from GitHub Packages. It may only be in the
-// env of an allow-listed step, and that step runs exactly what its entry says: npm ci
-// --ignore-scripts line by line, one pinned script, or one action pinned by full SHA. The one
-// entry that runs repo code is the coordinator checkout (npm --prefix e2e/stack run checkout).
-// Nothing else may change how a token step runs: its keys are allow-listed (no shell or
-// working-directory), its env holds the token and nothing else, its job has no container,
-// services or defaults, the job and workflow env hold only the image names in SCOPE_ENV, and
-// before the job's last token step only other token steps and the setup actions in SETUP_ACTION
-// run. No step of that job writes $GITHUB_ENV or $GITHUB_PATH, and the token step writes no
-// runner file. The token is never workflow- or job-wide, never in with: or a value in run: text,
-// never under a second env name. A secrets ref must name one secret (secrets.NAME or
+// NODE_AUTH_TOKEN reads @figurecollecting packages from GitHub Packages. It may only be in the env
+// of an allow-listed step, and that step runs exactly what its entry says: npm ci --ignore-scripts
+// line by line, one pinned script, or one action pinned by full SHA. The one entry that runs repo
+// code is the coordinator checkout (npm --prefix e2e/stack run checkout). Nothing else may change
+// how a token step runs: its keys are allow-listed (no shell or working-directory), its env holds
+// the token and nothing else, its job has no container, services or defaults, the job and workflow
+// env hold only the image names in SCOPE_ENV, and before the job's last token step only other token
+// steps and the setup actions in SETUP_ACTION run. No step of that job writes $GITHUB_ENV or
+// $GITHUB_PATH, and the token step writes no runner file. The token is never workflow- or job-wide,
+// never in with: or a value in run: text, never under a second env name. Every env is a plain
+// mapping, so the guard can read its names. A secrets ref must name one secret (secrets.NAME or
 // secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
 // secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
-// secrets: is a mapping of named secrets other than the token. Names match
-// case-insensitively (secret names are). aquasecurity actions are pinned by full SHA
-// (GHSA-69fq-xp46-6x23).
+// secrets: is a mapping of named secrets other than the token. Names match case-insensitively
+// (secret names are). aquasecurity actions are pinned by full SHA (GHSA-69fq-xp46-6x23).
 
 export type Rule =
   | 'workflow-env'
@@ -29,6 +28,7 @@ export type Rule =
   | 'env-alias'
   | 'all-secrets'
   | 'job-secrets'
+  | 'env-expr'
   | 'trivy-unpinned'
   | 'step-key'
   | 'step-env'
@@ -140,6 +140,10 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
     if (!keys.has(key)) flag(where, rule);
     else if (key === 'env' && Object.keys(record(value)).some((k) => !SCOPE_ENV.has(k))) flag(where, 'scope-env');
   };
+  /** An env the guard cannot read (one ${{ }} string, a list) may set any name, the token's too. */
+  const envExpr = (where: string, key: string, value: unknown) => {
+    if (key === 'env' && !plain(value)) flag(where, 'env-expr');
+  };
   const wf = record(workflow);
   const jobs = Object.entries(record(wf['jobs'])).map(([jobId, jobValue]) => {
     const job = record(jobValue);
@@ -150,12 +154,14 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
   const holds = jobs.some((j) => j.last >= 0);
   for (const [key, value] of Object.entries(wf)) {
     if (key === 'jobs') continue;
+    envExpr(key, key, value);
     scan(key, value, key === 'env' ? 'workflow-env' : 'elsewhere');
     if (holds) around(key, key, value, WORKFLOW_KEYS, 'workflow-key');
   }
   for (const { jobId, job, steps, last } of jobs) {
     for (const [key, value] of Object.entries(job)) {
       if (key === 'steps') continue;
+      envExpr(`${jobId} > ${key}`, key, value);
       // A reusable workflow's secrets: one named, unrelated secret per entry, nothing passed whole.
       if (key === 'secrets') {
         if (!plain(value) || ALL_SECRETS.test(values(value)) || mentions(value)) flag(`${jobId} > secrets`, 'job-secrets');
@@ -171,6 +177,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
       const bearing = mentions(step['env']);
       const uses = step['uses'];
       for (const [key, value] of Object.entries(step)) {
+        envExpr(where(key), key, value);
         const t = text(value);
         if (ALL_SECRETS.test(values(value))) flag(where(key), 'all-secrets');
         if (key === 'run') {

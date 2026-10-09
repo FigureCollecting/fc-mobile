@@ -39,9 +39,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - name: Build the app
-        run: npm run build
-
       - name: Install harness dependencies
         run: npm --prefix e2e/stack ci --ignore-scripts
         env:
@@ -52,6 +49,10 @@ jobs:
         run: npm --prefix e2e/stack run checkout
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # After the token steps: nothing that runs repo code comes before a step holding the token.
+      - name: Build the app
+        run: npm run build
 
       - name: Typecheck the harness
         run: npm --prefix e2e/stack run typecheck

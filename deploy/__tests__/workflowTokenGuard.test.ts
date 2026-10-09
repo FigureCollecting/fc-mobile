@@ -116,7 +116,7 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['a07-reused-step-name.yml', ['run-grammar']],
     ['a08-bracket-index-in-with.yml', ['run-grammar', 'token-action', 'with']],
     ['a09-trivy-owner-case.yml', ['trivy-unpinned']],
-    ['a10-secrets-inherit.yml', ['secrets-inherit']],
+    ['a10-secrets-inherit.yml', ['job-secrets']],
     ['a11-chained-tests.yml', ['run-grammar']],
     ['a12-npx.yml', ['run-grammar']],
     ['a13-alias-to-github-env.yml', ['env-alias', 'github-env', 'run-grammar']],
@@ -142,12 +142,16 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['b18-tojson-env-in-with.yml', ['all-env']],
     ['b19-indirect-github-env.yml', ['step-order']],
     ['b20-earlier-github-script.yml', ['step-order']],
+    // Round 3 (wk-09b-i2): each one returned [] or another rule before this fix.
+    ['d01-reusable-pass-token.yml', ['job-secrets']],
+    ['d02-reusable-tojson-secrets.yml', ['job-secrets']],
+    ['d03-reusable-token-other-name.yml', ['job-secrets']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(34);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(37);
   });
 });
 
@@ -280,8 +284,27 @@ describe('every secret at once', () => {
     expect(rules(yaml)).toEqual(['all-secrets']);
   });
 
-  it.each(['inherit', 'Inherit'])('flags secrets: %s on a reusable-workflow job', (value) => {
-    expect(rules(`jobs:\n  call:\n    uses: ./other.yml\n    secrets: ${value}\n`)).toEqual(['secrets-inherit']);
+  it.each(['inherit', 'Inherit', '${{ toJSON(secrets) }}', '[KEY]'])('flags secrets: %s on a reusable-workflow job', (value) => {
+    expect(checkWorkflow('x.yml', parse(`jobs:\n  call:\n    uses: ./other.yml\n    secrets: ${value}\n`), new Map())).toEqual([
+      { file: 'x.yml', where: 'call > secrets', rule: 'job-secrets' },
+    ]);
+  });
+
+  it.each([
+    'NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}',
+    'node_auth_token: ${{ secrets.KEY }}',
+    'PAT: ${{ secrets.node_auth_token }}',
+    'ALL: ${{ toJSON(secrets) }}',
+    'ALL: ${{ join(secrets.*, \',\') }}',
+    "KEY: ${{ secrets[matrix.name] }}",
+  ])('flags %s passed to a reusable workflow, once', (entry) => {
+    expect(checkWorkflow('x.yml', parse(`jobs:\n  call:\n    uses: ./other.yml\n    secrets:\n      ${entry}\n`), new Map())).toEqual([
+      { file: 'x.yml', where: 'call > secrets', rule: 'job-secrets' },
+    ]);
+  });
+
+  it('accepts an empty secrets: on a reusable-workflow job', () => {
+    expect(rules('jobs:\n  call:\n    uses: ./other.yml\n    secrets:\n')).toEqual([]);
   });
 
   it('accepts a reusable-workflow job that passes a named, unrelated secret', () => {

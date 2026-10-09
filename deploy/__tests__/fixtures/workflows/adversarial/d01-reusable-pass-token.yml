@@ -1,0 +1,7 @@
+# D1: a reusable-workflow job passes the token on by its own name.
+on: [push]
+jobs:
+  call:
+    uses: ./.github/workflows/other.yml
+    secrets:
+      NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}

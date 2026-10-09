@@ -1,0 +1,11 @@
+# B5: BASH_ENV next to the token sources a repo script before the run text.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+          BASH_ENV: ./scripts/x.sh

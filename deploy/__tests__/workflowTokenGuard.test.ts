@@ -121,12 +121,31 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['a12-npx.yml', ['run-grammar']],
     ['a13-alias-to-github-env.yml', ['env-alias', 'github-env', 'run-grammar']],
     ['c01-control-npm-ci.yml', ['run-grammar']],
+    // Round 2 (wk-09b-i1): each one also returned [] before this fix.
+    ['b01-step-shell.yml', ['all-env', 'step-key']],
+    ['b02-workflow-default-shell.yml', ['workflow-key']],
+    ['b03-job-default-shell.yml', ['job-key']],
+    ['b04-step-node-options.yml', ['step-env']],
+    ['b05-step-bash-env.yml', ['step-env']],
+    ['b06-job-node-options.yml', ['scope-env']],
+    ['b07-earlier-github-env.yml', ['github-env']],
+    ['b08-earlier-github-path.yml', ['github-env']],
+    ['b09-tojson-paren-secrets.yml', ['all-secrets']],
+    ['b10-join-secrets-star.yml', ['all-secrets']],
+    ['b11-tojson-secrets-star.yml', ['all-secrets']],
+    ['b12-secrets-spaced-index.yml', ['all-secrets']],
+    ['b13-step-working-directory.yml', ['step-key']],
+    ['b14-container-job.yml', ['job-key']],
+    ['b15-job-coordinator-repo.yml', ['scope-env']],
+    ['b16-workflow-bash-func.yml', ['scope-env']],
+    ['b17-env-index-in-with.yml', ['all-env']],
+    ['b18-tojson-env-in-with.yml', ['all-env']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(14);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(32);
   });
 });
 
@@ -137,6 +156,7 @@ describe('install grammar on allow-listed install steps', () => {
     'npm --prefix ../a_b.c/D-9 ci --ignore-scripts',
     'npm --prefix e2e/stack run checkout',
     'npm ci --ignore-scripts\n\n  npm --prefix e2e/stack run checkout\n',
+    'npm ci --ignore-scripts ',
   ])('accepts %j', (run) => {
     expect(install(run)).toEqual([]);
   });
@@ -161,6 +181,9 @@ describe('install grammar on allow-listed install steps', () => {
     'npm --prefix e2e/stack run checkout; env',
     'npm --prefix e2e/stack run build',
     'npm ci --ignore-scripts\nnpm test',
+    'npm --prefix . exec evil ci --ignore-scripts',
+    'npm --prefix $(x) ci --ignore-scripts',
+    'npm ci --ignore-scriptsx',
     '',
   ])('rejects %j', (run) => {
     expect(install(run)).toEqual(['run-grammar']);
@@ -237,9 +260,6 @@ describe('token references, case-insensitive', () => {
     expect(rules(`env:\n  node_auth_token: x\njobs: {}\n`)).toEqual(['workflow-env']);
   });
 
-  it('accepts unrelated env next to the token on an allowed step', () => {
-    expect(rules(step('Install dependencies', 'run: npm ci --ignore-scripts', `NODE_AUTH_TOKEN: ${TOK}\n          CI: 'true'`))).toEqual([]);
-  });
 
   it('flags the token under a second env name on an allowed step', () => {
     expect(install('npm ci --ignore-scripts')).toEqual([]);
@@ -297,6 +317,145 @@ describe('trivy pin', () => {
 
   it('accepts a full SHA', () => {
     expect(trivy(`aquasecurity/trivy-action@${SHA}`)).toEqual([]);
+  });
+});
+
+/** A job holding the allowed token install step, with extra job keys and steps before it. */
+const TOKEN_INSTALL = `      - name: Install dependencies\n        run: npm ci --ignore-scripts\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n`;
+const tokenJob = (keys = '', before = ''): string => `jobs:\n  build:\n    runs-on: ubuntu-latest\n${keys}    steps:\n${before}${TOKEN_INSTALL}`;
+
+describe('what may change how a token step runs', () => {
+  it.each(['id: install', "if: github.event_name == 'push'", 'continue-on-error: true'])('accepts %s on the token step', (key) => {
+    expect(rules(step('Install dependencies', `run: npm ci --ignore-scripts\n${key}`))).toEqual([]);
+  });
+
+  it.each(['shell: sh', 'working-directory: e2e/stack', 'timeout-minutes: 5'])('flags %s on the token step', (key) => {
+    const violations = checkWorkflow('x.yml', parse(step('Install dependencies', `run: npm ci --ignore-scripts\n${key}`)), fixtureAllowList('x.yml'));
+    expect(violations).toEqual([{ file: 'x.yml', where: `build > Install dependencies > ${key.split(':')[0]}`, rule: 'step-key' }]);
+  });
+
+  it('flags every key but the token in a token step env, and names the step', () => {
+    const violations = checkWorkflow('x.yml', parse(step('Install dependencies', 'run: npm ci --ignore-scripts', `NODE_AUTH_TOKEN: ${TOK}\n          CI: 'true'`)), fixtureAllowList('x.yml'));
+    expect(violations).toEqual([{ file: 'x.yml', where: 'build > Install dependencies > env', rule: 'step-env' }]);
+  });
+
+  it('accepts the job keys the live workflows use', () => {
+    const keys = "    name: Build\n    if: github.event_name == 'push'\n    needs: [lint]\n    permissions:\n      contents: read\n    strategy:\n      matrix:\n        node: ['24']\n    timeout-minutes: 25\n    outputs:\n      digest: x\n";
+    expect(rules(tokenJob(keys))).toEqual([]);
+  });
+
+  it.each(['services', 'defaults', 'container'])('flags %s on a job that holds a token step', (key) => {
+    const violations = checkWorkflow('x.yml', parse(tokenJob(`    ${key}:\n      x: y\n`)), fixtureAllowList('x.yml'));
+    expect(violations).toEqual([{ file: 'x.yml', where: `build > ${key}`, rule: 'job-key' }]);
+  });
+
+  it('leaves the keys of a job without a token step alone', () => {
+    expect(rules('defaults:\n  run:\n    shell: sh\njobs:\n  t:\n    container: node:24\n    defaults:\n      run:\n        shell: sh\n    steps:\n      - run: npm test\n')).toEqual([]);
+  });
+
+  it('accepts the standard workflow keys next to a token job, and flags defaults', () => {
+    const head = "name: x\nrun-name: x\non: [push]\npermissions:\n  contents: read\nconcurrency: x\n";
+    expect(rules(head + tokenJob())).toEqual([]);
+    expect(checkWorkflow('x.yml', parse(`defaults:\n  run:\n    shell: sh\n${tokenJob()}`), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'defaults', rule: 'workflow-key' },
+    ]);
+  });
+
+  it('accepts the allow-listed image names in the job and workflow env of a token job', () => {
+    expect(rules(`env:\n  FC_STACK_WEB_IMAGE: a\n${tokenJob('    env:\n      FC_WEB_IMAGE: a\n      FC_WEB_IMAGE_NEXT: b\n')}`)).toEqual([]);
+  });
+
+  it.each(['NODE_OPTIONS', 'BASH_ENV', 'ENV', 'PATH', 'LD_PRELOAD', 'npm_config_registry', 'NPM_CONFIG_USERCONFIG', 'FC_COORDINATOR_REF', 'fc_web_image', 'SHELLOPTS'])(
+    'flags %s in the env of a job that holds a token step, and in its workflow env',
+    (name) => {
+      expect(checkWorkflow('x.yml', parse(tokenJob(`    env:\n      ${name}: x\n`)), fixtureAllowList('x.yml'))).toEqual([
+        { file: 'x.yml', where: 'build > env', rule: 'scope-env' },
+      ]);
+      expect(checkWorkflow('x.yml', parse(`env:\n  ${name}: x\n${tokenJob()}`), fixtureAllowList('x.yml'))).toEqual([
+        { file: 'x.yml', where: 'env', rule: 'scope-env' },
+      ]);
+    },
+  );
+
+  it('leaves the env of a workflow or job without a token step alone', () => {
+    expect(rules('env:\n  NODE_OPTIONS: x\njobs:\n  t:\n    env:\n      NODE_OPTIONS: x\n    steps:\n      - run: npm test\n')).toEqual([]);
+    expect(rules(`${tokenJob()}  t:\n    env:\n      NODE_OPTIONS: x\n    steps:\n      - run: npm test\n`)).toEqual([]);
+  });
+
+  it.each(['echo "A=1" >> "$GITHUB_ENV"', 'echo /x >> $GITHUB_PATH', 'echo "::set-env name=A::1"', 'echo "::add-path::/x"'])(
+    'flags %j on any step of a job that holds a token step, before or after it',
+    (run) => {
+      const other = `      - name: Other\n        run: ${JSON.stringify(run)}\n`;
+      const want = [{ file: 'x.yml', where: 'build > Other > run', rule: 'github-env' }];
+      expect(checkWorkflow('x.yml', parse(tokenJob('', other)), fixtureAllowList('x.yml'))).toEqual(want);
+      expect(checkWorkflow('x.yml', parse(tokenJob() + other), fixtureAllowList('x.yml'))).toEqual(want);
+    },
+  );
+
+  it.each(['echo v=1 >> "$GITHUB_OUTPUT"', 'echo ok >> "$GITHUB_STEP_SUMMARY"', 'echo s=1 >> "$GITHUB_STATE"'])(
+    'leaves %j alone on another step of a token job',
+    (run) => {
+      expect(rules(tokenJob('', `      - run: ${JSON.stringify(run)}\n`))).toEqual([]);
+    },
+  );
+
+  it('leaves a $GITHUB_ENV write alone in a job without a token step', () => {
+    expect(rules(`${tokenJob()}  t:\n    steps:\n      - run: echo "A=1" >> "$GITHUB_ENV"\n`)).toEqual([]);
+  });
+});
+
+describe('secrets and env refs that name one entry, and the rest', () => {
+  it.each([
+    '${{ secrets.KEY }}',
+    '${{ secrets.MY-KEY }}',
+    '${{ SECRETS._k2 }}',
+    "${{ secrets['KEY'] }}",
+    "${{ secrets[ 'my-key' ] }}",
+    '${{ secrets.A || secrets.B }}',
+    'MY_SECRETS',
+  ])('accepts %s', (ref) => {
+    expect(rules(`jobs:\n  t:\n    steps:\n      - run: echo ${JSON.stringify(ref)}\n`)).toEqual([]);
+  });
+
+  it.each([
+    '${{ toJSON(secrets) }}',
+    '${{ toJSON((secrets)) }}',
+    '${{ toJSON( secrets ) }}',
+    '${{ join(secrets.*, \',\') }}',
+    '${{ toJSON(secrets.*) }}',
+    '${{ secrets.KEY.* }}',
+    '${{ secrets[matrix.name] }}',
+    "${{ secrets [format('{0}', matrix.name)] }}",
+    "${{ secrets['A' || 'B'] }}",
+    '${{ secrets. KEY }}',
+    '${{ secrets.9 }}',
+    '${{ fromJSON(toJSON(secrets)).KEY }}',
+    'no secrets here',
+  ])('flags %s as every secret', (ref) => {
+    expect(rules(`jobs:\n  t:\n    steps:\n      - run: echo ${JSON.stringify(ref)}\n`)).toEqual(['all-secrets']);
+  });
+
+  it('reads values, not keys: a with: input or a workflow_call secret named secrets is not a ref', () => {
+    expect(rules('on:\n  workflow_call:\n    secrets:\n      KEY:\n        required: true\njobs:\n  t:\n    steps:\n      - uses: a/b@v1\n        with:\n          secrets: x\n')).toEqual([]);
+  });
+
+  it.each(['${{ env.FC_WEB_IMAGE }}', "${{ env['FC_WEB_IMAGE'] }}", "${{ ENV[ 'fc-x' ] }}", 'node_auth_token=NODE_AUTH_TOKEN', 'envs'])(
+    'accepts %s in with: on the token action step',
+    (ref) => {
+      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual([]);
+    },
+  );
+
+  it.each(['${{ toJSON(env) }}', '${{ toJSON(env.*) }}', '${{ env.* }}', "${{ env[format('NODE_{0}', 'AUTH_TOKEN')] }}", '${{ env [matrix.k] }}', '${{ env.A.* }}'])(
+    'flags %s in with: on the token action step as the whole env',
+    (ref) => {
+      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual(['all-env']);
+    },
+  );
+
+  it('flags an env dump in an if: on the token step, and leaves it alone on a step without the token', () => {
+    expect(rules(step('Install dependencies', "run: npm ci --ignore-scripts\nif: toJSON(env) != ''"))).toEqual(['all-env']);
+    expect(rules("jobs:\n  t:\n    steps:\n      - run: echo '${{ toJSON(env) }}'\n")).toEqual([]);
   });
 });
 

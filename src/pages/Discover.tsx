@@ -51,9 +51,6 @@ function heldSummary(figures: LocalFigure[], headId: string): string {
 /** A card's field as shown: absent (no value, or withheld from this caller) stays absent. */
 const shown = (t: CardText | undefined): string | undefined => (t?.value ? t.value : undefined);
 
-/** Whether a catalog card names a figure the local hits already list. */
-const listedIn = (heads: ReadonlySet<string>, card: ProductCard): boolean =>
-  heads.has(card.headId) || card.requestedAs.some((r) => r.ref.case === 'headId' && heads.has(r.ref.value));
 
 /** Add one copy of a figure to a tab: a local write, offline too. */
 function AddSheet({ open, name, onAdd, onClose }: { open: boolean; name: string; onAdd: (kind: CollectionStatus) => void; onClose: () => void }) {
@@ -165,11 +162,13 @@ export function Discover() {
     [actions],
   );
 
-  // The catalog's hits below the local ones, without the figures the local hits already list.
+  // The catalog's hits below the local ones, without a figure the local hits already list: any head
+  // a local hit answers for, so a merged-away head and its survivor both count. A search card's
+  // requested_as is always empty (a search request names no refs), so only its head_id is read.
   const catalogHits = useMemo(() => {
     if (catalog.view.kind !== 'hits') return [];
     const listed = new Set(hits.flatMap((f) => f.local.heads));
-    return catalog.view.hits.filter((c) => !listedIn(listed, c));
+    return catalog.view.hits.filter((c) => !listed.has(c.headId));
   }, [catalog.view, hits]);
 
   const showResults = hasSearched && hits.length > 0;

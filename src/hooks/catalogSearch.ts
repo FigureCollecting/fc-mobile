@@ -1,11 +1,13 @@
 // Catalog-wide search in the client (WK-17 B2): CatalogService.SearchProducts, one search at a time.
-// A query is sent in the spine's form (NFKC, then trimmed of Unicode White_Space; 2 to 256 code
-// points, or one CJK character) once typing pauses; a newer query, going offline or disposing
-// cancels the search in flight, and its late answer is never shown. Pages hold at most 50 figures;
-// next_page_token is followed on request, and a refused token (the spine's
-// TOKEN_EXPIRED_OR_REBASED) restarts from page one. A catalog that cannot answer (unreachable, not
-// served yet, signed out, too slow) hides the section without a message; only another error says
-// the search failed.
+// A query is sent in the spine's form (NFKC, then trimmed of Unicode White_Space; the spine takes 1
+// to 256 code points) once typing pauses. The client's own minimum is 2 code points, or one Han,
+// kana or Hangul character, so a single Latin letter is never sent. A newer query, going offline or
+// disposing cancels the search in flight, and its late answer is never shown. Pages hold at most 50
+// figures; next_page_token is followed on request, and ANY INVALID_ARGUMENT on a later page (the
+// usual one is a stale token, TOKEN_EXPIRED_OR_REBASED; its ErrorInfo is not read) restarts once
+// from page one. A catalog that cannot answer (unreachable, not served yet, signed out, too slow)
+// hides the section without a message, on page one and on that restart alike; only another error
+// says the search failed.
 import { Code, ConnectError } from '@connectrpc/connect';
 import type { ProductCard, SearchProductsResponse } from '@figurecollecting/fc-api-contract';
 
@@ -102,7 +104,7 @@ export class CatalogSearch {
   /** The next page, when the last one said there are more. */
   more(): void {
     const v = this.#view;
-    if (v.kind !== 'hits' || !v.more || v.loadingMore) return;
+    if (this.#disposed || v.kind !== 'hits' || !v.more || v.loadingMore) return;
     this.#show({ ...v, loadingMore: true, moreFailed: false });
     void this.#next(v.query);
   }
@@ -110,7 +112,7 @@ export class CatalogSearch {
   /** Search again after a failure. */
   retry(): void {
     const v = this.#view;
-    if (v.kind !== 'failed') return;
+    if (this.#disposed || v.kind !== 'failed') return;
     this.#show({ kind: 'searching', query: v.query });
     void this.#first(v.query);
   }
@@ -124,7 +126,7 @@ export class CatalogSearch {
   async #first(query: string): Promise<void> {
     const got = await this.#fetch(query, '');
     if (got === undefined) return;
-    if (!got.ok) return this.#show(QUIET.has(got.code) ? { kind: 'hidden', reason: 'unavailable' } : { kind: 'failed', query });
+    if (!got.ok) return this.#failed(query, got.code);
     this.#page(query, [], got.page);
   }
 
@@ -134,11 +136,15 @@ export class CatalogSearch {
     const v = this.#view as Extract<CatalogView, { kind: 'hits' }>;
     if (got.ok) return this.#page(query, v.hits, got.page);
     if (got.code !== Code.InvalidArgument) return this.#show({ ...v, loadingMore: false, moreFailed: true });
-    // The token is stale (the spine's keyset was rebased): start again from page one.
+    // Taken as a stale token (the spine's keyset was rebased): start again from page one.
     const restart = await this.#fetch(query, '');
     if (restart === undefined) return;
-    if (!restart.ok) return this.#show({ kind: 'failed', query });
+    if (!restart.ok) return this.#failed(query, restart.code);
     this.#page(query, [], restart.page);
+  }
+
+  #failed(query: string, code: Code): void {
+    this.#show(QUIET.has(code) ? { kind: 'hidden', reason: 'unavailable' } : { kind: 'failed', query });
   }
 
   #page(query: string, have: ProductCard[], page: SearchProductsResponse): void {

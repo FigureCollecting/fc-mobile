@@ -18,6 +18,9 @@ import { headOf } from '../../sync/__tests__/engineSupport';
 import { shownCopies } from '../../sync/occurrences';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { toGtin14 } from '../../hooks/useBarcodeLookup';
+import { toasts } from '../../stores/toast';
+
+const toasted = () => toasts.value.map((t) => `${t.type}: ${t.message}`);
 
 afterEach(() => {
   localSession.value = undefined;
@@ -166,7 +169,7 @@ describe('Discover: catalog search (online)', () => {
     await user.click(within(catalog).getByRole('button', { name: 'Add to Owned' }));
     await waitFor(async () => expect(await kinds(r, head)).toEqual(['owned']));
     expect((await r.store.getProduct(head))?.card.title?.value).toBe('Nendoroid Hatsune Miku');
-    expect(await screen.findByText('Added to Owned')).toBeInTheDocument();
+    await waitFor(() => expect(toasted()).toContain('success: Added to Owned'));
     const local = screen.getByRole('list', { name: 'Search results' });
     const added = (await within(local).findByText('Nendoroid Hatsune Miku')).closest('li')!;
     expect(added.querySelector('[data-sync]')?.getAttribute('data-sync')).toBe('pending');
@@ -302,7 +305,7 @@ describe('Discover: catalog search (online)', () => {
     const catalog = await catalogList();
     vi.spyOn(r.engine, 'write').mockRejectedValueOnce(new Error('disk full'));
     await user.click(within(catalog).getByRole('button', { name: 'Add to Owned' }));
-    expect(await screen.findByText('Could not add: disk full')).toBeInTheDocument();
+    await waitFor(() => expect(toasted()).toContain('error: Could not add: disk full'));
   });
 });
 

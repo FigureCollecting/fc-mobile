@@ -87,18 +87,18 @@ export const TOKEN_STEPS: ReadonlyMap<string, TokenStep> = new Map<string, Token
 export const SCOPE_ENV: ReadonlySet<string> = new Set(['FC_WEB_IMAGE', 'FC_WEB_IMAGE_NEXT', 'FC_STACK_WEB_IMAGE']);
 /** Keys a token step may use; shell, working-directory and the rest change how it runs. */
 const STEP_KEYS = new Set(['name', 'id', 'if', 'run', 'env', 'uses', 'with', 'continue-on-error']);
-/** Keys of a job with a token step; container, services and defaults change how its steps run. */
-const JOB_KEYS = new Set(['name', 'runs-on', 'if', 'needs', 'permissions', 'strategy', 'timeout-minutes', 'outputs', 'env', 'steps']);
-/** Top-level keys of a workflow with a token step; defaults would change how its steps run. */
-const WORKFLOW_KEYS = new Set(['name', 'run-name', 'on', 'permissions', 'concurrency', 'env', 'jobs']);
+/** Keys of a job with a token step, steps aside; container, services and defaults change how its steps run. */
+const JOB_KEYS = new Set(['name', 'runs-on', 'if', 'needs', 'permissions', 'strategy', 'timeout-minutes', 'outputs', 'env']);
+/** Top-level keys of a workflow with a token step, jobs aside; defaults would change how its steps run. */
+const WORKFLOW_KEYS = new Set(['name', 'run-name', 'on', 'permissions', 'concurrency', 'env']);
 
 const TOKEN = 'NODE_AUTH_TOKEN';
 const NAMED = /node_auth_token/i;
 // A dereference of the token's value, as opposed to naming the variable (env=NODE_AUTH_TOKEN).
 const VALUE_REF = /(secrets|env)(\.|\[\s*')node_auth_token|\$\{?node_auth_token/i;
 // A secrets or env ref that is not one name (secrets.NAME, secrets['NAME']) hands over them all.
-const ALL_SECRETS = /\bsecrets\b(?!\.[a-z_][\w-]*\b(?!\.\*)|\[\s*'[\w-]+'\s*\])/i;
-const ALL_ENV = /\benv\b(?!\.[a-z_][\w-]*\b(?!\.\*)|\[\s*'[\w-]+'\s*\])/i;
+const ALL_SECRETS = /\bsecrets\b(?!\.[a-z_]\w*\b(?!\.\*)|\[\s*'[\w-]+'\s*\])/i;
+const ALL_ENV = /\benv\b(?!\.[a-z_]\w*\b(?!\.\*)|\[\s*'[\w-]+'\s*\])/i;
 const EXPORT = /GITHUB_(ENV|OUTPUT|STATE|PATH)|::(set-output|save-state|set-env|add-path)/;
 // Runner files that change the env or PATH of every later step.
 const RUNNER_ENV = /GITHUB_(ENV|PATH)|::(set-env|add-path)/;
@@ -183,7 +183,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
           flag(where(key), 'elsewhere');
         }
       }
-      if (i < last && !bearing && !(typeof uses === 'string' && SETUP_ACTION.test(uses))) flag(where('step'), 'step-order');
+      if (i < last && !bearing && !SETUP_ACTION.test(String(uses))) flag(where('step'), 'step-order');
       if (bearing && shape) {
         for (const [key, value] of Object.entries(step)) {
           if (!STEP_KEYS.has(key)) flag(where(key), 'step-key');

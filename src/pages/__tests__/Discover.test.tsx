@@ -237,6 +237,20 @@ describe('Discover: catalog search (online)', () => {
     expect(untitled!.querySelector('.discover-results__meta')?.textContent).toBe('1/7');
   });
 
+  it('names an untitled catalog hit by its character, then its maker and scale, before "Untitled figure"', async () => {
+    const r = await seeded();
+    r.clients.searchProducts.mockResolvedValue(
+      catalogPage([
+        catalogCard(24, { character: 'Kurisu Makise', series: 'Steins;Gate', manufacturer: 'Good Smile Company' }),
+        catalogCard(25, { manufacturer: 'Good Smile Company', scale: '1/8' }),
+      ]),
+    );
+    renderWithProviders(<Discover />);
+    await searchFor('kurisu');
+    const items = within(await catalogList()).getAllByRole('listitem');
+    expect(items.map((i) => i.querySelector('.discover-results__name')?.textContent)).toEqual(['Kurisu Makise (Steins;Gate)', 'Good Smile Company 1/8']);
+  });
+
   it('follows the next page on request', async () => {
     const r = await seeded();
     r.clients.searchProducts
@@ -420,6 +434,27 @@ describe('Discover: barcode lookup through Compare (online only)', () => {
     await waitFor(async () => expect(await kinds(r, head)).toEqual(['ordered']));
     expect((await r.store.getProduct(head))?.card.title?.value).toBe(`Figure ${head.slice(0, 8)}`);
     expect(await within(hit).findByText('In your collection: Ordered ×1')).toBeInTheDocument();
+  });
+
+  it('names an untitled barcode hit by its maker and scale, before "Untitled figure"', async () => {
+    const r = await seeded();
+    const head = headOf(8);
+    r.server.products.set(
+      head,
+      create(ProductCardSchema, {
+        headId: head,
+        requestedAs: [{ ref: { case: 'headId', value: head } }],
+        manufacturer: { value: 'Good Smile Company', asOf: CARD_AS_OF },
+        scale: { value: '1/8', asOf: CARD_AS_OF },
+      }),
+    );
+    r.clients.compare.mockResolvedValue(create(CompareResponseSchema, { resultJson: JSON.stringify({ heads: [{ head }], related: [] }) }));
+    renderWithProviders(<Discover />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Barcode'), '4580416940986');
+    await user.click(screen.getByRole('button', { name: 'Look up' }));
+    const hit = await screen.findByRole('region', { name: 'Barcode result' });
+    expect(hit.querySelector('.discover-results__name')?.textContent).toBe('Good Smile Company 1/8');
   });
 
   it('says so when no figure carries the barcode', async () => {

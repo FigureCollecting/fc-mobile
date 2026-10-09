@@ -86,6 +86,12 @@ describe('workflow token guard on fixtures', () => {
     expect(fixture('clean.yml', new Map())).toEqual(['non-install-step', 'non-install-step', 'non-install-step', 'non-install-step', 'with']);
   });
 
+  it('never matches an unnamed step against the allow-list', () => {
+    const wf = { jobs: { build: { steps: [{ run: 'npm ci --ignore-scripts', env: { NODE_AUTH_TOKEN: 'x' } }] } } };
+    const allowed = new Map<string, TokenStep>(['#0', 'undefined'].map((s) => [stepId('x.yml', 'build', s), { kind: 'install' }]));
+    expect(checkWorkflow('x.yml', wf, allowed).map((v) => v.rule)).toEqual(['non-install-step']);
+  });
+
   it('labels an unnamed step by its index', () => {
     const wf = { jobs: { build: { steps: [{ run: 'npm test', env: { NODE_AUTH_TOKEN: 'x' } }] } } };
     expect(checkWorkflow('x.yml', wf, new Map())).toEqual([{ file: 'x.yml', where: 'build > #0 > env', rule: 'non-install-step' }]);
@@ -146,6 +152,7 @@ describe('install grammar on allow-listed install steps', () => {
     'npm ci --ignore-scripts=false',
     'npm ci --ignore-scripts; npm test',
     'npm ci --ignore-scripts && npm test',
+    'npm ci; curl x --ignore-scripts',
     'npm ci --ignore-scripts | tee log',
     'npm  ci --ignore-scripts',
     'npm --prefix e2e/stack;curl ci --ignore-scripts',
@@ -228,6 +235,10 @@ describe('token references, case-insensitive', () => {
 
   it('flags a lower-case token key in a workflow env', () => {
     expect(rules(`env:\n  node_auth_token: x\njobs: {}\n`)).toEqual(['workflow-env']);
+  });
+
+  it('accepts unrelated env next to the token on an allowed step', () => {
+    expect(rules(step('Install dependencies', 'run: npm ci --ignore-scripts', `NODE_AUTH_TOKEN: ${TOK}\n          CI: 'true'`))).toEqual([]);
   });
 
   it('flags the token under a second env name on an allowed step', () => {

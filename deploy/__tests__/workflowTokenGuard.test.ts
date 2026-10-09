@@ -314,8 +314,9 @@ describe('every secret at once', () => {
     ]);
   });
 
-  it('accepts an empty secrets: on a reusable-workflow job', () => {
+  it('accepts an empty secrets: on a reusable-workflow job, and reads values, not keys', () => {
     expect(rules('jobs:\n  call:\n    uses: ./other.yml\n    secrets:\n')).toEqual([]);
+    expect(rules('jobs:\n  call:\n    uses: ./other.yml\n    secrets:\n      secrets: ${{ secrets.KEY }}\n')).toEqual([]);
   });
 
   it('accepts a reusable-workflow job that passes a named, unrelated secret', () => {
@@ -519,6 +520,8 @@ describe('what may change how a token step runs', () => {
     ['docker/metadata-action@v6', 'images: ${{ vars.IMAGE }}'],
     ['docker/metadata-action@v6', 'tags: ${{ vars.TAGS }}'],
     ['docker/metadata-action@v6', 'flavor: latest=true'],
+    ['docker/metadata-action@v6', 'images: ghcr.io/${{ vars.OWNER }}/web'],
+    ['actions/setup-node@v7', "cache: { a: '${{ vars.CACHE }}' }"],
     ['Docker/Login-Action@v4', 'registry: attacker.example'],
     ['docker/login-action@v4', 'username: ${{ vars.USER }}'],
     ['docker/login-action@v4', 'password: ${{ secrets.OTHER }}'],

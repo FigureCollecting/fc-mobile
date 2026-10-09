@@ -63,7 +63,6 @@ export class CatalogSearch {
   readonly #deps: CatalogSearchDeps;
   readonly #timers: NonNullable<CatalogSearchDeps['timers']>;
   #key: string | undefined;
-  #query: string | null = null;
   #token = '';
   #debounce: unknown;
   #inFlight: { abort: AbortController; timeout: unknown } | undefined;
@@ -91,7 +90,6 @@ export class CatalogSearch {
     if (key === this.#key) return;
     this.#key = key;
     this.#cancel();
-    this.#query = query;
     if (query === null) return this.#show({ kind: 'hidden', reason: 'idle' });
     if (!online) return this.#show({ kind: 'hidden', reason: 'offline' });
     this.#show({ kind: 'searching', query });

@@ -1,8 +1,9 @@
 // Catalog-wide search in the client (WK-17 B2): CatalogService.SearchProducts through a real Connect
 // client over an in-memory router transport (the coordinator's pass-through is built in parallel).
 // Debounced, one search in flight (a newer query or going offline cancels it), the query in the
-// spine's form (NFKC, then trimmed of Unicode White_Space) and bounds, pages of at most 50, a stale
-// page token restarting from page one, and the quiet failures that hide the section.
+// spine's form (NFKC, then trimmed of Unicode White_Space) within the client's own bounds, pages of
+// at most 50, a refused page token restarting from page one, and the quiet failures that hide the
+// section. The contract's numbers are stated here as literals, so a changed constant is caught.
 import { afterEach, describe, expect, it } from 'vitest';
 import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError, createClient, createRouterTransport, type HandlerContext } from '@connectrpc/connect';
@@ -87,6 +88,28 @@ describe('catalogQuery: the spine form and bounds', () => {
     expect(catalogQuery(`${emoji}x`)).toBeNull();
     expect(catalogQuery(` ${'a'.repeat(CATALOG_QUERY_MAX)} `)).toBe('a'.repeat(CATALOG_QUERY_MAX));
   });
+
+  it('bounds a query at 256 code points', () => {
+    expect(catalogQuery('a'.repeat(256))).toBe('a'.repeat(256));
+    expect(catalogQuery('a'.repeat(257))).toBeNull();
+  });
+
+  it.each([
+    ['Han', '初'],
+    ['Hiragana', 'み'],
+    ['Katakana', 'ミ'],
+    ['Hangul', '미'],
+  ])('sends a single %s character, which is a word on its own', (_script, ch) => {
+    expect(catalogQuery(ch)).toBe(ch);
+  });
+
+  it.each([
+    ['Latin', 'm'],
+    ['a digit', '1'],
+    ['Cyrillic', 'м'],
+  ])('sends no single %s character', (_script, ch) => {
+    expect(catalogQuery(ch)).toBeNull();
+  });
 });
 
 describe('CatalogSearch', () => {
@@ -96,7 +119,7 @@ describe('CatalogSearch', () => {
     t.search.set('mik', true);
     t.search.set(' miku ', true);
     expect(t.search.view).toEqual({ kind: 'searching', query: 'miku' });
-    expect(t.timers.delays()).toEqual([CATALOG_DEBOUNCE_MS]);
+    expect(t.timers.delays()).toEqual([300]);
     await t.settle();
     expect(t.pending).toHaveLength(0);
     t.fire(CATALOG_DEBOUNCE_MS);
@@ -267,7 +290,7 @@ describe('CatalogSearch', () => {
     t.search.set('miku', true);
     t.fire(CATALOG_DEBOUNCE_MS);
     const p = await t.reached(1);
-    expect(t.timers.delays()).toEqual([CATALOG_TIMEOUT_MS]);
+    expect(t.timers.delays()).toEqual([15_000]);
     t.fire(CATALOG_TIMEOUT_MS);
     expect(p.signal.aborted).toBe(true);
     await t.settle();
@@ -320,6 +343,34 @@ describe('CatalogSearch', () => {
     expect(t.search.view).toEqual({ kind: 'failed', query: 'miku' });
   });
 
+  it('hides the section quietly when the restart from page one meets a catalog that cannot answer', async () => {
+    const t = setup();
+    t.search.set('miku', true);
+    t.fire(CATALOG_DEBOUNCE_MS);
+    (await t.reached(1)).answer(page([card(0)], 'p2'));
+    await t.settle();
+    t.search.more();
+    (await t.reached(2)).fail(new ConnectError('stale', Code.InvalidArgument));
+    (await t.reached(3)).fail(new ConnectError('spine down', Code.Unavailable));
+    await t.settle();
+    expect(t.search.view).toEqual({ kind: 'hidden', reason: 'unavailable' });
+  });
+
+  it('hides the section quietly when the restart from page one does not answer in time', async () => {
+    const t = setup();
+    t.search.set('miku', true);
+    t.fire(CATALOG_DEBOUNCE_MS);
+    (await t.reached(1)).answer(page([card(0)], 'p2'));
+    await t.settle();
+    t.search.more();
+    (await t.reached(2)).fail(new ConnectError('stale', Code.InvalidArgument));
+    const restart = await t.reached(3);
+    t.fire(CATALOG_TIMEOUT_MS);
+    expect(restart.signal.aborted).toBe(true);
+    await t.settle();
+    expect(t.search.view).toEqual({ kind: 'hidden', reason: 'unavailable' });
+  });
+
   it('says a search failed when page one is refused too', async () => {
     const t = setup();
     t.search.set('miku', true);
@@ -358,6 +409,52 @@ describe('CatalogSearch', () => {
     t.search.set('nendo', true);
     expect(t.views).toHaveLength(seen);
     expect(t.timers.pending.size).toBe(0);
+  });
+
+  it('once disposed, neither retries a failed search nor fetches more, and tells no one', async () => {
+    const failed = setup();
+    failed.search.set('miku', true);
+    failed.fire(CATALOG_DEBOUNCE_MS);
+    (await failed.reached(1)).fail(new ConnectError('boom', Code.Internal));
+    await failed.settle();
+    const seenFailed = failed.views.length;
+    failed.search.dispose();
+    failed.search.retry();
+    await failed.settle();
+    expect(failed.pending).toHaveLength(1);
+    expect(failed.views).toHaveLength(seenFailed);
+
+    const paged = setup();
+    paged.search.set('miku', true);
+    paged.fire(CATALOG_DEBOUNCE_MS);
+    (await paged.reached(1)).answer(page([card(0)], 'p2'));
+    await paged.settle();
+    const seenPaged = paged.views.length;
+    paged.search.dispose();
+    paged.search.more();
+    await paged.settle();
+    expect(paged.pending).toHaveLength(1);
+    expect(paged.views).toHaveLength(seenPaged);
+  });
+
+  it('never aborts a search that already answered', async () => {
+    const signals: AbortSignal[] = [];
+    const timers = new ManualTimers();
+    const search = new CatalogSearch({
+      timers,
+      search: async (_req, { signal }) => {
+        signals.push(signal);
+        return page([card(1)]);
+      },
+    });
+    live = search;
+    search.set('miku', true);
+    timers.fireAll();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(heads(search.view)).toEqual([headOf(1)]);
+    search.set('nendo', true);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]!.aborted).toBe(false);
   });
 
   it('lets a listener unsubscribe', () => {

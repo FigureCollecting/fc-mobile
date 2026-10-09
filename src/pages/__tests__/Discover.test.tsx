@@ -184,10 +184,29 @@ describe('Discover: catalog search (online)', () => {
     await waitFor(() => expect(added.querySelector('[data-sync]')?.getAttribute('data-sync')).toBe('known'));
   });
 
-  it('leaves out a catalog hit merged into a figure the local hits list (named in requested_as)', async () => {
+  // An ER merge as the device sees it: the copy sits on the merged-away head 0, and GetProducts
+  // answered for head 0 with the survivor's card (head 30, requested_as names head 0). A search
+  // request carries no refs, so a SearchProducts card's requested_as is always empty.
+  async function mergedIntoSurvivor(r: LocalRig) {
+    await r.store.putProducts([
+      create(ProductCardSchema, { headId: headOf(30), requestedAs: [{ ref: { case: 'headId', value: headOf(0) } }], title: { value: 'Hatsune Miku: Deep Sea Girl', asOf: CARD_AS_OF } }),
+    ]);
+  }
+
+  it("leaves out the survivor of a merge the local hits already show, as SearchProducts sends it (requested_as empty)", async () => {
     const r = await seeded();
-    const merged = create(ProductCardSchema, { headId: headOf(30), requestedAs: [{ ref: { case: 'headId', value: headOf(0) } }], title: { value: 'Hatsune Miku: Deep Sea Girl (survivor)', asOf: CARD_AS_OF } });
-    r.clients.searchProducts.mockResolvedValue(catalogPage([merged, catalogCard(21, { title: 'Racing Miku 2026' })]));
+    await mergedIntoSurvivor(r);
+    r.clients.searchProducts.mockResolvedValue(catalogPage([catalogCard(30, { title: 'Hatsune Miku: Deep Sea Girl' }), catalogCard(21, { title: 'Racing Miku 2026' })]));
+    renderWithProviders(<Discover />);
+    await searchFor('miku');
+    const items = within(await catalogList()).getAllByRole('listitem');
+    expect(items.map((i) => i.querySelector('.discover-results__name')?.textContent)).toEqual(['Racing Miku 2026']);
+  });
+
+  it('leaves out a merged-away head the local hits answer for, while they show the survivor', async () => {
+    const r = await seeded();
+    await mergedIntoSurvivor(r);
+    r.clients.searchProducts.mockResolvedValue(catalogPage([catalogCard(0, { title: 'Hatsune Miku: Deep Sea Girl' }), catalogCard(21, { title: 'Racing Miku 2026' })]));
     renderWithProviders(<Discover />);
     await searchFor('miku');
     const items = within(await catalogList()).getAllByRole('listitem');
@@ -304,6 +323,28 @@ describe('Discover: catalog search (online)', () => {
     } finally {
       goOnline();
     }
+  });
+
+  it('sends nothing to SearchProducts while signed out, and searches once signed in', async () => {
+    const r = await seeded();
+    r.status.value = 'signed-out';
+    renderWithProviders(<Discover />);
+    await searchFor('miku');
+    await new Promise((res) => setTimeout(res, 400));
+    expect(r.clients.searchProducts).not.toHaveBeenCalled();
+    expect(screen.queryByRole('region', { name: 'In the catalog' })).toBeNull();
+    act(() => {
+      r.status.value = 'signed-in';
+    });
+    await waitFor(() => expect(r.clients.searchProducts).toHaveBeenCalledTimes(1));
+  });
+
+  it('searches the catalog before the sync engine has first reached the server', async () => {
+    const r = await localRig();
+    expect(r.engine.state.value.reachability).toBe('unknown');
+    renderWithProviders(<Discover />);
+    await searchFor('miku');
+    await waitFor(() => expect(r.clients.searchProducts).toHaveBeenCalledTimes(1));
   });
 
   it('treats a sync engine that cannot reach the server as offline', async () => {

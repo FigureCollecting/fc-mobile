@@ -1,0 +1,10 @@
+name: trivy by tag
+on: [push]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs

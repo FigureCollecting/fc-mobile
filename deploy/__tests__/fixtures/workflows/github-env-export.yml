@@ -1,0 +1,12 @@
+name: GITHUB_ENV export
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          echo "NODE_AUTH_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
+          npm ci --ignore-scripts
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,13 @@
+name: token in a container env
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:24
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+    steps:
+      - name: Install dependencies
+        if: ${{ secrets.NODE_AUTH_TOKEN != '' }}
+        run: npm ci --ignore-scripts

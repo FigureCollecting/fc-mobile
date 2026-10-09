@@ -1,0 +1,11 @@
+# A13: the token under another name, exported through $GITHUB_ENV by that name.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: echo "T=$T" >> "$GITHUB_ENV"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+          T: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

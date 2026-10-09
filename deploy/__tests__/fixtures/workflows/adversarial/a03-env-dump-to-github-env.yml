@@ -1,0 +1,13 @@
+# A3: an allowed step dumps its env (the token) into $GITHUB_ENV for every later step.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          env >> "$GITHUB_ENV"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+      - run: npm test

@@ -656,6 +656,16 @@ describe('coordinator checkout preparation', () => {
     expect(existsSync(path.join(bare.dir, 'node_modules', '.stack-lock-sha256'))).toBe(true);
   });
 
+  it('installs without running install scripts (the token is in the env)', () => {
+    const upstream = upstreamRepo();
+    const pkg = path.join(upstream.dir, 'package.json');
+    const ran = path.join(upstream.dir, 'postinstall-ran');
+    writeFileSync(pkg, JSON.stringify({ ...JSON.parse(readFileSync(pkg, 'utf8')), scripts: { postinstall: 'node -e "require(\'fs\').writeFileSync(\'postinstall-ran\', \'\')"' } }));
+    prepareCheckout({ dir: upstream.dir, source: 'dir' });
+    expect(existsSync(path.join(upstream.dir, 'node_modules', '.stack-lock-sha256'))).toBe(true);
+    expect(existsSync(ran)).toBe(false);
+  });
+
   it('names the failing git step for a ref that does not exist', () => {
     const upstream = upstreamRepo();
     const checkout = resolveCheckout({ ref: 'no-such-branch' }, { FC_COORDINATOR_REPO: upstream.dir }, scratch());

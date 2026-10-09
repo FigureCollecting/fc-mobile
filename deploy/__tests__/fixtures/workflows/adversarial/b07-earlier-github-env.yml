@@ -1,0 +1,11 @@
+# B7: an earlier untokened step writes NODE_OPTIONS to $GITHUB_ENV for the token step.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "NODE_OPTIONS=--require $PWD/x.js" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

@@ -1,0 +1,7 @@
+# A9: the trivy owner in another case still resolves to aquasecurity.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: AquaSecurity/trivy-action@v0.36.0

@@ -1,0 +1,12 @@
+# B17: a computed env index in with: hands the allowed action the token without spelling it.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          secrets: "t=${{ env[format('NODE_{0}', 'AUTH_TOKEN')] }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

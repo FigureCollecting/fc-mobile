@@ -1,0 +1,12 @@
+# B15: a job-wide FC_COORDINATOR_REPO points the coordinator checkout (npm ci with the token) at another repo.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FC_COORDINATOR_REPO: evil/fc-coordinator
+    steps:
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

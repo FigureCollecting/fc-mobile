@@ -1,0 +1,11 @@
+name: token in with
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          secrets: |
+            node_auth_token=${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

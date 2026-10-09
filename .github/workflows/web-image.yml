@@ -43,13 +43,13 @@ jobs:
             e2e/stack/package-lock.json
 
       - name: Install app dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Install harness dependencies and the pinned coordinator
         run: |
-          npm --prefix e2e/stack ci
+          npm --prefix e2e/stack ci --ignore-scripts
           npm --prefix e2e/stack run checkout
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
@@ -150,7 +150,7 @@ jobs:
 
       - name: Build and push
         id: publish
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           push: true
@@ -158,8 +158,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VITE_BUILD_ID=${{ steps.meta.outputs.version }}
-          secrets: |
-            node_auth_token=${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+          # The token is read from this step's env (BuildKit env secret), never passed in with:.
+          secret-envs: |
+            node_auth_token=NODE_AUTH_TOKEN
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Verify the PUBLISHED image runs as a non-root user
         # A second build from the one `image` tested: assert on the pushed bytes.

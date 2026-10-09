@@ -11,6 +11,9 @@
 //       later carries the legacy sign-in (/auth/login, /auth/refresh).
 //   (f) importing a fixture CSV shows the counts the server returned, and the note conflict it
 //       raises goes through the review (GR-Q1): both values with their dates, 'keep app' synced.
+//   (g) WK-17: online, the catalog's hits follow the local ones; 'Add to Owned' makes a copy that
+//       syncs APPLIED and moves up to the local hits; offline the catalog section is hidden and
+//       nothing is asked. SearchProducts is answered by a page route until the coordinator serves it.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
@@ -489,6 +492,79 @@ test('(f) importing a fixture CSV shows the counts the server returned, and its 
   expect(facet?.pending_id ?? null).toBeNull();
   expect(JSON.parse(facet!.value!.payload)).toMatchObject({ item: 'figure', rev: raised!.rev, choice: 'keep' });
   testInfo.annotations.push({ type: 'review-answer', description: facet!.value!.payload });
+});
+
+// ------------------------------------------------------------------ (g)
+
+const SEARCH_PATH = '**/api/coordinator.v1.CatalogService/SearchProducts';
+
+/** A catalog hit as the coordinator's JSON answers it: title only, the other fields absent. */
+const catalogCard = (h: CatalogHead) => ({ headId: h.headId, title: { value: h.name, asOf: '2026-10-01T00:00:00.000000Z' } });
+
+test("(g) online, the catalog's hits follow the local ones, 'Add to Owned' syncs APPLIED, and offline hides the catalog", async ({ context }, testInfo) => {
+  test.setTimeout(180_000);
+  const page = await openApp(context, USER_B);
+  await settled(page, 120_000);
+  // Two figures B does not hold yet, with unique ASCII titles (a reused stack or the other panel's
+  // run may have added earlier ones).
+  const held = new Set((await page.evaluate(() => window.__fcSync!.copies())).filter((c) => c.shown_in !== null).map((c) => c.head_id));
+  const pool = HEADS.filter((h, i) => i >= 600 && /^[\x20-\x7e]+$/.test(h.name) && !held.has(h.headId) && HEADS.filter((o) => o.name === h.name).length === 1);
+  const [x, y] = [pool[0]!, pool[1]!];
+  const asked: Array<{ query?: string; pageSize?: number; pageToken?: string }> = [];
+  await page.route(SEARCH_PATH, async (route) => {
+    asked.push(route.request().postDataJSON() as (typeof asked)[number]);
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ products: [x, y].map(catalogCard), nextPageToken: '' }) });
+  });
+
+  await navigate(page, '/discover');
+  const field = page.getByPlaceholder('Search your figures...');
+  const local = page.getByRole('list', { name: 'Search results' });
+  const catalog = page.getByRole('list', { name: 'Catalog results' });
+  await field.fill(x.name);
+  await expect(catalog.getByRole('listitem')).toHaveCount(2, { timeout: 15_000 });
+  await expect(page.getByText('No figure in your collection matches.')).toBeVisible();
+  expect(asked).toHaveLength(1);
+  expect(asked[0]).toMatchObject({ query: x.name, pageSize: 50 });
+  await shot(page, testInfo, 'search-catalog');
+
+  await catalog.getByRole('listitem').filter({ hasText: x.name }).getByRole('button', { name: 'Add to Owned' }).click();
+  // The added figure moves up to the local hits; the catalog keeps only the other one.
+  await expect(local.getByRole('listitem').filter({ hasText: x.name })).toHaveCount(1, { timeout: 15_000 });
+  await expect(catalog.getByRole('listitem')).toHaveCount(1);
+  await expect(catalog).toContainText(y.name);
+  expect(await local.evaluate((l) => l.compareDocumentPosition(document.querySelector('[aria-label="Catalog results"]')!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+  await settled(page);
+  const copy = (await page.evaluate(() => window.__fcSync!.copies())).find((c) => c.head_id === x.headId && c.status === 'owned' && c.shown_in !== null);
+  expect(copy, `an owned copy of ${x.headId}`).toBeDefined();
+  const status = await page.evaluate((k) => window.__fcSync!.facet(k), `occ/${copy!.occ_id}/status`);
+  expect(status?.pending_id ?? null).toBeNull();
+  expect(JSON.parse(status!.value!.payload)).toMatchObject({ status: 'owned' });
+  const outcomes = (await page.evaluate(() => window.__fcSync!.outbox())).filter((e) => e.facet_key.startsWith(`occ/${copy!.occ_id}/`));
+  expect(outcomes.map((e) => e.state)).toEqual(outcomes.map(() => 'APPLIED'));
+  expect((await stack.sync.counts({ user: USER_B.sub, prefix: `occ/${copy!.occ_id}/` })).facets).toBe(2);
+  await expect(local.getByRole('listitem').filter({ hasText: x.name }).locator('[data-sync]')).toHaveAttribute('data-sync', 'known');
+  testInfo.annotations.push({ type: 'catalog-add', description: JSON.stringify({ head: x.headId, occ: copy!.occ_id, outbox: outcomes }) });
+  await shot(page, testInfo, 'search-local-and-catalog');
+
+  // Offline: the section goes, nothing is asked, and nothing says an error.
+  const before = asked.length;
+  await context.setOffline(true);
+  try {
+    await expect(page.getByRole('region', { name: 'In the catalog' })).toHaveCount(0);
+    await field.fill(y.name);
+    await expect(page.getByText('No figure in your collection matches.')).toBeVisible();
+    await field.fill(x.name);
+    await expect(local.getByRole('listitem').filter({ hasText: x.name })).toHaveCount(1);
+    await page.waitForTimeout(600);
+    expect(asked).toHaveLength(before);
+    await expect(page.getByRole('region', { name: 'In the catalog' })).toHaveCount(0);
+    await expect(page.getByText(/catalog search failed/i)).toHaveCount(0);
+    await expect(page.locator('.toast-item').filter({ hasNotText: 'Added to Owned' })).toHaveCount(0);
+    await shot(page, testInfo, 'search-catalog-offline');
+  } finally {
+    await context.setOffline(false);
+    await page.unroute(SEARCH_PATH);
+  }
 });
 
 // ------------------------------------------------------------------ (e)

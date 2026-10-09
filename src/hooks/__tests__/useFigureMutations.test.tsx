@@ -3,6 +3,7 @@
 // engine, the only sync path. The same mutate({ id, data }) signatures the pages bind to.
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
+import { QueryClient, onlineManager } from '@tanstack/react-query';
 import { ufFacetKey } from '@figurecollecting/fc-api-contract';
 import { localRig, queryWrapper, type LocalRig } from '../../local/__tests__/localHarness';
 import { headOf } from '../../sync/__tests__/engineSupport';
@@ -185,5 +186,57 @@ describe('useCopyActions', () => {
       await result.current.addToCollection(headOf(4), 'wished');
     });
     await waitFor(() => expect(r.engine.changes.value).toBe(before + 1));
+  });
+});
+
+// WK-16 F9/F12: in Airplane mode the browser fires 'offline' and TanStack's onlineManager reads
+// offline. A mutation on the default networkMode ('online') is then paused in memory: 'Saving…'
+// never resolves, nothing reaches the store, and killing the app loses the edit. The local-store
+// edits run whatever the network says, on the app's own QueryClient defaults (not 'always').
+describe('offline: the edit hooks commit to the local store at once (WK-13b)', () => {
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  const appClient = () => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const STUCK = Symbol('stuck');
+  // A paused mutation never settles: give it 1 s, as 'Saving…' would hang.
+  const settles = <T,>(p: Promise<T>): Promise<T | typeof STUCK> => Promise.race([p, new Promise<typeof STUCK>((res) => setTimeout(() => res(STUCK), 1_000))]);
+
+  it('useUpdateFigure writes the note to the store and its outbox offline, before any network', async () => {
+    const r = await localRig();
+    await r.engine.write((s) => s.createCopy(headOf(1), 'owned'));
+    const calls = r.server.calls.length;
+    onlineManager.setOnline(false);
+    const { result } = renderHook(() => useUpdateFigure(), { wrapper: queryWrapper(appClient()) });
+    let out: unknown;
+    await act(async () => {
+      out = await settles(result.current.mutateAsync({ id: headOf(1), data: { note: 'kept offline' } }));
+    });
+    expect(out).not.toBe(STUCK);
+    expect(await live(r, ufFacetKey(headOf(1), 'note'))).toMatchObject({ note: 'kept offline' });
+    expect((await r.store.getFacet(ufFacetKey(headOf(1), 'note')))!.pending_id).not.toBeNull();
+    expect((await r.store.listOutbox()).filter((e) => e.facet_key === ufFacetKey(headOf(1), 'note')).map((e) => e.state)).toEqual(['PENDING']);
+    expect(r.server.calls.length).toBe(calls);
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(result.current.isPaused).toBe(false);
+  });
+
+  it.each([
+    ['useDeleteFigure', () => useDeleteFigure(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync(headOf(2) as never)],
+    ['useBulkUpdateStatus', () => useBulkUpdateStatus(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync({ ids: [headOf(2)], status: 'ordered' } as never)],
+    ['useBulkDelete', () => useBulkDelete(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync([headOf(2)] as never)],
+  ])('%s commits offline', async (_name, hook, run) => {
+    const r = await localRig();
+    await r.engine.write((s) => s.createCopy(headOf(2), 'owned'));
+    const before = (await r.store.listOutbox()).length;
+    onlineManager.setOnline(false);
+    const { result } = renderHook(hook, { wrapper: queryWrapper(appClient()) });
+    let out: unknown;
+    await act(async () => {
+      out = await settles(run(result.current as never));
+    });
+    expect(out).not.toBe(STUCK);
+    expect((await r.store.listOutbox()).length).toBeGreaterThan(before);
   });
 });

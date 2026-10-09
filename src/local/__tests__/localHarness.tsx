@@ -5,7 +5,7 @@ import { signal } from '@preact/signals';
 import { vi } from 'vitest';
 import { create } from '@bufbuild/protobuf';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { CompareResponseSchema, GetProductImagesResponseSchema, ImportMfcExportResponseSchema } from '@figurecollecting/fc-api-contract';
+import { CompareResponseSchema, GetProductImagesResponseSchema, ImportMfcExportResponseSchema, SearchProductsResponseSchema } from '@figurecollecting/fc-api-contract';
 import type { AuthStatus } from '../../auth/statusGate';
 import type { SyncEngineDeps } from '../../sync/engine';
 import { makeTestQueryClient } from '../../test/testUtils';
@@ -19,6 +19,7 @@ export interface LocalRig extends Rig {
     compare: ReturnType<typeof vi.fn>;
     getProducts: ReturnType<typeof vi.fn>;
     getProductImages: ReturnType<typeof vi.fn>;
+    searchProducts: ReturnType<typeof vi.fn>;
     importMfcExport: ReturnType<typeof vi.fn>;
   };
 }
@@ -32,11 +33,12 @@ export async function localRig(opts: { status?: AuthStatus; publish?: boolean; d
       r.server.catalog.getProducts(req, o),
     ),
     getProductImages: vi.fn(async () => create(GetProductImagesResponseSchema, {})),
+    searchProducts: vi.fn(async () => create(SearchProductsResponseSchema, {})),
     importMfcExport: vi.fn(async () => create(ImportMfcExportResponseSchema, {})),
   };
   const online: OnlineClients = {
     compare: { compare: clients.compare as never },
-    catalog: { getProducts: clients.getProducts as never, getProductImages: clients.getProductImages as never },
+    catalog: { getProducts: clients.getProducts as never, getProductImages: clients.getProductImages as never, searchProducts: clients.searchProducts as never },
     import: { importMfcExport: clients.importMfcExport as never },
   };
   const session: LocalSession = {

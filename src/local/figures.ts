@@ -12,6 +12,7 @@ import { compareVersion, type OccurrenceStatus } from '@figurecollecting/fc-api-
 import type { FacetRecord, ProductRecord } from '../storage/records';
 import { buildView, effectiveTags, shownCopies, type CopyView, type LocalView } from '../sync/occurrences';
 import { readPayload } from '../sync/payload';
+import { cardName } from './cardName';
 
 export type ItemSync = 'known' | 'pending' | 'offline-stale';
 export type UfField = 'score' | 'note' | 'wishability';
@@ -67,7 +68,6 @@ export interface FigureInputs {
 const KINDS: readonly OccurrenceStatus[] = ['owned', 'ordered', 'wished', 'former'];
 const UF_FIELDS: readonly UfField[] = ['score', 'note', 'wishability'];
 const COLLECTION_STATUSES = new Set<string>(['owned', 'ordered', 'wished']);
-const UNTITLED = 'Untitled figure';
 
 /** A GTIN-14 with a leading zero is a JAN/EAN-13; anything else is shown as it is. */
 export function jan13(gtin14: string): string {
@@ -165,7 +165,7 @@ function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[
 
   const figure: LocalFigure = {
     _id: d,
-    name: card?.title?.value || UNTITLED,
+    name: cardName(card),
     manufacturer: card?.manufacturer?.value ?? '',
     scale: card?.scale?.value ?? '',
     userId: m.sub,

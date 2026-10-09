@@ -6,14 +6,15 @@
 // how a token step runs: its keys are allow-listed (no shell or working-directory), its env holds
 // the token and nothing else, its job has no container, services or defaults, the job and workflow
 // env hold only the image names in SCOPE_ENV, and before the job's last token step only other token
-// steps and the setup actions in SETUP_ACTION run. No step of that job writes $GITHUB_ENV or
-// $GITHUB_PATH, and the token step writes no runner file. The token is never workflow- or job-wide,
-// never in with: or a value in run: text, never under a second env name. Every env is a plain
-// mapping, so the guard can read its names. A secrets ref must name one secret (secrets.NAME or
-// secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
-// secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
-// secrets: is a mapping of named secrets other than the token. Names match case-insensitively
-// (secret names are). aquasecurity actions are pinned by full SHA (GHSA-69fq-xp46-6x23).
+// steps and the setup actions in SETUP_ACTION run, with only the with: inputs in SETUP_WITH and no
+// env. No step of that job writes $GITHUB_ENV or $GITHUB_PATH, and the token step writes no runner
+// file. The token is never workflow- or job-wide, never in with: or a value in run: text, never
+// under a second env name. Every env is a plain mapping, so the guard can read its names. A secrets
+// ref must name one secret (secrets.NAME or secrets['NAME']), and a token step's env refs one
+// variable; anything else (toJSON(secrets), secrets.*, a computed index) and secrets: inherit hand
+// over every secret; a reusable workflow's secrets: is a mapping of named secrets other than the
+// token. Names match case-insensitively (secret names are). aquasecurity actions are pinned by full
+// SHA (GHSA-69fq-xp46-6x23).
 
 export type Rule =
   | 'workflow-env'
@@ -29,6 +30,7 @@ export type Rule =
   | 'all-secrets'
   | 'job-secrets'
   | 'env-expr'
+  | 'setup-with'
   | 'trivy-unpinned'
   | 'step-key'
   | 'step-env'
@@ -105,6 +107,24 @@ const EXPORT = /GITHUB_(ENV|OUTPUT|STATE|PATH)|::(set-output|save-state|set-env|
 const RUNNER_ENV = /GITHUB_(ENV|PATH)|::(set-env|add-path)/;
 // The actions that may run before a token step: they check out and set up, nothing else.
 const SETUP_ACTION = /^(actions\/(checkout|setup-node)|docker\/(setup-buildx|metadata|login)-action)@/i;
+const literal = (v: string): boolean => !v.includes('${{');
+/** The with: inputs each setup action may take before a token step, and the values each accepts. */
+const SETUP_WITH: Readonly<Record<string, Readonly<Record<string, (v: string) => boolean>>>> = {
+  'actions/checkout': {},
+  'actions/setup-node': {
+    'node-version': (v) => literal(v) || v === '${{ matrix.node-version }}',
+    cache: literal,
+    'cache-dependency-path': literal,
+    'registry-url': (v) => v === 'https://npm.pkg.github.com',
+  },
+  'docker/setup-buildx-action': {},
+  'docker/metadata-action': { images: literal, tags: literal },
+  'docker/login-action': {
+    registry: (v) => v === 'ghcr.io',
+    username: (v) => v === '${{ github.actor }}',
+    password: (v) => v === '${{ secrets.GITHUB_TOKEN }}',
+  },
+};
 const INSTALL_LINE = /^npm (--prefix [\w./-]+ )?ci --ignore-scripts$/;
 const CHECKOUT_LINE = 'npm --prefix e2e/stack run checkout';
 const SHA_PIN = /@[0-9a-f]{40}$/;
@@ -196,6 +216,15 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
         }
       }
       if (i < last && !bearing && !SETUP_ACTION.test(String(uses))) flag(where('step'), 'step-order');
+      // A setup action's inputs and env decide which node, npm registry or BuildKit the token reaches.
+      const setup = i < last ? SETUP_ACTION.exec(String(uses)) : null;
+      if (setup) {
+        const inputs = SETUP_WITH[setup[1].toLowerCase()];
+        const w = step['with'] ?? {};
+        const fits = Object.entries(record(w)).every(([k, x]) => Object.hasOwn(inputs, k) && inputs[k](text(x)));
+        if (!plain(w) || !fits) flag(where('with'), 'setup-with');
+        if (text(step['env']) !== '') flag(where('env'), 'setup-with');
+      }
       if (bearing && shape) {
         for (const [key, value] of Object.entries(step)) {
           if (!STEP_KEYS.has(key)) flag(where(key), 'step-key');

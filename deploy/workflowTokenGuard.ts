@@ -115,9 +115,11 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
     const steps = Array.isArray(job['steps']) ? job['steps'] : [];
     steps.forEach((stepValue, i) => {
       const step = record(stepValue);
-      const label = typeof step['name'] === 'string' ? step['name'] : `#${i}`;
+      const named = typeof step['name'] === 'string';
+      const label = named ? String(step['name']) : `#${i}`;
       const where = (key: string) => `${jobId} > ${label} > ${key}`;
-      const shape = allowed.get(stepId(file, jobId, label));
+      // Only a named step can be allow-listed: an index would pass whatever step moves into it.
+      const shape = named ? allowed.get(stepId(file, jobId, label)) : undefined;
       const bearing = mentions(step['env']);
       for (const [key, value] of Object.entries(step)) {
         const t = text(value);

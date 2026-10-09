@@ -224,6 +224,7 @@ describe('pinned script and pinned action on allow-listed build steps', () => {
     `evil/build-push-action@${SHA}`,
     `docker/build-push-action-x@${SHA}`,
     `xdocker/build-push-action@${SHA}`,
+    `Docker/build-push-action@${SHA}`,
   ])('rejects %s on the allowed-action step', (uses) => {
     expect(rules(step('Build and push', `uses: ${uses}`))).toEqual(['token-action']);
   });

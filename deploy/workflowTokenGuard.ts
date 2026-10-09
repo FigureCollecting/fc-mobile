@@ -1,20 +1,22 @@
 // Token-scope guard for .github/workflows (run by deploy/__tests__/workflowTokenGuard.test.ts).
 // NODE_AUTH_TOKEN reads @figurecollecting packages from GitHub Packages. It may only be in the env
 // of an allow-listed step, and that step runs exactly what its entry says: npm ci --ignore-scripts
-// line by line, one pinned script, or one action pinned by full SHA. The one entry that runs repo
-// code is the coordinator checkout (npm --prefix e2e/stack run checkout). Nothing else may change
-// how a token step runs: its keys are allow-listed (no shell or working-directory), its env holds
-// the token and nothing else, its job has no container, services or defaults, the job and workflow
-// env hold only the image names in SCOPE_ENV, and before the job's last token step only other token
-// steps and the setup actions in SETUP_ACTION run, with only the with: inputs in SETUP_WITH and no
-// env. No step of that job writes $GITHUB_ENV or $GITHUB_PATH, and the token step writes no runner
-// file. The token is never workflow- or job-wide, never in with: or a value in run: text, never
-// under a second env name. Every env is a plain mapping, so the guard can read its names. A secrets
-// ref must name one secret (secrets.NAME or secrets['NAME']), and a token step's env refs one
-// variable; anything else (toJSON(secrets), secrets.*, a computed index) and secrets: inherit hand
-// over every secret; a reusable workflow's secrets: is a mapping of named secrets other than the
-// token. Names match case-insensitively (secret names are). aquasecurity actions are pinned by full
-// SHA (GHSA-69fq-xp46-6x23).
+// line by line, one pinned script, or one action at its pinned commit. Of the npm entries only the
+// two coordinator ones (kind checkout) may run a repo script, npm --prefix e2e/stack run checkout;
+// an install entry may not. The image builds run the repo's Dockerfile, which this guard does not
+// read. Nothing else may change how a token step runs: its keys are allow-listed (no shell or
+// working-directory), its env holds the token and nothing else, its job has no container, services
+// or defaults, the job and workflow env hold only the image names in SCOPE_ENV, and before the
+// job's last token step only other token steps and the setup actions in SETUP_ACTION run, with only
+// the with: inputs in SETUP_WITH and no env. No step of that job writes $GITHUB_ENV or
+// $GITHUB_PATH, and the token step writes no runner file. The token is never workflow- or job-wide,
+// never in with: or a value in run: text, never under a second env name. Every env is a plain
+// mapping, so the guard can read its names. A secrets ref must name one secret (secrets.NAME or
+// secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
+// secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
+// secrets: is a mapping of named secrets other than the token. Names match case-insensitively
+// (secret names are). The setup and build actions in ACTION_PINS run at their pinned commit
+// wherever they are used, and aquasecurity actions are pinned by full SHA (GHSA-69fq-xp46-6x23).
 
 export type Rule =
   | 'workflow-env'
@@ -32,6 +34,7 @@ export type Rule =
   | 'env-expr'
   | 'setup-with'
   | 'trivy-unpinned'
+  | 'action-pin'
   | 'step-key'
   | 'step-env'
   | 'step-order'
@@ -49,12 +52,28 @@ export interface Violation {
 /** What an allow-listed step may do with the token in its env. */
 export type TokenStep =
   | { kind: 'install' }
+  | { kind: 'checkout' }
   | { kind: 'script'; lines: readonly string[] }
-  | { kind: 'action'; action: string };
+  | { kind: 'action'; uses: string };
 
 export const stepId = (file: string, job: string, step: string): string => `${file} > ${job} > ${step}`;
 
 const INSTALL: TokenStep = { kind: 'install' };
+const CHECKOUT: TokenStep = { kind: 'checkout' };
+
+/**
+ * The setup and build actions, each at one commit, checked against its release tag with
+ * `gh api repos/OWNER/NAME/commits/TAG`. A tag can move, and a SHA from a fork resolves too.
+ */
+export const ACTION_PINS: ReadonlyMap<string, string> = new Map([
+  ['actions/checkout', '3d3c42e5aac5ba805825da76410c181273ba90b1'], // v7.0.1
+  ['actions/setup-node', '949feb2413d6458794dcd2491c4babbbce0c15c1'], // v7.1.0
+  ['docker/setup-buildx-action', 'f87e5991a6d7451dcb8d9637bfbc97413f497069'], // v4.4.1
+  ['docker/metadata-action', 'dc802804100637a589fabce1cb79ff13a1411302'], // v6.2.0
+  ['docker/login-action', 'dbcb813823bdd20940b903addbd779551569679f'], // v4.6.0
+  ['docker/build-push-action', 'c3c9e263c25d99ce0380d002d59b67737d91b0dc'], // v7.4.0
+]);
+const pinned = (name: string): string => `${name}@${String(ACTION_PINS.get(name))}`;
 
 /** The steps that may carry NODE_AUTH_TOKEN in their env: npm installs, the coordinator checkout and image builds. */
 export const TOKEN_STEPS: ReadonlyMap<string, TokenStep> = new Map<string, TokenStep>([
@@ -63,9 +82,9 @@ export const TOKEN_STEPS: ReadonlyMap<string, TokenStep> = new Map<string, Token
   [stepId('stack.yml', 'stack', 'Install app dependencies'), INSTALL],
   [stepId('stack.yml', 'stack', 'Install harness dependencies'), INSTALL],
   // The harness clones the pinned fc-coordinator and runs its npm ci (--ignore-scripts).
-  [stepId('stack.yml', 'stack', 'Fetch and install the pinned coordinator'), INSTALL],
+  [stepId('stack.yml', 'stack', 'Fetch and install the pinned coordinator'), CHECKOUT],
   [stepId('web-image.yml', 'image', 'Install app dependencies'), INSTALL],
-  [stepId('web-image.yml', 'image', 'Install harness dependencies and the pinned coordinator'), INSTALL],
+  [stepId('web-image.yml', 'image', 'Install harness dependencies and the pinned coordinator'), CHECKOUT],
   // BuildKit secret for the Dockerfile's npm ci (--ignore-scripts).
   [
     stepId('web-image.yml', 'image', 'Build image N and N+1'),
@@ -83,7 +102,7 @@ export const TOKEN_STEPS: ReadonlyMap<string, TokenStep> = new Map<string, Token
       ],
     },
   ],
-  [stepId('web-image.yml', 'publish', 'Build and push'), { kind: 'action', action: 'docker/build-push-action' }],
+  [stepId('web-image.yml', 'publish', 'Build and push'), { kind: 'action', uses: pinned('docker/build-push-action') }],
 ]);
 
 /** The only workflow- or job-wide env a job with a token step may set: image names, read by no tool. */
@@ -128,6 +147,7 @@ const SETUP_WITH: Readonly<Record<string, Readonly<Record<string, (v: string) =>
 const INSTALL_LINE = /^npm (--prefix [\w./-]+ )?ci --ignore-scripts$/;
 const CHECKOUT_LINE = 'npm --prefix e2e/stack run checkout';
 const SHA_PIN = /@[0-9a-f]{40}$/;
+const USES = /^([^@]*)@(.*)$/s;
 
 type Rec = Record<string, unknown>;
 const record = (v: unknown): Rec => (v !== null && typeof v === 'object' ? (v as Rec) : {});
@@ -145,7 +165,7 @@ const lines = (run: unknown): string[] =>
 function runFits(run: unknown, shape: Exclude<TokenStep, { kind: 'action' }>): boolean {
   const got = lines(run);
   if (shape.kind === 'script') return got.join('\n') === shape.lines.join('\n');
-  return got.length > 0 && got.every((l) => INSTALL_LINE.test(l) || l === CHECKOUT_LINE);
+  return got.length > 0 && got.every((l) => INSTALL_LINE.test(l) || (shape.kind === 'checkout' && l === CHECKOUT_LINE));
 }
 
 export function checkWorkflow(file: string, workflow: unknown, allowed: ReadonlyMap<string, TokenStep>): Violation[] {
@@ -232,13 +252,16 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
         }
         if (Object.entries(record(step['env'])).some(([k, x]) => k !== TOKEN && !mentions(x))) flag(where('env'), 'step-env');
         if (shape.kind === 'action') {
-          const pinned = typeof uses === 'string' && uses.startsWith(`${shape.action}@`) && SHA_PIN.test(uses);
-          if (!pinned) flag(where('uses'), 'token-action');
+          if (uses !== shape.uses) flag(where('uses'), 'token-action');
         } else {
           if (uses !== undefined) flag(where('uses'), 'token-action');
           if (!runFits(step['run'], shape)) flag(where('run'), 'run-grammar');
         }
       }
+      // A setup or build action at any ref but its pinned commit, in any job.
+      const [, name = '', ref] = typeof uses === 'string' ? (USES.exec(uses) ?? []) : [];
+      const pin = ACTION_PINS.get(name.toLowerCase());
+      if (pin !== undefined && ref !== pin) flag(where('uses'), 'action-pin');
       if (typeof uses === 'string' && uses.toLowerCase().startsWith('aquasecurity/') && !SHA_PIN.test(uses)) {
         flag(where('uses'), 'trivy-unpinned');
       }

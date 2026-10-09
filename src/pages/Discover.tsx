@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useMemo } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import type { CollectionStatus } from '@figurecollecting/fc-shared';
-import type { ProductCard } from '@figurecollecting/fc-api-contract';
+import type { CardText, ProductCard } from '@figurecollecting/fc-api-contract';
 import { SlimHeader } from '../components/layout/SlimHeader';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { useSearch } from '../hooks/useSearch';
+import { useCatalogSearch } from '../hooks/useCatalogSearch';
+import { SyncBadge } from '../components/sync/SyncBadge';
 import { useCollection } from '../hooks/useCollection';
 import { useCopyActions } from '../hooks/useFigureMutations';
 import { useBarcodeLookup, BarcodeFormatError } from '../hooks/useBarcodeLookup';
@@ -46,6 +48,10 @@ function heldSummary(figures: LocalFigure[], headId: string): string {
     .join(' · ');
 }
 
+/** A card's field as shown: absent (no value, or withheld from this caller) stays absent. */
+const shown = (t: CardText | undefined): string | undefined => (t?.value ? t.value : undefined);
+
+
 /** Add one copy of a figure to a tab: a local write, offline too. */
 function AddSheet({ open, name, onAdd, onClose }: { open: boolean; name: string; onAdd: (kind: CollectionStatus) => void; onClose: () => void }) {
   return (
@@ -73,6 +79,7 @@ export function Discover() {
   const online = useOnlineStatus();
   const actions = useCopyActions();
   const lookup = useBarcodeLookup();
+  const catalog = useCatalogSearch(query);
 
   // The whole collection, every kind, for suggestions and what each hit or barcode result holds.
   const { data: collectionData } = useCollection();
@@ -154,6 +161,15 @@ export function Discover() {
     },
     [actions],
   );
+
+  // The catalog's hits below the local ones, without a figure the local hits already list: any head
+  // a local hit answers for, so a merged-away head and its survivor both count. A search card's
+  // requested_as is always empty (a search request names no refs), so only its head_id is read.
+  const catalogHits = useMemo(() => {
+    if (catalog.view.kind !== 'hits') return [];
+    const listed = new Set(hits.flatMap((f) => f.local.heads));
+    return catalog.view.hits.filter((c) => !listed.has(c.headId));
+  }, [catalog.view, hits]);
 
   const showResults = hasSearched && hits.length > 0;
   const showEmpty = hasSearched && !isLoading && hits.length === 0;
@@ -240,6 +256,7 @@ export function Discover() {
                   <span class="discover-results__name">{f.name}</span>
                   <span class="discover-results__meta">{[f.manufacturer, heldSummary(held, f.local.headId)].filter(Boolean).join(' · ')}</span>
                 </button>
+                <SyncBadge sync={f.local.sync} asOf={f.local.asOf} id={`search-sync-${f._id}`} />
                 <button type="button" class="discover-results__add" onClick={() => setAdding({ headId: f.local.headId, name: f.name })}>
                   Add to collection
                 </button>
@@ -251,8 +268,53 @@ export function Discover() {
         {showEmpty && (
           <div class="page-discover__empty">
             <p>No figure in your collection matches.</p>
-            <p class="page-discover__empty-hint">Catalog-wide search comes later; a barcode lookup finds any figure.</p>
           </div>
+        )}
+
+        {catalog.view.kind !== 'hidden' && (
+          <section class="catalog" aria-label="In the catalog">
+            <h2 class="catalog__title">In the catalog</h2>
+            {catalog.view.kind === 'searching' && (
+              <p class="catalog__note" role="status" aria-label="Searching the catalog">
+                Searching the catalog…
+              </p>
+            )}
+            {catalog.view.kind === 'failed' && (
+              <p class="catalog__note">
+                Catalog search failed.{' '}
+                <button type="button" class="catalog__retry" onClick={catalog.retry}>
+                  Try again
+                </button>
+              </p>
+            )}
+            {catalog.view.kind === 'hits' && catalogHits.length === 0 && !catalog.view.more && <p class="catalog__note">Nothing else in the catalog matches.</p>}
+            {catalogHits.length > 0 && (
+              <ul class="discover-results" aria-label="Catalog results">
+                {catalogHits.map((card) => {
+                  const meta = [shown(card.manufacturer), shown(card.scale), shown(card.releaseYm)].filter(Boolean).join(' · ');
+                  const holding = heldSummary(held, card.headId);
+                  return (
+                    <li key={card.headId} class="discover-results__item">
+                      <div class="discover-results__open">
+                        <span class="discover-results__name">{shown(card.title) ?? 'Untitled figure'}</span>
+                        {meta !== '' && <span class="discover-results__meta">{meta}</span>}
+                        {holding !== '' && <span class="discover-results__held">{`In your collection: ${holding}`}</span>}
+                      </div>
+                      <button type="button" class="discover-results__add" onClick={() => addCopy(card.headId, 'owned', card)}>
+                        Add to Owned
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {catalog.view.kind === 'hits' && catalog.view.moreFailed && <p class="catalog__note">Could not load more.</p>}
+            {catalog.view.kind === 'hits' && catalog.view.more && (
+              <button type="button" class="catalog__more" disabled={catalog.view.loadingMore} onClick={catalog.more}>
+                More results
+              </button>
+            )}
+          </section>
         )}
 
         {!hasSearched && !hasSuggestions && (
@@ -351,7 +413,38 @@ export function Discover() {
           font-size: var(--font-xs);
           color: var(--text-tertiary);
         }
+        .discover-results__held {
+          font-size: var(--font-xs);
+          color: var(--text-secondary);
+        }
+        .catalog {
+          margin-top: var(--space-3);
+        }
+        .catalog__title {
+          padding: 0 var(--space-page);
+          font-size: var(--font-2xs);
+          font-weight: var(--font-weight-semibold);
+          color: var(--text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        .catalog__note {
+          padding: var(--space-2) var(--space-page);
+          font-size: var(--font-sm);
+          color: var(--text-secondary);
+        }
+        .catalog__retry {
+          color: var(--brand-400);
+        }
+        .catalog__more {
+          display: block;
+          margin: var(--space-2) auto 0;
+        }
+        .catalog__more:disabled {
+          opacity: 0.5;
+        }
         .discover-results__add,
+        .catalog__more,
         .add-sheet__kind,
         .barcode__go {
           min-height: 40px;

@@ -11,7 +11,8 @@
 // runner file. The token is never workflow- or job-wide, never in with: or a value in run: text,
 // never under a second env name. A secrets ref must name one secret (secrets.NAME or
 // secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
-// secrets.*, a computed index) and secrets: inherit hand over every secret. Names match
+// secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
+// secrets: is a mapping of named secrets other than the token. Names match
 // case-insensitively (secret names are). aquasecurity actions are pinned by full SHA
 // (GHSA-69fq-xp46-6x23).
 
@@ -27,7 +28,7 @@ export type Rule =
   | 'token-action'
   | 'env-alias'
   | 'all-secrets'
-  | 'secrets-inherit'
+  | 'job-secrets'
   | 'trivy-unpinned'
   | 'step-key'
   | 'step-env'
@@ -110,6 +111,8 @@ const SHA_PIN = /@[0-9a-f]{40}$/;
 
 type Rec = Record<string, unknown>;
 const record = (v: unknown): Rec => (v !== null && typeof v === 'object' ? (v as Rec) : {});
+/** A mapping or nothing: not one ${{ }} string, not a list. */
+const plain = (v: unknown): boolean => typeof v === 'object' && !Array.isArray(v);
 /** Every key and string under v, so a name is found whether it is a key or in a value. */
 const text = (v: unknown): string =>
   typeof v === 'string' ? v : Object.entries(record(v)).map(([k, x]) => `${k}\n${text(x)}`).join('\n');
@@ -153,10 +156,12 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
   for (const { jobId, job, steps, last } of jobs) {
     for (const [key, value] of Object.entries(job)) {
       if (key === 'steps') continue;
-      scan(`${jobId} > ${key}`, value, key === 'env' ? 'job-env' : 'elsewhere');
+      // A reusable workflow's secrets: one named, unrelated secret per entry, nothing passed whole.
+      if (key === 'secrets') {
+        if (!plain(value) || ALL_SECRETS.test(values(value)) || mentions(value)) flag(`${jobId} > secrets`, 'job-secrets');
+      } else scan(`${jobId} > ${key}`, value, key === 'env' ? 'job-env' : 'elsewhere');
       if (last >= 0) around(`${jobId} > ${key}`, key, value, JOB_KEYS, 'job-key');
     }
-    if (String(job['secrets']).toLowerCase() === 'inherit') flag(`${jobId} > secrets`, 'secrets-inherit');
     steps.forEach((step, i) => {
       const named = typeof step['name'] === 'string';
       const label = named ? String(step['name']) : `#${i}`;

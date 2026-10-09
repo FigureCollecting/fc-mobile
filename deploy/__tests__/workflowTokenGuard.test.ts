@@ -128,8 +128,8 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['b04-step-node-options.yml', ['step-env']],
     ['b05-step-bash-env.yml', ['step-env']],
     ['b06-job-node-options.yml', ['scope-env']],
-    ['b07-earlier-github-env.yml', ['github-env']],
-    ['b08-earlier-github-path.yml', ['github-env']],
+    ['b07-earlier-github-env.yml', ['github-env', 'step-order']],
+    ['b08-earlier-github-path.yml', ['github-env', 'step-order']],
     ['b09-tojson-paren-secrets.yml', ['all-secrets']],
     ['b10-join-secrets-star.yml', ['all-secrets']],
     ['b11-tojson-secrets-star.yml', ['all-secrets']],
@@ -140,12 +140,14 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['b16-workflow-bash-func.yml', ['scope-env']],
     ['b17-env-index-in-with.yml', ['all-env']],
     ['b18-tojson-env-in-with.yml', ['all-env']],
+    ['b19-indirect-github-env.yml', ['step-order']],
+    ['b20-earlier-github-script.yml', ['step-order']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(32);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(34);
   });
 });
 
@@ -386,18 +388,41 @@ describe('what may change how a token step runs', () => {
     'flags %j on any step of a job that holds a token step, before or after it',
     (run) => {
       const other = `      - name: Other\n        run: ${JSON.stringify(run)}\n`;
-      const want = [{ file: 'x.yml', where: 'build > Other > run', rule: 'github-env' }];
-      expect(checkWorkflow('x.yml', parse(tokenJob('', other)), fixtureAllowList('x.yml'))).toEqual(want);
-      expect(checkWorkflow('x.yml', parse(tokenJob() + other), fixtureAllowList('x.yml'))).toEqual(want);
+      const want = { file: 'x.yml', where: 'build > Other > run', rule: 'github-env' };
+      expect(checkWorkflow('x.yml', parse(tokenJob() + other), fixtureAllowList('x.yml'))).toEqual([want]);
+      expect(checkWorkflow('x.yml', parse(tokenJob('', other)), fixtureAllowList('x.yml'))).toEqual([
+        want,
+        { file: 'x.yml', where: 'build > Other > step', rule: 'step-order' },
+      ]);
     },
   );
 
   it.each(['echo v=1 >> "$GITHUB_OUTPUT"', 'echo ok >> "$GITHUB_STEP_SUMMARY"', 'echo s=1 >> "$GITHUB_STATE"'])(
     'leaves %j alone on another step of a token job',
     (run) => {
-      expect(rules(tokenJob('', `      - run: ${JSON.stringify(run)}\n`))).toEqual([]);
+      expect(rules(`${tokenJob()}      - run: ${JSON.stringify(run)}\n`)).toEqual([]);
     },
   );
+
+  it('accepts the setup actions before the token steps, and untokened steps after the last one', () => {
+    const before = ['actions/checkout@v7', 'actions/setup-node@v7', 'docker/setup-buildx-action@v4', 'docker/metadata-action@v6', 'Docker/Login-Action@v4']
+      .map((u) => `      - uses: ${u}\n`)
+      .join('');
+    expect(rules(`${tokenJob('', before)}      - run: npm test\n      - uses: evil/action@v1\n`)).toEqual([]);
+  });
+
+  it.each(['run: npm run build', 'uses: ./.github/actions/local', 'uses: docker://evil/image', 'uses: actions/github-script@v8', 'uses: evil/checkout@v7', 'uses: actions/checkout-x@v7', 'uses: xactions/checkout@v7', 'uses: actions/checkout'])(
+    'flags %s before a token step',
+    (body) => {
+      expect(checkWorkflow('x.yml', parse(tokenJob('', `      - ${body}\n`)), fixtureAllowList('x.yml'))).toEqual([
+        { file: 'x.yml', where: 'build > #0 > step', rule: 'step-order' },
+      ]);
+    },
+  );
+
+  it('flags an untokened step between two token steps', () => {
+    expect(rules(`${tokenJob()}      - run: npm run build\n${TOKEN_INSTALL}`)).toEqual(['step-order']);
+  });
 
   it('leaves a $GITHUB_ENV write alone in a job without a token step', () => {
     expect(rules(`${tokenJob()}  t:\n    steps:\n      - run: echo "A=1" >> "$GITHUB_ENV"\n`)).toEqual([]);
@@ -413,12 +438,14 @@ describe('secrets and env refs that name one entry, and the rest', () => {
     "${{ secrets[ 'my-key' ] }}",
     '${{ secrets.A || secrets.B }}',
     'MY_SECRETS',
+    'SECRETS_FILE',
   ])('accepts %s', (ref) => {
     expect(rules(`jobs:\n  t:\n    steps:\n      - run: echo ${JSON.stringify(ref)}\n`)).toEqual([]);
   });
 
   it.each([
     '${{ toJSON(secrets) }}',
+    '${{ toJSON(SECRETS) }}',
     '${{ toJSON((secrets)) }}',
     '${{ toJSON( secrets ) }}',
     '${{ join(secrets.*, \',\') }}',
@@ -439,14 +466,14 @@ describe('secrets and env refs that name one entry, and the rest', () => {
     expect(rules('on:\n  workflow_call:\n    secrets:\n      KEY:\n        required: true\njobs:\n  t:\n    steps:\n      - uses: a/b@v1\n        with:\n          secrets: x\n')).toEqual([]);
   });
 
-  it.each(['${{ env.FC_WEB_IMAGE }}', "${{ env['FC_WEB_IMAGE'] }}", "${{ ENV[ 'fc-x' ] }}", 'node_auth_token=NODE_AUTH_TOKEN', 'envs'])(
+  it.each(['${{ env.FC_WEB_IMAGE }}', "${{ env['FC_WEB_IMAGE'] }}", "${{ ENV[ 'fc-x' ] }}", 'node_auth_token=NODE_AUTH_TOKEN', 'envs', 'MY_ENV'])(
     'accepts %s in with: on the token action step',
     (ref) => {
       expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual([]);
     },
   );
 
-  it.each(['${{ toJSON(env) }}', '${{ toJSON(env.*) }}', '${{ env.* }}', "${{ env[format('NODE_{0}', 'AUTH_TOKEN')] }}", '${{ env [matrix.k] }}', '${{ env.A.* }}'])(
+  it.each(['${{ toJSON(env) }}', '${{ toJSON(ENV) }}', '${{ toJSON(env.*) }}', '${{ env.* }}', "${{ env[format('NODE_{0}', 'AUTH_TOKEN')] }}", '${{ env [matrix.k] }}', '${{ env.A.* }}'])(
     'flags %s in with: on the token action step as the whole env',
     (ref) => {
       expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual(['all-env']);

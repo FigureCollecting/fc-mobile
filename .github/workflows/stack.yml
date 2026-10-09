@@ -35,7 +35,7 @@ jobs:
             e2e/stack/package-lock.json
 
       - name: Install app dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -43,7 +43,7 @@ jobs:
         run: npm run build
 
       - name: Install harness dependencies
-        run: npm --prefix e2e/stack ci
+        run: npm --prefix e2e/stack ci --ignore-scripts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
 

@@ -71,7 +71,7 @@ export function prepareCheckout(checkout: Checkout, env: Env = process.env): voi
   const wanted = createHash('sha256').update(readFileSync(lock)).digest('hex');
   if (existsSync(marker) && readFileSync(marker, 'utf8') === wanted) return;
   if (checkout.source === 'dir' && existsSync(path.join(checkout.dir, 'node_modules'))) return;
-  run('npm', ['ci', '--no-audit', '--no-fund'], checkout.dir, env);
+  run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], checkout.dir, env);
   mkdirSync(path.dirname(marker), { recursive: true });
   writeFileSync(marker, wanted);
 }

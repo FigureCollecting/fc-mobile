@@ -1,0 +1,12 @@
+# A8: secrets['NODE_AUTH_TOKEN'] in with: on an allowed step that runs an unpinned action.
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        uses: some/action@v1
+        with:
+          token: ${{ secrets['NODE_AUTH_TOKEN'] }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

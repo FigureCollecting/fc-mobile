@@ -1,0 +1,9 @@
+# D7: an env expression builds the name NODE_AUTH_TOKEN, so the guard never sees a token step.
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run tests
+        run: npm test
+        env: ${{ fromJSON(format('{{"NODE_{0}":"{1}"}}', 'AUTH_TOKEN', secrets.GITHUB_TOKEN)) }}

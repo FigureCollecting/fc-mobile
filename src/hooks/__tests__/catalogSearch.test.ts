@@ -234,8 +234,32 @@ describe('CatalogSearch', () => {
     const t = setup();
     t.search.retry();
     expect(t.search.view).toEqual({ kind: 'hidden', reason: 'idle' });
+    t.search.set('miku', true);
+    t.search.retry();
+    expect(t.timers.pending.size).toBe(1);
+    t.fire(CATALOG_DEBOUNCE_MS);
+    (await t.reached(1)).answer(page([card(1)]));
     await t.settle();
-    expect(t.pending).toHaveLength(0);
+    t.search.retry();
+    await t.settle();
+    expect(t.pending).toHaveLength(1);
+    expect(heads(t.search.view)).toEqual([headOf(1)]);
+  });
+
+  it('counts its own timeout as the catalog being too slow, whatever error the aborted call raises', async () => {
+    const timers = new ManualTimers();
+    const search = new CatalogSearch({
+      timers,
+      search: (_req, { signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))),
+    });
+    live = search;
+    search.set('miku', true);
+    timers.fireAll();
+    await Promise.resolve();
+    expect(timers.delays()).toEqual([CATALOG_TIMEOUT_MS]);
+    timers.fireAll();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(search.view).toEqual({ kind: 'hidden', reason: 'unavailable' });
   });
 
   it('gives up on a search that does not answer in time, quietly', async () => {
@@ -265,6 +289,35 @@ describe('CatalogSearch', () => {
     await t.settle();
     expect(heads(t.search.view)).toEqual([headOf(5), headOf(0)]);
     expect(t.search.view).toMatchObject({ more: true, loadingMore: false, moreFailed: false });
+  });
+
+  it('drops a restart from page one that a newer query cancelled', async () => {
+    const t = setup();
+    t.search.set('miku', true);
+    t.fire(CATALOG_DEBOUNCE_MS);
+    (await t.reached(1)).answer(page([card(0)], 'p2'));
+    await t.settle();
+    t.search.more();
+    (await t.reached(2)).fail(new ConnectError('stale', Code.InvalidArgument));
+    const restart = await t.reached(3);
+    t.search.set('nendo', true);
+    expect(restart.signal.aborted).toBe(true);
+    restart.answer(page([card(7)]));
+    await t.settle();
+    expect(t.search.view).toEqual({ kind: 'searching', query: 'nendo' });
+  });
+
+  it('says a search failed when the restart from page one fails', async () => {
+    const t = setup();
+    t.search.set('miku', true);
+    t.fire(CATALOG_DEBOUNCE_MS);
+    (await t.reached(1)).answer(page([card(0)], 'p2'));
+    await t.settle();
+    t.search.more();
+    (await t.reached(2)).fail(new ConnectError('stale', Code.InvalidArgument));
+    (await t.reached(3)).fail(new ConnectError('stale again', Code.InvalidArgument));
+    await t.settle();
+    expect(t.search.view).toEqual({ kind: 'failed', query: 'miku' });
   });
 
   it('says a search failed when page one is refused too', async () => {
@@ -304,6 +357,7 @@ describe('CatalogSearch', () => {
     expect(t.timers.pending.size).toBe(0);
     t.search.set('nendo', true);
     expect(t.views).toHaveLength(seen);
+    expect(t.timers.pending.size).toBe(0);
   });
 
   it('lets a listener unsubscribe', () => {

@@ -150,6 +150,7 @@ describe('Discover: catalog search (online)', () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveTextContent('Nendoroid Hatsune Miku');
     expect(items[0]).toHaveTextContent('Good Smile Company · Non-scale · 2026-12');
+    expect(items[0]).not.toHaveTextContent('In your collection');
     expect(within(items[0]!).getByRole('button', { name: 'Add to Owned' })).toBeInTheDocument();
     expect(r.clients.searchProducts).toHaveBeenCalledTimes(1);
     expect(r.clients.searchProducts).toHaveBeenCalledWith(
@@ -183,6 +184,16 @@ describe('Discover: catalog search (online)', () => {
     await waitFor(() => expect(added.querySelector('[data-sync]')?.getAttribute('data-sync')).toBe('known'));
   });
 
+  it('leaves out a catalog hit merged into a figure the local hits list (named in requested_as)', async () => {
+    const r = await seeded();
+    const merged = create(ProductCardSchema, { headId: headOf(30), requestedAs: [{ ref: { case: 'headId', value: headOf(0) } }], title: { value: 'Hatsune Miku: Deep Sea Girl (survivor)', asOf: CARD_AS_OF } });
+    r.clients.searchProducts.mockResolvedValue(catalogPage([merged, catalogCard(21, { title: 'Racing Miku 2026' })]));
+    renderWithProviders(<Discover />);
+    await searchFor('miku');
+    const items = within(await catalogList()).getAllByRole('listitem');
+    expect(items.map((i) => i.querySelector('.discover-results__name')?.textContent)).toEqual(['Racing Miku 2026']);
+  });
+
   it('shows what the user holds of a catalog hit the local search did not match', async () => {
     const r = await seeded();
     r.clients.searchProducts.mockResolvedValue(catalogPage([catalogCard(1, { title: 'Spike Spiegel' })]));
@@ -195,11 +206,12 @@ describe('Discover: catalog search (online)', () => {
   it('renders redacted or absent fields as absent, never as a blank or "undefined"', async () => {
     const r = await seeded();
     r.clients.searchProducts.mockResolvedValue(
-      catalogPage([catalogCard(21, { title: 'Racing Miku 2026', manufacturer: '' }), catalogCard(22, { scale: '1/7' })]),
+      catalogPage([catalogCard(21, { title: 'Racing Miku 2026', manufacturer: '' }), catalogCard(22, { scale: '1/7' }), catalogCard(23, { title: '' })]),
     );
     renderWithProviders(<Discover />);
     await searchFor('racing');
-    const [titled, untitled] = within(await catalogList()).getAllByRole('listitem');
+    const [titled, untitled, blank] = within(await catalogList()).getAllByRole('listitem');
+    expect(blank!.querySelector('.discover-results__name')?.textContent).toBe('Untitled figure');
     expect(titled!.querySelector('.discover-results__meta')).toBeNull();
     expect(titled).not.toHaveTextContent(/undefined|·/);
     expect(untitled).toHaveTextContent('Untitled figure');
@@ -209,12 +221,16 @@ describe('Discover: catalog search (online)', () => {
   it('follows the next page on request', async () => {
     const r = await seeded();
     r.clients.searchProducts
-      .mockResolvedValueOnce(catalogPage([catalogCard(21, { title: 'Racing Miku 2026' })], 'p2'))
-      .mockResolvedValueOnce(catalogPage([catalogCard(22, { title: 'Racing Miku 2025' })]));
+      .mockResolvedValueOnce(catalogPage([catalogCard(21, { title: 'Racing Miku 2026' })], 'p2'));
     renderWithProviders(<Discover />);
     const user = await searchFor('racing');
     await catalogList();
+    expect(screen.queryByText('Could not load more.')).toBeNull();
+    let answer!: (v: unknown) => void;
+    r.clients.searchProducts.mockReturnValueOnce(new Promise((res) => (answer = res)));
     await user.click(screen.getByRole('button', { name: 'More results' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'More results' })).toBeDisabled());
+    answer(catalogPage([catalogCard(22, { title: 'Racing Miku 2025' })]));
     await waitFor(async () => expect(within(await catalogList()).getAllByRole('listitem')).toHaveLength(2));
     expect(r.clients.searchProducts).toHaveBeenLastCalledWith(expect.objectContaining({ query: 'racing', pageToken: 'p2' }), expect.anything());
     expect(screen.queryByRole('button', { name: 'More results' })).toBeNull();
@@ -240,6 +256,30 @@ describe('Discover: catalog search (online)', () => {
     expect(await screen.findByText('Nothing else in the catalog matches.')).toBeInTheDocument();
     expect(screen.getByText(/no figure in your collection matches/i)).toBeInTheDocument();
     expect(r.clients.searchProducts).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers more rather than "nothing else" when a page held only figures already listed', async () => {
+    const r = await seeded();
+    r.clients.searchProducts.mockResolvedValue(catalogPage([catalogCard(0, { title: 'Hatsune Miku: Deep Sea Girl' })], 'p2'));
+    renderWithProviders(<Discover />);
+    await searchFor('miku');
+    expect(await screen.findByRole('button', { name: 'More results' })).toBeInTheDocument();
+    expect(screen.queryByText('Nothing else in the catalog matches.')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Catalog results' })).toBeNull();
+  });
+
+  it('cancels its catalog search when the screen goes away', async () => {
+    const r = await seeded();
+    let signal: AbortSignal | undefined;
+    r.clients.searchProducts.mockImplementation((_req: unknown, opts: { signal: AbortSignal }) => {
+      signal = opts.signal;
+      return new Promise(() => undefined);
+    });
+    const { unmount } = renderWithProviders(<Discover />);
+    await searchFor('miku');
+    await waitFor(() => expect(signal).toBeDefined());
+    unmount();
+    expect(signal!.aborted).toBe(true);
   });
 
   it('shows that it is searching the catalog', async () => {

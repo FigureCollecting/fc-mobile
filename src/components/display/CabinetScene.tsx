@@ -34,7 +34,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { frameCase, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
+import { frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
 import { figureArt, pictureBox, type FigureArt, type FigureImageRef } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { useContactBand, useMeasuredAlphaMargins } from './alphaMargin';
@@ -46,6 +46,8 @@ const S = 1;
 const DEFAULT_FRAME = { width: 360, height: 480 };
 /** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
 const PLATE_MAX_MM = 110;
+/** What may hang past a cabinet's box along the wall (pictures' clear margins, plates, shadows): drawn this far out of view. */
+const REACH_MARGIN_MM = 600;
 
 type V3 = readonly [number, number, number];
 
@@ -548,14 +550,18 @@ export function CabinetScene({
   const panPx = prefs.swipe === 'pan' ? clampPan(pan + liveDx) : 0;
   const { camera } = framing;
 
-  // draw only the cabinets the camera can reach, where the panned picture now sits: never the whole wall
-  // (a hundred cabinets of preserve-3d faces stall the browser)
-  const reachMm = useMemo(() => {
-    const depth = camera.z + 600;
-    const half = (depth * frame.width) / 2 / camera.focalPx;
-    const shift = (-panPx * (camera.z - framing.look[2])) / camera.focalPx;
-    return [camera.x + shift - half - 600, camera.x + shift + half + 600] as const;
-  }, [camera, frame.width, panPx, framing.look]);
+  // draw only the cabinets that can draw into the frame where the panned picture now sits: never the whole wall
+  // (a hundred cabinets of preserve-3d faces stall the browser); the room's far floor reaches widest
+  const room = useMemo(
+    () => ({
+      y0: 0,
+      y1: Math.max(ceilingMm, ...wall.cabinets.map((c) => c.profile.outer.heightMm)),
+      z0: -Math.max(...wall.cabinets.map((c) => c.profile.outer.depthMm)),
+      z1: Math.max(...wall.cabinets.map((c) => c.profile.footprint?.frontOverhangMm ?? 0)),
+    }),
+    [wall, ceilingMm],
+  );
+  const reachMm = wallReachMm(camera, panPx, room, REACH_MARGIN_MM);
   const visible = wall.cabinets
     .map((slot, i) => ({ slot, i }))
     .filter(({ slot }) => slot.rightMm + sideOverhangMm(slot.profile) >= reachMm[0] && slot.leftMm - sideOverhangMm(slot.profile) <= reachMm[1]);
@@ -565,6 +571,8 @@ export function CabinetScene({
   const swallowClick = useRef(false);
   const onPointerDown = useCallback((e: PointerEvent) => {
     press.current = { id: e.pointerId, x0: e.clientX, active: false };
+    // a touch swipe makes no click: whatever it left to swallow ends with the next press
+    swallowClick.current = false;
   }, []);
   const onPointerMove = useCallback((e: PointerEvent) => {
     const p = press.current;

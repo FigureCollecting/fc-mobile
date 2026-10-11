@@ -10,6 +10,7 @@ import {
   panLimitsPx,
   swipeCamera,
   wallPages,
+  wallReachMm,
   type FramingInput,
 } from '../caseFraming';
 
@@ -218,5 +219,61 @@ describe('CC4 swipe: move the camera along the wall, or pan the drawn wall like 
         expect(f.camera.x).toBeLessThanOrEqual(wall.cabinets[4].centerMm + 1e-9);
       }),
     );
+  });
+});
+
+describe('wallReachMm: the stretch of wall that can draw into the frame', () => {
+  const room = { y0: 0, y1: 2438.4, z0: -400, z1: 50 };
+
+  it('holds every point of the room that draws inside the frame, for any camera tilt and any pan', () => {
+    fc.assert(
+      fc.property(
+        fc.record({
+          x: fc.double({ min: -2000, max: 20000, noNaN: true }),
+          y: fc.double({ min: 300, max: 2200, noNaN: true }),
+          z: fc.double({ min: 600, max: 6000, noNaN: true }),
+          pitch: fc.double({ min: -0.4, max: 0.4, noNaN: true }),
+          pan: fc.double({ min: -3000, max: 3000, noNaN: true }),
+          px: fc.double({ min: 0, max: 1, noNaN: true }),
+          py: fc.double({ min: 0, max: 1, noNaN: true }),
+          pz: fc.double({ min: 0, max: 1, noNaN: true }),
+        }),
+        ({ x, y, z, pitch, pan, px, py, pz }) => {
+          const camera = { x, y, z, pitch, focalPx: 400, frame: { width: 443, height: 454 } };
+          const [lo, hi] = wallReachMm(camera, pan, room, 0);
+          // a point of the room straight below/above the frame's horizontal span, at some depth: wherever it draws
+          const p = [0, room.y0 + py * (room.y1 - room.y0), room.z0 + pz * (room.z1 - room.z0)] as const;
+          const probe = project(camera, [x, p[1], p[2]]);
+          if (probe.depth <= 1) return;
+          // the x that draws at px of the frame's width at that depth
+          const wx = x + ((px * camera.frame.width - camera.frame.width / 2 - pan) * probe.depth) / camera.focalPx;
+          const drawn = project(camera, [wx, p[1], p[2]]);
+          expect(drawn.x + pan).toBeCloseTo(px * camera.frame.width, 6);
+          expect(wx).toBeGreaterThanOrEqual(lo - 1e-6);
+          expect(wx).toBeLessThanOrEqual(hi + 1e-6);
+        },
+      ),
+    );
+  });
+
+  it('is exactly that stretch, padded by the margin: a far, panned view under a tilt', () => {
+    const camera = { x: 500, y: 1400, z: 1650, pitch: 0.19, focalPx: 319, frame: { width: 360, height: 480 } };
+    const [lo, hi] = wallReachMm(camera, -600, room, 0);
+    const depth = (yy: number, zz: number) => (camera.y - yy) * Math.sin(camera.pitch) + (camera.z - zz) * Math.cos(camera.pitch);
+    // panned left by 600 px: the right end is the far floor at the back, the left end the near top at the front
+    expect(hi).toBeCloseTo(500 + ((180 + 600) * depth(0, -400)) / 319, 6);
+    expect(lo).toBeCloseTo(500 + ((-180 + 600) * depth(2438.4, 50)) / 319, 6);
+    const [plo, phi] = wallReachMm(camera, -600, room, 600);
+    expect([plo, phi]).toEqual([lo - 600, hi + 600]);
+  });
+
+  it('a point at or behind the camera never widens it past 1 mm of depth', () => {
+    const camera = { x: 0, y: 1000, z: 10, pitch: 0, focalPx: 400, frame: { width: 400, height: 400 } };
+    const [lo, hi] = wallReachMm(camera, 0, { y0: 0, y1: 2000, z0: -400, z1: 50 }, 0);
+    expect(hi).toBeCloseTo((200 * 410) / 400, 6);
+    expect(lo).toBeCloseTo((-200 * 410) / 400, 6);
+    const [, panned] = wallReachMm(camera, 300, { y0: 0, y1: 2000, z0: -400, z1: 50 }, 0);
+    // slid right past the middle: the right end is the nearest point, held at 1 mm
+    expect(panned).toBeCloseTo((-100 * 1) / 400, 6);
   });
 });

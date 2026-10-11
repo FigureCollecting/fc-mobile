@@ -195,3 +195,31 @@ export function panLimitsPx(framing: Framing, wall: WallLayout): [number, number
   // a wall narrower than the frame may still start or end off screen: it slides in, never past its ends
   return [Math.min(0, camera.frame.width - m.x - right), Math.max(0, m.x - left)];
 }
+
+/** The room the cabinets stand in, mm: floor to ceiling, the deepest back to the farthest front (splayed feet). */
+export interface RoomSpan {
+  readonly y0: number;
+  readonly y1: number;
+  readonly z0: number;
+  readonly z1: number;
+}
+
+/**
+ * The stretch of the wall (world x, mm) whose points can draw into the frame
+ * when the picture is slid panPx: at depth d along the camera's axis the
+ * frame spans x from camera.x + (-w/2 - pan) d / f to camera.x + (w/2 - pan) d / f,
+ * so over the room's nearest and farthest depths (its corners; at least
+ * 1 mm) the ends are reached at one of the two. Padded by marginMm for what
+ * hangs past a cabinet's box (pictures' clear margins, plates, shadows).
+ */
+export function wallReachMm(camera: Camera, panPx: number, room: RoomSpan, marginMm: number): [number, number] {
+  const sin = Math.sin(camera.pitch);
+  const cos = Math.cos(camera.pitch);
+  const depths = [room.y0, room.y1].flatMap((y) => [room.z0, room.z1].map((z) => (camera.y - y) * sin + (camera.z - z) * cos));
+  const near = Math.max(1, Math.min(...depths));
+  const far = Math.max(1, ...depths);
+  const left = (-camera.frame.width / 2 - panPx) / camera.focalPx;
+  const right = (camera.frame.width / 2 - panPx) / camera.focalPx;
+  return [camera.x + Math.min(left * near, left * far) - marginMm, camera.x + Math.max(right * near, right * far) + marginMm];
+}
+

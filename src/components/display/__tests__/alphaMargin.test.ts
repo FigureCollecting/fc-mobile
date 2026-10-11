@@ -313,7 +313,13 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
     const getImageData = mockPictures(pictures());
     const first = renderHook(() => useAlphaMarginsOf([A, B]));
     await waitFor(() => expect(first.result.current).not.toBeNull());
-    expect(renderHook(() => useAlphaMarginsOf([B, A])).result.current?.size).toBe(2);
+    const again = renderHook(() => useAlphaMarginsOf([B, A]));
+    const atOnce = again.result.current;
+    expect(atOnce?.size).toBe(2);
+    // and it stays that answer: nothing is read again, the case never lays out a second time
+    await new Promise((r) => setTimeout(r, 20));
+    again.rerender();
+    expect(again.result.current).toBe(atOnce);
     expect(renderHook(() => useAlphaMarginsOf([B])).result.current?.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     // the grounding hook shares the same read
     expect(renderHook(() => useBottomMarginFrac(A)).result.current).toBeCloseTo(0.1, 9);
@@ -346,8 +352,11 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
     await waitFor(() => expect(releaseB).toBeTypeOf('function'));
     rerender({ urls: [A] });
     await waitFor(() => expect(result.current?.size).toBe(1));
+    const shown = result.current;
     releaseB();
     await new Promise((r) => setTimeout(r, 20));
+    // the same answer, untouched: the old list's read does not make the case lay out again
+    expect(result.current).toBe(shown);
     expect([...result.current!.keys()]).toEqual([A]);
   });
 
@@ -380,6 +389,40 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
       waiting.shift()!();
     }
     await waitFor(() => expect(result.current?.size).toBe(urls.length));
+    expect(most).toBe(ALPHA_READS_AT_ONCE);
+  });
+
+  it('a list asked for while others wait in line still waits its turn: never more than the limit in flight', async () => {
+    const first = Array.from({ length: 6 }, (_, i) => `https://example.com/q${i}.png`);
+    const later = 'https://example.com/later.png';
+    const buffers = Object.fromEntries([...first, later].map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])]));
+    const waiting: (() => void)[] = [];
+    let reading = 0;
+    let most = 0;
+    mockPictures(buffers, () => {
+      reading++;
+      most = Math.max(most, reading);
+      return new Promise<void>((r) =>
+        waiting.push(() => {
+          reading--;
+          r();
+        }),
+      );
+    });
+    renderHook(() => useAlphaMarginsOf(first));
+    await waitFor(() => expect(waiting.length).toBe(ALPHA_READS_AT_ONCE));
+    // one read ends: its turn goes to the next in line, so the line moves but the reads in flight stay at the limit
+    waiting.shift()!();
+    await waitFor(() => expect(waiting.length).toBe(ALPHA_READS_AT_ONCE));
+    // a second list now: it queues behind the rest
+    const { result } = renderHook(() => useAlphaMarginsOf([later]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(reading).toBe(ALPHA_READS_AT_ONCE);
+    while (waiting.length > 0) {
+      waiting.shift()!();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    await waitFor(() => expect(result.current?.size).toBe(1));
     expect(most).toBe(ALPHA_READS_AT_ONCE);
   });
 });

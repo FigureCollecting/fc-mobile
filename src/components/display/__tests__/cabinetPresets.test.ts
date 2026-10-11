@@ -105,7 +105,7 @@ describe('preset registry (Ross 2026-10-11: three profiles)', () => {
     for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF]) {
       expect(profile.sources.length).toBeGreaterThan(0);
       for (const src of profile.sources) {
-        expect(src.url).toMatch(/^https:\/\/(web\.archive\.org\/web\/\d{14}\/)?https:\/\/www\.ikea\.com\//);
+        expect(src.url).toMatch(/^(https:\/\/web\.archive\.org\/web\/\d{14}\/)?https:\/\/www\.ikea\.com\//);
         expect(src.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
         expect(src.facts.length).toBeGreaterThan(0);
       }

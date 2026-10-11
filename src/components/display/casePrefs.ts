@@ -2,13 +2,14 @@
  * The case's per-device choices (Ross CC14, 2026-10-09: kept on each device
  * until a contract round syncs them): which cabinets line the wall, the view,
  * what a sideways swipe does (CC4: pan the wall or move the camera, a
- * playable toggle so Ross decides hands-on) and the room's ceiling (CC9).
+ * playable toggle so Ross decides hands-on), the room's ceiling (CC9) and
+ * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine).
  * One localStorage entry; unreadable or unknown values fall back per field.
  */
 import { useCallback, useState } from 'preact/hooks';
 import { CEILING_DEFAULT_MM } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
-import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, OPEN_STEEL_RACK } from './cabinetPresets';
+import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from './cabinetPresets';
 
 export const CASE_PREFS_KEY = 'fc-case-prefs';
 
@@ -26,11 +27,19 @@ export interface WallPattern {
   readonly profiles: readonly CabinetProfile[];
 }
 
-/** Every preset alone, then the Detolf with Ross's rack alongside (CC16). */
+/** Every preset alone, then the KLINGSBO with the Detolf and Ross's rack alongside (Ross 10-11, superseding CC16). */
 export const WALL_PATTERNS: readonly WallPattern[] = [
   ...CABINET_PRESETS.map((p) => ({ id: p.id, label: p.name, profiles: [p] })),
-  { id: `${IKEA_DETOLF.id}+${OPEN_STEEL_RACK.id}`, label: 'IKEA DETOLF with the open steel rack alongside', profiles: [IKEA_DETOLF, OPEN_STEEL_RACK] },
+  {
+    id: [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK].map((p) => p.id).join('+'),
+    label: 'KLINGSBO with the Detolf and the open steel rack alongside',
+    profiles: [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK],
+  },
 ];
+
+/** The pull-up tabs (IC1-R1): Reserved holds an empty slot until it has a job (IC1-R3). */
+export type CaseTab = 'view' | 'reserved' | 'info' | 'refine';
+export const CASE_TABS: readonly CaseTab[] = ['view', 'reserved', 'info', 'refine'];
 
 export function wallPatternProfiles(id: string): CabinetProfile[] {
   return [...(WALL_PATTERNS.find((p) => p.id === id)?.profiles ?? [DEFAULT_CABINET_PROFILE])];
@@ -41,6 +50,8 @@ export interface CasePrefs {
   readonly view: CaseView;
   readonly swipe: SwipeMode;
   readonly ceilingMm: number;
+  /** Left to right; the first two sit left of the raised +, the last two right of it. */
+  readonly tabOrder: readonly CaseTab[];
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -48,7 +59,16 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   view: 'wall',
   swipe: 'camera',
   ceilingMm: CEILING_DEFAULT_MM,
+  tabOrder: CASE_TABS,
 };
+
+function isTabOrder(value: unknown): value is readonly CaseTab[] {
+  return (
+    Array.isArray(value) &&
+    value.length === CASE_TABS.length &&
+    CASE_TABS.every((tab) => value.includes(tab))
+  );
+}
 
 function parse(raw: string | null): Partial<Record<keyof CasePrefs, unknown>> {
   if (raw === null) return {};
@@ -73,6 +93,7 @@ export function readCasePrefs(): CasePrefs {
     view: CASE_VIEWS.includes(stored.view as CaseView) ? (stored.view as CaseView) : d.view,
     swipe: stored.swipe === 'pan' || stored.swipe === 'camera' ? stored.swipe : d.swipe,
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
+    tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
   };
 }
 

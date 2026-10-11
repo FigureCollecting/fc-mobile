@@ -13,7 +13,7 @@
  * alongside, CC16).
  */
 import type { Figure } from '@figurecollecting/fc-shared';
-import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, clearHeightsMm, topClearanceMm } from './cabinetProfile';
+import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, adjacencyGapMm, clearHeightsMm, sideOverhangMm, topClearanceMm } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import type { FigureDisplayMeta } from './displayMeta';
 import { resolveDepthMm, resolveHeightMm } from './sizeResolution';
@@ -91,10 +91,11 @@ export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILIN
       frontZMm: 0,
     });
   }
-  const frontWall = profile.rack ? profile.rack.postMm : profile.materials.front === 'glassDoor' ? (profile.glassMm ?? 0) : 0;
+  const doorWall = profile.rack ? profile.rack.postMm : profile.materials.front === 'glassDoor' ? (profile.glassMm ?? 0) : 0;
   for (let i = last - 1; i >= 0; i--) {
     const s = surfaces[i];
-    const onPlate = profile.plate !== undefined && s.material === 'glass';
+    const onPlate = profile.plate !== undefined && s.plate === true;
+    const frontWall = s.outsideDoor ? 0 : doorWall;
     slots.push({
       surfaceIndex: i,
       isTop: false,
@@ -102,7 +103,7 @@ export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILIN
       maxHeightMm: clear[i],
       widthMm: onPlate ? profile.plate!.widthMm : profile.interior.widthMm,
       depthMm: onPlate ? profile.plate!.depthMm : profile.interior.depthMm,
-      frontZMm: onPlate ? -profile.plate!.frontInsetMm : -frontWall,
+      frontZMm: onPlate ? -profile.plate!.frontInsetMm : frontWall > 0 ? -frontWall : 0,
     });
   }
   return slots;
@@ -253,4 +254,46 @@ export function packCabinets(
     }),
   }));
   return { cabinets, violators };
+}
+
+/** One cabinet's place along the wall, mm: x = 0 is the first cabinet's left side. */
+export interface WallSlot {
+  readonly profile: CabinetProfile;
+  readonly leftMm: number;
+  readonly rightMm: number;
+  readonly centerMm: number;
+  /** Body to body from the cabinet on its left (its adjacency gap); 0 for the first. */
+  readonly gapBeforeMm: number;
+}
+
+export interface WallLayout {
+  readonly cabinets: WallSlot[];
+  /** The wall's extent including the first and last cabinets' feet. */
+  readonly leftMm: number;
+  readonly rightMm: number;
+}
+
+/**
+ * Cabinets side by side, left to right, each as close to its neighbour as
+ * their legs allow (adjacencyGapMm: two KLINGSBOs never touch, Detolfs butt
+ * together). Positions are in the real world, never fitted to a screen.
+ */
+export function wallLayout(profiles: readonly CabinetProfile[]): WallLayout {
+  const cabinets: WallSlot[] = [];
+  let x = 0;
+  profiles.forEach((profile, i) => {
+    const gapBeforeMm = i === 0 ? 0 : adjacencyGapMm(profiles[i - 1], profile);
+    const leftMm = x + gapBeforeMm;
+    const rightMm = leftMm + profile.outer.widthMm;
+    cabinets.push({ profile, leftMm, rightMm, centerMm: leftMm + profile.outer.widthMm / 2, gapBeforeMm });
+    x = rightMm;
+  });
+  if (cabinets.length === 0) return { cabinets, leftMm: 0, rightMm: 0 };
+  const first = cabinets[0];
+  const lastSlot = cabinets[cabinets.length - 1];
+  return {
+    cabinets,
+    leftMm: first.leftMm - sideOverhangMm(first.profile),
+    rightMm: lastSlot.rightMm + sideOverhangMm(lastSlot.profile),
+  };
 }

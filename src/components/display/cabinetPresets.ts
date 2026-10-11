@@ -1,5 +1,7 @@
 /**
- * Cabinet presets: DATA only (case-cabinet-design-v3 preset_library). Adding
+ * Cabinet presets: DATA only. Ross 2026-10-11: THREE profiles, the IKEA
+ * KLINGSBO the default, the IKEA DETOLF second, his own open steel rack at
+ * low preference (the double-wide MILSBO was considered and rejected). Adding
  * a preset means adding one object to PRESET_DATA; the registry tests run
  * every preset through checkCabinetProfile (G19), so a data-only addition is
  * covered without a new test. Order in the file does not matter: the
@@ -29,13 +31,101 @@ function surface(
   return { name, topMm, thicknessMm, material, maxLoadKg, provenance };
 }
 
+/** A glass shelf that is the profile's plate (smaller than the interior, set back from the front). */
+function plate(s: CabinetSurface): CabinetSurface {
+  return { ...s, plate: true };
+}
+
+// --------------------------------------------------------------- IKEA KLINGSBO
+// THE DEFAULT (Ross 2026-10-11): a glass-door case on a steel frame, one open
+// shelf below it near the floor, an open top, splayed legs. IKEA no longer
+// sells it (Ross 10-11), so the sizes come from Wayback snapshots of the
+// product page and its measurement illustration, and the assembly
+// instructions IKEA still hosts. IKEA publishes the outside (45 x 40 x
+// 180 cm), the legs' footprint (54.5 x 45 cm), the open shelf's height
+// (15.5 cm to its underside) and the 22 cm above it; everything else is read
+// off the illustration, which is drawn to scale (6.41 px per cm; it matches
+// all seven published lengths within 0.3 %), and marked 'verify'.
+const KLINGSBO_PAGE_US =
+  'https://web.archive.org/web/20250701003134/https://www.ikea.com/us/en/p/klingsbo-glass-door-cabinet-black-clear-glass-60128562/';
+const KLINGSBO_PAGE_DE =
+  'https://web.archive.org/web/20241220230446/https://www.ikea.com/de/de/p/klingsbo-vitrine-schwarz-klarglas-60128562/';
+const KLINGSBO_DRAWING =
+  'https://web.archive.org/web/20250531220838/https://www.ikea.com/us/en/images/products/klingsbo-glass-door-cabinet-black-clear-glass__0975801_pe812864_s5.jpg';
+const KLINGSBO_ASSEMBLY =
+  'https://www.ikea.com/us/en/assembly_instructions/klingsbo-glass-door-cabinet-black-clear-glass__AA-306187-11-2.pdf';
+const KLINGSBO_FROM_DRAWING: Provenance = {
+  kind: 'derived',
+  source: 'read off the IKEA measurement illustration at its scale (6.41 px per cm); verify',
+};
+const KLINGSBO_SHELF_LOAD_KG = 7;
+
+export const IKEA_KLINGSBO: CabinetProfile = {
+  id: 'ikea-klingsbo',
+  name: 'IKEA KLINGSBO glass-door cabinet',
+  maker: 'IKEA',
+  preferenceRank: 1,
+  frame: 'panels',
+  outer: { widthMm: 450, depthMm: 400, heightMm: 1800 },
+  interior: { widthMm: 382, depthMm: 335 },
+  panels: { sideMm: 33, backMm: 33 },
+  materials: { sides: 'glass', back: 'glass', front: 'glassDoor' },
+  glassMm: 4,
+  surfaces: [
+    {
+      ...surface('open shelf', 176, 21, 'metal', {
+        kind: 'derived',
+        source: 'IKEA: 15.5 cm to its underside; its 21 mm rail from the illustration; verify',
+      }),
+      outsideDoor: true,
+    },
+    surface('cabinet floor', 421, 25, 'glass', {
+      kind: 'derived',
+      source: 'IKEA: 22 cm clear above the open shelf; its 25 mm frame from the illustration; verify',
+    }),
+    plate(surface('glass shelf 2', 694, 17, 'glass', KLINGSBO_FROM_DRAWING, KLINGSBO_SHELF_LOAD_KG)),
+    plate(surface('glass shelf 3', 969, 17, 'glass', KLINGSBO_FROM_DRAWING, KLINGSBO_SHELF_LOAD_KG)),
+    plate(surface('glass shelf 4', 1243, 17, 'glass', KLINGSBO_FROM_DRAWING, KLINGSBO_SHELF_LOAD_KG)),
+    plate(surface('glass shelf 5', 1519, 17, 'glass', KLINGSBO_FROM_DRAWING, KLINGSBO_SHELF_LOAD_KG)),
+    surface('top', 1800, 28, 'glass', { kind: 'cited', source: 'IKEA: 180 cm tall' }),
+  ],
+  shelves: { mode: 'fixed' },
+  plate: { widthMm: 359, depthMm: 314, frontInsetMm: 12 },
+  top: { usable: true },
+  base: { style: 'legs', heightMm: 155, leg: { sectionMm: 33, splay: true } },
+  footprint: { widthMm: 545, depthMm: 450, frontOverhangMm: 50 },
+  discontinued: true,
+  sources: [
+    { url: KLINGSBO_PAGE_US, date: '2025-07-01', facts: '17 3/4 x 15 3/4 x 70 7/8 in; 15 lb per shelf; tempered glass back, bottom, door and top; steel frame' },
+    { url: KLINGSBO_PAGE_DE, date: '2024-12-20', facts: '45 x 40 x 180 cm; 7 kg per shelf' },
+    { url: KLINGSBO_DRAWING, date: '2025-05-31', facts: '45 x 40.1 x 180 cm; legs 54.5 cm wide, 45 cm deep; open shelf 15.5 cm up; 22 cm above it' },
+    { url: KLINGSBO_ASSEMBLY, date: '2026-10-11', facts: 'AA-306187-11: four glass shelves on clip supports, splayed legs, a mesh open shelf' },
+  ],
+  provenance: {
+    outer: { kind: 'cited', source: 'IKEA listing: 45 x 40 x 180 cm (US: 17 3/4 x 15 3/4 x 70 7/8 in)' },
+    interior: KLINGSBO_FROM_DRAWING,
+    panels: { kind: 'derived', source: 'steel corner posts (and legs) about 33 mm, from the illustration; glass in between; verify' },
+    boards: KLINGSBO_FROM_DRAWING,
+    shelves: { kind: 'derived', source: 'fixed: each glass shelf rests on four clip supports (assembly step 11); heights from the illustration' },
+    base: { kind: 'cited', source: 'IKEA: the open shelf sits 15.5 cm up on four legs, the front pair splayed' },
+    footprint: { kind: 'cited', source: 'IKEA: the legs stand 54.5 cm wide and 45 cm deep (the body is 45 x 40 cm)' },
+    glass: { kind: 'placeholder', source: 'pane thickness not published; assumed 4 mm like the Detolf' },
+    plate: KLINGSBO_FROM_DRAWING,
+    loads: { kind: 'cited', source: 'IKEA: 7 kg (15 lb) per shelf; open shelf, floor and top not published' },
+  },
+};
+
 // ---------------------------------------------------------------- IKEA DETOLF
-// The DEFAULT (Ross CC3, 2026-09-29). Values from the DETOLF-VERIFY check
-// (2026-09-30): IKEA publishes only the outside size, the max load per shelf
-// and the materials; everything inside comes from owners' tape measurements
-// (three independent posts agree within 7 mm) and exact-fit glass shops.
-// IKEA seems to have stopped selling it around 2024; it stays the most
-// common collector cabinet. Not modelled yet (render units): the four ~6 mm
+// Second (Ross 2026-10-11; the default from CC3 until then). Values from the
+// DETOLF-VERIFY check (2026-09-30): IKEA publishes the outside size, the max
+// load per shelf, the materials and, on its measurement illustration, rounded
+// clear heights (40 / 39 / 39 / 40 cm) and a 38 cm inside width, which with
+// the boards overrun the 163 cm; the inside here comes from owners' tape
+// measurements (three independent posts agree within 7 mm) and exact-fit
+// glass shops. IKEA withdrew it in 2024: the product page redirects to the
+// catalogue (fetched 2026-10-11; Wayback has the redirect from 2024-08-15),
+// so the sizes cite the last snapshot. Owners butt Detolfs together: no
+// footprint beyond the body, adjacency gap 0. Not modelled yet (render units): the four ~6 mm
 // corner rods of the shelf-support ladders.
 const DETOLF_INTERIOR_STACK: Provenance = {
   kind: 'derived',
@@ -51,7 +141,7 @@ export const IKEA_DETOLF: CabinetProfile = {
   id: 'ikea-detolf',
   name: 'IKEA DETOLF glass-door cabinet',
   maker: 'IKEA',
-  preferenceRank: 1,
+  preferenceRank: 2,
   frame: 'panels',
   outer: { widthMm: 430, depthMm: 370, heightMm: 1630 },
   interior: { widthMm: 389, depthMm: 330 },
@@ -60,15 +150,28 @@ export const IKEA_DETOLF: CabinetProfile = {
   glassMm: 4,
   surfaces: [
     surface('base floor', 35, 35, 'wood', DETOLF_INTERIOR_STACK),
-    surface('glass shelf 2', 435, 4, 'glass', DETOLF_INTERIOR_STACK, DETOLF_SHELF_LOAD_KG),
-    surface('glass shelf 3', 826, 4, 'glass', DETOLF_INTERIOR_STACK, DETOLF_SHELF_LOAD_KG),
-    surface('glass shelf 4', 1217, 4, 'glass', DETOLF_INTERIOR_STACK, DETOLF_SHELF_LOAD_KG),
+    plate(surface('glass shelf 2', 435, 4, 'glass', DETOLF_INTERIOR_STACK, DETOLF_SHELF_LOAD_KG)),
+    plate(surface('glass shelf 3', 826, 4, 'glass', DETOLF_INTERIOR_STACK, DETOLF_SHELF_LOAD_KG)),
+    plate(surface('glass shelf 4', 1217, 4, 'glass', DETOLF_INTERIOR_STACK, DETOLF_SHELF_LOAD_KG)),
     surface('top', 1630, 35, 'wood', { kind: 'cited', source: 'IKEA: 163 cm tall' }),
   ],
   shelves: { mode: 'fixed' },
   plate: { widthMm: 383, depthMm: 290, frontInsetMm: 20 },
   top: { usable: true },
   base: { style: 'none', heightMm: 0 },
+  discontinued: true,
+  sources: [
+    {
+      url: 'https://web.archive.org/web/20231111035309/https://www.ikea.com/us/en/p/detolf-glass-door-cabinet-black-brown-10119206/',
+      date: '2023-11-11',
+      facts: '16 3/4 x 14 3/8 x 64 1/8 in; 8 lb per shelf; marked last chance',
+    },
+    {
+      url: 'https://web.archive.org/web/20231111004525/https://www.ikea.com/us/en/images/products/detolf-glass-door-cabinet-black-brown__0548121_pe656977_s5.jpg',
+      date: '2023-11-11',
+      facts: '43 x 37 x 163 cm; inside 38 cm wide; clear heights labelled 40 / 39 / 39 / 40 cm (rounded)',
+    },
+  ],
   provenance: {
     outer: { kind: 'cited', source: 'IKEA listing: 43 x 37 x 163 cm (US: 16 3/4 x 14 3/8 x 64 1/8 in)' },
     interior: { kind: 'measured', source: 'owners: inside about 387-391 W x 330-343 D mm' },
@@ -88,160 +191,6 @@ export const IKEA_DETOLF: CabinetProfile = {
   },
 };
 
-// ---------------------------------------------------------- v1 placeholders
-// Ross will send the sizes he wants for these; v1's numbers stand in until
-// then, so every value is a placeholder (case-cabinet-design-v3 order 2-6).
-const V1_PLACEHOLDER: Provenance = {
-  kind: 'placeholder',
-  source: "case-cabinet-design v1 preset; stands in until Ross sends the sizes he wants",
-};
-const V1_PROVENANCE = {
-  outer: V1_PLACEHOLDER,
-  interior: V1_PLACEHOLDER,
-  panels: V1_PLACEHOLDER,
-  boards: V1_PLACEHOLDER,
-  shelves: V1_PLACEHOLDER,
-  base: V1_PLACEHOLDER,
-} as const;
-
-export const OPEN_BOOKCASE: CabinetProfile = {
-  id: 'open-bookcase',
-  name: 'Open-front bookcase',
-  preferenceRank: 2,
-  frame: 'panels',
-  outer: { widthMm: 800, depthMm: 300, heightMm: 1800 },
-  interior: { widthMm: 764, depthMm: 294 },
-  panels: { sideMm: 18, backMm: 6 },
-  materials: { sides: 'wood', back: 'solid', front: 'open' },
-  glassMm: null,
-  surfaces: [
-    surface('base floor', 78, 18, 'wood', V1_PLACEHOLDER),
-    surface('shelf 2', 422.4, 18, 'wood', V1_PLACEHOLDER),
-    surface('shelf 3', 766.8, 18, 'wood', V1_PLACEHOLDER),
-    surface('shelf 4', 1111.2, 18, 'wood', V1_PLACEHOLDER),
-    surface('shelf 5', 1455.6, 18, 'wood', V1_PLACEHOLDER),
-    surface('top', 1800, 18, 'wood', V1_PLACEHOLDER),
-  ],
-  shelves: { mode: 'adjustable', pinPitchMm: 32 },
-  top: { usable: true },
-  base: { style: 'plinth', heightMm: 60 },
-  provenance: V1_PROVENANCE,
-};
-
-export const GLASS_CABINET_ON_LEGS: CabinetProfile = {
-  id: 'glass-cabinet-legs',
-  name: 'Glass cabinet on legs',
-  preferenceRank: 3,
-  frame: 'panels',
-  outer: { widthMm: 610, depthMm: 400, heightMm: 1830 },
-  interior: { widthMm: 600, depthMm: 390 },
-  panels: { sideMm: 5, backMm: 5 },
-  materials: { sides: 'glass', back: 'glass', front: 'glassDoor' },
-  glassMm: 5,
-  surfaces: [
-    surface('base floor', 168, 18, 'wood', V1_PLACEHOLDER),
-    surface('glass shelf 2', 580.5, 6, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 3', 993, 6, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 4', 1405.5, 6, 'glass', V1_PLACEHOLDER),
-    surface('top', 1830, 18, 'wood', V1_PLACEHOLDER),
-  ],
-  shelves: { mode: 'adjustable', pinPitchMm: 32 },
-  top: { usable: true },
-  base: { style: 'legs', heightMm: 150, leg: { taper: true } },
-  provenance: { ...V1_PROVENANCE, glass: V1_PLACEHOLDER },
-};
-
-// ------------------------------------------------------------------- Unit-A
-// The commissioned perspective model's 6 ft custom wood unit: 36 x 72 x 18 in,
-// 3/4 in stock, shelf tops at 3.75 in and then evenly to 72 in. Inch-native.
-const UNIT_A_SPEC: Provenance = {
-  kind: 'cited',
-  source: 'commissioned perspective model: 36 x 72 x 18 in, 3/4 in stock, tops at 3.75 in then evenly to 72 in',
-};
-const UNIT_A_BOARD_MM = inchesToMm(0.75);
-
-export const UNIT_A: CabinetProfile = {
-  id: 'unit-a',
-  name: 'Unit-A custom wood (6 ft)',
-  preferenceRank: 4,
-  frame: 'panels',
-  outer: { widthMm: inchesToMm(36), depthMm: inchesToMm(18), heightMm: inchesToMm(72) },
-  interior: { widthMm: inchesToMm(34.5), depthMm: inchesToMm(17.75) },
-  panels: { sideMm: UNIT_A_BOARD_MM, backMm: inchesToMm(0.25) },
-  materials: { sides: 'wood', back: 'solid', front: 'open' },
-  glassMm: null,
-  surfaces: [
-    surface('shelf 1', inchesToMm(3.75), UNIT_A_BOARD_MM, 'wood', UNIT_A_SPEC),
-    surface('shelf 2', inchesToMm(20.8125), UNIT_A_BOARD_MM, 'wood', UNIT_A_SPEC),
-    surface('shelf 3', inchesToMm(37.875), UNIT_A_BOARD_MM, 'wood', UNIT_A_SPEC),
-    surface('shelf 4', inchesToMm(54.9375), UNIT_A_BOARD_MM, 'wood', UNIT_A_SPEC),
-    surface('top', inchesToMm(72), UNIT_A_BOARD_MM, 'wood', UNIT_A_SPEC),
-  ],
-  shelves: { mode: 'fixed' },
-  top: { usable: true },
-  base: { style: 'plinth', heightMm: inchesToMm(3) },
-  provenance: {
-    outer: UNIT_A_SPEC,
-    interior: { kind: 'derived', source: '36 in less two 3/4 in sides; 18 in less the 1/4 in back' },
-    panels: { kind: 'placeholder', source: '3/4 in sides; the 1/4 in back is assumed by the model' },
-    boards: UNIT_A_SPEC,
-    shelves: UNIT_A_SPEC,
-    base: { kind: 'derived', source: 'a 3 in plinth under the 3/4 in bottom shelf (top at 3.75 in)' },
-  },
-};
-
-export const WIDE_CUSTOM: CabinetProfile = {
-  id: 'wide-custom',
-  name: 'Wide custom cabinet',
-  preferenceRank: 5,
-  frame: 'panels',
-  outer: { widthMm: 900, depthMm: 450, heightMm: 1950 },
-  interior: { widthMm: 864, depthMm: 439 },
-  panels: { sideMm: 18, backMm: 6 },
-  materials: { sides: 'wood', back: 'solid', front: 'glassDoor' },
-  glassMm: 5,
-  surfaces: [
-    surface('base floor', 118, 18, 'wood', V1_PLACEHOLDER),
-    surface('glass shelf 2', 421, 6, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 3', 724, 6, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 4', 1027, 6, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 5', 1330, 6, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 6', 1633, 6, 'glass', V1_PLACEHOLDER),
-    surface('top', 1950, 18, 'wood', V1_PLACEHOLDER),
-  ],
-  shelves: { mode: 'adjustable', pinPitchMm: 32 },
-  top: { usable: true },
-  base: { style: 'legs', heightMm: 100 },
-  provenance: { ...V1_PROVENANCE, glass: V1_PLACEHOLDER },
-};
-
-export const SHORT_PITCH: CabinetProfile = {
-  id: 'short-pitch',
-  name: 'Short-pitch unit (nendoroids, prize figures)',
-  preferenceRank: 6,
-  frame: 'panels',
-  outer: { widthMm: 600, depthMm: 300, heightMm: 1800 },
-  interior: { widthMm: 564, depthMm: 289 },
-  panels: { sideMm: 18, backMm: 6 },
-  materials: { sides: 'wood', back: 'solid', front: 'glassDoor' },
-  glassMm: 5,
-  surfaces: [
-    surface('base floor', 78, 18, 'wood', V1_PLACEHOLDER),
-    surface('glass shelf 2', 293, 5, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 3', 508, 5, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 4', 723, 5, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 5', 938, 5, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 6', 1153, 5, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 7', 1368, 5, 'glass', V1_PLACEHOLDER),
-    surface('glass shelf 8', 1583, 5, 'glass', V1_PLACEHOLDER),
-    surface('top', 1800, 18, 'wood', V1_PLACEHOLDER),
-  ],
-  shelves: { mode: 'adjustable', pinPitchMm: 32 },
-  top: { usable: true },
-  base: { style: 'plinth', heightMm: 60 },
-  provenance: { ...V1_PROVENANCE, glass: V1_PLACEHOLDER },
-};
-
 // --------------------------------------------------------- open steel rack
 // Ross's own open black steel boltless rack: a preset with LOW preference
 // (Ross CC3). Inch-native: 36 x 18 x 72 in to the top surface. Shelf 3
@@ -257,7 +206,7 @@ const RACK_POST_MM = inchesToMm(1.5);
 export const OPEN_STEEL_RACK: CabinetProfile = {
   id: 'open-steel-rack',
   name: 'Open steel rack',
-  preferenceRank: 7,
+  preferenceRank: 3,
   frame: 'open-rack',
   outer: { widthMm: inchesToMm(36), depthMm: inchesToMm(18), heightMm: inchesToMm(72) },
   interior: { widthMm: inchesToMm(36 - 2 * 1.5), depthMm: inchesToMm(18 - 2 * 1.5) },
@@ -284,6 +233,8 @@ export const OPEN_STEEL_RACK: CabinetProfile = {
   top: { usable: true },
   base: { style: 'posts', heightMm: inchesToMm(6.5 - 1.75) },
   rack: { postMm: RACK_POST_MM, beamMm: RACK_BEAM_MM },
+  discontinued: false,
+  sources: [],
   provenance: {
     outer: { kind: 'measured', source: 'Ross: 36 x 18 x 72 in to the top surface' },
     interior: { kind: 'derived', source: 'outer less two corner posts each way (the posts are an estimate)' },
@@ -295,15 +246,7 @@ export const OPEN_STEEL_RACK: CabinetProfile = {
   },
 };
 
-const PRESET_DATA: readonly CabinetProfile[] = [
-  IKEA_DETOLF,
-  OPEN_BOOKCASE,
-  GLASS_CABINET_ON_LEGS,
-  UNIT_A,
-  WIDE_CUSTOM,
-  SHORT_PITCH,
-  OPEN_STEEL_RACK,
-];
+const PRESET_DATA: readonly CabinetProfile[] = [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK];
 
 /** A copy sorted most preferred first (rank 1 first); the list given is left as it is. */
 export function byPreferenceRank(presets: readonly CabinetProfile[]): CabinetProfile[] {
@@ -313,9 +256,9 @@ export function byPreferenceRank(presets: readonly CabinetProfile[]): CabinetPro
 /** Every preset, most preferred first. */
 export const CABINET_PRESETS: readonly CabinetProfile[] = byPreferenceRank(PRESET_DATA);
 
-/** The IKEA Detolf (Ross CC3). A user's own default choice is stored per device later (SC-5). */
-export const DEFAULT_CABINET_PROFILE_ID = IKEA_DETOLF.id;
-export const DEFAULT_CABINET_PROFILE: CabinetProfile = IKEA_DETOLF;
+/** The IKEA KLINGSBO (Ross 2026-10-11). A user's own choice is kept per device (casePrefs, CC14). */
+export const DEFAULT_CABINET_PROFILE_ID = IKEA_KLINGSBO.id;
+export const DEFAULT_CABINET_PROFILE: CabinetProfile = IKEA_KLINGSBO;
 
 export function getCabinetPreset(id: string): CabinetProfile | undefined {
   return CABINET_PRESETS.find((p) => p.id === id);

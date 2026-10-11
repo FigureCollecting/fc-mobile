@@ -46,4 +46,8 @@ describe('README "Updates" states what the update code does', () => {
   it('says a rollback to an earlier build is named like any other build change', () => {
     expect(updatesSection().replace(/\s+/g, ' ')).toMatch(/rollback to an earlier build/);
   });
+
+  it('says any check that finds a newer build ready raises the prompt, not only the plugin', () => {
+    expect(updatesSection().replace(/\s+/g, ' ')).toMatch(/any check that finds one ready raises it too/);
+  });
 });

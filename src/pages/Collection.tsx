@@ -145,7 +145,8 @@ export function Collection() {
   const withImages = useMemo(
     () =>
       (localFigures ?? []).map((f) => {
-        const image = f.local.kind === 'owned' ? ownedImages.get(f.local.headId) : undefined;
+        // Kept for the owned figures only; the same product on another tab shows the same image.
+        const image = ownedImages.get(f.local.headId);
         return image === undefined ? f : { ...f, imageUrl: image.url };
       }),
     [localFigures, ownedImages],

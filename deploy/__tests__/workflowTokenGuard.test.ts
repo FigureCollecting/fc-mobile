@@ -376,7 +376,7 @@ describe('the coordinator checkout on its own entries', () => {
     },
   );
 
-  it.each(['npm --prefix e2e/stack run checkout; env', 'npm --prefix e2e/stack run build', 'npm run checkout', 'npm --prefix e2e/stack run checkout\nnpm test', ''])(
+  it.each(['npm --prefix e2e/stack run checkout; env', 'env; npm --prefix e2e/stack run checkout', 'npm --prefix e2e/stack run build', 'npm run checkout', 'npm --prefix e2e/stack run checkout\nnpm test', ''])(
     'rejects %j on a checkout entry',
     (run) => {
       expect(checkout(run)).toEqual(['run-grammar']);
@@ -689,6 +689,20 @@ describe('what may change how a token step runs', () => {
     ['Docker/Login-Action@dbcb813823bdd20940b903addbd779551569679f', 'registry: attacker.example'],
     ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'username: ${{ vars.USER }}'],
     ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'password: ${{ secrets.OTHER }}'],
+    // wk-09c-i1: each exact value with something after it, something before it, and empty.
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'registry-url: https://evil.example/https://npm.pkg.github.com'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', "registry-url: ''"],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'node-version: ${{ matrix.node-version }}${{ vars.V }}'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'node-version: ${{ vars.V }}${{ matrix.node-version }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'registry: ghcr.io.evil.example'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'registry: evil-ghcr.io'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', "registry: ''"],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'username: ${{ github.actor }}x'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'username: x${{ github.actor }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', "username: ''"],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'password: ${{ secrets.GITHUB_TOKEN }}x'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'password: x${{ secrets.GITHUB_TOKEN }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', "password: ''"],
   ])('flags %s with %s before a token step', (uses, input) => {
     expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: ${uses}\n        with:\n          ${input}\n`)), fixtureAllowList('x.yml'))).toEqual([
       { file: 'x.yml', where: 'build > #0 > with', rule: 'setup-with' },
@@ -923,6 +937,7 @@ describe('every other remote action pinned by full SHA', () => {
     'actions/upload-artifact@',
     'Docker://alpine@v1',
     'aquasecurityx/trivy-action@v1',
+    'actions/upload-artifact/./merge@v7',
   ])('flags %s in a job without a token step and after the last one', (uses) => {
     expect(anywhere(uses)).toEqual([['action-sha'], ['action-sha']]);
   });

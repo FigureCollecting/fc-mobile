@@ -168,49 +168,84 @@ for (const size of FOLD8) {
 }
 
 /**
- * Each cut-out or masked figure: its picture element on screen (relative to
- * the scene), its world boxes, and the clear fractions of its alpha above and
- * below the figure, measured here on the picture itself (the mask, for masked
- * art) with a canvas, independent of the app's own measurement.
+ * Every figure as drawn: its picture element on screen (relative to the
+ * scene), its world boxes, and the clear fractions of its picture's alpha on
+ * each side of the figure, measured here with a canvas on the picture itself
+ * (the mask, for masked art), independent of the app's own measurement. A
+ * framed copy or a plate is an opaque box: no clear margins.
  */
-async function pictureAlpha(page: Page) {
+async function drawnFigures(page: Page) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
-  const rows = await page.locator('button.cab-figure[data-art="cutout"], button.cab-figure[data-art="masked"]').evaluateAll(async (els) => {
-    const out: { name: string; world: string; art: string; top: number; height: number; clearAbove: number; clearBelow: number }[] = [];
+  const rows = await page.locator('button.cab-figure').evaluateAll(async (els) => {
+    const out: { name: string; kind: string; world: string; art: string; top: number; height: number; clear: { above: number; below: number; left: number; right: number } }[] = [];
     for (const b of els as HTMLElement[]) {
-      const el = b.querySelector<HTMLElement>('.cab-figure__art')!;
-      const src = el.dataset.maskUrl ?? (el as HTMLImageElement).src;
-      const img = new Image();
-      img.src = src;
-      await img.decode();
-      const c = document.createElement('canvas');
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const ctx = c.getContext('2d')!;
-      ctx.drawImage(img, 0, 0);
-      const d = ctx.getImageData(0, 0, c.width, c.height).data;
-      const opaqueRow = (y: number) => {
-        for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > 10) return true;
-        return false;
-      };
-      let first = 0;
-      while (first < c.height && !opaqueRow(first)) first++;
-      let last = c.height - 1;
-      while (last >= 0 && !opaqueRow(last)) last--;
+      const kind = b.dataset.art!;
+      const el = b.querySelector<HTMLElement>('.cab-figure__box')!.firstElementChild as HTMLElement;
+      const clear = { above: 0, below: 0, left: 0, right: 0 };
+      if (kind === 'cutout' || kind === 'masked') {
+        const img = new Image();
+        img.src = el.dataset.maskUrl ?? (el as HTMLImageElement).src;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        let x0 = c.width;
+        let x1 = -1;
+        let y0 = c.height;
+        let y1 = -1;
+        for (let y = 0; y < c.height; y++) {
+          for (let x = 0; x < c.width; x++) {
+            if (d[(y * c.width + x) * 4 + 3] <= 10) continue;
+            x0 = Math.min(x0, x);
+            x1 = Math.max(x1, x);
+            y0 = Math.min(y0, y);
+            y1 = Math.max(y1, y);
+          }
+        }
+        Object.assign(clear, { above: y0 / c.height, below: (c.height - 1 - y1) / c.height, left: x0 / c.width, right: (c.width - 1 - x1) / c.width });
+      }
       const r = el.getBoundingClientRect();
-      out.push({
-        name: b.getAttribute('aria-label')!,
-        world: b.dataset.world!,
-        art: b.dataset.artBox!,
-        top: r.top,
-        height: r.height,
-        clearAbove: first / c.height,
-        clearBelow: (c.height - 1 - last) / c.height,
-      });
+      out.push({ name: b.getAttribute('aria-label')!, kind, world: b.dataset.world!, art: b.dataset.artBox!, top: r.top, height: r.height, clear });
     }
     return out;
   });
-  return rows.map((r) => ({ ...r, top: r.top - scene.y, world: JSON.parse(r.world) as World, art: JSON.parse(r.art) as World }));
+  return rows.map((r) => {
+    const art = JSON.parse(r.art) as World;
+    const w = art.x1 - art.x0;
+    // where the figure itself is drawn along the wall, mm: its opaque columns
+    const opaque = { x0: art.x0 + r.clear.left * w, x1: art.x1 - r.clear.right * w };
+    return { ...r, top: r.top - scene.y, world: JSON.parse(r.world) as World, art, opaque, clearAbove: r.clear.above, clearBelow: r.clear.below };
+  });
+}
+
+/** The cut-out and masked figures (drawnFigures): pictures that carry their own clear margins. */
+async function pictureAlpha(page: Page) {
+  return (await drawnFigures(page)).filter((r) => r.kind === 'cutout' || r.kind === 'masked');
+}
+
+/**
+ * Neighbours on one surface (all cabinets of the wall, one row per surface
+ * height and depth), left to right: none reaches over the next, by its tap
+ * box (data-world) or by what it draws (its opaque columns).
+ */
+async function expectNoOverlap(page: Page, label: string) {
+  const rows = await drawnFigures(page);
+  const rowsOf = new Map<string, typeof rows>();
+  for (const r of rows) rowsOf.set(`${r.world.surface}:${r.world.z}`, [...(rowsOf.get(`${r.world.surface}:${r.world.z}`) ?? []), r]);
+  let pairs = 0;
+  for (const row of rowsOf.values()) {
+    row.sort((a, b) => a.world.x0 - b.world.x0);
+    for (let i = 1; i < row.length; i++) {
+      pairs++;
+      const [a, b] = [row[i - 1], row[i]];
+      expect(b.world.x0, `${label}: tap boxes ${a.name} / ${b.name}`).toBeGreaterThanOrEqual(a.world.x1 - 1e-6);
+      expect(b.opaque.x0, `${label}: drawn ${a.kind} ${a.name} / ${b.kind} ${b.name}`).toBeGreaterThanOrEqual(a.opaque.x1 - 0.01);
+    }
+  }
+  expect(pairs, label).toBeGreaterThan(0);
 }
 
 for (const branch of ['cut-out', 'masked'] as const) {
@@ -261,24 +296,20 @@ test('views switch in place: no figure overlaps another on its surface, the scen
   for (const view of ['One cabinet', 'One shelf', 'Whole cabinets', 'One cabinet'] as const) {
     await page.getByRole('button', { name: 'View' }).click();
     await page.getByRole('radio', { name: view }).click();
-    await page.keyboard.press('Escape');
+    await page.locator('.bottom-sheet__backdrop').click({ position: { x: 5, y: 5 } });
+    await expect(page.getByRole('radio', { name: view })).toHaveCount(0);
     await settle(page);
     expect(await page.locator('.cabinet-scene').boundingBox()).toEqual(sceneBox);
-    const rows = await drawnVsPredicted(page);
-    const bySurface = new Map<string, typeof rows>();
-    for (const r of rows) {
-      const key = `${r.world.surface}:${Math.round(r.world.z)}:${Math.round((r.world.x0 + r.world.x1) / 2 / 400)}`;
-      bySurface.set(key, [...(bySurface.get(key) ?? []), r]);
-    }
-    for (const group of bySurface.values()) {
-      const sorted = [...group].sort((a, b) => a.world.x0 - b.world.x0);
-      for (let i = 1; i < sorted.length; i++) {
-        // neighbours keep their gap in the world: the drawing never overlaps them
-        expect(sorted[i].world.x0, `${sorted[i - 1].name} / ${sorted[i].name}`).toBeGreaterThanOrEqual(sorted[i - 1].world.x1 - 1e-6);
-      }
-    }
+    await expectNoOverlap(page, view);
   }
 });
+
+for (const branch of ['', 'masked', 'framed', 'silhouette'] as const) {
+  test(`no drawn figure reaches over its neighbour: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
+    await expectNoOverlap(page, branch || 'cut-out');
+  });
+}
 
 test('the case ends where the cabinets do: the room fills the rest, nothing stretches (Ross 09-26)', async ({ page }) => {
   const size = FOLD8.find((v) => v.name === 'fold8-cover')!;

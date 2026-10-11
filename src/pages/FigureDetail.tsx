@@ -144,7 +144,7 @@ export function FigureDetail() {
           <BackIcon />
         </button>
         {image.data ? (
-          <img class="figure-detail__image" src={image.data.url} alt={figure.name} />
+          <img class="figure-detail__image" src={image.data.url} alt={figure.name} crossOrigin="anonymous" />
         ) : (
           // The placeholder plate (MG-2): no derivative, so no image of any kind.
           <div class="figure-detail__plate" aria-hidden="true">

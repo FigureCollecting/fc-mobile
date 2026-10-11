@@ -281,11 +281,12 @@ function ShelfFigure({
             src={figure.imageUrl}
             alt=""
             loading="lazy"
+            crossOrigin="anonymous"
             style={groundingShiftPx ? { transform: `translateY(${groundingShiftPx}px)` } : undefined}
           />
         ) : (
           <span class="shelf-figure__frame">
-            <img class="shelf-figure__img shelf-figure__img--photo" src={figure.imageUrl} alt="" loading="lazy" />
+            <img class="shelf-figure__img shelf-figure__img--photo" src={figure.imageUrl} alt="" loading="lazy" crossOrigin="anonymous" />
           </span>
         )
       ) : (

@@ -98,7 +98,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
                   onClick={onSelect ? () => onSelect(item.figure, item.index) : undefined}
                 >
                   {item.figure.imageUrl ? (
-                    <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" />
+                    <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" crossOrigin="anonymous" />
                   ) : (
                     // A placeholder plate (MG-2): no image anywhere, so the figure's name.
                     <span class="jrows__plate" aria-hidden="true">

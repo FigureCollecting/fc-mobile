@@ -27,7 +27,7 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
       </button>
 
       {figure.imageUrl ? (
-        <img class="detail-pane__image" src={figure.imageUrl} alt={figure.name} />
+        <img class="detail-pane__image" src={figure.imageUrl} alt={figure.name} crossOrigin="anonymous" />
       ) : (
         <div class="detail-pane__placeholder" aria-hidden="true" />
       )}

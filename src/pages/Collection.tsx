@@ -116,8 +116,8 @@ export function Collection() {
   } = useFigureListParams({ labelsDefault: !fixtureMode });
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  // the figure last opened: the Info tab opens it again
-  const [lastOpened, setLastOpened] = useState<number | null>(null);
+  // the figure last opened, by id: the Info tab opens it again wherever a re-sort or filter has moved it
+  const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [caseCard, setCaseCard] = useState<CaseCard | null>(null);
   const [casePrefs, setCasePrefs] = useCasePrefs();
   const [selecting, setSelecting] = useState(false);
@@ -156,6 +156,7 @@ export function Collection() {
     () => sortFigures(applyFilters(figures, filters), sort, order),
     [figures, filters, sort, order],
   );
+  const lastOpened = lastOpenedId === null ? -1 : visible.findIndex((f) => f._id === lastOpenedId);
 
   const handleRefresh = useCallback(async () => {
     if (fixtureMode) await fixturesQuery.refetch();
@@ -166,7 +167,7 @@ export function Collection() {
     (figure: Figure, index: number) => {
       if (!selecting) {
         setViewerIndex(index);
-        setLastOpened(index);
+        setLastOpenedId(figure._id);
         return;
       }
       setSelected((prev) => {
@@ -362,12 +363,12 @@ export function Collection() {
       {shownLayout === 'case' && !selecting && (
         <CaseTabs
           order={casePrefs.tabOrder}
-          infoEnabled={lastOpened !== null && !!visible[lastOpened]}
+          infoEnabled={lastOpened >= 0}
           open={caseCard ?? (filterOpen ? 'refine' : null)}
           onTab={(tab) => {
             if (tab === 'view') setCaseCard('view');
             else if (tab === 'refine') setFilterOpen(true);
-            else if (lastOpened !== null && visible[lastOpened]) setViewerIndex(lastOpened);
+            else if (lastOpened >= 0) setViewerIndex(lastOpened);
           }}
         />
       )}

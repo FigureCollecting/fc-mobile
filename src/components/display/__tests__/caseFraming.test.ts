@@ -154,7 +154,9 @@ describe('frameCase: one shelf (level; CC4b steps back at the top)', () => {
 describe('CC4 swipe: move the camera along the wall, or pan the drawn wall like a photo', () => {
   const wall = wallLayout(Array(5).fill(IKEA_KLINGSBO));
   const headroomMm = Array(5).fill(300);
-  const base = frameCase(input({ wall, headroomMm }));
+  // the middle cabinet, so a swipe either way has room before the ends
+  const base = frameCase(input({ wall, headroomMm, focus: 2 }));
+  const atStart = frameCase(input({ wall, headroomMm }));
 
   it('camera: a finger moving right walks the camera left, by the pixels at the cabinet front', () => {
     const moved = swipeCamera(base, wall, 100);
@@ -171,9 +173,12 @@ describe('CC4 swipe: move the camera along the wall, or pan the drawn wall like 
   });
 
   it('pan: the limits keep the wall on screen; a wall narrower than the frame does not pan', () => {
-    const [min, max] = panLimitsPx(base, wall);
+    const [min, max] = panLimitsPx(atStart, wall);
     expect(min).toBeLessThan(0);
-    expect(max).toBeCloseTo(0, 6);
+    expect(max).toBe(0);
+    const [midMin, midMax] = panLimitsPx(base, wall);
+    expect(midMin).toBeLessThan(0);
+    expect(midMax).toBeGreaterThan(0);
     const lone = frameCase(input({ wall: wallLayout([IKEA_KLINGSBO]) }));
     expect(panLimitsPx(lone, wallLayout([IKEA_KLINGSBO]))).toEqual([0, 0]);
   });

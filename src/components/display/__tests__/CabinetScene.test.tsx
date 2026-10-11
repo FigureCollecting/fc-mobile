@@ -6,7 +6,8 @@ import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO } from '../cabinetPresets';
 import { wallLayout } from '../packCabinets';
-import { cabinetBox } from '../caseFraming';
+import { cabinetBox, wallReachMm } from '../caseFraming';
+import { CEILING_DEFAULT_MM } from '../cabinetProfile';
 import { boxCorners, project, type Camera } from '../caseCamera';
 
 afterEach(() => {
@@ -560,6 +561,12 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
             const x1 = Math.max(...pts.map((p) => p.x)) + pan;
             if (x1 > 0 && x0 < camera.frame.width) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i} at ${x0.toFixed(0)}..${x1.toFixed(0)}`).toBe(true);
           }
+          // and 600 mm past the frame's reach either side (what hangs past a cabinet's box never pops in), no farther
+          const [lo, hi] = wallReachMm(camera, pan, { y0: 0, y1: CEILING_DEFAULT_MM, z0: -IKEA_KLINGSBO.outer.depthMm, z1: IKEA_KLINGSBO.footprint!.frontOverhangMm }, 600);
+          for (let i = 0; i < 20; i++) {
+            const b = cabinetBox(wall.cabinets[i], 0);
+            expect(drawn.has(i), `${v} after ${dx}: cabinet ${i} at ${b.x0}..${b.x1}, reach ${lo.toFixed(0)}..${hi.toFixed(0)}`).toBe(b.x1 >= lo && b.x0 <= hi);
+          }
         }
         cleanup();
       }
@@ -569,7 +576,8 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
 
 describe('CabinetScene: the picture, its tap box and its shadow, at the edges', () => {
   it('an image list size without a height is not believed: the figure packs by its display shape', () => {
-    const fig = { ...FIXTURE_FIGURES[0], _id: 'no-height', name: 'No Height', imageUrl: '/plain.jpg' } as Figure;
+    // no labelled width: the footprint comes from the picture's shape
+    const fig = { ...FIXTURE_FIGURES[0], _id: 'no-height', name: 'No Height', imageUrl: '/plain.jpg', dimensions: { heightMm: 230 } } as Figure;
     const { host } = scene([fig], {}, { imageFor: () => ({ url: '/plain.jpg', width: 600 }) });
     expect(figureButtons(host)).toHaveLength(1);
     expect(host.querySelector('.cabinet-scene__fit')).toBeNull();

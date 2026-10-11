@@ -53,7 +53,8 @@ export type Rule =
   | 'job-key'
   | 'workflow-key'
   | 'scope-env'
-  | 'all-env';
+  | 'all-env'
+  | 'post-stage';
 
 export interface Violation {
   file: string;
@@ -228,7 +229,9 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
     const job = record(jobValue);
     const steps = (Array.isArray(job['steps']) ? job['steps'] : []).map(record);
     const last = steps.findLastIndex((s) => mentions(s['env']));
-    return { jobId, job, steps, last };
+    // An action's post stage runs after every later step of its job, with its env (the token) set.
+    const post = steps.findIndex((s) => mentions(s['env']) && s['uses'] !== undefined);
+    return { jobId, job, steps, last, post };
   });
   const holds = jobs.some((j) => j.last >= 0);
   for (const [key, value] of Object.entries(wf)) {
@@ -237,7 +240,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
     scan(key, value, key === 'env' ? 'workflow-env' : 'elsewhere');
     if (holds) around(key, key, value, WORKFLOW_KEYS, 'workflow-key');
   }
-  for (const { jobId, job, steps, last } of jobs) {
+  for (const { jobId, job, steps, last, post } of jobs) {
     for (const [key, value] of Object.entries(job)) {
       if (key === 'steps') continue;
       envExpr(`${jobId} > ${key}`, key, value);
@@ -275,6 +278,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
         }
       }
       if (i < last && !bearing && !SETUP_ACTION.test(String(uses))) flag(where('step'), 'step-order');
+      if (post >= 0 && i > post) flag(where('step'), 'post-stage');
       // A setup action's inputs and env decide which node, npm registry or BuildKit the token reaches.
       const setup = i < last ? SETUP_ACTION.exec(String(uses)) : null;
       if (setup) {

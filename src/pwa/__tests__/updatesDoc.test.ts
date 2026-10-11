@@ -50,4 +50,16 @@ describe('README "Updates" states what the update code does', () => {
   it('says any check that finds a newer build ready raises the prompt, not only the plugin', () => {
     expect(updatesSection().replace(/\s+/g, ' ')).toMatch(/any check that finds one ready raises it too/);
   });
+
+  it('says a build still installing when the check stops waiting may install later, and the prompt then shows', () => {
+    const doc = updatesSection().replace(/\s+/g, ' ');
+    expect(doc).toMatch(/may still finish installing later; the prompt then shows/);
+    expect(doc).not.toMatch(/still installing by then answers "Could not check \(offline\)": nothing waits/);
+  });
+
+  it('says when workbox-window stops following new builds: after the first one it treats as external', () => {
+    const doc = updatesSection().replace(/\s+/g, ' ');
+    expect(doc).toMatch(/stops following new builds after the first one it treats as external/);
+    expect(doc).not.toMatch(/first new build to install behind a page/);
+  });
 });

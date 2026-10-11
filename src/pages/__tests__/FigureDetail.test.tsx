@@ -17,6 +17,8 @@ import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { shownCopies } from '../../sync/occurrences';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { fakeCaches } from '../../test/fakeCaches';
+import { rememberImages } from '../../media/ownedImages';
 
 afterEach(() => {
   localSession.value = undefined;
@@ -54,13 +56,51 @@ describe('FigureDetail page', () => {
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(
       create(GetProductImagesResponseSchema, {
-        products: [{ headId: headOf(0), images: [{ derivativeId: 'aa', primary: true, url: 'https://images.figurecollecting.com/d/aa.webp' }] }],
+        products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: `https://images.figurecollecting.com/d/${'a'.repeat(64)}` }] }],
       }),
     );
     await seedFigures(r, [MIKU]);
     renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
     const img = await screen.findByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
-    expect(img).toHaveAttribute('src', 'https://images.figurecollecting.com/d/aa.webp');
+    expect(img).toHaveAttribute('src', `https://images.figurecollecting.com/d/${'a'.repeat(64)}`);
+    // A CORS request, so the service worker can keep it and the case view can read its pixels.
+    expect(img).toHaveAttribute('crossorigin', 'anonymous');
+  });
+
+  it('shows no image from anywhere but the public image address (ADDR-1)', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, {
+        products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: 'https://images.store.example/original.jpg' }] }],
+      }),
+    );
+    await seedFigures(r, [MIKU]);
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+    await new Promise((res) => setTimeout(res, 20));
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector('.figure-detail__plate')).not.toBeNull();
+  });
+
+  it('offline, shows the image kept for an owned figure, and the plate when none was kept', async () => {
+    const storage = fakeCaches();
+    vi.stubGlobal('caches', storage);
+    renderHook(() => useOnlineStatus());
+    act(() => {
+      window.dispatchEvent(new Event('offline'));
+    });
+    try {
+      await rememberImages(headOf(0), [{ url: `https://images.figurecollecting.com/d/${'b'.repeat(64)}`, width: 600, height: 800, role: 'gallery', primary: true }], storage);
+      const r = await open([MIKU, { title: 'Second' }]);
+      const img = await screen.findByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
+      expect(img).toHaveAttribute('src', `https://images.figurecollecting.com/d/${'b'.repeat(64)}`);
+      expect(r.clients.getProductImages).not.toHaveBeenCalled();
+    } finally {
+      act(() => {
+        window.dispatchEvent(new Event('online'));
+      });
+      vi.unstubAllGlobals();
+    }
   });
 
   it('asks for no image offline, and draws the plate', async () => {

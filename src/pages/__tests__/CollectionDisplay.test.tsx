@@ -30,6 +30,10 @@ import { renderWithProviders } from '../../test/testUtils';
 import { localRig } from '../../local/__tests__/localHarness';
 import { seedFigures, type SeedFigure } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
+import { create } from '@bufbuild/protobuf';
+import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
+import { headOf } from '../../sync/__tests__/engineSupport';
+import { fakeCaches } from '../../test/fakeCaches';
 
 /** The local store holding `figs` (on the local data no figure has an image: MG-2). */
 async function respondWith(figs: SeedFigure[]) {
@@ -67,6 +71,25 @@ describe('Collection page (rebuilt display layer)', () => {
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     expect(container.querySelector('.case[data-motif="detolf-dark"]')).not.toBeNull();
+  });
+
+  it('stands an owned figure\'s kept image in the case (ADDR-1), a CORS image, and keeps the others as plates', async () => {
+    const storage = fakeCaches();
+    vi.stubGlobal('caches', storage);
+    try {
+      const r = await localRig();
+      const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: src, width: 600, height: 800 }] }] }),
+      );
+      await seedFigures(r, [makeFigure('1'), makeFigure('2')]);
+      renderWithProviders(<Collection />, { initialPath: '/' });
+      await waitFor(() => expect(document.querySelector(`img[src="${src}"]`)).not.toBeNull());
+      expect(document.querySelector(`img[src="${src}"]`)).toHaveAttribute('crossorigin', 'anonymous');
+      expect(document.querySelectorAll('.shelf-figure img')).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('honors the layout URL param for Display B', async () => {

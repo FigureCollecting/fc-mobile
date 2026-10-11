@@ -236,3 +236,23 @@ describe('quadStyle: one flat face of the mm world as a CSS 3D element', () => {
     expect(quadStyle([0, 0, 0], [10, 0, 0], [0, 0, 0])).toBeNull();
   });
 });
+
+describe('CabinetScene: the numbers the e2e checks the drawing against', () => {
+  it('publishes its camera and, per figure, the world box it draws and the surface it stands on', () => {
+    const { host } = scene(FIXTURE_FIGURES);
+    const cam = JSON.parse(host.dataset.camera!);
+    expect(Object.keys(cam).sort()).toEqual(['focalPx', 'height', 'pitch', 'width', 'x', 'y', 'z']);
+    expect(cam.width).toBe(360);
+    for (const b of figureButtons(host)) {
+      const w = JSON.parse(b.dataset.world!);
+      expect(w.x1).toBeGreaterThan(w.x0);
+      expect(w.y1).toBeGreaterThan(w.y0);
+      // the base stands on the surface: the box reaches below it only by the picture's transparent margin
+      expect(w.y0).toBeLessThanOrEqual(w.surface + 1e-9);
+      expect(w.surface - w.y0).toBeLessThan(0.5 * (w.y1 - w.y0));
+    }
+    const surfaces = new Set(figureButtons(host).map((b) => JSON.parse(b.dataset.world!).surface));
+    // the seven fixtures stand on the KLINGSBO's top and four of its glass shelves
+    expect([...surfaces].sort((a, b) => a - b)).toEqual([694, 969, 1243, 1519, 1800]);
+  });
+});

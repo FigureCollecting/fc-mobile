@@ -22,6 +22,9 @@ export interface SyncSession {
   localDb(): Promise<LocalDb>;
 }
 
+/** An idle, visible page pulls this often, so another device's edits show without a reload (WK-16 F15). */
+export const IDLE_POLL_MS = 60_000;
+
 /** Nothing is sent in these: only the session (a sign-in, a reload) moves on from them. Edits still queue. */
 export const HELD_STATUSES: ReadonlySet<AuthStatus> = new Set(['loading', 'signed-out', 'reauth-required', 'reload-required']);
 
@@ -76,6 +79,7 @@ export function createBrowserSync(opts: BrowserSyncOptions): BrowserSync {
     sync: opts.sync ?? createClient(SyncService, transport!),
     catalog: opts.catalog ?? createClient(CatalogService, transport!),
     blocked: () => HELD_STATUSES.has(session.status.peek()),
+    pollMs: IDLE_POLL_MS,
     ...(opts.window === undefined ? {} : { window: opts.window }),
     ...(opts.document === undefined ? {} : { document: opts.document }),
   });

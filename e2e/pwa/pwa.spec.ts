@@ -200,6 +200,13 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
     );
   const browsed = () => page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).map((r) => r.url).sort());
   const owned = () => page.evaluate(async () => (await (await caches.open('fc-owned-media-v1')).keys()).map((r) => r.url).sort());
+  /** Each cache the page or the worker keeps that holds this address. */
+  const cachesHolding = (url: string) =>
+    page.evaluate(async (u) => {
+      const out: string[] = [];
+      for (const name of await caches.keys()) if ((await (await caches.open(name)).match(u, { ignoreVary: true })) !== undefined) out.push(name);
+      return out;
+    }, url);
   const count = (url: string) => hits.filter((h) => h === url).length;
   // A document keeps the images it decoded and draws them again without a request: each offline
   // check runs in a fresh one, so what answers it is the worker.
@@ -228,7 +235,11 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(count(present)).toBe(2);
 
   // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): kept in the owned
-  // cache alone and served first, offline too; a withheld one is deleted from BOTH caches, so it is gone.
+  // cache alone and served first, offline too; a withheld one is deleted from every cache, so it is gone,
+  // though an <img> showed it online. This context's HTTP cache is off (any Playwright route turns it
+  // off, the hands-off guard's too), so this cannot show that no fetch fills it with the origin's
+  // immutable answer: src/sw/__tests__/sw.test.ts and src/media/__tests__/ownedImages.test.ts pin each
+  // fetch of an image address to cache 'no-store'.
   down = false;
   await context.addInitScript({ content: await bundleImageProbe() });
   await freshDocument();
@@ -258,11 +269,14 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(await browsed()).toEqual([present]);
   expect(await owned()).toEqual([replacement]);
   expect(await kept('h1')).toBe(replacement);
+  expect(await cachesHolding(ownedImage)).toEqual([]);
   down = true;
   await freshDocument();
   expect(await show(ownedImage)).toBe(false);
   expect(await get(ownedImage)).toBe('error TypeError');
   expect(await show(replacement)).toBe(true);
+  expect(await cachesHolding(ownedImage)).toEqual([]);
+  expect(await cachesHolding(replacement)).toEqual(['fc-owned-media-v1']);
 });
 
 test.describe('(c) build N+1 ships while 2 edits are pending', () => {

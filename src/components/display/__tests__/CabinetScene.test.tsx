@@ -398,6 +398,27 @@ describe('CabinetScene: one figure, one tap box (CASE-FIX dead tap)', () => {
   });
 });
 
+describe('CabinetScene: opaque boxes (framed copies, plates) on real figures with a labelled width', () => {
+  // a real synced figure: a plain picture (no display meta) or none, its labelled height and width (ProductCard)
+  const framed = (i: number): Figure => ({ _id: `r${i}`, name: `Real ${i}`, imageUrl: `https://img.example/r${i}.jpg`, dimensions: { heightMm: 230, widthMm: 100 } }) as Figure;
+  const plate = (i: number): Figure => ({ _id: `p${i}`, name: `Plate ${i}`, dimensions: { heightMm: 230, widthMm: 100 } }) as Figure;
+
+  for (const [kind, make] of [['framed', framed], ['plate', plate]] as const) {
+    it(`${kind}: the drawn box never reaches over a neighbour (packed 100 mm wide, drawn no wider)`, () => {
+      const { host } = scene(Array.from({ length: 12 }, (_, i) => make(i)));
+      let pairs = 0;
+      for (const row of bySurface(host)) {
+        for (let i = 1; i < row.length; i++) {
+          pairs++;
+          expect(row[i].button.dataset.art).toBe(kind);
+          expect(row[i].art.x0, `${row[i - 1].name} / ${row[i].name}`).toBeGreaterThanOrEqual(row[i - 1].art.x1 - 1e-6);
+        }
+      }
+      expect(pairs).toBeGreaterThan(0);
+    });
+  }
+});
+
 describe('quadStyle: one flat face of the mm world as a CSS 3D element', () => {
   it('a front-facing rectangle: its size in px (1 px per mm) and an identity frame at its top-left corner', () => {
     expect(quadStyle([10, 200, -5], [100, 0, 0], [0, -50, 0])).toEqual({

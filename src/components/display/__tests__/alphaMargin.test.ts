@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/preact';
 import {
   computeBottomMarginFrac,
+  computeTopMarginFrac,
   useBottomMarginFrac,
-  useMeasuredBottomMarginFrac,
+  useMeasuredAlphaMargins,
   __clearAlphaMarginCache,
   computeContactBand,
   useContactBand,
@@ -189,7 +190,31 @@ describe('useBottomMarginFrac (canvas-backed, real image measurement)', () => {
   });
 });
 
-describe('useMeasuredBottomMarginFrac (null until known, so a screen can wait for grounding)', () => {
+describe('computeTopMarginFrac (true scale: the transparent margin above the figure)', () => {
+  it('is the fraction of the height that is clear above the highest opaque row', () => {
+    expect(computeTopMarginFrac(bufferWithPixels(10, 100, [[3, 25], [5, 89]]))).toBeCloseTo(25 / 100, 9);
+  });
+
+  it('a figure touching the top edge: 0', () => {
+    expect(computeTopMarginFrac(bufferWithPixels(4, 20, [[0, 0], [3, 19]]))).toBe(0);
+  });
+
+  it('anti-aliasing dust (alpha 10) is clear; alpha 11 is drawn', () => {
+    expect(computeTopMarginFrac(bufferWithPixels(4, 20, [[1, 2]], 10))).toBe(0);
+    expect(computeTopMarginFrac(bufferWithPixels(4, 20, [[1, 2]], 11))).toBeCloseTo(2 / 20, 9);
+  });
+
+  it('reads every column of a row, not only the first', () => {
+    expect(computeTopMarginFrac(bufferWithPixels(8, 10, [[7, 4]]))).toBeCloseTo(4 / 10, 9);
+  });
+
+  it('a fully clear or empty image: 0 (no correction)', () => {
+    expect(computeTopMarginFrac(bufferWithPixels(4, 20, []))).toBe(0);
+    expect(computeTopMarginFrac({ width: 0, height: 0, data: new Uint8ClampedArray(0) })).toBe(0);
+  });
+});
+
+describe('useMeasuredAlphaMargins (both margins, null until known, so a screen can wait for them)', () => {
   beforeEach(() => {
     __clearAlphaMarginCache();
   });
@@ -199,30 +224,50 @@ describe('useMeasuredBottomMarginFrac (null until known, so a screen can wait fo
     delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
   });
 
-  it('is null while measuring, then the measured margin', async () => {
+  it('is null while measuring, then the top and bottom margins from ONE canvas read', async () => {
     HTMLImageElement.prototype.decode = vi.fn(() => Promise.resolve());
     Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 10, configurable: true });
     Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
-    const buf = bufferWithBottomMargin(10, 100, 90);
+    // opaque rows 20..89: 20 % clear above the figure, 10 % below it
+    const buf = bufferWithPixels(10, 100, [[4, 20], [6, 89]]);
+    const getImageData = vi.fn(() => buf);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       drawImage: vi.fn(),
-      getImageData: () => buf,
+      getImageData,
     } as unknown as CanvasRenderingContext2D);
-    const { result } = renderHook(() => useMeasuredBottomMarginFrac('https://example.com/known.png'));
+    const { result } = renderHook(() => useMeasuredAlphaMargins('https://example.com/known.png'));
     expect(result.current).toBeNull();
-    await waitFor(() => expect(result.current).toBeCloseTo(10 / 100, 5));
-    // a second figure on the same image knows it at once
-    expect(renderHook(() => useMeasuredBottomMarginFrac('https://example.com/known.png')).result.current).toBeCloseTo(0.1, 5);
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect(result.current!.top).toBeCloseTo(0.2, 9);
+    expect(result.current!.bottom).toBeCloseTo(0.1, 9);
+    // a second figure on the same image knows both at once, and the bottom-only hook shares the read
+    const again = renderHook(() => useMeasuredAlphaMargins('https://example.com/known.png')).result.current!;
+    expect(again.top).toBeCloseTo(0.2, 9);
+    expect(again.bottom).toBeCloseTo(0.1, 9);
+    expect(renderHook(() => useBottomMarginFrac('https://example.com/known.png')).result.current).toBeCloseTo(0.1, 9);
+    expect(getImageData).toHaveBeenCalledTimes(1);
   });
 
-  it('a failed measurement is known too: 0, never stuck at null', async () => {
+  it('a failed measurement is known too: both 0, never stuck at null', async () => {
     HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
-    const { result } = renderHook(() => useMeasuredBottomMarginFrac('https://example.com/broken2.png'));
-    await waitFor(() => expect(result.current).toBe(0));
+    const { result } = renderHook(() => useMeasuredAlphaMargins('https://example.com/broken2.png'));
+    await waitFor(() => expect(result.current).toEqual({ top: 0, bottom: 0 }));
   });
 
-  it('no image: 0 at once', () => {
-    expect(renderHook(() => useMeasuredBottomMarginFrac(undefined)).result.current).toBe(0);
+  it('a new image starts over: null until its own margins are known', async () => {
+    HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
+    const { result, rerender } = renderHook(({ url }) => useMeasuredAlphaMargins(url), { initialProps: { url: 'https://example.com/one.png' } });
+    await waitFor(() => expect(result.current).toEqual({ top: 0, bottom: 0 }));
+    let resolve!: () => void;
+    HTMLImageElement.prototype.decode = vi.fn(() => new Promise<void>((r) => (resolve = r)));
+    rerender({ url: 'https://example.com/two.png' });
+    await waitFor(() => expect(result.current).toBeNull());
+    resolve();
+    await waitFor(() => expect(result.current).not.toBeNull());
+  });
+
+  it('no image: both 0 at once', () => {
+    expect(renderHook(() => useMeasuredAlphaMargins(undefined)).result.current).toEqual({ top: 0, bottom: 0 });
   });
 });
 

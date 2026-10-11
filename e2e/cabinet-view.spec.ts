@@ -167,6 +167,93 @@ for (const size of FOLD8) {
   }
 }
 
+/**
+ * Each cut-out or masked figure: its picture element on screen (relative to
+ * the scene), its world boxes, and the clear fractions of its alpha above and
+ * below the figure, measured here on the picture itself (the mask, for masked
+ * art) with a canvas, independent of the app's own measurement.
+ */
+async function pictureAlpha(page: Page) {
+  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  const rows = await page.locator('button.cab-figure[data-art="cutout"], button.cab-figure[data-art="masked"]').evaluateAll(async (els) => {
+    const out: { name: string; world: string; art: string; top: number; height: number; clearAbove: number; clearBelow: number }[] = [];
+    for (const b of els as HTMLElement[]) {
+      const el = b.querySelector<HTMLElement>('.cab-figure__art')!;
+      const src = el.dataset.maskUrl ?? (el as HTMLImageElement).src;
+      const img = new Image();
+      img.src = src;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const ctx = c.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      const opaqueRow = (y: number) => {
+        for (let x = 0; x < c.width; x++) if (d[(y * c.width + x) * 4 + 3] > 10) return true;
+        return false;
+      };
+      let first = 0;
+      while (first < c.height && !opaqueRow(first)) first++;
+      let last = c.height - 1;
+      while (last >= 0 && !opaqueRow(last)) last--;
+      const r = el.getBoundingClientRect();
+      out.push({
+        name: b.getAttribute('aria-label')!,
+        world: b.dataset.world!,
+        art: b.dataset.artBox!,
+        top: r.top,
+        height: r.height,
+        clearAbove: first / c.height,
+        clearBelow: (c.height - 1 - last) / c.height,
+      });
+    }
+    return out;
+  });
+  return rows.map((r) => ({ ...r, top: r.top - scene.y, world: JSON.parse(r.world) as World, art: JSON.parse(r.art) as World }));
+}
+
+for (const branch of ['cut-out', 'masked'] as const) {
+  for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+    test(`true scale, ${branch}: the drawn figure (its opaque rows) is exactly its labelled height, feet on the surface: shelf view, ${size.name}`, async ({ page }) => {
+      await openCase(page, size, branch === 'masked' ? '&fxbranch=masked' : '', { view: 'shelf' });
+      const camera = await cameraOf(page);
+      // the shelf view looks level: a figure facing the camera is drawn without foreshortening
+      expect(camera.pitch).toBe(0);
+      const rows = await pictureAlpha(page);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) {
+        const cx = (r.world.x0 + r.world.x1) / 2;
+        const feet = project(camera, [cx, r.world.surface, r.world.z]).y;
+        const head = project(camera, [cx, r.world.y1, r.world.z]).y;
+        // the box under test: a labelled height, standing on the surface
+        expect(r.world.y0).toBeCloseTo(r.world.surface, 6);
+        const drawnHead = r.top + r.clearAbove * r.height;
+        const drawnFeet = r.top + (1 - r.clearBelow) * r.height;
+        expect(Math.abs(drawnFeet - feet), `${r.name} feet`).toBeLessThan(1.5);
+        expect(Math.abs(drawnHead - head), `${r.name} head: drawn ${(drawnFeet - drawnHead).toFixed(1)} px for ${(feet - head).toFixed(1)} px`).toBeLessThan(1.5);
+      }
+    });
+  }
+
+  test(`true scale, ${branch}: the tilted cabinet view draws each picture where its world box is, the figure in it its labelled height`, async ({ page }) => {
+    await openCase(page, FOLD8[0], branch === 'masked' ? '&fxbranch=masked' : '', { view: 'cabinet' });
+    const camera = await cameraOf(page);
+    for (const r of await pictureAlpha(page)) {
+      const pictureH = r.art.y1 - r.art.y0;
+      // in the world: the opaque rows of the picture run from the surface to the labelled height above it
+      expect(Math.abs(r.art.y0 + r.clearBelow * pictureH - r.world.surface), `${r.name} feet, mm`).toBeLessThan(0.5);
+      expect(Math.abs(r.art.y1 - r.clearAbove * pictureH - r.world.y1), `${r.name} head, mm`).toBeLessThan(0.5);
+      // and the browser draws the picture exactly over that world box
+      const cx = (r.art.x0 + r.art.x1) / 2;
+      const top = project(camera, [cx, r.art.y1, r.art.z]).y;
+      const bottom = project(camera, [cx, r.art.y0, r.art.z]).y;
+      expect(Math.abs(r.top - top), `${r.name} picture top`).toBeLessThan(1.5);
+      expect(Math.abs(r.top + r.height - bottom), `${r.name} picture bottom`).toBeLessThan(1.5);
+    }
+  });
+}
+
 test('views switch in place: no figure overlaps another on its surface, the scene keeps its size', async ({ page }) => {
   const size = FOLD8.find((v) => v.name === 'fold8-open')!;
   await openCase(page, size, '&fx=3');

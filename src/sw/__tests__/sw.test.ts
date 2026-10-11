@@ -3,7 +3,7 @@ import path from 'node:path';
 import fc from 'fast-check';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { API_NAVIGATION } from '../routes';
-import { BROWSED_MEDIA_CACHE } from '../../media/ownedImages';
+import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, withheldKey } from '../../media/ownedImages';
 
 // Workbox is mocked so the entry's wiring can be read back; its behaviour in a
 // real browser is covered by e2e/pwa.
@@ -66,6 +66,8 @@ function corsAnswer(body: string, init: ResponseInit = {}): Response {
 const ownedResponse = () => corsAnswer('owned');
 const opened: string[] = [];
 const matchOptions: (CacheQueryOptions | undefined)[] = [];
+/** The addresses the last owned sync withheld (src/media/ownedImages.ts): the page keeps a record of each. */
+const withheld = new Set<string>();
 
 beforeAll(async () => {
   const scope = self as unknown as Record<string, unknown>;
@@ -76,8 +78,10 @@ beforeAll(async () => {
       opened.push(name);
       return {
         match: async (r: Request | string, options?: CacheQueryOptions) => {
+          const href = new URL(typeof r === 'string' ? r : r.url).href;
+          if (name === WITHHELD_CACHE) return [...withheld].some((u) => withheldKey(u).url === href) ? new Response(null) : undefined;
           matchOptions.push(options);
-          return new URL(typeof r === 'string' ? r : r.url).href === OWNED_URL ? ownedResponse() : undefined;
+          return name === OWNED_MEDIA_CACHE && href === OWNED_URL ? ownedResponse() : undefined;
         },
       };
     },
@@ -141,7 +145,8 @@ describe('service worker wiring', () => {
     const browsed = new Response('browsed');
     (cacheFirst as unknown as { handle: (o: unknown) => Promise<Response> }).handle = vi.fn(async () => browsed);
     expect(await text(handler({ request: new Request(OWNED_URL) }))).toBe('owned');
-    expect(opened).toEqual(['fc-owned-media-v1']);
+    // The withheld addresses first (none here), then the owned cache.
+    expect(opened).toEqual(['fc-withheld-v1', 'fc-owned-media-v1']);
     expect(matchOptions).toEqual([{ ignoreVary: true }]);
     expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).not.toHaveBeenCalled();
     // An <img> of any other image: the browsed cache.
@@ -207,6 +212,33 @@ describe('service worker wiring', () => {
       } finally {
         vi.unstubAllGlobals();
       }
+    }
+  });
+
+  it('refuses an address the last owned sync withheld: a network error, from neither cache, nothing fetched, so nothing stored again', async () => {
+    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { handle: ReturnType<typeof vi.fn> };
+    cacheFirst.handle = vi.fn(async () => corsAnswer('browsed'));
+    const [, handler] = imageRoute();
+    const fetchSpy = vi.fn(async () => corsAnswer('origin'));
+    vi.stubGlobal('fetch', fetchSpy);
+    const WITHHELD_URL = `https://images.figurecollecting.com/d/${'ab'.repeat(32)}`;
+    // OWNED_URL too: the sync records an address before it evicts the bytes.
+    withheld.add(WITHHELD_URL).add(OWNED_URL);
+    const before = opened.length;
+    try {
+      for (const request of [asImage(new Request(WITHHELD_URL)), new Request(WITHHELD_URL), asImage(new Request(OWNED_URL)), new Request(OWNED_URL)]) {
+        expect((await handler({ request })).type).toBe('error');
+      }
+      expect(opened.slice(before)).toEqual([WITHHELD_CACHE, WITHHELD_CACHE, WITHHELD_CACHE, WITHHELD_CACHE]);
+      expect(cacheFirst.handle).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      // Once no record names it (a fresh list carries it again), it is served as before.
+      withheld.clear();
+      expect(await text(handler({ request: asImage(new Request(WITHHELD_URL)) }))).toBe('browsed');
+      expect(await text(handler({ request: new Request(OWNED_URL) }))).toBe('owned');
+    } finally {
+      withheld.clear();
+      vi.unstubAllGlobals();
     }
   });
 

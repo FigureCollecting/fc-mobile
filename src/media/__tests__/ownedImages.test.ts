@@ -10,7 +10,9 @@ import {
   BROWSED_MEDIA_CACHE,
   IMAGE_LISTS_CACHE,
   MAX_IMAGE_PAGES,
+  MAX_WITHHELD,
   OWNED_MEDIA_CACHE,
+  WITHHELD_CACHE,
   fetchImageLists,
   keptImage,
   keptImages,
@@ -19,6 +21,7 @@ import {
   rememberImages,
   syncOwnedImages,
   toCachedImages,
+  withheldAmong,
   type CachedImage,
 } from '../ownedImages';
 
@@ -371,5 +374,106 @@ describe('cancelling a sync', () => {
     };
     await expect(syncOwnedImages(['h1'], fetchLists, { storage, signal: abort.signal })).rejects.toThrow();
     expect(calls).toEqual([]);
+  });
+});
+
+describe('the addresses a sync withheld (the tombstone the worker reads)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!]));
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  const shown = async (storage: ReturnType<typeof fakeCaches>, u: string) =>
+    (await storage.open(BROWSED_MEDIA_CACHE)).put(new Request(u, { headers: { Origin: 'http://localhost:3000' } }), new Response('img', { headers: { Vary: 'Origin' } }));
+  const browsed = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(BROWSED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const withheld = async (storage: ReturnType<typeof fakeCaches>, cs: string[]) => [...(await withheldAmong(cs.map(url), storage))].sort();
+
+  it('remembers each image and mask a fresh list withholds from a figure still owned, not those of a figure that left the collection', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true, mask: mask('f') }), img('b')], h2: [img('c', { primary: true })] }), { storage });
+    expect(await withheld(storage, ['a', 'b', 'c', 'f'])).toEqual([]);
+    await syncOwnedImages(['h1'], lists({ h1: [img('d', { primary: true })] }), { storage });
+    expect(await withheld(storage, ['a', 'b', 'c', 'd', 'f'])).toEqual([url('a'), url('b'), url('f')].sort());
+  });
+
+  it('remembers every kept address of a figure still owned whose fresh list is empty, or that the coordinator left out', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [] }), { storage });
+    expect(await withheld(storage, ['a', 'c'])).toEqual([url('a'), url('c')].sort());
+  });
+
+  it('never remembers an address no kept list named (the residue of an interrupted sync), nor one another fresh list still carries', async () => {
+    const storage = fakeCaches();
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(url('r'), new Response('img'));
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] }), { storage });
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('c', { primary: true })], h2: [img('b', { primary: true }), img('a')] }), { storage });
+    expect(await withheld(storage, ['a', 'b', 'c', 'r'])).toEqual([]);
+  });
+
+  it('keeps no image there: each record is on the app\'s origin, not the image address, and has no body', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [] }), { storage });
+    const records = [...(storage.stores.get(WITHHELD_CACHE)?.entries() ?? [])];
+    expect(records.map(([k]) => new URL(k).origin)).toEqual(['http://localhost:3000']);
+    expect(await Promise.all(records.map(([, r]) => r.clone().text()))).toEqual(['']);
+    for (const name of [OWNED_MEDIA_CACHE, BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, WITHHELD_CACHE]) expect([...(storage.stores.get(name)?.keys() ?? [])]).not.toContain(url('a'));
+  });
+
+  it('deletes a refill of a withheld address from the browsed cache at every later sync', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    // Refilled after the sync that withheld them (a document still drawing them, an older worker).
+    await shown(storage, url('a'));
+    await shown(storage, url('f'));
+    await shown(storage, url('z'));
+    const result = await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([url('z')]);
+    expect(result).toMatchObject({ added: 0, evicted: 0 });
+    await shown(storage, url('a'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([url('z')]);
+  });
+
+  it('forgets an address once a fresh list carries it again, before it fetches it', async () => {
+    const atFetch: string[][] = [];
+    const storage: ReturnType<typeof fakeCaches> = fakeCaches(async (r) => {
+      atFetch.push([...(await withheldAmong([r.url], storage))]);
+      return new Response('img');
+    });
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    expect(await withheld(storage, ['a'])).toEqual([url('a')]);
+    atFetch.length = 0;
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    expect(atFetch).toEqual([[]]);
+    expect(await withheld(storage, ['a', 'b'])).toEqual([url('b')]);
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
+  });
+
+  it(`keeps at most MAX_WITHHELD (${MAX_WITHHELD}) addresses, the oldest dropped first`, async () => {
+    const storage = fakeCaches();
+    const many = Array.from({ length: MAX_WITHHELD + 1 }, (_, i) => `${D}/${i.toString(16).padStart(64, '0')}`);
+    const asImg = (u: string, primary = false) => create(ProductImageSchema, { derivativeId: u.slice(-64), role: 'gallery', primary, url: u, width: 1, height: 1 });
+    await syncOwnedImages(['h1'], lists({ h1: many.map((u, i) => asImg(u, i === 0)) }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    expect(storage.stores.get(WITHHELD_CACHE)?.size).toBe(MAX_WITHHELD);
+    expect([...(await withheldAmong([many[0]!, many[1]!, many.at(-1)!], storage))]).toEqual([many[1], many.at(-1)]);
+    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    expect(storage.stores.get(WITHHELD_CACHE)?.size).toBe(MAX_WITHHELD);
+    expect([...(await withheldAmong([many[1]!, many[2]!, url('a')], storage))]).toEqual([many[2], url('a')]);
+  });
+
+  it('reads the remembered addresses in a few cache calls, not one per address', async () => {
+    const storage = fakeCaches();
+    const many = Array.from({ length: 500 }, (_, i) => `${D}/${i.toString(16).padStart(64, '0')}`);
+    await syncOwnedImages(['h1'], lists({ h1: many.map((u, i) => create(ProductImageSchema, { derivativeId: u.slice(-64), role: 'gallery', primary: i === 0, url: u, width: 1, height: 1 })) }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [] }), { storage });
+    const calls = countCalls(storage);
+    await syncOwnedImages(['h1'], lists({ h1: [] }), { storage });
+    expect(calls.length).toBeLessThanOrEqual(8);
+  });
+
+  it('answers nothing withheld where the browser has no Cache API', async () => {
+    expect((await withheldAmong([url('a')], undefined)).size).toBe(0);
   });
 });

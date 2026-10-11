@@ -313,6 +313,18 @@ describe('cancelling a sync', () => {
     expect(getProductImages.mock.calls[0]![1]).toEqual({ signal: abort.signal });
   });
 
+  it('syncOwnedImages fetches no more bytes once its signal is aborted', async () => {
+    const abort = new AbortController();
+    const storage = fakeCaches(async () => {
+      abort.abort();
+      return new Response('img');
+    });
+    const lists = async () => new Map([['h1', [img('a', { primary: true })]], ['h2', [img('b', { primary: true })]], ['h3', [img('c', { primary: true })]]]);
+    const result = await syncOwnedImages(['h1', 'h2', 'h3'], lists, { storage, concurrency: 1, signal: abort.signal });
+    expect(storage.added).toHaveLength(1);
+    expect(result).toMatchObject({ added: 1, failed: 0 });
+  });
+
   it('syncOwnedImages touches no cache once its signal is aborted', async () => {
     const storage = fakeCaches();
     const calls = countCalls(storage);

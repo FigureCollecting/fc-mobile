@@ -295,8 +295,10 @@ describe('a large collection with no image yet costs a few cache calls, not a fe
     expect([...got.keys()]).toEqual(['h7']);
     expect(got.get('h7')?.url).toBe(url('a'));
     expect(calls.length).toBeLessThanOrEqual(6);
-    calls.length = 0;
-    expect((await keptImages(heads, fakeCaches())).size).toBe(0);
+    const empty = fakeCaches();
+    const emptyCalls = countCalls(empty);
+    expect((await keptImages(heads, empty)).size).toBe(0);
+    expect(emptyCalls).toEqual([`open ${IMAGE_LISTS_CACHE}`, `keys ${IMAGE_LISTS_CACHE}`]);
   });
 });
 

@@ -453,6 +453,12 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
   return frame;
 }
 
+/**
+ * The scene's height: every px from its top down to the space kept free
+ * below it (the pull-up tabs and the tab bar), never more, so the camera,
+ * which frames the cabinet into the scene, never puts a foot under the tabs
+ * (the Fold8 cover held sideways leaves 143 px). No room at all: 0.
+ */
 function useSceneHeight(ref: { current: HTMLElement | null }, reservePx: number): number | undefined {
   const [height, setHeight] = useState<number | undefined>(undefined);
   useLayoutEffect(() => {
@@ -460,7 +466,7 @@ function useSceneHeight(ref: { current: HTMLElement | null }, reservePx: number)
     if (!el) return;
     const measure = () => {
       const top = el.getBoundingClientRect().top + window.scrollY;
-      setHeight(Math.max(240, Math.floor(window.innerHeight - top - reservePx)));
+      setHeight(Math.max(0, Math.floor(window.innerHeight - top - reservePx)));
     };
     measure();
     window.addEventListener('resize', measure);
@@ -648,7 +654,7 @@ export function CabinetScene({
         height: camera.frame.height,
       })}
       data-pan={String(Math.round(panPx))}
-      style={sceneHeight ? { height: `${sceneHeight}px` } : undefined}
+      style={sceneHeight === undefined ? undefined : { height: `${sceneHeight}px` }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endPress(e, true)}
@@ -749,7 +755,6 @@ const styles = `
     position: relative;
     overflow: hidden;
     height: 60vh;
-    min-height: 240px;
     background: #0b0c0f;
     touch-action: pan-y;
     user-select: none;

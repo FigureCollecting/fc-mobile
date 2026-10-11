@@ -13,12 +13,21 @@
 //                       evicts it (e2e/pwa (b)).
 //   fc-derivatives-v2   the worker's cache of what an <img> showed (BROWSED_MEDIA_CACHE). The sync
 //                       deletes from it too every address a kept list named and the fresh lists no
-//                       longer carry.
+//                       longer carry, and every withheld address recorded below.
+//   fc-withheld-v1      one record per address withheld from a figure still owned (its kept list
+//                       named it, no fresh list carries it): keyed on the app's origin, no bytes, at
+//                       most MAX_WITHHELD, the oldest dropped first. Written before any byte is
+//                       evicted; an address a fresh list carries again is forgotten before any fetch.
+//                       The worker refuses a recorded address (src/sw.ts), and useProductImage does
+//                       not answer it online, until a fresh list carries it again.
 //
 // So at each sync, an image or a mask a display restriction now withholds from an owned figure, or
-// that belonged to a figure no longer owned, is deleted from all three. Both kept caches hold exactly
-// the owned figures (at most MAX_OWNED_FIGURES of them). A figure stands as its kept image only while
-// its bytes are here (keptImage); otherwise it is drawn as its plate. Nothing here is sent anywhere.
+// that belonged to a figure no longer owned, is deleted from the owned and browsed caches, and a
+// withheld one is recorded, so a refill of the browsed cache after that sync is deleted at the next.
+// A figure no longer owned is not recorded: its figure page asks the coordinator, as for any figure
+// not owned. Both kept caches hold exactly the owned figures (at most MAX_OWNED_FIGURES of them).
+// keptImage answers a figure's kept image only if its bytes are here when asked; otherwise the figure
+// is drawn as its plate. Nothing here is sent anywhere.
 // No fetch of the image address, here or in the worker, uses the HTTP cache, so neither answers an
 // evicted image from it. A document the worker does not control yet (a first visit before it claims,
 // a shift-reload) loads its <img>s through the HTTP cache, where the origin's immutable keeps a copy
@@ -249,14 +258,15 @@ export async function syncOwnedImages(
   const withheld = new Set<string>();
   for (const head of heads) for (const u of beforeOf.get(head) ?? []) if (!fresh.has(u)) withheld.add(u);
   for (const u of remembered) if (fresh.has(u)) await tomb.delete(withheldKey(u));
-  const rememberedNow = remembered.filter((u) => !fresh.has(u));
-  const known = new Set(rememberedNow);
+  // Oldest first. A withheld address was named by a list this sync replaced, so it is normally not
+  // recorded yet; the Set keeps one of each.
+  const recorded = new Set(remembered.filter((u) => !fresh.has(u)));
   for (const u of withheld) {
-    if (known.has(u)) continue;
     await tomb.put(withheldKey(u), new Response(null));
-    rememberedNow.push(u);
+    recorded.add(u);
   }
-  for (const u of rememberedNow.slice(0, Math.max(0, rememberedNow.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
+  const oldestFirst = [...recorded];
+  for (const u of oldestFirst.slice(0, Math.max(0, oldestFirst.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
 
   const have = new Set<string>();
   for (const key of mediaKeys) {
@@ -266,7 +276,7 @@ export async function syncOwnedImages(
   // From the worker's browsed cache: every address gone since the last sync, and every withheld one
   // remembered, so a refill after the sync that withheld it goes at the next.
   const sweep = new Set([...before].filter((u) => !fresh.has(u)));
-  for (const u of rememberedNow) sweep.add(u);
+  for (const u of recorded) sweep.add(u);
   if (sweep.size > 0) {
     const browsed = await storage.open(BROWSED_MEDIA_CACHE);
     for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);

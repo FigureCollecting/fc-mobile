@@ -9,16 +9,16 @@
 // holds the token and nothing else, its job has no container, services or defaults, and the job and
 // workflow env hold only the image names in SCOPE_ENV. Before the job's last token step only other
 // token steps and the setup actions in SETUP_ACTION are listed, with only the with: inputs in
-// SETUP_WITH and no env (setup-node exports NODE_AUTH_TOKEN job-wide when its own env holds it).
-// Actions also run outside their place in the list, so in that job every remote action is in
-// ACTION_PINS or LATER_PINS at its one commit, each checked with gh api to have no pre: stage (a
-// pre: stage runs at job start, before every token step; a local action runs none, a docker://
-// image has none), and no step follows a token step that runs an action (its post stage runs after
-// every later step of the job, with the step's env and so the token). No run: step of that job
-// names $GITHUB_ENV, $GITHUB_PATH, ::set-env or ::add-path (a text check: a run: step can reach
-// them another way, and then reaches only what runs after it, which holds no token), and a token
-// step's run: names no runner file. The pinned actions write their own: setup-node adds node to
-// $GITHUB_PATH and with registry-url sets NPM_CONFIG_USERCONFIG, metadata-action sets
+// SETUP_WITH and no env (with registry-url, setup-node exports NODE_AUTH_TOKEN job-wide when its
+// own env holds it). Actions also run outside their place in the list, so in that job every remote
+// action is in ACTION_PINS or LATER_PINS at its one commit, each checked with gh api to have no
+// pre: stage (a pre: stage runs at job start, before every token step; a local action runs none, a
+// docker:// image has none), and no step follows a token step that runs an action (its post stage
+// runs after every later step of the job, with the step's env and so the token). No run: step of
+// that job names $GITHUB_ENV, $GITHUB_PATH, ::set-env or ::add-path (a text check: a run: step can
+// reach them another way, and then reaches only what runs after it, which holds no token), and a
+// token step's run: names no runner file. The pinned actions write their own: setup-node adds node
+// to $GITHUB_PATH and with registry-url sets NPM_CONFIG_USERCONFIG, metadata-action sets
 // DOCKER_METADATA_OUTPUT_* in $GITHUB_ENV, and the build action sets its outputs and state and, in
 // its post stage, writes the job summary and uploads a build record. The token is never workflow-
 // or job-wide, its value never in with: or run: text (secret-envs and --secret name it), never

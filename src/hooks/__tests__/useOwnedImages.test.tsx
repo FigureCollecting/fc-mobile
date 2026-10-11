@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
 import { create } from '@bufbuild/protobuf';
+import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { useOwnedImages } from '../useOwnedImages';
 import { useOnlineStatus } from '../useOnlineStatus';
@@ -17,6 +18,13 @@ import { OWNED_MEDIA_CACHE, rememberImages } from '../../media/ownedImages';
 const D = 'https://images.figurecollecting.com/d';
 const url = (c: string) => `${D}/${c.repeat(64)}`;
 let storage: FakeCaches;
+
+/** A figure's list and its primary's bytes, as the last sync left them. */
+async function keep(head: string, c: string, bytes = true): Promise<void> {
+  await rememberImages(head, [{ url: url(c), width: 1, height: 1, role: 'gallery', primary: true }], storage);
+  if (bytes) await (await storage.open(OWNED_MEDIA_CACHE)).put(url(c), new Response('bytes'));
+}
+const settle = () => new Promise((res) => setTimeout(res, 50));
 
 beforeEach(() => {
   storage = fakeCaches();
@@ -51,7 +59,7 @@ describe('useOwnedImages', () => {
     try {
       const r = await localRig();
       await seedFigures(r, [{ title: 'Owned' }]);
-      await rememberImages(headOf(0), [{ url: url('b'), width: 1, height: 1, role: 'gallery', primary: true }], storage);
+      await keep(headOf(0), 'b');
       const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
       await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
       expect(r.clients.getProductImages).not.toHaveBeenCalled();
@@ -60,6 +68,48 @@ describe('useOwnedImages', () => {
         window.dispatchEvent(new Event('online'));
       });
     }
+  });
+
+  it('online, but the coordinator answers UNAVAILABLE: still shows what the last sync kept', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keep(headOf(0), 'b');
+    r.clients.getProductImages.mockRejectedValue(new ConnectError('display restrictions are unavailable', Code.Unavailable));
+    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
+  });
+
+  it('online, but the server out of reach (the sync engine\'s probe failed): asks nothing and shows what was kept with its bytes', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned, bytes never kept' }]);
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+    await r.engine.trigger('manual');
+    expect(r.engine.state.value.reachability).toBe('unreachable');
+    await keep(headOf(0), 'b');
+    await keep(headOf(1), 'c', false);
+    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
+    expect(result.current.has(headOf(1))).toBe(false);
+    expect(r.clients.getProductImages).not.toHaveBeenCalled();
+  });
+
+  it('answers no image for a figure whose bytes are not on the device, so the case draws its plate', async () => {
+    storage = fakeCaches(async () => new Response('nope', { status: 404 }));
+    vi.stubGlobal('caches', storage);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, {
+        products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: url('a'), width: 600, height: 800 }] }],
+      }),
+    );
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    await keep(headOf(1), 'c', false);
+    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+    await settle();
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([]);
+    expect(result.current.size).toBe(0);
   });
 
   it('answers nothing while signed out', async () => {

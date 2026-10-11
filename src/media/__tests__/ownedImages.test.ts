@@ -7,9 +7,12 @@ import { ProductImageSchema, type ProductImage } from '@figurecollecting/fc-api-
 import { describe, expect, it, vi } from 'vitest';
 import { fakeCaches } from '../../test/fakeCaches';
 import {
+  BROWSED_MEDIA_CACHE,
   IMAGE_LISTS_CACHE,
+  MAX_IMAGE_PAGES,
   OWNED_MEDIA_CACHE,
   fetchImageLists,
+  keptImage,
   primaryImage,
   recallImages,
   rememberImages,
@@ -155,8 +158,80 @@ describe('fetchImageLists', () => {
     expect(got.get('h0')?.map((i) => i.derivativeId)).toEqual([hex('a'), hex('b')]);
   });
 
-  it('refuses to follow a spine that never ends', async () => {
+  it('refuses to follow a spine that never ends, having read exactly MAX_IMAGE_PAGES pages', async () => {
     const getProductImages = vi.fn(async () => ({ products: [], nextPageToken: 'again' }));
     await expect(fetchImageLists({ getProductImages } as never, ['h1'])).rejects.toThrow(/pages/);
+    expect(getProductImages).toHaveBeenCalledTimes(MAX_IMAGE_PAGES);
+  });
+
+  it('reads a spine that ends on the last page it may read', async () => {
+    let read = 0;
+    const getProductImages = vi.fn(async () => {
+      read += 1;
+      const last = read === MAX_IMAGE_PAGES;
+      return { products: last ? [{ headId: 'h1', images: [img('a')] }] : [], nextPageToken: last ? '' : `p${read}` };
+    });
+    const got = await fetchImageLists({ getProductImages } as never, ['h1']);
+    expect(getProductImages).toHaveBeenCalledTimes(MAX_IMAGE_PAGES);
+    expect(got.get('h1')?.map((i) => i.derivativeId)).toEqual([hex('a')]);
+  });
+});
+
+describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!]));
+  // What an <img crossorigin> leaves there: its request carried an Origin and the origin answers
+  // Vary: Origin, so a bare url finds it only with { ignoreVary: true } (as in Chromium).
+  const shown = async (storage: ReturnType<typeof fakeCaches>, u: string) =>
+    (await storage.open(BROWSED_MEDIA_CACHE)).put(new Request(u, { headers: { Origin: 'http://localhost:3000' } }), new Response('img', { headers: { Vary: 'Origin' } }));
+  const browsed = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(BROWSED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+
+  it('is the cache the worker keeps every other image in', () => {
+    expect(BROWSED_MEDIA_CACHE).toBe('fc-derivatives-v2');
+  });
+
+  it('deletes there too an image or a mask a fresh list no longer carries, so a withheld one leaves the device', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') }), img('b')] }), { storage });
+    await shown(storage, url('a'));
+    await shown(storage, url('f'));
+    await shown(storage, url('b'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('c', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([]);
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('c')]);
+  });
+
+  it('deletes there too the images of a figure that left the collection', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
+    await shown(storage, url('c'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([]);
+  });
+
+  it('leaves there what a fresh list still carries, and every image no kept list ever named', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true }), img('b')] }), { storage });
+    await shown(storage, url('b'));
+    await shown(storage, url('z'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([url('b'), url('z')].sort());
+  });
+});
+
+describe('keptImage', () => {
+  it('answers a figure\'s primary only while its bytes are on the device', async () => {
+    const storage = fakeCaches();
+    await rememberImages('h1', toCachedImages([img('b'), img('a', { primary: true })]), storage);
+    expect(await keptImage('h1', storage)).toBeUndefined();
+    // Stored as Cache.add stores it, with the origin's Vary: Origin.
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(new Request(url('a'), { headers: { Origin: 'http://localhost:3000' } }), new Response('img', { headers: { Vary: 'Origin' } }));
+    expect((await keptImage('h1', storage))?.url).toBe(url('a'));
+  });
+
+  it('answers nothing without a kept list, or without the Cache API', async () => {
+    const storage = fakeCaches();
+    expect(await keptImage('h1', storage)).toBeUndefined();
+    expect(await keptImage('h1', undefined)).toBeUndefined();
   });
 });

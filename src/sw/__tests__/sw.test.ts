@@ -3,6 +3,7 @@ import path from 'node:path';
 import fc from 'fast-check';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { API_NAVIGATION } from '../routes';
+import { BROWSED_MEDIA_CACHE } from '../../media/ownedImages';
 
 // Workbox is mocked so the entry's wiring can be read back; its behaviour in a
 // real browser is covered by e2e/pwa.
@@ -69,6 +70,8 @@ beforeAll(async () => {
 });
 
 const ORIGIN = 'https://figurecollecting.com';
+/** A request as an <img> makes it: Request's own destination is '' outside a browser's fetch. */
+const asImage = (request: Request): Request => Object.defineProperty(request, 'destination', { value: 'image' });
 function ctx(p: string, method = 'GET', origin = ORIGIN) {
   const url = new URL(p, origin);
   return { url, request: new Request(url, { method }), sameOrigin: url.origin === ORIGIN, event: {} };
@@ -89,9 +92,10 @@ describe('service worker wiring', () => {
     expect(nav.options.denylist).toEqual([API_NAVIGATION]);
   });
 
-  it('serves the public image address from the owned-figure cache first, else CacheFirst, keeping only a CORS 200, bounded', async () => {
+  it('serves the public image address from the owned-figure cache first, else CacheFirst for an <img>, keeping only a CORS 200, bounded', async () => {
     const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { options: { cacheName: string; plugins: unknown[]; matchOptions: CacheQueryOptions }; handle?: unknown };
-    expect(cacheFirst.options.cacheName).toBe('fc-derivatives-v2');
+    // The one the owned sync also deletes from (src/media/ownedImages.ts).
+    expect(cacheFirst.options.cacheName).toBe(BROWSED_MEDIA_CACHE);
     // The origin sends Vary: Origin (fc-infra edge README); an <img crossorigin> request then misses a
     // response a fetch() stored, so the content-addressed caches ignore Vary (one app origin per worker).
     expect(cacheFirst.options.matchOptions).toEqual({ ignoreVary: true });
@@ -110,9 +114,31 @@ describe('service worker wiring', () => {
     expect(opened).toEqual(['fc-owned-media-v1']);
     expect(matchOptions).toEqual([{ ignoreVary: true }]);
     expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).not.toHaveBeenCalled();
-    const other = { request: new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`) };
-    expect(await handler(other)).toBe(browsed);
-    expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).toHaveBeenCalledWith(other);
+    // An <img> of any other image: the browsed cache.
+    const shown = { request: asImage(new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`)) };
+    expect(await handler(shown)).toBe(browsed);
+    expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).toHaveBeenCalledWith(shown);
+  });
+
+  it('sends the page\'s own fetch of an image (the owned sync\'s Cache.add) to the origin, never into the browsed cache', async () => {
+    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { handle: ReturnType<typeof vi.fn> };
+    cacheFirst.handle = vi.fn(async () => new Response('browsed'));
+    const [, handler] = wb.registerRoute.mock.calls.find(([m]) => typeof m === 'function' && (m as (c: unknown) => boolean)(ctx(`/d/${'ab'.repeat(32)}`, 'GET', 'https://images.figurecollecting.com'))) as unknown as [unknown, (o: { request: Request }) => Promise<Response>];
+    const network = new Response('origin');
+    const fetchSpy = vi.fn(async () => network);
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const request = new Request(`https://images.figurecollecting.com/d/${'ef'.repeat(32)}`, { mode: 'cors', credentials: 'omit' });
+      expect(request.destination).toBe('');
+      expect(await handler({ request })).toBe(network);
+      expect(fetchSpy).toHaveBeenCalledWith(request);
+      expect(cacheFirst.handle).not.toHaveBeenCalled();
+      // An owned image is still answered from its cache first, whoever asks.
+      expect(await handler({ request: new Request(OWNED_URL) })).toBe(ownedResponse);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('registers exactly two routes of its own, and none that matches /api', () => {

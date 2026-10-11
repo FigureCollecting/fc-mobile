@@ -92,6 +92,26 @@ describe('Collection page (rebuilt display layer)', () => {
     }
   });
 
+  it('keeps an owned figure as its plate when its image bytes could not be kept (ADDR-1)', async () => {
+    const storage = fakeCaches(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('caches', storage);
+    try {
+      const r = await localRig();
+      const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: src, width: 600, height: 800 }] }] }),
+      );
+      await seedFigures(r, [makeFigure('1'), makeFigure('2')]);
+      const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+      await waitFor(() => expect(container.querySelectorAll('.shelf-figure__silhouette')).toHaveLength(2));
+      await new Promise((res) => setTimeout(res, 50));
+      expect(document.querySelector('.shelf-figure img')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('honors the layout URL param for Display B', async () => {
     await respondWith([makeFigure('1')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });

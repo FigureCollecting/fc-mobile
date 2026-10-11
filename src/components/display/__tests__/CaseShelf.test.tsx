@@ -166,6 +166,19 @@ describe('CaseShelf (Display A — virtual cases)', () => {
     expect(container.querySelector('.shelf-figure__frame')).not.toBeNull();
   });
 
+  it('stands a figure whose image fails to load as its plate, matted or framed', async () => {
+    const matted = FIXTURE_FIGURES[0]!;
+    const photo = { ...FIXTURE_FIGURES[2]!, _id: 'unmatted-photo', imageUrl: 'photo.jpg' };
+    const { container } = renderWithProviders(<CaseShelf figures={[matted, photo]} motif="detolf-dark" density="compact" />);
+    expect(container.querySelectorAll('.shelf-figure img')).toHaveLength(2);
+    expect(container.querySelector('.shelf-figure__silhouette')).toBeNull();
+    fireEvent.error(container.querySelector('.shelf-figure img:not(.shelf-figure__img--photo)')!);
+    await waitFor(() => expect(container.querySelectorAll('.shelf-figure__silhouette')).toHaveLength(1));
+    fireEvent.error(container.querySelector('.shelf-figure__img--photo')!);
+    await waitFor(() => expect(container.querySelectorAll('.shelf-figure__silhouette')).toHaveLength(2));
+    expect(container.querySelectorAll('.shelf-figure img')).toHaveLength(0);
+  });
+
   it('reports taps with the figure and its index in the result set', async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();

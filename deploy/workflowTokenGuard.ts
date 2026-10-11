@@ -9,20 +9,24 @@
 // working-directory), its env holds the token and nothing else, its job has no container, services
 // or defaults, the job and workflow env hold only the image names in SCOPE_ENV, and before the
 // job's last token step only other token steps and the setup actions in SETUP_ACTION run, with only
-// the with: inputs in SETUP_WITH and no env. No step of that job writes $GITHUB_ENV or
-// $GITHUB_PATH, and the token step writes no runner file. The token is never workflow- or job-wide,
-// never in with: or a value in run: text, never under a second env name. Every env is a plain
+// the with: inputs in SETUP_WITH and no env. No run: step of that job writes $GITHUB_ENV or
+// $GITHUB_PATH (the pinned setup-node itself adds node to $GITHUB_PATH, and with registry-url sets
+// NPM_CONFIG_USERCONFIG), and a token step's run: writes no runner file (the build action sets its
+// own outputs and state). The token is never workflow- or job-wide, its value never in with: or
+// run: text (secret-envs and --secret name it), never under a second env name. Every env is a plain
 // mapping, so the guard can read its names. A secrets ref must name one secret (secrets.NAME or
 // secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
 // secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
 // secrets: is a mapping of named secrets other than the token. Names match case-insensitively
 // (secret names are). A step's remote action is named the way GitHub's runner names it: the path
-// before the first @, split on / and \ with empty segments dropped, gives owner/repo. The setup and
-// build actions in ACTION_PINS run at their pinned commit wherever they are used; every other
-// remote action, aquasecurity's included (GHSA-69fq-xp46-6x23), names a full 40-hex commit, and
-// which repo that commit is on is left to review (a fork's commit resolves too). Not judged: local
-// paths (./, .\), docker:// images, a uses with no @ (a $/ path, or a remote one GitHub rejects)
-// and job-level uses.
+// before the first @, split on / and \ with empty segments dropped, gives owner/repo; the ref after
+// that @ is compared whole. The setup and build actions in ACTION_PINS run at their pinned commit in
+// every workflow step that names them; every other remote action, aquasecurity's included
+// (GHSA-69fq-xp46-6x23), names a full 40-hex commit, and which repo that commit is on is left to
+// review (a fork's commit resolves too). Not judged: local paths (./, .\), docker:// images, a uses
+// with no @ (a $/ path, or a remote one GitHub rejects), job-level uses, and the uses inside an
+// action, which are that action's own (the pinned trivy-action's setup-trivy runs actions/checkout
+// v6.0.1, pinned by SHA).
 
 export type Rule =
   | 'workflow-env'

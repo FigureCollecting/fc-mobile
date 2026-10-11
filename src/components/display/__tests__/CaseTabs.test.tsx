@@ -6,7 +6,7 @@ import { DEFAULT_CASE_PREFS } from '../casePrefs';
 
 vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
 
-const slots = (root: ParentNode) => Array.from(root.querySelectorAll<HTMLElement>('.case-tabs > [data-tab]')).map((el) => el.dataset.tab);
+const slots = (_root: ParentNode, root: ParentNode = document.body) => Array.from(root.querySelectorAll<HTMLElement>('.case-tabs > [data-tab]')).map((el) => el.dataset.tab);
 
 describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
   it('lays the four slots out around the dock of the raised +', () => {
@@ -14,9 +14,15 @@ describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
     expect(slots(container)).toEqual(['view', 'reserved', 'dock', 'info', 'refine']);
   });
 
+  it('sits in document.body, so the page\'s own transforms never carry the fixed bar away from the tab bar', () => {
+    const { container } = render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} infoEnabled onTab={() => {}} open={null} />);
+    expect(container.querySelector('.case-tabs')).toBeNull();
+    expect(document.body.querySelector(':scope > .case-tabs')).not.toBeNull();
+  });
+
   it('IC1-R3: the Reserved slot is held empty, with nothing to press or read', () => {
     const { container } = render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} infoEnabled onTab={() => {}} open={null} />);
-    const reserved = container.querySelector('[data-tab="reserved"]') as HTMLElement;
+    const reserved = document.body.querySelector('[data-tab="reserved"]') as HTMLElement;
     expect(reserved.tagName).toBe('SPAN');
     expect(reserved.textContent).toBe('');
     expect(reserved.getAttribute('aria-hidden')).toBe('true');

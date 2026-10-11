@@ -76,7 +76,7 @@ describe('Collection page (rebuilt display layer)', () => {
     await respondWith([makeFigure('1')]);
     const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(Array.from(container.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
+    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
       'view',
       'reserved',
       'dock',
@@ -86,7 +86,7 @@ describe('Collection page (rebuilt display layer)', () => {
     unmount();
     const rows = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(rows.container.querySelector('.case-tabs')).toBeNull();
+    expect(rows.container.ownerDocument.querySelector('.case-tabs')).toBeNull();
   });
 
   it('the View tab opens the case card; its choices are kept on this device (CC14)', async () => {

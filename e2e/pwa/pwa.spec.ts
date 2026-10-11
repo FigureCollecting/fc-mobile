@@ -218,7 +218,8 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   // runs in a fresh document: a reload in this tab. A Playwright route turns off Chromium's HTTP cache and
   // the tab's memory cache (any route: the hands-off guard's too), so here what answers that check is the
   // worker. In a tab with no route, the memory cache can answer a fresh document's <img> from an earlier
-  // document's immutable answer without asking the worker: so every answer the worker gives is no-store.
+  // document's immutable answer without asking the worker (measured outside this suite), so every answer
+  // the worker gives but an opaque one is no-store, as checked below.
   const freshDocument = async () => {
     await page.reload();
     await shellInstalled(page);

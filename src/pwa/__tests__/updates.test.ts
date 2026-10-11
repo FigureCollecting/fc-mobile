@@ -1,6 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisterSWOptions } from 'vite-plugin-pwa/types';
-import { applyUpdate, checkForUpdate, reloadToLatest, startServiceWorker, updateReady, UPDATE_CHECK_MS } from '../updates';
+import {
+  applyUpdate,
+  checkForUpdate,
+  INSTALL_WAIT_MS,
+  reloadToLatest,
+  startServiceWorker,
+  updateReady,
+  UPDATE_CHECK_MS,
+  type UpdateCheck,
+} from '../updates';
 
 type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'waiting' | 'update'>;
 
@@ -251,11 +260,51 @@ describe('checkForUpdate (the Settings action)', () => {
   const active = {} as ServiceWorker;
   const newer = {} as ServiceWorker;
 
+  /** A worker whose state the test moves, as the browser does; it counts its statechange listeners. */
+  class FakeWorker extends EventTarget {
+    state: ServiceWorkerState;
+    listeners = 0;
+    constructor(state: ServiceWorkerState = 'installing') {
+      super();
+      this.state = state;
+    }
+    override addEventListener(...args: Parameters<EventTarget['addEventListener']>): void {
+      this.listeners += 1;
+      super.addEventListener(...args);
+    }
+    override removeEventListener(...args: Parameters<EventTarget['removeEventListener']>): void {
+      this.listeners -= 1;
+      super.removeEventListener(...args);
+    }
+    become(state: ServiceWorkerState): void {
+      this.state = state;
+      this.dispatchEvent(new Event('statechange'));
+    }
+    get worker(): ServiceWorker {
+      return this as unknown as ServiceWorker;
+    }
+  }
+
+  /** The check's answer once `ms` of (fake) time has passed, or 'pending' while it still waits. */
+  async function answerAfter(check: Promise<UpdateCheck>, ms = 0): Promise<UpdateCheck | 'pending'> {
+    let answer: UpdateCheck | 'pending' = 'pending';
+    void check.then((a) => (answer = a));
+    await vi.advanceTimersByTimeAsync(ms);
+    return answer;
+  }
+
   function registered(fetchImpl = ok(), reg = registration({ active })) {
     const f = fakeRegister();
     startServiceWorker({ register: f.register, fetchImpl, supported: true, container: new EventTarget() });
     f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
     return { reg, fetchImpl };
+  }
+
+  /** A registration whose update() finds a newer build, which starts installing. */
+  function updateFinds(next: FakeWorker) {
+    const reg = registration({ active });
+    reg.update.mockImplementation(async () => void Object.assign(reg, { installing: next.worker }));
+    return registered(ok(), reg);
   }
 
   it('is unavailable where service workers are unsupported, even after a page that had one', async () => {
@@ -279,9 +328,28 @@ describe('checkForUpdate (the Settings action)', () => {
     expect(reg.update).toHaveBeenCalledTimes(1);
   });
 
-  it('reports a new version when update() finds a newer build, which installs and raises the prompt', async () => {
+  it('reports a new version once the newer build update() finds has installed (it then waits, and the prompt shows)', async () => {
+    const next = new FakeWorker();
+    const { reg } = updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    Object.assign(reg, { installing: null, waiting: next.worker });
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+  });
+
+  it('could not check when the newer build update() finds fails to install (an asset 404s mid-deploy): nothing waits', async () => {
+    const next = new FakeWorker();
+    updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    next.become('redundant');
+    await expect(check).resolves.toBe('offline');
+  });
+
+  it('reports a new version when update() leaves a newer build waiting', async () => {
     const reg = registration({ active });
-    reg.update.mockImplementation(async () => void Object.assign(reg, { installing: newer }));
+    reg.update.mockImplementation(async () => void Object.assign(reg, { waiting: newer }));
     registered(ok(), reg);
     await expect(checkForUpdate()).resolves.toBe('ready');
   });
@@ -291,14 +359,58 @@ describe('checkForUpdate (the Settings action)', () => {
     await expect(checkForUpdate()).resolves.toBe('ready');
   });
 
-  it('reports a newer build that is installing without fetching again; the first install is the latest build', async () => {
-    const installingNewer = registered(ok(), registration({ active, installing: newer }));
+  it('reports a new version when a newer build already waits, though sw.js is unreachable: its prompt is up', async () => {
+    registered(vi.fn(async () => ({ status: 503, redirected: false }) as Response), registration({ active, waiting: newer }));
     await expect(checkForUpdate()).resolves.toBe('ready');
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    await expect(checkForUpdate()).resolves.toBe('ready');
+  });
+
+  it('is not a new version offline while the first build waits to activate (no active build before it)', async () => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    registered(ok(), registration({ waiting: newer }));
+    await expect(checkForUpdate()).resolves.toBe('offline');
+  });
+
+  it('waits for a newer build that is installing, without fetching again; the first install is the latest build', async () => {
+    const next = new FakeWorker();
+    const installingNewer = registered(ok(), registration({ active, installing: next.worker }));
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
     expect(installingNewer.fetchImpl).not.toHaveBeenCalled();
 
     const firstInstall = registered(ok(), registration({ installing: newer }));
     await expect(checkForUpdate()).resolves.toBe('latest');
     expect(firstInstall.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('could not check when the installing build has already failed (redundant before the registration lets it go)', async () => {
+    registered(ok(), registration({ active, installing: new FakeWorker('redundant').worker }));
+    expect(await answerAfter(checkForUpdate())).toBe('offline');
+  });
+
+  it('could not check when the newer build is still installing after INSTALL_WAIT_MS, and waits no longer', async () => {
+    const next = new FakeWorker();
+    registered(ok(), registration({ active, installing: next.worker }));
+    const check = checkForUpdate();
+    expect(await answerAfter(check, INSTALL_WAIT_MS - 1)).toBe('pending');
+    expect(await answerAfter(check, 1)).toBe('offline');
+    expect(next.listeners).toBe(0);
+  });
+
+  it('leaves no listener and no timer behind once the newer build settles', async () => {
+    const next = new FakeWorker();
+    registered(ok(), registration({ active, installing: next.worker }));
+    const timers = vi.getTimerCount();
+    const check = checkForUpdate();
+    expect(next.listeners).toBe(1);
+    expect(vi.getTimerCount()).toBe(timers + 1);
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+    expect(next.listeners).toBe(0);
+    expect(vi.getTimerCount()).toBe(timers);
   });
 
   it('is not a new version when update() installs the first build (no active build)', async () => {
@@ -319,6 +431,7 @@ describe('checkForUpdate (the Settings action)', () => {
   it.each([
     ['sw.js unreachable', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch')))],
     ['sw.js not a 200', vi.fn(async () => ({ status: 503, redirected: false }) as Response)],
+    ['sw.js a 2xx that is not a 200', vi.fn(async () => ({ status: 204, redirected: false }) as Response)],
     ['sw.js redirected (an Access login)', vi.fn(async () => ({ status: 200, redirected: true }) as Response)],
   ])('could not check, and never calls update(), when %s', async (_why, fetchImpl) => {
     const { reg } = registered(fetchImpl);

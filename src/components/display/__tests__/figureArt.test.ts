@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { MAX_MARGIN_FRAC, figureArt, imageRefFromProductImage, pictureBox } from '../figureArt';
+import { MAX_MARGINS_FRAC, figureArt, imageRefFromProductImage, pictureBox } from '../figureArt';
 import { UNMATTED_META } from '../displayMeta';
 import type { FigureDisplayMeta } from '../displayMeta';
 
@@ -69,13 +69,36 @@ describe('pictureBox: the picture sized so the figure in it stands at its labell
     expect(pictureBox('cutout', 200, 0.5, { top: 0, bottom: 0 }, 100)).toEqual({ widthMm: 100, heightMm: 200, belowMm: 0 });
   });
 
-  it(`a margin past ${MAX_MARGIN_FRAC * 100} % of the picture is not believed; a negative one or none is 0`, () => {
-    expect(MAX_MARGIN_FRAC).toBe(0.45);
-    const top = pictureBox('cutout', 100, 1, { top: 0.9, bottom: 0 }, 100);
-    expect(top.heightMm).toBeCloseTo(100 / (1 - MAX_MARGIN_FRAC), 9);
-    const bottom = pictureBox('cutout', 100, 1, { top: 0, bottom: 0.7 }, 100);
-    expect(bottom.heightMm).toBeCloseTo(100 / (1 - MAX_MARGIN_FRAC), 9);
-    expect(bottom.belowMm).toBeCloseTo(MAX_MARGIN_FRAC * bottom.heightMm, 9);
+  it('a large clear margin is believed: the figure still stands its full height (a tall picture, a small figure in it)', () => {
+    // 60 % clear above the head, 5 % under the feet: the box is 100 / 0.35 tall, the figure in it 100
+    const b = pictureBox('cutout', 100, 0.75, { top: 0.6, bottom: 0.05 }, 75);
+    expect(b.heightMm).toBeCloseTo(100 / 0.35, 9);
+    expect(b.heightMm * (1 - 0.6 - 0.05)).toBeCloseTo(100, 9);
+    expect(b.belowMm).toBeCloseTo(0.05 * b.heightMm, 9);
+    expect(pictureBox('cutout', 100, 1, { top: 0, bottom: 0.7 }, 100).heightMm).toBeCloseTo(100 / 0.3, 9);
+  });
+
+  it(`the two margins together are believed up to ${MAX_MARGINS_FRAC * 100} % of the picture (a box at most 10x the figure): the feet keep the surface, the top gives way`, () => {
+    expect(MAX_MARGINS_FRAC).toBe(0.9);
+    // exactly at the cap: believed as it is
+    const at = pictureBox('cutout', 100, 1, { top: 0.85, bottom: 0.05 }, 100);
+    expect(at.heightMm).toBeCloseTo(1000, 6);
+    expect(at.belowMm).toBeCloseTo(50, 6);
+    // past it: the bottom margin stays, so the lowest opaque row is still on the surface; the top is cut to fit
+    const over = pictureBox('cutout', 100, 1, { top: 0.93, bottom: 0.05 }, 100);
+    expect(over.heightMm).toBeCloseTo(1000, 6);
+    expect(over.belowMm).toBeCloseTo(0.05 * over.heightMm, 6);
+    // a bottom margin past the cap alone: capped, nothing left for the top
+    const low = pictureBox('cutout', 100, 1, { top: 0.04, bottom: 0.95 }, 100);
+    expect(low.heightMm).toBeCloseTo(1000, 6);
+    expect(low.belowMm).toBeCloseTo(900, 6);
+    // never more than 10x the figure, whatever the margins say
+    for (const [top, bottom] of [[0.5, 0.5], [0.99, 0], [0, 0.99], [1, 1], [0.45, 0.45]]) {
+      expect(pictureBox('cutout', 100, 1, { top, bottom }, 100).heightMm, `${top} ${bottom}`).toBeLessThanOrEqual(1000 + 1e-6);
+    }
+  });
+
+  it('a negative margin or none is 0', () => {
     expect(pictureBox('cutout', 100, 1, { top: -0.2, bottom: -0.1 }, 100)).toEqual({ widthMm: 100, heightMm: 100, belowMm: 0 });
     expect(pictureBox('cutout', 100, 1, { top: Number.NaN, bottom: Number.NaN }, 100)).toEqual({ widthMm: 100, heightMm: 100, belowMm: 0 });
   });

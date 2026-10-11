@@ -55,7 +55,7 @@ describe('workflow token guard on fixtures', () => {
   });
 
   it('fails on the token in with:', () => {
-    expect(fixture('token-in-with.yml')).toEqual(['action-with', 'with']);
+    expect(fixture('token-in-with.yml')).toEqual(['with']);
   });
 
   it('fails on a GITHUB_ENV export of the token', () => {
@@ -320,6 +320,14 @@ describe("the build action's inputs", () => {
   it('flags with: as one expression or a list', () => {
     expect(build('with: ${{ fromJSON(vars.BUILD) }}')).toEqual(['action-with']);
     expect(build('with:\n  - context: .')).toEqual(['action-with']);
+  });
+
+  it('takes no input on an allow-listed action that has no input list', () => {
+    const uses = `actions/upload-artifact@${SHA}`;
+    const allowed = new Map<string, TokenStep>([[stepId('x.yml', 'build', 'Upload'), { kind: 'action', uses }]]);
+    const check = (w: string): Rule[] => checkWorkflow('x.yml', parse(step('Upload', `uses: ${uses}${w}`)), allowed).map((v) => v.rule);
+    expect(check('')).toEqual([]);
+    expect(check('\nwith:\n  path: dist')).toEqual(['action-with']);
   });
 
   it('judges the inputs only at the pinned action', () => {

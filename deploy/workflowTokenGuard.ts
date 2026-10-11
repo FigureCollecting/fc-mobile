@@ -4,7 +4,8 @@
 // line by line, one pinned script, or one action at its pinned commit. Of the npm entries only the
 // two coordinator ones (kind checkout) may run a repo script, npm --prefix e2e/stack run checkout;
 // an install entry may not. The image builds run the repo's Dockerfile, which this guard does not
-// read. Nothing else may change how a token step runs: its keys are allow-listed (no shell or
+// read: the build action takes only the with: inputs in ACTION_WITH (context . and no file, builder
+// or extra context). Nothing else may change how a token step runs: its keys are allow-listed (no shell or
 // working-directory), its env holds the token and nothing else, its job has no container, services
 // or defaults, the job and workflow env hold only the image names in SCOPE_ENV, and before the
 // job's last token step only other token steps and the setup actions in SETUP_ACTION run, with only
@@ -35,6 +36,7 @@ export type Rule =
   | 'setup-with'
   | 'trivy-unpinned'
   | 'action-pin'
+  | 'action-with'
   | 'step-key'
   | 'step-env'
   | 'step-order'
@@ -144,6 +146,17 @@ const SETUP_WITH: Readonly<Record<string, Readonly<Record<string, (v: string) =>
     password: (v) => v === '${{ secrets.GITHUB_TOKEN }}',
   },
 };
+/** The with: inputs an allow-listed action may take with the token in its env; it builds the repo here. */
+const ACTION_WITH: Readonly<Record<string, Readonly<Record<string, (v: string) => boolean>>>> = {
+  'docker/build-push-action': {
+    context: (v) => v === '.',
+    push: literal,
+    tags: () => true,
+    labels: () => true,
+    'build-args': (v) => v.trim() === 'VITE_BUILD_ID=${{ steps.meta.outputs.version }}',
+    'secret-envs': (v) => v.trim() === 'node_auth_token=NODE_AUTH_TOKEN',
+  },
+};
 const INSTALL_LINE = /^npm (--prefix [\w./-]+ )?ci --ignore-scripts$/;
 const CHECKOUT_LINE = 'npm --prefix e2e/stack run checkout';
 const SHA_PIN = /@[0-9a-f]{40}$/;
@@ -159,6 +172,9 @@ const text = (v: unknown): string =>
 /** Every string under v, keys left out: a secrets: key or input is not a secrets ref. */
 const values = (v: unknown): string => (typeof v === 'string' ? v : Object.values(record(v)).map(values).join('\n'));
 const mentions = (v: unknown): boolean => NAMED.test(text(v));
+/** with: is a mapping (or absent) whose every input is in inputs and takes a value it accepts. */
+const inputsFit = (w: unknown, inputs: Readonly<Record<string, (v: string) => boolean>>): boolean =>
+  plain(w) && Object.entries(record(w)).every(([k, x]) => Object.hasOwn(inputs, k) && inputs[k](text(x)));
 const lines = (run: unknown): string[] =>
   typeof run === 'string' ? run.split('\n').map((l) => l.trim()).filter((l) => l !== '') : [];
 
@@ -239,10 +255,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
       // A setup action's inputs and env decide which node, npm registry or BuildKit the token reaches.
       const setup = i < last ? SETUP_ACTION.exec(String(uses)) : null;
       if (setup) {
-        const inputs = SETUP_WITH[setup[1].toLowerCase()];
-        const w = step['with'] ?? {};
-        const fits = Object.entries(record(w)).every(([k, x]) => Object.hasOwn(inputs, k) && inputs[k](text(x)));
-        if (!plain(w) || !fits) flag(where('with'), 'setup-with');
+        if (!inputsFit(step['with'] ?? {}, SETUP_WITH[setup[1].toLowerCase()])) flag(where('with'), 'setup-with');
         if (text(step['env']) !== '') flag(where('env'), 'setup-with');
       }
       if (bearing && shape) {
@@ -253,6 +266,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
         if (Object.entries(record(step['env'])).some(([k, x]) => k !== TOKEN && !mentions(x))) flag(where('env'), 'step-env');
         if (shape.kind === 'action') {
           if (uses !== shape.uses) flag(where('uses'), 'token-action');
+          else if (!inputsFit(step['with'] ?? {}, ACTION_WITH[shape.uses.split('@')[0]] ?? {})) flag(where('with'), 'action-with');
         } else {
           if (uses !== undefined) flag(where('uses'), 'token-action');
           if (!runFits(step['run'], shape)) flag(where('run'), 'run-grammar');

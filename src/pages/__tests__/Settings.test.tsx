@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
@@ -11,6 +13,14 @@ vi.mock('../../storage/cacheManager', () => ({
 
 const pwaStorage = vi.hoisted(() => ({ readStorageStatus: vi.fn() }));
 vi.mock('../../pwa/storage', () => ({ readStorageStatus: pwaStorage.readStorageStatus }));
+
+// The real check unless a test says otherwise: jsdom has no service worker.
+const pwaUpdates = vi.hoisted(() => ({ checkForUpdate: vi.fn() }));
+vi.mock('../../pwa/updates', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../pwa/updates')>();
+  pwaUpdates.checkForUpdate.mockImplementation(actual.checkForUpdate);
+  return { ...actual, checkForUpdate: pwaUpdates.checkForUpdate };
+});
 
 import { getCacheStats } from '../../storage/cacheManager';
 import { Settings } from '../Settings';
@@ -32,6 +42,7 @@ function signIn() {
 }
 
 beforeEach(() => {
+  pwaUpdates.checkForUpdate.mockClear();
   pwaStorage.readStorageStatus.mockReset();
   pwaStorage.readStorageStatus.mockResolvedValue(null);
   mockedGetCacheStats.mockReset();
@@ -39,9 +50,55 @@ beforeEach(() => {
 });
 
 describe('Settings about', () => {
-  it('shows the build next to the version, so a user can tell which build is running', () => {
+  it("shows package.json's version with the build next to it, so a user can tell which build is running", () => {
+    const pkg = JSON.parse(readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')) as { version: string };
     renderWithProviders(<Settings />, { initialPath: '/settings' });
-    expect(screen.getByText(`0.1.0 (${import.meta.env.VITE_BUILD_ID})`)).toBeInTheDocument();
+    expect(screen.getByText(`${pkg.version} (${import.meta.env.VITE_BUILD_ID})`)).toBeInTheDocument();
+  });
+});
+
+describe('Settings check for update', () => {
+  const checkButton = () => screen.getByRole('button', { name: 'Check for update' });
+
+  it.each([
+    ['ready', 'A new version is ready'],
+    ['latest', 'You are on the latest build'],
+    ['offline', 'Could not check (offline)'],
+    ['unavailable', 'Update checks are not available here'],
+  ] as const)('runs the check from About and reports %s as "%s"', async (outcome, message) => {
+    pwaUpdates.checkForUpdate.mockResolvedValueOnce(outcome);
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.queryByText(message)).toBeNull();
+    await userEvent.click(checkButton());
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(pwaUpdates.checkForUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('is disabled while a check runs, then offers it again', async () => {
+    let finish: (o: 'latest') => void = () => {};
+    pwaUpdates.checkForUpdate.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    await userEvent.click(checkButton());
+    expect(checkButton()).toBeDisabled();
+    expect(screen.getByText('Checking…')).toBeInTheDocument();
+    finish('latest');
+    expect(await screen.findByText('You are on the latest build')).toBeInTheDocument();
+    expect(checkButton()).toBeEnabled();
+    expect(screen.queryByText('Checking…')).toBeNull();
+  });
+
+  it('says checks are not available in a browser with no service worker (the real check, in jsdom)', async () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    await userEvent.click(checkButton());
+    expect(await screen.findByText('Update checks are not available here')).toBeInTheDocument();
+  });
+
+  it('never throws: a check that fails reports that it could not check', async () => {
+    pwaUpdates.checkForUpdate.mockRejectedValueOnce(new Error('boom'));
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    await userEvent.click(checkButton());
+    expect(await screen.findByText('Could not check (offline)')).toBeInTheDocument();
+    expect(checkButton()).toBeEnabled();
   });
 });
 

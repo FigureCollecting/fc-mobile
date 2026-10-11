@@ -8,12 +8,12 @@ import type { Theme } from '../stores/theme';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { getCacheStats, clearAllCaches } from '../storage/cacheManager';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { APP_VERSION } from '../config/version';
 import type { CacheStats } from '../storage/cacheManager';
 import { readStorageStatus, type StorageStatus } from '../pwa/storage';
+import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
 import { Style } from '../styles/Style';
-
-const APP_VERSION = '0.1.0';
 
 const SYNC_INTERVALS = [
   { value: 'manual', label: 'Manual' },
@@ -52,6 +52,38 @@ function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (
     >
       <span class="toggle__thumb" />
     </button>
+  );
+}
+
+const UPDATE_CHECK_MESSAGES: Record<UpdateCheck, string> = {
+  ready: 'A new version is ready',
+  latest: 'You are on the latest build',
+  offline: 'Could not check (offline)',
+  unavailable: 'Update checks are not available here',
+};
+
+/** Looks for a newer build now; one found installs and raises the app's update prompt. */
+function CheckForUpdate() {
+  const [result, setResult] = useState<UpdateCheck | 'checking' | null>(null);
+  const run = async () => {
+    hapticLight();
+    setResult('checking');
+    setResult(await checkForUpdate().catch((): UpdateCheck => 'offline'));
+  };
+  return (
+    <>
+      <button
+        class="settings__row settings__row--action"
+        type="button"
+        onClick={() => void run()}
+        disabled={result === 'checking'}
+      >
+        <span class="settings__label">Check for update</span>
+      </button>
+      <p class="settings__hint" aria-live="polite">
+        {result === 'checking' ? 'Checking…' : result && UPDATE_CHECK_MESSAGES[result]}
+      </p>
+    </>
   );
 }
 
@@ -336,6 +368,8 @@ export function Settings() {
             <span class="settings__value">{`${APP_VERSION} (${import.meta.env.VITE_BUILD_ID})`}</span>
           </div>
 
+          <CheckForUpdate />
+
           <a
             class="settings__row settings__row--action"
             href="https://github.com/FigureCollecting"
@@ -530,6 +564,11 @@ const styles = `
     background: var(--surface-tertiary);
   }
 
+  .settings__row--action:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
   .settings__label {
     color: var(--text-primary);
   }
@@ -556,6 +595,10 @@ const styles = `
     font-size: var(--font-xs);
     color: var(--text-tertiary);
     padding: 0 var(--space-2) var(--space-2);
+  }
+
+  .settings__hint:empty {
+    padding: 0;
   }
 
   .settings__select {

@@ -435,8 +435,6 @@ export interface CabinetSceneProps {
   labels?: boolean;
   /** The image list's entry for a figure (GetProductImages); absent = resolveFigureImageUrl. */
   imageFor?: (figure: Figure) => FigureImageRef | undefined;
-  /** CSS px kept free below the scene (the pull-up tabs and the tab bar). */
-  bottomReservePx?: number;
   /** The frame where nothing can be measured (tests). */
   frameFallback?: { width: number; height: number };
 }
@@ -465,39 +463,15 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
   return frame;
 }
 
-/**
- * The scene's height: every px from its top down to the space kept free
- * below it (the pull-up tabs and the tab bar), never more, so the camera,
- * which frames the cabinet into the scene, never puts a foot under the tabs
- * (the Fold8 cover held sideways leaves 143 px). No room at all: 0.
- */
-function useSceneHeight(ref: { current: HTMLElement | null }, reservePx: number): number | undefined {
-  const [height, setHeight] = useState<number | undefined>(undefined);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () => {
-      const top = el.getBoundingClientRect().top + window.scrollY;
-      setHeight(Math.max(0, Math.floor(window.innerHeight - top - reservePx)));
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, [ref, reservePx]);
-  return height;
-}
-
 export function CabinetScene({
   figures,
   onSelect,
   prefs,
   labels = false,
   imageFor,
-  bottomReservePx = 0,
   frameFallback = DEFAULT_FRAME,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const sceneHeight = useSceneHeight(hostRef, bottomReservePx);
   const frame = useFrame(hostRef, frameFallback);
   const ceilingMm = prefs.ceilingMm;
   const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
@@ -669,7 +643,6 @@ export function CabinetScene({
         height: camera.frame.height,
       })}
       data-pan={String(Math.round(panPx))}
-      style={sceneHeight === undefined ? undefined : { height: `${sceneHeight}px` }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endPress(e, true)}
@@ -765,6 +738,7 @@ export function CabinetScene({
   );
 }
 
+// The page sizes the scene (Collection: down to the pull-up tabs); 60vh only where nothing does.
 const styles = `
   .cabinet-scene {
     position: relative;

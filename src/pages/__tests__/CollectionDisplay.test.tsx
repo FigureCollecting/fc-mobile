@@ -77,7 +77,7 @@ describe('Collection page (rebuilt display layer)', () => {
     const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     expect(container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(true);
-    const scene = container.querySelector<HTMLElement>('.page-collection__display--case > .cabinet-scene')!;
+    const scene = container.querySelector('.page-collection__display--case > .cabinet-scene') as HTMLElement;
     // its height is the page's to give: nothing measured once and left stale when the layout above changes
     expect(scene.style.height).toBe('');
     unmount();

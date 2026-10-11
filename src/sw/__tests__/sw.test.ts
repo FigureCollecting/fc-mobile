@@ -44,7 +44,11 @@ const skipWaiting = vi.fn(async () => undefined);
 const MANIFEST = [{ url: '/index.html', revision: 'r1' }];
 // The owned-figure cache the page fills (src/media/ownedImages.ts): one entry, read first.
 const OWNED_URL = `https://images.figurecollecting.com/d/${'cd'.repeat(32)}`;
-const ownedResponse = new Response('owned');
+// As the origin answers (fc-infra edge README): immutable for a year.
+const IMMUTABLE = 'public, max-age=31536000, immutable';
+const ORIGIN_HEADERS = { 'content-type': 'image/png', 'cache-control': IMMUTABLE, 'x-origin': 'kept' };
+/** Each match of the owned entry gives a fresh response, as the Cache API does. */
+const ownedResponse = () => new Response('owned', { headers: ORIGIN_HEADERS });
 const opened: string[] = [];
 const matchOptions: (CacheQueryOptions | undefined)[] = [];
 
@@ -58,7 +62,7 @@ beforeAll(async () => {
       return {
         match: async (r: Request | string, options?: CacheQueryOptions) => {
           matchOptions.push(options);
-          return new URL(typeof r === 'string' ? r : r.url).href === OWNED_URL ? ownedResponse : undefined;
+          return new URL(typeof r === 'string' ? r : r.url).href === OWNED_URL ? ownedResponse() : undefined;
         },
       };
     },
@@ -76,6 +80,14 @@ function ctx(p: string, method = 'GET', origin = ORIGIN) {
   const url = new URL(p, origin);
   return { url, request: new Request(url, { method }), sameOrigin: url.origin === ORIGIN, event: {} };
 }
+const text = async (response: Promise<Response>) => (await response).text();
+/** The image route: its matcher and its handler. */
+function imageRoute() {
+  const call = wb.registerRoute.mock.calls.find(([m]) => typeof m === 'function' && (m as (c: unknown) => boolean)(ctx(`/d/${'ab'.repeat(32)}`, 'GET', 'https://images.figurecollecting.com')));
+  return call as unknown as [(c: ReturnType<typeof ctx>) => boolean, (o: { request: Request }) => Promise<Response>];
+}
+/** A response with no copy to make: an opaque (no-cors) one, an opaque redirect, a network error. Status 0. */
+const statusZero = (type: ResponseType) => Object.defineProperties(new Response(null), { type: { value: type }, status: { value: 0 } });
 
 describe('service worker wiring', () => {
   it('precaches the injected manifest and drops caches of older builds', () => {
@@ -113,13 +125,13 @@ describe('service worker wiring', () => {
 
     const browsed = new Response('browsed');
     (cacheFirst as unknown as { handle: (o: unknown) => Promise<Response> }).handle = vi.fn(async () => browsed);
-    expect(await handler({ request: new Request(OWNED_URL) })).toBe(ownedResponse);
+    expect(await text(handler({ request: new Request(OWNED_URL) }))).toBe('owned');
     expect(opened).toEqual(['fc-owned-media-v1']);
     expect(matchOptions).toEqual([{ ignoreVary: true }]);
     expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).not.toHaveBeenCalled();
     // An <img> of any other image: the browsed cache.
     const shown = { request: asImage(new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`)) };
-    expect(await handler(shown)).toBe(browsed);
+    expect(await text(handler(shown))).toBe('browsed');
     expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).toHaveBeenCalledWith(shown);
   });
 
@@ -133,14 +145,53 @@ describe('service worker wiring', () => {
     try {
       const request = new Request(`https://images.figurecollecting.com/d/${'ef'.repeat(32)}`, { mode: 'cors', credentials: 'omit' });
       expect(request.destination).toBe('');
-      expect(await handler({ request })).toBe(network);
+      expect(await text(handler({ request }))).toBe('origin');
       expect(fetchSpy).toHaveBeenCalledWith(request, { cache: 'no-store' });
       expect(cacheFirst.handle).not.toHaveBeenCalled();
       // An owned image is still answered from its cache first, whoever asks.
-      expect(await handler({ request: new Request(OWNED_URL) })).toBe(ownedResponse);
+      expect(await text(handler({ request: new Request(OWNED_URL) }))).toBe('owned');
       expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it('answers the page with a copy marked Cache-Control no-store, from either cache or the origin, so no document keeps the bytes; status, body and other headers as they were', async () => {
+    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { handle: ReturnType<typeof vi.fn> };
+    const [, handler] = imageRoute();
+    const fetchSpy = vi.fn(async () => new Response('gone', { status: 404, statusText: 'Not Found', headers: ORIGIN_HEADERS }));
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const fromOwned = await handler({ request: new Request(OWNED_URL) });
+      cacheFirst.handle = vi.fn(async () => new Response('browsed', { headers: ORIGIN_HEADERS }));
+      const fromBrowsed = await handler({ request: asImage(new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`)) });
+      const fromOrigin = await handler({ request: new Request(`https://images.figurecollecting.com/d/${'ef'.repeat(32)}`) });
+      const answers = [fromOwned, fromBrowsed, fromOrigin];
+      expect(answers.map((r) => r.headers.get('cache-control'))).toEqual(['no-store', 'no-store', 'no-store']);
+      expect(answers.map((r) => [r.status, r.statusText, r.headers.get('content-type'), r.headers.get('x-origin')])).toEqual([
+        [200, '', 'image/png', 'kept'],
+        [200, '', 'image/png', 'kept'],
+        [404, 'Not Found', 'image/png', 'kept'],
+      ]);
+      expect(await Promise.all(answers.map((r) => r.text()))).toEqual(['owned', 'browsed', 'gone']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('passes an opaque answer (an <img> without crossorigin), an opaque redirect or a network error as it is: none can be copied', async () => {
+    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { handle: ReturnType<typeof vi.fn> };
+    const [, handler] = imageRoute();
+    const opaque = statusZero('opaque');
+    cacheFirst.handle = vi.fn(async () => opaque);
+    expect(await handler({ request: asImage(new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`)) })).toBe(opaque);
+    for (const answer of [statusZero('opaqueredirect'), Response.error()]) {
+      vi.stubGlobal('fetch', vi.fn(async () => answer));
+      try {
+        expect(await handler({ request: new Request(`https://images.figurecollecting.com/d/${'ef'.repeat(32)}`) })).toBe(answer);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     }
   });
 

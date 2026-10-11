@@ -208,8 +208,17 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
       return out;
     }, url);
   const count = (url: string) => hits.filter((h) => h === url).length;
-  // A document keeps the images it decoded and draws them again without a request: each offline
-  // check runs in a fresh one, so what answers it is the worker.
+  // Each answer the worker gave this page for the address, as Chromium reports it: the address and its Cache-Control.
+  const answers: string[] = [];
+  page.on('response', (r) => {
+    if (r.fromServiceWorker() && r.url().startsWith(`${MEDIA}/`)) answers.push(`${r.url()} ${r.headers()['cache-control']}`);
+  });
+  const notNoStore = () => answers.filter((a) => !a.endsWith(' no-store'));
+  // A document keeps the images it decoded and draws them again without a request, so each offline check
+  // runs in a fresh document: a reload in this tab. A Playwright route turns off Chromium's HTTP cache and
+  // the tab's memory cache (any route: the hands-off guard's too), so here what answers that check is the
+  // worker. In a tab with no route, the memory cache can answer a fresh document's <img> from an earlier
+  // document's immutable answer without asking the worker: so every answer the worker gives is no-store.
   const freshDocument = async () => {
     await page.reload();
     await shellInstalled(page);
@@ -217,7 +226,11 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
 
   // A 404 is never kept, nor an opaque (no-cors) answer.
   expect(await show(missing)).toBe(false);
+  const opaqueFrom = answers.length;
   expect(await show(present, false)).toBe(true);
+  // An opaque answer cannot be copied, so the worker passes it as it is, the origin's immutable with it.
+  // The app sets crossorigin on every <img> of the address.
+  expect(answers.splice(opaqueFrom)).toEqual([`${present} public, max-age=31536000, immutable`]);
   expect(await browsed()).toEqual([]);
   // A CORS 200 an <img> shows is kept. Workbox writes the cache after it answers (waitUntil).
   expect(await show(present)).toBe(true);
@@ -235,11 +248,13 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(count(present)).toBe(2);
 
   // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): the sync stores them
-  // in the owned cache only, and the worker serves them from it first, offline too; a withheld one is
-  // deleted from every cache, so it is gone, though an <img> showed it online. This context's HTTP cache is off (any Playwright route turns it
-  // off, the hands-off guard's too), so this cannot show that no fetch fills it with the origin's
-  // immutable answer: src/sw/__tests__/sw.test.ts and src/media/__tests__/ownedImages.test.ts pin each
-  // fetch of an image address to cache 'no-store'.
+  // in the owned cache only, and the worker serves them from it first, offline too. A withheld one is
+  // deleted from every CacheStorage cache, and offline the worker answers it with a network error, though an
+  // <img> showed it online before it was owned and offline while it was. Every answer the worker gave this
+  // page for it was marked no-store. With this context's caches off, the test cannot show what Chromium's
+  // HTTP cache or the tab's memory cache would keep: src/sw/__tests__/sw.test.ts and
+  // src/media/__tests__/ownedImages.test.ts pin each fetch of an image address to cache 'no-store', and
+  // sw.test.ts each answer to the page to Cache-Control no-store.
   down = false;
   await context.addInitScript({ content: await bundleImageProbe() });
   await freshDocument();
@@ -263,6 +278,8 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(await get(ownedImage)).toBe(200);
   expect(await show(ownedImage)).toBe(true);
   expect(count(ownedImage)).toBe(before);
+  // Shown from the origin, fetched by the sync, then read and shown from the owned cache: each answer no-store.
+  expect(answers.filter((a) => a.startsWith(`${ownedImage} `))).toEqual(Array(4).fill(`${ownedImage} no-store`));
 
   // Withheld: the fresh list carries another image. The old one leaves both caches and fails offline.
   down = false;
@@ -279,6 +296,9 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(await show(replacement)).toBe(true);
   expect(await cachesHolding(ownedImage)).toEqual([]);
   expect(await cachesHolding(replacement)).toEqual(['fc-owned-media-v1']);
+  // Every answer but the opaque one, from either cache or the origin, the sync's own fetches too.
+  expect(answers.length).toBeGreaterThan(0);
+  expect(notNoStore()).toEqual([]);
 });
 
 test.describe('(c) build N+1 ships while 2 edits are pending', () => {

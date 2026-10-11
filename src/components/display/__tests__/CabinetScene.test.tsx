@@ -251,6 +251,42 @@ describe('CabinetScene: views and navigation', () => {
   });
 });
 
+describe('CabinetScene: the scene is the space above the pull-up tabs (every Fold8 size)', () => {
+  /** A window innerHeight tall whose scene starts top px down the page. */
+  function windowOf(innerHeight: number, top: number) {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const r = real.call(this);
+      if (!this.classList.contains('cabinet-scene')) return r;
+      return { x: 0, y: top, top, left: 0, right: r.width, bottom: top + r.height, width: r.width, height: r.height, toJSON: () => ({}) } as DOMRect;
+    });
+  }
+  const jsdomHeight = window.innerHeight;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: jsdomHeight });
+  });
+
+  it('the Fold8 cover held sideways (616x357): 143 px from its top (122) to the tabs (92 reserved), never a floor under them', () => {
+    windowOf(357, 122);
+    const { host } = scene(FIXTURE_FIGURES, {}, { bottomReservePx: 92 });
+    expect(host.style.height).toBe('143px');
+  });
+
+  it('a taller window: every px down to the tabs', () => {
+    windowOf(558, 122);
+    const { host } = scene(FIXTURE_FIGURES, {}, { bottomReservePx: 92 });
+    expect(host.style.height).toBe('344px');
+  });
+
+  it('a window with no room left: an empty scene, never one reaching under the tabs', () => {
+    windowOf(200, 122);
+    const { host } = scene(FIXTURE_FIGURES, {}, { bottomReservePx: 92 });
+    expect(host.style.height).toBe('0px');
+  });
+});
+
 describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   const tall = { ...FIXTURE_FIGURES[0], _id: 'tall', name: 'Tall Statue', dimensions: { heightMm: 700 } } as Figure;
   const deep = { ...FIXTURE_FIGURES[1], _id: 'deep', name: 'Deep Diorama', dimensions: { heightMm: 200, depthMm: 420 } } as Figure;

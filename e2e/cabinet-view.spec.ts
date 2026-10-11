@@ -3,7 +3,9 @@ import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
-import { wallLayout } from '../src/components/display/packCabinets';
+import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
+import { cabinetBox } from '../src/components/display/caseFraming';
+import { boxCorners } from '../src/components/display/caseCamera';
 
 /**
  * The faithful cabinets in a real browser (CASE-FIX, CASE-CABINET,
@@ -121,6 +123,46 @@ for (const size of FOLD8) {
           expect(Math.abs(r.drawn[edge] - r.predicted[edge]), `${r.name} ${edge}`).toBeLessThan(1.5);
         }
       }
+    });
+  }
+}
+
+/** The lowest scene y (CSS px) of what the view frames: the focus cabinet's front feet, or the shelf view's surface edge. */
+async function framedBottomPx(page: Page, view: 'wall' | 'cabinet' | 'shelf'): Promise<number> {
+  const camera = await cameraOf(page);
+  const host = page.locator('.cabinet-scene');
+  const focus = Number(await host.getAttribute('data-focus'));
+  const slot = wallLayout(Array.from({ length: focus + 1 }, () => IKEA_KLINGSBO)).cabinets[focus];
+  if (view !== 'shelf') {
+    const b = cabinetBox(slot, 0);
+    return Math.max(...boxCorners(b.x0, b.x1, 0, 0, b.z0, b.z1).map((c) => project(camera, c).y));
+  }
+  const s = surfaceSlots(IKEA_KLINGSBO)[Number(await host.getAttribute('data-shelf'))];
+  const surface = IKEA_KLINGSBO.surfaces[s.surfaceIndex];
+  const lo = surface.topMm - surface.thicknessMm;
+  return Math.max(...[slot.leftMm, slot.rightMm].map((x) => project(camera, [x, lo, 0]).y));
+}
+
+for (const size of FOLD8) {
+  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+    test(`the whole framed cabinet stands above the pull-up tabs and the tab bar: ${view}, ${size.name}`, async ({ page }) => {
+      await openCase(page, size, '&fx=3', { view });
+      // the shelf view frames a shelf whole; the top's band may not fit, the camera steps back only 3 in (CC4b)
+      if (view === 'shelf') {
+        await page.getByRole('button', { name: 'Shelf below' }).click();
+        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
+      }
+      const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+      const tabsTop = Math.min(
+        (await page.locator('.case-tabs').boundingBox())!.y,
+        ...(await page.locator('.case-tabs [data-tab]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top))),
+      );
+      // the scene itself ends above the tabs: nothing it draws is ever under them
+      expect(scene.y + scene.height).toBeLessThanOrEqual(tabsTop + 1);
+      // and the camera frames the cabinet (its feet, or the shelf's edge) inside that scene
+      const bottom = scene.y + (await framedBottomPx(page, view));
+      expect(bottom).toBeLessThanOrEqual(scene.y + scene.height);
+      expect(bottom).toBeLessThanOrEqual(tabsTop);
     });
   }
 }

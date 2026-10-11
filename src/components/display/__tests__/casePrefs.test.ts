@@ -9,20 +9,33 @@ import {
   wallPatternProfiles,
   writeCasePrefs,
 } from '../casePrefs';
-import { IKEA_DETOLF, OPEN_STEEL_RACK } from '../cabinetPresets';
+import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 
 beforeEach(() => localStorage.clear());
 
 describe('case prefs, kept per device (CC14)', () => {
-  it('defaults: the Detolf (CC16), whole cabinets, the camera walks (CC4 playable), an 8 ft ceiling', () => {
-    expect(DEFAULT_CASE_PREFS).toEqual({ pattern: 'ikea-detolf', view: 'wall', swipe: 'camera', ceilingMm: 2438.4 });
+  it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, the camera walks (CC4 playable), an 8 ft ceiling, IC1-R1 tab order', () => {
+    expect(DEFAULT_CASE_PREFS).toEqual({
+      pattern: 'ikea-klingsbo',
+      view: 'wall',
+      swipe: 'camera',
+      ceilingMm: 2438.4,
+      tabOrder: ['view', 'reserved', 'info', 'refine'],
+    });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
 
   it('round-trips through localStorage', () => {
-    writeCasePrefs({ swipe: 'pan', view: 'shelf', pattern: 'ikea-detolf+open-steel-rack', ceilingMm: 2700 });
-    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual({ pattern: 'ikea-detolf+open-steel-rack', view: 'shelf', swipe: 'pan', ceilingMm: 2700 });
-    expect(readCasePrefs()).toEqual({ pattern: 'ikea-detolf+open-steel-rack', view: 'shelf', swipe: 'pan', ceilingMm: 2700 });
+    const prefs = {
+      pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack',
+      view: 'shelf',
+      swipe: 'pan',
+      ceilingMm: 2700,
+      tabOrder: ['refine', 'info', 'reserved', 'view'],
+    } as const;
+    writeCasePrefs(prefs);
+    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
+    expect(readCasePrefs()).toEqual(prefs);
   });
 
   it('a partial write keeps the rest', () => {
@@ -31,8 +44,14 @@ describe('case prefs, kept per device (CC14)', () => {
   });
 
   it('anything unknown or broken falls back field by field', () => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ pattern: 'nope', view: 'aerial', swipe: 'fly', ceilingMm: -3 }));
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ pattern: 'nope', view: 'aerial', swipe: 'fly', ceilingMm: -3, tabOrder: ['view', 'view', 'info', 'refine'] }));
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
+    for (const tabOrder of [['view', 'info', 'refine'], 'view', ['view', 'reserved', 'info', 'refine', 'more'], ['view', 'reserved', 'info', 7]]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ tabOrder }));
+      expect(readCasePrefs().tabOrder).toEqual(DEFAULT_CASE_PREFS.tabOrder);
+    }
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ ceilingMm: Number.POSITIVE_INFINITY, swipe: 'camera' }));
+    expect(readCasePrefs().ceilingMm).toBe(2438.4);
     localStorage.setItem(CASE_PREFS_KEY, '{not json');
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
     localStorage.setItem(CASE_PREFS_KEY, '7');
@@ -62,10 +81,15 @@ describe('case prefs, kept per device (CC14)', () => {
 });
 
 describe('wall patterns', () => {
-  it('every preset alone, and the Detolf with the rack alongside', () => {
-    expect(WALL_PATTERNS.map((p) => p.id)).toContain('ikea-detolf+open-steel-rack');
-    expect(wallPatternProfiles('ikea-detolf+open-steel-rack')).toEqual([IKEA_DETOLF, OPEN_STEEL_RACK]);
+  it('every preset alone, and the KLINGSBO with the Detolf and the rack alongside (Ross 10-11)', () => {
+    expect(WALL_PATTERNS.map((p) => p.id)).toEqual([
+      'ikea-klingsbo',
+      'ikea-detolf',
+      'open-steel-rack',
+      'ikea-klingsbo+ikea-detolf+open-steel-rack',
+    ]);
+    expect(wallPatternProfiles('ikea-klingsbo+ikea-detolf+open-steel-rack')).toEqual([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
     expect(wallPatternProfiles('open-steel-rack')).toEqual([OPEN_STEEL_RACK]);
-    expect(wallPatternProfiles('unknown')).toEqual([IKEA_DETOLF]);
+    expect(wallPatternProfiles('unknown')).toEqual([IKEA_KLINGSBO]);
   });
 });

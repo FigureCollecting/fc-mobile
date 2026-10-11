@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { IKEA_DETOLF, OPEN_STEEL_RACK, UNIT_A } from '../cabinetPresets';
+import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import type { CabinetProfile } from '../cabinetProfile';
 import {
   DEFAULT_FIGURE_HEIGHT_MM,
@@ -10,6 +10,7 @@ import {
   measureCaseFigure,
   packCabinets,
   surfaceSlots,
+  wallLayout,
   type CaseFigure,
 } from '../packCabinets';
 import { UNMATTED_META } from '../displayMeta';
@@ -39,8 +40,18 @@ describe('surfaceSlots', () => {
     expect(base).toMatchObject({ widthMm: 389, depthMm: 330, maxHeightMm: 396 });
   });
 
+  it('the KLINGSBO: the glass shelves are the plate; the cabinet floor and the open shelf below the door span the interior', () => {
+    const slots = surfaceSlots(IKEA_KLINGSBO);
+    expect(slots.map((s) => s.surfaceIndex)).toEqual([6, 5, 4, 3, 2, 1, 0]);
+    expect(slots[0]).toMatchObject({ isTop: true, widthMm: 450, depthMm: 400, frontZMm: 0 });
+    expect(slots[1]).toMatchObject({ widthMm: 359, depthMm: 314, frontZMm: -12, maxHeightMm: 253 });
+    expect(slots[5]).toMatchObject({ widthMm: 382, depthMm: 335, frontZMm: -4, maxHeightMm: 256 });
+    // the open shelf has no door in front of it
+    expect(slots[6]).toMatchObject({ widthMm: 382, depthMm: 335, frontZMm: 0, maxHeightMm: 220 });
+  });
+
   it('a profile whose top is not usable has no top slot', () => {
-    const closed: CabinetProfile = { ...UNIT_A, top: { usable: false } };
+    const closed: CabinetProfile = { ...IKEA_KLINGSBO, top: { usable: false } };
     expect(surfaceSlots(closed).some((s) => s.isTop)).toBe(false);
   });
 
@@ -77,6 +88,13 @@ describe('fitCheck (FIT-CHECK)', () => {
 
   it('a figure wider than every surface is too wide', () => {
     expect(fitCheck(IKEA_DETOLF, item(0, 200, 431)).verdict).toBe('too-wide');
+  });
+
+  it('the KLINGSBO default: a 610.6 mm figure is too tall, a 401 mm deep one too deep, a 300 mm one only on the top, a 259 mm one inside', () => {
+    expect(fitCheck(IKEA_KLINGSBO, item(0, 610.6)).verdict).toBe('too-tall');
+    expect(fitCheck(IKEA_KLINGSBO, item(0, 200, 100, 401)).verdict).toBe('too-deep');
+    expect(fitCheck(IKEA_KLINGSBO, item(0, 300)).verdict).toBe('top-only');
+    expect(fitCheck(IKEA_KLINGSBO, item(0, 259)).verdict).toBe('fits');
   });
 
   it('a lower ceiling shrinks what the top takes', () => {
@@ -152,6 +170,12 @@ describe('packCabinets', () => {
     expect(cabinets.slice(0, 3).map((c) => c.profile.id)).toEqual(['ikea-detolf', 'open-steel-rack', 'ikea-detolf']);
   });
 
+  it('the comparison wall cycles KLINGSBO, Detolf, rack (Ross 10-11: KLINGSBO first, the Detolf and the rack alongside)', () => {
+    const items = Array.from({ length: 60 }, (_, i) => item(i, 200, 180));
+    const { cabinets } = packCabinets(items, [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
+    expect(cabinets.slice(0, 4).map((c) => c.profile.id)).toEqual(['ikea-klingsbo', 'ikea-detolf', 'open-steel-rack', 'ikea-klingsbo']);
+  });
+
   it('nothing to pack: no cabinets; an empty pattern throws', () => {
     expect(packCabinets([], [IKEA_DETOLF])).toEqual({ cabinets: [], violators: [] });
     expect(() => packCabinets([item(0, 100)], [])).toThrow(RangeError);
@@ -205,6 +229,32 @@ describe('packCabinets', () => {
       expect(placed + violators.length).toBe(1144);
       expect(cabinets.length).toBeGreaterThan(10);
     }
+  });
+});
+
+describe('wallLayout (side by side, the adjacency gap between neighbours)', () => {
+  it('stands two KLINGSBOs 95 mm apart, a Detolf 47.5 mm from a KLINGSBO and touching the rack', () => {
+    const wall = wallLayout([IKEA_KLINGSBO, IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
+    expect(wall.cabinets.map((c) => [c.leftMm, c.rightMm])).toEqual([
+      [0, 450],
+      [545, 995],
+      [1042.5, 1472.5],
+      [1472.5, 1472.5 + 914.4],
+    ]);
+    expect(wall.cabinets.map((c) => c.centerMm)).toEqual([225, 770, 1257.5, 1472.5 + 457.2]);
+    expect(wall.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, 95, 47.5, 0]);
+  });
+
+  it("reaches out to the first and last cabinet's feet", () => {
+    const wall = wallLayout([IKEA_KLINGSBO, IKEA_DETOLF]);
+    expect(wall.leftMm).toBe(-47.5);
+    expect(wall.rightMm).toBe(450 + 47.5 + 430);
+    expect(wallLayout([IKEA_DETOLF]).leftMm).toBe(0);
+    expect(wallLayout([IKEA_DETOLF]).rightMm).toBe(430);
+  });
+
+  it('an empty wall is empty', () => {
+    expect(wallLayout([])).toEqual({ cabinets: [], leftMm: 0, rightMm: 0 });
   });
 });
 

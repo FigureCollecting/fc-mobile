@@ -17,6 +17,9 @@ import {
   checkCabinetRegistry,
   unverifiedFields,
   fixedModeCompartmentMm,
+  adjacencyGapMm,
+  buyLink,
+  sideOverhangMm,
   type CabinetProfile,
   type CabinetSurface,
   type Provenance,
@@ -51,6 +54,8 @@ function box(patch: Partial<CabinetProfile> = {}): CabinetProfile {
     shelves: { mode: 'fixed' },
     top: { usable: true },
     base: { style: 'plinth', heightMm: 50 },
+    discontinued: false,
+    sources: [],
     provenance: {
       outer: MEASURED,
       interior: MEASURED,
@@ -551,5 +556,40 @@ describe('fixedModeCompartmentMm (thin adapter for CaseShelf fixed mode)', () =>
   it('returns a small positive compartment as it is', () => {
     const tight = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 87), surface('top', 1000)] });
     expect(fixedModeCompartmentMm(tight)).toBe(1);
+  });
+});
+
+describe('footprint, adjacency gap and buy link (Ross 2026-10-11)', () => {
+  const splayed = (widthMm: number, depthMm = 450, frontOverhangMm = 50) =>
+    box({ footprint: { widthMm, depthMm, frontOverhangMm } });
+
+  it('a cabinet without a footprint stands on its own body: no overhang, no gap', () => {
+    expect(sideOverhangMm(box())).toBe(0);
+    expect(adjacencyGapMm(box(), box())).toBe(0);
+  });
+
+  it('splayed legs reach half the extra footprint width out on each side; two such cabinets keep both apart', () => {
+    expect(sideOverhangMm(splayed(700))).toBe(50);
+    expect(adjacencyGapMm(splayed(700), splayed(640))).toBe(70);
+    expect(adjacencyGapMm(splayed(700), box())).toBe(50);
+    expect(adjacencyGapMm(box(), splayed(640))).toBe(20);
+  });
+
+  it("'footprint': the legs' footprint must enclose the body (width, depth, and the front overhang inside the extra depth)", () => {
+    expect(checkCabinetProfile(splayed(600, 400, 0))).toEqual([]);
+    expect(checkCabinetProfile(splayed(700, 450, 50))).toEqual([]);
+    expect(checkCabinetProfile(splayed(599))).toEqual(['footprint']);
+    expect(checkCabinetProfile(splayed(700, 399, 0))).toEqual(['footprint']);
+    expect(checkCabinetProfile(splayed(700, 450, 51))).toEqual(['footprint']);
+    expect(checkCabinetProfile(splayed(700, 450, -1))).toEqual(['footprint']);
+    expect(checkCabinetProfile(splayed(Number.NaN))).toEqual(['footprint']);
+  });
+
+  it('never links to a discontinued cabinet, links to a sold one that has a URL, and to nothing without one', () => {
+    const url = 'https://www.ikea.com/us/en/p/example-00000000/';
+    expect(buyLink(box({ buyUrl: url }))).toBe(url);
+    expect(buyLink(box({ buyUrl: url, discontinued: true }))).toBeNull();
+    expect(buyLink(box())).toBeNull();
+    expect(buyLink(box({ buyUrl: '' }))).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import { useBarcodeLookup, BarcodeFormatError } from '../hooks/useBarcodeLookup'
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { requireSession } from '../local/session';
 import type { LocalFigure } from '../local/figures';
+import { cardName } from '../local/cardName';
 import { TAB_LABEL } from '../components/collection/CollectionTabs';
 import { showToast } from '../stores/toast';
 import { Style } from '../styles/Style';
@@ -296,7 +297,7 @@ export function Discover() {
                   return (
                     <li key={card.headId} class="discover-results__item">
                       <div class="discover-results__open">
-                        <span class="discover-results__name">{shown(card.title) ?? 'Untitled figure'}</span>
+                        <span class="discover-results__name">{cardName(card)}</span>
                         {meta !== '' && <span class="discover-results__meta">{meta}</span>}
                         {holding !== '' && <span class="discover-results__held">{`In your collection: ${holding}`}</span>}
                       </div>
@@ -358,7 +359,7 @@ export function Discover() {
                 const holding = heldSummary(held, card.headId);
                 return (
                   <div key={card.headId} class="barcode__card">
-                    <span class="discover-results__name">{card.title?.value || 'Untitled figure'}</span>
+                    <span class="discover-results__name">{cardName(card)}</span>
                     {card.manufacturer?.value && <span class="discover-results__meta">{card.manufacturer.value}</span>}
                     {holding !== '' && <span class="discover-results__meta">{`In your collection: ${holding}`}</span>}
                     <div class="barcode__adds">

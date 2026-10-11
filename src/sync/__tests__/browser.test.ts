@@ -5,7 +5,7 @@ import { NetworkError } from '../../auth/errors';
 import type { AuthStatus } from '../../auth/statusGate';
 import type { LocalDb } from '../../storage/localDb';
 import { UserStore } from '../../storage/userStore';
-import { HELD_STATUSES, NotEnrolledError, createBrowserSync, startBrowserSync, storeProvider, type SyncSession } from '../browser';
+import { HELD_STATUSES, IDLE_POLL_MS, NotEnrolledError, createBrowserSync, startBrowserSync, storeProvider, type SyncSession } from '../browser';
 import { FakeCoordinator } from './fakeCoordinator';
 import { DEVICE, OTHER_DEVICE, T0, freshDb } from './harness';
 import { headOf, seedCopies } from './engineSupport';
@@ -151,6 +151,20 @@ describe('createBrowserSync', () => {
     dispose();
   });
 
+  it('pulls on an idle interval (F15): after a pass in sync, the next is due in IDLE_POLL_MS', async () => {
+    expect(IDLE_POLL_MS).toBe(60_000);
+    const { db } = await freshDb();
+    const s = session(db);
+    const server = new FakeCoordinator(T0);
+    const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' as DocumentVisibilityState });
+    const set = vi.spyOn(globalThis, 'setTimeout');
+    const { engine, dispose } = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog, document: doc });
+    await vi.waitFor(() => expect(engine.state.value).toMatchObject({ phase: 'idle', reachability: 'reachable' }));
+    expect(set.mock.calls.map((c) => c[1])).toContain(IDLE_POLL_MS);
+    set.mockRestore();
+    dispose();
+  });
+
   it('holds in exactly the statuses only a sign-in or reload clears', () => {
     expect([...HELD_STATUSES].sort()).toEqual(['loading', 'reauth-required', 'reload-required', 'signed-out']);
   });
@@ -165,7 +179,7 @@ describe('startBrowserSync', () => {
     const add = vi.spyOn(window, 'addEventListener');
     const other = startBrowserSync(session(db, 'signed-out'));
     expect(other).not.toBe(sync);
-    expect(add.mock.calls.map((c) => c[0])).toEqual(['online', 'pageshow']);
+    expect(add.mock.calls.map((c) => c[0])).toEqual(['online', 'offline', 'pageshow']);
     sync.dispose();
     other.dispose();
     add.mockRestore();

@@ -11,8 +11,12 @@
 //      empty replica, the outbox untouched;
 //   4. GetProducts, in batches of 200, for the figures the user holds (occ/*/head and uf/* rows)
 //      that have no card or a card older than 24 h.
-// Passes run one at a time on: start, online, visibilitychange to visible, pageshow, 1 s after a
-// local write, and a full-jitter backoff (cap 2 s doubling to 5 min) while the page is visible.
+// Passes run one at a time on: start, online, offline (so the status reads unreachable at once),
+// visibilitychange to visible, pageshow, 1 s after a local write, a full-jitter backoff (cap 2 s
+// doubling to 5 min) while the page is visible, and, when pollMs is set, every pollMs while the page
+// is visible and in sync (an idle session hears other devices' edits).
+// A local write commits to the store (facets and outbox, one IndexedDB transaction) before any
+// network and never waits for it; the outbox is the store's, so a restart replays it.
 // While the session needs a sign-in or a reload, nothing goes out and nothing is lost: edits stay
 // in the outbox. The engine reads facet rows only through the store's index fields (family,
 // head_id), never parsing a key, and never writes the auth status.
@@ -46,7 +50,7 @@ const MAX_PRODUCT_PAGES = 1_000;
 
 export type SyncCalls = Pick<Client<typeof SyncService>, 'status' | 'delta' | 'push'>;
 export type CatalogCalls = Pick<Client<typeof CatalogService>, 'getProducts'>;
-export type SyncTrigger = 'start' | 'online' | 'visible' | 'pageshow' | 'write' | 'retry' | 'auth' | 'manual';
+export type SyncTrigger = 'start' | 'online' | 'offline' | 'visible' | 'pageshow' | 'write' | 'retry' | 'poll' | 'auth' | 'manual';
 export type Reachability = 'unknown' | 'reachable' | 'unreachable';
 /** unreachable: retry on the backoff; paused: wait for the session (sign in, reload); error: retry on the backoff. */
 export type FailureKind = 'unreachable' | 'paused' | 'error';
@@ -87,8 +91,10 @@ export interface SyncEngineDeps {
   random?: () => number;
   /** AbortSignal.timeout by default. */
   timeoutSignal?: (ms: number) => AbortSignal;
-  /** Where online and pageshow fire; none in tests that drive trigger() by hand. */
+  /** Where online, offline and pageshow fire; none in tests that drive trigger() by hand. */
   window?: EventTarget;
+  /** Pull every pollMs while the page is visible and the last pass succeeded; none when unset. */
+  pollMs?: number;
   document?: EventTarget & { visibilityState: DocumentVisibilityState };
 }
 
@@ -184,6 +190,7 @@ export class SyncEngine {
     if (this.started || this.stopped) return;
     this.started = true;
     this.deps.window?.addEventListener('online', this.onOnline);
+    this.deps.window?.addEventListener('offline', this.onOffline);
     this.deps.window?.addEventListener('pageshow', this.onPageShow);
     this.deps.document?.addEventListener('visibilitychange', this.onVisibility);
     void this.trigger('start');
@@ -192,6 +199,7 @@ export class SyncEngine {
   stop(): void {
     this.stopped = true;
     this.deps.window?.removeEventListener('online', this.onOnline);
+    this.deps.window?.removeEventListener('offline', this.onOffline);
     this.deps.window?.removeEventListener('pageshow', this.onPageShow);
     this.deps.document?.removeEventListener('visibilitychange', this.onVisibility);
     this.clearRetry();
@@ -199,6 +207,7 @@ export class SyncEngine {
   }
 
   private readonly onOnline = (): void => void this.trigger('online');
+  private readonly onOffline = (): void => void this.trigger('offline');
   private readonly onPageShow = (): void => void this.trigger('pageshow');
   private readonly onVisibility = (): void => {
     if (this.visible()) void this.trigger('visible');
@@ -281,8 +290,20 @@ export class SyncEngine {
     // browser replayed on its own and the server refused as a replay) is retried like any failure.
     if (outcome === 'paused' && this.deps.blocked?.() !== true) outcome = 'error';
     this.set({ phase: outcome === 'paused' ? 'paused' : 'idle' });
-    if (outcome === 'ok') this.attempt = 0;
-    else if (outcome !== 'paused') this.scheduleRetry();
+    if (outcome === 'ok') {
+      this.attempt = 0;
+      this.schedulePoll();
+    } else if (outcome !== 'paused') this.scheduleRetry();
+  }
+
+  // The next pull of an idle session; any trigger before it clears it, as it clears a retry.
+  private schedulePoll(): void {
+    const { pollMs } = this.deps;
+    if (pollMs === undefined || this.stopped || !this.visible()) return;
+    this.retryTimer = this.timers.setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.trigger('poll');
+    }, pollMs);
   }
 
   private scheduleRetry(): void {
@@ -308,6 +329,8 @@ export class SyncEngine {
     let store: UserStore | undefined;
     try {
       store = await this.deps.store();
+      // What waits is counted before the probe: a boot into a dead network shows it at once.
+      await this.refresh(store);
       await this.probe(store);
       await this.drain(store);
       await this.pull(store);

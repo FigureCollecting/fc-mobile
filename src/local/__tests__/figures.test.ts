@@ -86,6 +86,18 @@ describe('buildFigures', () => {
     expect(f!.releases).toBeUndefined();
   });
 
+  it('names a figure whose card has no title by its character, then maker and scale, before "Untitled figure"', () => {
+    const facets = [...copy(O[0], H[0], 'owned'), ...copy(O[1], H[1], 'owned')];
+    const untitledCard = (head: string, extra: Record<string, unknown>) => card(head, { title: undefined, ...extra });
+    const figs = buildFigures(
+      inputs(facets, [
+        product(untitledCard(H[0], { character: { value: 'Kurisu Makise', asOf: '' }, series: { value: 'Steins;Gate', asOf: '' } })),
+        product(untitledCard(H[1], { character: undefined, series: undefined, manufacturer: { value: 'Good Smile Company', asOf: '' }, scale: { value: '1/8', asOf: '' } })),
+      ]),
+    );
+    expect(figs.map((f) => f.name)).toEqual(['Kurisu Makise (Steins;Gate)', 'Good Smile Company 1/8']);
+  });
+
   it("lists former copies as their own item, with the copies' disposals and no collection status", () => {
     const facets = [...copy(O[0], H[0], 'former'), row(`occ/${O[0]}/disposal`, { reason: 'sold', on: '2026-10-01', counterparty: 'Kai' })];
     const [f] = buildFigures(inputs(facets));

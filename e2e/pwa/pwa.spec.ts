@@ -161,31 +161,64 @@ test('(b) /api reaches the coordinator online, fails offline, and the image 404s
   }
 });
 
-test('(b) derivatives: same-origin CacheFirst, and only a 200 is kept', async ({ page }) => {
+test('(b) derivatives: the one public image address, kept by the worker on a CORS 200 only, and served offline', async ({ context, page }) => {
   const { origin } = stackState();
+  const MEDIA = 'https://images.figurecollecting.com/d';
+  const present = `${MEDIA}/${'ab'.repeat(32)}`;
+  const missing = `${MEDIA}/${HEX64}`;
+  const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
+  const hits: string[] = [];
+  let down = false;
+  // The media origin, as the edge README's contract says it answers: the bytes, immutable, CORS for the app.
+  await context.route(/^https:\/\/images\.figurecollecting\.com\//, (route) => {
+    const url = route.request().url();
+    hits.push(url);
+    if (down) return route.abort('internetdisconnected');
+    const headers = { 'access-control-allow-origin': origin, 'cache-control': 'public, max-age=31536000, immutable', vary: 'Origin' };
+    if (url === missing) return route.fulfill({ status: 404, headers });
+    return route.fulfill({ status: 200, contentType: 'image/png', body: png, headers });
+  });
   await page.goto(`${origin}/`);
   await shellInstalled(page);
-  const get = (path: string) => page.evaluate((p) => fetch(p).then((r) => r.status), path);
-  const logged = (await stack.edge.log()).length;
-  const hits = async (path: string) => (await stack.edge.log()).slice(logged).filter((e) => e.path === path).length;
+  const get = (url: string, mode: RequestMode = 'cors') =>
+    page.evaluate(([u, m]) => fetch(u, { mode: m as RequestMode, credentials: 'omit' }).then((r) => r.status, (e: Error) => `error ${e.name}`), [url, mode] as const);
+  const count = (url: string) => hits.filter((h) => h === url).length;
 
-  const missing = `/media/d/${HEX64}`;
+  // A 404 is never kept: both reach the origin.
   expect(await get(missing)).toBe(404);
   expect(await get(missing)).toBe(404);
-  expect(await hits(missing)).toBe(2);
+  expect(count(missing)).toBe(2);
+  // An opaque (no-cors) answer is never kept either.
+  expect(await get(present, 'no-cors')).toBe(0);
+  expect(await page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).length)).toBe(0);
 
-  const present = `/media/d/${'ab'.repeat(32)}`;
-  await stack.edge.fault({ match: `^${present}$`, action: 'status', status: 200, times: 1 });
+  // A CORS 200 is kept, then served with the origin unreachable, and an <img> of it renders offline.
   expect(await get(present)).toBe(200);
-  await stack.edge.stop();
-  try {
-    expect(await get(present)).toBe(200);
-  } finally {
-    await stack.edge.start();
-  }
-  expect(await hits(present)).toBe(1);
-  const cached = await page.evaluate(async () => (await (await caches.open('fc-derivatives-v1')).keys()).map((r) => new URL(r.url).pathname));
+  down = true;
+  expect(await get(present)).toBe(200);
+  expect(await get(missing)).toBe('error TypeError');
+  const loaded = await page.evaluate(async (src) => {
+    const img = document.createElement('img');
+    img.crossOrigin = 'anonymous';
+    img.src = src;
+    document.body.appendChild(img);
+    await img.decode().catch(() => undefined);
+    return img.complete && img.naturalWidth > 0;
+  }, present);
+  expect(loaded).toBe(true);
+  expect(count(present)).toBe(2); // the no-cors probe and the one CORS fetch; nothing after the origin went down
+  const cached = await page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).map((r) => r.url));
   expect(cached).toEqual([present]);
+
+  // An owned figure's image (the page's cache, src/media/ownedImages.ts) is served first, offline too.
+  const owned = `${MEDIA}/${'cd'.repeat(32)}`;
+  down = false;
+  await page.evaluate(async (u) => {
+    await (await caches.open('fc-owned-media-v1')).add(new Request(u, { mode: 'cors', credentials: 'omit' }));
+  }, owned);
+  down = true;
+  expect(await get(owned)).toBe(200);
+  expect(count(owned)).toBe(1);
 });
 
 test.describe('(c) build N+1 ships while 2 edits are pending', () => {
@@ -348,7 +381,7 @@ test('(d) img-src: same-origin and images.figurecollecting.com images load, a ho
   const { origin } = stackState();
   const src = {
     self: `${origin}/icons/icon-192.png`,
-    derivative: 'https://images.figurecollecting.com/serve/1@2',
+    derivative: `https://images.figurecollecting.com/d/${HEX64}`,
     hotlinked: 'https://static.myfigurecollection.net/upload/items/1/12345-abcde.jpg',
   };
   const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));

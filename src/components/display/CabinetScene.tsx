@@ -44,6 +44,8 @@ export const SWIPE_START_PX = 8;
 /** px per mm in the authored world: figures are drawn at their own pixels, never resampled small. */
 const S = 1;
 const DEFAULT_FRAME = { width: 360, height: 480 };
+/** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
+const PLATE_MAX_MM = 110;
 
 type V3 = readonly [number, number, number];
 
@@ -381,6 +383,7 @@ function SceneFigure({
   const shadowW = Math.max(20, contact.widthFrac * boxW * 1.15);
   const shadowD = Math.min(slot.depthMm, Math.max(40, item.depthMm));
   const shadowX = cx - boxW / 2 + contact.centerXFrac * boxW;
+  const plateW = Math.min(PLATE_MAX_MM, item.widthMm);
   const box = (x0: number, x1: number, y0: number, y1: number) =>
     JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
   return (
@@ -413,7 +416,7 @@ function SceneFigure({
         </span>
       </button>
       {labels && (
-        <div class="q cab-plate" style={quadStyle([cx - 55, slot.topMm + 1, slot.frontZMm + 1], [110, 0, 0], [0, -30, 0]) ?? undefined}>
+        <div class="q cab-plate" style={quadStyle([cx - plateW / 2, slot.topMm + 1, slot.frontZMm + 1], [plateW, 0, 0], [0, -30, 0]) ?? undefined}>
           {item.figure.name}
         </div>
       )}

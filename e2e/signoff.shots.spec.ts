@@ -39,7 +39,7 @@ test('this project is its panel: CSS size, pixel ratio, touch, a mobile viewport
 
 const SCREENS = [
   { name: 'collection', path: '/?layout=rows', ready: '.jrows__item' },
-  { name: 'case', path: '/?layout=case&motif=detolf-dark&density=compact', ready: 'button.shelf-figure' },
+  { name: 'case', path: '/?layout=case', ready: 'button.cab-figure' },
 ] as const;
 
 for (const screen of SCREENS) {

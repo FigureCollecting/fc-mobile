@@ -16,14 +16,12 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, adjacencyGapMm, clearHeightsMm, sideOverhangMm, topClearanceMm } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import type { FigureDisplayMeta } from './displayMeta';
-import { resolveDepthMm, resolveHeightMm } from './sizeResolution';
+import { MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm } from './sizeResolution';
 
 /** Space left between neighbours on a surface. */
 export const FIGURE_GAP_MM = 10;
 /** A figure with no size data and no scale: about a 1/8 standing figure, flagged as estimated. */
 export const DEFAULT_FIGURE_HEIGHT_MM = 200;
-/** Above this a height is scraper-corrupted data (sizeResolution's ceiling). */
-const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
 
 /** One figure as the packer sees it: its physical size, mm. */
 export interface CaseFigure {

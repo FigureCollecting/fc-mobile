@@ -365,20 +365,6 @@ export function unverifiedFields(profile: CabinetProfile): UnverifiedField[] {
   return flagged;
 }
 
-/**
- * Thin adapter for CaseShelf's fixed mode until CAB-RENDER-1 moves it onto
- * caseCamera (remove it then). Today every shelf band is drawn at one height,
- * so fixed mode needs ONE compartment height as its mm -> px anchor: the
- * smallest interior clear height, so a figure that fits the band fits every
- * compartment. null when the profile has no compartments, or when the
- * smallest is zero, negative or NaN (no mm -> px scale can be anchored on it);
- * CaseShelf then uses its dynamic default.
- */
-export function fixedModeCompartmentMm(profile: CabinetProfile): number | null {
-  const smallest = Math.min(...clearHeightsMm(profile));
-  return Number.isFinite(smallest) && smallest > 0 ? smallest : null;
-}
-
 /** How far a cabinet's feet reach beyond its body on each side (half the extra footprint width); 0 without a footprint. */
 export function sideOverhangMm(profile: CabinetProfile): number {
   const f = profile.footprint;

@@ -16,7 +16,6 @@ import {
   checkCabinetProfile,
   checkCabinetRegistry,
   unverifiedFields,
-  fixedModeCompartmentMm,
   adjacencyGapMm,
   buyLink,
   sideOverhangMm,
@@ -530,32 +529,6 @@ describe('unverifiedFields (what the screen marks: derived = verify, placeholder
 
   it('is empty for a fully measured profile', () => {
     expect(unverifiedFields(box())).toEqual([]);
-  });
-});
-
-describe('fixedModeCompartmentMm (thin adapter for CaseShelf fixed mode)', () => {
-  it("returns the smallest interior clear height, so 'fits the band' means fits every compartment", () => {
-    expect(fixedModeCompartmentMm(box())).toBe(432);
-  });
-
-  it('returns null when the profile has no compartments', () => {
-    expect(fixedModeCompartmentMm(box({ surfaces: [surface('top', 1000, 950)] }))).toBeNull();
-  });
-
-  it('returns null when the smallest compartment is zero, negative or not a number (it cannot anchor a scale)', () => {
-    const flush = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 86), surface('top', 1000)] });
-    expect(clearHeightsMm(flush)).toEqual([0, 896]);
-    expect(checkCabinetProfile(flush)).toEqual([]); // a valid profile can reach the adapter with a zero gap
-    expect(fixedModeCompartmentMm(flush)).toBeNull();
-    const overlapping = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 80), surface('top', 1000)] });
-    expect(fixedModeCompartmentMm(overlapping)).toBeNull();
-    const unsized = box({ surfaces: [surface('base floor', 68), surface('shelf 2', Number.NaN), surface('top', 1000)] });
-    expect(fixedModeCompartmentMm(unsized)).toBeNull();
-  });
-
-  it('returns a small positive compartment as it is', () => {
-    const tight = box({ surfaces: [surface('base floor', 68), surface('shelf 2', 87), surface('top', 1000)] });
-    expect(fixedModeCompartmentMm(tight)).toBe(1);
   });
 });
 

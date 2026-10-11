@@ -24,7 +24,7 @@ import type { FigureImageRef } from '../components/display/figureArt';
  * — the two are different shapes serving different purposes: this one is
  * hand-authored per dev fixture, that one is produced by image-manager for
  * real synced figures. displayMeta.ts's getDisplayMeta() maps the latter
- * into the former's shape (the local render meta CaseShelf/packShelves/
+ * into the former's shape (the local render meta CabinetScene/packCabinets/
  * packJustified/sizeResolution/FigureViewer all consume) when a real
  * figure's displayMeta is present.
  */

@@ -16,7 +16,6 @@ import {
   checkCabinetRegistry,
   clearHeightsMm,
   fitsOnTop,
-  fixedModeCompartmentMm,
   framingHeadroomMm,
   stackSumMm,
   topClearanceMm,
@@ -188,7 +187,7 @@ describe('IKEA KLINGSBO (Wayback snapshots of the discontinued product page, mea
     expect(Math.abs(topClearanceRawMm(IKEA_KLINGSBO, 2438.4 + 1000) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
     expect(fitsOnTop(IKEA_KLINGSBO, 609.6)).toBe(true);
     expect(fitsOnTop(IKEA_KLINGSBO, 610.6)).toBe(false);
-    expect(fixedModeCompartmentMm(IKEA_KLINGSBO)).toBe(220);
+    expect(Math.min(...clearHeightsMm(IKEA_KLINGSBO))).toBe(220);
   });
 
   it('keeps two KLINGSBOs 95 mm apart (their feet meet); next to a Detolf or the rack 47.5 mm', () => {
@@ -271,8 +270,8 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
     expect(IKEA_DETOLF.preferenceRank).toBe(2);
   });
 
-  it('feeds the fixed-mode adapter its smallest compartment, 378 mm', () => {
-    expect(fixedModeCompartmentMm(IKEA_DETOLF)).toBe(378);
+  it('its smallest compartment is the top one, 378 mm', () => {
+    expect(Math.min(...clearHeightsMm(IKEA_DETOLF))).toBe(378);
   });
 });
 

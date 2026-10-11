@@ -239,6 +239,45 @@ FC_WEB_IMAGE=fc-mobile-web:n FC_WEB_IMAGE_NEXT=fc-mobile-web:n1 FC_STACK_WEB_IMA
 (`FC_COORDINATOR_URL` overrides) with the path and Host unchanged; start it with
 `COORDINATOR_PUBLIC_ORIGIN=http://localhost:5173 COORDINATOR_ROUTE_PREFIX=/api`.
 
+## Updates
+
+How an open or installed app finds a new build and takes it. `src/pwa/updates.ts`
+registers the service worker in prompt mode: a new build installs in the
+background and then waits; nothing changes under the user until they choose.
+
+The app checks for a new build (a `no-store` fetch of `/sw.js`; only a plain
+200, never a redirect such as an Access login, goes on to `registration.update()`):
+
+- every hour while the page runs (`UPDATE_CHECK_MS`);
+- when the connection comes back (`online`);
+- when the app returns to the foreground (`visibilitychange` to visible);
+- when the user taps **Check for update** in Settings > About, which answers
+  "A new version is ready", "You are on the latest build", "Could not check
+  (offline)" (also for a server error or a redirect) or "Update checks are not
+  available here" (no service worker).
+
+The browser also checks `sw.js` itself each time it loads the app, so opening
+the app checks too.
+
+A backgrounded tab or a closed app checks on its next foreground: browsers
+throttle or freeze timers in the background, so the hourly check may not run
+there, and a closed app runs nothing. No push and no periodic background sync is
+used to find updates: the app registers no periodic sync, and the service
+worker's `push` handler (for the legacy notification screens, off unless
+`VITE_ENABLE_LEGACY_SCREENS=true`) only shows a notification. A phone that does
+not open the app learns of nothing.
+
+When a new build waits, "A new version is ready." shows with Reload. Reload
+hands control to it (`SKIP_WAITING`) and every open page of the app reloads into
+it. Left alone, the waiting build takes over once no page of the app is open, so
+the next open runs it.
+
+The first time a new build runs here, "Updated to build <id>" shows once, with
+Dismiss. The last build seen is kept in localStorage (`fc-last-build`); nothing
+shows on a first install or when the build is unchanged. Settings > About shows
+package.json's version (injected at build as `__APP_VERSION__`) and the build id
+(`VITE_BUILD_ID`).
+
 ## API URL configuration
 
 `src/api/client.ts` resolves its base URL with the following precedence:

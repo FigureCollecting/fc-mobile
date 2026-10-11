@@ -294,6 +294,9 @@ describe('cabinetsInReach: the cabinets drawn for a stretch of wall', () => {
     // and from the right: inside its right foot
     expect(cabinetsInReach(three, [mid.rightMm + 20, 1e6])).toEqual([1, 2]);
     expect(cabinetsInReach(three, [mid.rightMm + feet + 1, 1e6])).toEqual([2]);
+    // a foot's tip exactly at the end of the stretch still counts
+    expect(cabinetsInReach(three, [-1000, mid.leftMm - feet])).toEqual([0, 1]);
+    expect(cabinetsInReach(three, [mid.rightMm + feet, 1e6])).toEqual([1, 2]);
   });
 
   it('nothing in reach: nothing drawn', () => {

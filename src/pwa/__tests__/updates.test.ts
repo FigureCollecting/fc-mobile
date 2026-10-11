@@ -321,7 +321,7 @@ describe('checkForUpdate (the Settings action)', () => {
     ['sw.js not a 200', vi.fn(async () => ({ status: 503, redirected: false }) as Response)],
     ['sw.js redirected (an Access login)', vi.fn(async () => ({ status: 200, redirected: true }) as Response)],
   ])('could not check, and never calls update(), when %s', async (_why, fetchImpl) => {
-    const { reg } = registered(fetchImpl as unknown as typeof fetch);
+    const { reg } = registered(fetchImpl);
     await expect(checkForUpdate()).resolves.toBe('offline');
     expect(reg.update).not.toHaveBeenCalled();
   });

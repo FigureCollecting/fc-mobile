@@ -10,7 +10,14 @@ export const UPDATE_CHECK_MS = 60 * 60 * 1000;
 /** True once a new build is installed and waiting for the user. */
 export const updateReady = signal(false);
 
+/** What a check for a newer build found; Settings words each one. */
+export type UpdateCheck = 'ready' | 'latest' | 'offline' | 'unavailable';
+
+type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'waiting' | 'update'>;
+
 let apply: ((reloadPage?: boolean) => Promise<void>) | undefined;
+/** The registered worker's check; unset where there is no service worker. */
+let checkNow: (() => Promise<UpdateCheck>) | undefined;
 
 export interface StartOptions {
   register?: (options: RegisterSWOptions) => (reloadPage?: boolean) => Promise<void>;
@@ -28,6 +35,7 @@ export function startServiceWorker({
   container = navigator.serviceWorker,
   reload = () => window.location.reload(),
 }: StartOptions = {}): void {
+  checkNow = undefined;
   if (!supported) return;
   // Once this page runs over an installed build, a change of controller is a
   // newer build taking over (from this tab or another) and the old precache is
@@ -69,7 +77,7 @@ export function startServiceWorker({
         if (loadedUncontrolled) ownClaim = registration.active;
         reloadOnTakeover();
       }
-      watchForUpdates(swUrl, registration, fetchImpl);
+      checkNow = watchForUpdates(swUrl, registration, fetchImpl);
     },
     onRegisterError(error) {
       console.warn('[sw] registration failed', error);
@@ -92,25 +100,38 @@ export function reloadToLatest(reload: () => void = () => window.location.reload
   return Promise.resolve();
 }
 
-function watchForUpdates(
-  swUrl: string,
-  registration: Pick<ServiceWorkerRegistration, 'installing' | 'update'>,
-  fetchImpl: typeof fetch,
-): void {
-  const check = async (): Promise<void> => {
-    if (registration.installing !== null || !navigator.onLine) return;
+/**
+ * Look for a newer build now, as the hourly, reconnect and foreground checks do. A newer build
+ * installs and raises the update prompt. Never rejects.
+ */
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return checkNow?.() ?? Promise.resolve('unavailable');
+}
+
+/** A build newer than the active one is installing or waiting; the first install is not one. */
+const newerBuild = (registration: Registration): boolean =>
+  registration.active !== null && (registration.installing !== null || registration.waiting !== null);
+
+function watchForUpdates(swUrl: string, registration: Registration, fetchImpl: typeof fetch): () => Promise<UpdateCheck> {
+  const check = async (): Promise<UpdateCheck> => {
+    if (registration.installing !== null) return newerBuild(registration) ? 'ready' : 'latest';
+    if (!navigator.onLine) return 'offline';
     try {
       // update() rejects when the server is down, and an Access login redirect
       // is not a new worker: only a plain 200 for sw.js goes on to update().
       const res = await fetchImpl(swUrl, { cache: 'no-store', headers: { 'cache-control': 'no-cache' } });
-      if (res.status === 200 && !res.redirected) await registration.update();
+      if (res.status !== 200 || res.redirected) return 'offline';
+      await registration.update();
     } catch {
       // Offline or mid-deploy; the next check retries.
+      return 'offline';
     }
+    return newerBuild(registration) ? 'ready' : 'latest';
   };
   setInterval(() => void check(), UPDATE_CHECK_MS);
   window.addEventListener('online', () => void check());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void check();
   });
+  return check;
 }

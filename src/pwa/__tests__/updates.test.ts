@@ -443,8 +443,8 @@ describe('checkForUpdate (the Settings action)', () => {
   });
 
   it('raises the update prompt itself once a check finds a newer build ready, though the plugin missed it', async () => {
-    // workbox-window follows only the first build that installs behind a page: after one that failed
-    // mid-deploy, the next build waits and the plugin raises no prompt for it.
+    // workbox-window stops following new builds after the first one it treats as external: after one
+    // that failed mid-deploy, the next build waits and the plugin raises no prompt for it.
     const next = new FakeWorker();
     const { reg } = updateFinds(next);
     const check = checkForUpdate();

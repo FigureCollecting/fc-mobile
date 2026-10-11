@@ -256,10 +256,11 @@ The app checks for a new build (a `no-store` fetch of `/sw.js`; only a plain
   (offline)" (also for a server error or a redirect) or "Update checks are not
   available here" (no service worker). A newer build counts as ready only once
   it has installed, and the check waits up to 30 seconds (`INSTALL_WAIT_MS`) for
-  that. One that fails to install (say a precached asset 404s mid-deploy) or is
-  still installing by then answers "Could not check (offline)": nothing waits,
-  so no prompt shows. When a newer build already waits, even offline, the answer
-  is "A new version is ready".
+  that. One that fails to install (say a precached asset 404s mid-deploy)
+  answers "Could not check (offline)": nothing waits, so no prompt shows. One
+  still installing by then answers the same, but the build may still finish
+  installing later; the prompt then shows. When a newer build already waits,
+  even offline, the answer is "A new version is ready".
 
 The browser also checks `sw.js` itself each time it loads the app, so opening
 the app checks too.
@@ -273,9 +274,11 @@ worker's `push` handler (for the legacy notification screens, off unless
 not open the app learns of nothing.
 
 When a new build waits, "A new version is ready." shows with Reload. The plugin
-raises it for the first new build to install behind a page, and any check that
-finds one ready raises it too, so it still shows when an earlier build failed to
-install and the plugin stopped following. Reload hands control to it
+(workbox-window) raises it, but stops following new builds after the first one
+it treats as external (another page's, a second one, or one found more than a
+minute after this page registered, as on a page left open), so any check that
+finds one ready raises it too: it still shows after an earlier build failed to
+install. Reload hands control to it
 (`SKIP_WAITING`) and every open page of the app reloads into it. Left alone, the
 waiting build takes over once no page of the app is open, so the next open runs
 it.

@@ -182,8 +182,9 @@ function watchForUpdates(
     }
     return found(registration, raisePrompt);
   };
-  // The plugin prompts only for the first newer build to install behind this page, so after one that
-  // failed mid-deploy it misses the next: every check that finds a newer build ready raises the prompt.
+  // workbox-window stops following new builds after the first one it treats as external (another page's,
+  // a second one, or one found over a minute after register), so it can miss the next one, as after a
+  // build that failed mid-deploy: every check that finds a newer build ready raises the prompt.
   const check = async (): Promise<UpdateCheck> => {
     const result = await look();
     if (result === 'ready') raisePrompt();

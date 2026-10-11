@@ -1,8 +1,10 @@
 // A figure's derivative image (MG-2, ADDR-1): in reach, the one GetProductImages returns on the public
-// image address (src/media/address.ts), never figure.imageUrl or a spine image claim; out of reach
-// (offline, or the sync engine found the server unreachable) or when that call fails, the image kept
-// for an owned figure, and only while its bytes are on the device (src/media/ownedImages.ts). Neither:
-// the placeholder plate. The page draws the plate too when the image fails to load.
+// image address (src/media/address.ts), never figure.imageUrl or a spine image claim, and never an
+// address the last owned sync withheld until a sync carries it again; out of reach (offline, or the
+// sync engine found the server unreachable) or when that call fails, the image kept for an owned
+// figure, if its bytes were on the device when asked (src/media/ownedImages.ts). An answer given
+// before a completed owned sync is not reused after it: useOwnedImages drops it, and the page asks
+// again. Neither: the placeholder plate. The page draws the plate too when the image fails to load.
 import { useQuery } from '@tanstack/react-query';
 import { localSession } from '../local/session';
 import { useAuthPhase } from '../local/useLocal';

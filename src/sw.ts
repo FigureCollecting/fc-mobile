@@ -19,20 +19,25 @@ cleanupOutdatedCaches();
 // coordinator on this origin: never answered here, online or off.
 registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [API_NAVIGATION] }));
 
-// Derivatives and masks on the one public image address. The owned figures' images come first,
-// from the cache the page fills and evicts with the collection (src/media/ownedImages.ts). Any other
-// image an <img> shows is CacheFirst in its own bounded cache. The page's own fetch of an image (the
+// Derivatives and masks on the one public image address. An address the last owned sync withheld (a
+// record in fc-withheld-v1, src/media/ownedImages.ts) is refused first, a network error: no cache
+// answers it, nothing is fetched or stored, online or offline. The owned figures' images come next,
+// from the cache the page fills and evicts with the collection. Any other image an <img> shows is
+// CacheFirst in its own bounded cache. The page's own fetch of an image (the
 // owned sync's Cache.add) goes to the origin and is never stored here a second time. Every fetch this
 // route sends is cache 'no-store', so it neither reads nor fills the browser's HTTP cache: the origin
 // answers immutable, and a copy there would outlive the sync's eviction. For the same reason the page
 // gets every answer as a copy marked Cache-Control: no-store. Chromium's memory cache inside a tab
 // keeps an immutable image and draws it in a later document of that tab without asking the worker,
 // after an eviction too; that was measured outside the suite only, as every e2e context is routed and
-// a route turns that cache off. An opaque answer (an <img> without crossorigin) cannot be copied and
-// goes as it is, the origin's immutable with it; the case view's and the figure page's <img>s set
-// crossorigin (src/pages/__tests__/CollectionDisplay.test.tsx and FigureDetail.test.tsx pin it).
-// src/sw/__tests__/sw.test.ts pins the fetches and the copies; e2e/pwa (b) checks the header on every
-// answer and, with Chromium's caches off, proves the worker's caches. A document the worker does not
+// a route turns that cache off. A document also draws again, without a request, an image it already
+// decoded (measured outside the suite too). An opaque answer cannot be copied and goes as it is, the origin's immutable with it. The
+// <img>s of the case view, the figure page, JustifiedRows and DetailPane set crossorigin (their tests
+// pin it). PhotoSwipe's <img> in the Collection's FigureViewer does not: it asks in no-cors mode, is
+// answered from either cache as any request is, and on a miss in both gets the origin's opaque answer
+// as it is, immutable, which is never stored here. src/sw/__tests__/sw.test.ts pins the refusal, the
+// fetches and the copies; e2e/pwa (b) checks the header on every answer, the refusal online and
+// offline, and, with Chromium's caches off, the worker's caches. A document the worker does not
 // control yet (a first visit before clientsClaim, a shift-reload) loads its <img>s through the HTTP
 // cache, and that copy outlives an eviction; no fetch of this route or the sync reads it.
 // Only a CORS 200 is kept: an opaque response (status 0) can be neither measured nor composited, and

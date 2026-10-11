@@ -1,10 +1,13 @@
 // ADDR-1: each owned figure's image for the case view, online and offline. Signed in and in reach (the
 // browser online AND the sync engine not finding the server unreachable), the caches are brought to
 // the owned figures (src/media/ownedImages.ts: their lists replaced, their primary images and masks
-// fetched, everything else evicted); out of reach, or when that sync fails, what the last one kept
-// stands and nothing more is asked. A figure answers its image only while the bytes are on the device;
-// one without is absent, and the case draws its plate. A collection with no image costs a few cache
-// calls, not a few per figure, and a sync stops when the case view goes away.
+// fetched, everything else evicted, a withheld address recorded); out of reach, or when that sync
+// fails, what the last one kept stands and nothing more is asked. A figure answers the image the last
+// sync kept, and only if its bytes were on the device when asked; one without is absent, and the case
+// draws its plate. Once a sync completes, no earlier answer of this hook or of useProductImage stands,
+// offline or online: one a view shows is asked again, any other is dropped, so neither answers an
+// image that sync withheld (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). A collection with no
+// image costs a few cache calls, not a few per figure, and a sync stops when the case view goes away.
 import { hashKey, useQuery, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCallback } from 'preact/hooks';
 import { localSession } from '../local/session';

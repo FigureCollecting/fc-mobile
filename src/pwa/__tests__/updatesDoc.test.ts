@@ -36,7 +36,7 @@ describe('README "Updates" states what the update code does', () => {
   });
 
   it('says how long the Settings check waits for a newer build to install, and what a failed install reports', () => {
-    const doc = updatesSection();
+    const doc = updatesSection().replace(/\s+/g, ' ');
     expect(INSTALL_WAIT_MS).toBe(30 * 1000);
     expect(doc).toMatch(/up to 30 seconds/);
     expect(doc).toMatch(/fails to install/);
@@ -44,6 +44,6 @@ describe('README "Updates" states what the update code does', () => {
   });
 
   it('says a rollback to an earlier build is named like any other build change', () => {
-    expect(updatesSection()).toMatch(/rollback to an earlier build/);
+    expect(updatesSection().replace(/\s+/g, ' ')).toMatch(/rollback to an earlier build/);
   });
 });

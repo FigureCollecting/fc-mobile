@@ -254,7 +254,12 @@ The app checks for a new build (a `no-store` fetch of `/sw.js`; only a plain
 - when the user taps **Check for update** in Settings > About, which answers
   "A new version is ready", "You are on the latest build", "Could not check
   (offline)" (also for a server error or a redirect) or "Update checks are not
-  available here" (no service worker).
+  available here" (no service worker). A newer build counts as ready only once
+  it has installed, and the check waits up to 30 seconds (`INSTALL_WAIT_MS`) for
+  that. One that fails to install (say a precached asset 404s mid-deploy) or is
+  still installing by then answers "Could not check (offline)": nothing waits,
+  so no prompt shows. When a newer build already waits, even offline, the answer
+  is "A new version is ready".
 
 The browser also checks `sw.js` itself each time it loads the app, so opening
 the app checks too.
@@ -274,7 +279,9 @@ the next open runs it.
 
 The first time a new build runs here, "Updated to build <id>" shows once, with
 Dismiss. The last build seen is kept in localStorage (`fc-last-build`); nothing
-shows on a first install or when the build is unchanged. Settings > About shows
+shows on a first install or when the build is unchanged. A rollback to an
+earlier build is a change of build too and is named the same way: the notice
+says the build changed, not that it is newer. Settings > About shows
 package.json's version (injected at build as `__APP_VERSION__`) and the build id
 (`VITE_BUILD_ID`).
 

@@ -6,6 +6,7 @@ import preact from '@preact/preset-vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { NGINX_CONF, devServerHeaders, previewHeaders } from './deploy/securityHeaders.ts';
 import { WEB_MANIFEST } from './deploy/webManifest.ts';
+import { appVersionDefine } from './deploy/appVersion.ts';
 
 const nm = path.resolve(import.meta.dirname, 'node_modules');
 
@@ -35,6 +36,7 @@ function fixtureArtOnlyWhereFixturesRun(mode: string): Plugin {
 }
 
 export default defineConfig(({ mode }) => ({
+  define: appVersionDefine(),
   // `npm run dev` against a local coordinator started with
   // COORDINATOR_PUBLIC_ORIGIN=http://localhost:5173 and COORDINATOR_ROUTE_PREFIX=/api:
   // the path and Host pass through unchanged, so every DPoP htu matches.

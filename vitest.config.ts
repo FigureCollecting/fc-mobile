@@ -1,10 +1,13 @@
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import preact from '@preact/preset-vite';
+import { appVersionDefine } from './deploy/appVersion.ts';
 
 const nm = path.resolve(__dirname, 'node_modules');
 
 export default defineConfig({
+  // The same package.json version the build injects (vite.config.ts).
+  define: appVersionDefine(),
   plugins: [preact({ reactAliasesEnabled: false })],
   resolve: {
     alias: [

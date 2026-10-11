@@ -7,6 +7,7 @@ import { ToastContainer } from './components/ui/Toast';
 import { Onboarding } from './pages/Onboarding';
 import { isFixtureMode } from './dev-fixtures/fixtures';
 import { UpdatePrompt } from './pwa/UpdatePrompt';
+import { UpdatedNotice } from './pwa/UpdatedNotice';
 
 // Sign-in is OIDC + PKCE + DPoP against Authentik (src/auth), which owns registration and second
 // factors; the session publishes the page's sync to the screens. Lazy, so the first paint does not
@@ -68,6 +69,7 @@ export function App() {
           banner sits in AppShell's layout instead. */}
       <div class="pwa-notices">
         <UpdatePrompt />
+        <UpdatedNotice />
       </div>
     </QueryClientProvider>
   );

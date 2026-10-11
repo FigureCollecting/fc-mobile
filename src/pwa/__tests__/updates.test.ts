@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisterSWOptions } from 'vite-plugin-pwa/types';
-import { applyUpdate, reloadToLatest, startServiceWorker, updateReady, UPDATE_CHECK_MS } from '../updates';
+import {
+  applyUpdate,
+  checkForUpdate,
+  INSTALL_WAIT_MS,
+  reloadToLatest,
+  startServiceWorker,
+  updateReady,
+  UPDATE_CHECK_MS,
+  type UpdateCheck,
+} from '../updates';
 
-type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'update'>;
+type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'waiting' | 'update'>;
 
 function fakeRegister() {
   const apply = vi.fn(async () => undefined);
@@ -15,7 +24,7 @@ function fakeRegister() {
 }
 
 function registration(over: Partial<Registration> = {}): Registration & { update: ReturnType<typeof vi.fn> } {
-  return { active: null, installing: null, update: vi.fn(async () => undefined), ...over } as never;
+  return { active: null, installing: null, waiting: null, update: vi.fn(async () => undefined), ...over } as never;
 }
 
 const ok = () => vi.fn(async () => ({ status: 200, redirected: false }) as Response);
@@ -244,6 +253,313 @@ describe('update checks', () => {
     f.options().onRegisteredSW?.('/sw.js', undefined);
     vi.advanceTimersByTime(UPDATE_CHECK_MS);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
+describe('checkForUpdate (the Settings action)', () => {
+  const active = {} as ServiceWorker;
+  const newer = {} as ServiceWorker;
+
+  /** A worker whose state the test moves, as the browser does; it counts its statechange listeners. */
+  class FakeWorker extends EventTarget {
+    state: ServiceWorkerState;
+    listeners = 0;
+    constructor(state: ServiceWorkerState = 'installing') {
+      super();
+      this.state = state;
+    }
+    override addEventListener(...args: Parameters<EventTarget['addEventListener']>): void {
+      this.listeners += 1;
+      super.addEventListener(...args);
+    }
+    override removeEventListener(...args: Parameters<EventTarget['removeEventListener']>): void {
+      this.listeners -= 1;
+      super.removeEventListener(...args);
+    }
+    become(state: ServiceWorkerState): void {
+      this.state = state;
+      this.dispatchEvent(new Event('statechange'));
+    }
+    get worker(): ServiceWorker {
+      return this as unknown as ServiceWorker;
+    }
+  }
+
+  /** The check's answer once `ms` of (fake) time has passed, or 'pending' while it still waits. */
+  async function answerAfter(check: Promise<UpdateCheck>, ms = 0): Promise<UpdateCheck | 'pending'> {
+    let answer: UpdateCheck | 'pending' = 'pending';
+    void check.then((a) => (answer = a));
+    await vi.advanceTimersByTimeAsync(ms);
+    return answer;
+  }
+
+  function registered(fetchImpl = ok(), reg = registration({ active })) {
+    const f = fakeRegister();
+    startServiceWorker({ register: f.register, fetchImpl, supported: true, container: new EventTarget() });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    return { reg, fetchImpl };
+  }
+
+  /** A registration whose update() finds a newer build, which starts installing. */
+  function updateFinds(next: FakeWorker) {
+    const reg = registration({ active });
+    reg.update.mockImplementation(async () => void Object.assign(reg, { installing: next.worker }));
+    return registered(ok(), reg);
+  }
+
+  it('is unavailable where service workers are unsupported, even after a page that had one', async () => {
+    registered();
+    startServiceWorker({ register: fakeRegister().register, supported: false });
+    await expect(checkForUpdate()).resolves.toBe('unavailable');
+  });
+
+  it('is unavailable until the worker registers, and when it registers nothing', async () => {
+    const f = fakeRegister();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container: new EventTarget() });
+    await expect(checkForUpdate()).resolves.toBe('unavailable');
+    f.options().onRegisteredSW?.('/sw.js', undefined);
+    await expect(checkForUpdate()).resolves.toBe('unavailable');
+  });
+
+  it('runs the guarded check now: sw.js past every cache, then update(); nothing newer is the latest build', async () => {
+    const { reg, fetchImpl } = registered();
+    await expect(checkForUpdate()).resolves.toBe('latest');
+    expect(fetchImpl).toHaveBeenCalledWith('/sw.js', expect.objectContaining({ cache: 'no-store' }));
+    expect(reg.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a new version once the newer build update() finds has installed (it then waits, and the prompt shows)', async () => {
+    const next = new FakeWorker();
+    const { reg } = updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    Object.assign(reg, { installing: null, waiting: next.worker });
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+  });
+
+  it('could not check when the newer build update() finds fails to install (an asset 404s mid-deploy): nothing waits', async () => {
+    const next = new FakeWorker();
+    updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    next.become('redundant');
+    await expect(check).resolves.toBe('offline');
+  });
+
+  it('reports a new version when update() leaves a newer build waiting', async () => {
+    const reg = registration({ active });
+    reg.update.mockImplementation(async () => void Object.assign(reg, { waiting: newer }));
+    registered(ok(), reg);
+    await expect(checkForUpdate()).resolves.toBe('ready');
+  });
+
+  it('reports a new version when a newer build already waits', async () => {
+    registered(ok(), registration({ active, waiting: newer }));
+    await expect(checkForUpdate()).resolves.toBe('ready');
+  });
+
+  it('reports a new version when a newer build already waits, though sw.js is unreachable: its prompt is up', async () => {
+    registered(vi.fn(async () => ({ status: 503, redirected: false }) as Response), registration({ active, waiting: newer }));
+    await expect(checkForUpdate()).resolves.toBe('ready');
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    await expect(checkForUpdate()).resolves.toBe('ready');
+  });
+
+  it('is not a new version offline while the first build waits to activate (no active build before it)', async () => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    registered(ok(), registration({ waiting: newer }));
+    await expect(checkForUpdate()).resolves.toBe('offline');
+  });
+
+  it('waits for a newer build that is installing, without fetching again; the first install is the latest build', async () => {
+    const next = new FakeWorker();
+    const installingNewer = registered(ok(), registration({ active, installing: next.worker }));
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+    expect(installingNewer.fetchImpl).not.toHaveBeenCalled();
+
+    const firstInstall = registered(ok(), registration({ installing: newer }));
+    await expect(checkForUpdate()).resolves.toBe('latest');
+    expect(firstInstall.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('could not check when the installing build has already failed (redundant before the registration lets it go)', async () => {
+    registered(ok(), registration({ active, installing: new FakeWorker('redundant').worker }));
+    expect(await answerAfter(checkForUpdate())).toBe('offline');
+  });
+
+  it('could not check when the newer build is still installing after INSTALL_WAIT_MS, and waits no longer', async () => {
+    const next = new FakeWorker();
+    registered(ok(), registration({ active, installing: next.worker }));
+    const check = checkForUpdate();
+    expect(await answerAfter(check, INSTALL_WAIT_MS - 1)).toBe('pending');
+    expect(await answerAfter(check, 1)).toBe('offline');
+  });
+
+  it('raises the prompt, and arms the takeover reload, when a build still installing at INSTALL_WAIT_MS installs later', async () => {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const reg = registration({ installing: newer });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    const next = new FakeWorker();
+    Object.assign(reg, { installing: next.worker, active });
+    expect(await answerAfter(checkForUpdate(), INSTALL_WAIT_MS)).toBe('offline');
+    expect(updateReady.value).toBe(false);
+    expect(next.listeners).toBe(1);
+    Object.assign(reg, { installing: null, waiting: next.worker });
+    next.become('installed');
+    expect(updateReady.value).toBe(true);
+    expect(next.listeners).toBe(0);
+    container.dispatchEvent(new Event('controllerchange'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises nothing when a build still installing at INSTALL_WAIT_MS fails later, and stops listening to it', async () => {
+    const next = new FakeWorker();
+    registered(ok(), registration({ active, installing: next.worker }));
+    expect(await answerAfter(checkForUpdate(), INSTALL_WAIT_MS)).toBe('offline');
+    expect(next.listeners).toBe(1);
+    next.become('redundant');
+    expect(updateReady.value).toBe(false);
+    expect(next.listeners).toBe(0);
+  });
+
+  it('leaves no listener and no timer behind once the newer build settles', async () => {
+    const next = new FakeWorker();
+    registered(ok(), registration({ active, installing: next.worker }));
+    const timers = vi.getTimerCount();
+    const check = checkForUpdate();
+    expect(next.listeners).toBe(1);
+    expect(vi.getTimerCount()).toBe(timers + 1);
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+    expect(next.listeners).toBe(0);
+    expect(vi.getTimerCount()).toBe(timers);
+  });
+
+  it('raises the update prompt itself once a check finds a newer build ready, though the plugin missed it', async () => {
+    // workbox-window stops following new builds after the first one it treats as external: after one
+    // that failed mid-deploy, the next build waits and the plugin raises no prompt for it.
+    const next = new FakeWorker();
+    const { reg } = updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    expect(updateReady.value).toBe(false);
+    Object.assign(reg, { installing: null, waiting: next.worker });
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+    expect(updateReady.value).toBe(true);
+  });
+
+  it('raises no prompt when a check finds nothing newer, cannot reach the server, or the newer build fails', async () => {
+    registered();
+    await expect(checkForUpdate()).resolves.toBe('latest');
+    const next = new FakeWorker();
+    updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    next.become('redundant');
+    await expect(check).resolves.toBe('offline');
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    registered();
+    await expect(checkForUpdate()).resolves.toBe('offline');
+    expect(updateReady.value).toBe(false);
+  });
+
+  it('arms the takeover reload with the prompt it raises, in a page that registered before any build was active', async () => {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const reg = registration({ installing: newer });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    Object.assign(reg, { installing: null, active, waiting: {} as ServiceWorker });
+    await expect(checkForUpdate()).resolves.toBe('ready');
+    expect(updateReady.value).toBe(true);
+    container.dispatchEvent(new Event('controllerchange'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A page that registered before any build was active, so no takeover reload is armed yet; the first
+   * build has since activated, and update() now leaves a newer build waiting.
+   */
+  function pageWhoseUpdateLeavesNewerWaiting() {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const reg = registration({ installing: newer });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    Object.assign(reg, { installing: null, active });
+    reg.update.mockImplementation(async () => void Object.assign(reg, { waiting: {} as ServiceWorker }));
+    const takeOver = () => container.dispatchEvent(new Event('controllerchange'));
+    return { reg, reload, takeOver };
+  }
+
+  it.each([
+    ['hourly', () => vi.advanceTimersByTimeAsync(UPDATE_CHECK_MS)],
+    [
+      'reconnect (online)',
+      () => {
+        window.dispatchEvent(new Event('online'));
+        return vi.advanceTimersByTimeAsync(0);
+      },
+    ],
+    [
+      'foreground (visibilitychange to visible)',
+      () => {
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+        document.dispatchEvent(new Event('visibilitychange'));
+        return vi.advanceTimersByTimeAsync(0);
+      },
+    ],
+  ])('raises it, and arms the takeover reload, from the %s check too', async (_which, runCheck) => {
+    const { reg, reload, takeOver } = pageWhoseUpdateLeavesNewerWaiting();
+    // The first build claiming the page: nothing is armed before the check, so no reload.
+    takeOver();
+    expect(reload).not.toHaveBeenCalled();
+    await runCheck();
+    expect(reg.update).toHaveBeenCalledTimes(1);
+    expect(updateReady.value).toBe(true);
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('is not a new version when update() installs the first build (no active build)', async () => {
+    const reg = registration();
+    reg.update.mockImplementation(async () => void Object.assign(reg, { installing: newer }));
+    registered(ok(), reg);
+    await expect(checkForUpdate()).resolves.toBe('latest');
+  });
+
+  it('cannot check offline, and does not try', async () => {
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const { reg, fetchImpl } = registered();
+    await expect(checkForUpdate()).resolves.toBe('offline');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(reg.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['sw.js unreachable', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch')))],
+    ['sw.js not a 200', vi.fn(async () => ({ status: 503, redirected: false }) as Response)],
+    ['sw.js a 2xx that is not a 200', vi.fn(async () => ({ status: 204, redirected: false }) as Response)],
+    ['sw.js redirected (an Access login)', vi.fn(async () => ({ status: 200, redirected: true }) as Response)],
+  ])('could not check, and never calls update(), when %s', async (_why, fetchImpl) => {
+    const { reg } = registered(fetchImpl);
+    await expect(checkForUpdate()).resolves.toBe('offline');
+    expect(reg.update).not.toHaveBeenCalled();
+  });
+
+  it('could not check when update() fails, and never throws', async () => {
+    registered(ok(), registration({ active, update: vi.fn(async () => Promise.reject(new Error('network'))) }));
+    await expect(checkForUpdate()).resolves.toBe('offline');
   });
 });
 

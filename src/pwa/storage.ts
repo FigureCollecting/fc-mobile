@@ -45,3 +45,24 @@ export async function readStorageStatus(storage = currentStorage()): Promise<Sto
     return null;
   }
 }
+
+/** The build id this browser last ran, so a new build can say it has arrived. */
+export const LAST_BUILD_KEY = 'fc-last-build';
+
+/**
+ * Records this build as the last one run here. True when it replaced another build; false on
+ * the first run here (nothing recorded), for the same build, for a build with no id, and when
+ * storage refuses (private mode). Never throws.
+ */
+export function recordBuild(build: string | undefined, store?: Pick<Storage, 'getItem' | 'setItem'>): boolean {
+  if (!build) return false;
+  try {
+    const storage = store ?? localStorage;
+    const last = storage.getItem(LAST_BUILD_KEY);
+    if (last === build) return false;
+    storage.setItem(LAST_BUILD_KEY, build);
+    return last !== null;
+  } catch {
+    return false;
+  }
+}

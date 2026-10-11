@@ -380,6 +380,9 @@ test.describe('(c) build N+1 ships while 2 edits are pending', () => {
       await expect.poll(() => buildNow(tab), { timeout: 30_000, message: i === 0 ? 'the tab that took it' : `other tab ${i}` }).toBe(buildNext);
     }
     await expect(updatePrompt(from)).toHaveCount(0);
+    // The first page to run N+1 here names it; tabs race to be first, so at least one does.
+    const named = [from, ...others].map((tab) => tab.getByRole('status').filter({ hasText: `Updated to build ${buildNext}` }));
+    await expect.poll(async () => (await Promise.all(named.map((n) => n.count()))).some((c) => c > 0), { message: 'Updated to build N+1' }).toBe(true);
   }
 
   // Whether a page had a controller when it registered decides whether the

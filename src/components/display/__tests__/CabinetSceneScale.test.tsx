@@ -53,7 +53,8 @@ function drawn(container: ParentNode) {
 
 describe('CabinetScene: figures at true scale (the transparent margin above the head counts too)', () => {
   it("each picture is as tall as its figure's labelled height over BOTH clear margins; its lowest opaque row stands on the surface", () => {
-    measured.fallback = { top: 0.25, bottom: 0.05 };
+    // clear columns at the sides too, so each figure draws about as wide as its label and the seven share one cabinet
+    measured.fallback = { top: 0.25, bottom: 0.05, left: 0.15, right: 0.15 };
     const rows = figures(FIXTURE_FIGURES);
     expect(rows).toHaveLength(FIXTURE_FIGURES.length);
     for (const r of rows) {

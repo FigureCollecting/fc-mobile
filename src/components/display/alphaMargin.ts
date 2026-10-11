@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 
 /**
  * Minimal shape of ImageData needed here — decoupled from the DOM lib's
@@ -56,6 +56,28 @@ export function computeTopMarginFrac(buffer: AlphaBuffer): number {
     }
   }
   return 0;
+}
+
+/**
+ * Fractions of the image's own width that are clear LEFT of the figure's
+ * first opaque column and RIGHT of its last: the part of its picture's width
+ * a cut-out does not draw, so the case can pack it by what it draws. Both 0
+ * for a fully clear or empty image.
+ */
+export function computeSideMarginFracs(buffer: AlphaBuffer): { left: number; right: number } {
+  const { width, height, data } = buffer;
+  let x0 = width;
+  let x1 = -1;
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      if (data[rowStart + x * 4 + 3] <= ALPHA_THRESHOLD) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+    }
+  }
+  if (x1 < 0) return { left: 0, right: 0 };
+  return { left: x0 / width, right: (width - 1 - x1) / width };
 }
 
 /** Cells on a mask's long side: about one per CSS px of the tallest figure
@@ -118,23 +140,45 @@ export function alphaMaskDrawnIn(mask: AlphaMask, u0: number, v0: number, u1: nu
   return false;
 }
 
-/** A picture's clear margins above and below the figure, as fractions of its height. */
+/** A picture's clear margins around the figure: above and below as fractions of its height, left and right of its width. */
 export interface AlphaMargins {
   top: number;
   bottom: number;
+  left: number;
+  right: number;
 }
 
-const NO_MARGINS: AlphaMargins = { top: 0, bottom: 0 };
+const NO_MARGINS: AlphaMargins = { top: 0, bottom: 0, left: 0, right: 0 };
 const marginCache = new Map<string, AlphaMargins>();
 const pending = new Map<string, Promise<AlphaMargins>>();
 /** null: measured, but no usable mask (unreadable, or nothing drawn). */
 const maskCache = new Map<string, AlphaMask | null>();
+
+/** How many pictures are read at once, so a long list never decodes all of its images together. */
+export const ALPHA_READS_AT_ONCE = 4;
+let reading = 0;
+const queued: (() => void)[] = [];
+
+/** Run one read when a turn is free; a finished read hands its turn straight to the next one waiting. */
+async function inTurn<T>(read: () => Promise<T>): Promise<T> {
+  if (reading < ALPHA_READS_AT_ONCE) reading++;
+  else await new Promise<void>((go) => queued.push(go));
+  try {
+    return await read();
+  } finally {
+    const next = queued.shift();
+    if (next) next();
+    else reading--;
+  }
+}
 
 /** Test-only: reset module-level caches between test cases. */
 export function __clearAlphaMarginCache(): void {
   marginCache.clear();
   pending.clear();
   maskCache.clear();
+  reading = 0;
+  queued.length = 0;
 }
 
 /**
@@ -147,47 +191,51 @@ export function getAlphaMask(imageUrl: string): AlphaMask | null | undefined {
   return maskCache.get(imageUrl);
 }
 
-async function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
+/** One canvas read of a picture: its clear margins and its drawn-pixel mask. Never throws. */
+async function readAlpha(imageUrl: string): Promise<{ margins: AlphaMargins; mask: AlphaMask | null }> {
+  try {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = imageUrl;
+    await img.decode();
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    if (canvas.width === 0 || canvas.height === 0) return { margins: NO_MARGINS, mask: null };
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { margins: NO_MARGINS, mask: null };
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return {
+      margins: { top: computeTopMarginFrac(imageData), bottom: computeBottomMarginFrac(imageData), ...computeSideMarginFracs(imageData) },
+      mask: computeAlphaMask(imageData),
+    };
+  } catch {
+    // Tainted canvas (cross-origin image without CORS headers), decode
+    // failure (broken URL), or no canvas 2D support — degrade to "no
+    // correction" (today's object-fit:bottom behavior) rather than crash
+    // the shelf over a single bad image.
+    return { margins: NO_MARGINS, mask: null };
+  }
+}
+
+/** A picture's clear margins, read once (ALPHA_READS_AT_ONCE at a time) and cached by URL; known in the cache when this resolves. */
+function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
   const cached = marginCache.get(imageUrl);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return Promise.resolve(cached);
   const inFlight = pending.get(imageUrl);
   if (inFlight) return inFlight;
 
-  const promise = (async (): Promise<AlphaMargins> => {
-    let mask: AlphaMask | null = null;
-    try {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = imageUrl;
-      await img.decode();
-
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      if (canvas.width === 0 || canvas.height === 0) return NO_MARGINS;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return NO_MARGINS;
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      mask = computeAlphaMask(imageData);
-      return { top: computeTopMarginFrac(imageData), bottom: computeBottomMarginFrac(imageData) };
-    } catch {
-      // Tainted canvas (cross-origin image without CORS headers), decode
-      // failure (broken URL), or no canvas 2D support — degrade to "no
-      // correction" (today's object-fit:bottom behavior) rather than crash
-      // the shelf over a single bad image.
-      return NO_MARGINS;
-    } finally {
-      maskCache.set(imageUrl, mask && mask.drawn > 0 ? mask : null);
-      pending.delete(imageUrl);
-    }
-  })();
-
+  const promise = inTurn(() => readAlpha(imageUrl)).then(({ margins, mask }) => {
+    marginCache.set(imageUrl, margins);
+    maskCache.set(imageUrl, mask && mask.drawn > 0 ? mask : null);
+    pending.delete(imageUrl);
+    return margins;
+  });
   pending.set(imageUrl, promise);
-  const result = await promise;
-  marginCache.set(imageUrl, result);
-  return result;
+  return promise;
 }
 
 /**
@@ -222,37 +270,42 @@ export function useBottomMarginFrac(imageUrl: string | undefined): number {
   return frac;
 }
 
+/** Every picture's margins from the cache, or null when any is not known yet. */
+function cachedMargins(urls: readonly string[]): Map<string, AlphaMargins> | null {
+  const out = new Map<string, AlphaMargins>();
+  for (const url of urls) {
+    const margins = marginCache.get(url);
+    if (margins === undefined) return null;
+    out.set(url, margins);
+  }
+  return out;
+}
+
 /**
- * Both clear margins of a figure's picture (true scale needs the one above
- * the head as well as the one under the feet), from the same canvas read as
- * useBottomMarginFrac, but null until they are known (a failed measurement is
- * known: both 0), so the case can mark a figure as grounded only once its
- * size is final. No image: both 0 at once.
+ * The clear margins of every picture in `urls` (the case's whole list: it
+ * packs every figure by what it draws), each read once and cached by URL.
+ * null until every one is known (a failed read is known: all 0), then all
+ * of them at once, so the case lays out once on them and never on a part of
+ * the list. A list whose pictures are all cached is known at once.
  */
-export function useMeasuredAlphaMargins(imageUrl: string | undefined): AlphaMargins | null {
-  const [margins, setMargins] = useState<AlphaMargins | null>(() => (imageUrl ? (marginCache.get(imageUrl) ?? null) : NO_MARGINS));
+export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, AlphaMargins> | null {
+  const key = urls.join('\n');
+  const [settled, setSettled] = useState(0);
+  // `key` stands for `urls` (a new array on every render of the same list)
+  const known = useMemo(() => cachedMargins(urls), [key, settled]);
 
   useEffect(() => {
-    if (!imageUrl) {
-      setMargins(NO_MARGINS);
-      return;
-    }
-    const cached = marginCache.get(imageUrl);
-    if (cached !== undefined) {
-      setMargins(cached);
-      return;
-    }
-    setMargins(null);
-    let cancelled = false;
-    measureAlphaMargins(imageUrl).then((measured) => {
-      if (!cancelled) setMargins(measured);
+    if (known) return;
+    let current = true;
+    void Promise.all(urls.map(measureAlphaMargins)).then(() => {
+      if (current) setSettled((n) => n + 1);
     });
     return () => {
-      cancelled = true;
+      current = false;
     };
-  }, [imageUrl]);
+  }, [key]);
 
-  return margins;
+  return known;
 }
 
 /**

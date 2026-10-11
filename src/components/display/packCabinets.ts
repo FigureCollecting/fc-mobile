@@ -16,6 +16,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, adjacencyGapMm, clearHeightsMm, sideOverhangMm, topClearanceMm } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import type { FigureDisplayMeta } from './displayMeta';
+import { drawnWidthMm, type PictureMargins } from './figureArt';
 import { MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm } from './sizeResolution';
 
 /** Space left between neighbours on a surface. */
@@ -29,7 +30,7 @@ export interface CaseFigure {
   /** Its position in the list the screen shows (the tap's onSelect index). */
   readonly index: number;
   readonly heightMm: number;
-  /** Footprint width: labelled, else the picture's width at that height. */
+  /** Footprint width: labelled, else the picture's width at that height; never less than a cut-out draws. */
   readonly widthMm: number;
   /** The picture's width at heightMm: what the billboard draws. */
   readonly billboardWidthMm: number;
@@ -40,16 +41,25 @@ export interface CaseFigure {
 
 const positive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
-export function measureCaseFigure(figure: Figure, index: number, meta: FigureDisplayMeta): CaseFigure {
+/**
+ * One figure's size for the packer. `drawn`: the clear margins of a cut-out
+ * or masked picture, once its alpha is read; the figure is then packed by
+ * the wider of its label and what it draws at true scale (drawnWidthMm), or
+ * by what it draws when it has no label, so it never reaches over a
+ * neighbour (a real cut-out can draw far wider than its label).
+ */
+export function measureCaseFigure(figure: Figure, index: number, meta: FigureDisplayMeta, drawn?: PictureMargins): CaseFigure {
   const resolved = resolveHeightMm(figure);
   const heightMm = Math.min(resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
   const billboardWidthMm = meta.aspect * heightMm;
   const labelledWidth = figure.dimensions?.widthMm;
+  const drawnWidth = drawn ? drawnWidthMm(heightMm, meta.aspect, drawn) : 0;
+  const widthMm = positive(labelledWidth) ? Math.max(labelledWidth, drawnWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
   return {
     figure,
     index,
     heightMm,
-    widthMm: positive(labelledWidth) ? labelledWidth : billboardWidthMm,
+    widthMm,
     billboardWidthMm,
     depthMm: resolveDepthMm(figure, meta, heightMm).depthMm,
     heightEstimated: resolved?.source !== 'labeled',

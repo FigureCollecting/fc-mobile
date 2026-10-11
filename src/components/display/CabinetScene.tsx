@@ -35,9 +35,9 @@ import {
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
 import { cabinetsInReach, frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
-import { figureArt, pictureBox, type FigureArt, type FigureImageRef } from './figureArt';
+import { figureArt, pictureBox, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
-import { useContactBand, useMeasuredAlphaMargins } from './alphaMargin';
+import { useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
@@ -352,26 +352,42 @@ function artAspect(art: FigureArt, image: FigureImageRef | undefined, metaAspect
   return metaAspect;
 }
 
+/** No picture alpha to read (framed, plate): nothing clear around the figure, known at once. */
+const OPAQUE: PictureMargins = { top: 0, bottom: 0 };
+
+/**
+ * The clear margins of what the case draws for a figure: the image list's
+ * bottom when it gives one, the rest from the picture's alpha; null while
+ * the alpha is still being read.
+ */
+function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins> | null): PictureMargins | null {
+  if (!art.alphaUrl) return OPAQUE;
+  const read = alpha?.get(art.alphaUrl);
+  if (!read) return null;
+  return { top: read.top, bottom: art.bottomMarginFrac ?? read.bottom, left: read.left, right: read.right };
+}
+
 function SceneFigure({
   draw,
   art,
   aspect,
+  margins,
   labels,
   onSelect,
 }: {
   draw: FigureDraw;
   art: FigureArt;
   aspect: number;
+  /** null while its picture's alpha is still being read: drawn meanwhile on what the image list says, not grounded. */
+  margins: PictureMargins | null;
   labels: boolean;
   onSelect: () => void;
 }) {
   const { placed, slot, cx } = draw;
   const { item } = placed;
-  // the clear margins above and below the figure in its picture: the image list gives the bottom, the alpha says both
-  const measured = useMeasuredAlphaMargins(art.alphaUrl);
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
-  const grounded = measured !== null;
-  const picture = pictureBox(art.kind, placed.heightMm, aspect, { top: measured?.top ?? 0, bottom: art.bottomMarginFrac ?? measured?.bottom ?? 0 }, item.widthMm);
+  const grounded = margins !== null;
+  const picture = pictureBox(art.kind, placed.heightMm, aspect, margins ?? { top: 0, bottom: art.bottomMarginFrac ?? 0 }, item.widthMm);
   const boxH = picture.heightMm;
   const boxW = picture.widthMm;
   const yBottom = slot.topMm - picture.belowMm;
@@ -476,15 +492,30 @@ export function CabinetScene({
   const ceilingMm = prefs.ceilingMm;
   const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
 
+  // what the case draws for each figure, in the shape it draws it (the image list's own size when it gives one)
+  const arts = useMemo(
+    () =>
+      figures.map((f) => {
+        const meta = getDisplayMeta(f);
+        const image = imageFor?.(f);
+        const art = figureArt(f, meta, image);
+        return { meta, art, aspect: artAspect(art, image, meta.aspect) };
+      }),
+    [figures, imageFor],
+  );
+  const alphaUrls = useMemo(() => [...new Set(arts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [arts]);
+  // every picture's clear margins, known all at once: the case lays out once on them, never on a part of the list
+  const alpha = useAlphaMarginsOf(alphaUrls);
+
   const packed = useMemo(() => {
-    // each figure is packed by the shape of what the case draws for it (the image list's own size when it gives one)
+    // each figure is packed by what the case draws for it: its label, or what its cut-out draws at true scale when wider
     const items = figures.map((f, i) => {
-      const meta = getDisplayMeta(f);
-      const image = imageFor?.(f);
-      return measureCaseFigure(f, i, { ...meta, aspect: artAspect(figureArt(f, meta, image), image, meta.aspect) });
+      const { meta, art, aspect } = arts[i];
+      const drawn = art.alphaUrl ? pictureMargins(art, alpha) : null;
+      return measureCaseFigure(f, i, { ...meta, aspect }, drawn ?? undefined);
     });
     return packCabinets(items, pattern, ceilingMm);
-  }, [figures, pattern, ceilingMm, imageFor]);
+  }, [figures, arts, alpha, pattern, ceilingMm]);
 
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
@@ -663,15 +694,14 @@ export function CabinetScene({
             .filter((d) => shownCabs.has(d.cab))
             .map(({ draw }) => {
               const { figure, index } = draw.placed.item;
-              const meta = getDisplayMeta(figure);
-              const image = imageFor?.(figure);
-              const art = figureArt(figure, meta, image);
+              const { art, aspect } = arts[index];
               return (
                 <SceneFigure
                   key={figure._id}
                   draw={draw}
                   art={art}
-                  aspect={artAspect(art, image, meta.aspect)}
+                  aspect={aspect}
+                  margins={pictureMargins(art, alpha)}
                   labels={labels}
                   onSelect={() => onSelect(figure, index)}
                 />

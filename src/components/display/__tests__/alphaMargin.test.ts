@@ -327,13 +327,16 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
   });
 
   it('a list with a new picture starts over: null until that one is known too', async () => {
-    mockPictures(pictures(), (src) => (src === B ? new Promise<void>(() => {}) : Promise.resolve()));
+    let releaseB!: () => void;
+    mockPictures(pictures(), (src) => (src === B ? new Promise<void>((r) => (releaseB = r)) : Promise.resolve()));
     const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [A] } });
     await waitFor(() => expect(result.current?.size).toBe(1));
     rerender({ urls: [A, B] });
     expect(result.current).toBeNull();
     await new Promise((r) => setTimeout(r, 20));
     expect(result.current).toBeNull();
+    releaseB();
+    await waitFor(() => expect(result.current?.size).toBe(2));
   });
 
   it('a list it no longer shows never lands: the answer is for the list it shows now', async () => {

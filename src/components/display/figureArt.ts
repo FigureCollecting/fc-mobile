@@ -70,10 +70,12 @@ export function figureArt(figure: Figure, meta: FigureDisplayMeta, image?: Figur
  */
 export const MAX_MARGINS_FRAC = 0.9;
 
-/** A picture's clear margins above and below the figure, fractions of its height. */
+/** A picture's clear margins around the figure: above and below as fractions of its height, left and right (when known) of its width. */
 export interface PictureMargins {
   readonly top: number;
   readonly bottom: number;
+  readonly left?: number;
+  readonly right?: number;
 }
 
 /** The box a figure's picture is drawn in, mm. */
@@ -102,6 +104,18 @@ export function pictureBox(kind: FigureArtKind, heightMm: number, aspect: number
   const natural = aspect * boxH;
   const widthMm = kind === 'framed' || kind === 'plate' ? Math.min(natural, footprintMm) : natural;
   return { widthMm, heightMm: boxH, belowMm: bottom * boxH };
+}
+
+/**
+ * How wide the figure in a cut-out or masked picture draws at true scale,
+ * mm: the picture sized by pictureBox, less its clear columns left and
+ * right. Wider than aspect x height when the clear rows are tall (wings over
+ * a small figure); the case packs such art by it, never by less (a label
+ * fitted to nothing, or none at all), so no figure reaches over a neighbour.
+ */
+export function drawnWidthMm(heightMm: number, aspect: number, margins: PictureMargins): number {
+  const picture = pictureBox('cutout', heightMm, aspect, margins, Infinity);
+  return picture.widthMm * Math.max(0, 1 - clearFrac(margins.left ?? 0) - clearFrac(margins.right ?? 0));
 }
 
 /** The part of a coordinator.v1.ProductImage the case reads. */

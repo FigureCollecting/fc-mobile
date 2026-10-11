@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
@@ -9,6 +9,13 @@ import { wallLayout } from '../packCabinets';
 import { cabinetBox, wallReachMm } from '../caseFraming';
 import { CEILING_DEFAULT_MM } from '../cabinetProfile';
 import { boxCorners, project, type Camera } from '../caseCamera';
+import { __clearAlphaMarginCache } from '../alphaMargin';
+
+// each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
+// what a test checks at once is laid out on the labels, never on reads an earlier test left in the cache
+beforeEach(() => {
+  __clearAlphaMarginCache();
+});
 
 afterEach(() => {
   cleanup();

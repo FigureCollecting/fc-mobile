@@ -211,6 +211,8 @@ for (const size of FOLD8) {
       }
       await expectFramedAboveTabs(page, view, 'reloaded without chips');
       await page.getByRole('button', { name: 'Refine' }).click();
+      // a press on the sheet while it still springs up stops it where it is (framer-motion's drag): wait for it to rest
+      await expect(page.locator('.detent-sheet')).toHaveAttribute('style', /translateY\(48%\)/);
       await page.getByRole('button', { name: 'owned', exact: true }).click();
       await page.locator('.filter-sheet2__btn--apply').click();
       await expect(page.locator('.applied-chips__chip')).toHaveCount(1);

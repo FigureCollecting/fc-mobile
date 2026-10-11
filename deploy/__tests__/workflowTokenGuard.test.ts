@@ -349,6 +349,10 @@ describe("the build action's inputs", () => {
     'build-args: vite_build_id=${{ steps.meta.outputs.version }}',
     'build-args: ${{ steps.meta.outputs.version }}=VITE_BUILD_ID',
     'context: " . "',
+    // wk-09c-i2b: the allowed value split across lines is two entries; ./ is not . exactly.
+    'build-args: |\n    VITE_BUILD_ID=\n    ${{ steps.meta.outputs.version }}',
+    'secret-envs: |\n    node_auth_token=\n    NODE_AUTH_TOKEN',
+    'context: ./',
   ])('flags with: %s', (input) => {
     expect(build(`with:\n  ${input}`)).toEqual(['action-with']);
   });
@@ -912,9 +916,10 @@ describe('setup and build actions pinned to one commit', () => {
       `${name}@v1`,
       `${name}@${sha.slice(0, 7)}`,
       `${name}@${sha}0`,
-      // wk-09c-i2: a tag named after the pin ends with it but is another ref.
+      // wk-09c-i2: a tag named after the pin ends with it but is another ref; so is a branch (wk-09c-i2b).
       `${name}@v${sha}`,
       `${name}@refs/tags/${sha}`,
+      `${name}@refs/heads/${sha}`,
       `${name}@${sha.toUpperCase()}`,
       `${name}@${IMPOSTER}`,
       `${name}@${sha}@x`,
@@ -932,7 +937,7 @@ describe('setup and build actions pinned to one commit', () => {
     expect(rules(tokenJob('', `      - uses: actions/setup-node@${IMPOSTER}\n        with:\n          node-version: 24\n`))).toEqual(['action-pin']);
   });
 
-  it.each(['v', 'refs/tags/', 'x'].map((prefix) => `${prefix}${PINNED['actions/setup-node']}`))(
+  it.each(['v', 'refs/tags/', 'refs/heads/', 'x'].map((prefix) => `${prefix}${PINNED['actions/setup-node']}`))(
     'flags actions/setup-node@%s, a ref that ends with the pin, before a token step, and nothing else',
     (ref) => {
       expect(rules(tokenJob('', `      - uses: actions/setup-node@${ref}\n        with:\n          node-version: 24\n`))).toEqual(['action-pin']);
@@ -996,8 +1001,8 @@ describe('action paths read the way GitHub reads them', () => {
     },
   );
 
-  it.each(Object.entries(PINNED).flatMap(([name, sha]) => spellings(name).flatMap((path) => [`${path}@v${sha}`, `${path}@refs/tags/${sha}`])))(
-    'flags %s, a tag named after the pin, as the pinned action at another ref',
+  it.each(Object.entries(PINNED).flatMap(([name, sha]) => spellings(name).flatMap((path) => [`${path}@v${sha}`, `${path}@refs/tags/${sha}`, `${path}@refs/heads/${sha}`])))(
+    'flags %s, a tag or branch named after the pin, as the pinned action at another ref',
     (uses) => {
       expect(anywhere(uses)).toEqual([['action-pin'], ['action-pin']]);
     },

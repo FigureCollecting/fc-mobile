@@ -413,6 +413,55 @@ describe('checkForUpdate (the Settings action)', () => {
     expect(vi.getTimerCount()).toBe(timers);
   });
 
+  it('raises the update prompt itself once a check finds a newer build ready, though the plugin missed it', async () => {
+    // workbox-window follows only the first build that installs behind a page: after one that failed
+    // mid-deploy, the next build waits and the plugin raises no prompt for it.
+    const next = new FakeWorker();
+    const { reg } = updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    expect(updateReady.value).toBe(false);
+    Object.assign(reg, { installing: null, waiting: next.worker });
+    next.become('installed');
+    await expect(check).resolves.toBe('ready');
+    expect(updateReady.value).toBe(true);
+  });
+
+  it('raises no prompt when a check finds nothing newer, cannot reach the server, or the newer build fails', async () => {
+    registered();
+    await expect(checkForUpdate()).resolves.toBe('latest');
+    const next = new FakeWorker();
+    updateFinds(next);
+    const check = checkForUpdate();
+    expect(await answerAfter(check)).toBe('pending');
+    next.become('redundant');
+    await expect(check).resolves.toBe('offline');
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    registered();
+    await expect(checkForUpdate()).resolves.toBe('offline');
+    expect(updateReady.value).toBe(false);
+  });
+
+  it('arms the takeover reload with the prompt it raises, in a page that registered before any build was active', async () => {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const reg = registration({ installing: newer });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    Object.assign(reg, { installing: null, active, waiting: {} as ServiceWorker });
+    await expect(checkForUpdate()).resolves.toBe('ready');
+    expect(updateReady.value).toBe(true);
+    container.dispatchEvent(new Event('controllerchange'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises it from the hourly, reconnect and foreground checks too', async () => {
+    registered(ok(), registration({ active, waiting: newer }));
+    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_MS);
+    expect(updateReady.value).toBe(true);
+  });
+
   it('is not a new version when update() installs the first build (no active build)', async () => {
     const reg = registration();
     reg.update.mockImplementation(async () => void Object.assign(reg, { installing: newer }));

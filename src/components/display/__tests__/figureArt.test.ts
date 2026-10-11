@@ -103,6 +103,11 @@ describe('imageRefFromProductImage', () => {
     ).toEqual({ url: '/d/1.webp', maskUrl: '/m/1.png', width: 600, height: 800, bottomMarginFrac: 0.02, contactBand: { centerXFrac: 0.5, widthFrac: 0.6 } });
   });
 
+  it('a size is taken only when both sides are known', () => {
+    expect(imageRefFromProductImage({ url: '/d/3.webp', width: 600, height: 0 })).toEqual({ url: '/d/3.webp' });
+    expect(imageRefFromProductImage({ url: '/d/3.webp', width: 0, height: 800 })).toEqual({ url: '/d/3.webp' });
+  });
+
   it('an empty URL (no public media base) or an empty mask URL is no image or no mask', () => {
     expect(imageRefFromProductImage({ url: '', width: 0, height: 0 })).toBeUndefined();
     expect(imageRefFromProductImage({ url: '/d/2.webp', width: 0, height: 0, mask: { url: '' } })).toEqual({ url: '/d/2.webp' });

@@ -4,6 +4,10 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
+import { IKEA_KLINGSBO } from '../cabinetPresets';
+import { wallLayout } from '../packCabinets';
+import { cabinetBox } from '../caseFraming';
+import { boxCorners, project, type Camera } from '../caseCamera';
 
 afterEach(() => {
   cleanup();
@@ -26,6 +30,13 @@ function drag(el: HTMLElement, dx: number) {
   fireEvent.pointerMove(el, { pointerId: 1, clientX: 200 + dx / 2, clientY: 200 });
   fireEvent.pointerMove(el, { pointerId: 1, clientX: 200 + dx, clientY: 200 });
   fireEvent.pointerUp(el, { pointerId: 1, clientX: 200 + dx, clientY: 200 });
+}
+
+/** A finger's tap: down, up and the click the browser makes of them. */
+function tap(el: HTMLElement) {
+  fireEvent.pointerDown(el, { pointerId: 2, clientX: 10, clientY: 10, button: 0 });
+  fireEvent.pointerUp(el, { pointerId: 2, clientX: 10, clientY: 10 });
+  fireEvent.click(el);
 }
 
 describe('CabinetScene: faithful cabinets from the profile (CASE-CABINET)', () => {
@@ -446,6 +457,142 @@ describe('CabinetScene: opaque boxes (framed copies, plates) on real figures wit
       expect(pairs).toBeGreaterThan(0);
     });
   }
+});
+
+/** The scene's published camera (data-camera). */
+function cameraOf(host: HTMLElement): Camera {
+  const c = JSON.parse(host.dataset.camera!);
+  return { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
+}
+
+/** The default wall: KLINGSBOs side by side, as many as asked. */
+const klingsbos = (n: number) => wallLayout(Array.from({ length: n }, () => IKEA_KLINGSBO));
+
+describe('CabinetScene: where a walk, the wall ends and a change of view leave the camera', () => {
+  it('camera mode: after a walk the focus is the cabinet nearest the camera, and Next steps on from there', () => {
+    // some thirty cabinets: the walk never reaches the end of the wall
+    const { host } = scene(getFixtureFigures(120), { swipe: 'camera', view: 'cabinet' });
+    const wall = klingsbos(60);
+    for (const dx of [-400, -400, -250]) {
+      drag(host, dx);
+      const x = Number(host.dataset.cameraX);
+      const nearest = wall.cabinets.reduce((best, c, i) => (Math.abs(c.centerMm - x) < Math.abs(wall.cabinets[best].centerMm - x) ? i : best), 0);
+      expect(nearest).toBeGreaterThan(0);
+      expect(host.dataset.focus, `camera at ${x}`).toBe(String(nearest));
+    }
+    const focus = Number(host.dataset.focus);
+    expect(screen.getByRole('button', { name: 'Next cabinet' })).not.toBeDisabled();
+    tap(screen.getByRole('button', { name: 'Next cabinet' }));
+    expect(host.dataset.focus).toBe(String(focus + 1));
+    expect(Number(host.dataset.cameraX)).toBeCloseTo(wall.cabinets[focus + 1].centerMm, 6);
+  });
+
+  for (const view of ['cabinet', 'shelf'] as const) {
+    it(`${view} view: Next is disabled on the last cabinet, Previous on the first`, () => {
+      const { host } = scene(getFixtureFigures(8), { view });
+      const next = screen.getByRole('button', { name: 'Next cabinet' });
+      let steps = 0;
+      while (!(next as HTMLButtonElement).disabled && steps < 50) {
+        fireEvent.click(next);
+        steps++;
+      }
+      expect(steps).toBeGreaterThan(1);
+      expect(next).toBeDisabled();
+      expect(host.dataset.focus).toBe(String(steps));
+      expect(screen.getByRole('button', { name: 'Previous cabinet' })).not.toBeDisabled();
+    });
+  }
+
+  it('a new view, wall pattern or swipe mode starts unpanned', () => {
+    const figs = getFixtureFigures(40);
+    const view = (patch: Partial<CasePrefs>) => <CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'cabinet', ...patch })} />;
+    const { container, rerender } = render(view({}));
+    const host = container.querySelector('.cabinet-scene') as HTMLElement;
+    const panned = () => {
+      drag(host, -2000);
+      expect(Number(host.dataset.pan)).toBeLessThan(0);
+    };
+    panned();
+    rerender(view({ view: 'shelf' }));
+    expect(host.dataset.pan).toBe('0');
+    panned();
+    rerender(view({ view: 'shelf', pattern: 'ikea-detolf' }));
+    expect(host.dataset.pan).toBe('0');
+    panned();
+    rerender(view({ view: 'shelf', pattern: 'ikea-detolf', swipe: 'camera' }));
+    rerender(view({ view: 'shelf', pattern: 'ikea-detolf', swipe: 'pan' }));
+    expect(host.dataset.pan).toBe('0');
+  });
+
+  it('a touch swipe, which no click follows, never eats the next tap', () => {
+    const { host, onSelect } = scene(getFixtureFigures(8), { swipe: 'camera', view: 'cabinet' });
+    drag(host, -150);
+    tap(figureButtons(host)[0]);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it(`a move of exactly ${SWIPE_START_PX} px is a swipe: the click after it opens nothing`, () => {
+    const { host, onSelect } = scene(getFixtureFigures(8), { swipe: 'camera', view: 'cabinet' });
+    drag(host, -SWIPE_START_PX);
+    fireEvent.click(figureButtons(host)[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+    drag(host, SWIPE_START_PX - 1);
+    fireEvent.click(figureButtons(host)[0]);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  for (const swipe of ['camera', 'pan'] as const) {
+    it(`every cabinet that draws into the frame is drawn, however far the ${swipe} swipe goes`, () => {
+      const wall = klingsbos(60);
+      for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+        // some thirty cabinets: the first twenty are checked wherever the swipe goes
+        const { host } = scene(getFixtureFigures(120), { swipe, view: v });
+        for (const dx of [0, -300, -300, -900, 250, -1200]) {
+          if (dx !== 0) drag(host, dx);
+          const camera = cameraOf(host);
+          const pan = Number(host.dataset.pan);
+          const drawn = new Set(Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
+          for (let i = 0; i < 20; i++) {
+            const b = cabinetBox(wall.cabinets[i], 0);
+            const pts = boxCorners(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1).map((c) => project(camera, c));
+            if (pts.some((p) => p.depth <= 0)) continue;
+            const x0 = Math.min(...pts.map((p) => p.x)) + pan;
+            const x1 = Math.max(...pts.map((p) => p.x)) + pan;
+            if (x1 > 0 && x0 < camera.frame.width) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i} at ${x0.toFixed(0)}..${x1.toFixed(0)}`).toBe(true);
+          }
+        }
+        cleanup();
+      }
+    });
+  }
+});
+
+describe('CabinetScene: the picture, its tap box and its shadow, at the edges', () => {
+  it('an image list size without a height is not believed: the figure packs by its display shape', () => {
+    const fig = { ...FIXTURE_FIGURES[0], _id: 'no-height', name: 'No Height', imageUrl: '/plain.jpg' } as Figure;
+    const { host } = scene([fig], {}, { imageFor: () => ({ url: '/plain.jpg', width: 600 }) });
+    expect(figureButtons(host)).toHaveLength(1);
+    expect(host.querySelector('.cabinet-scene__fit')).toBeNull();
+  });
+
+  it('a picture narrower than its labelled footprint: the tap box is the picture, not the footprint', () => {
+    const wide = { ...FIXTURE_FIGURES[0], dimensions: { heightMm: 230, widthMm: 300 } } as Figure;
+    const [r] = bySurface(scene([wide]).host).flat();
+    expect(r.art.x1 - r.art.x0).toBeLessThan(300);
+    expect(r.tap.x1 - r.tap.x0).toBeCloseTo(r.art.x1 - r.art.x0, 6);
+  });
+
+  it('a contact shadow is never thinner than 20 mm, nor deeper than the surface it lies on', () => {
+    const thin = { ...FIXTURE_FIGURES[0], _id: 'thin' } as Figure;
+    const { host } = scene([thin], {}, { imageFor: () => ({ url: '/c.png', maskUrl: '/m.png', width: 550, height: 800, contactBand: { centerXFrac: 0.5, widthFrac: 0.001 } }) });
+    expect(host.querySelector<HTMLElement>('.cab-shadow')!.style.width).toBe('20px');
+    cleanup();
+    // deeper than the KLINGSBO's glass plates (314 mm): it overhangs, its shadow stays on the plate
+    const deepish = Array.from({ length: 12 }, (_, i) => ({ ...FIXTURE_FIGURES[2], _id: `deepish-${i}`, name: `Deepish ${i}`, dimensions: { heightMm: 150, depthMm: 330 } }) as Figure);
+    const over = Array.from(scene(deepish).host.querySelectorAll<HTMLElement>('.cab-figure--overhang'));
+    expect(over.length).toBeGreaterThan(0);
+    for (const b of over) expect((b.previousElementSibling as HTMLElement).style.height).toBe('314px');
+  });
 });
 
 describe('quadStyle: one flat face of the mm world as a CSS 3D element', () => {

@@ -142,6 +142,15 @@ describe('framing (G4, CC8 / CC15)', () => {
     expect(touches).toBe(true);
   });
 
+  it('a level camera above a box\'s middle: the box\'s feet are the corners that bind, inside the bottom margin', () => {
+    const box = boxCorners(-100, 100, 0, 1600, -300, 0);
+    const { camera } = fitDistance({ frame: COVER, camY: 1500, look: [0, 1500, 0], tilt: false, corners: box });
+    const m = frameMargins(COVER);
+    const ys = box.map((c) => project(camera, c).y);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(COVER.height - m.y + 1e-3);
+    expect(Math.max(...ys)).toBeGreaterThan(COVER.height - m.y - 0.05);
+  });
+
   it('boxCorners gives the eight corners', () => {
     const c = boxCorners(0, 1, 0, 2, -3, 0);
     expect(c).toHaveLength(8);

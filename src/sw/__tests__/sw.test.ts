@@ -47,8 +47,23 @@ const OWNED_URL = `https://images.figurecollecting.com/d/${'cd'.repeat(32)}`;
 // As the origin answers (fc-infra edge README): immutable for a year.
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 const ORIGIN_HEADERS = { 'content-type': 'image/png', 'cache-control': IMMUTABLE, 'x-origin': 'kept' };
+/**
+ * A CORS answer as the browser hands it to the worker, from the Cache API or the network: type
+ * 'cors', its headers immutable (each change throws, as in Chromium).
+ */
+function corsAnswer(body: string, init: ResponseInit = {}): Response {
+  const response = new Response(body, { ...init, headers: ORIGIN_HEADERS });
+  for (const change of ['set', 'append', 'delete'] as const) {
+    Object.defineProperty(response.headers, change, {
+      value: () => {
+        throw new TypeError('Headers are immutable');
+      },
+    });
+  }
+  return Object.defineProperty(response, 'type', { value: 'cors' });
+}
 /** Each match of the owned entry gives a fresh response, as the Cache API does. */
-const ownedResponse = () => new Response('owned', { headers: ORIGIN_HEADERS });
+const ownedResponse = () => corsAnswer('owned');
 const opened: string[] = [];
 const matchOptions: (CacheQueryOptions | undefined)[] = [];
 
@@ -156,14 +171,14 @@ describe('service worker wiring', () => {
     }
   });
 
-  it('answers the page with a copy marked Cache-Control no-store, from either cache or the origin, so no document keeps the bytes; status, body and other headers as they were', async () => {
+  it('answers the page with a copy marked Cache-Control no-store, from either cache or the origin, so Chromium\'s memory cache does not answer a later document with it; status, body and other headers as they were', async () => {
     const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { handle: ReturnType<typeof vi.fn> };
     const [, handler] = imageRoute();
-    const fetchSpy = vi.fn(async () => new Response('gone', { status: 404, statusText: 'Not Found', headers: ORIGIN_HEADERS }));
+    const fetchSpy = vi.fn(async () => corsAnswer('gone', { status: 404, statusText: 'Not Found' }));
     vi.stubGlobal('fetch', fetchSpy);
     try {
       const fromOwned = await handler({ request: new Request(OWNED_URL) });
-      cacheFirst.handle = vi.fn(async () => new Response('browsed', { headers: ORIGIN_HEADERS }));
+      cacheFirst.handle = vi.fn(async () => corsAnswer('browsed'));
       const fromBrowsed = await handler({ request: asImage(new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`)) });
       const fromOrigin = await handler({ request: new Request(`https://images.figurecollecting.com/d/${'ef'.repeat(32)}`) });
       const answers = [fromOwned, fromBrowsed, fromOrigin];

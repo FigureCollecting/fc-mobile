@@ -10,9 +10,8 @@ import { useReview } from '../hooks/useReview';
 import { clearCache } from '../storage/figureCache';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { APP_VERSION } from '../config/version';
 import { Style } from '../styles/Style';
-
-const APP_VERSION = '0.1.0';
 
 /** Chevron icon for list items */
 function ChevronRight() {

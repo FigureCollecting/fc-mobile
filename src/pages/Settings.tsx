@@ -8,13 +8,12 @@ import type { Theme } from '../stores/theme';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { getCacheStats, clearAllCaches } from '../storage/cacheManager';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { APP_VERSION } from '../config/version';
 import type { CacheStats } from '../storage/cacheManager';
 import { readStorageStatus, type StorageStatus } from '../pwa/storage';
 import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
 import { Style } from '../styles/Style';
-
-const APP_VERSION = '0.1.0';
 
 const SYNC_INTERVALS = [
   { value: 'manual', label: 'Manual' },

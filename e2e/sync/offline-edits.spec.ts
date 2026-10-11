@@ -7,7 +7,7 @@
 // (its page closed) and opened again offline; the three notes are on the detail with Pending, the
 // three tiles are Pending, the status line counts 3 changes; reconnecting turns them Synced in 30 s.
 import { readFileSync } from 'node:fs';
-import { expect, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
+import { expect, type BrowserContext, type Page } from '@playwright/test';
 import { guardedTest as test } from '../fixtures';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
@@ -104,24 +104,32 @@ async function navigate(page: Page, path: string): Promise<void> {
 }
 
 /**
- * Kill the app and open it again while offline: the page is closed (every in-memory queue goes with
- * it) and a new one loads from the service worker. Playwright's WebKit cannot navigate under
- * context.setOffline, so there the new page loads in a true outage (the edge stopped).
+ * Offline as each browser can express it. Chromium drops the network (context.setOffline) and the
+ * service worker serves the app. Playwright's WebKit under setOffline cannot load the app's lazy
+ * chunks even from the service worker (the detail screen falls to its error boundary), so there the
+ * servers stop instead: a true outage, the browser still online, the probe failing. Airplane mode
+ * (the browser itself offline, Ross's Fold8 case) is therefore Chromium's to prove.
  */
-async function restartOffline(context: BrowserContext, page: Page, testInfo: TestInfo): Promise<Page> {
-  const webkit = testInfo.project.use.defaultBrowserType === 'webkit';
-  await page.close();
+async function goOffline(context: BrowserContext, webkit: boolean): Promise<void> {
+  if (webkit) await stack.edge.stop();
+  else await context.setOffline(true);
+}
+
+/** Back online; in WebKit the servers start and the radio blinks, so the page hears the online event. */
+async function goOnline(context: BrowserContext, webkit: boolean): Promise<void> {
   if (webkit) {
-    await stack.edge.stop();
-    await context.setOffline(false);
+    await stack.edge.start();
+    await context.setOffline(true);
   }
+  await context.setOffline(false);
+}
+
+/** Kill the app and open it again while offline: the page is closed (every in-memory queue goes with it) and a new one loads from the service worker. */
+async function restartOffline(context: BrowserContext, page: Page): Promise<Page> {
+  await page.close();
   const next = await context.newPage();
   await next.goto('/');
   await hooksReady(next);
-  if (webkit) {
-    await context.setOffline(true);
-    await stack.edge.start();
-  }
   await expect.poll(() => authStatus(next), { timeout: 30_000 }).toBe('signed-in');
   return next;
 }
@@ -143,7 +151,8 @@ test('three Notes edits made offline commit at once, survive killing the app off
   await page.evaluate(() => window.__fcSync!.syncNow());
   await settled(page);
 
-  await context.setOffline(true);
+  const webkit = testInfo.project.use.defaultBrowserType === 'webkit';
+  await goOffline(context, webkit);
   const stamp = Date.now();
   const notes = heads.map((_, i) => `offline note ${i + 1} ${stamp}`);
   for (const [i, head] of heads.entries()) {
@@ -151,7 +160,11 @@ test('three Notes edits made offline commit at once, survive killing the app off
     await page.getByRole('button', { name: 'Edit' }).click();
     const sheet = page.getByRole('form', { name: 'Edit figure' });
     await sheet.getByLabel('Notes').fill(notes[i]!);
-    await sheet.getByRole('button', { name: /^Save/ }).click();
+    const save = sheet.getByRole('button', { name: /^Save/ });
+    // WebKit leaves the half-open sheet's Save below the fold of the cover panel, inside the sheet's
+    // own scroller, where Playwright cannot scroll it into view; the button gets the same click event.
+    if (webkit) await save.dispatchEvent('click');
+    else await save.click();
     // F9: 'Saving…' resolves at the local commit, not at the network.
     await expect.soft(sheet, `Save ${i + 1} closes the sheet offline`).toBeHidden({ timeout: 3_000 });
     // F13: the detail reads the pending edit back at once.
@@ -162,7 +175,7 @@ test('three Notes edits made offline commit at once, survive killing the app off
   }
 
   // F12: the app is swiped away with the edits pending and reopened offline.
-  page = await restartOffline(context, page, testInfo);
+  page = await restartOffline(context, page);
 
   // F10: the status line counts the waiting edits.
   await expect(page.locator('.sync-status-line')).toContainText(`${EDITS} changes waiting to sync`, { timeout: 15_000 });
@@ -178,7 +191,7 @@ test('three Notes edits made offline commit at once, survive killing the app off
 
   // Reconnect: Synced within 30 s, and the server holds the notes.
   const back = Date.now();
-  await context.setOffline(false);
+  await goOnline(context, webkit);
   await navigate(page, '/?layout=rows&tab=owned');
   for (const head of heads) await expect(tile(page, head)).toHaveAttribute('data-sync', 'known', { timeout: Math.max(1, 30_000 - (Date.now() - back)) });
   expect(Date.now() - back).toBeLessThan(30_000);

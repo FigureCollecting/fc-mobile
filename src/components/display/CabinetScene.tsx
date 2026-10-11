@@ -23,6 +23,7 @@ import { Style } from '../../styles/Style';
 import { getDisplayMeta } from './displayMeta';
 import { CEILING_DEFAULT_MM, framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
 import {
+  FIGURE_GAP_MM,
   measureCaseFigure,
   packCabinets,
   wallLayout,
@@ -371,11 +372,17 @@ function SceneFigure({
   const boxW = aspect * boxH;
   const yBottom = slot.topMm - margin * boxH;
   const z = placed.zMm;
-  const q = quadStyle([cx - boxW / 2, yBottom + boxH, z], [boxW, 0, 0], [0, -boxH, 0]);
+  // the tap box: the figure standing on its surface, never wider than its footprint and half the gap each side,
+  // so neighbours' boxes meet at most; the picture hangs from it by its transparent margins and takes no taps
+  const tapW = Math.min(boxW, item.widthMm + FIGURE_GAP_MM);
+  const tapX0 = cx - tapW / 2;
+  const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0]);
   const contact = art.contactBand ?? band ?? { centerXFrac: 0.5, widthFrac: art.kind === 'cutout' || art.kind === 'masked' ? 0.6 : 0.9 };
   const shadowW = Math.max(20, contact.widthFrac * boxW * 1.15);
   const shadowD = Math.min(slot.depthMm, Math.max(40, item.depthMm));
   const shadowX = cx - boxW / 2 + contact.centerXFrac * boxW;
+  const box = (x0: number, x1: number, y0: number, y1: number) =>
+    JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
   return (
     <>
       <Quad cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, z - shadowD / 2]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} />
@@ -387,10 +394,16 @@ function SceneFigure({
         data-art={art.kind}
         data-figure-id={item.figure._id}
         data-grounded={grounded ? '1' : '0'}
-        data-world={JSON.stringify({ x0: num(cx - boxW / 2), x1: num(cx + boxW / 2), y0: num(yBottom), y1: num(yBottom + boxH), z: num(z), surface: slot.topMm })}
+        data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
+        data-art-box={box(cx - boxW / 2, cx + boxW / 2, yBottom, yBottom + boxH)}
         onClick={onSelect}
       >
-        <ArtBody art={art} name={item.figure.name} />
+        <span
+          class="cab-figure__box"
+          style={{ left: `${fmt(cx - boxW / 2 - tapX0)}px`, top: '0px', width: `${fmt(boxW)}px`, height: `${fmt(boxH)}px`, pointerEvents: 'none' }}
+        >
+          <ArtBody art={art} name={item.figure.name} />
+        </span>
       </button>
       {labels && (
         <div class="q cab-plate" style={quadStyle([cx - 55, slot.topMm + 1, slot.frontZMm + 1], [110, 0, 0], [0, -30, 0]) ?? undefined}>
@@ -472,9 +485,14 @@ export function CabinetScene({
   const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
 
   const packed = useMemo(() => {
-    const items = figures.map((f, i) => measureCaseFigure(f, i, getDisplayMeta(f)));
+    // each figure is packed by the shape of what the case draws for it (the image list's own size when it gives one)
+    const items = figures.map((f, i) => {
+      const meta = getDisplayMeta(f);
+      const image = imageFor?.(f);
+      return measureCaseFigure(f, i, { ...meta, aspect: artAspect(figureArt(f, meta, image), image, meta.aspect) });
+    });
     return packCabinets(items, pattern, ceilingMm);
-  }, [figures, pattern, ceilingMm]);
+  }, [figures, pattern, ceilingMm, imageFor]);
 
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
@@ -774,6 +792,7 @@ const styles = `
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
+  .cabinet-scene .cab-figure__box { position: absolute; display: block; }
   .cabinet-scene .cab-figure:focus-visible { outline: 3px solid var(--brand-400, #5aa0ff); outline-offset: 2px; }
   .cabinet-scene .cab-figure__art { display: block; width: 100%; height: 100%; max-width: none; object-fit: fill; }
   .cabinet-scene .cab-figure__art--masked {

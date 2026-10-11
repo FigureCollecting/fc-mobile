@@ -72,6 +72,20 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(screen.getByRole('button', { name: 'Figure 1' }).dataset.art).toBe('plate');
   });
 
+  it('the case page is a column the scene fills down to the pull-up tabs (CSS, B1); the rows page is not', async () => {
+    await respondWith([makeFigure('1')]);
+    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(true);
+    const scene = container.querySelector<HTMLElement>('.page-collection__display--case > .cabinet-scene')!;
+    // its height is the page's to give: nothing measured once and left stale when the layout above changes
+    expect(scene.style.height).toBe('');
+    unmount();
+    const rows = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(rows.container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(false);
+  });
+
   it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the rows do not', async () => {
     await respondWith([makeFigure('1')]);
     const { unmount } = renderWithProviders(<Collection />, { initialPath: '/' });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
+import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
@@ -292,39 +292,51 @@ describe('CabinetScene: views and navigation', () => {
   });
 });
 
-describe('CabinetScene: the scene is the space above the pull-up tabs (every Fold8 size)', () => {
-  /** A window innerHeight tall whose scene starts top px down the page. */
-  function windowOf(innerHeight: number, top: number) {
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
-    const real = HTMLElement.prototype.getBoundingClientRect;
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      const r = real.call(this);
-      if (!this.classList.contains('cabinet-scene')) return r;
-      return { x: 0, y: top, top, left: 0, right: r.width, bottom: top + r.height, width: r.width, height: r.height, toJSON: () => ({}) } as DOMRect;
-    });
-  }
-  const jsdomHeight = window.innerHeight;
+describe('CabinetScene: the scene is the space its page gives it, and the camera frames that space', () => {
   afterEach(() => {
-    vi.restoreAllMocks();
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: jsdomHeight });
+    vi.unstubAllGlobals();
   });
 
-  it('the Fold8 cover held sideways (616x357): 143 px from its top (122) to the tabs (92 reserved), never a floor under them', () => {
-    windowOf(357, 122);
-    const { host } = scene(FIXTURE_FIGURES, {}, { bottomReservePx: 92 });
-    expect(host.style.height).toBe('143px');
+  it('sets no height of its own: the page sizes it (CSS), so it follows whatever comes or goes above it', () => {
+    const { host } = scene(FIXTURE_FIGURES);
+    expect(host.style.height).toBe('');
   });
 
-  it('a taller window: every px down to the tabs', () => {
-    windowOf(558, 122);
-    const { host } = scene(FIXTURE_FIGURES, {}, { bottomReservePx: 92 });
-    expect(host.style.height).toBe('344px');
-  });
-
-  it('a window with no room left: an empty scene, never one reaching under the tabs', () => {
-    windowOf(200, 122);
-    const { host } = scene(FIXTURE_FIGURES, {}, { bottomReservePx: 92 });
-    expect(host.style.height).toBe('0px');
+  it('re-frames the camera when the scene itself is resized (a banner or chips row above it), not only the window', () => {
+    const observed: { callback: () => void; targets: Element[] }[] = [];
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        targets: Element[] = [];
+        constructor(callback: () => void) {
+          observed.push({ callback, targets: this.targets });
+        }
+        observe(el: Element) {
+          this.targets.push(el);
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    let size = { width: 616, height: 181 };
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('cabinet-scene') ? size.width : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('cabinet-scene') ? size.height : 0;
+    });
+    const { host } = scene(FIXTURE_FIGURES, { view: 'cabinet' });
+    const camera = () => JSON.parse(host.dataset.camera!) as { width: number; height: number; z: number };
+    expect(camera()).toMatchObject({ width: 616, height: 181 });
+    const before = camera().z;
+    // the offline banner comes in above: the page gives the scene 38 px less, the window keeps its size
+    size = { width: 616, height: 143 };
+    const watching = observed.filter((o) => o.targets.includes(host));
+    expect(watching).toHaveLength(1);
+    act(() => watching[0].callback());
+    expect(camera()).toMatchObject({ width: 616, height: 143 });
+    // the cabinet still has to fit the shorter frame: the camera steps back
+    expect(camera().z).toBeGreaterThan(before);
   });
 });
 

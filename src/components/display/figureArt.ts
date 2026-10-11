@@ -61,8 +61,14 @@ export function figureArt(figure: Figure, meta: FigureDisplayMeta, image?: Figur
   return { kind: 'framed', url };
 }
 
-/** A clear margin past this fraction of its picture is not believed (a stray speck, a bad mask): the box stays within 10x the figure. */
-export const MAX_MARGIN_FRAC = 0.45;
+/**
+ * The clear margins above and below a figure, together, are believed up to
+ * this fraction of its picture, so the box stays within 10x the figure: a
+ * larger sum (a figure under a tenth of its picture, or a bad mask) is cut.
+ * The bottom is kept first, so the lowest opaque row stays on the surface;
+ * the top gives way, and only such a figure draws short of its height.
+ */
+export const MAX_MARGINS_FRAC = 0.9;
 
 /** A picture's clear margins above and below the figure, fractions of its height. */
 export interface PictureMargins {
@@ -78,7 +84,8 @@ export interface PictureBox {
   readonly belowMm: number;
 }
 
-const believed = (frac: number) => (frac > 0 ? Math.min(MAX_MARGIN_FRAC, frac) : 0);
+/** A measured margin as a fraction: a negative one, or none (NaN), is 0. */
+const clearFrac = (frac: number) => (frac > 0 ? frac : 0);
 
 /**
  * True scale (Ross 09-26): the picture is drawn so that the figure in it,
@@ -89,8 +96,8 @@ const believed = (frac: number) => (frac > 0 ? Math.min(MAX_MARGIN_FRAC, frac) :
  * never reaches over a neighbour.
  */
 export function pictureBox(kind: FigureArtKind, heightMm: number, aspect: number, margins: PictureMargins, footprintMm: number): PictureBox {
-  const top = believed(margins.top);
-  const bottom = believed(margins.bottom);
+  const bottom = Math.min(MAX_MARGINS_FRAC, clearFrac(margins.bottom));
+  const top = Math.min(MAX_MARGINS_FRAC - bottom, clearFrac(margins.top));
   const boxH = heightMm / (1 - top - bottom);
   const natural = aspect * boxH;
   const widthMm = kind === 'framed' || kind === 'plate' ? Math.min(natural, footprintMm) : natural;

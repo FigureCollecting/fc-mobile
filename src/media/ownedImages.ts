@@ -22,7 +22,10 @@
 // No fetch of the image address, here or in the worker, uses the HTTP cache, so neither answers an
 // evicted image from it. A document the worker does not control yet (a first visit before it claims,
 // a shift-reload) loads its <img>s through the HTTP cache, where the origin's immutable keeps a copy
-// after an eviction here; no fetch here or in the worker reads it.
+// after an eviction here; no fetch here or in the worker reads it. The worker answers the page with a
+// copy marked Cache-Control no-store (src/sw.ts), because Chromium's memory cache inside a tab keeps
+// an immutable image for a later document of that tab past an eviction here (measured outside the
+// suite: src/sw.ts says why); an opaque answer cannot be copied and goes as it is.
 import type { ProductImage } from '@figurecollecting/fc-api-contract';
 import { isMediaUrl } from './address';
 
@@ -158,6 +161,8 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
     let pageToken = '';
     for (let pages = 0; ; pages += 1) {
       signal?.throwIfAborted();
+      // Over the budget the sync fails before it touches a cache: nothing is evicted, so a kept image a
+      // fresh list would now withhold stays until a sync completes (an F6 follow-up of ADDR-1).
       if (pages === MAX_IMAGE_PAGES) throw new Error(`GetProductImages did not end within ${MAX_IMAGE_PAGES} pages`);
       const request = pageToken === '' ? { headIds, pageSize: IMAGE_PAGE_SIZE } : { headIds, pageSize: IMAGE_PAGE_SIZE, pageToken };
       const res = await client.getProductImages(request, signal === undefined ? undefined : { signal });

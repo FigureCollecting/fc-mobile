@@ -188,6 +188,17 @@ describe('fetchImageLists', () => {
     expect(getProductImages).toHaveBeenCalledTimes(MAX_IMAGE_PAGES);
   });
 
+  it('fails a sync whose lists run past the page budget before it touches any cache: nothing is evicted, what was kept stays', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], async () => new Map([['h1', [img('a', { primary: true })]]]), { storage });
+    const calls = countCalls(storage);
+    const getProductImages = vi.fn(async () => ({ products: [], nextPageToken: 'again' }));
+    await expect(syncOwnedImages(['h1'], (heads) => fetchImageLists({ getProductImages } as never, heads), { storage })).rejects.toThrow(/pages/);
+    expect(calls).toEqual([]);
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('a'));
+  });
+
   it('reads a spine that ends on the last page it may read', async () => {
     let read = 0;
     const getProductImages = vi.fn(async () => {

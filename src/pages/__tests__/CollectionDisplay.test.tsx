@@ -119,6 +119,38 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(await screen.findByRole('button', { name: /show \d/i })).toBeInTheDocument();
   });
 
+  it('Info reopens the figure last tapped even after the list is filtered; disabled once that figure is filtered out', async () => {
+    await respondWith([
+      makeFigure('1', { manufacturer: 'Alter' }),
+      makeFigure('2', { manufacturer: 'Kotobukiya' }),
+      makeFigure('3', { manufacturer: 'Kotobukiya' }),
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 2' });
+    await user.click(drawnPart('Figure 2'));
+    await waitFor(() => expect(instances).toHaveLength(1));
+    expect(instances[0].options.index).toBe(1);
+    instances[0].destroy();
+    // the list changes under it: Figure 1 filtered out, so Figure 2 now sits first
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.click(await screen.findByRole('button', { name: 'Kotobukiya2' }));
+    await user.click(screen.getByRole('button', { name: /show 2/i }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 1' })).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Info' }));
+    await waitFor(() => expect(instances).toHaveLength(2));
+    expect(instances[1].options.index).toBe(0);
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    instances[1].destroy();
+    // filtered out altogether: nothing to reopen
+    await user.click(screen.getByRole('listitem', { name: /remove filter kotobukiya/i }));
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.click(await screen.findByRole('button', { name: 'Alter1' }));
+    await user.click(screen.getByRole('button', { name: /show 1/i }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Info' })).toBeDisabled();
+  });
+
   it('honors the layout URL param for Display B', async () => {
     await respondWith([makeFigure('1')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });

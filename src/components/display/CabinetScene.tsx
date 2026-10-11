@@ -21,7 +21,7 @@ import type { ComponentChildren, JSX } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { Style } from '../../styles/Style';
 import { getDisplayMeta } from './displayMeta';
-import { CEILING_DEFAULT_MM, framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
+import { framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
 import {
   FIGURE_GAP_MM,
   measureCaseFigure,
@@ -481,7 +481,7 @@ export function CabinetScene({
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneHeight = useSceneHeight(hostRef, bottomReservePx);
   const frame = useFrame(hostRef, frameFallback);
-  const ceilingMm = prefs.ceilingMm ?? CEILING_DEFAULT_MM;
+  const ceilingMm = prefs.ceilingMm;
   const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
 
   const packed = useMemo(() => {

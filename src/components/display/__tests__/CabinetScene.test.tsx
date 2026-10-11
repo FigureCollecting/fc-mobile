@@ -109,6 +109,15 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     }
   });
 
+  it("a contact band from the image list places the shadow under the figure's real base", () => {
+    const at = (centerXFrac: number) => (f: Figure) => ({ url: `/c/${f._id}.png`, maskUrl: `/m/${f._id}.png`, bottomMarginFrac: 0.1, contactBand: { centerXFrac, widthFrac: 0.4 } });
+    const left = scene(FIXTURE_FIGURES, {}, { imageFor: at(0.2) }).host.querySelector<HTMLElement>('.cab-shadow')!.style.transform;
+    cleanup();
+    const right = scene(FIXTURE_FIGURES, {}, { imageFor: at(0.8) }).host.querySelector<HTMLElement>('.cab-shadow')!.style.transform;
+    const tx = (t: string) => Number(t.replace(/^matrix3d\(/, '').split(',')[12]);
+    expect(tx(right)).toBeGreaterThan(tx(left));
+  });
+
   it('grounds each figure with a contact shadow on its surface', () => {
     const { host } = scene(FIXTURE_FIGURES);
     expect(host.querySelectorAll('.cab-shadow')).toHaveLength(FIXTURE_FIGURES.length);
@@ -152,6 +161,20 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
     expect(Number(host.dataset.pan)).toBeLessThan(0);
   });
 
+  it('a cancelled swipe moves nothing; another finger never steers this one', () => {
+    const many = getFixtureFigures(8);
+    const { host } = scene(many, { swipe: 'camera', view: 'cabinet' });
+    const x0 = host.dataset.cameraX;
+    fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
+    fireEvent.pointerMove(host, { pointerId: 2, clientX: 40, clientY: 200 });
+    expect(host.dataset.cameraX).toBe(x0);
+    fireEvent.pointerMove(host, { pointerId: 1, clientX: 60, clientY: 200 });
+    expect(host.dataset.cameraX).not.toBe(x0);
+    fireEvent.pointerCancel(host, { pointerId: 1, clientX: 60, clientY: 200 });
+    expect(host.dataset.cameraX).toBe(x0);
+    expect(host.dataset.focus).toBe('0');
+  });
+
   it(`a move under ${SWIPE_START_PX} px is still a tap`, () => {
     const { host, onSelect } = scene(FIXTURE_FIGURES);
     drag(host, SWIPE_START_PX - 1);
@@ -169,6 +192,18 @@ describe('CabinetScene: views and navigation', () => {
     expect(screen.getByRole('button', { name: 'Previous cabinet' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
     expect(host.dataset.focus).toBe('1');
+    fireEvent.click(screen.getByRole('button', { name: 'Previous cabinet' }));
+    expect(host.dataset.focus).toBe('0');
+  });
+
+  it('the wall view steps a page of cabinets at a time', () => {
+    const many = getFixtureFigures(8);
+    const { host } = scene(many, { view: 'wall' }, { frameFallback: { width: 360, height: 480 } });
+    expect(host.dataset.focus).toBe('0');
+    expect(screen.getByRole('button', { name: 'Previous cabinet' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
+    // two cabinets a page at this width: the next page starts at the third, never the second
+    expect(host.dataset.focus).toBe('2');
     fireEvent.click(screen.getByRole('button', { name: 'Previous cabinet' }));
     expect(host.dataset.focus).toBe('0');
   });
@@ -205,6 +240,22 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
     expect(fit.textContent).toContain('too deep');
     expect(fit.textContent).toContain('IKEA KLINGSBO');
     expect(figureButtons(host).map((b) => b.getAttribute('aria-label'))).not.toContain('Tall Statue');
+  });
+
+  it('one misfit reads in the singular', () => {
+    const fit = scene([...FIXTURE_FIGURES, tall]).host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    expect(fit.querySelector('summary')?.textContent).toBe('1 figure does not fit');
+  });
+
+  it('a figure deeper than the shelf it lands on is drawn overhanging and listed', () => {
+    // deeper than the KLINGSBO's glass plates (314 mm), not its floor or open shelf (335 mm): the packer fills top first, so the plates' share overhangs
+    const deepish = Array.from({ length: 12 }, (_, i) => ({ ...FIXTURE_FIGURES[2], _id: `deepish-${i}`, name: `Deepish ${i}`, dimensions: { heightMm: 150, depthMm: 330 } }) as Figure);
+    const { host } = scene(deepish);
+    const over = host.querySelectorAll('.cab-figure--overhang');
+    expect(over.length).toBeGreaterThan(0);
+    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    expect(fit.dataset.count).toBe(String(over.length));
+    expect(fit.textContent).toContain('too deep for its shelf, it overhangs');
   });
 
   it('no flag when everything fits', () => {

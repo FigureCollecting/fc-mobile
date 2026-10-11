@@ -26,6 +26,27 @@ describe('DisplayToggle', () => {
     expect(onLayout).toHaveBeenCalledWith('rows');
   });
 
+  it('a tap on the mode already showing changes nothing', async () => {
+    const user = userEvent.setup();
+    const onLayout = vi.fn();
+    const { unmount } = renderWithProviders(<DisplayToggle layout="case" density="compact" onLayout={onLayout} onDensity={noop} />);
+    await user.click(screen.getByRole('radio', { name: /display case/i }));
+    unmount();
+    renderWithProviders(<DisplayToggle layout="rows" density="compact" onLayout={onLayout} onDensity={noop} />);
+    await user.click(screen.getByRole('radio', { name: /justified rows/i }));
+    expect(onLayout).not.toHaveBeenCalled();
+  });
+
+  it('draws each density as its own grid: one tile, four, nine', () => {
+    const tiles = (density: 'comfortable' | 'compact' | 'gallery') => {
+      const { unmount } = renderWithProviders(<DisplayToggle layout="rows" density={density} onLayout={noop} onDensity={noop} />);
+      const n = screen.getByRole('button', { name: /density/i }).querySelectorAll('rect').length;
+      unmount();
+      return n;
+    };
+    expect([tiles('comfortable'), tiles('compact'), tiles('gallery')]).toEqual([1, 4, 9]);
+  });
+
   it('cycles density presets for the rows', async () => {
     const user = userEvent.setup();
     const onDensity = vi.fn();

@@ -16,8 +16,12 @@
 // secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
 // secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
 // secrets: is a mapping of named secrets other than the token. Names match case-insensitively
-// (secret names are). The setup and build actions in ACTION_PINS run at their pinned commit
-// wherever they are used, and aquasecurity actions are pinned by full SHA (GHSA-69fq-xp46-6x23).
+// (secret names are). A step's remote action is named the way GitHub's runner names it: the path
+// before the first @, split on / and \ with empty segments dropped, gives owner/repo. The setup and
+// build actions in ACTION_PINS run at their pinned commit wherever they are used; every other
+// remote action, aquasecurity's included (GHSA-69fq-xp46-6x23), names a full 40-hex commit, and
+// which repo that commit is on is left to review (a fork's commit resolves too). Local paths (./,
+// .\), docker:// images, a uses with no @ (GitHub rejects it) and job-level uses are not judged.
 
 export type Rule =
   | 'workflow-env'
@@ -36,6 +40,7 @@ export type Rule =
   | 'setup-with'
   | 'trivy-unpinned'
   | 'action-pin'
+  | 'action-sha'
   | 'action-with'
   | 'step-key'
   | 'step-env'
@@ -159,8 +164,9 @@ const ACTION_WITH: Readonly<Record<string, Readonly<Record<string, (v: string) =
 };
 const INSTALL_LINE = /^npm (--prefix [\w./-]+ )?ci --ignore-scripts$/;
 const CHECKOUT_LINE = 'npm --prefix e2e/stack run checkout';
-const SHA_PIN = /@[0-9a-f]{40}$/;
-const USES = /^([^@]*)@(.*)$/s;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+// GitHub runs these from this repo or as an image, never as a remote action; it matches them case-sensitively.
+const LOCAL = /^(\.\/|\.\\|docker:\/\/)/;
 
 type Rec = Record<string, unknown>;
 const record = (v: unknown): Rec => (v !== null && typeof v === 'object' ? (v as Rec) : {});
@@ -175,6 +181,18 @@ const mentions = (v: unknown): boolean => NAMED.test(text(v));
 /** with: is a mapping (or absent) whose every input is in inputs and takes a value it accepts. */
 const inputsFit = (w: unknown, inputs: Readonly<Record<string, (v: string) => boolean>>): boolean =>
   plain(w) && Object.entries(record(w)).every(([k, x]) => Object.hasOwn(inputs, k) && inputs[k](text(x)));
+/**
+ * A remote action as GitHub's runner reads uses (actions/runner PipelineTemplateConverter): the path
+ * before the first @ split on / and \ with empty segments dropped, owner/repo its first two segments
+ * (lower-cased: names match case-insensitively), the ref everything after that @.
+ */
+function remoteAction(uses: unknown): { owner: string; name: string; ref: string } | undefined {
+  if (typeof uses !== 'string' || LOCAL.test(uses)) return undefined;
+  const at = uses.indexOf('@');
+  if (at < 0) return undefined;
+  const segments = uses.slice(0, at).toLowerCase().split(/[/\\]/).filter((x) => x !== '');
+  return { owner: segments[0] ?? '', name: segments.slice(0, 2).join('/'), ref: uses.slice(at + 1) };
+}
 const lines = (run: unknown): string[] =>
   typeof run === 'string' ? run.split('\n').map((l) => l.trim()).filter((l) => l !== '') : [];
 
@@ -272,12 +290,16 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
           if (!runFits(step['run'], shape)) flag(where('run'), 'run-grammar');
         }
       }
-      // A setup or build action at any ref but its pinned commit, in any job.
-      const [, name = '', ref] = typeof uses === 'string' ? (USES.exec(uses) ?? []) : [];
-      const pin = ACTION_PINS.get(name.toLowerCase());
-      if (pin !== undefined && ref !== pin) flag(where('uses'), 'action-pin');
-      if (typeof uses === 'string' && uses.toLowerCase().startsWith('aquasecurity/') && !SHA_PIN.test(uses)) {
-        flag(where('uses'), 'trivy-unpinned');
+      // In any job: a setup or build action at any ref but its pinned commit, any other remote
+      // action at anything but a full commit SHA.
+      const action = remoteAction(uses);
+      if (action !== undefined) {
+        const pin = ACTION_PINS.get(action.name);
+        if (pin !== undefined) {
+          if (action.ref !== pin) flag(where('uses'), 'action-pin');
+        } else if (!FULL_SHA.test(action.ref)) {
+          flag(where('uses'), action.owner === 'aquasecurity' ? 'trivy-unpinned' : 'action-sha');
+        }
       }
     });
   }

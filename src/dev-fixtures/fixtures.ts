@@ -100,6 +100,10 @@ interface FixtureDef {
    *  these actual commercial figure lines — drives proportional sizing the
    *  same way a real synced figure's scraped dimensions would. */
   heightMm: number;
+  /** Labelled width, mm: as wide as the figure's cut-out draws at heightMm
+   *  over its clear margins (true scale), rounded up, the way a real synced
+   *  figure's ProductCard gives one; the case packs it by this. */
+  widthMm: number;
   meta: FixtureDisplayMeta;
 }
 
@@ -114,6 +118,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['maid', 'blue hair'],
     heightMm: 230,
+    widthMm: 121,
     meta: { width: 550, height: 800, aspect: 0.688, relHeight: 1.0, footprintCenterX: 0.48, footprintWidth: 0.58, matted: true, baseRecovered: true },
   },
   {
@@ -126,6 +131,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['wings', 'dark'],
     heightMm: 260,
+    widthMm: 245,
     meta: { width: 600, height: 738, aspect: 0.813, relHeight: 0.98, footprintCenterX: 0.52, footprintWidth: 0.66, matted: true, baseRecovered: true },
   },
   {
@@ -138,6 +144,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['chibi', 'twin tails'],
     heightMm: 100,
+    widthMm: 85,
     meta: { width: 523, height: 550, aspect: 0.951, relHeight: 0.69, footprintCenterX: 0.5, footprintWidth: 0.55, matted: true, baseRecovered: true },
   },
   {
@@ -150,6 +157,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['magical girl'],
     heightMm: 180,
+    widthMm: 86,
     meta: { width: 600, height: 712, aspect: 0.843, relHeight: 0.94, footprintCenterX: 0.5, footprintWidth: 0.7, matted: true, baseRecovered: false },
   },
   {
@@ -162,6 +170,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['suit'],
     heightMm: 220,
+    widthMm: 35,
     meta: { width: 550, height: 800, aspect: 0.688, relHeight: 1.0, footprintCenterX: 0.5, footprintWidth: 0.4, matted: true, baseRecovered: false },
   },
   {
@@ -176,6 +185,7 @@ const DEFS: FixtureDef[] = [
     // Low reclining diorama pose — much shorter off the base than a
     // standing 1/8 figure despite the same nominal scale.
     heightMm: 150,
+    widthMm: 286,
     meta: { width: 600, height: 400, aspect: 1.5, relHeight: 0.72, footprintCenterX: 0.5, footprintWidth: 0.8, matted: true, baseRecovered: true },
   },
   {
@@ -188,6 +198,7 @@ const DEFS: FixtureDef[] = [
     status: 'wished',
     tags: ['school uniform'],
     heightMm: 230,
+    widthMm: 339,
     meta: { width: 600, height: 412, aspect: 1.456, relHeight: 0.7, footprintCenterX: 0.5, footprintWidth: 0.72, matted: true, baseRecovered: true },
   },
 ];
@@ -204,7 +215,7 @@ function toFigure(def: FixtureDef): Figure {
     tags: def.tags,
     collectionStatus: def.status,
     imageUrl: img(def.id.replace(/^fx-/, '')),
-    dimensions: { heightMm: def.heightMm },
+    dimensions: { heightMm: def.heightMm, widthMm: def.widthMm },
     companyRoles: [
       { companyId: `c-${def.id}`, companyName: def.distributor, roleId: 'r-dist', roleName: 'Distributor' },
     ],

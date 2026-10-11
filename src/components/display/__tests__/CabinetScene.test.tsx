@@ -459,7 +459,7 @@ describe('CabinetScene: the numbers the e2e checks the drawing against', () => {
       expect(w.surface - w.y0).toBeLessThan(0.5 * (w.y1 - w.y0));
     }
     const surfaces = new Set(figureButtons(host).map((b) => JSON.parse(b.dataset.world!).surface));
-    // the seven fixtures stand on the KLINGSBO's top and four of its glass shelves
-    expect([...surfaces].sort((a, b) => a - b)).toEqual([694, 969, 1243, 1519, 1800]);
+    // the seven fixtures, packed by their labelled widths, stand on the KLINGSBO's top and three of its glass shelves
+    expect([...surfaces].sort((a, b) => a - b)).toEqual([969, 1243, 1519, 1800]);
   });
 });

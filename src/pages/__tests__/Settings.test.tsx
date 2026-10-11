@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
@@ -48,9 +50,10 @@ beforeEach(() => {
 });
 
 describe('Settings about', () => {
-  it('shows the build next to the version, so a user can tell which build is running', () => {
+  it("shows package.json's version with the build next to it, so a user can tell which build is running", () => {
+    const pkg = JSON.parse(readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8')) as { version: string };
     renderWithProviders(<Settings />, { initialPath: '/settings' });
-    expect(screen.getByText(`0.1.0 (${import.meta.env.VITE_BUILD_ID})`)).toBeInTheDocument();
+    expect(screen.getByText(`${pkg.version} (${import.meta.env.VITE_BUILD_ID})`)).toBeInTheDocument();
   });
 });
 

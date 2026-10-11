@@ -41,6 +41,23 @@ export function computeBottomMarginFrac(buffer: AlphaBuffer): number {
   return 0;
 }
 
+/**
+ * Fraction of the image's own height that is transparent padding ABOVE the
+ * figure's visible content (its first opaque row from the top): without it,
+ * a figure sized by its picture's height draws short by that much (true
+ * scale, Ross 09-26). 0 for a fully transparent or empty image.
+ */
+export function computeTopMarginFrac(buffer: AlphaBuffer): number {
+  const { width, height, data } = buffer;
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * width * 4;
+    for (let x = 0; x < width; x++) {
+      if (data[rowStart + x * 4 + 3] > ALPHA_THRESHOLD) return y / height;
+    }
+  }
+  return 0;
+}
+
 /** Cells on a mask's long side: about one per CSS px of the tallest figure
  *  a shelf draws (the comfortable band is 216 px), at most 8 KB a mask. */
 export const ALPHA_MASK_MAX_CELLS = 256;
@@ -101,8 +118,15 @@ export function alphaMaskDrawnIn(mask: AlphaMask, u0: number, v0: number, u1: nu
   return false;
 }
 
-const marginCache = new Map<string, number>();
-const pending = new Map<string, Promise<number>>();
+/** A picture's clear margins above and below the figure, as fractions of its height. */
+export interface AlphaMargins {
+  top: number;
+  bottom: number;
+}
+
+const NO_MARGINS: AlphaMargins = { top: 0, bottom: 0 };
+const marginCache = new Map<string, AlphaMargins>();
+const pending = new Map<string, Promise<AlphaMargins>>();
 /** null: measured, but no usable mask (unreadable, or nothing drawn). */
 const maskCache = new Map<string, AlphaMask | null>();
 
@@ -123,13 +147,13 @@ export function getAlphaMask(imageUrl: string): AlphaMask | null | undefined {
   return maskCache.get(imageUrl);
 }
 
-async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
+async function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
   const cached = marginCache.get(imageUrl);
   if (cached !== undefined) return cached;
   const inFlight = pending.get(imageUrl);
   if (inFlight) return inFlight;
 
-  const promise = (async () => {
+  const promise = (async (): Promise<AlphaMargins> => {
     let mask: AlphaMask | null = null;
     try {
       const img = new Image();
@@ -140,20 +164,20 @@ async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
       const canvas = document.createElement('canvas');
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
-      if (canvas.width === 0 || canvas.height === 0) return 0;
+      if (canvas.width === 0 || canvas.height === 0) return NO_MARGINS;
 
       const ctx = canvas.getContext('2d');
-      if (!ctx) return 0;
+      if (!ctx) return NO_MARGINS;
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       mask = computeAlphaMask(imageData);
-      return computeBottomMarginFrac(imageData);
+      return { top: computeTopMarginFrac(imageData), bottom: computeBottomMarginFrac(imageData) };
     } catch {
       // Tainted canvas (cross-origin image without CORS headers), decode
       // failure (broken URL), or no canvas 2D support — degrade to "no
       // correction" (today's object-fit:bottom behavior) rather than crash
       // the shelf over a single bad image.
-      return 0;
+      return NO_MARGINS;
     } finally {
       maskCache.set(imageUrl, mask && mask.drawn > 0 ? mask : null);
       pending.delete(imageUrl);
@@ -174,7 +198,7 @@ async function measureBottomMarginFrac(imageUrl: string): Promise<number> {
  * throws into the render tree.
  */
 export function useBottomMarginFrac(imageUrl: string | undefined): number {
-  const [frac, setFrac] = useState(() => (imageUrl ? (marginCache.get(imageUrl) ?? 0) : 0));
+  const [frac, setFrac] = useState(() => (imageUrl ? (marginCache.get(imageUrl)?.bottom ?? 0) : 0));
 
   useEffect(() => {
     if (!imageUrl) {
@@ -183,12 +207,12 @@ export function useBottomMarginFrac(imageUrl: string | undefined): number {
     }
     const cached = marginCache.get(imageUrl);
     if (cached !== undefined) {
-      setFrac(cached);
+      setFrac(cached.bottom);
       return;
     }
     let cancelled = false;
-    measureBottomMarginFrac(imageUrl).then((measured) => {
-      if (!cancelled) setFrac(measured);
+    measureAlphaMargins(imageUrl).then((measured) => {
+      if (!cancelled) setFrac(measured.bottom);
     });
     return () => {
       cancelled = true;
@@ -199,34 +223,36 @@ export function useBottomMarginFrac(imageUrl: string | undefined): number {
 }
 
 /**
- * The same measurement as useBottomMarginFrac, but null until it is known
- * (a failed measurement is known: 0), so the case can mark a figure as
- * grounded only once its margin is final. No image: 0 at once.
+ * Both clear margins of a figure's picture (true scale needs the one above
+ * the head as well as the one under the feet), from the same canvas read as
+ * useBottomMarginFrac, but null until they are known (a failed measurement is
+ * known: both 0), so the case can mark a figure as grounded only once its
+ * size is final. No image: both 0 at once.
  */
-export function useMeasuredBottomMarginFrac(imageUrl: string | undefined): number | null {
-  const [frac, setFrac] = useState<number | null>(() => (imageUrl ? (marginCache.get(imageUrl) ?? null) : 0));
+export function useMeasuredAlphaMargins(imageUrl: string | undefined): AlphaMargins | null {
+  const [margins, setMargins] = useState<AlphaMargins | null>(() => (imageUrl ? (marginCache.get(imageUrl) ?? null) : NO_MARGINS));
 
   useEffect(() => {
     if (!imageUrl) {
-      setFrac(0);
+      setMargins(NO_MARGINS);
       return;
     }
     const cached = marginCache.get(imageUrl);
     if (cached !== undefined) {
-      setFrac(cached);
+      setMargins(cached);
       return;
     }
-    setFrac(null);
+    setMargins(null);
     let cancelled = false;
-    measureBottomMarginFrac(imageUrl).then((measured) => {
-      if (!cancelled) setFrac(measured);
+    measureAlphaMargins(imageUrl).then((measured) => {
+      if (!cancelled) setMargins(measured);
     });
     return () => {
       cancelled = true;
     };
   }, [imageUrl]);
 
-  return frac;
+  return margins;
 }
 
 /**

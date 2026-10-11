@@ -39,6 +39,7 @@ function figures(figs: Figure[], extra: Partial<Parameters<typeof CabinetScene>[
     tap: JSON.parse(b.dataset.world!) as Box,
     art: JSON.parse(b.dataset.artBox!) as Box,
     grounded: b.dataset.grounded,
+    picture: b.querySelector<HTMLElement>('.cab-figure__box')!,
   }));
 }
 
@@ -55,6 +56,9 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
       // the head: the highest opaque row is the labelled height above the surface
       expect(r.art.y1 - 0.25 * pictureH, r.name).toBeCloseTo(r.tap.surface + labelled, 3);
       expect(r.grounded).toBe('1');
+      // drawn there: the picture rises above the tap box (the figure) by its clear top margin, 1 px per mm
+      expect(parseFloat(r.picture.style.top), r.name).toBeCloseTo(-(r.art.y1 - r.tap.y1), 3);
+      expect(parseFloat(r.picture.style.height), r.name).toBeCloseTo(pictureH, 3);
     }
   });
 

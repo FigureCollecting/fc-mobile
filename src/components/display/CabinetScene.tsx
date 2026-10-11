@@ -35,9 +35,9 @@ import {
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
 import { frameCase, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
-import { figureArt, type FigureArt, type FigureImageRef } from './figureArt';
+import { figureArt, pictureBox, type FigureArt, type FigureImageRef } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
-import { useContactBand, useMeasuredBottomMarginFrac } from './alphaMargin';
+import { useContactBand, useMeasuredAlphaMargins } from './alphaMargin';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
@@ -363,14 +363,14 @@ function SceneFigure({
 }) {
   const { placed, slot, cx } = draw;
   const { item } = placed;
-  const measured = useMeasuredBottomMarginFrac(art.bottomMarginFrac === undefined ? art.alphaUrl : undefined);
+  // the clear margins above and below the figure in its picture: the image list gives the bottom, the alpha says both
+  const measured = useMeasuredAlphaMargins(art.alphaUrl);
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
-  const margin = Math.min(0.5, Math.max(0, art.bottomMarginFrac ?? measured ?? 0));
-  const grounded = art.bottomMarginFrac !== undefined || measured !== null;
-  // the image box is as tall as the figure stands over its own transparent margin
-  const boxH = placed.heightMm / (1 - margin);
-  const boxW = aspect * boxH;
-  const yBottom = slot.topMm - margin * boxH;
+  const grounded = measured !== null;
+  const picture = pictureBox(art.kind, placed.heightMm, aspect, { top: measured?.top ?? 0, bottom: art.bottomMarginFrac ?? measured?.bottom ?? 0 }, item.widthMm);
+  const boxH = picture.heightMm;
+  const boxW = picture.widthMm;
+  const yBottom = slot.topMm - picture.belowMm;
   const z = placed.zMm;
   // the tap box: the figure standing on its surface, never wider than its footprint and half the gap each side,
   // so neighbours' boxes meet at most; the picture hangs from it by its transparent margins and takes no taps
@@ -400,7 +400,14 @@ function SceneFigure({
       >
         <span
           class="cab-figure__box"
-          style={{ left: `${fmt(cx - boxW / 2 - tapX0)}px`, top: '0px', width: `${fmt(boxW)}px`, height: `${fmt(boxH)}px`, pointerEvents: 'none' }}
+          style={{
+            left: `${fmt(cx - boxW / 2 - tapX0)}px`,
+            // the button's top is the figure's head; the picture rises above it by its clear top margin
+            top: `${fmt(slot.topMm + placed.heightMm - (yBottom + boxH))}px`,
+            width: `${fmt(boxW)}px`,
+            height: `${fmt(boxH)}px`,
+            pointerEvents: 'none',
+          }}
         >
           <ArtBody art={art} name={item.figure.name} />
         </span>

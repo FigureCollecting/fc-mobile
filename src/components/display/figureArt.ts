@@ -61,6 +61,42 @@ export function figureArt(figure: Figure, meta: FigureDisplayMeta, image?: Figur
   return { kind: 'framed', url };
 }
 
+/** A clear margin past this fraction of its picture is not believed (a stray speck, a bad mask): the box stays within 10x the figure. */
+export const MAX_MARGIN_FRAC = 0.45;
+
+/** A picture's clear margins above and below the figure, fractions of its height. */
+export interface PictureMargins {
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** The box a figure's picture is drawn in, mm. */
+export interface PictureBox {
+  readonly widthMm: number;
+  readonly heightMm: number;
+  /** How far the picture hangs below the surface: its clear bottom margin. */
+  readonly belowMm: number;
+}
+
+const believed = (frac: number) => (frac > 0 ? Math.min(MAX_MARGIN_FRAC, frac) : 0);
+
+/**
+ * True scale (Ross 09-26): the picture is drawn so that the figure in it,
+ * its opaque rows, stands exactly heightMm tall with its lowest row on the
+ * surface, over the clear margins above and below it. Cut-outs and masked
+ * art keep their shape (their sides are clear); a framed copy or a plate is
+ * an opaque box, drawn no wider than the footprint it is packed by, so it
+ * never reaches over a neighbour.
+ */
+export function pictureBox(kind: FigureArtKind, heightMm: number, aspect: number, margins: PictureMargins, footprintMm: number): PictureBox {
+  const top = believed(margins.top);
+  const bottom = believed(margins.bottom);
+  const boxH = heightMm / (1 - top - bottom);
+  const natural = aspect * boxH;
+  const widthMm = kind === 'framed' || kind === 'plate' ? Math.min(natural, footprintMm) : natural;
+  return { widthMm, heightMm: boxH, belowMm: bottom * boxH };
+}
+
 /** The part of a coordinator.v1.ProductImage the case reads. */
 export interface ProductImageLike {
   readonly url: string;

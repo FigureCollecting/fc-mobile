@@ -249,9 +249,10 @@ describe('pinned script and pinned action on allow-listed build steps', () => {
     [`docker/build-push-action@${SHA.slice(0, 7)}`, ['action-pin', 'token-action']],
     [`docker/build-push-action@${SHA}0`, ['action-pin', 'token-action']],
     [`docker/build-push-action@${'0123456789abcdef'.repeat(3).slice(0, 40)}`, ['action-pin', 'token-action']],
-    [`evil/build-push-action@${SHA}`, ['token-action']],
-    [`docker/build-push-action-x@${SHA}`, ['token-action']],
-    [`xdocker/build-push-action@${SHA}`, ['token-action']],
+    // wk-09c-i3: another action at a full SHA in a token job may also run a pre: stage.
+    [`evil/build-push-action@${SHA}`, ['pre-stage', 'token-action']],
+    [`docker/build-push-action-x@${SHA}`, ['pre-stage', 'token-action']],
+    [`xdocker/build-push-action@${SHA}`, ['pre-stage', 'token-action']],
     [`Docker/build-push-action@${SHA}`, ['token-action']],
   ])('rejects %s on the allowed-action step', (uses, expected) => {
     expect(rules(step('Build and push', `uses: ${uses}`))).toEqual(expected);
@@ -363,7 +364,7 @@ describe("the build action's inputs", () => {
   });
 
   it('takes no input on an allow-listed action that has no input list', () => {
-    const uses = `actions/upload-artifact@${SHA}`;
+    const uses = 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9';
     const allowed = new Map<string, TokenStep>([[stepId('x.yml', 'build', 'Upload'), { kind: 'action', uses }]]);
     const check = (w: string): Rule[] => checkWorkflow('x.yml', parse(step('Upload', `uses: ${uses}${w}`)), allowed).map((v) => v.rule);
     expect(check('')).toEqual([]);
@@ -641,13 +642,7 @@ describe('what may change how a token step runs', () => {
     'run: npm run build',
     'uses: ./.github/actions/local',
     'uses: docker://evil/image',
-    `uses: actions/github-script@${SHA}`,
-    `uses: evil/checkout@${SHA}`,
-    `uses: actions/checkout-x@${SHA}`,
-    `uses: xactions/checkout@${SHA}`,
     'uses: actions/checkout',
-    `uses: evil/login-action@${SHA}`,
-    `uses: docker/login-action-x@${SHA}`,
     // Another spelling of a setup action runs it, but only the plain spelling may come first.
     'uses: actions//checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     'uses: actions/checkout/@3d3c42e5aac5ba805825da76410c181273ba90b1',
@@ -661,6 +656,20 @@ describe('what may change how a token step runs', () => {
       ]);
     },
   );
+
+  it.each([
+    `actions/github-script@${SHA}`,
+    `evil/checkout@${SHA}`,
+    `actions/checkout-x@${SHA}`,
+    `xactions/checkout@${SHA}`,
+    `evil/login-action@${SHA}`,
+    `docker/login-action-x@${SHA}`,
+  ])('flags %s before a token step twice: wrong place, may run a pre: stage', (uses) => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: ${uses}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > step', rule: 'step-order' },
+      { file: 'x.yml', where: 'build > #0 > uses', rule: 'pre-stage' },
+    ]);
+  });
 
   it('accepts the with: inputs the live workflows give the setup actions', () => {
     const before = [

@@ -54,7 +54,8 @@ export type Rule =
   | 'workflow-key'
   | 'scope-env'
   | 'all-env'
-  | 'post-stage';
+  | 'post-stage'
+  | 'pre-stage';
 
 export interface Violation {
   file: string;
@@ -87,6 +88,15 @@ export const ACTION_PINS: ReadonlyMap<string, string> = new Map([
   ['docker/build-push-action', 'c3c9e263c25d99ce0380d002d59b67737d91b0dc'], // v7.4.0
 ]);
 const pinned = (name: string): string => `${name}@${String(ACTION_PINS.get(name))}`;
+/**
+ * The other actions a job with a token step may run, each at one commit whose action.yml files,
+ * nested uses included, have no pre: stage (checked with gh api, as are ACTION_PINS): a pre: stage
+ * runs at job start, before every token step, wherever its step sits.
+ */
+export const LATER_PINS: ReadonlyMap<string, string> = new Map([
+  ['actions/upload-artifact', 'cf430e030ddbb5b0abf93d22962f4752f3646cd9'], // v7.0.2
+  ['aquasecurity/trivy-action', 'ed142fd0673e97e23eac54620cfb913e5ce36c25'], // v0.36.0
+]);
 
 /** The steps that may carry NODE_AUTH_TOKEN in their env: npm installs, the coordinator checkout and image builds. */
 export const TOKEN_STEPS: ReadonlyMap<string, TokenStep> = new Map<string, TokenStep>([
@@ -300,7 +310,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
         }
       }
       // In any job: a setup or build action at any ref but its pinned commit, any other remote
-      // action at anything but a full commit SHA.
+      // action at anything but a full commit SHA; in a token job, at anything but LATER_PINS.
       const action = remoteAction(uses);
       if (action !== undefined) {
         const pin = ACTION_PINS.get(action.name);
@@ -308,6 +318,8 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
           if (action.ref !== pin) flag(where('uses'), 'action-pin');
         } else if (!FULL_SHA.test(action.ref)) {
           flag(where('uses'), action.name.split('/')[0] === 'aquasecurity' ? 'trivy-unpinned' : 'action-sha');
+        } else if (last >= 0 && LATER_PINS.get(action.name) !== action.ref) {
+          flag(where('uses'), 'pre-stage');
         }
       }
     });

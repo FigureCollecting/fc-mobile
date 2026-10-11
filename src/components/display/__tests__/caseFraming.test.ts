@@ -3,12 +3,14 @@ import fc from 'fast-check';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { IN_MM, frameMargins, project, startCameraY } from '../caseCamera';
 import { wallLayout } from '../packCabinets';
+import { sideOverhangMm } from '../cabinetProfile';
 import {
   STEP_BACK_MAX_MM,
   cabinetBox,
   frameCase,
   panLimitsPx,
   swipeCamera,
+  cabinetsInReach,
   wallPages,
   wallReachMm,
   type FramingInput,
@@ -277,3 +279,25 @@ describe('wallReachMm: the stretch of wall that can draw into the frame', () => 
     expect(panned).toBeCloseTo((-100 * 1) / 400, 6);
   });
 });
+
+describe('cabinetsInReach: the cabinets drawn for a stretch of wall', () => {
+  const three = wallLayout([IKEA_KLINGSBO, IKEA_KLINGSBO, IKEA_KLINGSBO]);
+  const feet = sideOverhangMm(IKEA_KLINGSBO);
+
+  it('a cabinet whose splayed feet alone reach into the stretch is drawn; one a few mm farther is not', () => {
+    const mid = three.cabinets[1];
+    expect(feet).toBeGreaterThan(21);
+    expect(mid.leftMm - cabinetBox(mid, 0).x0).toBeCloseTo(feet, 6);
+    // the stretch ends inside the middle cabinet's left foot, short of its body
+    expect(cabinetsInReach(three, [-1000, mid.leftMm - 20])).toEqual([0, 1]);
+    expect(cabinetsInReach(three, [-1000, mid.leftMm - feet - 1])).toEqual([0]);
+    // and from the right: inside its right foot
+    expect(cabinetsInReach(three, [mid.rightMm + 20, 1e6])).toEqual([1, 2]);
+    expect(cabinetsInReach(three, [mid.rightMm + feet + 1, 1e6])).toEqual([2]);
+  });
+
+  it('nothing in reach: nothing drawn', () => {
+    expect(cabinetsInReach(three, [1e6, 2e6])).toEqual([]);
+  });
+});
+

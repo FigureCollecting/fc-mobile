@@ -148,17 +148,38 @@ describe('syncOwnedImages', () => {
 });
 
 describe('fetchImageLists', () => {
-  it('asks in batches of 200 heads, follows every page, and joins a figure\'s rows across pages', async () => {
+  it('asks in batches of 200 heads for pages of 200 rows, follows every page, and joins a figure\'s rows across pages', async () => {
     const heads = Array.from({ length: 201 }, (_, i) => `h${i}`);
-    const getProductImages = vi.fn(async (req: { headIds: string[]; pageToken?: string }) => {
+    const getProductImages = vi.fn(async (req: { headIds: string[]; pageSize?: number; pageToken?: string }) => {
       if (req.headIds.length === 1) return { products: [{ headId: 'h200', images: [img('z')] }], nextPageToken: '' };
       if (!req.pageToken) return { products: [{ headId: 'h0', images: [img('a', { primary: true })] }], nextPageToken: 't2' };
       return { products: [{ headId: 'h0', images: [img('b')] }, { headId: 'h1', images: [img('c')] }], nextPageToken: '' };
     });
     const got = await fetchImageLists({ getProductImages } as never, heads);
-    expect(getProductImages.mock.calls.map(([r]) => [r.headIds.length, r.pageToken ?? ''])).toEqual([[200, ''], [200, 't2'], [1, '']]);
+    expect(getProductImages.mock.calls.map(([r]) => [r.headIds.length, r.pageSize, r.pageToken ?? ''])).toEqual([[200, 200, ''], [200, 200, 't2'], [1, 200, '']]);
     expect([...got.keys()]).toEqual(['h0', 'h1', 'h200']);
     expect(got.get('h0')?.map((i) => i.derivativeId)).toEqual([hex('a'), hex('b')]);
+  });
+
+  it('fits 200 figures of 50 images each in the page budget, as the coordinator pages them (0 = 50 rows, at most 200)', async () => {
+    const heads = Array.from({ length: 200 }, (_, i) => `h${i}`);
+    const getProductImages = vi.fn(async (req: { headIds: string[]; pageSize?: number; pageToken?: string }) => {
+      const rows = req.headIds.flatMap((h) => Array.from({ length: 50 }, (_, n) => ({ h, n })));
+      const size = Math.min(req.pageSize || 50, 200);
+      const start = Number(req.pageToken ?? '0');
+      const products: { headId: string; images: ProductImage[] }[] = [];
+      for (const r of rows.slice(start, start + size)) {
+        const last = products[products.length - 1];
+        const image = img(r.n.toString(16), { primary: r.n === 0 });
+        if (last?.headId === r.h) last.images.push(image);
+        else products.push({ headId: r.h, images: [image] });
+      }
+      return { products, nextPageToken: start + size < rows.length ? String(start + size) : '' };
+    });
+    const got = await fetchImageLists({ getProductImages } as never, heads);
+    expect(getProductImages).toHaveBeenCalledTimes(MAX_IMAGE_PAGES);
+    expect(got.size).toBe(200);
+    expect(got.get('h199')).toHaveLength(50);
   });
 
   it('refuses to follow a spine that never ends, having read exactly MAX_IMAGE_PAGES pages', async () => {

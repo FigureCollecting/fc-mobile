@@ -112,6 +112,22 @@ describe('useOwnedImages', () => {
     expect(result.current.size).toBe(0);
   });
 
+  it('cancels its sync when the case view goes away: the call in flight is aborted, nothing more is asked', async () => {
+    const r = await localRig();
+    let seen: AbortSignal | undefined;
+    r.clients.getProductImages.mockImplementation((_req: unknown, opts?: { signal?: AbortSignal }) => {
+      seen = opts?.signal;
+      return new Promise(() => {});
+    });
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const { unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+    expect(seen?.aborted).toBe(false);
+    unmount();
+    await waitFor(() => expect(seen?.aborted).toBe(true));
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
   it('answers nothing while signed out', async () => {
     const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
     await new Promise((res) => setTimeout(res, 20));

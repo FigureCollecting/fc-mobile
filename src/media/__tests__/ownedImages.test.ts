@@ -13,6 +13,7 @@ import {
   OWNED_MEDIA_CACHE,
   fetchImageLists,
   keptImage,
+  keptImages,
   primaryImage,
   recallImages,
   rememberImages,
@@ -250,5 +251,77 @@ describe('keptImage', () => {
     const storage = fakeCaches();
     expect(await keptImage('h1', storage)).toBeUndefined();
     expect(await keptImage('h1', undefined)).toBeUndefined();
+  });
+});
+
+/** Every Cache Storage call the code makes: an open, or a method on an opened cache. */
+function countCalls(storage: ReturnType<typeof fakeCaches>): string[] {
+  const calls: string[] = [];
+  const open = storage.open.bind(storage);
+  (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+    calls.push(`open ${name}`);
+    const cache = await open(name);
+    return new Proxy(cache, {
+      get: (target, prop) => {
+        const value = (target as unknown as Record<string | symbol, unknown>)[prop];
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          calls.push(`${String(prop)} ${name}`);
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    });
+  };
+  return calls;
+}
+
+describe('a large collection with no image yet costs a few cache calls, not a few per figure', () => {
+  const heads = Array.from({ length: 1200 }, (_, i) => `h${i}`);
+
+  it('syncOwnedImages: nothing per figure when every list is empty and nothing was kept', async () => {
+    const storage = fakeCaches();
+    const calls = countCalls(storage);
+    const result = await syncOwnedImages(heads, async () => new Map(), { storage });
+    expect(result).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0 });
+    expect(calls.length).toBeLessThanOrEqual(6);
+  });
+
+  it('keptImages: nothing per figure when no list was kept, and only the kept ones otherwise', async () => {
+    const storage = fakeCaches();
+    await rememberImages('h7', toCachedImages([img('a', { primary: true })]), storage);
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(url('a'), new Response('img'));
+    const calls = countCalls(storage);
+    const got = await keptImages(heads, storage);
+    expect([...got.keys()]).toEqual(['h7']);
+    expect(got.get('h7')?.url).toBe(url('a'));
+    expect(calls.length).toBeLessThanOrEqual(6);
+    calls.length = 0;
+    expect((await keptImages(heads, fakeCaches())).size).toBe(0);
+  });
+});
+
+describe('cancelling a sync', () => {
+  it('fetchImageLists hands the signal to each call and asks nothing more once it is aborted', async () => {
+    const abort = new AbortController();
+    const getProductImages = vi.fn(async (_req: { headIds: string[] }, _opts?: { signal?: AbortSignal }) => {
+      abort.abort();
+      return { products: [], nextPageToken: '' };
+    });
+    const heads = Array.from({ length: 401 }, (_, i) => `h${i}`);
+    await expect(fetchImageLists({ getProductImages } as never, heads, abort.signal)).rejects.toThrow();
+    expect(getProductImages).toHaveBeenCalledTimes(1);
+    expect(getProductImages.mock.calls[0]![1]).toEqual({ signal: abort.signal });
+  });
+
+  it('syncOwnedImages touches no cache once its signal is aborted', async () => {
+    const storage = fakeCaches();
+    const calls = countCalls(storage);
+    const abort = new AbortController();
+    const fetchLists = async () => {
+      abort.abort();
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    };
+    await expect(syncOwnedImages(['h1'], fetchLists, { storage, signal: abort.signal })).rejects.toThrow();
+    expect(calls).toEqual([]);
   });
 });

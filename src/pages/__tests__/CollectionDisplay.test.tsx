@@ -56,9 +56,9 @@ afterEach(() => {
   localSession.value = undefined;
 });
 
-/** Where a finger lands on a case figure: its drawn part (its box takes no taps). */
+/** Where a finger lands on a case figure: its tap box (the picture hanging from it takes no taps). */
 function drawnPart(name: string): Element {
-  return screen.getByRole('button', { name }).firstElementChild!;
+  return screen.getByRole('button', { name });
 }
 
 describe('Collection page (rebuilt display layer)', () => {

@@ -185,13 +185,13 @@ export function swipeCamera(framing: Framing, wall: WallLayout, dxPx: number): F
 /**
  * CC4, pan mode: how far (CSS px) the drawn picture may slide, left
  * (negative) and right, so the wall's ends never leave the frame margins.
- * [0, 0] when the whole wall already fits.
+ * [0, 0] when the whole wall already sits inside them.
  */
 export function panLimitsPx(framing: Framing, wall: WallLayout): [number, number] {
   const { camera, look } = framing;
   const m = frameMargins(camera.frame);
   const left = project(camera, [wall.leftMm, look[1], 0]).x;
   const right = project(camera, [wall.rightMm, look[1], 0]).x;
-  if (right - left <= camera.frame.width - 2 * m.x) return [0, 0];
+  // a wall narrower than the frame may still start or end off screen: it slides in, never past its ends
   return [Math.min(0, camera.frame.width - m.x - right), Math.max(0, m.x - left)];
 }

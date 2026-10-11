@@ -3,6 +3,7 @@ import { renderHook, waitFor } from '@testing-library/preact';
 import {
   computeBottomMarginFrac,
   useBottomMarginFrac,
+  useMeasuredBottomMarginFrac,
   __clearAlphaMarginCache,
   computeContactBand,
   useContactBand,
@@ -185,6 +186,43 @@ describe('useBottomMarginFrac (canvas-backed, real image measurement)', () => {
     renderHook(() => useBottomMarginFrac('https://example.com/cached.png'));
     // Second mount for the same URL should hit the cache, not re-measure.
     expect(getImageData).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('useMeasuredBottomMarginFrac (null until known, so a screen can wait for grounding)', () => {
+  beforeEach(() => {
+    __clearAlphaMarginCache();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  it('is null while measuring, then the measured margin', async () => {
+    HTMLImageElement.prototype.decode = vi.fn(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 10, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const buf = bufferWithBottomMargin(10, 100, 90);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => buf,
+    } as unknown as CanvasRenderingContext2D);
+    const { result } = renderHook(() => useMeasuredBottomMarginFrac('https://example.com/known.png'));
+    expect(result.current).toBeNull();
+    await waitFor(() => expect(result.current).toBeCloseTo(10 / 100, 5));
+    // a second figure on the same image knows it at once
+    expect(renderHook(() => useMeasuredBottomMarginFrac('https://example.com/known.png')).result.current).toBeCloseTo(0.1, 5);
+  });
+
+  it('a failed measurement is known too: 0, never stuck at null', async () => {
+    HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
+    const { result } = renderHook(() => useMeasuredBottomMarginFrac('https://example.com/broken2.png'));
+    await waitFor(() => expect(result.current).toBe(0));
+  });
+
+  it('no image: 0 at once', () => {
+    expect(renderHook(() => useMeasuredBottomMarginFrac(undefined)).result.current).toBe(0);
   });
 });
 

@@ -4,7 +4,9 @@ import {
   computeBottomMarginFrac,
   computeTopMarginFrac,
   useBottomMarginFrac,
-  useMeasuredAlphaMargins,
+  useAlphaMarginsOf,
+  computeSideMarginFracs,
+  ALPHA_READS_AT_ONCE,
   __clearAlphaMarginCache,
   computeContactBand,
   useContactBand,
@@ -214,7 +216,59 @@ describe('computeTopMarginFrac (true scale: the transparent margin above the fig
   });
 });
 
-describe('useMeasuredAlphaMargins (both margins, null until known, so a screen can wait for them)', () => {
+describe('computeSideMarginFracs: the clear columns left and right of the figure', () => {
+  it('fractions of the image width outside the first and last opaque column', () => {
+    // opaque columns 2..6 of 10: 20 % clear on the left, 30 % on the right
+    expect(computeSideMarginFracs(bufferWithPixels(10, 4, [[2, 1], [6, 3], [4, 0]]))).toEqual({ left: 0.2, right: 0.3 });
+  });
+
+  it('a pixel at or under the alpha threshold is clear, one past it is drawn', () => {
+    expect(computeSideMarginFracs(bufferWithPixels(10, 1, [[1, 0]], 10))).toEqual({ left: 0, right: 0 });
+    expect(computeSideMarginFracs(bufferWithPixels(10, 1, [[1, 0]], 11))).toEqual({ left: 0.1, right: 0.8 });
+  });
+
+  it('opaque to both edges: none; a fully clear or empty image: none', () => {
+    expect(computeSideMarginFracs(bufferWithPixels(4, 2, [[0, 0], [3, 1]]))).toEqual({ left: 0, right: 0 });
+    expect(computeSideMarginFracs(bufferWithPixels(4, 2, []))).toEqual({ left: 0, right: 0 });
+    expect(computeSideMarginFracs({ width: 0, height: 0, data: new Uint8ClampedArray(0) })).toEqual({ left: 0, right: 0 });
+  });
+});
+
+describe('useAlphaMarginsOf: every picture of a list measured, known all at once (one relayout)', () => {
+  /** Each image's alpha by its URL: the canvas reads the image last drawn on it. */
+  function mockPictures(buffers: Record<string, AlphaBuffer>, decode: (src: string) => Promise<void> = () => Promise.resolve()) {
+    HTMLImageElement.prototype.decode = vi.fn(function (this: HTMLImageElement) {
+      return decode(this.src);
+    });
+    let drawn = '';
+    const getImageData = vi.fn(() => buffers[drawn]);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: (img: HTMLImageElement) => {
+        drawn = img.src;
+      },
+      getImageData,
+    } as unknown as CanvasRenderingContext2D);
+    // (the tests above leave these as plain values on the prototype)
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+      configurable: true,
+      get(this: HTMLImageElement) {
+        return buffers[this.src]?.width ?? 0;
+      },
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', {
+      configurable: true,
+      get(this: HTMLImageElement) {
+        return buffers[this.src]?.height ?? 0;
+      },
+    });
+    return getImageData;
+  }
+
+  const A = 'https://example.com/a.png';
+  const B = 'https://example.com/b.png';
+  // a: opaque rows 20..89 and columns 1..7 of a 10 x 100 image; b: rows 0..49, columns 0..9 of 10 x 50
+  const pictures = () => ({ [A]: bufferWithPixels(10, 100, [[1, 20], [7, 89]]), [B]: bufferWithPixels(10, 50, [[0, 0], [9, 49]]) });
+
   beforeEach(() => {
     __clearAlphaMarginCache();
   });
@@ -224,50 +278,106 @@ describe('useMeasuredAlphaMargins (both margins, null until known, so a screen c
     delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
   });
 
-  it('is null while measuring, then the top and bottom margins from ONE canvas read', async () => {
-    HTMLImageElement.prototype.decode = vi.fn(() => Promise.resolve());
-    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 10, configurable: true });
-    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
-    // opaque rows 20..89: 20 % clear above the figure, 10 % below it
-    const buf = bufferWithPixels(10, 100, [[4, 20], [6, 89]]);
-    const getImageData = vi.fn(() => buf);
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-      drawImage: vi.fn(),
-      getImageData,
-    } as unknown as CanvasRenderingContext2D);
-    const { result } = renderHook(() => useMeasuredAlphaMargins('https://example.com/known.png'));
+  it('null while any picture is measuring, then all four margins of every picture, one canvas read each', async () => {
+    const getImageData = mockPictures(pictures());
+    const seen: (ReadonlyMap<string, unknown> | null)[] = [];
+    const { result } = renderHook(() => {
+      const r = useAlphaMarginsOf([A, B]);
+      seen.push(r);
+      return r;
+    });
     expect(result.current).toBeNull();
     await waitFor(() => expect(result.current).not.toBeNull());
-    expect(result.current!.top).toBeCloseTo(0.2, 9);
-    expect(result.current!.bottom).toBeCloseTo(0.1, 9);
-    // a second figure on the same image knows both at once, and the bottom-only hook shares the read
-    const again = renderHook(() => useMeasuredAlphaMargins('https://example.com/known.png')).result.current!;
-    expect(again.top).toBeCloseTo(0.2, 9);
-    expect(again.bottom).toBeCloseTo(0.1, 9);
-    expect(renderHook(() => useBottomMarginFrac('https://example.com/known.png')).result.current).toBeCloseTo(0.1, 9);
-    expect(getImageData).toHaveBeenCalledTimes(1);
+    const a = result.current!.get(A)!;
+    expect([a.top, a.bottom, a.left, a.right].map((v) => Math.round(v * 1e9) / 1e9)).toEqual([0.2, 0.1, 0.1, 0.2]);
+    expect(result.current!.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    // never a part of the list: null, then the whole list, once
+    const known = seen.filter((r) => r !== null);
+    expect(new Set(known).size).toBe(1);
+    expect(known[0]!.size).toBe(2);
+    expect(getImageData).toHaveBeenCalledTimes(2);
   });
 
-  it('a failed measurement is known too: both 0, never stuck at null', async () => {
+  it('waits for the slowest picture: no figure is laid out on a part of the list', async () => {
+    let releaseB!: () => void;
+    mockPictures(pictures(), (src) => (src === B ? new Promise<void>((r) => (releaseB = r)) : Promise.resolve()));
+    const { result } = renderHook(() => useAlphaMarginsOf([A, B]));
+    await waitFor(() => expect(releaseB).toBeTypeOf('function'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current).toBeNull();
+    releaseB();
+    await waitFor(() => expect(result.current?.size).toBe(2));
+  });
+
+  it('known at once when every picture is cached, a part of a measured list too, with no second read', async () => {
+    const getImageData = mockPictures(pictures());
+    const first = renderHook(() => useAlphaMarginsOf([A, B]));
+    await waitFor(() => expect(first.result.current).not.toBeNull());
+    expect(renderHook(() => useAlphaMarginsOf([B, A])).result.current?.size).toBe(2);
+    expect(renderHook(() => useAlphaMarginsOf([B])).result.current?.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    // the grounding hook shares the same read
+    expect(renderHook(() => useBottomMarginFrac(A)).result.current).toBeCloseTo(0.1, 9);
+    expect(getImageData).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed read is known too: all 0, never stuck at null', async () => {
     HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
-    const { result } = renderHook(() => useMeasuredAlphaMargins('https://example.com/broken2.png'));
-    await waitFor(() => expect(result.current).toEqual({ top: 0, bottom: 0 }));
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await waitFor(() => expect(result.current?.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 }));
   });
 
-  it('a new image starts over: null until its own margins are known', async () => {
-    HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
-    const { result, rerender } = renderHook(({ url }) => useMeasuredAlphaMargins(url), { initialProps: { url: 'https://example.com/one.png' } });
-    await waitFor(() => expect(result.current).toEqual({ top: 0, bottom: 0 }));
-    let resolve!: () => void;
-    HTMLImageElement.prototype.decode = vi.fn(() => new Promise<void>((r) => (resolve = r)));
-    rerender({ url: 'https://example.com/two.png' });
-    await waitFor(() => expect(result.current).toBeNull());
-    resolve();
-    await waitFor(() => expect(result.current).not.toBeNull());
+  it('a list with a new picture starts over: null until that one is known too', async () => {
+    mockPictures(pictures(), (src) => (src === B ? new Promise<void>(() => {}) : Promise.resolve()));
+    const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [A] } });
+    await waitFor(() => expect(result.current?.size).toBe(1));
+    rerender({ urls: [A, B] });
+    expect(result.current).toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current).toBeNull();
   });
 
-  it('no image: both 0 at once', () => {
-    expect(renderHook(() => useMeasuredAlphaMargins(undefined)).result.current).toEqual({ top: 0, bottom: 0 });
+  it('a list it no longer shows never lands: the answer is for the list it shows now', async () => {
+    let releaseB!: () => void;
+    mockPictures(pictures(), (src) => (src === B ? new Promise<void>((r) => (releaseB = r)) : Promise.resolve()));
+    const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [B] } });
+    await waitFor(() => expect(releaseB).toBeTypeOf('function'));
+    rerender({ urls: [A] });
+    await waitFor(() => expect(result.current?.size).toBe(1));
+    releaseB();
+    await new Promise((r) => setTimeout(r, 20));
+    expect([...result.current!.keys()]).toEqual([A]);
+  });
+
+  it('no pictures: an empty answer at once', () => {
+    const { result } = renderHook(() => useAlphaMarginsOf([]));
+    expect(result.current?.size).toBe(0);
+  });
+
+  it(`reads at most ${ALPHA_READS_AT_ONCE} pictures at once, however long the list`, async () => {
+    expect(ALPHA_READS_AT_ONCE).toBe(4);
+    const urls = Array.from({ length: 11 }, (_, i) => `https://example.com/p${i}.png`);
+    const buffers = Object.fromEntries(urls.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])]));
+    const waiting: (() => void)[] = [];
+    let reading = 0;
+    let most = 0;
+    mockPictures(buffers, () => {
+      reading++;
+      most = Math.max(most, reading);
+      return new Promise<void>((r) =>
+        waiting.push(() => {
+          reading--;
+          r();
+        }),
+      );
+    });
+    const { result } = renderHook(() => useAlphaMarginsOf(urls));
+    for (let done = 0; done < urls.length; done++) {
+      await waitFor(() => expect(waiting.length).toBeGreaterThan(0));
+      expect(reading).toBeLessThanOrEqual(ALPHA_READS_AT_ONCE);
+      waiting.shift()!();
+    }
+    await waitFor(() => expect(result.current?.size).toBe(urls.length));
+    expect(most).toBe(ALPHA_READS_AT_ONCE);
   });
 });
 

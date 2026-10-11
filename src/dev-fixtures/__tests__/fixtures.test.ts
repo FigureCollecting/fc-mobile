@@ -10,6 +10,7 @@ import {
   getFixtureMultiplier,
   getFixtureFigures,
   getFixtureBranch,
+  getFixtureWidths,
   getFixtureImageRef,
   resolveFixtureArt,
 } from '../fixtures';
@@ -299,5 +300,54 @@ describe('fixture render branch (?fxbranch=masked|framed|silhouette)', () => {
     expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
     expect(new Set(figures.map((f) => f._id)).size).toBe(figures.length);
     for (const f of figures) expect(getDisplayMeta(f).matted).toBe(false);
+  });
+});
+
+describe('fixture labelled widths (?fxwidth=none|narrow): the shapes a real collection brings to the case', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('defaults to the labelled widths: the fixture set itself', () => {
+    for (const query of ['/', '/?fxwidth=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureWidths()).toBe('labelled');
+      expect(getFixtureFigures()).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('none: the same figures without a labelled width, their heights kept', () => {
+    window.history.pushState({}, '', '/?fxwidth=none');
+    expect(getFixtureWidths()).toBe('none');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    figures.forEach((f, i) => {
+      expect(f._id).toBe(FIXTURE_FIGURES[i]._id);
+      expect(f.imageUrl).toBe(FIXTURE_FIGURES[i].imageUrl);
+      expect(f.dimensions).toEqual({ heightMm: FIXTURE_FIGURES[i].dimensions!.heightMm });
+    });
+  });
+
+  it('narrow: each labelled half as wide, well under what its cut-out draws at true scale, as the real sign-off cut-outs are', () => {
+    window.history.pushState({}, '', '/?fxwidth=narrow');
+    expect(getFixtureWidths()).toBe('narrow');
+    const figures = getFixtureFigures();
+    figures.forEach((f, i) => {
+      const label = FIXTURE_FIGURES[i].dimensions!.widthMm!;
+      expect(f.dimensions).toEqual({ heightMm: FIXTURE_FIGURES[i].dimensions!.heightMm, widthMm: Math.round(label / 2) });
+      // the synthetic labels are their true-scale drawn width rounded up (above): half is under it
+      expect(f.dimensions!.widthMm!).toBeLessThan(label - 1);
+    });
+  });
+
+  it('combines with ?fx=N and ?fxbranch', () => {
+    window.history.pushState({}, '', '/?fx=2&fxbranch=masked&fxwidth=none');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
+    expect(new Set(figures.map((f) => f._id)).size).toBe(figures.length);
+    for (const f of figures) {
+      expect(f._id).toMatch(/-masked$/);
+      expect(f.dimensions?.widthMm).toBeUndefined();
+    }
   });
 });

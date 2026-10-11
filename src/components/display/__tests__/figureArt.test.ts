@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { MAX_MARGINS_FRAC, figureArt, imageRefFromProductImage, pictureBox } from '../figureArt';
+import { MAX_MARGINS_FRAC, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox } from '../figureArt';
 import { UNMATTED_META } from '../displayMeta';
 import type { FigureDisplayMeta } from '../displayMeta';
 
@@ -109,6 +109,29 @@ describe('pictureBox: the picture sized so the figure in it stands at its labell
     // narrower than the footprint: their own shape
     expect(pictureBox('framed', 100, 0.75, { top: 0, bottom: 0 }, 300).widthMm).toBeCloseTo(75, 9);
     expect(pictureBox('plate', 100, 0.75, { top: 0, bottom: 0 }, 300).widthMm).toBeCloseTo(75, 9);
+  });
+});
+
+describe('drawnWidthMm: how wide the figure in a cut-out or masked picture draws at true scale (its opaque columns)', () => {
+  it('the picture drawn so the figure stands its labelled height, less its clear columns left and right', () => {
+    const margins = { top: 0.25, bottom: 0.05, left: 0.1, right: 0.2 };
+    expect(drawnWidthMm(180, 0.843, margins)).toBeCloseTo(((0.843 * 180) / 0.7) * 0.7, 9);
+    expect(drawnWidthMm(180, 0.843, margins)).toBeCloseTo(pictureBox('cutout', 180, 0.843, margins, 1).widthMm * (1 - 0.1 - 0.2), 9);
+  });
+
+  it('wider than the picture at its labelled height when the clear rows are tall (Madoka: wings over a small figure)', () => {
+    // a third of the picture clear above the head: the figure draws 1.5x as wide as aspect x height
+    expect(drawnWidthMm(100, 1, { top: 1 / 3, bottom: 0, left: 0, right: 0 })).toBeCloseTo(150, 9);
+  });
+
+  it('no side margins known (none, negative, or none measured): the whole picture width', () => {
+    expect(drawnWidthMm(200, 0.5, { top: 0, bottom: 0 })).toBeCloseTo(100, 9);
+    expect(drawnWidthMm(200, 0.5, { top: 0, bottom: 0, left: -0.2, right: Number.NaN })).toBeCloseTo(100, 9);
+  });
+
+  it(`keeps the ${MAX_MARGINS_FRAC * 100} % cap on the rows, and never goes below 0 however clear the sides say they are`, () => {
+    expect(drawnWidthMm(100, 1, { top: 0.95, bottom: 0.05, left: 0, right: 0 })).toBeCloseTo(1000, 6);
+    expect(drawnWidthMm(100, 1, { top: 0, bottom: 0, left: 0.7, right: 0.6 })).toBe(0);
   });
 });
 

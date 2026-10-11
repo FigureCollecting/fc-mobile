@@ -281,6 +281,40 @@ describe('measureCaseFigure', () => {
     expect(m.heightEstimated).toBe(true);
   });
 
+  describe("with the picture's alpha known (cut-out and masked art): packed by what it draws, never narrower", () => {
+    // a picture as wide as it is tall, a third clear above the figure and a tenth on each side: at 200 mm the figure draws 240 mm wide
+    const drawn = { top: 1 / 3, bottom: 0, left: 0.1, right: 0.1 };
+    const square = { ...UNMATTED_META, aspect: 1 };
+
+    it('a label narrower than the figure draws: the drawn width (the real cut-outs: Madoka 86 mm labelled, 155 mm drawn)', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 120 } }), 0, square, drawn);
+      expect(m.widthMm).toBeCloseTo(240, 9);
+    });
+
+    it('a label wider than the figure draws: the label (its base, its pose)', () => {
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 300 } }), 0, square, drawn).widthMm).toBe(300);
+    });
+
+    it('no label: the drawn width, not the picture at its height', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 200 } }), 0, square, drawn);
+      expect(m.widthMm).toBeCloseTo(240, 9);
+      expect(m.billboardWidthMm).toBeCloseTo(200, 9);
+      // and narrower than the picture when its sides are clear and its rows are not
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200 } }), 0, square, { top: 0, bottom: 0, left: 0.25, right: 0.25 }).widthMm).toBeCloseTo(100, 9);
+    });
+
+    it('alpha not known yet: as before, the label or the picture at its height', () => {
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 120 } }), 0, square).widthMm).toBe(120);
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200 } }), 0, square).widthMm).toBeCloseTo(200, 9);
+    });
+
+    it('a picture that draws nothing wide does not take away the label', () => {
+      const none = { top: 0, bottom: 0, left: 0.6, right: 0.6 };
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 120 } }), 0, square, none).widthMm).toBe(120);
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200 } }), 0, square, none).widthMm).toBeCloseTo(200, 9);
+    });
+  });
+
   it('a corrupt height is capped at 2500 mm', () => {
     expect(measureCaseFigure(fig({ dimensions: { heightMm: 660580570 } }), 0, UNMATTED_META).heightMm).toBe(2500);
   });

@@ -4,16 +4,20 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
-import type { AlphaMargins } from '../alphaMargin';
+import type { PictureMargins } from '../figureArt';
 
 /** What the canvas read of each picture's alpha says, by URL; null while it is still measuring. */
-const measured = vi.hoisted(() => ({ margins: new Map<string, AlphaMargins | null>(), fallback: null as AlphaMargins | null }));
+const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null }));
 
 vi.mock('../alphaMargin', async (importOriginal) => {
   const real = await importOriginal<typeof import('../alphaMargin')>();
   return {
     ...real,
-    useMeasuredAlphaMargins: (url: string | undefined) => (url ? (measured.margins.has(url) ? measured.margins.get(url)! : measured.fallback) : { top: 0, bottom: 0 }),
+    // the whole list or nothing: null while any of its pictures is still measuring
+    useAlphaMarginsOf: (urls: readonly string[]) => {
+      const all = urls.map((u) => (measured.margins.has(u) ? measured.margins.get(u)! : measured.fallback));
+      return all.some((m) => m === null) ? null : new Map(urls.map((u, i) => [u, all[i]!]));
+    },
     useContactBand: () => null,
   };
 });
@@ -34,6 +38,10 @@ interface Box {
 
 function figures(figs: Figure[], extra: Partial<Parameters<typeof CabinetScene>[0]> = {}) {
   const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} {...extra} />);
+  return drawn(container);
+}
+
+function drawn(container: ParentNode) {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('button.cab-figure')).map((b) => ({
     name: b.getAttribute('aria-label')!,
     tap: JSON.parse(b.dataset.world!) as Box,
@@ -88,5 +96,72 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
       expect(r.art.y0).toBeCloseTo(r.tap.surface, 6);
       expect(r.art.y1 - r.art.y0).toBeCloseTo(r.tap.y1 - r.tap.y0, 6);
     }
+  });
+});
+
+/** Neighbours on each surface, left to right, by what they draw: the picture's columns less its clear sides. */
+function expectOpaqueApart(rows: ReturnType<typeof drawn>, sides: { left: number; right: number }) {
+  const bySurface = new Map<number, typeof rows>();
+  for (const r of rows) bySurface.set(r.tap.surface, [...(bySurface.get(r.tap.surface) ?? []), r]);
+  let pairs = 0;
+  for (const row of bySurface.values()) {
+    row.sort((a, b) => a.art.x0 - b.art.x0);
+    for (let i = 1; i < row.length; i++) {
+      const [a, b] = [row[i - 1], row[i]];
+      const aRight = a.art.x1 - sides.right * (a.art.x1 - a.art.x0);
+      const bLeft = b.art.x0 + sides.left * (b.art.x1 - b.art.x0);
+      expect(bLeft, `${a.name} / ${b.name}`).toBeGreaterThanOrEqual(aRight - 1e-6);
+      pairs++;
+    }
+  }
+  expect(pairs).toBeGreaterThan(0);
+}
+
+const unlabelled = (f: Figure) => ({ ...f, dimensions: { heightMm: f.dimensions!.heightMm } }) as Figure;
+const labelled = (widthMm: number) => (f: Figure) => ({ ...f, dimensions: { ...f.dimensions, widthMm } }) as Figure;
+
+describe('CabinetScene: cut-out and masked art packed by what it draws at true scale, so no figure reaches over a neighbour', () => {
+  // tall clear rows above the head and a little at each side: every picture draws wider than aspect x height
+  const margins = { top: 0.3, bottom: 0.05, left: 0.04, right: 0.04 };
+  const masked = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800 });
+
+  it('an unlabelled cut-out: its opaque columns never meet a neighbour\'s', () => {
+    measured.fallback = margins;
+    expectOpaqueApart(figures(FIXTURE_FIGURES.map(unlabelled)), margins);
+  });
+
+  it('masked art without a label: the same, by its mask', () => {
+    measured.fallback = margins;
+    expectOpaqueApart(figures(FIXTURE_FIGURES.map(unlabelled), { imageFor: masked }), margins);
+  });
+
+  it('a label narrower than what the cut-out draws (as the real sign-off cut-outs have) is packed by what it draws', () => {
+    measured.fallback = margins;
+    expectOpaqueApart(figures(FIXTURE_FIGURES.map(labelled(20))), margins);
+  });
+
+  it('a label wider than what it draws is kept: neighbours stand a label apart', () => {
+    measured.fallback = margins;
+    const rows = figures(FIXTURE_FIGURES.slice(0, 3).map(labelled(400)));
+    const centres = rows.map((r) => (r.tap.x0 + r.tap.x1) / 2).sort((a, b) => a - b);
+    for (let i = 1; i < centres.length; i++) expect(centres[i] - centres[i - 1]).toBeGreaterThanOrEqual(400 + 10 - 1e-6);
+  });
+
+  it('one relayout: while any picture is measuring every figure stands by its label, none grounded; then all at once', () => {
+    const figs = FIXTURE_FIGURES.map(labelled(20));
+    measured.fallback = margins;
+    measured.margins.set(figs[4].imageUrl!, null);
+    const onSelect = vi.fn();
+    const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
+    const before = drawn(container);
+    expect(before.map((r) => r.grounded)).toEqual(before.map(() => '0'));
+    // by the 20 mm labels: tap boxes 20 mm wide, 30 mm apart centre to centre
+    const xs = before.filter((r) => r.tap.surface === before[0].tap.surface).map((r) => (r.tap.x0 + r.tap.x1) / 2).sort((a, b) => a - b);
+    expect(xs[1] - xs[0]).toBeCloseTo(30, 6);
+    measured.margins.clear();
+    rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
+    const after = drawn(container);
+    expect(after.map((r) => r.grounded)).toEqual(after.map(() => '1'));
+    expectOpaqueApart(after, margins);
   });
 });

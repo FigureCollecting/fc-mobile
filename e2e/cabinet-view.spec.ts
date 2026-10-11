@@ -354,26 +354,42 @@ for (const branch of ['cut-out', 'masked'] as const) {
   });
 }
 
-test('views switch in place: no figure overlaps another on its surface, the scene keeps its size', async ({ page }) => {
-  const size = FOLD8.find((v) => v.name === 'fold8-open')!;
-  await openCase(page, size, '&fx=3');
-  const sceneBox = await page.locator('.cabinet-scene').boundingBox();
-  for (const view of ['One cabinet', 'One shelf', 'Whole cabinets', 'One cabinet'] as const) {
-    await page.getByRole('button', { name: 'View' }).click();
-    await page.getByRole('radio', { name: view }).click();
-    await page.locator('.bottom-sheet__backdrop').click({ position: { x: 5, y: 5 } });
-    await expect(page.getByRole('radio', { name: view })).toHaveCount(0);
-    await settle(page);
-    expect(await page.locator('.cabinet-scene').boundingBox()).toEqual(sceneBox);
-    await expectNoOverlap(page, view);
-  }
-});
+// the labelled widths as given, none at all, and labels narrower than the cut-outs draw (as the real sign-off cut-outs have)
+for (const widths of ['', 'none', 'narrow'] as const) {
+  test(`views switch in place: no figure overlaps another on its surface, the scene keeps its size${widths ? `, widths ${widths}` : ''}`, async ({ page }) => {
+    const size = FOLD8.find((v) => v.name === 'fold8-open')!;
+    await openCase(page, size, `&fx=3${widths ? `&fxwidth=${widths}` : ''}`);
+    const sceneBox = await page.locator('.cabinet-scene').boundingBox();
+    for (const view of ['One cabinet', 'One shelf', 'Whole cabinets', 'One cabinet'] as const) {
+      await page.getByRole('button', { name: 'View' }).click();
+      await page.getByRole('radio', { name: view }).click();
+      await page.locator('.bottom-sheet__backdrop').click({ position: { x: 5, y: 5 } });
+      await expect(page.getByRole('radio', { name: view })).toHaveCount(0);
+      await settle(page);
+      expect(await page.locator('.cabinet-scene').boundingBox()).toEqual(sceneBox);
+      await expectNoOverlap(page, view);
+    }
+  });
+}
 
 for (const branch of ['', 'masked', 'framed', 'silhouette'] as const) {
   test(`no drawn figure reaches over its neighbour: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
     await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
     await expectNoOverlap(page, branch || 'cut-out');
   });
+}
+
+// what keeps neighbours apart is the case packing by what each picture draws, not labels fitted to the fixtures
+for (const [widths, what] of [
+  ['none', 'no labelled width'],
+  ['narrow', 'labelled narrower than its cut-out draws, as the real sign-off cut-outs are'],
+] as const) {
+  for (const branch of ['', 'masked'] as const) {
+    test(`no drawn figure reaches over its neighbour, ${what}: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
+      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxwidth=${widths}${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
+      await expectNoOverlap(page, `${widths} ${branch || 'cut-out'}`);
+    });
+  }
 }
 
 test('the case ends where the cabinets do: the room fills the rest, nothing stretches (Ross 09-26)', async ({ page }) => {

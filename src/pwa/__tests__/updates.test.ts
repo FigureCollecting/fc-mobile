@@ -397,6 +397,35 @@ describe('checkForUpdate (the Settings action)', () => {
     const check = checkForUpdate();
     expect(await answerAfter(check, INSTALL_WAIT_MS - 1)).toBe('pending');
     expect(await answerAfter(check, 1)).toBe('offline');
+  });
+
+  it('raises the prompt, and arms the takeover reload, when a build still installing at INSTALL_WAIT_MS installs later', async () => {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const reg = registration({ installing: newer });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    const next = new FakeWorker();
+    Object.assign(reg, { installing: next.worker, active });
+    expect(await answerAfter(checkForUpdate(), INSTALL_WAIT_MS)).toBe('offline');
+    expect(updateReady.value).toBe(false);
+    expect(next.listeners).toBe(1);
+    Object.assign(reg, { installing: null, waiting: next.worker });
+    next.become('installed');
+    expect(updateReady.value).toBe(true);
+    expect(next.listeners).toBe(0);
+    container.dispatchEvent(new Event('controllerchange'));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises nothing when a build still installing at INSTALL_WAIT_MS fails later, and stops listening to it', async () => {
+    const next = new FakeWorker();
+    registered(ok(), registration({ active, installing: next.worker }));
+    expect(await answerAfter(checkForUpdate(), INSTALL_WAIT_MS)).toBe('offline');
+    expect(next.listeners).toBe(1);
+    next.become('redundant');
+    expect(updateReady.value).toBe(false);
     expect(next.listeners).toBe(0);
   });
 

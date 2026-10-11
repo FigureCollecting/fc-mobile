@@ -185,17 +185,20 @@ describe('fixture art: committed synthetic stand-ins, real cut-outs only for loc
       expect([clean.width, clean.height, clean.channels]).toEqual([cut.width, cut.height, 3]);
       expect([mask.width, mask.height, mask.channels]).toEqual([cut.width, cut.height, 4]);
       let drawn = 0;
+      let alphaOff = 0;
+      let colourOff = 0;
       for (let y = 0; y < cut.height; y++) {
         for (let x = 0; x < cut.width; x++) {
           const a = cut.rows[y][x * 4 + 3];
-          expect(mask.rows[y][x * 4 + 3]).toBe(a);
+          if (mask.rows[y][x * 4 + 3] !== a) alphaOff++;
           if (a === 255) {
             drawn++;
             // where the figure is solid the clean copy shows the figure itself
-            expect(clean.rows[y].subarray(x * 3, x * 3 + 3)).toEqual(cut.rows[y].subarray(x * 4, x * 4 + 3));
+            for (let c = 0; c < 3; c++) if (clean.rows[y][x * 3 + c] !== cut.rows[y][x * 4 + c]) colourOff++;
           }
         }
       }
+      expect({ name, alphaOff, colourOff }).toEqual({ name, alphaOff: 0, colourOff: 0 });
       expect(drawn, name).toBeGreaterThan(1000);
     }
   });

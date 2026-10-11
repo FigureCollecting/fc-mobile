@@ -15,6 +15,7 @@
  * .env.test), never the git-ignored files.
  */
 import type { Figure } from '@figurecollecting/fc-shared';
+import type { FigureImageRef } from '../components/display/figureArt';
 
 /**
  * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
@@ -75,6 +76,10 @@ const ART: FixtureArt = {
   synthetic: import.meta.glob('./synthetic/*.png', { eager: true, import: 'default', query: '?url' }),
   syntheticOnly: import.meta.env.VITE_FIXTURE_ART === 'synthetic',
 };
+
+/** The masked branch's halves (CASE-ADAPT): an opaque clean copy and a separate mask, both synthetic. */
+const CLEAN: Record<string, string> = import.meta.glob('./synthetic/clean/*.png', { eager: true, import: 'default', query: '?url' });
+const MASK: Record<string, string> = import.meta.glob('./synthetic/mask/*.png', { eager: true, import: 'default', query: '?url' });
 
 function img(name: string): string | undefined {
   return resolveFixtureArt(name, ART);
@@ -270,27 +275,48 @@ export function getFixtureMultiplier(): number {
   }
 }
 
-export type FixtureBranch = 'matted' | 'framed' | 'silhouette';
+export type FixtureBranch = 'matted' | 'masked' | 'framed' | 'silhouette';
 
 const FIXTURE_BRANCH_PARAM = 'fxbranch';
 
 /**
- * Dev-only switch for the case's three render branches: `?fxbranch=framed`
- * draws the fixtures as a real figure without matting data draws today (a
- * framed photo), `?fxbranch=silhouette` as one without an image. Matted
- * (the fixtures as they are) for anything else.
+ * Dev-only switch for the case's render branches: `?fxbranch=masked` draws
+ * the fixtures as the image list will give a masked figure (a clean copy
+ * plus its separate mask, getFixtureImageRef), `?fxbranch=framed` as a real
+ * figure without a mask draws today (its clean copy, framed),
+ * `?fxbranch=silhouette` as one without an image. Matted (the fixtures as
+ * they are: cut-outs) for anything else.
  */
 export function getFixtureBranch(): FixtureBranch {
   const raw = new URLSearchParams(location.search).get(FIXTURE_BRANCH_PARAM);
-  return raw === 'framed' || raw === 'silhouette' ? raw : 'matted';
+  return raw === 'masked' || raw === 'framed' || raw === 'silhouette' ? raw : 'matted';
 }
+
+const artName = (figureId: string) => figureId.replace(/^fx-/, '').replace(/(-x\d+)?(-masked|-framed)?$/, '');
 
 function toBranch(figure: Figure, branch: FixtureBranch): Figure {
   // An id outside the fixture manifest resolves UNMATTED_META, exactly like
   // a real figure without displayMeta.
-  if (branch === 'framed') return { ...figure, _id: `${figure._id}-framed` };
+  const clean = CLEAN[`./synthetic/clean/${artName(figure._id)}.png`];
+  if (branch === 'masked') return { ...figure, _id: `${figure._id}-masked`, imageUrl: clean };
+  if (branch === 'framed') return { ...figure, _id: `${figure._id}-framed`, imageUrl: clean };
   if (branch === 'silhouette') return { ...figure, imageUrl: undefined };
   return figure;
+}
+
+/**
+ * The image list's entry for a fixture of the masked branch (what
+ * GetProductImages will give a figure with a mask): its clean copy, its
+ * mask and their native size. Undefined for every other figure.
+ */
+export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
+  if (!figure._id.endsWith('-masked')) return undefined;
+  const name = artName(figure._id);
+  const url = CLEAN[`./synthetic/clean/${name}.png`];
+  const maskUrl = MASK[`./synthetic/mask/${name}.png`];
+  const meta = FIXTURE_META[`fx-${name}`];
+  if (!url || !maskUrl || !meta) return undefined;
+  return { url, maskUrl, width: meta.width, height: meta.height };
 }
 
 /**

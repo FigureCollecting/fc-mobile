@@ -199,6 +199,37 @@ export function useBottomMarginFrac(imageUrl: string | undefined): number {
 }
 
 /**
+ * The same measurement as useBottomMarginFrac, but null until it is known
+ * (a failed measurement is known: 0), so the case can mark a figure as
+ * grounded only once its margin is final. No image: 0 at once.
+ */
+export function useMeasuredBottomMarginFrac(imageUrl: string | undefined): number | null {
+  const [frac, setFrac] = useState<number | null>(() => (imageUrl ? (marginCache.get(imageUrl) ?? null) : 0));
+
+  useEffect(() => {
+    if (!imageUrl) {
+      setFrac(0);
+      return;
+    }
+    const cached = marginCache.get(imageUrl);
+    if (cached !== undefined) {
+      setFrac(cached);
+      return;
+    }
+    setFrac(null);
+    let cancelled = false;
+    measureBottomMarginFrac(imageUrl).then((measured) => {
+      if (!cancelled) setFrac(measured);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl]);
+
+  return frac;
+}
+
+/**
  * Horizontal contact-band measurement — a SIBLING to computeBottomMarginFrac
  * (same alpha-scan pipeline, independent hook/cache) rather than an
  * extension of it, so the existing vertical-grounding path/tests stay

@@ -50,6 +50,7 @@ const fmt = (v: number): string => {
   const r = Math.round(v * 1e6) / 1e6;
   return Object.is(r, -0) ? '0' : String(r);
 };
+const num = (v: number): number => Number(fmt(v));
 
 /**
  * One flat face: corner `a` (world mm), its local x along `u` and local y
@@ -386,6 +387,7 @@ function SceneFigure({
         data-art={art.kind}
         data-figure-id={item.figure._id}
         data-grounded={grounded ? '1' : '0'}
+        data-world={JSON.stringify({ x0: num(cx - boxW / 2), x1: num(cx + boxW / 2), y0: num(yBottom), y1: num(yBottom + boxH), z: num(z), surface: slot.topMm })}
         onClick={onSelect}
       >
         <ArtBody art={art} name={item.figure.name} />
@@ -617,6 +619,15 @@ export function CabinetScene({
       data-focus={String(focusIdx)}
       data-shelf={String(shelfIdx)}
       data-camera-x={fmt(camera.x)}
+      data-camera={JSON.stringify({
+        x: num(camera.x),
+        y: num(camera.y),
+        z: num(camera.z),
+        pitch: num(camera.pitch),
+        focalPx: num(camera.focalPx),
+        width: camera.frame.width,
+        height: camera.frame.height,
+      })}
       data-pan={String(Math.round(panPx))}
       style={sceneHeight ? { height: `${sceneHeight}px` } : undefined}
       onPointerDown={onPointerDown}

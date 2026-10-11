@@ -8,7 +8,7 @@ import type { StackState } from '../stack/src/stack.js';
 import { expect, test, watchCsp } from '../fixtures';
 import { HANDS_OFF_LAUNCH_ARGS, blockHandsOff } from '../handsOff';
 import type { Edge } from '../stack/src/edge.js';
-import { bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb, type WebContainer } from './web';
+import { bundleImageProbe, bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb, type WebContainer } from './web';
 
 const IMAGE = requireImage('FC_WEB_IMAGE');
 const IMAGE_NEXT = requireImage('FC_WEB_IMAGE_NEXT');
@@ -161,11 +161,12 @@ test('(b) /api reaches the coordinator online, fails offline, and the image 404s
   }
 });
 
-test('(b) derivatives: the one public image address, kept by the worker on a CORS 200 only, and served offline', async ({ context, page }) => {
+test('(b) derivatives: the one public image address, kept by the worker for an <img> on a CORS 200 only, and served offline', async ({ context, page }) => {
   const { origin } = stackState();
   const MEDIA = 'https://images.figurecollecting.com/d';
   const present = `${MEDIA}/${'ab'.repeat(32)}`;
   const missing = `${MEDIA}/${HEX64}`;
+  const fetched = `${MEDIA}/${'ef'.repeat(32)}`;
   const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
   const hits: string[] = [];
   let down = false;
@@ -180,48 +181,88 @@ test('(b) derivatives: the one public image address, kept by the worker on a COR
   });
   await page.goto(`${origin}/`);
   await shellInstalled(page);
-  const get = (url: string, mode: RequestMode = 'cors') =>
-    page.evaluate(([u, m]) => fetch(u, { mode: m as RequestMode, credentials: 'omit' }).then((r) => r.status, (e: Error) => `error ${e.name}`), [url, mode] as const);
+  const get = (url: string) =>
+    page.evaluate((u) => fetch(u, { mode: 'cors', credentials: 'omit' }).then((r) => r.status, (e: Error) => `error ${e.name}`), url);
+  // An <img> of the address, as the app draws one: whether it decoded.
+  const show = (url: string, cors = true) =>
+    page.evaluate(
+      async ([src, c]) => {
+        const img = document.createElement('img');
+        if (c) img.crossOrigin = 'anonymous';
+        img.src = src;
+        document.body.appendChild(img);
+        await img.decode().catch(() => undefined);
+        const ok = img.complete && img.naturalWidth > 0;
+        img.remove();
+        return ok;
+      },
+      [url, cors] as const,
+    );
+  const browsed = () => page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).map((r) => r.url).sort());
+  const owned = () => page.evaluate(async () => (await (await caches.open('fc-owned-media-v1')).keys()).map((r) => r.url).sort());
   const count = (url: string) => hits.filter((h) => h === url).length;
+  // A document keeps the images it decoded and draws them again without a request: each offline
+  // check runs in a fresh one, so what answers it is the worker.
+  const freshDocument = async () => {
+    await page.reload();
+    await shellInstalled(page);
+  };
 
-  // A 404 is never kept: both reach the origin.
-  expect(await get(missing)).toBe(404);
-  expect(await get(missing)).toBe(404);
-  expect(count(missing)).toBe(2);
-  // An opaque (no-cors) answer is never kept either.
-  expect(await get(present, 'no-cors')).toBe(0);
-  expect(await page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).length)).toBe(0);
+  // A 404 is never kept, nor an opaque (no-cors) answer.
+  expect(await show(missing)).toBe(false);
+  expect(await show(present, false)).toBe(true);
+  expect(await browsed()).toEqual([]);
+  // A CORS 200 an <img> shows is kept. Workbox writes the cache after it answers (waitUntil).
+  expect(await show(present)).toBe(true);
+  await expect.poll(browsed).toEqual([present]);
+  // The page's own fetch of an image goes to the origin and is never kept: only what an <img> shows is.
+  expect(await get(fetched)).toBe(200);
 
-  // A CORS 200 is kept, then served with the origin unreachable, and an <img> of it renders offline.
-  expect(await get(present)).toBe(200);
-  // Workbox writes the cache after it answers (waitUntil), so wait for the write before the outage.
-  const keptKeys = () => page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).length);
-  await expect.poll(keptKeys).toBe(1);
   down = true;
-  expect(await get(present)).toBe(200);
-  expect(await get(missing)).toBe('error TypeError');
-  const loaded = await page.evaluate(async (src) => {
-    const img = document.createElement('img');
-    img.crossOrigin = 'anonymous';
-    img.src = src;
-    document.body.appendChild(img);
-    await img.decode().catch(() => undefined);
-    return img.complete && img.naturalWidth > 0;
-  }, present);
-  expect(loaded).toBe(true);
-  expect(count(present)).toBe(2); // the no-cors probe and the one CORS fetch; nothing after the origin went down
-  const cached = await page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).map((r) => r.url));
-  expect(cached).toEqual([present]);
+  await freshDocument();
+  expect(await show(present)).toBe(true);
+  expect(await show(missing)).toBe(false);
+  expect(await get(fetched)).toBe('error TypeError');
+  expect(await browsed()).toEqual([present]);
+  // The no-cors <img> and the CORS one; nothing after the origin went down.
+  expect(count(present)).toBe(2);
 
-  // An owned figure's image (the page's cache, src/media/ownedImages.ts) is served first, offline too.
-  const owned = `${MEDIA}/${'cd'.repeat(32)}`;
+  // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): kept in the owned
+  // cache alone and served first, offline too; a withheld one is deleted from BOTH caches, so it is gone.
   down = false;
-  await page.evaluate(async (u) => {
-    await (await caches.open('fc-owned-media-v1')).add(new Request(u, { mode: 'cors', credentials: 'omit' }));
-  }, owned);
+  await context.addInitScript({ content: await bundleImageProbe() });
+  await freshDocument();
+  type Probe = { syncOwned: (heads: string[], lists: Record<string, { url: string; primary?: boolean }[]>) => Promise<unknown>; kept: (head: string) => Promise<string | null> };
+  const sync = (lists: Record<string, { url: string; primary?: boolean }[]>) =>
+    page.evaluate((l) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.syncOwned(Object.keys(l), l), lists);
+  const kept = (head: string) => page.evaluate((h) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.kept(h), head);
+  const ownedImage = `${MEDIA}/${'cd'.repeat(32)}`;
+  const replacement = `${MEDIA}/${'0d'.repeat(32)}`;
+  // Shown once before the figure was owned: the browsed cache holds it too.
+  expect(await show(ownedImage)).toBe(true);
+  await expect.poll(browsed).toEqual([present, ownedImage].sort());
+  expect(await sync({ h1: [{ url: ownedImage, primary: true }] })).toMatchObject({ figures: 1, images: 1, added: 1, failed: 0 });
+  expect(await owned()).toEqual([ownedImage]);
+  expect(await kept('h1')).toBe(ownedImage);
   down = true;
-  expect(await get(owned)).toBe(200);
-  expect(count(owned)).toBe(1);
+  await freshDocument();
+  const before = count(ownedImage);
+  expect(await get(ownedImage)).toBe(200);
+  expect(await show(ownedImage)).toBe(true);
+  expect(count(ownedImage)).toBe(before);
+
+  // Withheld: the fresh list carries another image. The old one leaves both caches and fails offline.
+  down = false;
+  expect(await sync({ h1: [{ url: replacement, primary: true }] })).toMatchObject({ added: 1, evicted: 1 });
+  // The sync's own fetch of the replacement was never kept by the worker.
+  expect(await browsed()).toEqual([present]);
+  expect(await owned()).toEqual([replacement]);
+  expect(await kept('h1')).toBe(replacement);
+  down = true;
+  await freshDocument();
+  expect(await show(ownedImage)).toBe(false);
+  expect(await get(ownedImage)).toBe('error TypeError');
+  expect(await show(replacement)).toBe(true);
 });
 
 test.describe('(c) build N+1 ships while 2 edits are pending', () => {

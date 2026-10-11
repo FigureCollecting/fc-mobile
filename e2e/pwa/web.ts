@@ -66,18 +66,27 @@ export function openEdge(coordinator: string, web: WebContainer): Promise<Edge> 
 }
 
 /** The real v2 store and UserStore, bundled so a test can queue edits in the page. */
-export async function bundleOutboxProbe(): Promise<string> {
+export function bundleOutboxProbe(): Promise<string> {
+  return bundlePageProbe('./outboxProbe.ts', 'fcOutboxProbe');
+}
+
+/** The app's own owned-image sync, for the page (e2e/pwa/imageProbe.ts). */
+export function bundleImageProbe(): Promise<string> {
+  return bundlePageProbe('./imageProbe.ts', 'fcImageProbe');
+}
+
+async function bundlePageProbe(entry: string, name: string): Promise<string> {
   const out = await build({
     configFile: false,
     logLevel: 'silent',
     build: {
       write: false,
       minify: false,
-      lib: { entry: new URL('./outboxProbe.ts', import.meta.url).pathname, formats: ['iife'], name: 'fcOutboxProbe' },
+      lib: { entry: new URL(entry, import.meta.url).pathname, formats: ['iife'], name },
     },
   });
   const [bundle] = Array.isArray(out) ? out : [out];
   const chunk = (bundle as { output: Array<{ type: string; code?: string }> }).output.find((o) => o.type === 'chunk');
-  if (chunk?.code === undefined) throw new Error('outbox probe did not bundle');
+  if (chunk?.code === undefined) throw new Error(`${entry} did not bundle`);
   return chunk.code;
 }

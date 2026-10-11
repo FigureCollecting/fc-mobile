@@ -186,12 +186,12 @@ const inputsFit = (w: unknown, inputs: Readonly<Record<string, (v: string) => bo
  * before the first @ split on / and \ with empty segments dropped, owner/repo its first two segments
  * (lower-cased: names match case-insensitively), the ref everything after that @.
  */
-function remoteAction(uses: unknown): { owner: string; name: string; ref: string } | undefined {
+function remoteAction(uses: unknown): { name: string; ref: string } | undefined {
   if (typeof uses !== 'string' || LOCAL.test(uses)) return undefined;
   const at = uses.indexOf('@');
   if (at < 0) return undefined;
   const segments = uses.slice(0, at).toLowerCase().split(/[/\\]/).filter((x) => x !== '');
-  return { owner: segments[0] ?? '', name: segments.slice(0, 2).join('/'), ref: uses.slice(at + 1) };
+  return { name: segments.slice(0, 2).join('/'), ref: uses.slice(at + 1) };
 }
 const lines = (run: unknown): string[] =>
   typeof run === 'string' ? run.split('\n').map((l) => l.trim()).filter((l) => l !== '') : [];
@@ -298,7 +298,7 @@ export function checkWorkflow(file: string, workflow: unknown, allowed: Readonly
         if (pin !== undefined) {
           if (action.ref !== pin) flag(where('uses'), 'action-pin');
         } else if (!FULL_SHA.test(action.ref)) {
-          flag(where('uses'), action.owner === 'aquasecurity' ? 'trivy-unpinned' : 'action-sha');
+          flag(where('uses'), action.name.split('/')[0] === 'aquasecurity' ? 'trivy-unpinned' : 'action-sha');
         }
       }
     });

@@ -2,9 +2,10 @@
  * Collection list state in URL search params — same names and pipe-separated
  * list encoding as fc-frontend's useFigureListState (status, sort, order,
  * mfr, dist, scale, origin, cat), so links stay meaningful across web and
- * mobile. Mobile adds: layout (case|rows), density, motif, tag, type.
+ * mobile. Mobile adds: layout (case|rows), density, tag, type. The case's
+ * own look (cabinets, view, swipe) is kept per device in casePrefs.
  *
- * Resolution order for view prefs (layout/density/motif): URL > localStorage
+ * Resolution order for view prefs (layout/density): URL > localStorage
  * > default. Category=Prepainted and type=Figures are PRESELECTED defaults,
  * shown as removable chips; removing one writes the explicit sentinel 'all'
  * so the cleared state survives in the URL.
@@ -13,7 +14,6 @@ import { useCallback, useMemo } from 'preact/hooks';
 import { useSearchParams } from 'wouter';
 import { DEFAULT_DENSITY, isDensity } from '../components/display/density';
 import type { Density } from '../components/display/density';
-import type { CaseMotif } from '../components/display/CaseShelf';
 
 export type LayoutMode = 'case' | 'rows';
 /** The collection's tabs over the default collections (GR 2026-09-26). */
@@ -38,10 +38,8 @@ export interface SortState {
 
 const LS_LAYOUT = 'fc-list-layout';
 const LS_DENSITY = 'fc-list-density';
-const LS_MOTIF = 'fc-list-motif';
 
 const VALID_LAYOUTS: LayoutMode[] = ['case', 'rows'];
-const VALID_MOTIFS: CaseMotif[] = ['detolf-dark', 'glass-clear', 'bookcase-wood'];
 
 export const DEFAULT_CAT = ['Prepainted'];
 export const DEFAULT_TYPE = ['Figures'];
@@ -100,13 +98,6 @@ export function useFigureListParams(options: ListParamOptions = {}) {
     if (isDensity(p)) return p;
     const stored = lsGet(LS_DENSITY);
     return isDensity(stored) ? stored : DEFAULT_DENSITY;
-  }, [params]);
-
-  const motif = useMemo((): CaseMotif => {
-    const p = params.get('motif') as CaseMotif;
-    if (VALID_MOTIFS.includes(p)) return p;
-    const stored = lsGet(LS_MOTIF) as CaseMotif;
-    return VALID_MOTIFS.includes(stored) ? stored : 'detolf-dark';
   }, [params]);
 
   const filters = useMemo(
@@ -175,14 +166,6 @@ export function useFigureListParams(options: ListParamOptions = {}) {
     [update],
   );
 
-  const setMotif = useCallback(
-    (next: CaseMotif) => {
-      lsSet(LS_MOTIF, next);
-      update({ motif: next });
-    },
-    [update],
-  );
-
   const setFilters = useCallback(
     (next: ListFilters) => {
       const list = (arr: string[]): string | null => (arr.length > 0 ? arr.join('|') : null);
@@ -245,7 +228,6 @@ export function useFigureListParams(options: ListParamOptions = {}) {
   return {
     layout,
     density,
-    motif,
     filters,
     sort: sortState.sort,
     order: sortState.order,
@@ -254,7 +236,6 @@ export function useFigureListParams(options: ListParamOptions = {}) {
     setTab,
     setLayout,
     setDensity,
-    setMotif,
     setFilters,
     setSort,
     setLabels,

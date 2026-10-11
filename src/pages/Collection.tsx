@@ -5,7 +5,10 @@ import { SlimHeader } from '../components/layout/SlimHeader';
 import { PullToRefresh } from '../components/ui/PullToRefresh';
 import { ErrorState } from '../components/ui/ErrorState';
 import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
-import { CaseShelf } from '../components/display/CaseShelf';
+import { CabinetScene } from '../components/display/CabinetScene';
+import { CaseTabs, type CaseCard } from '../components/display/CaseTabs';
+import { CaseViewCard } from '../components/display/CaseViewCard';
+import { useCasePrefs } from '../components/display/casePrefs';
 import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
@@ -29,13 +32,15 @@ import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, countActiveFilters } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
-import { getFixtureFigures, isFixtureMode } from '../dev-fixtures/fixtures';
+import { getFixtureFigures, getFixtureImageRef, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
 
 /** Fold-open near-square threshold: at or above this container width, the
  *  figure detail opens as a right-hand pane instead of a full-screen
  *  takeover. A container query (measured width), never a device/UA check. */
 const DUAL_PANE_MIN_WIDTH = 640;
+/** CSS px the cabinet scene leaves free below it: the tab bar (56) and the pull-up tabs (32), plus a gap. */
+const CASE_BOTTOM_RESERVE_PX = 56 + 32 + 4;
 
 /** Shelf-shaped loading skeleton. */
 function SkeletonShelves() {
@@ -97,7 +102,6 @@ export function Collection() {
   const {
     layout,
     density,
-    motif,
     filters,
     sort,
     order,
@@ -106,13 +110,16 @@ export function Collection() {
     setTab,
     setLayout,
     setDensity,
-    setMotif,
     setFilters,
     setSort,
     setLabels,
   } = useFigureListParams({ labelsDefault: !fixtureMode });
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // the figure last opened: the Info tab opens it again
+  const [lastOpened, setLastOpened] = useState<number | null>(null);
+  const [caseCard, setCaseCard] = useState<CaseCard | null>(null);
+  const [casePrefs, setCasePrefs] = useCasePrefs();
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [moveOpen, setMoveOpen] = useState(false);
@@ -159,6 +166,7 @@ export function Collection() {
     (figure: Figure, index: number) => {
       if (!selecting) {
         setViewerIndex(index);
+        setLastOpened(index);
         return;
       }
       setSelected((prev) => {
@@ -218,11 +226,9 @@ export function Collection() {
       <DisplayToggle
         layout={layout}
         density={density}
-        motif={motif}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}
-        onMotif={setMotif}
         onLabels={setLabels}
       />
     </>
@@ -296,14 +302,14 @@ export function Collection() {
             ) : !fixtureMode && tab === 'former' ? (
               <FormerList figures={visible as LocalFigure[]} onOpen={(f) => setViewerIndex(visible.indexOf(f))} />
             ) : shownLayout === 'case' ? (
-              <div class="page-collection__display">
-                <CaseShelf
+              <div class="page-collection__display page-collection__display--case">
+                <CabinetScene
                   figures={visible}
-                  motif={motif}
-                  density={density}
                   onSelect={handleSelect}
+                  prefs={casePrefs}
                   labels={labels}
-                  watermark={<BrandWatermark />}
+                  imageFor={fixtureMode ? getFixtureImageRef : undefined}
+                  bottomReservePx={CASE_BOTTOM_RESERVE_PX}
                 />
               </div>
             ) : (
@@ -353,6 +359,21 @@ export function Collection() {
         onClose={() => setMoveOpen(false)}
       />
 
+      {shownLayout === 'case' && !selecting && (
+        <CaseTabs
+          order={casePrefs.tabOrder}
+          infoEnabled={lastOpened !== null && !!visible[lastOpened]}
+          open={caseCard ?? (filterOpen ? 'refine' : null)}
+          onTab={(tab) => {
+            if (tab === 'view') setCaseCard('view');
+            else if (tab === 'refine') setFilterOpen(true);
+            else if (lastOpened !== null && visible[lastOpened]) setViewerIndex(lastOpened);
+          }}
+        />
+      )}
+
+      <CaseViewCard open={caseCard === 'view'} prefs={casePrefs} onChange={setCasePrefs} onClose={() => setCaseCard(null)} />
+
       <TabbedFilterSheet
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
@@ -392,6 +413,11 @@ const styles = `
   /* justified rows go edge-to-edge */
   .page-collection__display--flush {
     padding: 0 0 var(--space-4);
+  }
+
+  /* the cabinets fill the frame left above the tabs; the room, not padding, takes any spare space */
+  .page-collection__display--case {
+    padding: 0;
   }
 
   /* Fold dual-pane (>= 640px container width): grid condenses left, detail

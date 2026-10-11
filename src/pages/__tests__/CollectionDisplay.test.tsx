@@ -76,7 +76,7 @@ describe('Collection page (rebuilt display layer)', () => {
     await respondWith([makeFigure('1')]);
     const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(Array.from(container.querySelectorAll<HTMLElement>('.case-tabs > [data-tab]')).map((e) => e.dataset.tab)).toEqual([
+    expect(Array.from(container.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
       'view',
       'reserved',
       'dock',

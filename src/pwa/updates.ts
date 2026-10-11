@@ -10,7 +10,14 @@ export const UPDATE_CHECK_MS = 60 * 60 * 1000;
 /** True once a new build is installed and waiting for the user. */
 export const updateReady = signal(false);
 
+/** What a check for a newer build found; Settings words each one. */
+export type UpdateCheck = 'ready' | 'latest' | 'offline' | 'unavailable';
+
+type Registration = Pick<ServiceWorkerRegistration, 'active' | 'installing' | 'waiting' | 'update'>;
+
 let apply: ((reloadPage?: boolean) => Promise<void>) | undefined;
+/** The registered worker's check; unset where there is no service worker. */
+let checkNow: (() => Promise<UpdateCheck>) | undefined;
 
 export interface StartOptions {
   register?: (options: RegisterSWOptions) => (reloadPage?: boolean) => Promise<void>;
@@ -28,6 +35,7 @@ export function startServiceWorker({
   container = navigator.serviceWorker,
   reload = () => window.location.reload(),
 }: StartOptions = {}): void {
+  checkNow = undefined;
   if (!supported) return;
   // Once this page runs over an installed build, a change of controller is a
   // newer build taking over (from this tab or another) and the old precache is
@@ -50,14 +58,18 @@ export function startServiceWorker({
       reload();
     });
   };
+  /** Shows the update prompt for a newer build that waits; its takeover then reloads this page. */
+  const raisePrompt = (): void => {
+    updateReady.value = true;
+    reloadOnTakeover();
+  };
   apply = register({
     immediate: true,
     onNeedRefresh() {
       // The plugin also calls this for a worker another page registered, even the first install,
       // which waits for nothing and claims this page: not an update, and no reload mid-sign-in.
       if (registered !== undefined && registered.active === null) return;
-      updateReady.value = true;
-      reloadOnTakeover();
+      raisePrompt();
     },
     // The reload above covers every page; the plugin's would be a second one.
     onNeedReload() {},
@@ -69,7 +81,7 @@ export function startServiceWorker({
         if (loadedUncontrolled) ownClaim = registration.active;
         reloadOnTakeover();
       }
-      watchForUpdates(swUrl, registration, fetchImpl);
+      checkNow = watchForUpdates(swUrl, registration, fetchImpl, raisePrompt);
     },
     onRegisterError(error) {
       console.warn('[sw] registration failed', error);
@@ -92,25 +104,96 @@ export function reloadToLatest(reload: () => void = () => window.location.reload
   return Promise.resolve();
 }
 
+/**
+ * Look for a newer build now, as the hourly, reconnect and foreground checks do. A newer build
+ * installs and raises the update prompt. Never rejects.
+ */
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return checkNow?.() ?? Promise.resolve('unavailable');
+}
+
+/** How long a check waits for a newer build to finish installing before it gives up. */
+export const INSTALL_WAIT_MS = 30 * 1000;
+
+/** A newer build waits behind the active one; the first build, about to activate, is not one. */
+const newerWaiting = (registration: Registration): boolean =>
+  registration.active !== null && registration.waiting !== null;
+
+/**
+ * A newer build that is installing is ready once installed (it then waits, and the prompt shows).
+ * One that fails to install (a precached asset 404s mid-deploy) turns redundant and nothing waits;
+ * neither that nor one still installing after INSTALL_WAIT_MS is a version to offer. One that
+ * installs after that wait still waits: `installedLate` then raises the prompt for it.
+ */
+function installOutcome(worker: ServiceWorker, installedLate: () => void): Promise<UpdateCheck> {
+  return new Promise((resolve) => {
+    let answered = false;
+    const answer = (result: UpdateCheck): void => {
+      answered = true;
+      resolve(result);
+    };
+    const settle = (): void => {
+      if (worker.state === 'installing') return;
+      clearTimeout(timer);
+      worker.removeEventListener('statechange', settle);
+      const result = worker.state === 'redundant' ? 'offline' : 'ready';
+      if (!answered) answer(result);
+      else if (result === 'ready') installedLate();
+    };
+    const timer = setTimeout(() => answer('offline'), INSTALL_WAIT_MS);
+    worker.addEventListener('statechange', settle);
+    settle();
+  });
+}
+
+/** What the registration holds after a check; the first install is not a newer build. */
+function found(registration: Registration, raisePrompt: () => void): UpdateCheck | Promise<UpdateCheck> {
+  if (registration.active === null) return 'latest';
+  if (registration.waiting !== null) return 'ready';
+  return registration.installing === null ? 'latest' : installOutcome(registration.installing, raisePrompt);
+}
+
 function watchForUpdates(
   swUrl: string,
-  registration: Pick<ServiceWorkerRegistration, 'installing' | 'update'>,
+  registration: Registration,
   fetchImpl: typeof fetch,
-): void {
-  const check = async (): Promise<void> => {
-    if (registration.installing !== null || !navigator.onLine) return;
+  raisePrompt: () => void,
+): () => Promise<UpdateCheck> {
+  /** Asks the browser to look for a newer sw.js; false when the server could not be asked. */
+  const askServer = async (): Promise<boolean> => {
+    if (!navigator.onLine) return false;
     try {
       // update() rejects when the server is down, and an Access login redirect
       // is not a new worker: only a plain 200 for sw.js goes on to update().
       const res = await fetchImpl(swUrl, { cache: 'no-store', headers: { 'cache-control': 'no-cache' } });
-      if (res.status === 200 && !res.redirected) await registration.update();
+      if (res.status !== 200 || res.redirected) return false;
+      await registration.update();
+      return true;
     } catch {
       // Offline or mid-deploy; the next check retries.
+      return false;
     }
+  };
+  const look = async (): Promise<UpdateCheck> => {
+    // A build already installing is the newest one there is: wait for it rather than ask again.
+    if (registration.installing === null && !(await askServer())) {
+      // A newer build already waiting is ready (its prompt is up) whatever the network.
+      return newerWaiting(registration) ? 'ready' : 'offline';
+    }
+    return found(registration, raisePrompt);
+  };
+  // workbox-window stops following new builds after the first one it treats as external (another page's,
+  // a second one, or one found over a minute after register), so it can miss the next one, as after a
+  // build that failed mid-deploy: every check that finds a newer build ready raises the prompt.
+  const check = async (): Promise<UpdateCheck> => {
+    const result = await look();
+    if (result === 'ready') raisePrompt();
+    return result;
   };
   setInterval(() => void check(), UPDATE_CHECK_MS);
   window.addEventListener('online', () => void check());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void check();
   });
+  return check;
 }

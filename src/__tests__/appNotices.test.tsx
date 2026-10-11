@@ -40,6 +40,19 @@ describe('app-level PWA notices', () => {
     expect(await screen.findByText(/a new version is ready/i)).toBeInTheDocument();
   });
 
+  it('names the build once it has replaced the last one seen here, over any screen', async () => {
+    localStorage.setItem('fc-last-build', `before-${import.meta.env.VITE_BUILD_ID}`);
+    renderWithProviders(<App />, { initialPath: '/' });
+    const notice = await screen.findByText(`Updated to build ${import.meta.env.VITE_BUILD_ID}`);
+    expect(notice.closest('.pwa-notices')).not.toBeNull();
+  });
+
+  it('says nothing of an update on the first run here', async () => {
+    renderWithProviders(<App />, { initialPath: '/' });
+    expect(await screen.findByText('Sign in to see your collection')).toBeInTheDocument();
+    expect(screen.queryByText(/updated to build/i)).toBeNull();
+  });
+
   it("asks an iOS tab to install before sign-in, counting the edits this tab's outbox holds", async () => {
     platform.isIosBrowserTab.mockReturnValue(true);
     const { engine } = fake.sync as Awaited<ReturnType<typeof fakeBrowserSync>>;

@@ -811,6 +811,22 @@ describe('nothing after a token step that runs an action', () => {
     expect(rules('jobs:\n  t:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - run: npm test\n')).toEqual([]);
   });
 
+  // The header's text-check caveat: a run: step that reaches a runner file another way may only
+  // sit where nothing after it holds the token.
+  it('leaves a run: step that reaches $GITHUB_PATH another way alone only after the last token run: step', () => {
+    const indirect = `      - name: Tidy\n        run: 'v=GITHUB_; v="\${v}PATH"; echo "$PWD/bin" >> "\${!v}"'\n`;
+    expect(rules(tokenJob() + indirect)).toEqual([]);
+    expect(rules(tokenJob('', indirect))).toEqual(['step-order']);
+    expect(rules(actionJob(indirect))).toEqual(['post-stage']);
+  });
+
+  it('flags setup-node with the token in its env, which would export it job-wide, before or after the token step', () => {
+    const setup = `      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with:\n          registry-url: https://npm.pkg.github.com\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n`;
+    // Before it, the install that follows is also flagged: setup-node's post stage would hold the token.
+    expect(rules(tokenJob('', setup))).toEqual(['non-install-step', 'post-stage', 'setup-with']);
+    expect(rules(tokenJob() + setup)).toEqual(['non-install-step']);
+  });
+
   it('flags another job only for its own steps', () => {
     expect(rules(`${actionJob()}  later:\n    needs: build\n    steps:\n      - run: npm test\n`)).toEqual([]);
   });

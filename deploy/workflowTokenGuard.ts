@@ -5,28 +5,36 @@
 // two coordinator ones (kind checkout) may run a repo script, npm --prefix e2e/stack run checkout;
 // an install entry may not. The image builds run the repo's Dockerfile, which this guard does not
 // read: the build action takes only the with: inputs in ACTION_WITH (context . and no file, builder
-// or extra context). Nothing else may change how a token step runs: its keys are allow-listed (no shell or
-// working-directory), its env holds the token and nothing else, its job has no container, services
-// or defaults, the job and workflow env hold only the image names in SCOPE_ENV, and before the
-// job's last token step only other token steps and the setup actions in SETUP_ACTION run, with only
-// the with: inputs in SETUP_WITH and no env. No run: step of that job writes $GITHUB_ENV or
-// $GITHUB_PATH (the pinned setup-node itself adds node to $GITHUB_PATH, and with registry-url sets
-// NPM_CONFIG_USERCONFIG), and a token step's run: writes no runner file (the build action sets its
-// own outputs and state). The token is never workflow- or job-wide, its value never in with: or
-// run: text (secret-envs and --secret name it), never under a second env name. Every env is a plain
-// mapping, so the guard can read its names. A secrets ref must name one secret (secrets.NAME or
-// secrets['NAME']), and a token step's env refs one variable; anything else (toJSON(secrets),
-// secrets.*, a computed index) and secrets: inherit hand over every secret; a reusable workflow's
-// secrets: is a mapping of named secrets other than the token. Names match case-insensitively
-// (secret names are). A step's remote action is named the way GitHub's runner names it: the path
-// before the first @, split on / and \ with empty segments dropped, gives owner/repo; the ref after
-// that @ is compared whole. The setup and build actions in ACTION_PINS run at their pinned commit in
-// every workflow step that names them; every other remote action, aquasecurity's included
-// (GHSA-69fq-xp46-6x23), names a full 40-hex commit, and which repo that commit is on is left to
-// review (a fork's commit resolves too). Not judged: local paths (./, .\), docker:// images, a uses
-// with no @ (a $/ path, or a remote one GitHub rejects), job-level uses, and the uses inside an
-// action, which are that action's own (the pinned trivy-action's setup-trivy runs actions/checkout
-// v6.0.1, pinned by SHA).
+// or extra context). A token step's keys are allow-listed (no shell or working-directory), its env
+// holds the token and nothing else, its job has no container, services or defaults, and the job and
+// workflow env hold only the image names in SCOPE_ENV. Before the job's last token step only other
+// token steps and the setup actions in SETUP_ACTION are listed, with only the with: inputs in
+// SETUP_WITH and no env (setup-node exports NODE_AUTH_TOKEN job-wide when its own env holds it).
+// Actions also run outside their place in the list, so in that job every remote action is in
+// ACTION_PINS or LATER_PINS at its one commit, each checked with gh api to have no pre: stage (a
+// pre: stage runs at job start, before every token step; a local action runs none, a docker://
+// image has none), and no step follows a token step that runs an action (its post stage runs after
+// every later step of the job, with the step's env and so the token). No run: step of that job
+// names $GITHUB_ENV, $GITHUB_PATH, ::set-env or ::add-path (a text check: a run: step can reach
+// them another way, and then reaches only what runs after it, which holds no token), and a token
+// step's run: names no runner file. The pinned actions write their own: setup-node adds node to
+// $GITHUB_PATH and with registry-url sets NPM_CONFIG_USERCONFIG, metadata-action sets
+// DOCKER_METADATA_OUTPUT_* in $GITHUB_ENV, and the build action sets its outputs and state and, in
+// its post stage, writes the job summary and uploads a build record. The token is never workflow-
+// or job-wide, its value never in with: or run: text (secret-envs and --secret name it), never
+// under a second env name. Every env is a plain mapping, so the guard can read its names. A secrets
+// ref must name one secret (secrets.NAME or secrets['NAME']), and a token step's env refs one
+// variable; anything else (toJSON(secrets), secrets.*, a computed index) and secrets: inherit hand
+// over every secret; a reusable workflow's secrets: is a mapping of named secrets other than the
+// token. Names match case-insensitively (secret names are). A step's remote action is named the way
+// GitHub's runner names it: the path before the first @, split on / and \ with empty segments
+// dropped, gives owner/repo; the ref after that @ is compared whole. The setup and build actions in
+// ACTION_PINS run at their pinned commit in every workflow step that names them; every other remote
+// action, aquasecurity's included (GHSA-69fq-xp46-6x23), names a full 40-hex commit, and which repo
+// a commit outside the pins is on is left to review (a fork's commit resolves too). Not judged:
+// local paths (./, .\), docker:// images, a uses with no @ (a $/ path, or a remote one GitHub
+// rejects), job-level uses, and the uses inside an action, which are that action's own (the pinned
+// trivy-action's setup-trivy runs actions/checkout v6.0.1, pinned by SHA).
 
 export type Rule =
   | 'workflow-env'

@@ -22,22 +22,27 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { deny
 // Derivatives and masks on the one public image address. The owned figures' images come first,
 // from the cache the page fills and evicts with the collection (src/media/ownedImages.ts). Any other
 // image an <img> shows is CacheFirst in its own bounded cache. The page's own fetch of an image (the
-// owned sync's Cache.add) goes to the origin and is never stored here a second time: its bytes live
-// in the owned cache alone, so the sync's eviction leaves no copy behind (e2e/pwa (b)). Only a CORS
-// 200 is kept: an opaque response (status 0) can be neither measured nor composited, and costs ~7 MB
-// of quota each. Both caches ignore Vary: the origin sends Vary: Origin, and an <img crossorigin>
-// request then misses a response a fetch() stored (measured in e2e/pwa (b)); the bytes are
-// content-addressed and a worker serves one origin.
+// owned sync's Cache.add) goes to the origin and is never stored here a second time. Every fetch this
+// route sends is cache 'no-store': the origin answers immutable, and a copy in the browser's HTTP cache
+// would outlive the sync's eviction and answer offline. So the worker's caches are the only store, and
+// the sync's eviction leaves no copy behind (src/sw/__tests__/sw.test.ts pins the fetches; e2e/pwa (b)
+// runs with the HTTP cache off, as every Playwright route turns it off, and proves the worker's caches).
+// Only a CORS 200 is kept: an opaque response (status 0) can be neither measured nor composited, and
+// costs ~7 MB of quota each. Both caches ignore Vary: the origin sends Vary: Origin, and an <img
+// crossorigin> request then misses a response a fetch() stored (measured in e2e/pwa (b)); the bytes
+// are content-addressed and a worker serves one origin.
 const IGNORE_VARY = { ignoreVary: true };
+const NO_STORE: RequestInit = { cache: 'no-store' };
 const browsed = new CacheFirst({
   cacheName: BROWSED_MEDIA_CACHE,
   matchOptions: IGNORE_VARY,
+  fetchOptions: NO_STORE,
   plugins: [new CacheableResponsePlugin({ statuses: [200] }), new ExpirationPlugin({ maxEntries: 200, purgeOnQuotaError: true })],
 });
 registerRoute(isDerivativeRequest, async (options: { request: Request }) => {
   const owned = await (await self.caches.open(OWNED_MEDIA_CACHE)).match(options.request, IGNORE_VARY);
   if (owned !== undefined) return owned;
-  return options.request.destination === 'image' ? browsed.handle(options as never) : fetch(options.request);
+  return options.request.destination === 'image' ? browsed.handle(options as never) : fetch(options.request, NO_STORE);
 });
 
 clientsClaim();

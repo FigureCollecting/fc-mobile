@@ -4,9 +4,11 @@
 //                       (address, size, role, primary, mask address, grounding). A fresh list REPLACES
 //                       the record (catalog.proto DISPLAY RESTRICTIONS).
 //   fc-owned-media-v1   the bytes of each owned figure's primary image and its mask, fetched by a CORS
-//                       request without credentials. The service worker reads it FIRST for the public
-//                       image address and sends this fetch to the origin, never into its own cache
-//                       (src/sw.ts), so the bytes live here only.
+//                       request without credentials or the browser's HTTP cache (cache 'no-store': the
+//                       origin answers immutable, and a copy there would outlive an eviction here). The
+//                       service worker reads it FIRST for the public image address and sends this fetch
+//                       to the origin, never into its own caches nor the HTTP cache (src/sw.ts), so the
+//                       bytes live here only.
 //   fc-derivatives-v2   the worker's cache of what an <img> showed (BROWSED_MEDIA_CACHE). The sync
 //                       deletes from it too every address a kept list named and the fresh lists no
 //                       longer carry.
@@ -213,7 +215,7 @@ export async function syncOwnedImages(
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
     for (let next = missing.shift(); next !== undefined && options.signal?.aborted !== true; next = missing.shift()) {
       try {
-        await media.add(new Request(next, { mode: 'cors', credentials: 'omit' }));
+        await media.add(new Request(next, { mode: 'cors', credentials: 'omit', cache: 'no-store' }));
         result.added += 1;
       } catch {
         result.failed += 1;

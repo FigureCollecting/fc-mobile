@@ -173,6 +173,24 @@ describe('what a completed sync leaves alone', () => {
   });
 });
 
+describe('the case view\'s own answer', () => {
+  it('is not dropped by its own sync: a sync over an earlier answer (ten minutes on) runs once', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const client = appQueryClient();
+    // A sync that dropped its own answer would sync again, endlessly: the coordinator stops answering after 3.
+    r.clients.getProductImages.mockImplementation(async () => (r.clients.getProductImages.mock.calls.length > 3 ? new Promise(() => {}) : listOf(B)));
+    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(B));
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    await act(() => client.refetchQueries({ queryKey: ['local', 'owned-images'] }));
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    await settle();
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+    expect(result.current.get(headOf(0))?.url).toBe(B);
+  });
+});
+
 describe('a sync that does not complete', () => {
   it('drops no answer: offline the figure page still answers the kept image, its bytes still on the device', async () => {
     const r = await localRig();

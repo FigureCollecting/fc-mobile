@@ -26,6 +26,14 @@ describe('JustifiedRows (Display B)', () => {
     }
   });
 
+  it('asks for every image with crossorigin anonymous, a CORS request (src/sw.ts)', () => {
+    const figs = FIXTURE_FIGURES.filter((f) => f.imageUrl).slice(0, 3);
+    const { container } = renderWithProviders(<JustifiedRows figures={figs} density="compact" />);
+    const imgs = [...container.querySelectorAll('.jrows__img')];
+    expect(imgs).toHaveLength(3);
+    for (const img of imgs) expect(img).toHaveAttribute('crossorigin', 'anonymous');
+  });
+
   it('draws the placeholder plate, with no caption, for a figure whose image fails to load', async () => {
     const figs = FIXTURE_FIGURES.filter((f) => f.imageUrl).slice(0, 2);
     const { container } = renderWithProviders(<JustifiedRows figures={figs} density="compact" labels />);

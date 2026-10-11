@@ -456,10 +456,50 @@ describe('checkForUpdate (the Settings action)', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('raises it from the hourly, reconnect and foreground checks too', async () => {
-    registered(ok(), registration({ active, waiting: newer }));
-    await vi.advanceTimersByTimeAsync(UPDATE_CHECK_MS);
+  /**
+   * A page that registered before any build was active, so no takeover reload is armed yet; the first
+   * build has since activated, and update() now leaves a newer build waiting.
+   */
+  function pageWhoseUpdateLeavesNewerWaiting() {
+    const f = fakeRegister();
+    const container = new EventTarget();
+    const reload = vi.fn();
+    startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
+    const reg = registration({ installing: newer });
+    f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
+    Object.assign(reg, { installing: null, active });
+    reg.update.mockImplementation(async () => void Object.assign(reg, { waiting: {} as ServiceWorker }));
+    const takeOver = () => container.dispatchEvent(new Event('controllerchange'));
+    return { reg, reload, takeOver };
+  }
+
+  it.each([
+    ['hourly', () => vi.advanceTimersByTimeAsync(UPDATE_CHECK_MS)],
+    [
+      'reconnect (online)',
+      () => {
+        window.dispatchEvent(new Event('online'));
+        return vi.advanceTimersByTimeAsync(0);
+      },
+    ],
+    [
+      'foreground (visibilitychange to visible)',
+      () => {
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+        document.dispatchEvent(new Event('visibilitychange'));
+        return vi.advanceTimersByTimeAsync(0);
+      },
+    ],
+  ])('raises it, and arms the takeover reload, from the %s check too', async (_which, runCheck) => {
+    const { reg, reload, takeOver } = pageWhoseUpdateLeavesNewerWaiting();
+    // The first build claiming the page: nothing is armed before the check, so no reload.
+    takeOver();
+    expect(reload).not.toHaveBeenCalled();
+    await runCheck();
+    expect(reg.update).toHaveBeenCalledTimes(1);
     expect(updateReady.value).toBe(true);
+    takeOver();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it('is not a new version when update() installs the first build (no active build)', async () => {

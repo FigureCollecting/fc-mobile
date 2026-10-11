@@ -219,6 +219,31 @@ describe('CabinetScene: views and navigation', () => {
     expect(screen.getByRole('button', { name: 'Shelf below' })).toBeDisabled();
   });
 
+  it('a long wall draws only the cabinets the camera can see, in either swipe mode', () => {
+    // about 1,200 figures: some hundred cabinets along the wall
+    const lots = getFixtureFigures(170);
+    for (const swipe of ['camera', 'pan'] as const) {
+      for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        const { host } = scene(lots, { swipe, view });
+        const drawn = host.querySelectorAll('.cab').length;
+        expect(drawn, `${swipe} ${view}`).toBeGreaterThan(0);
+        expect(drawn, `${swipe} ${view}`).toBeLessThanOrEqual(8);
+        expect(figureButtons(host).length, `${swipe} ${view}`).toBeLessThanOrEqual(8 * 16);
+        cleanup();
+      }
+    }
+  });
+
+  it('pan mode: the cabinets the slid picture brings into view are drawn', () => {
+    const lots = getFixtureFigures(40);
+    const { host } = scene(lots, { swipe: 'pan', view: 'cabinet' });
+    const before = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+    drag(host, -2000);
+    const after = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+    expect(Number(host.dataset.pan)).toBeLessThan(0);
+    expect(Math.max(...after)).toBeGreaterThan(Math.max(...before));
+  });
+
   it('with nothing to show it still stands one empty cabinet', () => {
     const { host } = scene([]);
     expect(host.querySelectorAll('.cab')).toHaveLength(1);

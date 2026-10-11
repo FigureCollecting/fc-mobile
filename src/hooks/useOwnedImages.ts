@@ -3,12 +3,13 @@
 // the owned figures (src/media/ownedImages.ts: their lists replaced, their primary images and masks
 // fetched, everything else evicted); out of reach, or when that sync fails, what the last one kept
 // stands and nothing more is asked. A figure answers its image only while the bytes are on the device;
-// one without is absent, and the case draws its plate.
+// one without is absent, and the case draws its plate. A collection with no image costs a few cache
+// calls, not a few per figure, and a sync stops when the case view goes away.
 import { useQuery } from '@tanstack/react-query';
 import { useCallback } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
-import { fetchImageLists, keptImage, syncOwnedImages, MAX_OWNED_FIGURES, type CachedImage } from '../media/ownedImages';
+import { fetchImageLists, keptImages, syncOwnedImages, MAX_OWNED_FIGURES, type CachedImage } from '../media/ownedImages';
 import { useOnlineStatus } from './useOnlineStatus';
 
 const EMPTY: ReadonlyMap<string, CachedImage> = new Map();
@@ -25,21 +26,19 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
   const heads = useSnapshot(ownedHeads).data;
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: ['local', 'owned-images', reachable, heads?.join(',') ?? ''],
-    queryFn: async () => {
+    // The query's signal is consumed, so a sync stops (its call in flight aborted, no cache touched)
+    // when the case view goes away or a newer one replaces it.
+    queryFn: async ({ signal }) => {
       const owned = (heads ?? []).slice(0, MAX_OWNED_FIGURES);
       if (reachable) {
         try {
-          await syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h));
-        } catch {
+          await syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal });
+        } catch (err) {
+          if (signal.aborted) throw err;
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
         }
       }
-      const out = new Map<string, CachedImage>();
-      for (const head of owned) {
-        const image = await keptImage(head);
-        if (image !== undefined) out.set(head, image);
-      }
-      return out;
+      return keptImages(owned);
     },
     enabled: session !== undefined && phase === 'signed-in' && heads !== undefined,
     staleTime: 10 * 60_000,

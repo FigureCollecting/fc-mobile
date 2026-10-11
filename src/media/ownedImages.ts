@@ -84,10 +84,8 @@ export async function rememberImages(headId: string, list: readonly CachedImage[
   else await cache.put(listKey(headId), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
 }
 
-/** A figure's last image list, or undefined when none is kept. */
-export async function recallImages(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage[] | undefined> {
-  if (storage === undefined) return undefined;
-  const res = await (await storage.open(IMAGE_LISTS_CACHE)).match(listKey(headId));
+async function readList(records: Cache, headId: string): Promise<CachedImage[] | undefined> {
+  const res = await records.match(listKey(headId));
   if (res === undefined) return undefined;
   try {
     return JSON.parse(await res.text()) as CachedImage[];
@@ -96,32 +94,58 @@ export async function recallImages(headId: string, storage: CacheStorage | undef
   }
 }
 
-/**
- * A figure's primary as kept, but only while its bytes are on the device: a kept list whose image
- * never cached (or was evicted) answers nothing, and the figure is drawn as its plate.
- */
-export async function keptImage(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage | undefined> {
+/** A figure's last image list, or undefined when none is kept. */
+export async function recallImages(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage[] | undefined> {
   if (storage === undefined) return undefined;
-  const image = primaryImage((await recallImages(headId, storage)) ?? []);
-  if (image === undefined) return undefined;
-  const bytes = await (await storage.open(OWNED_MEDIA_CACHE)).match(image.url, IGNORE_VARY);
-  return bytes === undefined ? undefined : image;
+  return readList(await storage.open(IMAGE_LISTS_CACHE), headId);
+}
+
+/**
+ * Each figure's primary as kept, but only while its bytes are on the device: a kept list whose image
+ * never cached (or was evicted) answers nothing, and the figure is drawn as its plate. Reads only the
+ * figures that have a kept list, so a collection with no image costs two cache calls.
+ */
+export async function keptImages(heads: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<Map<string, CachedImage>> {
+  const out = new Map<string, CachedImage>();
+  if (storage === undefined) return out;
+  const records = await storage.open(IMAGE_LISTS_CACHE);
+  const recorded = new Set((await records.keys()).map((k) => headOfKey(k.url)));
+  const wanted = heads.filter((h) => recorded.has(h));
+  if (wanted.length === 0) return out;
+  const media = await storage.open(OWNED_MEDIA_CACHE);
+  for (const head of wanted) {
+    const image = primaryImage((await readList(records, head)) ?? []);
+    if (image !== undefined && (await media.match(image.url, IGNORE_VARY)) !== undefined) out.set(head, image);
+  }
+  return out;
+}
+
+/** One figure's kept image (keptImages). */
+export async function keptImage(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage | undefined> {
+  return (await keptImages([headId], storage)).get(headId);
 }
 
 /** The client's slice of CatalogService.GetProductImages. */
 export interface ImageListClient {
-  getProductImages(request: { headIds: string[]; pageToken?: string }): Promise<{ products: { headId: string; images: ProductImage[] }[]; nextPageToken: string }>;
+  getProductImages(
+    request: { headIds: string[]; pageToken?: string },
+    options?: { signal?: AbortSignal },
+  ): Promise<{ products: { headId: string; images: ProductImage[] }[]; nextPageToken: string }>;
 }
 
-/** Every head's image list, in batches of 200 heads, every page followed, a head's rows joined across pages. */
-export async function fetchImageLists(client: ImageListClient, heads: readonly string[]): Promise<Map<string, ProductImage[]>> {
+/**
+ * Every head's image list, in batches of 200 heads, every page followed, a head's rows joined across
+ * pages. An aborted signal stops it between calls and aborts the call in flight.
+ */
+export async function fetchImageLists(client: ImageListClient, heads: readonly string[], signal?: AbortSignal): Promise<Map<string, ProductImage[]>> {
   const out = new Map<string, ProductImage[]>();
   for (let i = 0; i < heads.length; i += MAX_HEADS_PER_CALL) {
     const headIds = heads.slice(i, i + MAX_HEADS_PER_CALL);
     let pageToken = '';
     for (let pages = 0; ; pages += 1) {
+      signal?.throwIfAborted();
       if (pages === MAX_IMAGE_PAGES) throw new Error(`GetProductImages did not end within ${MAX_IMAGE_PAGES} pages`);
-      const res = await client.getProductImages(pageToken === '' ? { headIds } : { headIds, pageToken });
+      const res = await client.getProductImages(pageToken === '' ? { headIds } : { headIds, pageToken }, signal === undefined ? undefined : { signal });
       for (const p of res.products) out.set(p.headId, [...(out.get(p.headId) ?? []), ...p.images]);
       pageToken = res.nextPageToken;
       if (pageToken === '') break;
@@ -139,36 +163,41 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
 export async function syncOwnedImages(
   ownedHeads: readonly string[],
   fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
-  options: { storage?: CacheStorage | undefined; max?: number; concurrency?: number } = {},
+  options: { storage?: CacheStorage | undefined; max?: number; concurrency?: number; signal?: AbortSignal } = {},
 ): Promise<OwnedImageSync> {
   const storage = 'storage' in options ? options.storage : browserCaches();
   const result: OwnedImageSync = { figures: 0, images: 0, added: 0, evicted: 0, failed: 0 };
   if (storage === undefined) return result;
   const heads = [...new Set(ownedHeads)].slice(0, options.max ?? MAX_OWNED_FIGURES);
   const lists = await fetchLists(heads);
+  // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched.
+  options.signal?.throwIfAborted();
 
   // Every address the device holds for an owned figure before this sync: each record's, each kept byte's.
   const records = await storage.open(IMAGE_LISTS_CACHE);
   const media = await storage.open(OWNED_MEDIA_CACHE);
+  const recordKeys = await records.keys();
   const before = new Set<string>();
-  for (const key of await records.keys()) for (const u of addressesOf((await recallImages(headOfKey(key.url), storage)) ?? [])) before.add(u);
+  for (const key of recordKeys) for (const u of addressesOf((await readList(records, headOfKey(key.url))) ?? [])) before.add(u);
   const mediaKeys = await media.keys();
   for (const key of mediaKeys) before.add(key.url);
 
+  // A figure with no image costs nothing here: only a non-empty list is written, and every record
+  // of a figure that is not kept (no image now, or no longer owned) is deleted below.
   const keep = new Set<string>();
   const kept = new Set<string>();
   const fresh = new Set<string>();
   for (const head of heads) {
     const list = toCachedImages(lists.get(head) ?? []);
-    await rememberImages(head, list, storage);
-    for (const u of addressesOf(list)) fresh.add(u);
     const primary = primaryImage(list);
     if (primary === undefined) continue;
+    await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
+    for (const u of addressesOf(list)) fresh.add(u);
     kept.add(head);
     keep.add(primary.url);
     if (primary.maskUrl !== undefined) keep.add(primary.maskUrl);
   }
-  for (const key of await records.keys()) if (!kept.has(headOfKey(key.url))) await records.delete(key);
+  for (const key of recordKeys) if (!kept.has(headOfKey(key.url))) await records.delete(key);
 
   const have = new Set<string>();
   for (const key of mediaKeys) {
@@ -182,7 +211,7 @@ export async function syncOwnedImages(
   }
   const missing = [...keep].filter((u) => !have.has(u));
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
-    for (let next = missing.shift(); next !== undefined; next = missing.shift()) {
+    for (let next = missing.shift(); next !== undefined && options.signal?.aborted !== true; next = missing.shift()) {
       try {
         await media.add(new Request(next, { mode: 'cors', credentials: 'omit' }));
         result.added += 1;

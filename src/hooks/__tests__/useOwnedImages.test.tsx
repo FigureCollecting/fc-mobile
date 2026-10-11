@@ -46,7 +46,7 @@ describe('useOwnedImages', () => {
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Wished', status: 'wished' }]);
     const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
-    expect(r.clients.getProductImages).toHaveBeenCalledWith({ headIds: [headOf(0)] });
+    expect(r.clients.getProductImages).toHaveBeenCalledWith({ headIds: [headOf(0)] }, { signal: expect.any(AbortSignal) });
     expect(result.current.has(headOf(1))).toBe(false);
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
   });

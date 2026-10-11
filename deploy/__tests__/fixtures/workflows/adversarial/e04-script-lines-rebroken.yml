@@ -1,0 +1,12 @@
+# X18 (wk-09b-i2): the pinned one-line script broken across two lines is another script.
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build image
+        run: |
+          docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN
+          -t app .
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}

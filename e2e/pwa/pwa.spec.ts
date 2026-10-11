@@ -194,6 +194,9 @@ test('(b) derivatives: the one public image address, kept by the worker on a COR
 
   // A CORS 200 is kept, then served with the origin unreachable, and an <img> of it renders offline.
   expect(await get(present)).toBe(200);
+  // Workbox writes the cache after it answers (waitUntil), so wait for the write before the outage.
+  const keptKeys = () => page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).length);
+  await expect.poll(keptKeys).toBe(1);
   down = true;
   expect(await get(present)).toBe(200);
   expect(await get(missing)).toBe('error TypeError');

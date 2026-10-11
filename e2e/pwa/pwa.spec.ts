@@ -229,7 +229,6 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   const opaqueFrom = answers.length;
   expect(await show(present, false)).toBe(true);
   // An opaque answer cannot be copied, so the worker passes it as it is, the origin's immutable with it.
-  // The app sets crossorigin on every <img> of the address.
   expect(answers.splice(opaqueFrom)).toEqual([`${present} public, max-age=31536000, immutable`]);
   expect(await browsed()).toEqual([]);
   // A CORS 200 an <img> shows is kept. Workbox writes the cache after it answers (waitUntil).

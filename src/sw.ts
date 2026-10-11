@@ -24,17 +24,32 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { deny
 // image an <img> shows is CacheFirst in its own bounded cache. The page's own fetch of an image (the
 // owned sync's Cache.add) goes to the origin and is never stored here a second time. Every fetch this
 // route sends is cache 'no-store', so it neither reads nor fills the browser's HTTP cache: the origin
-// answers immutable, and a copy there would outlive the sync's eviction. So the worker never answers
-// from the HTTP cache (src/sw/__tests__/sw.test.ts pins the fetches; e2e/pwa (b) runs with the HTTP
-// cache off, as every Playwright route turns it off, and proves the worker's caches). A document the
-// worker does not control yet (a first visit before clientsClaim, a shift-reload) loads its <img>s
-// through the HTTP cache, and that copy outlives an eviction; no fetch of this route or the sync reads it.
+// answers immutable, and a copy there would outlive the sync's eviction. For the same reason the page
+// gets every answer as a copy marked Cache-Control: no-store. Chromium's memory cache inside a tab
+// keeps an immutable image and draws it in a later document of that tab without asking the worker,
+// after an eviction too; that was measured outside the suite only, as every e2e context is routed and
+// a route turns that cache off. An opaque answer (an <img> without crossorigin) cannot be copied and
+// goes as it is, the origin's immutable with it; the case view's and the figure page's <img>s set
+// crossorigin (src/pages/__tests__/CollectionDisplay.test.tsx and FigureDetail.test.tsx pin it).
+// src/sw/__tests__/sw.test.ts pins the fetches and the copies; e2e/pwa (b) checks the header on every
+// answer and, with Chromium's caches off, proves the worker's caches. A document the worker does not
+// control yet (a first visit before clientsClaim, a shift-reload) loads its <img>s through the HTTP
+// cache, and that copy outlives an eviction; no fetch of this route or the sync reads it.
 // Only a CORS 200 is kept: an opaque response (status 0) can be neither measured nor composited, and
 // costs ~7 MB of quota each. Both caches ignore Vary: the origin sends Vary: Origin, and an <img
 // crossorigin> request then misses a response a fetch() stored (measured in e2e/pwa (b)); the bytes
 // are content-addressed and a worker serves one origin.
 const IGNORE_VARY = { ignoreVary: true };
 const NO_STORE: RequestInit = { cache: 'no-store' };
+/** Status 0, no headers or body to copy: an opaque answer, an opaque redirect, a network error. */
+const UNCOPYABLE: ReadonlySet<ResponseType> = new Set(['opaque', 'opaqueredirect', 'error']);
+/** The answer the page gets: a copy marked no-store, the status, body and other headers as they were. */
+function forThePage(response: Response): Response {
+  if (UNCOPYABLE.has(response.type)) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', 'no-store');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 const browsed = new CacheFirst({
   cacheName: BROWSED_MEDIA_CACHE,
   matchOptions: IGNORE_VARY,
@@ -43,8 +58,8 @@ const browsed = new CacheFirst({
 });
 registerRoute(isDerivativeRequest, async (options: { request: Request }) => {
   const owned = await (await self.caches.open(OWNED_MEDIA_CACHE)).match(options.request, IGNORE_VARY);
-  if (owned !== undefined) return owned;
-  return options.request.destination === 'image' ? browsed.handle(options as never) : fetch(options.request, NO_STORE);
+  if (owned !== undefined) return forThePage(owned);
+  return forThePage(await (options.request.destination === 'image' ? browsed.handle(options as never) : fetch(options.request, NO_STORE)));
 });
 
 clientsClaim();

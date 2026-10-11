@@ -223,3 +223,11 @@ export function wallReachMm(camera: Camera, panPx: number, room: RoomSpan, margi
   return [camera.x + Math.min(left * near, left * far) - marginMm, camera.x + Math.max(right * near, right * far) + marginMm];
 }
 
+/** The wall's cabinets (by index) whose box, splayed feet included, reaches into the stretch [lo, hi] (wallReachMm). */
+export function cabinetsInReach(wall: WallLayout, [lo, hi]: readonly [number, number]): number[] {
+  return wall.cabinets.flatMap((slot, i) => {
+    const feet = sideOverhangMm(slot.profile);
+    return slot.rightMm + feet >= lo && slot.leftMm - feet <= hi ? [i] : [];
+  });
+}
+

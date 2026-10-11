@@ -34,7 +34,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
+import { cabinetsInReach, frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
 import { figureArt, pictureBox, type FigureArt, type FigureImageRef } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { useContactBand, useMeasuredAlphaMargins } from './alphaMargin';
@@ -561,10 +561,7 @@ export function CabinetScene({
     }),
     [wall, ceilingMm],
   );
-  const reachMm = wallReachMm(camera, panPx, room, REACH_MARGIN_MM);
-  const visible = wall.cabinets
-    .map((slot, i) => ({ slot, i }))
-    .filter(({ slot }) => slot.rightMm + sideOverhangMm(slot.profile) >= reachMm[0] && slot.leftMm - sideOverhangMm(slot.profile) <= reachMm[1]);
+  const visible = cabinetsInReach(wall, wallReachMm(camera, panPx, room, REACH_MARGIN_MM)).map((i) => ({ slot: wall.cabinets[i], i }));
 
   // --- swipe (CC4) and tap
   const press = useRef<{ id: number; x0: number; active: boolean } | null>(null);

@@ -272,10 +272,13 @@ worker's `push` handler (for the legacy notification screens, off unless
 `VITE_ENABLE_LEGACY_SCREENS=true`) only shows a notification. A phone that does
 not open the app learns of nothing.
 
-When a new build waits, "A new version is ready." shows with Reload. Reload
-hands control to it (`SKIP_WAITING`) and every open page of the app reloads into
-it. Left alone, the waiting build takes over once no page of the app is open, so
-the next open runs it.
+When a new build waits, "A new version is ready." shows with Reload. The plugin
+raises it for the first new build to install behind a page, and any check that
+finds one ready raises it too, so it still shows when an earlier build failed to
+install and the plugin stopped following. Reload hands control to it
+(`SKIP_WAITING`) and every open page of the app reloads into it. Left alone, the
+waiting build takes over once no page of the app is open, so the next open runs
+it.
 
 The first time a new build runs here, "Updated to build <id>" shows once, with
 Dismiss. The last build seen is kept in localStorage (`fc-last-build`); nothing

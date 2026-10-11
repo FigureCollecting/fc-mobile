@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { inflateSync } from 'node:zlib';
 import {
   FIXTURE_FIGURES,
   FIXTURE_META,
@@ -9,9 +10,33 @@ import {
   getFixtureMultiplier,
   getFixtureFigures,
   getFixtureBranch,
+  getFixtureImageRef,
   resolveFixtureArt,
 } from '../fixtures';
 import { getDisplayMeta } from '../../components/display/displayMeta';
+import { figureArt } from '../../components/display/figureArt';
+
+/** The unfiltered pixels of a PNG this repo's script wrote (one IDAT, filter 0 on every row). */
+function pngPixels(file: string): { width: number; height: number; channels: number; rows: Buffer[] } {
+  const png = readFileSync(file);
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  const channels = png[25] === 6 ? 4 : png[25] === 2 ? 3 : 0;
+  let o = 8;
+  const idat: Buffer[] = [];
+  while (o < png.length) {
+    const len = png.readUInt32BE(o);
+    if (png.toString('ascii', o + 4, o + 8) === 'IDAT') idat.push(png.subarray(o + 8, o + 8 + len));
+    o += 12 + len;
+  }
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels + 1;
+  const rows = Array.from({ length: height }, (_, y) => {
+    expect(raw[y * stride], 'filter type 0').toBe(0);
+    return raw.subarray(y * stride + 1, (y + 1) * stride);
+  });
+  return { width, height, channels, rows };
+}
 
 afterEach(() => localStorage.clear());
 
@@ -151,6 +176,30 @@ describe('fixture art: committed synthetic stand-ins, real cut-outs only for loc
     }
   });
 
+  it('has an opaque clean copy (RGB, a studio backdrop) and a mask whose alpha IS the cut-out\'s, for every figure (CASE-ADAPT)', () => {
+    for (const f of FIXTURE_FIGURES) {
+      const name = f._id.replace(/^fx-/, '');
+      const cut = pngPixels(path.join(SYNTHETIC_DIR, `${name}.png`));
+      const clean = pngPixels(path.join(SYNTHETIC_DIR, 'clean', `${name}.png`));
+      const mask = pngPixels(path.join(SYNTHETIC_DIR, 'mask', `${name}.png`));
+      expect([clean.width, clean.height, clean.channels]).toEqual([cut.width, cut.height, 3]);
+      expect([mask.width, mask.height, mask.channels]).toEqual([cut.width, cut.height, 4]);
+      let drawn = 0;
+      for (let y = 0; y < cut.height; y++) {
+        for (let x = 0; x < cut.width; x++) {
+          const a = cut.rows[y][x * 4 + 3];
+          expect(mask.rows[y][x * 4 + 3]).toBe(a);
+          if (a === 255) {
+            drawn++;
+            // where the figure is solid the clean copy shows the figure itself
+            expect(clean.rows[y].subarray(x * 3, x * 3 + 3)).toEqual(cut.rows[y].subarray(x * 4, x * 4 + 3));
+          }
+        }
+      }
+      expect(drawn, name).toBeGreaterThan(1000);
+    }
+  });
+
   it('prefers a real cut-out when present, unless synthetic-only, and falls back to the synthetic art', () => {
     const real = { './rem.png': '/real/rem.png' };
     const synthetic = { './synthetic/rem.png': '/synthetic/rem.png', './synthetic/spike.png': '/synthetic/spike.png' };
@@ -161,7 +210,7 @@ describe('fixture art: committed synthetic stand-ins, real cut-outs only for loc
   });
 });
 
-describe('fixture render branch (?fxbranch=framed|silhouette)', () => {
+describe('fixture render branch (?fxbranch=masked|framed|silhouette)', () => {
   afterEach(() => {
     window.history.pushState({}, '', '/');
   });
@@ -174,17 +223,37 @@ describe('fixture render branch (?fxbranch=framed|silhouette)', () => {
     }
   });
 
-  it('framed: the same figures and images, but unmatted like a real figure, so the case frames the photo', () => {
+  it('framed: the same figures on their opaque clean copies, unmatted like a real figure, so the case frames the photo', () => {
     window.history.pushState({}, '', '/?fxbranch=framed');
     expect(getFixtureBranch()).toBe('framed');
     const figures = getFixtureFigures();
     expect(figures).toHaveLength(FIXTURE_FIGURES.length);
     figures.forEach((f, i) => {
       expect(f.name).toBe(FIXTURE_FIGURES[i].name);
-      expect(f.imageUrl).toBe(FIXTURE_FIGURES[i].imageUrl);
+      expect(f.imageUrl).toMatch(new RegExp(`/synthetic/clean/${FIXTURE_FIGURES[i]._id.replace(/^fx-/, '')}\\.png$`));
       expect(f._id).not.toBe(FIXTURE_FIGURES[i]._id);
       expect(getDisplayMeta(f).matted).toBe(false);
+      expect(getFixtureImageRef(f)).toBeUndefined();
+      expect(figureArt(f, getDisplayMeta(f), getFixtureImageRef(f)).kind).toBe('framed');
     });
+  });
+
+  it('masked: the clean copy with its separate mask, as the image list will give it (CASE-ADAPT)', () => {
+    window.history.pushState({}, '', '/?fxbranch=masked');
+    expect(getFixtureBranch()).toBe('masked');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    figures.forEach((f, i) => {
+      const name = FIXTURE_FIGURES[i]._id.replace(/^fx-/, '');
+      expect(f._id).toBe(`${FIXTURE_FIGURES[i]._id}-masked`);
+      const ref = getFixtureImageRef(f);
+      expect(ref?.url).toMatch(new RegExp(`/synthetic/clean/${name}\\.png$`));
+      expect(ref?.maskUrl).toMatch(new RegExp(`/synthetic/mask/${name}\\.png$`));
+      expect(ref?.width).toBe(FIXTURE_META[FIXTURE_FIGURES[i]._id].width);
+      expect(figureArt(f, getDisplayMeta(f), ref).kind).toBe('masked');
+    });
+    // the plain fixtures carry no image list entry: they are cut-outs
+    expect(getFixtureImageRef(FIXTURE_FIGURES[0])).toBeUndefined();
   });
 
   it('silhouette: the same figures without images', () => {

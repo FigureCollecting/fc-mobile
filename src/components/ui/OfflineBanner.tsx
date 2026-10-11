@@ -2,12 +2,17 @@ import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { localSession } from '../../local/session';
 import { Style } from '../../styles/Style';
 
+// Shown while the browser says offline, and while the sync engine's probe cannot reach the server
+// although the browser says online (captive Wi-Fi): the probe is bounded at 3 s and runs on the
+// offline event and 1 s after an edit, so the banner follows a dead network within a few seconds.
 export function OfflineBanner() {
   const online = useOnlineStatus();
+  const state = localSession.value?.engine.state.value;
   // The sync engine's waiting edits: the one outbox.
-  const pendingCount = localSession.value?.engine.state.value.pending ?? 0;
+  const pendingCount = state?.pending ?? 0;
+  const unreachable = state?.reachability === 'unreachable';
 
-  if (online.value) return null;
+  if (online.value && !unreachable) return null;
 
   return (
     <div class="offline-banner" role="status" aria-live="polite">
@@ -21,7 +26,7 @@ export function OfflineBanner() {
         <line x1="12" y1="20" x2="12.01" y2="20" />
       </svg>
       <span>
-        {"You're offline — showing cached data"}
+        {online.value ? "Can't reach the server — showing what's on this device" : "You're offline — showing what's on this device"}
         {pendingCount > 0 && ` (${pendingCount} pending ${pendingCount === 1 ? 'change' : 'changes'})`}
       </span>
 

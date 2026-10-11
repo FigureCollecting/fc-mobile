@@ -22,6 +22,9 @@ const wb = vi.hoisted(() => ({
   CacheableResponsePlugin: vi.fn(function (this: Record<string, unknown>, config: unknown) {
     this.config = config;
   }),
+  ExpirationPlugin: vi.fn(function (this: Record<string, unknown>, config: unknown) {
+    this.config = config;
+  }),
 }));
 vi.mock('workbox-precaching', () => ({
   precacheAndRoute: wb.precacheAndRoute,
@@ -31,17 +34,28 @@ vi.mock('workbox-precaching', () => ({
 vi.mock('workbox-routing', () => ({ registerRoute: wb.registerRoute, NavigationRoute: wb.NavigationRoute }));
 vi.mock('workbox-strategies', () => ({ CacheFirst: wb.CacheFirst }));
 vi.mock('workbox-cacheable-response', () => ({ CacheableResponsePlugin: wb.CacheableResponsePlugin }));
+vi.mock('workbox-expiration', () => ({ ExpirationPlugin: wb.ExpirationPlugin }));
 vi.mock('workbox-core', () => ({ clientsClaim: wb.clientsClaim }));
 
 type Listener = (event: unknown) => void;
 const listeners: Record<string, Listener[]> = {};
 const skipWaiting = vi.fn(async () => undefined);
 const MANIFEST = [{ url: '/index.html', revision: 'r1' }];
+// The owned-figure cache the page fills (src/media/ownedImages.ts): one entry, read first.
+const OWNED_URL = `https://images.figurecollecting.com/d/${'cd'.repeat(32)}`;
+const ownedResponse = new Response('owned');
+const opened: string[] = [];
 
 beforeAll(async () => {
   const scope = self as unknown as Record<string, unknown>;
   scope.__WB_MANIFEST = MANIFEST;
   scope.skipWaiting = skipWaiting;
+  scope.caches = {
+    open: async (name: string) => {
+      opened.push(name);
+      return { match: async (r: Request | string) => (new URL(typeof r === 'string' ? r : r.url).href === OWNED_URL ? ownedResponse : undefined) };
+    },
+  };
   vi.spyOn(self, 'addEventListener').mockImplementation(((type: string, fn: Listener) => {
     (listeners[type] ??= []).push(fn);
   }) as typeof self.addEventListener);
@@ -69,15 +83,26 @@ describe('service worker wiring', () => {
     expect(nav.options.denylist).toEqual([API_NAVIGATION]);
   });
 
-  it('serves content-addressed derivatives CacheFirst, caching only status 200', () => {
-    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { options: { cacheName: string; plugins: unknown[] } };
-    expect(cacheFirst.options.cacheName).toBe('fc-derivatives-v1');
+  it('serves the public image address from the owned-figure cache first, else CacheFirst, keeping only a CORS 200, bounded', async () => {
+    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { options: { cacheName: string; plugins: unknown[] }; handle?: unknown };
+    expect(cacheFirst.options.cacheName).toBe('fc-derivatives-v2');
     expect(wb.CacheableResponsePlugin).toHaveBeenCalledWith({ statuses: [200] });
-    expect(cacheFirst.options.plugins).toEqual([wb.CacheableResponsePlugin.mock.instances[0]]);
-    const call = wb.registerRoute.mock.calls.find(([, handler]) => handler === cacheFirst);
-    const match = call?.[0] as (c: ReturnType<typeof ctx>) => boolean;
-    expect(match(ctx(`/media/d/${'ab'.repeat(32)}`))).toBe(true);
-    expect(match(ctx(`/media/d/${'ab'.repeat(32)}`, 'GET', 'https://images.figurecollecting.com'))).toBe(false);
+    expect(wb.ExpirationPlugin).toHaveBeenCalledWith({ maxEntries: 200, purgeOnQuotaError: true });
+    expect(cacheFirst.options.plugins).toEqual([wb.CacheableResponsePlugin.mock.instances[0], wb.ExpirationPlugin.mock.instances[0]]);
+
+    const call = wb.registerRoute.mock.calls.find(([m]) => typeof m === 'function' && m !== undefined && (m as (c: unknown) => boolean)(ctx(`/d/${'ab'.repeat(32)}`, 'GET', 'https://images.figurecollecting.com')));
+    expect(call).toBeDefined();
+    const [match, handler] = call as unknown as [(c: ReturnType<typeof ctx>) => boolean, (o: { request: Request }) => Promise<Response>];
+    expect(match(ctx(`/media/d/${'ab'.repeat(32)}`))).toBe(false);
+
+    const browsed = new Response('browsed');
+    (cacheFirst as unknown as { handle: (o: unknown) => Promise<Response> }).handle = vi.fn(async () => browsed);
+    expect(await handler({ request: new Request(OWNED_URL) })).toBe(ownedResponse);
+    expect(opened).toEqual(['fc-owned-media-v1']);
+    expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).not.toHaveBeenCalled();
+    const other = { request: new Request(`https://images.figurecollecting.com/d/${'ab'.repeat(32)}`) };
+    expect(await handler(other)).toBe(browsed);
+    expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).toHaveBeenCalledWith(other);
   });
 
   it('registers exactly two routes of its own, and none that matches /api', () => {

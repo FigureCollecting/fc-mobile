@@ -183,6 +183,20 @@ describe('CC4 swipe: move the camera along the wall, or pan the drawn wall like 
     expect(panLimitsPx(lone, wallLayout([IKEA_KLINGSBO]))).toEqual([0, 0]);
   });
 
+  it('pan: a wall that fits the frame but runs off its right edge still slides in, never past its ends', () => {
+    // a short wide frame on the first of four cabinets: the wall is narrower than the frame, yet it starts mid-screen
+    const four = wallLayout([IKEA_KLINGSBO, IKEA_KLINGSBO, IKEA_KLINGSBO, IKEA_KLINGSBO]);
+    const f = frameCase(input({ frame: { width: 443, height: 344 }, wall: four, headroomMm: [300, 300, 300, 300] }));
+    const m = frameMargins(f.camera.frame);
+    const left = project(f.camera, [four.leftMm, f.look[1], 0]).x;
+    const right = project(f.camera, [four.rightMm, f.look[1], 0]).x;
+    expect(right - left).toBeLessThan(f.camera.frame.width - 2 * m.x);
+    expect(right).toBeGreaterThan(f.camera.frame.width - m.x);
+    const [min, max] = panLimitsPx(f, four);
+    expect(min).toBeCloseTo(f.camera.frame.width - m.x - right, 6);
+    expect(max).toBe(0);
+  });
+
   it('camera moves keep the camera inside the wall for any swipe', () => {
     fc.assert(
       fc.property(fc.array(fc.double({ min: -2000, max: 2000, noNaN: true }), { maxLength: 12 }), (moves) => {

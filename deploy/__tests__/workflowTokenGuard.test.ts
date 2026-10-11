@@ -836,8 +836,11 @@ describe('setup and build actions pinned to one commit', () => {
       './.github/actions/local',
       '.\\.github\\actions\\local',
       '$/.github/actions/local',
+      './.github/actions/a@b',
+      '.\\.github\\actions\\a@b',
       'docker://alpine',
       'docker://alpine:3',
+      `docker://alpine@sha256:${'a'.repeat(64)}`,
     ]) {
       expect(plainJob(uses)).toEqual([]);
     }
@@ -919,6 +922,7 @@ describe('every other remote action pinned by full SHA', () => {
     `actions/upload-artifact@${SHA}@x`,
     'actions/upload-artifact@',
     'Docker://alpine@v1',
+    'aquasecurityx/trivy-action@v1',
   ])('flags %s in a job without a token step and after the last one', (uses) => {
     expect(anywhere(uses)).toEqual([['action-sha'], ['action-sha']]);
   });

@@ -271,6 +271,16 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   // While it is owned, the <img>'s copy stays in the browsed cache too, until the sync evicts the image.
   expect((await cachesHolding(ownedImage)).sort()).toEqual(['fc-derivatives-v2', 'fc-owned-media-v1']);
   expect(await kept('h1')).toBe(ownedImage);
+  // As a sync in a document the worker does not control stores it: the origin's answer, immutable. The
+  // worker's answers from the owned cache below are no-store all the same.
+  await page.evaluate(async (u) => {
+    const cache = await caches.open('fc-owned-media-v1');
+    const stored = await cache.match(u, { ignoreVary: true });
+    if (stored === undefined) throw new Error(`${u} is not kept`);
+    const headers = new Headers(stored.headers);
+    headers.set('cache-control', 'public, max-age=31536000, immutable');
+    await cache.put(u, new Response(await stored.blob(), { headers }));
+  }, ownedImage);
   down = true;
   await freshDocument();
   const before = count(ownedImage);

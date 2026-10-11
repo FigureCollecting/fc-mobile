@@ -129,6 +129,35 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     const { host } = scene(FIXTURE_FIGURES, {}, { labels: true });
     expect(Array.from(host.querySelectorAll('.cab-plate')).map((p) => p.textContent)).toEqual(FIXTURE_FIGURES.map((f) => f.name));
   });
+
+  it('a nameplate is never wider than its figure: narrow figures (Nendoroids) keep their plates apart', () => {
+    const nendo = (i: number, widthMm: number) => ({ _id: `n${i}`, name: `Nendoroid ${i}`, dimensions: { heightMm: 100, widthMm } }) as Figure;
+    // labels are on by default for real data; ten 60 mm figures, then one wider than a full plate
+    const { host } = scene([...Array.from({ length: 10 }, (_, i) => nendo(i, 60)), nendo(10, 150)], {}, { labels: true });
+    const plates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate')).map((p) => {
+      const m = p.style.transform.replace(/^matrix3d\(|\)$/g, '').split(',').map(Number);
+      return { name: p.textContent, x0: m[12], x1: m[12] + parseFloat(p.style.width), y: m[13], z: m[14] };
+    });
+    const tap = new Map(figureButtons(host).map((b) => [b.getAttribute('aria-label'), JSON.parse(b.dataset.world!) as { x0: number; x1: number }]));
+    expect(plates).toHaveLength(11);
+    const rows = new Map<string, typeof plates>();
+    for (const p of plates) rows.set(`${p.y}:${p.z}`, [...(rows.get(`${p.y}:${p.z}`) ?? []), p]);
+    let pairs = 0;
+    for (const row of rows.values()) {
+      row.sort((a, b) => a.x0 - b.x0);
+      for (let i = 1; i < row.length; i++) {
+        pairs++;
+        expect(row[i].x0, `${row[i - 1].name} / ${row[i].name}`).toBeGreaterThan(row[i - 1].x1);
+      }
+    }
+    expect(pairs).toBeGreaterThan(0);
+    // each plate centred under its figure: as wide as the figure, at most the full 110 mm
+    for (const p of plates) {
+      const t = tap.get(p.name)!;
+      expect((p.x0 + p.x1) / 2, p.name!).toBeCloseTo((t.x0 + t.x1) / 2, 6);
+      expect(p.x1 - p.x0, p.name!).toBeCloseTo(p.name === 'Nendoroid 10' ? 110 : 60, 6);
+    }
+  });
 });
 
 describe('CabinetScene: taps and the CC4 swipe toggle', () => {

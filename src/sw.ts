@@ -22,13 +22,17 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { deny
 // Derivatives and masks on the one public image address. The owned figures' images come first,
 // from the cache the page fills and evicts with the collection (src/media/ownedImages.ts); any other
 // image is CacheFirst in its own bounded cache. Only a CORS 200 is kept: an opaque response (status
-// 0) can be neither measured nor composited, and costs ~7 MB of quota each.
+// 0) can be neither measured nor composited, and costs ~7 MB of quota each. Both caches ignore Vary:
+// the origin sends Vary: Origin, and an <img crossorigin> request then misses a response a fetch()
+// stored (measured in e2e/pwa (b)); the bytes are content-addressed and a worker serves one origin.
+const IGNORE_VARY = { ignoreVary: true };
 const browsed = new CacheFirst({
   cacheName: 'fc-derivatives-v2',
+  matchOptions: IGNORE_VARY,
   plugins: [new CacheableResponsePlugin({ statuses: [200] }), new ExpirationPlugin({ maxEntries: 200, purgeOnQuotaError: true })],
 });
 registerRoute(isDerivativeRequest, async (options: { request: Request }) => {
-  const owned = await (await self.caches.open(OWNED_MEDIA_CACHE)).match(options.request);
+  const owned = await (await self.caches.open(OWNED_MEDIA_CACHE)).match(options.request, IGNORE_VARY);
   return owned ?? browsed.handle(options as never);
 });
 

@@ -165,12 +165,14 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['e03-build-push-any-sha.yml', ['action-pin', 'token-action']],
     ['e04-script-lines-rebroken.yml', ['run-grammar']],
     ['e05-build-push-remote-context.yml', ['action-with']],
+    // wk-09c-i2b: the publish job as it was, three steps after the build action's post stage was set.
+    ['f01-publish-verify-after-build.yml', ['post-stage', 'post-stage', 'post-stage']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(53);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(54);
   });
 });
 
@@ -737,6 +739,89 @@ describe('what may change how a token step runs', () => {
 
   it('leaves a $GITHUB_ENV write alone in a job without a token step', () => {
     expect(rules(`${tokenJob()}  t:\n    steps:\n      - run: echo "A=1" >> "$GITHUB_ENV"\n`)).toEqual([]);
+  });
+});
+
+// wk-09c-i2b: an action's post stage runs after every later step of its job, with the step's env
+// (the token) still set (actions/runner ActionRunner.cs registers it with the same step; StepsRunner.cs
+// merges $GITHUB_ENV into its env and runs it from PATH). So nothing may follow a token step that
+// runs an action, in the same job: no run: step, no action at any commit, no other token step.
+const BUILD_PUSH = `      - name: Build and push\n        uses: docker/build-push-action@${SHA}\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n`;
+const actionJob = (after = '', before = ''): string => `jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n${before}${BUILD_PUSH}${after}`;
+
+describe('nothing after a token step that runs an action', () => {
+  it('accepts the token action as the last step, after setup actions and a token install', () => {
+    expect(rules(actionJob('', `      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n${TOKEN_INSTALL}`))).toEqual([]);
+  });
+
+  it.each([
+    'run: npm test',
+    'run: bash ./scripts/tidy.sh',
+    `run: 'v=GITHUB_; v="\${v}PATH"; echo "$PWD/bin" >> "\${!v}"'`,
+    "run: echo ok\n        if: always()",
+    `uses: evil/action@${SHA}`,
+    'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9',
+    'uses: ./.github/actions/local',
+    'uses: docker://alpine:3',
+  ])('flags %s after it, and names the step', (body) => {
+    expect(checkWorkflow('x.yml', parse(actionJob(`      - name: Later\n        ${body}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Later > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('flags every step after it, an unnamed one by its index', () => {
+    expect(checkWorkflow('x.yml', parse(actionJob('      - run: npm test\n      - name: Test\n        run: npm test\n')), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #1 > step', rule: 'post-stage' },
+      { file: 'x.yml', where: 'build > Test > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('flags a token step after it: a token install, and a second run of the token action', () => {
+    expect(checkWorkflow('x.yml', parse(actionJob(TOKEN_INSTALL)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Install dependencies > step', rule: 'post-stage' },
+    ]);
+    expect(checkWorkflow('x.yml', parse(actionJob(BUILD_PUSH)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Build and push > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('reads the job, not the allow-list: steps after an unlisted token action are flagged too', () => {
+    const job = `jobs:\n  build:\n    steps:\n      - name: Publish\n        uses: ./.github/actions/publish\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n      - name: Later\n        run: npm test\n`;
+    expect(checkWorkflow('x.yml', parse(job), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Publish > env', rule: 'non-install-step' },
+      { file: 'x.yml', where: 'build > Later > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('leaves steps after a token run: step, and after an untokened action, alone', () => {
+    expect(rules(`${tokenJob()}      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n      - run: npm test\n`)).toEqual([]);
+    expect(rules('jobs:\n  t:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - run: npm test\n')).toEqual([]);
+  });
+
+  it('flags another job only for its own steps', () => {
+    expect(rules(`${actionJob()}  later:\n    needs: build\n    steps:\n      - run: npm test\n`)).toEqual([]);
+  });
+
+  it('flags a step appended to the live publish job after its build step', () => {
+    const wf = load(WORKFLOWS, 'web-image.yml') as { jobs: { publish: { steps: unknown[] } } };
+    wf.jobs.publish.steps.push({ name: 'Appended', run: 'echo ok' });
+    expect(checkWorkflow('web-image.yml', wf, TOKEN_STEPS)).toEqual([{ file: 'web-image.yml', where: 'publish > Appended > step', rule: 'post-stage' }]);
+  });
+
+  it('ends the live publish job with its build step and checks the pushed bytes in a job that needs it', () => {
+    const jobs = (load(WORKFLOWS, 'web-image.yml') as { jobs: Record<string, { needs?: unknown; permissions?: unknown; steps: { name?: string; run?: string }[] }> }).jobs;
+    expect(jobs['publish'].steps.at(-1)?.name).toBe('Build and push');
+    const verify = jobs['verify-published'];
+    expect(verify.needs).toBe('publish');
+    expect(verify.permissions).toEqual({ contents: 'read', packages: 'read' });
+    expect(verify.steps.map((s) => s.name)).toEqual([
+      'Checkout code',
+      'Log in to GitHub Container Registry',
+      'Verify the PUBLISHED image runs as a non-root user',
+      'Verify the PUBLISHED image bundle signs in through OIDC only',
+      'Report the digest',
+    ]);
   });
 });
 

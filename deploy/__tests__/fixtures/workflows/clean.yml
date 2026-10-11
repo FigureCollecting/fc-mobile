@@ -28,6 +28,11 @@ jobs:
             node_auth_token=NODE_AUTH_TOKEN
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN }}
+  # Nothing follows the build action in its job: its post stage runs with the token.
+  check:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
       - name: Scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:

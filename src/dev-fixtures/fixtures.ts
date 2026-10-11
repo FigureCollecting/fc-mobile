@@ -100,9 +100,13 @@ interface FixtureDef {
    *  these actual commercial figure lines — drives proportional sizing the
    *  same way a real synced figure's scraped dimensions would. */
   heightMm: number;
-  /** Labelled width, mm: as wide as the figure's cut-out draws at heightMm
-   *  over its clear margins (true scale), rounded up, the way a real synced
-   *  figure's ProductCard gives one; the case packs it by this. */
+  /** Labelled width, mm, the way a real synced figure's ProductCard gives
+   *  one. Here it is how wide the SYNTHETIC stand-in's cut-out draws at
+   *  heightMm over its clear margins (true scale), rounded up, so the
+   *  default fixtures pack by their labels. A real cut-out can draw wider
+   *  than its label (the sign-off Madoka's wings: 155 mm drawn, 86 mm
+   *  labelled); the case packs cut-out and masked art by the wider of the
+   *  two once it has read the picture's alpha (?fxwidth exercises that). */
   widthMm: number;
   meta: FixtureDisplayMeta;
 }
@@ -303,6 +307,28 @@ export function getFixtureBranch(): FixtureBranch {
   return raw === 'masked' || raw === 'framed' || raw === 'silhouette' ? raw : 'matted';
 }
 
+export type FixtureWidths = 'labelled' | 'none' | 'narrow';
+
+const FIXTURE_WIDTHS_PARAM = 'fxwidth';
+
+/**
+ * Dev-only switch for the fixtures' labelled widths, the shapes a real
+ * collection brings to the case: `?fxwidth=none` drops them (a figure the
+ * catalogue gives no width), `?fxwidth=narrow` halves them, under what each
+ * cut-out draws at true scale, as the real sign-off cut-outs are. As
+ * labelled for anything else.
+ */
+export function getFixtureWidths(): FixtureWidths {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_WIDTHS_PARAM);
+  return raw === 'none' || raw === 'narrow' ? raw : 'labelled';
+}
+
+function withWidths(figure: Figure, widths: FixtureWidths): Figure {
+  if (widths === 'labelled') return figure;
+  const { heightMm, widthMm } = figure.dimensions!;
+  return { ...figure, dimensions: widths === 'none' ? { heightMm } : { heightMm, widthMm: Math.round(widthMm! / 2) } };
+}
+
 const artName = (figureId: string) => figureId.replace(/^fx-/, '').replace(/(-x\d+)?(-masked|-framed)?$/, '');
 
 function toBranch(figure: Figure, branch: FixtureBranch): Figure {
@@ -335,14 +361,15 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * (`fx-rem-x1`, `fx-rem-x2`, ...). getDisplayMeta strips the `-xN` suffix to
  * resolve the original matte metadata, so every repeated copy still renders
  * matted (not a generic framed-photo fallback) — unless `?fxbranch` asks
- * for another branch (getFixtureBranch).
+ * for another branch (getFixtureBranch); `?fxwidth` changes their labelled
+ * widths (getFixtureWidths).
  */
-export function getFixtureFigures(multiplier = getFixtureMultiplier(), branch = getFixtureBranch()): Figure[] {
-  if (multiplier <= 1 && branch === 'matted') return FIXTURE_FIGURES;
+export function getFixtureFigures(multiplier = getFixtureMultiplier(), branch = getFixtureBranch(), widths = getFixtureWidths()): Figure[] {
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled') return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const base of FIXTURE_FIGURES) {
-      out.push(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch));
+      out.push(withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch), widths));
     }
   }
   return out;

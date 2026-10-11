@@ -8,7 +8,7 @@ import { localSession } from '../local/session';
 import { useAuthPhase } from '../local/useLocal';
 import { useOnlineStatus } from './useOnlineStatus';
 import { isMediaUrl } from '../media/address';
-import { keptImage } from '../media/ownedImages';
+import { keptImage, withheldAmong } from '../media/ownedImages';
 
 export interface DerivativeImage {
   url: string;
@@ -36,6 +36,9 @@ export function useProductImage(headId: string | undefined) {
         // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
         return asDerivative(await keptImage(headId!));
       }
+      // An address the last owned sync withheld is not answered until a sync carries it again.
+      const withheld = await withheldAmong(images.map((i) => i.url));
+      images = images.filter((i) => !withheld.has(i.url));
       return asDerivative(images.find((i) => i.primary) ?? images[0]);
     },
     enabled: session !== undefined && headId !== undefined && phase === 'signed-in',

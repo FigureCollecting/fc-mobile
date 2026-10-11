@@ -35,6 +35,10 @@ export const IMAGE_LISTS_CACHE = 'fc-image-lists-v1';
 export const BROWSED_MEDIA_CACHE = 'fc-derivatives-v2';
 /** The bound on figures kept for offline: ~2 images each. */
 export const MAX_OWNED_FIGURES = 1500;
+/** The addresses a sync withheld from a figure still owned: one record each, no bytes (withheldKey). */
+export const WITHHELD_CACHE = 'fc-withheld-v1';
+/** The bound on the withheld addresses remembered (a full collection's images and masks); the oldest go first. */
+export const MAX_WITHHELD = 2 * MAX_OWNED_FIGURES;
 /**
  * The most GetProductImages pages one batch may take: a server that never ends is a fault. At
  * IMAGE_PAGE_SIZE rows a page, that is 50 images a figure for a batch of 200 figures.
@@ -91,6 +95,10 @@ const IGNORE_VARY: CacheQueryOptions = { ignoreVary: true };
 const addressesOf = (list: readonly CachedImage[]): string[] => list.flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
 const listKey = (headId: string): Request => new Request(new URL(`/__fc/image-list/${encodeURIComponent(headId)}`, self.location.href));
 const headOfKey = (url: string): string => decodeURIComponent(new URL(url).pathname.slice('/__fc/image-list/'.length));
+const WITHHELD_PATH = '/__fc/withheld/';
+/** A withheld address's record: on the app's origin, so no cache holds the image's own address for it. */
+export const withheldKey = (address: string): Request => new Request(new URL(`${WITHHELD_PATH}${encodeURIComponent(new URL(address).href)}`, self.location.href));
+const addressOfWithheldKey = (url: string): string => decodeURIComponent(new URL(url).pathname.slice(WITHHELD_PATH.length));
 
 /** Keep (or, for an empty list, forget) a figure's image list. */
 export async function rememberImages(headId: string, list: readonly CachedImage[], storage: CacheStorage | undefined = browserCaches()): Promise<void> {
@@ -139,6 +147,15 @@ export async function keptImages(heads: readonly string[], storage: CacheStorage
 /** One figure's kept image (keptImages). */
 export async function keptImage(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage | undefined> {
   return (await keptImages([headId], storage)).get(headId);
+}
+
+/** The addresses among these that a sync withheld and no later sync carried again. */
+export async function withheldAmong(addresses: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (storage === undefined) return out;
+  const records = await storage.open(WITHHELD_CACHE);
+  for (const address of addresses) if ((await records.match(withheldKey(address))) !== undefined) out.add(address);
+  return out;
 }
 
 /** The client's slice of CatalogService.GetProductImages. */
@@ -198,7 +215,12 @@ export async function syncOwnedImages(
   const media = await storage.open(OWNED_MEDIA_CACHE);
   const recordKeys = await records.keys();
   const before = new Set<string>();
-  for (const key of recordKeys) for (const u of addressesOf((await readList(records, headOfKey(key.url))) ?? [])) before.add(u);
+  const beforeOf = new Map<string, string[]>();
+  for (const key of recordKeys) {
+    const addresses = addressesOf((await readList(records, headOfKey(key.url))) ?? []);
+    beforeOf.set(headOfKey(key.url), addresses);
+    for (const u of addresses) before.add(u);
+  }
   const mediaKeys = await media.keys();
   for (const key of mediaKeys) before.add(key.url);
 
@@ -219,15 +241,35 @@ export async function syncOwnedImages(
   }
   for (const key of recordKeys) if (!kept.has(headOfKey(key.url))) await records.delete(key);
 
+  // Withheld: an address the kept list of a figure still owned named and no fresh list carries. It is
+  // remembered before any byte is evicted, so the worker refuses it from then on (src/sw.ts); an
+  // address a fresh list carries again is forgotten before any fetch below.
+  const tomb = await storage.open(WITHHELD_CACHE);
+  const remembered = (await tomb.keys()).map((k) => addressOfWithheldKey(k.url));
+  const withheld = new Set<string>();
+  for (const head of heads) for (const u of beforeOf.get(head) ?? []) if (!fresh.has(u)) withheld.add(u);
+  for (const u of remembered) if (fresh.has(u)) await tomb.delete(withheldKey(u));
+  const rememberedNow = remembered.filter((u) => !fresh.has(u));
+  const known = new Set(rememberedNow);
+  for (const u of withheld) {
+    if (known.has(u)) continue;
+    await tomb.put(withheldKey(u), new Response(null));
+    rememberedNow.push(u);
+  }
+  for (const u of rememberedNow.slice(0, Math.max(0, rememberedNow.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
+
   const have = new Set<string>();
   for (const key of mediaKeys) {
     if (keep.has(key.url)) have.add(key.url);
     else if (await media.delete(key, IGNORE_VARY)) result.evicted += 1;
   }
-  const gone = [...before].filter((u) => !fresh.has(u));
-  if (gone.length > 0) {
+  // From the worker's browsed cache: every address gone since the last sync, and every withheld one
+  // remembered, so a refill after the sync that withheld it goes at the next.
+  const sweep = new Set([...before].filter((u) => !fresh.has(u)));
+  for (const u of rememberedNow) sweep.add(u);
+  if (sweep.size > 0) {
     const browsed = await storage.open(BROWSED_MEDIA_CACHE);
-    for (const u of gone) await browsed.delete(u, IGNORE_VARY);
+    for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);
   }
   const missing = [...keep].filter((u) => !have.has(u));
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {

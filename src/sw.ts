@@ -6,7 +6,7 @@ import { CacheFirst } from 'workbox-strategies';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { API_NAVIGATION, isDerivativeRequest } from './sw/routes';
-import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE } from './media/ownedImages';
+import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, withheldKey } from './media/ownedImages';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -57,6 +57,7 @@ const browsed = new CacheFirst({
   plugins: [new CacheableResponsePlugin({ statuses: [200] }), new ExpirationPlugin({ maxEntries: 200, purgeOnQuotaError: true })],
 });
 registerRoute(isDerivativeRequest, async (options: { request: Request }) => {
+  if ((await (await self.caches.open(WITHHELD_CACHE)).match(withheldKey(options.request.url))) !== undefined) return Response.error();
   const owned = await (await self.caches.open(OWNED_MEDIA_CACHE)).match(options.request, IGNORE_VARY);
   if (owned !== undefined) return forThePage(owned);
   return forThePage(await (options.request.destination === 'image' ? browsed.handle(options as never) : fetch(options.request, NO_STORE)));

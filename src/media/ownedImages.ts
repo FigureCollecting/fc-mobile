@@ -2,22 +2,30 @@
 //
 //   fc-image-lists-v1   one record per owned figure: its image list as the coordinator last sent it
 //                       (address, size, role, primary, mask address, grounding). A fresh list REPLACES
-//                       the record, so an image or a mask a display restriction now withholds is gone
-//                       from the device at the next sync (catalog.proto DISPLAY RESTRICTIONS).
+//                       the record (catalog.proto DISPLAY RESTRICTIONS).
 //   fc-owned-media-v1   the bytes of each owned figure's primary image and its mask, fetched by a CORS
 //                       request without credentials. The service worker reads it FIRST for the public
-//                       image address (src/sw.ts).
+//                       image address and sends this fetch to the origin, never into its own cache
+//                       (src/sw.ts), so the bytes live here only.
+//   fc-derivatives-v2   the worker's cache of what an <img> showed (BROWSED_MEDIA_CACHE). The sync
+//                       deletes from it too every address a kept list named and the fresh lists no
+//                       longer carry.
 //
-// Both hold exactly the owned figures (at most MAX_OWNED_FIGURES of them): a figure that leaves the
-// collection leaves both caches at the next sync. Nothing here is ever sent anywhere.
+// So at each sync, an image or a mask a display restriction now withholds from an owned figure, or
+// that belonged to a figure no longer owned, is deleted from all three. Both kept caches hold exactly
+// the owned figures (at most MAX_OWNED_FIGURES of them). A figure stands as its kept image only while
+// its bytes are here (keptImage); otherwise it is drawn as its plate. Nothing here is sent anywhere.
 import type { ProductImage } from '@figurecollecting/fc-api-contract';
 import { isMediaUrl } from './address';
 
 export const OWNED_MEDIA_CACHE = 'fc-owned-media-v1';
 export const IMAGE_LISTS_CACHE = 'fc-image-lists-v1';
+/** The service worker's cache of the images an <img> showed (src/sw.ts). */
+export const BROWSED_MEDIA_CACHE = 'fc-derivatives-v2';
 /** The bound on figures kept for offline: ~2 images each. */
 export const MAX_OWNED_FIGURES = 1500;
-const MAX_IMAGE_PAGES = 50;
+/** The most GetProductImages pages one batch may take: a server that never ends is a fault. */
+export const MAX_IMAGE_PAGES = 50;
 const MAX_HEADS_PER_CALL = 200;
 
 export interface CachedImage {
@@ -61,6 +69,10 @@ export function primaryImage(list: readonly CachedImage[]): CachedImage | undefi
 }
 
 const browserCaches = (): CacheStorage | undefined => (typeof caches === 'undefined' ? undefined : caches);
+// The origin answers Vary: Origin; an <img crossorigin> stores its request with an Origin, so a bare
+// address finds (or deletes) it only ignoring Vary. The bytes are content-addressed: one per address.
+const IGNORE_VARY: CacheQueryOptions = { ignoreVary: true };
+const addressesOf = (list: readonly CachedImage[]): string[] => list.flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
 const listKey = (headId: string): Request => new Request(new URL(`/__fc/image-list/${encodeURIComponent(headId)}`, self.location.href));
 const headOfKey = (url: string): string => decodeURIComponent(new URL(url).pathname.slice('/__fc/image-list/'.length));
 
@@ -82,6 +94,18 @@ export async function recallImages(headId: string, storage: CacheStorage | undef
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A figure's primary as kept, but only while its bytes are on the device: a kept list whose image
+ * never cached (or was evicted) answers nothing, and the figure is drawn as its plate.
+ */
+export async function keptImage(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage | undefined> {
+  if (storage === undefined) return undefined;
+  const image = primaryImage((await recallImages(headId, storage)) ?? []);
+  if (image === undefined) return undefined;
+  const bytes = await (await storage.open(OWNED_MEDIA_CACHE)).match(image.url, IGNORE_VARY);
+  return bytes === undefined ? undefined : image;
 }
 
 /** The client's slice of CatalogService.GetProductImages. */
@@ -107,9 +131,10 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
 }
 
 /**
- * Bring both caches to the owned figures: fetch their lists, replace every record, drop the records
+ * Bring the caches to the owned figures: fetch their lists, replace every record, drop the records
  * of figures no longer owned, then keep exactly each figure's primary image and its mask, fetching
- * what is missing (`concurrency` at a time) and deleting what nothing references.
+ * what is missing (`concurrency` at a time) and deleting what nothing references. Every address a
+ * record named before and no fresh list carries is deleted from the worker's browsed cache too.
  */
 export async function syncOwnedImages(
   ownedHeads: readonly string[],
@@ -122,25 +147,38 @@ export async function syncOwnedImages(
   const heads = [...new Set(ownedHeads)].slice(0, options.max ?? MAX_OWNED_FIGURES);
   const lists = await fetchLists(heads);
 
+  // Every address the device holds for an owned figure before this sync: each record's, each kept byte's.
+  const records = await storage.open(IMAGE_LISTS_CACHE);
+  const media = await storage.open(OWNED_MEDIA_CACHE);
+  const before = new Set<string>();
+  for (const key of await records.keys()) for (const u of addressesOf((await recallImages(headOfKey(key.url), storage)) ?? [])) before.add(u);
+  const mediaKeys = await media.keys();
+  for (const key of mediaKeys) before.add(key.url);
+
   const keep = new Set<string>();
   const kept = new Set<string>();
+  const fresh = new Set<string>();
   for (const head of heads) {
     const list = toCachedImages(lists.get(head) ?? []);
     await rememberImages(head, list, storage);
+    for (const u of addressesOf(list)) fresh.add(u);
     const primary = primaryImage(list);
     if (primary === undefined) continue;
     kept.add(head);
     keep.add(primary.url);
     if (primary.maskUrl !== undefined) keep.add(primary.maskUrl);
   }
-  const records = await storage.open(IMAGE_LISTS_CACHE);
   for (const key of await records.keys()) if (!kept.has(headOfKey(key.url))) await records.delete(key);
 
-  const media = await storage.open(OWNED_MEDIA_CACHE);
   const have = new Set<string>();
-  for (const key of await media.keys()) {
+  for (const key of mediaKeys) {
     if (keep.has(key.url)) have.add(key.url);
-    else if (await media.delete(key)) result.evicted += 1;
+    else if (await media.delete(key, IGNORE_VARY)) result.evicted += 1;
+  }
+  const gone = [...before].filter((u) => !fresh.has(u));
+  if (gone.length > 0) {
+    const browsed = await storage.open(BROWSED_MEDIA_CACHE);
+    for (const u of gone) await browsed.delete(u, IGNORE_VARY);
   }
   const missing = [...keep].filter((u) => !have.has(u));
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {

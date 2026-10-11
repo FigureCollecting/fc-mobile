@@ -11,6 +11,7 @@ import { useScrollParent } from '../../hooks/useScrollParent';
 import { Style } from '../../styles/Style';
 import { SyncBadge } from '../sync/SyncBadge';
 import type { LocalMeta } from '../../local/figures';
+import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 const ROW_GAP_PX = 2;
 
@@ -38,6 +39,9 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
   const hostRef = useRef<HTMLDivElement>(null);
   const width = useElementWidth(hostRef, 360);
   const rows = packJustified(figures, width, ROW_HEIGHT[density]);
+  // An image that fails to load is drawn as the placeholder plate (ADDR-1), never a blank tile.
+  const images = useBrokenImages();
+  const shownUrl = (f: Figure): string | undefined => (images.broken(f.imageUrl) ? undefined : f.imageUrl);
 
   // Virtualize by ROW against the app's own page scroll container — not a
   // nested scrollbox — so collections of 1000+ figures stay smooth. Falls
@@ -97,8 +101,8 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
                   aria-pressed={isSelected === undefined ? undefined : isSelected(item.figure)}
                   onClick={onSelect ? () => onSelect(item.figure, item.index) : undefined}
                 >
-                  {item.figure.imageUrl ? (
-                    <img class="jrows__img" src={item.figure.imageUrl} alt="" loading="lazy" crossOrigin="anonymous" />
+                  {shownUrl(item.figure) ? (
+                    <img class="jrows__img" src={shownUrl(item.figure)} alt="" loading="lazy" crossOrigin="anonymous" onError={() => images.failed(item.figure.imageUrl!)} />
                   ) : (
                     // A placeholder plate (MG-2): no image anywhere, so the figure's name.
                     <span class="jrows__plate" aria-hidden="true">
@@ -106,7 +110,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
                       {item.figure.manufacturer && <span class="jrows__plate-mfr">{item.figure.manufacturer}</span>}
                     </span>
                   )}
-                  {labels && item.figure.imageUrl && (
+                  {labels && shownUrl(item.figure) && (
                     <span class="jrows__caption" aria-hidden="true">
                       <span class="jrows__caption-name">{item.figure.name}</span>
                       {item.figure.manufacturer && (

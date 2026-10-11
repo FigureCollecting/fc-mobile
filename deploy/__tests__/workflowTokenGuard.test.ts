@@ -343,6 +343,10 @@ describe("the build action's inputs", () => {
     'secret-envs: NODE_AUTH_TOKEN=node_auth_token',
     'context: e2e/.',
     "context: ''",
+    // wk-09c-i2: the ARG name is case-sensitive, the pair is not swapped, and the context is . exactly.
+    'build-args: vite_build_id=${{ steps.meta.outputs.version }}',
+    'build-args: ${{ steps.meta.outputs.version }}=VITE_BUILD_ID',
+    'context: " . "',
   ])('flags with: %s', (input) => {
     expect(build(`with:\n  ${input}`)).toEqual(['action-with']);
   });
@@ -823,6 +827,9 @@ describe('setup and build actions pinned to one commit', () => {
       `${name}@v1`,
       `${name}@${sha.slice(0, 7)}`,
       `${name}@${sha}0`,
+      // wk-09c-i2: a tag named after the pin ends with it but is another ref.
+      `${name}@v${sha}`,
+      `${name}@refs/tags/${sha}`,
       `${name}@${sha.toUpperCase()}`,
       `${name}@${IMPOSTER}`,
       `${name}@${sha}@x`,
@@ -839,6 +846,13 @@ describe('setup and build actions pinned to one commit', () => {
   it('flags a setup action at another commit before a token step, and nothing else', () => {
     expect(rules(tokenJob('', `      - uses: actions/setup-node@${IMPOSTER}\n        with:\n          node-version: 24\n`))).toEqual(['action-pin']);
   });
+
+  it.each(['v', 'refs/tags/', 'x'].map((prefix) => `${prefix}${PINNED['actions/setup-node']}`))(
+    'flags actions/setup-node@%s, a ref that ends with the pin, before a token step, and nothing else',
+    (ref) => {
+      expect(rules(tokenJob('', `      - uses: actions/setup-node@${ref}\n        with:\n          node-version: 24\n`))).toEqual(['action-pin']);
+    },
+  );
 
   it('leaves other actions at a full SHA, local actions, images and a uses GitHub cannot parse alone', () => {
     for (const uses of [
@@ -897,6 +911,13 @@ describe('action paths read the way GitHub reads them', () => {
     },
   );
 
+  it.each(Object.entries(PINNED).flatMap(([name, sha]) => spellings(name).flatMap((path) => [`${path}@v${sha}`, `${path}@refs/tags/${sha}`])))(
+    'flags %s, a tag named after the pin, as the pinned action at another ref',
+    (uses) => {
+      expect(anywhere(uses)).toEqual([['action-pin'], ['action-pin']]);
+    },
+  );
+
   it('flags another spelling of a setup action at a tag before a token step twice: wrong place, wrong commit', () => {
     expect(rules(tokenJob('', '      - uses: actions//checkout@v7\n'))).toEqual(['action-pin', 'step-order']);
   });
@@ -938,6 +959,9 @@ describe('every other remote action pinned by full SHA', () => {
     'Docker://alpine@v1',
     'aquasecurityx/trivy-action@v1',
     'actions/upload-artifact/./merge@v7',
+    // wk-09c-i2: only ./ and .\ are local; a leading dot alone is a remote owner's name.
+    '.evil/checkout@v1',
+    '.github/actions/local@v1',
   ])('flags %s in a job without a token step and after the last one', (uses) => {
     expect(anywhere(uses)).toEqual([['action-sha'], ['action-sha']]);
   });

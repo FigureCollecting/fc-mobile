@@ -145,6 +145,27 @@ describe('FigureDetail page', () => {
     }
   });
 
+  it('online, but the server out of reach (the sync engine\'s probe failed): asks nothing and shows the kept image', async () => {
+    const storage = fakeCaches();
+    vi.stubGlobal('caches', storage);
+    try {
+      const src = `https://images.figurecollecting.com/d/${'b'.repeat(64)}`;
+      await rememberImages(headOf(0), [{ url: src, width: 600, height: 800, role: 'gallery', primary: true }], storage);
+      await (await storage.open(OWNED_MEDIA_CACHE)).put(src, new Response('bytes'));
+      const r = await localRig();
+      await seedFigures(r, [MIKU]);
+      r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+      await r.engine.trigger('manual');
+      expect(r.engine.state.value.reachability).toBe('unreachable');
+      renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+      const img = await screen.findByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
+      expect(img).toHaveAttribute('src', src);
+      expect(r.clients.getProductImages).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('draws the plate when the image fails to load', async () => {
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(

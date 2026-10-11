@@ -209,13 +209,30 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
     expect(browsed(storage)).toEqual([]);
   });
 
-  it('leaves there what a fresh list still carries, and every image no kept list ever named', async () => {
+  it('leaves there what a fresh list still carries, primary or not, and every image no kept list ever named', async () => {
     const storage = fakeCaches();
-    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true }), img('b')] }), { storage });
-    await shown(storage, url('b'));
-    await shown(storage, url('z'));
-    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
-    expect(browsed(storage)).toEqual([url('b'), url('z')].sort());
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true }), img('b'), img('c')], h2: [img('d', { primary: true }), img('e')] }), { storage });
+    for (const c of ['b', 'c', 'e', 'z']) await shown(storage, url(c));
+    await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('b', { primary: true })], h2: [img('d', { primary: true }), img('e')] }), { storage });
+    expect(browsed(storage)).toEqual([url('b'), url('e'), url('z')].sort());
+  });
+
+  it('deletes there a withheld mask whose bytes were never kept', async () => {
+    const storage = fakeCaches(async (r) => (r.url === url('f') ? new Response('', { status: 404 }) : new Response('img')));
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
+    await shown(storage, url('f'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([]);
+  });
+
+  it('deletes there an address only the owned cache still held (the residue of an interrupted sync)', async () => {
+    const storage = fakeCaches();
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(url('r'), new Response('img'));
+    await shown(storage, url('r'));
+    const result = await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    expect(browsed(storage)).toEqual([]);
+    expect(result).toMatchObject({ evicted: 1, added: 1 });
   });
 });
 

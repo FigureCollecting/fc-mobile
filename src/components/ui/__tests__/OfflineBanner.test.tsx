@@ -28,6 +28,17 @@ describe('OfflineBanner', () => {
     expect(container.querySelector('.offline-banner')).toBeNull();
   });
 
+  it('shows nothing while online before the first probe has answered, nor without a session', async () => {
+    const r = await localRig();
+    await r.engine.write((s) => s.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'a' }));
+    expect(r.engine.state.value.reachability).toBe('unknown');
+    const { container, unmount } = render(<OfflineBanner />);
+    expect(container.querySelector('.offline-banner')).toBeNull();
+    unmount();
+    localSession.value = undefined;
+    expect(render(<OfflineBanner />).container.querySelector('.offline-banner')).toBeNull();
+  });
+
   it("shows when the reachability probe failed although the browser says online, with what waits", async () => {
     const r = await localRig();
     r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });

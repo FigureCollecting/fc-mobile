@@ -91,7 +91,7 @@ describe('syncOwnedImages', () => {
   const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
   const owned = async (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
 
-  it('caches the primary image and its mask of every owned figure, by a CORS request without credentials', async () => {
+  it('caches the primary image and its mask of every owned figure, by a CORS request without credentials or the HTTP cache', async () => {
     const storage = fakeCaches();
     const fetchLists = lists({
       h1: [img('a', { primary: true, mask: { maskId: hex('f'), contentType: 'image/png', url: url('f') } }), img('b')],
@@ -101,6 +101,8 @@ describe('syncOwnedImages', () => {
     expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3']);
     expect(await owned(storage)).toEqual([url('a'), url('c'), url('f')].sort());
     expect(storage.added.every((r) => r.mode === 'cors' && r.credentials === 'omit')).toBe(true);
+    // The origin answers immutable: a byte the HTTP cache kept would outlive its eviction from the owned cache.
+    expect(storage.added.map((r) => r.cache)).toEqual(['no-store', 'no-store', 'no-store']);
     expect(await recallImages('h1', storage)).toHaveLength(2);
     expect(await recallImages('h3', storage)).toBeUndefined();
     expect(result).toEqual({ figures: 2, images: 3, added: 3, evicted: 0, failed: 0 });

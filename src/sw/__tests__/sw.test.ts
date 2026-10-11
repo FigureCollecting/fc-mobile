@@ -93,12 +93,15 @@ describe('service worker wiring', () => {
   });
 
   it('serves the public image address from the owned-figure cache first, else CacheFirst for an <img>, keeping only a CORS 200, bounded', async () => {
-    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { options: { cacheName: string; plugins: unknown[]; matchOptions: CacheQueryOptions }; handle?: unknown };
+    const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { options: { cacheName: string; plugins: unknown[]; matchOptions: CacheQueryOptions; fetchOptions: RequestInit }; handle?: unknown };
     // The one the owned sync also deletes from (src/media/ownedImages.ts).
     expect(cacheFirst.options.cacheName).toBe(BROWSED_MEDIA_CACHE);
     // The origin sends Vary: Origin (fc-infra edge README); an <img crossorigin> request then misses a
     // response a fetch() stored, so the content-addressed caches ignore Vary (one app origin per worker).
     expect(cacheFirst.options.matchOptions).toEqual({ ignoreVary: true });
+    // The origin answers immutable: the worker's fetch neither reads nor fills the browser's HTTP cache,
+    // so the worker's caches hold the only copy and the owned sync's eviction leaves none behind.
+    expect(cacheFirst.options.fetchOptions).toEqual({ cache: 'no-store' });
     expect(wb.CacheableResponsePlugin).toHaveBeenCalledWith({ statuses: [200] });
     expect(wb.ExpirationPlugin).toHaveBeenCalledWith({ maxEntries: 200, purgeOnQuotaError: true });
     expect(cacheFirst.options.plugins).toEqual([wb.CacheableResponsePlugin.mock.instances[0], wb.ExpirationPlugin.mock.instances[0]]);
@@ -120,7 +123,7 @@ describe('service worker wiring', () => {
     expect((cacheFirst as unknown as { handle: ReturnType<typeof vi.fn> }).handle).toHaveBeenCalledWith(shown);
   });
 
-  it('sends the page\'s own fetch of an image (the owned sync\'s Cache.add) to the origin, never into the browsed cache', async () => {
+  it('sends the page\'s own fetch of an image (the owned sync\'s Cache.add) to the origin, never into the browsed cache or the HTTP cache', async () => {
     const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { handle: ReturnType<typeof vi.fn> };
     cacheFirst.handle = vi.fn(async () => new Response('browsed'));
     const [, handler] = wb.registerRoute.mock.calls.find(([m]) => typeof m === 'function' && (m as (c: unknown) => boolean)(ctx(`/d/${'ab'.repeat(32)}`, 'GET', 'https://images.figurecollecting.com'))) as unknown as [unknown, (o: { request: Request }) => Promise<Response>];
@@ -131,7 +134,7 @@ describe('service worker wiring', () => {
       const request = new Request(`https://images.figurecollecting.com/d/${'ef'.repeat(32)}`, { mode: 'cors', credentials: 'omit' });
       expect(request.destination).toBe('');
       expect(await handler({ request })).toBe(network);
-      expect(fetchSpy).toHaveBeenCalledWith(request);
+      expect(fetchSpy).toHaveBeenCalledWith(request, { cache: 'no-store' });
       expect(cacheFirst.handle).not.toHaveBeenCalled();
       // An owned image is still answered from its cache first, whoever asks.
       expect(await handler({ request: new Request(OWNED_URL) })).toBe(ownedResponse);

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { UPDATE_CHECK_MS } from '../updates';
+import { INSTALL_WAIT_MS, UPDATE_CHECK_MS } from '../updates';
 
 const ROOT = path.resolve(__dirname, '../../..');
 
@@ -33,5 +33,17 @@ describe('README "Updates" states what the update code does', () => {
     );
     expect(code.length).toBeGreaterThan(0);
     for (const f of code) expect(readFileSync(path.join(src, f), 'utf8'), f).not.toMatch(/periodicSync|periodicsync/);
+  });
+
+  it('says how long the Settings check waits for a newer build to install, and what a failed install reports', () => {
+    const doc = updatesSection();
+    expect(INSTALL_WAIT_MS).toBe(30 * 1000);
+    expect(doc).toMatch(/up to 30 seconds/);
+    expect(doc).toMatch(/fails to install/);
+    expect(doc).toMatch(/already waits, even offline/);
+  });
+
+  it('says a rollback to an earlier build is named like any other build change', () => {
+    expect(updatesSection()).toMatch(/rollback to an earlier build/);
   });
 });

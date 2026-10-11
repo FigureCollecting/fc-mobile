@@ -87,6 +87,13 @@ describe('recordBuild', () => {
     expect(recordBuild('build-42', s)).toBe(false);
   });
 
+  it('names a rollback too: any build other than the last one seen here is a change', () => {
+    const s = memory();
+    s.setItem(LAST_BUILD_KEY, 'build-42');
+    expect(recordBuild('build-41', s)).toBe(true);
+    expect(s.getItem(LAST_BUILD_KEY)).toBe('build-41');
+  });
+
   it('is no update when the build is unchanged', () => {
     const s = memory();
     s.setItem(LAST_BUILD_KEY, 'build-41');

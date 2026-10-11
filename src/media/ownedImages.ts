@@ -26,8 +26,13 @@ export const IMAGE_LISTS_CACHE = 'fc-image-lists-v1';
 export const BROWSED_MEDIA_CACHE = 'fc-derivatives-v2';
 /** The bound on figures kept for offline: ~2 images each. */
 export const MAX_OWNED_FIGURES = 1500;
-/** The most GetProductImages pages one batch may take: a server that never ends is a fault. */
+/**
+ * The most GetProductImages pages one batch may take: a server that never ends is a fault. At
+ * IMAGE_PAGE_SIZE rows a page, that is 50 images a figure for a batch of 200 figures.
+ */
 export const MAX_IMAGE_PAGES = 50;
+/** The largest page the coordinator serves (catalog.proto: 0 is its default of 50 rows, capped at 200). */
+export const IMAGE_PAGE_SIZE = 200;
 const MAX_HEADS_PER_CALL = 200;
 
 export interface CachedImage {
@@ -130,14 +135,15 @@ export async function keptImage(headId: string, storage: CacheStorage | undefine
 /** The client's slice of CatalogService.GetProductImages. */
 export interface ImageListClient {
   getProductImages(
-    request: { headIds: string[]; pageToken?: string },
+    request: { headIds: string[]; pageSize?: number; pageToken?: string },
     options?: { signal?: AbortSignal },
   ): Promise<{ products: { headId: string; images: ProductImage[] }[]; nextPageToken: string }>;
 }
 
 /**
- * Every head's image list, in batches of 200 heads, every page followed, a head's rows joined across
- * pages. An aborted signal stops it between calls and aborts the call in flight.
+ * Every head's image list, in batches of 200 heads and pages of IMAGE_PAGE_SIZE rows, every page
+ * followed, a head's rows joined across pages. An aborted signal stops it between calls and aborts the
+ * call in flight.
  */
 export async function fetchImageLists(client: ImageListClient, heads: readonly string[], signal?: AbortSignal): Promise<Map<string, ProductImage[]>> {
   const out = new Map<string, ProductImage[]>();
@@ -147,7 +153,8 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
     for (let pages = 0; ; pages += 1) {
       signal?.throwIfAborted();
       if (pages === MAX_IMAGE_PAGES) throw new Error(`GetProductImages did not end within ${MAX_IMAGE_PAGES} pages`);
-      const res = await client.getProductImages(pageToken === '' ? { headIds } : { headIds, pageToken }, signal === undefined ? undefined : { signal });
+      const request = pageToken === '' ? { headIds, pageSize: IMAGE_PAGE_SIZE } : { headIds, pageSize: IMAGE_PAGE_SIZE, pageToken };
+      const res = await client.getProductImages(request, signal === undefined ? undefined : { signal });
       for (const p of res.products) out.set(p.headId, [...(out.get(p.headId) ?? []), ...p.images]);
       pageToken = res.nextPageToken;
       if (pageToken === '') break;

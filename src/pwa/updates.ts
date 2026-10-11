@@ -122,30 +122,35 @@ const newerWaiting = (registration: Registration): boolean =>
 /**
  * A newer build that is installing is ready once installed (it then waits, and the prompt shows).
  * One that fails to install (a precached asset 404s mid-deploy) turns redundant and nothing waits;
- * neither that nor one still installing after INSTALL_WAIT_MS is a version to offer.
+ * neither that nor one still installing after INSTALL_WAIT_MS is a version to offer. One that
+ * installs after that wait still waits: `installedLate` then raises the prompt for it.
  */
-function installOutcome(worker: ServiceWorker): Promise<UpdateCheck> {
+function installOutcome(worker: ServiceWorker, installedLate: () => void): Promise<UpdateCheck> {
   return new Promise((resolve) => {
+    let answered = false;
+    const answer = (result: UpdateCheck): void => {
+      answered = true;
+      resolve(result);
+    };
     const settle = (): void => {
       if (worker.state === 'installing') return;
-      done(worker.state === 'redundant' ? 'offline' : 'ready');
-    };
-    const timer = setTimeout(() => done('offline'), INSTALL_WAIT_MS);
-    function done(result: UpdateCheck): void {
       clearTimeout(timer);
       worker.removeEventListener('statechange', settle);
-      resolve(result);
-    }
+      const result = worker.state === 'redundant' ? 'offline' : 'ready';
+      if (!answered) answer(result);
+      else if (result === 'ready') installedLate();
+    };
+    const timer = setTimeout(() => answer('offline'), INSTALL_WAIT_MS);
     worker.addEventListener('statechange', settle);
     settle();
   });
 }
 
 /** What the registration holds after a check; the first install is not a newer build. */
-function found(registration: Registration): UpdateCheck | Promise<UpdateCheck> {
+function found(registration: Registration, raisePrompt: () => void): UpdateCheck | Promise<UpdateCheck> {
   if (registration.active === null) return 'latest';
   if (registration.waiting !== null) return 'ready';
-  return registration.installing === null ? 'latest' : installOutcome(registration.installing);
+  return registration.installing === null ? 'latest' : installOutcome(registration.installing, raisePrompt);
 }
 
 function watchForUpdates(
@@ -175,7 +180,7 @@ function watchForUpdates(
       // A newer build already waiting is ready (its prompt is up) whatever the network.
       return newerWaiting(registration) ? 'ready' : 'offline';
     }
-    return found(registration);
+    return found(registration, raisePrompt);
   };
   // The plugin prompts only for the first newer build to install behind this page, so after one that
   // failed mid-deploy it misses the next: every check that finds a newer build ready raises the prompt.

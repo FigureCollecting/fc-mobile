@@ -15,6 +15,7 @@ import {
 } from '../fixtures';
 import { getDisplayMeta } from '../../components/display/displayMeta';
 import { figureArt } from '../../components/display/figureArt';
+import { measureCaseFigure } from '../../components/display/packCabinets';
 
 /** The unfiltered pixels of a PNG this repo's script wrote (one IDAT, filter 0 on every row). */
 function pngPixels(file: string): { width: number; height: number; channels: number; rows: Buffer[] } {
@@ -200,6 +201,31 @@ describe('fixture art: committed synthetic stand-ins, real cut-outs only for loc
       }
       expect({ name, alphaOff, colourOff }).toEqual({ name, alphaOff: 0, colourOff: 0 });
       expect(drawn, name).toBeGreaterThan(1000);
+    }
+  });
+
+  it("labels each figure with the width its cut-out draws at true scale, rounded up: the case packs it by that, never narrower", () => {
+    for (const f of FIXTURE_FIGURES) {
+      const name = f._id.replace(/^fx-/, '');
+      const cut = pngPixels(path.join(SYNTHETIC_DIR, `${name}.png`));
+      let [x0, x1, y0, y1] = [cut.width, -1, cut.height, -1];
+      for (let y = 0; y < cut.height; y++) {
+        for (let x = 0; x < cut.width; x++) {
+          if (cut.rows[y][x * 4 + 3] <= 10) continue;
+          [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
+        }
+      }
+      const heightMm = f.dimensions!.heightMm!;
+      // drawn so its opaque rows are heightMm tall over its clear margins (pictureBox)
+      const pictureH = heightMm / (1 - y0 / cut.height - (cut.height - 1 - y1) / cut.height);
+      const opaqueFrac = (x1 - x0 + 1) / cut.width;
+      const meta = getDisplayMeta(f);
+      // as a cut-out (the display meta's aspect) and as masked art (the image list's own size)
+      const drawn = Math.max(opaqueFrac * meta.aspect * pictureH, opaqueFrac * (cut.width / cut.height) * pictureH);
+      const footprint = measureCaseFigure(f, 0, meta).widthMm;
+      expect(f.dimensions!.widthMm, name).toBe(footprint);
+      expect(footprint, name).toBeGreaterThanOrEqual(drawn);
+      expect(footprint - drawn, name).toBeLessThan(1);
     }
   });
 

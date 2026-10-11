@@ -158,6 +158,21 @@ describe('the figure page (useProductImage) after the case view\'s sync withheld
   });
 });
 
+describe('what a completed sync leaves alone', () => {
+  it('drops no answer but the two image hooks\': another local answer, or another image answer, stays', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const client = appQueryClient();
+    client.setQueryData(['local', 'collection-counts'], { owned: 1 });
+    client.setQueryData(['remote', 'image', headOf(0)], { url: X });
+    await caseViewSyncs(r, client, listOf());
+    expect(client.getQueryData(['local', 'collection-counts'])).toEqual({ owned: 1 });
+    expect(client.getQueryData(['remote', 'image', headOf(0)])).toEqual({ url: X });
+    expect(client.getQueryState(['local', 'collection-counts'])?.isInvalidated).toBe(false);
+  });
+});
+
 describe('a sync that does not complete', () => {
   it('drops no answer: offline the figure page still answers the kept image, its bytes still on the device', async () => {
     const r = await localRig();

@@ -418,6 +418,28 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     for (const name of [OWNED_MEDIA_CACHE, BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, WITHHELD_CACHE]) expect([...(storage.stores.get(name)?.keys() ?? [])]).not.toContain(url('a'));
   });
 
+  it('remembers an address before it evicts its bytes or its shown copy, so the worker never serves it in between', async () => {
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    await shown(storage, url('a'));
+    const atDelete: string[] = [];
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== OWNED_MEDIA_CACHE && name !== BROWSED_MEDIA_CACHE) return cache;
+      const del = cache.delete.bind(cache);
+      return Object.assign(Object.create(cache) as Cache, {
+        delete: async (r: RequestInfo | URL, o?: CacheQueryOptions) => {
+          const u = typeof r === 'string' ? r : r instanceof URL ? r.href : r.url;
+          atDelete.push(`${name} ${[...(await withheldAmong([u], storage))].length === 1 ? 'remembered' : 'NOT remembered'}`);
+          return del(r, o);
+        },
+      });
+    };
+    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
+    expect(atDelete).toEqual([`${OWNED_MEDIA_CACHE} remembered`, `${BROWSED_MEDIA_CACHE} remembered`]);
+  });
+
   it('deletes a refill of a withheld address from the browsed cache at every later sync', async () => {
     const storage = fakeCaches();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });
@@ -434,20 +456,26 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect(browsed(storage)).toEqual([url('z')]);
   });
 
-  it('forgets an address once a fresh list carries it again, before it fetches it', async () => {
+  it('forgets an address once a fresh list carries it again, before it fetches it, and leaves its shown copy', async () => {
     const atFetch: string[][] = [];
     const storage: ReturnType<typeof fakeCaches> = fakeCaches(async (r) => {
       atFetch.push([...(await withheldAmong([r.url], storage))]);
       return new Response('img');
     });
-    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true }), img('c')] }), { storage });
     await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
-    expect(await withheld(storage, ['a'])).toEqual([url('a')]);
+    expect(await withheld(storage, ['a', 'c'])).toEqual([url('a'), url('c')].sort());
     atFetch.length = 0;
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     expect(atFetch).toEqual([[]]);
-    expect(await withheld(storage, ['a', 'b'])).toEqual([url('b')]);
+    expect(await withheld(storage, ['a', 'b', 'c'])).toEqual([url('b'), url('c')].sort());
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
+    // Shown again once a fresh list carries it: a later sync leaves that copy where it is.
+    await shown(storage, url('c'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true }), img('c')] }), { storage });
+    await shown(storage, url('a'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true }), img('c')] }), { storage });
+    expect(browsed(storage)).toEqual([url('a'), url('c')].sort());
   });
 
   it(`keeps at most MAX_WITHHELD (${MAX_WITHHELD}) addresses, the oldest dropped first`, async () => {

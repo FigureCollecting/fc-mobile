@@ -4,11 +4,13 @@
 //                       (address, size, role, primary, mask address, grounding). A fresh list REPLACES
 //                       the record (catalog.proto DISPLAY RESTRICTIONS).
 //   fc-owned-media-v1   the bytes of each owned figure's primary image and its mask, fetched by a CORS
-//                       request without credentials or the browser's HTTP cache (cache 'no-store': the
-//                       origin answers immutable, and a copy there would outlive an eviction here). The
-//                       service worker reads it FIRST for the public image address and sends this fetch
-//                       to the origin, never into its own caches nor the HTTP cache (src/sw.ts), so the
-//                       bytes live here only.
+//                       request without credentials that neither reads nor fills the browser's HTTP
+//                       cache (cache 'no-store': the origin answers immutable, and a copy there would
+//                       outlive an eviction here). The service worker reads this cache FIRST for the
+//                       public image address and sends this fetch to the origin without storing it
+//                       (src/sw.ts). The sync stores the bytes here only; an image an <img> showed
+//                       before its figure was owned stays in fc-derivatives-v2 too, until the sync
+//                       evicts it (e2e/pwa (b)).
 //   fc-derivatives-v2   the worker's cache of what an <img> showed (BROWSED_MEDIA_CACHE). The sync
 //                       deletes from it too every address a kept list named and the fresh lists no
 //                       longer carry.
@@ -17,6 +19,10 @@
 // that belonged to a figure no longer owned, is deleted from all three. Both kept caches hold exactly
 // the owned figures (at most MAX_OWNED_FIGURES of them). A figure stands as its kept image only while
 // its bytes are here (keptImage); otherwise it is drawn as its plate. Nothing here is sent anywhere.
+// No fetch of the image address, here or in the worker, uses the HTTP cache, so neither answers an
+// evicted image from it. A document the worker does not control yet (a first visit before it claims,
+// a shift-reload) loads its <img>s through the HTTP cache, where the origin's immutable keeps a copy
+// after an eviction here; no fetch here or in the worker reads it.
 import type { ProductImage } from '@figurecollecting/fc-api-contract';
 import { isMediaUrl } from './address';
 

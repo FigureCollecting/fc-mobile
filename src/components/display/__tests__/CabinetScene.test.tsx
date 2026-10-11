@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { CabinetScene, SWIPE_START_PX } from '../CabinetScene';
+import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 
@@ -209,5 +209,30 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
 
   it('no flag when everything fits', () => {
     expect(scene(FIXTURE_FIGURES).host.querySelector('.cabinet-scene__fit')).toBeNull();
+  });
+});
+
+describe('quadStyle: one flat face of the mm world as a CSS 3D element', () => {
+  it('a front-facing rectangle: its size in px (1 px per mm) and an identity frame at its top-left corner', () => {
+    expect(quadStyle([10, 200, -5], [100, 0, 0], [0, -50, 0])).toEqual({
+      width: '100px',
+      height: '50px',
+      transform: 'matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,10,-200,-5,1)',
+    });
+  });
+
+  it('a horizontal face (a shelf top): its local y runs toward the viewer', () => {
+    expect(quadStyle([0, 400, -300], [450, 0, 0], [0, 0, 300])).toEqual({
+      width: '450px',
+      height: '300px',
+      transform: 'matrix3d(1,0,0,0,0,0,1,0,0,-1,0,0,0,-400,-300,1)',
+    });
+  });
+
+  it('a slanted leg keeps its true length; a face with no area draws nothing', () => {
+    const leg = quadStyle([0, 155, 0], [33, 0, 0], [-47.5, -155, 50])!;
+    expect(parseFloat(leg.height)).toBeCloseTo(Math.hypot(47.5, 155, 50), 6);
+    expect(quadStyle([0, 0, 0], [0, 0, 0], [0, 10, 0])).toBeNull();
+    expect(quadStyle([0, 0, 0], [10, 0, 0], [0, 0, 0])).toBeNull();
   });
 });

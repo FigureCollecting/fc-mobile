@@ -532,13 +532,14 @@ export function CabinetScene({
   const panPx = prefs.swipe === 'pan' ? clampPan(pan + liveDx) : 0;
   const { camera } = framing;
 
-  // draw only the cabinets the camera (or the panned picture) can reach
+  // draw only the cabinets the camera can reach, where the panned picture now sits: never the whole wall
+  // (a hundred cabinets of preserve-3d faces stall the browser)
   const reachMm = useMemo(() => {
     const depth = camera.z + 600;
     const half = (depth * frame.width) / 2 / camera.focalPx;
-    const panExtra = (Math.max(-panMin, panMax) * (camera.z - framing.look[2])) / camera.focalPx;
-    return [camera.x - half - panExtra - 600, camera.x + half + panExtra + 600] as const;
-  }, [camera, frame.width, panMin, panMax, framing.look]);
+    const shift = (-panPx * (camera.z - framing.look[2])) / camera.focalPx;
+    return [camera.x + shift - half - 600, camera.x + shift + half + 600] as const;
+  }, [camera, frame.width, panPx, framing.look]);
   const visible = wall.cabinets
     .map((slot, i) => ({ slot, i }))
     .filter(({ slot }) => slot.rightMm + sideOverhangMm(slot.profile) >= reachMm[0] && slot.leftMm - sideOverhangMm(slot.profile) <= reachMm[1]);

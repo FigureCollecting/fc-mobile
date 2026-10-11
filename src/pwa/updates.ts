@@ -58,14 +58,18 @@ export function startServiceWorker({
       reload();
     });
   };
+  /** Shows the update prompt for a newer build that waits; its takeover then reloads this page. */
+  const raisePrompt = (): void => {
+    updateReady.value = true;
+    reloadOnTakeover();
+  };
   apply = register({
     immediate: true,
     onNeedRefresh() {
       // The plugin also calls this for a worker another page registered, even the first install,
       // which waits for nothing and claims this page: not an update, and no reload mid-sign-in.
       if (registered !== undefined && registered.active === null) return;
-      updateReady.value = true;
-      reloadOnTakeover();
+      raisePrompt();
     },
     // The reload above covers every page; the plugin's would be a second one.
     onNeedReload() {},
@@ -77,7 +81,7 @@ export function startServiceWorker({
         if (loadedUncontrolled) ownClaim = registration.active;
         reloadOnTakeover();
       }
-      checkNow = watchForUpdates(swUrl, registration, fetchImpl);
+      checkNow = watchForUpdates(swUrl, registration, fetchImpl, raisePrompt);
     },
     onRegisterError(error) {
       console.warn('[sw] registration failed', error);
@@ -144,7 +148,12 @@ function found(registration: Registration): UpdateCheck | Promise<UpdateCheck> {
   return registration.installing === null ? 'latest' : installOutcome(registration.installing);
 }
 
-function watchForUpdates(swUrl: string, registration: Registration, fetchImpl: typeof fetch): () => Promise<UpdateCheck> {
+function watchForUpdates(
+  swUrl: string,
+  registration: Registration,
+  fetchImpl: typeof fetch,
+  raisePrompt: () => void,
+): () => Promise<UpdateCheck> {
   /** Asks the browser to look for a newer sw.js; false when the server could not be asked. */
   const askServer = async (): Promise<boolean> => {
     if (!navigator.onLine) return false;
@@ -160,13 +169,20 @@ function watchForUpdates(swUrl: string, registration: Registration, fetchImpl: t
       return false;
     }
   };
-  const check = async (): Promise<UpdateCheck> => {
+  const look = async (): Promise<UpdateCheck> => {
     // A build already installing is the newest one there is: wait for it rather than ask again.
     if (registration.installing === null && !(await askServer())) {
       // A newer build already waiting is ready (its prompt is up) whatever the network.
       return newerWaiting(registration) ? 'ready' : 'offline';
     }
     return found(registration);
+  };
+  // The plugin prompts only for the first newer build to install behind this page, so after one that
+  // failed mid-deploy it misses the next: every check that finds a newer build ready raises the prompt.
+  const check = async (): Promise<UpdateCheck> => {
+    const result = await look();
+    if (result === 'ready') raisePrompt();
+    return result;
   };
   setInterval(() => void check(), UPDATE_CHECK_MS);
   window.addEventListener('online', () => void check());

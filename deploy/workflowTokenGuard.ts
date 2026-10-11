@@ -20,8 +20,9 @@
 // before the first @, split on / and \ with empty segments dropped, gives owner/repo. The setup and
 // build actions in ACTION_PINS run at their pinned commit wherever they are used; every other
 // remote action, aquasecurity's included (GHSA-69fq-xp46-6x23), names a full 40-hex commit, and
-// which repo that commit is on is left to review (a fork's commit resolves too). Local paths (./,
-// .\), docker:// images, a uses with no @ (GitHub rejects it) and job-level uses are not judged.
+// which repo that commit is on is left to review (a fork's commit resolves too). Not judged: local
+// paths (./, .\), docker:// images, a uses with no @ (a $/ path, or a remote one GitHub rejects)
+// and job-level uses.
 
 export type Rule =
   | 'workflow-env'

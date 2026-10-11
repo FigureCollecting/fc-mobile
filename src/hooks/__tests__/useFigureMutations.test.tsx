@@ -223,9 +223,9 @@ describe('offline: the edit hooks commit to the local store at once (WK-13b)', (
   });
 
   it.each([
-    ['useDeleteFigure', () => useDeleteFigure(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync(headOf(2) as never)],
-    ['useBulkUpdateStatus', () => useBulkUpdateStatus(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync({ ids: [headOf(2)], status: 'ordered' } as never)],
-    ['useBulkDelete', () => useBulkDelete(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync([headOf(2)] as never)],
+    ['useDeleteFigure', (): unknown => useDeleteFigure(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync(headOf(2) as never)],
+    ['useBulkUpdateStatus', (): unknown => useBulkUpdateStatus(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync({ ids: [headOf(2)], status: 'ordered' } as never)],
+    ['useBulkDelete', (): unknown => useBulkDelete(), (m: { mutateAsync: (v: never) => Promise<unknown> }) => m.mutateAsync([headOf(2)] as never)],
   ])('%s commits offline', async (_name, hook, run) => {
     const r = await localRig();
     await r.engine.write((s) => s.createCopy(headOf(2), 'owned'));

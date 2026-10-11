@@ -22,6 +22,11 @@ export interface FigureEdit {
   quantity?: number;
 }
 
+// Every hook here is a local write: it runs whatever the network says. On TanStack's default
+// networkMode ('online') a mutation started offline is paused in memory, so 'Saving…' never
+// resolved, nothing reached the store, and killing the app lost the edit (WK-16 F9/F12).
+const LOCAL = { networkMode: 'always' } as const;
+
 /** Write through the engine with the figure as the store holds it now. */
 function withFigure<T>(id: string, fn: (store: UserStore, figure: LocalFigure) => Promise<T>): Promise<T> {
   return requireSession().engine.write(async (store) => {
@@ -66,6 +71,7 @@ async function applyEdit(store: UserStore, figure: LocalFigure, edit: FigureEdit
 
 export function useUpdateFigure() {
   return useMutation({
+    ...LOCAL,
     mutationFn: async ({ id, data }: { id: string; data: FigureEdit }) => {
       if (data.quantity !== undefined && !(Number.isInteger(data.quantity) && data.quantity >= 1)) {
         throw new RangeError('the count of copies must be at least 1');
@@ -78,6 +84,7 @@ export function useUpdateFigure() {
 /** Remove the figure from the collection: every copy it holds (its former copies stay). */
 export function useDeleteFigure() {
   return useMutation({
+    ...LOCAL,
     mutationFn: (id: string) =>
       withFigure(id, async (store, figure) => {
         for (const c of held(figure)) await store.removeCopy({ occ_id: c.occ_id });
@@ -88,6 +95,7 @@ export function useDeleteFigure() {
 /** Move the held copies of several figures to one status, in one batch. */
 export function useBulkUpdateStatus() {
   return useMutation({
+    ...LOCAL,
     mutationFn: ({ ids, status }: { ids: string[]; status: CollectionStatus }) =>
       requireSession().engine.write(async (store) => {
         const snapshot = await readSnapshot(store, false);
@@ -104,6 +112,7 @@ export function useBulkUpdateStatus() {
 
 export function useBulkDelete() {
   return useMutation({
+    ...LOCAL,
     mutationFn: (ids: string[]) =>
       requireSession().engine.write(async (store) => {
         const snapshot = await readSnapshot(store, false);

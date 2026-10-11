@@ -143,26 +143,91 @@ async function framedBottomPx(page: Page, view: 'wall' | 'cabinet' | 'shelf'): P
   return Math.max(...[slot.leftMm, slot.rightMm].map((x) => project(camera, [x, lo, 0]).y));
 }
 
+type View = 'wall' | 'cabinet' | 'shelf';
+
+/** Open the case in `view`; the shelf view frames shelf 1 (the top's band may not fit, the camera steps back only 3 in, CC4b). */
+async function openFramed(page: Page, size: { width: number; height: number }, view: View) {
+  await openCase(page, size, '&fx=3', { view });
+  if (view === 'shelf') {
+    await page.getByRole('button', { name: 'Shelf below' }).click();
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
+  }
+}
+
+/**
+ * The scene runs from wherever the layout above it ends down to the
+ * pull-up tabs (their 4 px gap), never under them, and the camera frames
+ * the cabinet (its feet, or the shelf's edge) inside it.
+ */
+async function expectFramedAboveTabs(page: Page, view: View, label: string) {
+  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  const tabsTop = Math.min(
+    (await page.locator('.case-tabs').boundingBox())!.y,
+    ...(await page.locator('.case-tabs [data-tab]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top))),
+  );
+  const sceneBottom = scene.y + scene.height;
+  expect(sceneBottom, `${label}: the scene ends above the tabs`).toBeLessThanOrEqual(tabsTop + 1);
+  expect(sceneBottom, `${label}: the scene reaches down to the tabs`).toBeGreaterThanOrEqual(tabsTop - 6);
+  const bottom = scene.y + (await framedBottomPx(page, view));
+  expect(bottom, `${label}: framed inside the scene`).toBeLessThanOrEqual(sceneBottom);
+  expect(bottom, `${label}: framed above the tabs`).toBeLessThanOrEqual(tabsTop);
+}
+
+/** expectFramedAboveTabs once the scene and its camera have followed a change of layout. */
+async function expectReframedAboveTabs(page: Page, view: View, label: string) {
+  await expect(async () => expectFramedAboveTabs(page, view, label)).toPass({ timeout: 5_000 });
+}
+
 for (const size of FOLD8) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
     test(`the whole framed cabinet stands above the pull-up tabs and the tab bar: ${view}, ${size.name}`, async ({ page }) => {
-      await openCase(page, size, '&fx=3', { view });
-      // the shelf view frames a shelf whole; the top's band may not fit, the camera steps back only 3 in (CC4b)
+      await openFramed(page, size, view);
+      await expectFramedAboveTabs(page, view, 'at load');
+    });
+
+    test(`still above the tabs when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+      await openFramed(page, size, view);
+      await expectFramedAboveTabs(page, view, 'online');
+      await context.setOffline(true);
+      await expect(page.locator('.offline-banner')).toBeVisible();
+      await expectReframedAboveTabs(page, view, 'offline');
+      await context.setOffline(false);
+      await expect(page.locator('.offline-banner')).toHaveCount(0);
+      await expectReframedAboveTabs(page, view, 'back online');
+    });
+
+    test(`still above the tabs when the chips row comes and goes above the scene: ${view}, ${size.name}`, async ({ page }) => {
+      await openFramed(page, size, view);
+      // clear the default chips: the scene grows up into their row
+      while ((await page.locator('.applied-chips__chip').count()) > 0) await page.locator('.applied-chips__chip').first().click();
+      await expectReframedAboveTabs(page, view, 'chips cleared');
+      // come back later with no chips, then add a filter: its chip row pushes the scene down
+      await page.reload();
+      await page.waitForSelector('button.cab-figure');
+      await expect(page.locator('.applied-chips')).toHaveCount(0);
       if (view === 'shelf') {
         await page.getByRole('button', { name: 'Shelf below' }).click();
         await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
       }
-      const scene = (await page.locator('.cabinet-scene').boundingBox())!;
-      const tabsTop = Math.min(
-        (await page.locator('.case-tabs').boundingBox())!.y,
-        ...(await page.locator('.case-tabs [data-tab]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top))),
-      );
-      // the scene itself ends above the tabs: nothing it draws is ever under them
-      expect(scene.y + scene.height).toBeLessThanOrEqual(tabsTop + 1);
-      // and the camera frames the cabinet (its feet, or the shelf's edge) inside that scene
-      const bottom = scene.y + (await framedBottomPx(page, view));
-      expect(bottom).toBeLessThanOrEqual(scene.y + scene.height);
-      expect(bottom).toBeLessThanOrEqual(tabsTop);
+      await expectFramedAboveTabs(page, view, 'reloaded without chips');
+      await page.getByRole('button', { name: 'Refine' }).click();
+      await page.getByRole('button', { name: 'owned', exact: true }).click();
+      await page.locator('.filter-sheet2__btn--apply').click();
+      await expect(page.locator('.applied-chips__chip')).toHaveCount(1);
+      await expectReframedAboveTabs(page, view, 'a chip added');
+    });
+  }
+}
+
+for (const [from, to] of [
+  ['fold8-cover', 'fold8-cover-sideways'],
+  ['fold8-open', 'fold8-open-rotated'],
+] as const) {
+  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+    test(`turning the phone with the case open re-fits the scene above the tabs: ${view}, ${from} to ${to}`, async ({ page }) => {
+      await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
+      await page.setViewportSize(FOLD8.find((v) => v.name === to)!);
+      await expectReframedAboveTabs(page, view, to);
     });
   }
 }

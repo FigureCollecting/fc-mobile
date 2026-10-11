@@ -21,7 +21,7 @@ describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
   });
 
   it('IC1-R3: the Reserved slot is held empty, with nothing to press or read', () => {
-    const { container } = render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} infoEnabled onTab={() => {}} open={null} />);
+    render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} infoEnabled onTab={() => {}} open={null} />);
     const reserved = document.body.querySelector('[data-tab="reserved"]') as HTMLElement;
     expect(reserved.tagName).toBe('SPAN');
     expect(reserved.textContent).toBe('');

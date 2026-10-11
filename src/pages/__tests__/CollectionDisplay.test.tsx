@@ -74,7 +74,7 @@ describe('Collection page (rebuilt display layer)', () => {
 
   it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the rows do not', async () => {
     await respondWith([makeFigure('1')]);
-    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    const { unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
       'view',

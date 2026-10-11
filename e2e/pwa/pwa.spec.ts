@@ -249,8 +249,8 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
 
   // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): the sync stores them
   // in the owned cache only, and the worker serves them from it first, offline too. A withheld one is
-  // deleted from every CacheStorage cache, and offline the worker answers it with a network error, though an
-  // <img> showed it online before it was owned and offline while it was. Every answer the worker gave this
+  // deleted from every CacheStorage cache, and the worker refuses it with a network error, online and
+  // offline, though an <img> showed it online before it was owned and offline while it was. Every answer the worker gave this
   // page for it was marked no-store. With this context's caches off, the test cannot show what Chromium's
   // HTTP cache or the tab's memory cache would keep: src/sw/__tests__/sw.test.ts and
   // src/media/__tests__/ownedImages.test.ts pin each fetch of an image address to cache 'no-store', and
@@ -299,6 +299,16 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(await owned()).toEqual([replacement]);
   expect(await kept('h1')).toBe(replacement);
   expect(await cachesHolding(ownedImage)).toEqual([]);
+  // The sync recorded it as withheld: in a fresh document the worker refuses it, online too, though the
+  // origin still serves it. No request leaves for it, no cache takes it again, and the next sync finds
+  // nothing to evict.
+  await freshDocument();
+  const asked = count(ownedImage);
+  expect(await show(ownedImage)).toBe(false);
+  expect(await get(ownedImage)).toBe('error TypeError');
+  expect(count(ownedImage)).toBe(asked);
+  expect(await cachesHolding(ownedImage)).toEqual([]);
+  expect(await sync({ h1: [{ url: replacement, primary: true }] })).toMatchObject({ added: 0, evicted: 0 });
   down = true;
   await freshDocument();
   expect(await show(ownedImage)).toBe(false);

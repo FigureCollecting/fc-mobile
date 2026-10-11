@@ -234,9 +234,9 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   // The no-cors <img> and the CORS one; nothing after the origin went down.
   expect(count(present)).toBe(2);
 
-  // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): kept in the owned
-  // cache alone and served first, offline too; a withheld one is deleted from every cache, so it is gone,
-  // though an <img> showed it online. This context's HTTP cache is off (any Playwright route turns it
+  // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): the sync stores them
+  // in the owned cache only, and the worker serves them from it first, offline too; a withheld one is
+  // deleted from every cache, so it is gone, though an <img> showed it online. This context's HTTP cache is off (any Playwright route turns it
   // off, the hands-off guard's too), so this cannot show that no fetch fills it with the origin's
   // immutable answer: src/sw/__tests__/sw.test.ts and src/media/__tests__/ownedImages.test.ts pin each
   // fetch of an image address to cache 'no-store'.
@@ -254,6 +254,8 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   await expect.poll(browsed).toEqual([present, ownedImage].sort());
   expect(await sync({ h1: [{ url: ownedImage, primary: true }] })).toMatchObject({ figures: 1, images: 1, added: 1, failed: 0 });
   expect(await owned()).toEqual([ownedImage]);
+  // While it is owned, the <img>'s copy stays in the browsed cache too, until the sync evicts the image.
+  expect((await cachesHolding(ownedImage)).sort()).toEqual(['fc-derivatives-v2', 'fc-owned-media-v1']);
   expect(await kept('h1')).toBe(ownedImage);
   down = true;
   await freshDocument();

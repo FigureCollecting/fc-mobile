@@ -634,7 +634,7 @@ describe('what may change how a token step runs', () => {
     const before = ['actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1', 'docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069', 'docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302', 'Docker/Login-Action@dbcb813823bdd20940b903addbd779551569679f']
       .map((u) => `      - uses: ${u}\n`)
       .join('');
-    expect(rules(`${tokenJob('', before)}      - run: npm test\n      - uses: evil/action@${SHA}\n`)).toEqual([]);
+    expect(rules(`${tokenJob('', before)}      - run: npm test\n      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n`)).toEqual([]);
   });
 
   it.each([
@@ -763,7 +763,6 @@ describe('nothing after a token step that runs an action', () => {
     'run: bash ./scripts/tidy.sh',
     `run: 'v=GITHUB_; v="\${v}PATH"; echo "$PWD/bin" >> "\${!v}"'`,
     "run: echo ok\n        if: always()",
-    `uses: evil/action@${SHA}`,
     'uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     'uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9',
     'uses: ./.github/actions/local',
@@ -1016,8 +1015,8 @@ describe('action paths read the way GitHub reads them', () => {
     expect(anywhere(uses)).toEqual([['trivy-unpinned'], ['trivy-unpinned']]);
   });
 
-  it.each(spellings('aquasecurity/trivy-action').map((path) => `${path}@${SHA}`))('accepts %s at a full SHA', (uses) => {
-    expect(anywhere(uses)).toEqual([[], []]);
+  it.each(spellings('aquasecurity/trivy-action').map((path) => `${path}@${SHA}`))('accepts %s at a full SHA in a job without a token step', (uses) => {
+    expect(anywhere(uses)).toEqual([[], ['pre-stage']]);
   });
 
   it('reads a ref with a trailing newline as another ref', () => {
@@ -1071,6 +1070,59 @@ describe('every other remote action pinned by full SHA', () => {
       }
     }
     expect(tags).toEqual([]);
+  });
+});
+
+// wk-09c-i3: an action's pre: stage runs at job start, before every main step (actions/runner
+// JobExtension.cs runs preJobSteps, then jobSteps; ActionManager.cs registers a pre for every remote
+// action at the root, composite ones included). So in a job with a token step every remote action,
+// wherever it sits, is one reviewed for that: a setup or build action at its pin, or one of these
+// at its commit, whose action.yml files (and their nested uses) have no pre: (checked with gh api).
+// A local action runs no pre (ActionRunner.cs), and a docker:// image has no action.yml.
+const LATER: Readonly<Record<string, string>> = {
+  'actions/upload-artifact': 'cf430e030ddbb5b0abf93d22962f4752f3646cd9', // v7.0.2
+  'aquasecurity/trivy-action': 'ed142fd0673e97e23eac54620cfb913e5ce36c25', // v0.36.0
+};
+
+describe('no action in a token job that may run a pre: stage before the token steps', () => {
+  it.each(
+    Object.entries(LATER).flatMap(([name, sha]) => [`${name}@${sha}`, `${name.toUpperCase()}@${sha}`, ...spellings(name).map((path) => `${path}@${sha}`)]),
+  )('accepts %s, a reviewed later action at its commit, after the last token step', (uses) => {
+    expect(anywhere(uses)).toEqual([[], []]);
+  });
+
+  it.each([
+    `evil/action@${SHA}`,
+    `actions/upload-artifact@${SHA}`,
+    `actions/upload-artifact@${IMPOSTER}`,
+    `aquasecurity/trivy-action@${LATER['actions/upload-artifact']}`,
+    `actions/upload-artifact-x@${LATER['actions/upload-artifact']}`,
+    `xactions/upload-artifact@${LATER['actions/upload-artifact']}`,
+    'github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d',
+    `aquasecurity/setup-trivy@${LATER['aquasecurity/trivy-action']}`,
+  ])('flags %s after the last token step, and leaves it alone in a job without one', (uses) => {
+    expect(anywhere(uses)).toEqual([[], ['pre-stage']]);
+    expect(rules(`${tokenJob()}  other:\n    steps:\n      - uses: ${uses}\n`)).toEqual([]);
+  });
+
+  it('flags an unreviewed action before a token step twice: wrong place, may run a pre: stage', () => {
+    expect(checkWorkflow('x.yml', parse(tokenJob('', `      - uses: evil/action@${SHA}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > #0 > step', rule: 'step-order' },
+      { file: 'x.yml', where: 'build > #0 > uses', rule: 'pre-stage' },
+    ]);
+  });
+
+  it('flags an unreviewed action after a token action for both stages', () => {
+    expect(checkWorkflow('x.yml', parse(actionJob(`      - name: Later\n        uses: evil/action@${SHA}\n`)), fixtureAllowList('x.yml'))).toEqual([
+      { file: 'x.yml', where: 'build > Later > step', rule: 'post-stage' },
+      { file: 'x.yml', where: 'build > Later > uses', rule: 'pre-stage' },
+    ]);
+  });
+
+  it('leaves a local action and a docker:// image after the last token step alone', () => {
+    for (const uses of ['./.github/actions/local', '.\\.github\\actions\\local', 'docker://alpine:3']) {
+      expect(rules(`${tokenJob()}      - uses: ${uses}\n`)).toEqual([]);
+    }
   });
 });
 

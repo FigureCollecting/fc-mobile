@@ -4,7 +4,9 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+import { ExpirationPlugin } from 'workbox-expiration';
 import { API_NAVIGATION, isDerivativeRequest } from './sw/routes';
+import { OWNED_MEDIA_CACHE } from './media/ownedImages';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -17,13 +19,18 @@ cleanupOutdatedCaches();
 // coordinator on this origin: never answered here, online or off.
 registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [API_NAVIGATION] }));
 
-registerRoute(
-  isDerivativeRequest,
-  new CacheFirst({
-    cacheName: 'fc-derivatives-v1',
-    plugins: [new CacheableResponsePlugin({ statuses: [200] })],
-  }),
-);
+// Derivatives and masks on the one public image address. The owned figures' images come first,
+// from the cache the page fills and evicts with the collection (src/media/ownedImages.ts); any other
+// image is CacheFirst in its own bounded cache. Only a CORS 200 is kept: an opaque response (status
+// 0) can be neither measured nor composited, and costs ~7 MB of quota each.
+const browsed = new CacheFirst({
+  cacheName: 'fc-derivatives-v2',
+  plugins: [new CacheableResponsePlugin({ statuses: [200] }), new ExpirationPlugin({ maxEntries: 200, purgeOnQuotaError: true })],
+});
+registerRoute(isDerivativeRequest, async (options: { request: Request }) => {
+  const owned = await (await self.caches.open(OWNED_MEDIA_CACHE)).match(options.request);
+  return owned ?? browsed.handle(options as never);
+});
 
 clientsClaim();
 

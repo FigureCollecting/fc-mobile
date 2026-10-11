@@ -2,7 +2,7 @@
 // record per figure (the fresh GetProductImages list replaces it, so an image or mask a restriction
 // now withholds is dropped), the primary image and its mask in a bounded cache the service worker
 // reads first, both evicted with the collection.
-import { create } from '@bufbuild/protobuf';
+import { create, type MessageInitShape } from '@bufbuild/protobuf';
 import { ProductImageSchema, type ProductImage } from '@figurecollecting/fc-api-contract';
 import { describe, expect, it, vi } from 'vitest';
 import { fakeCaches } from '../../test/fakeCaches';
@@ -21,17 +21,17 @@ import {
 const D = 'https://images.figurecollecting.com/d';
 const hex = (c: string) => c.repeat(64);
 const url = (c: string) => `${D}/${hex(c)}`;
-const img = (c: string, over: Partial<ProductImage> = {}): ProductImage =>
+const img = (c: string, over: MessageInitShape<typeof ProductImageSchema> = {}): ProductImage =>
   create(ProductImageSchema, { derivativeId: hex(c), role: 'gallery', primary: false, url: url(c), width: 600, height: 800, ...over });
 
 describe('toCachedImages', () => {
   it('keeps the address, size, role and primary of every image on the public address, with its mask and grounding', () => {
     const list = toCachedImages([
-      img('a', { primary: true, mask: { maskId: hex('m'), contentType: 'image/png', url: url('m') }, bottomMarginFrac: 0.08, contactBand: { centerXFrac: 0.5, widthFrac: 0.3 } }),
+      img('a', { primary: true, mask: { maskId: hex('f'), contentType: 'image/png', url: url('f') }, bottomMarginFrac: 0.08, contactBand: { centerXFrac: 0.5, widthFrac: 0.3 } }),
       img('b', { role: 'other' }),
     ]);
     expect(list).toEqual([
-      { url: url('a'), width: 600, height: 800, role: 'gallery', primary: true, maskUrl: url('m'), bottomMarginFrac: 0.08, contactBand: { centerXFrac: 0.5, widthFrac: 0.3 } },
+      { url: url('a'), width: 600, height: 800, role: 'gallery', primary: true, maskUrl: url('f'), bottomMarginFrac: 0.08, contactBand: { centerXFrac: 0.5, widthFrac: 0.3 } },
       { url: url('b'), width: 600, height: 800, role: 'other', primary: false },
     ]);
   });
@@ -44,7 +44,7 @@ describe('toCachedImages', () => {
     const list = toCachedImages([
       img('a', { url: 'https://images.store.example/a.jpg' }),
       img('b', { url: '' }),
-      img('c', { mask: { maskId: hex('m'), contentType: '', url: 'https://elsewhere.example/m.png' } }),
+      img('c', { mask: { maskId: hex('f'), contentType: '', url: 'https://elsewhere.example/m.png' } }),
     ]);
     expect(list).toEqual([{ url: url('c'), width: 600, height: 800, role: 'gallery', primary: false }]);
   });
@@ -90,12 +90,12 @@ describe('syncOwnedImages', () => {
   it('caches the primary image and its mask of every owned figure, by a CORS request without credentials', async () => {
     const storage = fakeCaches();
     const fetchLists = lists({
-      h1: [img('a', { primary: true, mask: { maskId: hex('m'), contentType: 'image/png', url: url('m') } }), img('b')],
+      h1: [img('a', { primary: true, mask: { maskId: hex('f'), contentType: 'image/png', url: url('f') } }), img('b')],
       h2: [img('c')],
     });
     const result = await syncOwnedImages(['h1', 'h2', 'h3'], fetchLists, { storage });
     expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3']);
-    expect(await owned(storage)).toEqual([url('a'), url('c'), url('m')].sort());
+    expect(await owned(storage)).toEqual([url('a'), url('c'), url('f')].sort());
     expect(storage.added.every((r) => r.mode === 'cors' && r.credentials === 'omit')).toBe(true);
     expect(await recallImages('h1', storage)).toHaveLength(2);
     expect(await recallImages('h3', storage)).toBeUndefined();
@@ -113,7 +113,7 @@ describe('syncOwnedImages', () => {
 
   it('replaces a figure\'s list with the fresh one: a withdrawn image or mask is dropped from the cache', async () => {
     const storage = fakeCaches();
-    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: { maskId: hex('m'), contentType: '', url: url('m') } })] }), { storage });
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: { maskId: hex('f'), contentType: '', url: url('f') } })] }), { storage });
     await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
     expect(await owned(storage)).toEqual([url('b')]);
     expect((await recallImages('h1', storage))?.map((i) => i.url)).toEqual([url('b')]);

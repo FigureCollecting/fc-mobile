@@ -55,6 +55,9 @@ export function previewHeaders(conf: string, env: Record<string, string | undefi
   };
   add('connect-src', crossOrigin(env['VITE_API_URL']));
   add('img-src', crossOrigin(env['VITE_IMAGE_MANAGER_URL']));
+  // The public image address (ADDR-1): images load from it and the service worker fetches them.
+  add('img-src', crossOrigin(env['VITE_MEDIA_PUBLIC_BASE_URL']));
+  add('connect-src', crossOrigin(env['VITE_MEDIA_PUBLIC_BASE_URL']));
   return { ...headers, 'Content-Security-Policy': formatCsp(csp) };
 }
 

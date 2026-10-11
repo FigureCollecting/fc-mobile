@@ -408,6 +408,14 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect(await withheld(storage, ['a', 'b', 'c', 'r'])).toEqual([]);
   });
 
+  it('reads a kept list it cannot parse as naming nothing: nothing withheld, and the fresh list replaces it', async () => {
+    const storage = fakeCaches();
+    await (await storage.open(IMAGE_LISTS_CACHE)).put(new Request('http://localhost:3000/__fc/image-list/h1'), new Response('{'));
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    expect([...(storage.stores.get(WITHHELD_CACHE)?.keys() ?? [])]).toEqual([]);
+    expect((await recallImages('h1', storage))?.map((i) => i.url)).toEqual([url('a')]);
+  });
+
   it('keeps no image there: each record is on the app\'s origin, not the image address, and has no body', async () => {
     const storage = fakeCaches();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });

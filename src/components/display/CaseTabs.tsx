@@ -5,6 +5,7 @@
  * the others never move. The order is kept per device (CC14); the View card
  * can swap the sides.
  */
+import { createPortal } from 'preact/compat';
 import type { CaseTab } from './casePrefs';
 import { Style } from '../../styles/Style';
 
@@ -80,13 +81,15 @@ export function CaseTabs({ order, infoEnabled, open, onTab }: CaseTabsProps) {
       </button>
     );
   };
-  return (
+  // In document.body, like the tab bar: a fixed bar inside the page would ride the page's transitions.
+  return createPortal(
     <nav class="case-tabs" aria-label="Case cards">
       {order.slice(0, 2).map(slot)}
       <span class="case-tabs__dock" data-tab="dock" aria-hidden="true" />
       {order.slice(2).map(slot)}
       <Style css={styles} />
-    </nav>
+    </nav>,
+    document.body,
   );
 }
 

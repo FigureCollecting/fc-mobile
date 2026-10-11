@@ -212,6 +212,80 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   });
 });
 
+interface WorldBox {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+  surface: number;
+}
+
+/** Neighbours on one surface, left to right, as their tap boxes (data-world) and their picture boxes (data-art-box). */
+function bySurface(host: HTMLElement) {
+  const rows = figureButtons(host).map((b) => ({
+    name: b.getAttribute('aria-label')!,
+    tap: JSON.parse(b.dataset.world!) as WorldBox,
+    art: JSON.parse(b.dataset.artBox!) as WorldBox,
+    button: b,
+  }));
+  const groups = new Map<number, typeof rows>();
+  for (const r of rows) groups.set(r.tap.surface, [...(groups.get(r.tap.surface) ?? []), r]);
+  return [...groups.values()].map((g) => g.sort((a, b) => a.tap.x0 - b.tap.x0));
+}
+
+describe('CabinetScene: one figure, one tap box (CASE-FIX dead tap)', () => {
+  // masked art whose transparent margin is a third of the picture: the pictures overlap their neighbours' margins
+  const marginRef = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800, bottomMarginFrac: 0.3 });
+
+  it("neighbours' tap boxes never overlap, even where their pictures' transparent margins do", () => {
+    const { host } = scene(FIXTURE_FIGURES, {}, { imageFor: marginRef });
+    let artOverlaps = 0;
+    for (const row of bySurface(host)) {
+      for (let i = 1; i < row.length; i++) {
+        if (row[i].art.x0 < row[i - 1].art.x1) artOverlaps++;
+        expect(row[i].tap.x0, `${row[i - 1].name} / ${row[i].name}`).toBeGreaterThanOrEqual(row[i - 1].tap.x1 - 1e-6);
+      }
+    }
+    // the case under test: some pictures do reach over their neighbours
+    expect(artOverlaps).toBeGreaterThan(0);
+  });
+
+  it('the tap box is the figure standing on its surface, inside its picture; the picture never takes a tap', () => {
+    const { host } = scene(FIXTURE_FIGURES, {}, { imageFor: marginRef });
+    for (const row of bySurface(host)) {
+      for (const r of row) {
+        expect(r.tap.y0).toBe(r.tap.surface);
+        expect(r.tap.y1).toBeCloseTo(r.art.y1, 6);
+        expect(r.art.y0).toBeLessThan(r.tap.surface);
+        expect(r.tap.x0).toBeGreaterThanOrEqual(r.art.x0 - 1e-6);
+        expect(r.tap.x1).toBeLessThanOrEqual(r.art.x1 + 1e-6);
+        const box = r.button.querySelector<HTMLElement>('.cab-figure__box')!;
+        expect(box.style.pointerEvents).toBe('none');
+        // the picture box sits in the button's own px (1 px per mm), centred on it, hanging below it by the margin
+        expect(parseFloat(box.style.width)).toBeCloseTo(r.art.x1 - r.art.x0, 3);
+        expect(parseFloat(box.style.height)).toBeCloseTo(r.art.y1 - r.art.y0, 3);
+        expect(parseFloat(box.style.left)).toBeCloseTo(r.art.x0 - r.tap.x0, 3);
+        expect(parseFloat(r.button.style.width)).toBeCloseTo(r.tap.x1 - r.tap.x0, 3);
+        expect(parseFloat(r.button.style.height)).toBeCloseTo(r.tap.y1 - r.tap.y0, 3);
+      }
+    }
+  });
+
+  it('a picture of its own shape is packed by that shape: framed copies never overlap', () => {
+    // the image list says the picture is twice as wide as it is tall, wider than the display meta's guess
+    const wide = (f: Figure) => ({ url: `/clean/${f._id}.png`, width: 2000, height: 1000 });
+    const { host } = scene(FIXTURE_FIGURES, {}, { imageFor: wide });
+    let pairs = 0;
+    for (const row of bySurface(host)) {
+      for (let i = 1; i < row.length; i++) {
+        pairs++;
+        expect(row[i].art.x0, `${row[i - 1].name} / ${row[i].name}`).toBeGreaterThanOrEqual(row[i - 1].art.x1 - 1e-6);
+      }
+    }
+    expect(pairs).toBeGreaterThan(0);
+  });
+});
+
 describe('quadStyle: one flat face of the mm world as a CSS 3D element', () => {
   it('a front-facing rectangle: its size in px (1 px per mm) and an identity frame at its top-left corner', () => {
     expect(quadStyle([10, 200, -5], [100, 0, 0], [0, -50, 0])).toEqual({

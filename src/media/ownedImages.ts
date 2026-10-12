@@ -64,14 +64,15 @@ const MAX_HEADS_PER_CALL = 200;
 export const OWNED_SYNC_LOCK = 'fc-owned-sync';
 /**
  * How long a sync waits for another document's before it fails, having asked and touched nothing (what
- * the last sync kept then stands). The other lets go when it completes or fails: once its fetches in
- * flight end when its case view goes away, and at most OWNED_SYNC_STEP_MS after its fetches in flight
- * stop receiving anything (syncOwnedImages). While their bytes keep coming (a large first sync, a slow
- * link) it holds the lock, and this wait runs out first. A document whose sync failed here answers
- * from what was kept, the other's sync told to it or not, until a sync of its own: its case view
- * opened again once its answer is ten minutes old, or the owned figures or the reach changing. So a
- * takedown the other's lists did not carry yet lands there only then, as one between two documents'
- * list reads does.
+ * the last sync kept then stands). The other lets go when it completes or fails: when its case view
+ * goes away, once its fetches in flight end and a cache write under way finishes; and at most
+ * OWNED_SYNC_STEP_MS after its fetches in flight stop receiving anything, or a cache write finishes,
+ * whichever is later (syncOwnedImages). While their bytes keep coming (a large first sync, a slow
+ * link), or a write is slow, it holds the lock, and this wait runs out first. A document whose sync
+ * failed here answers from what was kept, the other's sync told to it or not, until a sync of its own:
+ * its case view opened again once its answer is ten minutes old, or the owned figures or the reach
+ * changing. So a takedown the other's lists did not carry yet lands there only then, as one between
+ * two documents' list reads does.
  */
 export const OWNED_SYNC_WAIT_MS = 10_000;
 /**
@@ -253,14 +254,15 @@ interface SyncOptions {
  * withheld. It waits at most `lockWaitMs` for another document's, then fails having asked and
  * touched nothing. Every image fetch carries the sync's signal, so the case view going away aborts
  * the fetches in flight (and fetchImageLists' call), and the sync lets go of the lock once they
- * end. An image fetch that receives nothing (its headers, a byte of its body) for OWNED_SYNC_STEP_MS
- * is abandoned and no other starts after it; what is still missing is fetched at a later sync that
- * the link brings bytes to. So the sync lets go of the lock at most that long after its fetches in
- * flight stop receiving anything, its case view open or not; while their bytes keep coming, however
- * slowly, it fetches on, and a slow but working link keeps every image. Where the browser has no Web Locks
- * (an older browser, a page not served securely), syncs are not serialised, as before the lock:
- * two documents syncing at once can finish in the other order, and the one that read older lists
- * then undoes, until the next sync, what the other withheld.
+ * end and a cache write under way finishes. An image fetch that receives nothing (its headers, a byte
+ * of its body) for OWNED_SYNC_STEP_MS is abandoned and no other starts after it; what is still missing
+ * is fetched at a later sync that the link brings bytes to. So the sync lets go of the lock at most
+ * that long after its fetches in flight stop receiving anything, or a cache write finishes, whichever
+ * is later, its case view open or not; while their bytes keep coming, however slowly, it fetches on,
+ * and a slow but working link keeps every image. A write is not bounded: a slow one holds the lock.
+ * Where the browser has no Web Locks (an older browser, a page not served securely), syncs are not
+ * serialised, as before the lock: two documents syncing at once can finish in the other order, and
+ * the one that read older lists then undoes, until the next sync, what the other withheld.
  */
 export async function syncOwnedImages(
   ownedHeads: readonly string[],

@@ -658,6 +658,8 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(result.current.get(A)).toEqual({ top: 0.25, bottom: 0.5, left: 0.25, right: 0.5 });
     expect(getAlphaMask(A)).not.toBeNull();
+    // and its deadline goes with it: no timer left behind holding the picture
+    expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(2 * ALPHA_READ_DEADLINE_MS);
     expect([started.length, abandoned()]).toEqual([2, 1]);
   });

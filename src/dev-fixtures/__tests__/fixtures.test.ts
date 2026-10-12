@@ -468,11 +468,13 @@ describe('fixture distinct pictures (?fxuniq=1): each repeated copy at its own p
     return ref ? [ref.url, ref.maskUrl] : [f.imageUrl];
   };
 
-  it('off unless asked for: the copies share their pictures', () => {
-    for (const query of ['/?fx=3', '/?fx=3&fxuniq=0', '/?fx=3&fxuniq=bogus']) {
+  it('off unless asked for: the copies share their pictures, in every branch', () => {
+    for (const query of ['/?fx=3', '/?fx=3&fxuniq=0', '/?fx=3&fxuniq=bogus', '/?fx=3&fxbranch=masked', '/?fx=3&fxbranch=framed']) {
       window.history.pushState({}, '', query);
       expect(getFixtureUnique()).toBe(false);
-      expect(new Set(getFixtureFigures().map((f) => f.imageUrl)).size).toBe(FIXTURE_FIGURES.length);
+      const figures = getFixtureFigures();
+      expect(new Set(figures.map((f) => f.imageUrl)).size, query).toBe(FIXTURE_FIGURES.length);
+      figures.forEach((f, i) => expect(pictures(f), f._id).toEqual(pictures(figures[i % FIXTURE_FIGURES.length])));
     }
   });
 

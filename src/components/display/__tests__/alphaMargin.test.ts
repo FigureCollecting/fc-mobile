@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/preact';
+import { h, render } from 'preact';
 import {
   computeBottomMarginFrac,
   computeTopMarginFrac,
@@ -18,7 +19,7 @@ import {
   getAlphaMask,
   ALPHA_MASK_MAX_CELLS,
 } from '../alphaMargin';
-import type { AlphaBuffer, AlphaMask } from '../alphaMargin';
+import type { AlphaBuffer, AlphaMargins, AlphaMask } from '../alphaMargin';
 
 /** Whether the mask is drawn at the single point (u, v). */
 function alphaMaskAt(mask: AlphaMask, u: number, v: number): boolean {
@@ -528,6 +529,55 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
     expect(result.current.has(last)).toBe(true);
     expect(result.current.has(slow[1])).toBe(false);
+  });
+
+  it(`reads that ran out of time are at most another ${ALPHA_READS_AT_ONCE} at once: a stalled network never decodes a long list together`, async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: 40 }, (_, i) => `https://example.com/z${i}.png`);
+    const { release, started } = heldPictures(urls, urls);
+    renderHook(() => useAlphaMarginsOf(urls));
+    const inFlight: number[] = [];
+    for (let turn = 0; turn < 10; turn++) {
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+      inFlight.push(started.length);
+    }
+    // the first four gave their turns to the next four, which then keep theirs: no room left for more reads out of time
+    expect(inFlight).toEqual(inFlight.map(() => 2 * ALPHA_READS_AT_ONCE));
+    // one read out of time ends: the oldest out of time still holding a turn gives it up, and one more picture is read
+    release(urls[0]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual(urls.slice(0, 2 * ALPHA_READS_AT_ONCE + 1));
+    // one still holding its turn ends: the turn goes to the next in line, and that read waits its own time
+    release(urls[ALPHA_READS_AT_ONCE + 1]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual(urls.slice(0, 2 * ALPHA_READS_AT_ONCE + 2));
+    // and still no more than that in flight (two have landed), however long the rest stall
+    await vi.advanceTimersByTimeAsync(5 * ALPHA_READ_TURN_MS);
+    expect(started.length - 2).toBe(2 * ALPHA_READS_AT_ONCE);
+  });
+
+  it('a read landing after a new list renders but before its effect runs is answered (the browser runs effects after the frame)', async () => {
+    vi.useFakeTimers();
+    const { release, started } = heldPictures([A, B], [A, B]);
+    const seen: ReadonlyMap<string, AlphaMargins>[] = [];
+    function Probe({ urls }: { urls: readonly string[] }) {
+      seen.push(useAlphaMarginsOf(urls));
+      return null;
+    }
+    // no act(): Preact renders at once and runs the effects after the next frame, as it does in the browser
+    const root = document.createElement('div');
+    render(h(Probe, { urls: [A, B] }), root);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A, B]);
+    // the list narrows to A, rendered while A is still being read
+    render(h(Probe, { urls: [A] }), root);
+    expect(seen.at(-1)!.has(A)).toBe(false);
+    // A lands now: after that render, before its effect
+    release(A);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4 * ALPHA_READ_TURN_MS);
+    expect(seen.at(-1)!.has(A), 'A was read: its figure is grounded').toBe(true);
+    render(null, root);
   });
 
   it('a stalled read that hands its turn on with none waiting frees it once: later lists still read at most the limit at once', async () => {

@@ -16,8 +16,9 @@
 //                       longer carry, and every withheld address recorded below.
 //   fc-withheld-v1      one record per address withheld from a figure still owned (its kept list
 //                       named it, no fresh list carries it): keyed on the app's origin, no bytes, at
-//                       most MAX_WITHHELD, the oldest dropped first. Written before any byte is
-//                       evicted; an address a fresh list carries again is forgotten before any fetch.
+//                       most MAX_WITHHELD, the oldest dropped first. Written before any kept list is
+//                       replaced or any byte evicted, so a sync that stops part way keeps it; an
+//                       address a fresh list carries again is forgotten before any fetch.
 //                       The worker refuses a recorded address (src/sw.ts), and useProductImage does
 //                       not answer it online, until a fresh list carries it again.
 //
@@ -236,23 +237,23 @@ export async function syncOwnedImages(
   // A figure with no image costs nothing here: only a non-empty list is written, and every record
   // of a figure that is not kept (no image now, or no longer owned) is deleted below.
   const keep = new Set<string>();
-  const kept = new Set<string>();
+  const kept = new Map<string, CachedImage[]>();
   const fresh = new Set<string>();
   for (const head of heads) {
     const list = toCachedImages(lists.get(head) ?? []);
     const primary = primaryImage(list);
     if (primary === undefined) continue;
-    await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
     for (const u of addressesOf(list)) fresh.add(u);
-    kept.add(head);
+    kept.set(head, list);
     keep.add(primary.url);
     if (primary.maskUrl !== undefined) keep.add(primary.maskUrl);
   }
-  for (const key of recordKeys) if (!kept.has(headOfKey(key.url))) await records.delete(key);
 
   // Withheld: an address the kept list of a figure still owned named and no fresh list carries. It is
-  // remembered before any byte is evicted, so the worker refuses it from then on (src/sw.ts); an
-  // address a fresh list carries again is forgotten before any fetch below.
+  // remembered before any kept list is replaced or any byte evicted, so a sync that stops part way
+  // (a quota error, the page killed) loses no record of it, and the worker refuses it from then on
+  // (src/sw.ts). An address a fresh list carries again is forgotten before any fetch below. When the
+  // record cannot be written, the sync fails here, having replaced and evicted nothing.
   const tomb = await storage.open(WITHHELD_CACHE);
   const remembered = (await tomb.keys()).map((k) => addressOfWithheldKey(k.url));
   const withheld = new Set<string>();
@@ -267,6 +268,9 @@ export async function syncOwnedImages(
   }
   const oldestFirst = [...recorded];
   for (const u of oldestFirst.slice(0, Math.max(0, oldestFirst.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
+
+  for (const [head, list] of kept) await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
+  for (const key of recordKeys) if (!kept.has(headOfKey(key.url))) await records.delete(key);
 
   const have = new Set<string>();
   for (const key of mediaKeys) {

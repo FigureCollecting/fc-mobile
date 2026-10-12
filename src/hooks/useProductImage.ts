@@ -3,14 +3,17 @@
 // address the last owned sync withheld until a sync carries it again; out of reach (offline, or the
 // sync engine found the server unreachable) or when that call fails, the image kept for an owned
 // figure, if its bytes were on the device when asked (src/media/ownedImages.ts). An answer given
-// before a completed owned sync is not reused after it: useOwnedImages drops it, and the page asks
-// again. Neither: the placeholder plate. The page draws the plate too when the image fails to load.
+// before a completed owned sync is not reused after it, in any open document of the app: the one that
+// ran the sync drops it and tells the others, which drop theirs (src/hooks/imageAnswers.ts), and the
+// page asks again. Neither: the placeholder plate. The page draws the plate too when the image fails
+// to load.
 import { useQuery } from '@tanstack/react-query';
 import { localSession } from '../local/session';
 import { useAuthPhase } from '../local/useLocal';
 import { useOnlineStatus } from './useOnlineStatus';
 import { isMediaUrl } from '../media/address';
 import { keptImage, withheldAmong } from '../media/ownedImages';
+import { hearOwnedSyncs } from './imageAnswers';
 
 export interface DerivativeImage {
   url: string;
@@ -28,7 +31,8 @@ export function useProductImage(headId: string | undefined) {
   const reachable = online && session?.engine.state.value.reachability !== 'unreachable';
   return useQuery<DerivativeImage | null>({
     queryKey: ['local', 'image', headId, reachable],
-    queryFn: async ({ signal }) => {
+    queryFn: async ({ signal, client }) => {
+      hearOwnedSyncs(client);
       if (!reachable) return asDerivative(await keptImage(headId!));
       let images;
       try {

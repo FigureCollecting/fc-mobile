@@ -5,30 +5,21 @@
 // fails, what the last one kept stands and nothing more is asked. A figure answers the image the last
 // sync kept, and only if its bytes were on the device when asked; one without is absent, and the case
 // draws its plate. Once a sync completes, no earlier answer of this hook or of useProductImage stands,
-// offline or online: one a view shows is asked again, any other is dropped, so neither answers an
-// image that sync withheld (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). A collection with no
-// image costs a few cache calls, not a few per figure, and a sync stops when the case view goes away.
-import { hashKey, useQuery, type QueryClient, type QueryKey } from '@tanstack/react-query';
+// offline or online, in the document that ran it or in any other open document of the app, each told
+// on a BroadcastChannel (src/hooks/imageAnswers.ts): one being read is read again, one a view shows is
+// asked again, any other is dropped, so neither answers an image that sync withheld
+// (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). A case view told of another document's sync
+// answers from what it kept, without a sync of its own. A collection with no image costs a few cache
+// calls, not a few per figure, and a sync stops when the case view goes away.
+import { useQuery } from '@tanstack/react-query';
 import { useCallback } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
 import { fetchImageLists, keptImages, syncOwnedImages, MAX_OWNED_FIGURES, type CachedImage } from '../media/ownedImages';
+import { answersFromKept, dropImageAnswers, hearOwnedSyncs, tellOwnedSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
 
 const EMPTY: ReadonlyMap<string, CachedImage> = new Map();
-
-/**
- * After a completed sync, no earlier image answer stands: of this hook (for any reachability or
- * collection) or of useProductImage (['local', 'image', ...]). One a view shows now is asked again;
- * any other is dropped, so a view that opens later asks too. The sync's own answer is the exception.
- */
-function dropImageAnswers(client: QueryClient, own: QueryKey): void {
-  const ownHash = hashKey(own);
-  const earlier = (q: { queryKey: QueryKey; queryHash: string }) =>
-    q.queryHash !== ownHash && q.queryKey[0] === 'local' && (q.queryKey[1] === 'owned-images' || q.queryKey[1] === 'image');
-  client.removeQueries({ type: 'inactive', predicate: earlier });
-  void client.invalidateQueries({ predicate: earlier });
-}
 
 export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
   const session = localSession.value;
@@ -45,11 +36,13 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
     // The query's signal is consumed, so a sync stops (its call in flight aborted, no cache touched)
     // when the case view goes away or a newer one replaces it.
     queryFn: async ({ signal, client, queryKey }) => {
+      hearOwnedSyncs(client);
       const owned = (heads ?? []).slice(0, MAX_OWNED_FIGURES);
-      if (reachable) {
+      if (reachable && !answersFromKept(client, queryKey)) {
         try {
           await syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal });
-          dropImageAnswers(client, queryKey);
+          void dropImageAnswers(client, queryKey);
+          tellOwnedSync(client);
         } catch (err) {
           if (signal.aborted) throw err;
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.

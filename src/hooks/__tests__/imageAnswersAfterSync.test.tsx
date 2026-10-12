@@ -774,7 +774,7 @@ describe('two documents sync at once, and the coordinator withholds the image be
   });
 });
 
-describe('a sync stopped part way, its case view gone while an image fetch stalls, after it recorded what the coordinator withholds', () => {
+describe('a sync stopped part way, after it recorded what the coordinator withholds: its case view gone while an image fetch stalls, or the stalled fetch abandoned', () => {
   const Z = `${D}/${'d'.repeat(64)}`;
   const row = (url: string) => ({ derivativeId: url.slice(-64), role: 'gallery', primary: true, url, width: 600, height: 800 });
   /** The coordinator's lists for two owned figures: the first's images, the second's. */
@@ -978,6 +978,48 @@ describe('a sync stopped part way, its case view gone while an image fetch stall
     expect([...(await withheldAmong([X], storage))]).toEqual([X]);
     again.view.unmount();
   });
+
+  it.each([[11_000], [15_000]])(
+    'a sync whose case view stays open, its image fetch abandoned on the stalled link at 20 s, tells it stopped: the case view of another document, opened %i ms into the stall and waiting on the lock, syncs, records the withholding its own read carries, and answers the plate',
+    async (bAt) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+      try {
+        const r = await localRig();
+        await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+        await keptX();
+        let call = 0;
+        r.clients.getProductImages.mockImplementation(async () => {
+          call += 1;
+          // The first document's read comes before the restriction; the other's, later and answered in
+          // 50 ms, withholds X.
+          if (call === 1) return lists([X], [Z]);
+          await new Promise((res) => setTimeout(res, 50));
+          return lists([], [Z]);
+        });
+        const docA = appQueryClient();
+        const docB = appQueryClient();
+        const viewA = caseView(docA);
+        await waitFor(() => expect(storage.added.map((q) => q.url)).toContain(Z));
+        await vi.advanceTimersByTimeAsync(bAt);
+        const viewB = caseView(docB);
+        await waitFor(() => expect(locks.asked).toHaveLength(2));
+        // 20 s after Z's fetch began, with nothing received, the first document's sync abandons it.
+        await vi.advanceTimersByTimeAsync(20_000 - bAt);
+        await idle(docA, docB);
+        expect(call).toBe(2);
+        expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+        expect(viewB.result.current.has(headOf(0))).toBe(false);
+        expect(viewB.result.current.get(headOf(1))?.url).toBe(Z);
+        expect(held()).not.toContain(X);
+        // The first document's case view, still open, is told of that completed sync: it answers the plate too.
+        await waitFor(() => expect(viewA.result.current.has(headOf(0))).toBe(false));
+        viewA.unmount();
+        viewB.unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it('a sync that completes, by contrast: stops the case view of another document waiting on the lock, which answers from what that sync kept and keeps nothing of its own read (a takedown between their reads lands at its next sync)', async () => {
     const r = await localRig();

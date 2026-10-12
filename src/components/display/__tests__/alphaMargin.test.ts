@@ -194,6 +194,35 @@ describe('useBottomMarginFrac (canvas-backed, real image measurement)', () => {
     await waitFor(() => expect(result.current).toBeCloseTo(22 / 100, 5));
   });
 
+  it('a view of a picture known as never decoded wants it while shown: its load reads it again then, telling that view alone; with no view showing it, a load reads nothing', async () => {
+    let decodes = 0;
+    mockDecode(() => (decodes++ === 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve()));
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 10, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const buf = bufferWithBottomMargin(10, 100, 78);
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => buf,
+    } as unknown as CanvasRenderingContext2D);
+    const url = 'https://example.com/known-undecoded.png';
+    const first = renderHook(() => useBottomMarginFrac(url));
+    await waitFor(() => expect(decodes).toBe(1));
+    first.unmount();
+    // a view of it, known now (all 0), comes and goes: then no view shows it, and its load reads nothing
+    renderHook(() => useBottomMarginFrac(url)).unmount();
+    alphaPictureLoaded(url);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(decodes).toBe(1);
+    // a view of it again, and one of no picture: its load reads it, and only its view learns the margin
+    const shown = renderHook(() => useBottomMarginFrac(url));
+    const none = renderHook(() => useBottomMarginFrac(undefined));
+    expect(shown.result.current).toBe(0);
+    alphaPictureLoaded(url);
+    await waitFor(() => expect(shown.result.current).toBeCloseTo(22 / 100, 5));
+    expect(decodes).toBe(2);
+    expect(none.result.current).toBe(0);
+  });
+
   it('returns 0 for an undefined image URL without measuring anything', () => {
     const { result } = renderHook(() => useBottomMarginFrac(undefined));
     expect(result.current).toBe(0);
@@ -581,6 +610,27 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(marginsOf(answers.at(-1)!.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
   });
 
+  it('its own picture loading while its read is in flight, that read then never decoding: the read again goes ahead of the line', async () => {
+    vi.useFakeTimers();
+    const held = Array.from({ length: ALPHA_READS_AT_ONCE - 1 }, (_, i) => `https://example.com/h${i}.png`);
+    const waiting = Array.from({ length: 3 }, (_, i) => `https://example.com/w${i}.png`);
+    const started: string[] = [];
+    const failA: (() => void)[] = [];
+    let readsOfA = 0;
+    mockPictures({ ...pictures(), ...Object.fromEntries([...held, ...waiting].map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])) }, (src) => {
+      started.push(src);
+      if (src !== A) return new Promise<void>(() => {});
+      return readsOfA++ === 0 ? new Promise<void>((_, no) => failA.push(() => no(neverDecoded()))) : Promise.resolve();
+    });
+    renderHook(() => useAlphaMarginsOf([A, ...held, ...waiting]));
+    await vi.advanceTimersByTimeAsync(1000);
+    alphaPictureLoaded(A);
+    failA[0]();
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS - 1000);
+    // its turn went to the first in line as it ended; the read again goes next, ahead of the rest
+    expect(started).toEqual([A, ...held, waiting[0], A, waiting[1], waiting[2]]);
+  });
+
   it('a picture read again on its own load whose view is gone before its turn: nothing kept, all 0 still, and its next load reads it again; a list not showing it is never answered anew', async () => {
     vi.useFakeTimers();
     const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/m${i}.png`);
@@ -601,6 +651,11 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     alphaPictureLoaded(A);
     shown.unmount();
     await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started.filter((s) => s === A)).toHaveLength(1);
+    // a view of it, known now, comes and goes: no view shows it, and its load reads nothing
+    renderHook(() => useAlphaMarginsOf([A])).unmount();
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(started.filter((s) => s === A)).toHaveLength(1);
     // a view of it again: all 0 from the cache at once; its next load reads it, and that view learns its own margins
     const again = renderHook(() => useAlphaMarginsOf([A]));
@@ -1352,6 +1407,35 @@ describe('useContactBand (canvas-backed, real image measurement)', () => {
     expect(result.current).toBeNull();
     alphaPictureLoaded(url);
     await waitFor(() => expect(result.current?.centerXFrac).toBeCloseTo(19.5 / 100, 5));
+  });
+
+  it('a view of a picture known as never decoded wants it while shown: its load reads it again then, telling that view alone; with no view showing it, a load reads nothing', async () => {
+    let decodes = 0;
+    mockDecode(() => (decodes++ === 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve()));
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 100, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const buf = bufferWithContactBand(100, 100, 8, 10, 30);
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => buf,
+    } as unknown as CanvasRenderingContext2D);
+    const url = 'https://example.com/known-undecoded-band.png';
+    const first = renderHook(() => useContactBand(url));
+    await waitFor(() => expect(decodes).toBe(1));
+    first.unmount();
+    // a view of it, known now (no band), comes and goes: then no view shows it, and its load reads nothing
+    renderHook(() => useContactBand(url)).unmount();
+    alphaPictureLoaded(url);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(decodes).toBe(1);
+    // a view of it again, and one of no picture: its load reads it, and only its view learns the band
+    const shown = renderHook(() => useContactBand(url));
+    const none = renderHook(() => useContactBand(undefined));
+    expect(shown.result.current).toBeNull();
+    alphaPictureLoaded(url);
+    await waitFor(() => expect(shown.result.current?.centerXFrac).toBeCloseTo(19.5 / 100, 5));
+    expect(decodes).toBe(2);
+    expect(none.result.current).toBeNull();
   });
 
   it('degrades to null (caller falls back to meta fields) instead of throwing when the canvas is tainted / unsupported', async () => {

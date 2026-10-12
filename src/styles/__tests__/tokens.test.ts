@@ -226,3 +226,43 @@ describe('design tokens: font-size floor (11px general, 16px inputs)', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/** The fluid steps as they were before TYPE-1 (develop 7d1fad1): their phone and Fold8 sizes must not move. */
+const FLUID_BEFORE: Record<string, string> = {
+  '--font-sm': 'clamp(0.75rem, 0.7rem + 0.22vw, 0.8125rem)',
+  '--font-base': 'clamp(0.8125rem, 0.76rem + 0.24vw, 0.875rem)',
+  '--font-lg': 'clamp(0.9375rem, 0.88rem + 0.28vw, 1rem)',
+  '--font-xl': 'clamp(1.0625rem, 1rem + 0.3vw, 1.125rem)',
+};
+
+/** One notch up at desktop widths (Ross 2026-10-11): each fluid step's maximum, 1 px more. */
+const DESKTOP_PX: Record<string, number> = { '--font-sm': 14, '--font-base': 15, '--font-lg': 17, '--font-xl': 19 };
+
+const before = (name: string, viewportPx: number) => cssPx(FLUID_BEFORE[name], { rootPx: REM_TO_PX, viewportPx });
+
+describe('design tokens: one notch up at desktop widths, the phone and Fold8 sizes unchanged', () => {
+  for (const [name, px] of Object.entries(DESKTOP_PX)) {
+    it(`${name} reads ${px}px from 1280 wide on, 1 px over its old maximum`, () => {
+      for (const w of [1280, 1536, 1920, 2560]) {
+        expect(sizeAt(name, w), `${name} at ${w}px`).toBeCloseTo(px, 9);
+        expect(sizeAt(name, w), `${name} at ${w}px`).toBeCloseTo(before(name, w) + 1, 9);
+      }
+    });
+
+    it(`${name} is unchanged on phones, at every Fold8 size and up to 960 wide`, () => {
+      for (const w of [320, 360, ...CASE_VIEWPORTS.map((v) => v.width), 900, 960]) {
+        expect(sizeAt(name, w), `${name} at ${w}px`).toBeCloseTo(before(name, w), 9);
+      }
+    });
+
+    it(`${name} climbs smoothly as the window widens: never shrinks, never jumps`, () => {
+      let last = sizeAt(name, 320);
+      for (let w = 328; w <= 2560; w += 8) {
+        const size = sizeAt(name, w);
+        expect(size, `${name} at ${w}px`).toBeGreaterThanOrEqual(last - 1e-9);
+        expect(size - last, `${name} from ${w - 8}px to ${w}px`).toBeLessThan(0.05);
+        last = size;
+      }
+    });
+  }
+});

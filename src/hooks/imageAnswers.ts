@@ -1,11 +1,12 @@
 // ADDR-1: what a completed owned sync (src/hooks/useOwnedImages.ts) does to the image answers of the
 // case view's hook (useOwnedImages) and the figure page's (useProductImage), in every open document
 // of the app. Each document (a tab, the installed window) has its own QueryClient over the same
-// caches. The one that ran the sync drops its earlier answers but the sync's own, and tells every other
-// one on a BroadcastChannel; each other one drops all of its earlier answers when told. A case view
-// open in a document told answers again from what that sync kept, without a sync of its own, so two
-// open case views never sync each other. Where the browser has no BroadcastChannel, no other document
-// is told.
+// caches, which hears other documents' syncs from its first image answer on. The one that ran the
+// sync drops its earlier answers but the sync's own, and tells every other one on a BroadcastChannel
+// (never itself); each other one drops all of its earlier answers when told. A case view open in a
+// document told answers again from what that sync kept, without a sync of its own, so two open case
+// views never sync each other. Where the browser has no BroadcastChannel, no other document is told.
+// src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 
 /** The channel every document of the app hears another's completed sync on: one name across builds. */

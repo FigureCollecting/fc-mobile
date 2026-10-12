@@ -28,7 +28,8 @@ interface Prefs {
   swipe?: 'camera' | 'pan';
 }
 
-async function openCase(page: Page, size: { width: number; height: number }, query = '', prefs: Prefs = {}) {
+/** Open the case and settle it: every figure, or every one but those named `stalled` (whose pictures are held back). */
+async function openCase(page: Page, size: { width: number; height: number }, query = '', prefs: Prefs = {}, stalled?: RegExp) {
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
@@ -38,15 +39,22 @@ async function openCase(page: Page, size: { width: number; height: number }, que
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0);
-  await settle(page);
+  await settle(page, stalled);
 }
 
-/** Every picture decoded and every figure grounded (its transparent margin measured). */
-async function settle(page: Page) {
-  await page.waitForFunction(() =>
-    Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure')).every(
-      (b) => b.dataset.grounded === '1' && Array.from(b.querySelectorAll('img')).every((img) => img.complete && img.naturalWidth > 0),
-    ),
+/**
+ * Every picture decoded and every figure grounded (its transparent margin
+ * measured), but those named `stalled`: the rest within 3 s, never waiting
+ * on them.
+ */
+async function settle(page: Page, stalled?: RegExp) {
+  await page.waitForFunction(
+    (skip) =>
+      Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure'))
+        .filter((b) => !(skip && new RegExp(skip).test(b.getAttribute('aria-label')!)))
+        .every((b) => b.dataset.grounded === '1' && Array.from(b.querySelectorAll('img')).every((img) => img.complete && img.naturalWidth > 0)),
+    stalled?.source,
+    stalled ? { timeout: 3_000 } : undefined,
   );
 }
 
@@ -241,11 +249,13 @@ for (const [from, to] of [
  * (the mask, for masked art), independent of the app's own measurement. A
  * framed copy or a plate is an opaque box: no clear margins.
  */
-async function drawnFigures(page: Page) {
+async function drawnFigures(page: Page, stalled?: RegExp) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
-  const rows = await page.locator('button.cab-figure').evaluateAll(async (els) => {
+  const rows = await page.locator('button.cab-figure').evaluateAll(async (els, skip) => {
     const out: { name: string; kind: string; world: string; art: string; top: number; height: number; clear: { above: number; below: number; left: number; right: number } }[] = [];
     for (const b of els as HTMLElement[]) {
+      // a figure whose picture is held back draws nothing yet
+      if (skip && new RegExp(skip).test(b.getAttribute('aria-label')!)) continue;
       const kind = b.dataset.art!;
       const el = b.querySelector<HTMLElement>('.cab-figure__box')!.firstElementChild as HTMLElement;
       const clear = { above: 0, below: 0, left: 0, right: 0 };
@@ -278,7 +288,7 @@ async function drawnFigures(page: Page) {
       out.push({ name: b.getAttribute('aria-label')!, kind, world: b.dataset.world!, art: b.dataset.artBox!, top: r.top, height: r.height, clear });
     }
     return out;
-  });
+  }, stalled?.source);
   return rows.map((r) => {
     const art = JSON.parse(r.art) as World;
     const w = art.x1 - art.x0;
@@ -300,8 +310,8 @@ async function pictureAlpha(page: Page) {
  * draws past its surface's usable width into the cabinet's side panel (the
  * default wall: KLINGSBOs).
  */
-async function expectNoOverlap(page: Page, label: string) {
-  const rows = await drawnFigures(page);
+async function expectNoOverlap(page: Page, label: string, stalled?: RegExp) {
+  const rows = await drawnFigures(page, stalled);
   const wall = wallLayout(Array.from({ length: rows.length }, () => IKEA_KLINGSBO)).cabinets;
   const slots = surfaceSlots(IKEA_KLINGSBO);
   const mm = (v: number) => v.toFixed(1);
@@ -426,6 +436,66 @@ for (const widths of ['', 'none', 'narrow'] as const) {
     });
   }
 }
+
+test.describe('a slow or stalled picture never holds the other figures back', () => {
+  // the app's service worker would answer the pictures from its precache, round these routes
+  test.use({ serviceWorkers: 'block' });
+  const RYUKO = /\/assets\/ryuuko-[^/]*\.png$/;
+  const ryuko = /^Ryuko/;
+
+  async function groundedOf(page: Page, name: RegExp) {
+    const all = await page.locator('button.cab-figure').evaluateAll((els) => els.map((b) => ({ name: b.getAttribute('aria-label')!, grounded: (b as HTMLElement).dataset.grounded })));
+    return all.filter((f) => name.test(f.name)).map((f) => f.grounded);
+  }
+
+  for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+    test(`a picture that never arrives: every other figure grounded and packed by what it draws, at once: ${size.name}`, async ({ page }) => {
+      await page.route(RYUKO, () => {
+        /* never answers */
+      });
+      // labels narrower than the cut-outs draw: a figure packed by its label while its picture is read would overlap
+      await openCase(page, size, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
+      const stalled = await groundedOf(page, ryuko);
+      expect(stalled.length).toBeGreaterThan(0);
+      expect(stalled, 'the stalled picture alone waits, on its label').toEqual(stalled.map(() => '0'));
+      await expectNoOverlap(page, `${size.name}, Ryuko stalled`, ryuko);
+    });
+
+    test(`a picture 4 s late: the others grounded meanwhile, then it lands and the case relays out around it: ${size.name}`, async ({ page }) => {
+      await page.route(RYUKO, async (route) => {
+        await new Promise((r) => setTimeout(r, 4_000));
+        await route.continue();
+      });
+      await openCase(page, size, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
+      const late = await groundedOf(page, ryuko);
+      expect(late.length).toBeGreaterThan(0);
+      expect(late, 'still on its way').toEqual(late.map(() => '0'));
+      await expectNoOverlap(page, `${size.name}, Ryuko on its way`, ryuko);
+      await settle(page);
+      await expectNoOverlap(page, `${size.name}, Ryuko landed`);
+    });
+  }
+
+  test('a filter removed: the figures already measured stay grounded while the new pictures load', async ({ page }) => {
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow&mfr=Good%20Smile%20Company', { view: 'wall' });
+    const measured = /^(Rem|Nendoroid Hatsune Miku|Hatsune Miku: Deep Sea Girl)$/;
+    expect((await groundedOf(page, measured)).length).toBeGreaterThan(0);
+    // the pictures new to the list arrive 2 s late (a phone on a slow network)
+    const NEW = /\/assets\/(dark-angel|madoka|spike|ryuuko)-[^/]*\.png$/;
+    await page.route(NEW, async (route) => {
+      await new Promise((r) => setTimeout(r, 2_000));
+      await route.continue();
+    });
+    await page.getByRole('listitem', { name: 'Remove filter Good Smile Company' }).click();
+    await expect(page.locator('button.cab-figure[aria-label="Spike Spiegel"]').first()).toBeAttached();
+    const during = await groundedOf(page, measured);
+    expect(during, 'already measured: grounded at once').toEqual(during.map(() => '1'));
+    const newcomers = /^(Dark Angel Olivia|Madoka Kaname|Spike Spiegel|Ryuko Matoi)$/;
+    await expectNoOverlap(page, 'new pictures on their way', newcomers);
+    await settle(page);
+    await expectNoOverlap(page, 'new pictures landed');
+  });
+});
 
 test('the case ends where the cabinets do: the room fills the rest, nothing stretches (Ross 09-26)', async ({ page }) => {
   const size = FOLD8.find((v) => v.name === 'fold8-cover')!;

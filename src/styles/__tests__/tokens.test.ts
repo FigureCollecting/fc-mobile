@@ -271,3 +271,43 @@ describe('design tokens: one notch up at desktop widths, the phone and Fold8 siz
     });
   }
 });
+
+/**
+ * Files whose small literal font sizes are not UI text at the reader's scale:
+ * the case's in-scene labels are drawn in scene px and scaled by the camera.
+ */
+const LITERAL_SIZE_EXEMPT: Record<string, string> = {
+  'components/display/CabinetScene.tsx': 'in-scene labels, sized in scene px and scaled by the case camera',
+};
+
+describe('design tokens: the smallest text goes through the tokens', () => {
+  it('declares no font size under 12px outside tokens.css (use --font-2xs or --font-xs), so TYPE-1 and user text scaling reach it', () => {
+    const srcRoot = path.resolve(path.dirname(tokensPath), '..');
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '__tests__' || entry.name === 'test') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!/\.(tsx?|css)$/.test(entry.name) || full === tokensPath) continue;
+        const rel = path.relative(srcRoot, full);
+        if (rel in LITERAL_SIZE_EXEMPT) continue;
+        fs.readFileSync(full, 'utf-8')
+          .split('\n')
+          .forEach((line, i) => {
+            for (const m of line.matchAll(/\bfont(-size)?:\s*([^;`{}]*)/g)) {
+              const size = m[2].match(/(?:^|\s)(\d*\.?\d+)(px|rem|em)\b/);
+              if (!size) continue;
+              const px = parseFloat(size[1]) * (size[2] === 'px' ? 1 : REM_TO_PX);
+              if (px < 12) offenders.push(`${rel}:${i + 1} ${m[0].trim()}`);
+            }
+          });
+      }
+    };
+    walk(srcRoot);
+    expect(offenders).toEqual([]);
+  });
+});

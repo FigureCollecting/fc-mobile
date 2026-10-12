@@ -19,6 +19,7 @@ import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
 import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, rememberImages, syncOwnedImages, withheldAmong } from '../../media/ownedImages';
 import { tellOwnedSync } from '../imageAnswers';
+import { installFakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
 const X = `${D}/${'c'.repeat(64)}`;
@@ -410,5 +411,214 @@ describe('another open document of the app (a tab, the installed window): its ow
     await caseViewSyncs(r, client, listOf());
     setOnline(false);
     expect(await figurePage(client)).toEqual({ first: undefined, settled: null });
+  });
+});
+
+describe('an answer a view shows, while it is asked again after a sync that withheld its image: it never waits on the coordinator to stop naming it', () => {
+  /** The coordinator withholds X now; its first answer (the case view's sync) comes at once, every later one waits for `answer`. */
+  function laterAnswersWait(r: LocalRig): { answer: () => void; asked: () => number } {
+    let answer!: () => void;
+    const later = new Promise<void>((res) => (answer = res));
+    let n = 0;
+    r.clients.getProductImages.mockImplementation(async () => {
+      n += 1;
+      if (n >= 2) await later;
+      return listOf();
+    });
+    return { answer, asked: () => n };
+  }
+
+  it.each([
+    ['another document', true],
+    ['the document that ran the sync', false],
+  ])('the figure page, open online in %s: answers the plate before the coordinator answers its re-ask', async (_where, other) => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const docA = appQueryClient();
+    const docB = other ? appQueryClient() : docA;
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
+    first.unmount();
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(page.result.current.data?.url).toBe(X));
+    const coordinator = laterAnswersWait(r);
+    docA.removeQueries({ queryKey: ['local', 'owned-images'] });
+    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(coordinator.asked()).toBe(2));
+    // The page's re-ask is with the coordinator: its answer is already the plate.
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+    expect(page.result.current.isFetching).toBe(true);
+    coordinator.answer();
+    await waitFor(() => expect(page.result.current.isFetching).toBe(false));
+    expect(page.result.current.data).toBeNull();
+    view.unmount();
+  });
+
+  it('the figure page, open online in another document, its re-ask never answered: answers the plate, and goes on answering it', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
+    first.unmount();
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(page.result.current.data?.url).toBe(X));
+    const coordinator = laterAnswersWait(r);
+    docA.removeQueries({ queryKey: ['local', 'owned-images'] });
+    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(coordinator.asked()).toBe(2));
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+    await new Promise((res) => setTimeout(res, 500));
+    expect(page.result.current.data).toBeNull();
+    expect(page.result.current.isFetching).toBe(true);
+    page.unmount();
+    view.unmount();
+  });
+
+  it('the figure page asks the coordinator with a deadline of 10 s, so a re-ask on a stalled link ends', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    expect((await figurePage(appQueryClient())).settled).toBe(X);
+    expect(r.clients.getProductImages).toHaveBeenCalledWith({ headIds: [headOf(0)] }, expect.objectContaining({ timeoutMs: 10_000, signal: expect.any(AbortSignal) }));
+  });
+
+  /** The first document's sync, run as its case view runs it, told to the others; then `onTold` runs, before any of them hears. */
+  async function anotherDocumentSyncs(fresh: ReturnType<typeof listOf>, onTold: () => void): Promise<void> {
+    await syncOwnedImages([headOf(0)], async () => new Map([[headOf(0), fresh.products[0]?.images ?? []]]), { storage });
+    onTold();
+    tellOwnedSync(appQueryClient());
+  }
+
+  /** Holds the next read of the kept lists (the case view answering again from what the sync kept) until released. */
+  function holdNextKeptRead(): { hold: () => void; release: () => void } {
+    let on = false;
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      if (on && name === IMAGE_LISTS_CACHE) {
+        on = false;
+        await held;
+      }
+      return open(name);
+    };
+    return { hold: () => (on = true), release };
+  }
+
+  it.each([
+    ['out of reach, the figure has no image left: the plate', false, [] as string[], undefined],
+    ['online, the sync kept another image: the plate, then that image', true, [B], B],
+  ])('the case view, open %s; told of a sync that withheld its image, its figure is drawn as the plate before it answers again', async (_name, online, fresh, after) => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const docB = appQueryClient();
+    setOnline(online);
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    const kept = holdNextKeptRead();
+    await anotherDocumentSyncs(listOf(...fresh), kept.hold);
+    await waitFor(() => expect(docB.isFetching()).toBe(1));
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
+    kept.release();
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    await settle();
+    expect(viewB.result.current.get(headOf(0))?.url).toBe(after);
+  });
+
+  it('the case view, told of a sync that withheld only a figure\'s mask: names the image without the mask before it answers again', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const M = `${D}/${'a'.repeat(64)}`;
+    const M2 = `${D}/${'b'.repeat(64)}`;
+    const withMask = (mask: string) =>
+      create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: X.slice(-64), role: 'gallery', primary: true, url: X, width: 600, height: 800, mask: { maskId: mask.slice(-64), contentType: 'image/png', url: mask } }] }] });
+    const docB = appQueryClient();
+    setOnline(false);
+    await syncOwnedImages([headOf(0)], async () => new Map([[headOf(0), withMask(M).products[0]!.images]]), { storage });
+    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.maskUrl).toBe(M));
+    const kept = holdNextKeptRead();
+    await anotherDocumentSyncs(withMask(M2), kept.hold);
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.maskUrl).toBeUndefined());
+    expect(viewB.result.current.get(headOf(0))?.url).toBe(X);
+    kept.release();
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.maskUrl).toBe(M2));
+  });
+});
+
+describe('two documents sync at once, and the coordinator withholds the image between their reads of the lists', () => {
+  it('the sync that read older lists never undoes the withholding: no current image is refused, the withheld one is never fetched again, and the next sync withholds it', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      let releaseY!: () => void;
+      const yGate = new Promise<void>((res) => (releaseY = res));
+      storage = fakeCaches(async (req) => {
+        if (req.url === Y) await yGate;
+        return new Response('img');
+      });
+      vi.stubGlobal('caches', storage);
+      const forgotten: string[] = [];
+      const open = storage.open.bind(storage);
+      (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+        const cache = await open(name);
+        if (name !== WITHHELD_CACHE) return cache;
+        return Object.assign(Object.create(cache) as Cache, {
+          delete: async (req: RequestInfo | URL, o?: CacheQueryOptions) => {
+            forgotten.push(decodeURIComponent(new URL(req instanceof Request ? req.url : String(req)).pathname));
+            return cache.delete(req, o);
+          },
+        });
+      };
+      const r = await localRig();
+      await seedFigures(r, [{ title: 'Owned' }]);
+      await keptX();
+      const docA = appQueryClient();
+      const docB = appQueryClient();
+      // The first read (document B's) was answered before the restriction (X), and comes late; every later one lists Y.
+      let releaseB!: () => void;
+      const bGate = new Promise<void>((res) => (releaseB = res));
+      let call = 0;
+      r.clients.getProductImages.mockImplementation(async () => {
+        call += 1;
+        if (call === 1) {
+          await bGate;
+          return listOf(X);
+        }
+        return listOf(Y);
+      });
+      const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+      await waitFor(() => expect(call).toBe(1));
+      const viewA = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+      await settle();
+      await settle();
+      releaseB();
+      await waitFor(() => expect(docB.isFetching()).toBe(0));
+      await settle();
+      releaseY();
+      await waitFor(() => expect(docA.isFetching() + docB.isFetching()).toBe(0));
+      await settle();
+      expect([...(await withheldAmong([Y], storage))]).toEqual([]);
+      expect(forgotten.filter((k) => k.includes(X))).toEqual([]);
+      expect(storage.added.map((q) => q.url)).not.toContain(X);
+      // The next sync of either reads the lists after the restriction: it withholds X, and both answer Y.
+      await act(() => docA.refetchQueries({ queryKey: ['local', 'owned-images'] }));
+      await waitFor(() => expect(docA.isFetching() + docB.isFetching()).toBe(0));
+      await settle();
+      expect([...(await withheldAmong([X, Y], storage))]).toEqual([X]);
+      expect(viewA.result.current.get(headOf(0))?.url).toBe(Y);
+      await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(Y));
+      expect(held()).not.toContain(X);
+      viewA.unmount();
+      viewB.unmount();
+    } finally {
+      uninstall();
+    }
   });
 });

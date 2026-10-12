@@ -4,8 +4,9 @@
 // reads first, both evicted with the collection.
 import { create, type MessageInitShape } from '@bufbuild/protobuf';
 import { ProductImageSchema, type ProductImage } from '@figurecollecting/fc-api-contract';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeCaches } from '../../test/fakeCaches';
+import { fakeLocks, installFakeLocks } from '../../test/fakeLocks';
 import {
   BROWSED_MEDIA_CACHE,
   IMAGE_LISTS_CACHE,
@@ -13,6 +14,7 @@ import {
   MAX_OWNED_FIGURES,
   MAX_WITHHELD,
   OWNED_MEDIA_CACHE,
+  OWNED_SYNC_WAIT_MS,
   WITHHELD_CACHE,
   fetchImageLists,
   keptImage,
@@ -592,5 +594,128 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
 
   it('answers nothing withheld where the browser has no Cache API', async () => {
     expect((await withheldAmong([url('a')], undefined)).size).toBe(0);
+  });
+});
+
+describe('syncs in different documents of the app (a tab, the installed window): one at a time, under a Web Lock', () => {
+  const lists = (m: Record<string, ProductImage[]>) => async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!]));
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const withheld = async (storage: ReturnType<typeof fakeCaches>, cs: string[]) => [...(await withheldAmong(cs.map(url), storage))].sort();
+  const settle = () => new Promise((res) => setTimeout(res, 20));
+  let uninstall: () => void = () => {};
+  afterEach(() => uninstall());
+
+  /** Another document's CacheStorage over the same caches (one origin), its next open held until released. */
+  function otherDocument(storage: ReturnType<typeof fakeCaches>): { storage: CacheStorage; holdNextOpen: () => void; release: () => void } {
+    let hold = false;
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const open = async (name: string) => {
+      if (hold) {
+        hold = false;
+        await held;
+      }
+      return storage.open(name);
+    };
+    return { storage: Object.assign(Object.create(storage) as CacheStorage, { open }), holdNextOpen: () => (hold = true), release };
+  }
+
+  it('asks for the one lock every document syncs under, by a name that holds across builds', async () => {
+    const locks = fakeLocks();
+    uninstall = installFakeLocks(locks);
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage: fakeCaches() });
+    expect(locks.asked).toEqual(['fc-owned-sync']);
+  });
+
+  it('a sync that read the lists later writes later: one that read older lists, finishing last, never undoes what the later one withheld', async () => {
+    uninstall = installFakeLocks();
+    const storage = fakeCaches();
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    const events: string[] = [];
+    // Document B reads the lists before a display restriction withholds a (it still lists a); its read
+    // answers late, and its first cache call after it is slow too.
+    const b = otherDocument(storage);
+    let answerB!: () => void;
+    const bAnswers = new Promise<void>((res) => (answerB = res));
+    const syncB = syncOwnedImages(['h1'], async () => {
+      events.push('B reads');
+      await bAnswers;
+      b.holdNextOpen();
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    }, { storage: b.storage }).then(() => events.push('B done'));
+    await settle();
+    // Document A reads them after: a is withheld, c is the figure's image now.
+    const syncA = syncOwnedImages(['h1'], async () => {
+      events.push('A reads');
+      return new Map([['h1', [img('c', { primary: true })]]]);
+    }, { storage }).then(() => events.push('A done'));
+    await settle();
+    answerB();
+    await settle();
+    b.release();
+    await Promise.all([syncA, syncB]);
+    expect(events).toEqual(['B reads', 'B done', 'A reads', 'A done']);
+    expect(await withheld(storage, ['a', 'c'])).toEqual([url('a')]);
+    expect((await recallImages('h1', storage))?.map((i) => i.url)).toEqual([url('c')]);
+    expect(owned(storage)).toEqual([url('c')]);
+    expect(storage.added.filter((r) => r.url === url('a'))).toHaveLength(1);
+  });
+
+  it('a sync waiting for another document\'s stops when its signal aborts: it asks nothing and touches no cache', async () => {
+    uninstall = installFakeLocks();
+    const storage = fakeCaches();
+    let answerB!: () => void;
+    const syncB = syncOwnedImages(['h1'], async () => {
+      await new Promise<void>((res) => (answerB = res));
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    }, { storage });
+    await settle();
+    const abort = new AbortController();
+    const fetchA = vi.fn(lists({ h1: [img('c', { primary: true })] }));
+    const syncA = syncOwnedImages(['h1'], fetchA, { storage, signal: abort.signal });
+    const outcome = syncA.then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
+    await settle();
+    abort.abort();
+    // It stops while the other document's sync still holds the lock.
+    expect(await Promise.race([outcome, settle().then(() => 'still waiting')])).toBe('AbortError');
+    answerB();
+    await syncB;
+    expect(fetchA).not.toHaveBeenCalled();
+    expect(owned(storage)).toEqual([url('a')]);
+  });
+
+  it('a sync waits at most 10 s (OWNED_SYNC_WAIT_MS) for another document\'s: then it fails, having asked nothing and touched no cache', async () => {
+    expect(OWNED_SYNC_WAIT_MS).toBe(10_000);
+    uninstall = installFakeLocks();
+    const storage = fakeCaches();
+    let answerB!: () => void;
+    const syncB = syncOwnedImages(['h1'], async () => {
+      await new Promise<void>((res) => (answerB = res));
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    }, { storage });
+    await settle();
+    const fetchA = vi.fn(lists({ h1: [img('c', { primary: true })] }));
+    const outcome = syncOwnedImages(['h1'], fetchA, { storage, lockWaitMs: 30 }).then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
+    expect(await Promise.race([outcome, new Promise((res) => setTimeout(() => res('still waiting'), 300))])).toBe('TimeoutError');
+    answerB();
+    await syncB;
+    expect(fetchA).not.toHaveBeenCalled();
+    expect(owned(storage)).toEqual([url('a')]);
+  });
+
+  it('where the browser has no Web Locks, a sync runs at once: syncs in two documents are not serialised', async () => {
+    expect((navigator as unknown as { locks?: unknown }).locks).toBeUndefined();
+    const storage = fakeCaches();
+    const events: string[] = [];
+    let answerB!: () => void;
+    const syncB = syncOwnedImages(['h1'], async () => {
+      await new Promise<void>((res) => (answerB = res));
+      return new Map();
+    }, { storage }).then(() => events.push('B done'));
+    await settle();
+    await syncOwnedImages(['h1'], lists({ h1: [img('c', { primary: true })] }), { storage }).then(() => events.push('A done'));
+    answerB();
+    await syncB;
+    expect(events).toEqual(['A done', 'B done']);
   });
 });

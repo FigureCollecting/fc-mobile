@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Code, ConnectError, createClient } from '@connectrpc/connect';
-import { CompareService } from '@figurecollecting/fc-api-contract';
+import { CatalogService, CompareService } from '@figurecollecting/fc-api-contract';
 import { COORDINATOR_BASE_URL, createCoordinatorTransport } from '../transport';
 import { LOCAL_DB_VERSION } from '../../storage/localDb';
 import { World } from '../../auth/__tests__/world';
@@ -90,6 +90,15 @@ describe('coordinator transport', () => {
     await expect(
       client.compare({ seed: { case: 'gtin14', value: '1' }, nowIso: 'x' }, { signal: controller.signal }),
     ).rejects.toMatchObject({ code: Code.Canceled });
+  });
+
+  it('ends a call given a deadline that the coordinator never answers, through the DPoP fetch: DeadlineExceeded', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    world.net.hanging.add(APP_ORIGIN);
+    const client = createClient(CatalogService, createCoordinatorTransport(tab.fetch));
+    await expect(client.getProductImages({ headIds: ['h'] }, { timeoutMs: 20 })).rejects.toMatchObject({ code: Code.DeadlineExceeded });
   });
 
   it('passes through errors it does not own', async () => {

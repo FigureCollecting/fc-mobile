@@ -698,6 +698,31 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
   });
 
+  it('its own picture loading before any read, its first view gone before its turn: the next view\'s first read, never decoding, is read again at once', async () => {
+    vi.useFakeTimers();
+    const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/g${i}.png`);
+    const started: string[] = [];
+    let fails = 1;
+    mockPictures({ ...pictures(), ...Object.fromEntries(held.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])) }, (src) => {
+      started.push(src);
+      if (src !== A) return new Promise<void>(() => {});
+      return fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+    });
+    alphaPictureLoaded(A);
+    renderHook(() => useAlphaMarginsOf(held));
+    const first = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    // every turn taken: its read waits in line, and its view goes before its turn
+    first.unmount();
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started).toEqual(held);
+    const again = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS + EFFECTS_MS);
+    // never read before, its picture here: the read that never decodes it failed to fetch it, and goes again at once
+    expect(started.filter((s) => s === A)).toHaveLength(2);
+    expect(marginsOf(again.result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
   it('its own picture loading while its read waits in line, that read then never decoding (its fetch failed): read again at once; failing again, all 0 until its next load reads it', async () => {
     vi.useFakeTimers();
     const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/l${i}.png`);

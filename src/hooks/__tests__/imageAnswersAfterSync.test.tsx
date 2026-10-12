@@ -478,6 +478,35 @@ describe('an answer a view shows, while it is asked again after a sync that with
     view.unmount();
   });
 
+  it('the figure page, open online in another document, its image not withheld: goes on answering it while it is asked again', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(listOf(B));
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(page.result.current.data?.url).toBe(B));
+    let answer!: () => void;
+    const later = new Promise<void>((res) => (answer = res));
+    let n = 0;
+    r.clients.getProductImages.mockImplementation(async () => {
+      n += 1;
+      if (n >= 2) await later;
+      return listOf(B);
+    });
+    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    // The page's re-ask is with the coordinator.
+    await waitFor(() => expect(n).toBe(2));
+    expect(docB.isFetching()).toBe(1);
+    await settle();
+    expect(page.result.current.data?.url).toBe(B);
+    answer();
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    expect(page.result.current.data?.url).toBe(B);
+    view.unmount();
+    page.unmount();
+  });
+
   it('the figure page asks the coordinator with a deadline of 10 s, so a re-ask on a stalled link ends', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }]);

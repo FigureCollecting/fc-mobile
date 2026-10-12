@@ -703,6 +703,25 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(owned(storage)).toEqual([url('a')]);
   });
 
+  it('a sync whose signal is already aborted does not wait for another document\'s: it stops at once, having asked nothing', async () => {
+    uninstall = installFakeLocks();
+    const storage = fakeCaches();
+    let answerB!: () => void;
+    const syncB = syncOwnedImages(['h1'], async () => {
+      await new Promise<void>((res) => (answerB = res));
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    }, { storage });
+    await settle();
+    const abort = new AbortController();
+    abort.abort();
+    const fetchA = vi.fn(lists({ h1: [img('c', { primary: true })] }));
+    const outcome = syncOwnedImages(['h1'], fetchA, { storage, signal: abort.signal }).then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
+    expect(await Promise.race([outcome, settle().then(() => 'still waiting')])).toBe('AbortError');
+    answerB();
+    await syncB;
+    expect(fetchA).not.toHaveBeenCalled();
+  });
+
   it('where the browser has no Web Locks, a sync runs at once: syncs in two documents are not serialised', async () => {
     expect((navigator as unknown as { locks?: unknown }).locks).toBeUndefined();
     const storage = fakeCaches();

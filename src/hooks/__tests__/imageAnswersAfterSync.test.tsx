@@ -1021,6 +1021,23 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
+  it('the case view whose own sync recorded the image withheld and stopped part way, opened again in that document: never names it', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    const docA = appQueryClient();
+    await answeredXLongAgo(r, docA);
+    r.clients.getProductImages.mockResolvedValue(lists([], [Z]));
+    // Opened again on its ten-minute-old answer, its sync records X, stalls on Z, and stops as the case view goes away.
+    const viewA = await recordsXAndStalls(docA);
+    viewA.unmount();
+    await idle(docA);
+    const again = watchedCaseView(docA);
+    await idle(docA);
+    expect(again.named).not.toContain(X);
+    expect(again.view.result.current.get(headOf(1))?.url).toBe(Z);
+    again.view.unmount();
+  });
+
   it('one mark per run of a case view: a run that ends after its case view opened again (a slow cache write) leaves the later run marked, so a stopped sync told then leaves it to finish', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);

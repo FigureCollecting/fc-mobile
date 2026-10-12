@@ -975,6 +975,51 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     });
   }
 
+  it(`a re-read held back while ${ALPHA_READS_AT_ONCE} re-reads fill their room starts the moment one of them ends, out of time or still in its turn; held re-reads start in the order they came`, async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: ALPHA_READS_AT_ONCE + 2 }, (_, i) => `https://example.com/r${i}.png`);
+    const [p4, p5] = urls.slice(ALPHA_READS_AT_ONCE);
+    const { release, started, startedAt } = heldPictures(urls, urls);
+    const t0 = Date.now();
+    const readsOf = (url: string) => startedAt.filter((_, i) => started[i] === url).map((t) => t - t0);
+    renderHook(() => useAlphaMarginsOf(urls));
+    // the first four, out of time at 8 s, are read again from 9.5 s and fill the room; the last two, out of time at
+    // 9.5 s, wait their backoff, then in line from 11 s, held back
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(urls.map(readsOf)).toEqual([[0, 9_500], [0, 9_500], [0, 9_500], [0, 9_500], [1_500], [1_500]]);
+    // one of the four, out of time by now, lands: the first held starts at once
+    release(urls[0]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect([readsOf(p4), readsOf(p5)]).toEqual([[1_500, 12_000], [1_500]]);
+    // that one lands while still in its turn: the next held starts at once
+    await vi.advanceTimersByTimeAsync(500);
+    release(p4);
+    await vi.advanceTimersByTimeAsync(0);
+    expect([readsOf(p4), readsOf(p5)]).toEqual([[1_500, 12_000], [1_500, 12_500]]);
+  });
+
+  // the timeline above with one held re-read: its own picture loads during its backoff, or while it waits in line held back
+  for (const [where, loadAt, startsAt] of [
+    ['during its backoff: it starts at the next turn', 10_000, 11_000],
+    ['while it waits in line, held back: it starts at once', 12_000, 12_000],
+  ] as const) {
+    it(`a re-read sent at once by its own picture loading is never held back by the re-reads filling their room: loaded ${where}`, async () => {
+      vi.useFakeTimers();
+      const urls = Array.from({ length: ALPHA_READS_AT_ONCE + 1 }, (_, i) => `https://example.com/r${i}.png`);
+      const p4 = urls[ALPHA_READS_AT_ONCE];
+      const { started, startedAt } = heldPictures(urls, urls);
+      const t0 = Date.now();
+      const readsOf = (url: string) => startedAt.filter((_, i) => started[i] === url).map((t) => t - t0);
+      renderHook(() => useAlphaMarginsOf(urls));
+      await vi.advanceTimersByTimeAsync(loadAt);
+      alphaPictureLoaded(p4);
+      await vi.advanceTimersByTimeAsync(startsAt - loadAt + 100);
+      expect(readsOf(p4)).toEqual([1_500, startsAt]);
+      // held back without its load: until one of the four re-reads ends, 25.5 s
+      expect(readsOf(urls[0])).toEqual([0, 9_500]);
+    });
+  }
+
   it('a read landing after a new list renders but before its effect runs is answered (the browser runs effects after the frame)', async () => {
     vi.useFakeTimers();
     const { release, started } = heldPictures([A, B], [A, B]);

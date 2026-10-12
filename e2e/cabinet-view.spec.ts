@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, type Camera } from '../src/components/display/caseCamera';
@@ -500,6 +500,16 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     return all.filter((f) => name.test(f.name)).map((f) => f.grounded);
   }
 
+  /** The most any figure named so is off true scale, mm: its opaque rows from the surface to its labelled height (none drawn yet: Infinity). */
+  async function offTrueScale(page: Page, named: (name: string) => boolean) {
+    const rows = (await pictureAlpha(page)).filter((r) => named(r.name));
+    const off = rows.flatMap((r) => {
+      const h = r.art.y1 - r.art.y0;
+      return [Math.abs(r.art.y0 + r.clearBelow * h - r.world.surface), Math.abs(r.art.y1 - r.clearAbove * h - r.world.y1)];
+    });
+    return off.length > 0 ? Math.max(...off) : Infinity;
+  }
+
   for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
     test(`a picture that never arrives: every other figure grounded and packed by what it draws, at once: ${size.name}`, async ({ page }) => {
       await page.route(RYUKO, () => {
@@ -546,19 +556,63 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       };
     });
     await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
-    // the most any Ryuko is off true scale, mm: its opaque rows from the surface to its labelled height (none drawn yet: Infinity)
-    const offTrueScale = async () => {
-      const rows = (await pictureAlpha(page)).filter((r) => ryuko.test(r.name));
-      const off = rows.flatMap((r) => {
-        const h = r.art.y1 - r.art.y0;
-        return [Math.abs(r.art.y0 + r.clearBelow * h - r.world.surface), Math.abs(r.art.y1 - r.clearAbove * h - r.world.y1)];
-      });
-      return off.length > 0 ? Math.max(...off) : Infinity;
-    };
-    await expect.poll(offTrueScale, { timeout: 15_000, intervals: [500] }).toBeLessThan(0.5);
+    await expect.poll(() => offTrueScale(page, (name) => ryuko.test(name)), { timeout: 15_000, intervals: [500] }).toBeLessThan(0.5);
     // read twice: the failed read, then the one its load sent
     expect(await page.evaluate(() => (window as unknown as { __ryukoReads: number }).__ryukoReads)).toBe(2);
     await expectNoOverlap(page, 'Ryuko read again on its load');
+  });
+
+  test(`a cut-out whose own picture loads while its alpha read waits in line, that read's own fetch then failing (a network error): read again at once, and it ends at true scale`, async ({ page }) => {
+    const PICTURES = /\/assets\/[^/?]+\.png$/;
+    const t0 = Date.now();
+    /** The pictures in the order their alpha reads (crossOrigin canvas fetches) were first sent, and each such fetch: when, and whether it failed. */
+    const readOrder: string[] = [];
+    const reads: { url: string; at: number; failed: boolean }[] = [];
+    /** When each figure's own picture (not a read's fetch) finished loading. */
+    const loadedAt = new Map<string, number>();
+    /** A read's fetch: a CORS request (its Origin header; Sec-Fetch-Mode where the browser reports it). */
+    const isRead = async (req: Request) => {
+      const headers = await req.allHeaders();
+      return headers['sec-fetch-mode'] === 'cors' || 'origin' in headers;
+    };
+    page.on('requestfinished', async (req) => {
+      const at = Date.now() - t0;
+      if (PICTURES.test(req.url()) && !(await isRead(req))) loadedAt.set(req.url(), at);
+    });
+    await page.route(PICTURES, async (route) => {
+      const url = route.request().url();
+      if (!(await isRead(route.request()))) return route.fallback().catch(() => {});
+      if (!readOrder.includes(url)) readOrder.push(url);
+      const nth = readOrder.indexOf(url);
+      const failed = nth === ALPHA_READS_AT_ONCE && !reads.some((r) => r.url === url);
+      reads.push({ url, at: Date.now() - t0, failed });
+      // the first reads keep their turns 3 s, so the next waits in line while its own picture loads; its read's fetch fails once
+      if (failed) return route.abort('failed');
+      if (nth < ALPHA_READS_AT_ONCE) await new Promise((r) => setTimeout(r, 3_000));
+      return route.fallback().catch(() => {});
+    });
+    await page.addInitScript(() => {
+      localStorage.setItem('onboarding_complete', '1');
+      localStorage.setItem('fc-fixture-mode', 'on');
+      localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall' }));
+    });
+    await page.setViewportSize(FOLD8.find((v) => v.name === 'fold8-open')!);
+    await page.goto('/?layout=case&fx=3&fxwidth=narrow');
+    await page.waitForSelector('button.cab-figure');
+    await expect.poll(() => reads.some((r) => r.failed), { timeout: 15_000 }).toBe(true);
+    const failedRead = reads.find((r) => r.failed)!;
+    const victim = failedRead.url;
+    // its own picture had loaded before its read was sent: the load found it waiting in line
+    expect(loadedAt.get(victim)).toBeLessThan(failedRead.at);
+    const names = await page.evaluate(
+      (v) => Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure')).filter((b) => b.querySelector<HTMLImageElement>('img.cab-figure__art')?.src === v).map((b) => b.getAttribute('aria-label')!),
+      victim,
+    );
+    expect(names.length).toBeGreaterThan(0);
+    await expect.poll(() => offTrueScale(page, (name) => names.includes(name)), { timeout: 15_000, intervals: [500] }).toBeLessThan(0.5);
+    // read twice: the read whose fetch failed, then the one sent again at once
+    expect(reads.filter((r) => r.url === victim).map((r) => r.failed)).toEqual([true, false]);
+    await expectNoOverlap(page, 'read again after its fetch failed');
   });
 
   test(`8 pictures whose alpha reads stall for good: every other figure is still grounded within ${ALPHA_READ_DEADLINE_MS + 3 * ALPHA_READ_TURN_MS} ms (the stalled reads' first deadline, ${ALPHA_READ_DEADLINE_MS} ms, and three turns)`, async ({ page }) => {

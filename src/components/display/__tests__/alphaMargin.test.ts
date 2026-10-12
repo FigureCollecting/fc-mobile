@@ -631,6 +631,80 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(started).toEqual([A, ...held, waiting[0], A, waiting[1], waiting[2]]);
   });
 
+  it('its own picture loading while its read waits in line, that read then never decoding (its fetch failed): read again at once; failing again, all 0 until its next load reads it', async () => {
+    vi.useFakeTimers();
+    const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/l${i}.png`);
+    const started: string[] = [];
+    let fails = 2;
+    mockPictures({ ...pictures(), ...Object.fromEntries(held.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])) }, (src) => {
+      started.push(src);
+      if (src !== A) return new Promise<void>(() => {});
+      return fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+    });
+    const answers: ReadonlyMap<string, AlphaMargins>[] = [];
+    renderHook(() => {
+      const known = useAlphaMarginsOf([...held, A]);
+      if (answers.at(-1) !== known) answers.push(known);
+      return known;
+    });
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    // every turn taken: its read waits in line, and its own picture loads meanwhile
+    expect(started).toEqual(held);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    // the read its load sent never decoded the picture, which is here: that read's own fetch failed, so read again at once
+    expect(started).toEqual([...held, A, A]);
+    // one load, one read again: that read failing too, it is all 0, and nothing reads it again without a load
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(answers.at(-1)!.get(A)).toEqual(NONE);
+    await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started.filter((s) => s === A)).toHaveLength(2);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS + ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(started.filter((s) => s === A)).toHaveLength(3);
+    expect(marginsOf(answers.at(-1)!.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
+  it('its own picture loading during its backoff, the read it sends then never decoding (its fetch failed): read again at once, and known by its own margins', async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    mockPictures(pictures(), (src) => {
+      started.push(src);
+      const n = started.length - 1;
+      return n === 0 ? new Promise<void>(() => {}) : n === 1 ? Promise.reject(neverDecoded()) : Promise.resolve();
+    });
+    const answers: ReadonlyMap<string, AlphaMargins>[] = [];
+    renderHook(() => {
+      const known = useAlphaMarginsOf([A]);
+      if (answers.at(-1) !== known) answers.push(known);
+      return known;
+    });
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS / 2);
+    // its first read ran out of time: it waits out its backoff, and its own picture loads meanwhile
+    expect(started).toEqual([A]);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A, A, A]);
+    expect(answers.some((known) => known.has(A) && marginsOf(known.get(A))!.every((m) => m === 0)), 'never answered all 0').toBe(false);
+    expect(marginsOf(answers.at(-1)!.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
+  it('a list changed to show a picture that never decoded: its own picture loading reads it again, and the changed list learns its margins', async () => {
+    vi.useFakeTimers();
+    let readsOfA = 0;
+    mockPictures(pictures(), (src) => (src === A && readsOfA++ === 0 ? Promise.reject(neverDecoded()) : Promise.resolve()));
+    const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [B] as readonly string[] } });
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    // a filter, sort or sync change: the same view, now showing A too
+    rerender({ urls: [B, A] });
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(result.current.get(A)).toEqual(NONE);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(readsOfA).toBe(2);
+    expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
   it('a picture read again on its own load whose view is gone before its turn: nothing kept, all 0 still, and its next load reads it again; a list not showing it is never answered anew', async () => {
     vi.useFakeTimers();
     const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/m${i}.png`);
@@ -1072,6 +1146,19 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     alphaPictureLoaded(urls[9]);
     await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
     expect(started).toEqual([...urls.slice(0, ALPHA_READS_AT_ONCE), urls[9], ...urls.slice(ALPHA_READS_AT_ONCE, 2 * ALPHA_READS_AT_ONCE - 1)]);
+  });
+
+  it('its own picture loading while it is second in line: it is read next, ahead of the first', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: ALPHA_READS_AT_ONCE + 2 }, (_, i) => `https://example.com/n${i}.png`);
+    const [first, second] = urls.slice(ALPHA_READS_AT_ONCE);
+    const { started } = heldPictures(urls, urls.slice(0, ALPHA_READS_AT_ONCE));
+    renderHook(() => useAlphaMarginsOf(urls));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual(urls.slice(0, ALPHA_READS_AT_ONCE));
+    alphaPictureLoaded(second);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started.slice(ALPHA_READS_AT_ONCE)).toEqual([second, first]);
   });
 
   it('a load of a picture not being read (never asked for, or read already) starts no read', async () => {

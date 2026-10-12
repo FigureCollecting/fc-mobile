@@ -252,6 +252,8 @@ interface SyncOptions {
   lockWaitMs?: number;
   /** Called each time the sync has written the record of an address it withholds. */
   onRecorded?: () => void;
+  /** Called once the sync has read the lists, its signal not aborted, before it touches any cache. */
+  onListsRead?: () => void;
 }
 
 /**
@@ -327,6 +329,7 @@ async function bringToOwned(
   const lists = await fetchLists(heads);
   // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched.
   options.signal?.throwIfAborted();
+  options.onListsRead?.();
 
   // Every address the device holds for an owned figure before this sync: each record's, each kept byte's.
   const records = await storage.open(IMAGE_LISTS_CACHE);

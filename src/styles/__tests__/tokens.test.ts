@@ -457,6 +457,7 @@ describe('the literal-size guard reads every way a font size is written', () => 
       '.a { font-size: var(--font-xs); }',
       '.a { font-size: 12px; }',
       '.a { font-size: 0.75rem; }',
+      '.a { font-size: 1em; }',
       '.a { font-size: small; }',
       '.a { font-size: 100%; }',
       '.a { font-size: inherit; }',

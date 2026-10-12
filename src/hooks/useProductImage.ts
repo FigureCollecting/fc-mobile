@@ -21,6 +21,9 @@ export interface DerivativeImage {
   height: number;
 }
 
+/** How long the page waits for the coordinator's answer; past that, as when it fails. */
+export const IMAGE_ASK_TIMEOUT_MS = 10_000;
+
 const asDerivative = (i: { url: string; width: number; height: number } | undefined): DerivativeImage | null =>
   i === undefined ? null : { url: i.url, width: i.width, height: i.height };
 
@@ -36,7 +39,7 @@ export function useProductImage(headId: string | undefined) {
       if (!reachable) return asDerivative(await keptImage(headId!));
       let images;
       try {
-        const res = await session!.clients.catalog.getProductImages({ headIds: [headId!] }, { signal });
+        const res = await session!.clients.catalog.getProductImages({ headIds: [headId!] }, { signal, timeoutMs: IMAGE_ASK_TIMEOUT_MS });
         images = (res.products.find((p) => p.headId === headId)?.images ?? []).filter((i) => isMediaUrl(i.url));
       } catch {
         // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.

@@ -57,6 +57,10 @@ export const MAX_IMAGE_PAGES = 50;
 /** The largest page the coordinator serves (catalog.proto: 0 is its default of 50 rows, capped at 200). */
 export const IMAGE_PAGE_SIZE = 200;
 const MAX_HEADS_PER_CALL = 200;
+/** The Web Lock every document of the app syncs the owned images under: one name across builds. */
+export const OWNED_SYNC_LOCK = 'fc-owned-sync';
+/** How long a sync waits for another document's before it fails, and what the last sync kept stands. */
+export const OWNED_SYNC_WAIT_MS = 10_000;
 
 export interface CachedImage {
   url: string;
@@ -201,20 +205,65 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
   return out;
 }
 
+interface SyncOptions {
+  storage?: CacheStorage | undefined;
+  max?: number;
+  concurrency?: number;
+  signal?: AbortSignal;
+  /** How long to wait for another document's sync (OWNED_SYNC_WAIT_MS). */
+  lockWaitMs?: number;
+}
+
 /**
  * Bring the caches to the owned figures: fetch their lists, replace every record, drop the records
  * of figures no longer owned, then keep exactly each figure's primary image and its mask, fetching
  * what is missing (`concurrency` at a time) and deleting what nothing references. Every address a
  * record named before and no fresh list carries is deleted from the worker's browsed cache too.
+ *
+ * One document of the app at a time (a tab, the installed window): the sync holds the Web Lock
+ * OWNED_SYNC_LOCK from before it reads the lists until its last cache write, so a sync that read the
+ * lists later also writes later, and one that read older lists never undoes what a later one
+ * withheld. It waits at most `lockWaitMs` for another document's, then fails having asked and
+ * touched nothing. Where the browser has no Web Locks (an older browser, a page not served
+ * securely), syncs are not serialised, as before the lock: two documents syncing at once can finish
+ * in the other order, and the one that read older lists then undoes, until the next sync, what the
+ * other withheld.
  */
 export async function syncOwnedImages(
   ownedHeads: readonly string[],
   fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
-  options: { storage?: CacheStorage | undefined; max?: number; concurrency?: number; signal?: AbortSignal } = {},
+  options: SyncOptions = {},
 ): Promise<OwnedImageSync> {
   const storage = 'storage' in options ? options.storage : browserCaches();
+  if (storage === undefined) return { figures: 0, images: 0, added: 0, evicted: 0, failed: 0 };
+  const locks = typeof navigator === 'undefined' ? undefined : (navigator as { locks?: LockManager }).locks;
+  if (locks === undefined) return bringToOwned(ownedHeads, fetchLists, storage, options);
+  const wait = new AbortController();
+  const timer = setTimeout(
+    () => wait.abort(new DOMException('another document of the app is still syncing', 'TimeoutError')),
+    options.lockWaitMs ?? OWNED_SYNC_WAIT_MS,
+  );
+  const stop = () => wait.abort(options.signal?.reason);
+  if (options.signal?.aborted === true) stop();
+  options.signal?.addEventListener('abort', stop, { once: true });
+  try {
+    return await locks.request(OWNED_SYNC_LOCK, { signal: wait.signal }, () => {
+      clearTimeout(timer);
+      return bringToOwned(ownedHeads, fetchLists, storage, options);
+    });
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', stop);
+  }
+}
+
+async function bringToOwned(
+  ownedHeads: readonly string[],
+  fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
+  storage: CacheStorage,
+  options: SyncOptions,
+): Promise<OwnedImageSync> {
   const result: OwnedImageSync = { figures: 0, images: 0, added: 0, evicted: 0, failed: 0 };
-  if (storage === undefined) return result;
   const heads = [...new Set(ownedHeads)].slice(0, options.max ?? MAX_OWNED_FIGURES);
   const lists = await fetchLists(heads);
   // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched.

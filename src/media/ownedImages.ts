@@ -17,18 +17,21 @@
 //   fc-withheld-v1      one record per address withheld from a figure still owned (its kept list
 //                       named it, no fresh list carries it): keyed on the app's origin, no bytes, at
 //                       most MAX_WITHHELD, the oldest dropped first. Written before any kept list is
-//                       replaced or any byte evicted, so a sync that stops part way keeps it; then,
-//                       before any kept list is written, its bytes, its shown copy and every kept
-//                       list naming it are deleted (deletes need no quota), so a write refused after
-//                       that leaves none of them. An address a fresh list carries again is forgotten
-//                       before any fetch.
+//                       replaced or any byte evicted, so a sync that stops part way keeps it; then
+//                       its bytes and its shown copy are deleted (deletes need no quota), and every
+//                       kept list naming it is replaced, or deleted where the device refuses that
+//                       write, before any other kept list is written, so a write refused or a case
+//                       view gone after that leaves none of them (a record refused part way keeps
+//                       the kept list naming an address it could not record, for the next sync to
+//                       record). An address a fresh list carries again is forgotten before any fetch.
 //                       The worker refuses a recorded address (src/sw.ts), and neither keptImages
 //                       nor useProductImage online answers it, until a fresh list carries it again.
 //
 // So at each sync, an image or a mask a display restriction now withholds from an owned figure, or
 // that belonged to a figure no longer owned, is deleted from the owned and browsed caches, a withheld
-// one recorded first, all before any kept list is written: a write refused after that, or the case
-// view going away, leaves none. A refill of the browsed cache after that sync is deleted at the next.
+// one recorded first and the kept lists naming it replaced, all before any other kept list is written:
+// a write refused after that, or the case view going away, leaves none. A refill of the browsed cache
+// after that sync is deleted at the next.
 // A figure no longer owned is not recorded: its figure page asks the coordinator, as for any figure
 // not owned. Both kept caches hold exactly the owned figures (at most MAX_OWNED_FIGURES of them).
 // Where the browser has Web Locks, the documents of the app sync one at a time (syncOwnedImages). A list
@@ -70,15 +73,16 @@ export const OWNED_SYNC_LOCK = 'fc-owned-sync';
  * How long a sync waits for another document's before it fails, having asked and touched nothing (what
  * the last sync kept then stands). The other lets go when it completes or fails. When its case view
  * goes away, it lets go once its fetches in flight end and the cache work under way is done: a write,
- * or, once it has read the lists, reading the kept lists and recording and deleting what it withholds
- * or no longer keeps, which an abort never cuts short; it writes no fresh list and starts no fetch
- * after. And at most OWNED_SYNC_STEP_MS after its fetches in flight stop receiving anything, or a
- * cache write finishes, whichever is later (syncOwnedImages). While their bytes keep coming (a large
- * first sync, a slow link), or a write is slow, it holds the lock, and this wait runs out first. A
- * document whose sync failed here answers from what was kept, the other's sync told to it or not,
- * until a sync of its own: its case view opened again once its answer is ten minutes old, or the owned
- * figures or the reach changing. So a takedown the other's lists did not carry yet lands there only
- * then, as one between two documents' list reads does.
+ * or, once it has read the lists, reading the kept lists, recording and deleting what it withholds or
+ * no longer keeps and replacing the kept lists that named what it withholds, which an abort never cuts
+ * short; it writes no other kept list and starts no fetch after. And at most OWNED_SYNC_STEP_MS after
+ * its fetches in flight stop receiving anything, or a cache write finishes, whichever is later
+ * (syncOwnedImages). While their bytes keep coming (a large first sync, a slow link), or a write is
+ * slow, it holds the lock, and this wait runs out first. A document whose sync failed here answers from
+ * what was kept, the other's sync told to it or not, until a sync of its own: its case view opened
+ * again once its answer is ten minutes old, or the owned figures or the reach changing. So a takedown
+ * the other's lists did not carry yet lands there only then, as one between two documents' list reads
+ * does.
  */
 export const OWNED_SYNC_WAIT_MS = 10_000;
 /**
@@ -252,10 +256,11 @@ interface SyncOptions {
 
 /**
  * Bring the caches to the owned figures: fetch their lists, record what they withhold, delete what
- * nothing references any more (bytes, the kept list of a figure no longer kept or naming a recorded
- * address), then write every figure's fresh list and keep exactly each figure's primary image and its
- * mask, fetching what is missing (`concurrency` at a time). Every address a record named before and no
- * fresh list carries is deleted from the worker's browsed cache too, before any list is written.
+ * nothing references any more (bytes, the kept list of a figure no longer kept), replace the kept lists
+ * that named a recorded address, then write every other figure's fresh list and keep exactly each
+ * figure's primary image and its mask, fetching what is missing (`concurrency` at a time). Every
+ * address a record named before and no fresh list carries is deleted from the worker's browsed cache
+ * too, before any list is written.
  *
  * One document of the app at a time (a tab, the installed window): the sync holds the Web Lock
  * OWNED_SYNC_LOCK from before it reads the lists until its last cache write, so a sync that read the
@@ -263,8 +268,8 @@ interface SyncOptions {
  * withheld. It waits at most `lockWaitMs` for another document's, then fails having asked and
  * touched nothing. Every image fetch carries the sync's signal, so the case view going away aborts
  * the fetches in flight (and fetchImageLists' call), and the sync lets go of the lock once they
- * end and the cache work under way is done (OWNED_SYNC_WAIT_MS): it writes no fresh list and starts
- * no fetch after. An image fetch that receives nothing (its headers, a byte of its body) for
+ * end and the cache work under way is done (OWNED_SYNC_WAIT_MS): it writes no other kept list and
+ * starts no fetch after. An image fetch that receives nothing (its headers, a byte of its body) for
  * OWNED_SYNC_STEP_MS is abandoned and no other starts after it; what is still missing is fetched at a
  * later sync that the link brings bytes to. So the sync lets go of the lock at most that long after
  * its fetches in flight stop receiving anything, or a cache write finishes, whichever is later, its

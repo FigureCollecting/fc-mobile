@@ -312,11 +312,12 @@ describe('keptImage', () => {
     expect(await keptImage('h1', undefined)).toBeUndefined();
   });
 
-  it('read while a sync runs, after it recorded what it withholds and before it replaces the kept lists: never answers a recorded address', async () => {
+  it('read while a sync runs, after it recorded what it withholds and before it deletes the kept list naming it: never answers a recorded address', async () => {
     const base = device();
     await syncOwnedImages(['h1'], async () => new Map([['h1', [img('a', { primary: true })]]]), { storage: base });
     expect((await keptImage('h1', base))?.url).toBe(url('a'));
-    // The next sync (a display restriction now withholds a) is held at its first kept-list write.
+    // The next sync (a display restriction now withholds a) is held at its first kept-list write: the
+    // delete of the list naming a.
     let release!: () => void;
     const held = new Promise<void>((res) => (release = res));
     let reached = false;
@@ -325,13 +326,14 @@ describe('keptImage', () => {
       open: async (name: string) => {
         const cache = await open(name);
         if (name !== IMAGE_LISTS_CACHE) return cache;
-        return Object.assign(Object.create(cache) as Cache, {
-          put: async (r: RequestInfo, res: Response) => {
+        const write =
+          <A extends unknown[]>(f: (...a: A) => Promise<unknown>) =>
+          async (...a: A) => {
             reached = true;
             await held;
-            return cache.put(r, res);
-          },
-        });
+            return f(...a);
+          };
+        return Object.assign(Object.create(cache) as Cache, { put: write(cache.put.bind(cache)), delete: write(cache.delete.bind(cache)) });
       },
     });
     const sync = syncOwnedImages(['h1'], async () => new Map([['h1', [img('c', { primary: true })]]]), { storage });
@@ -570,15 +572,17 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
       atWrite.push(await withheld(storage, ['a', 'c']));
     });
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('b', { primary: true })], h2: [img('d', { primary: true })] }), { storage });
-    // Two lists replaced, the record of the figure that left deleted: each write found both recorded.
-    expect(atWrite).toEqual(Array(3).fill([url('a'), url('c')].sort()));
+    // The two lists naming a withheld address and the record of the figure that left deleted, then the
+    // two lists written: each write found both recorded.
+    expect(atWrite).toEqual(Array(5).fill([url('a'), url('c')].sort()));
   });
 
   it('a sync that stops after replacing a kept list (a quota error, the page killed) leaves what it withheld recorded, so a later sync deletes a refill', async () => {
     const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
+    // Writes 1 and 2 delete the lists naming a and c; 3 replaces h1's; 4, h2's, is refused.
     const restore = onListWrite(storage, async (n) => {
-      if (n === 2) throw new DOMException('quota', 'QuotaExceededError');
+      if (n === 4) throw new DOMException('quota', 'QuotaExceededError');
     });
     const fresh = lists({ h1: [img('b', { primary: true })], h2: [img('d', { primary: true })] });
     await expect(syncOwnedImages(['h1', 'h2'], fresh, { storage })).rejects.toThrow('quota');

@@ -346,7 +346,7 @@ async function bringToOwned(
   // remembered before any kept list is replaced or any byte evicted, so a sync that stops part way
   // (a quota error, the page killed) loses no record of it, and the worker refuses it from then on
   // (src/sw.ts). An address a fresh list carries again is forgotten before any fetch below. When the
-  // record cannot be written, the sync fails here, having replaced and evicted nothing.
+  // first record cannot be written, the sync fails here, having replaced and evicted nothing.
   const tomb = await storage.open(WITHHELD_CACHE);
   const remembered = (await tomb.keys()).map((k) => addressOfWithheldKey(k.url));
   const withheld = new Set<string>();
@@ -355,16 +355,31 @@ async function bringToOwned(
   // Oldest first. A withheld address was named by a list this sync replaced, so it is normally not
   // recorded yet; the Set keeps one of each.
   const recorded = new Set(remembered.filter((u) => !fresh.has(u)));
-  for (const u of withheld) {
-    await tomb.put(withheldKey(u), new Response(null));
-    recorded.add(u);
+  const unrecorded = new Set(withheld);
+  let refused: { error: unknown } | undefined;
+  try {
+    for (const u of withheld) {
+      await tomb.put(withheldKey(u), new Response(null));
+      unrecorded.delete(u);
+      recorded.add(u);
+    }
+  } catch (error) {
+    if (unrecorded.size === withheld.size) throw error;
+    // Another was recorded: the deletes below run, then the sync fails.
+    refused = { error };
   }
   const oldestFirst = [...recorded];
   for (const u of oldestFirst.slice(0, Math.max(0, oldestFirst.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
 
-  for (const [head, list] of kept) await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
-  for (const key of recordKeys) if (!kept.has(headOfKey(key.url))) await records.delete(key);
-
+  // Deletes need no quota, and every one comes before the first kept list is written: what this sync
+  // withholds, and what it no longer keeps, leaves the device even when a later write fails. The kept
+  // list of a figure no longer kept, or that names a recorded address, is deleted, unless it names one
+  // the device refused to record: the next sync records that from it.
+  for (const key of recordKeys) {
+    const head = headOfKey(key.url);
+    const names = beforeOf.get(head) ?? [];
+    if ((!kept.has(head) || names.some((u) => recorded.has(u))) && !names.some((u) => unrecorded.has(u))) await records.delete(key);
+  }
   const have = new Set<string>();
   for (const key of mediaKeys) {
     if (keep.has(key.url)) have.add(key.url);
@@ -378,6 +393,9 @@ async function bringToOwned(
     const browsed = await storage.open(BROWSED_MEDIA_CACHE);
     for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);
   }
+  if (refused !== undefined) throw refused.error;
+
+  for (const [head, list] of kept) await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
   const missing = [...keep].filter((u) => !have.has(u));
   // Each fetch is aborted when the sync's signal aborts, or when it has received nothing (its headers,
   // a byte of its body) for OWNED_SYNC_STEP_MS; then the link is taken as stalled and no other fetch

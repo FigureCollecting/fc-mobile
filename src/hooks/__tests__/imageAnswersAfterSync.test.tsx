@@ -1041,8 +1041,11 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     let call = 0;
     r.clients.getProductImages.mockImplementation(async () => {
       call += 1;
-      // B's first run reads X; every later read withholds it.
-      return call === 1 ? lists([X], []) : lists([], [Z]);
+      // B's first run reads X; every later read withholds it, B's second run's answered in 50 ms, after
+      // the first document's stopped sync is told.
+      if (call === 1) return lists([X], []);
+      if (call === 3) await new Promise((res) => setTimeout(res, 50));
+      return lists([], [Z]);
     });
     const docA = appQueryClient();
     const docB = appQueryClient();

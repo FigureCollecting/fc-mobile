@@ -321,7 +321,7 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(notNoStore()).toEqual([]);
 });
 
-test('(b) another tab: told on a BroadcastChannel when a tab\'s owned sync completes, it drops its image answers', async ({ context, page }) => {
+test('(b) another tab: told on a BroadcastChannel when a tab\'s owned sync completes, it drops its image answers, and an open page stops naming the withheld image before its re-ask answers', async ({ context, page }) => {
   const { origin } = stackState();
   const MEDIA = 'https://images.figurecollecting.com/d';
   const withheld = `${MEDIA}/${'cd'.repeat(32)}`;
@@ -334,26 +334,37 @@ test('(b) another tab: told on a BroadcastChannel when a tab\'s owned sync compl
   type Probe = {
     syncOwned: (heads: string[], lists: Record<string, { url: string; primary?: boolean }[]>) => Promise<unknown>;
     answer: (head: string, url: string) => boolean;
+    show: (head: string, url: string) => boolean;
+    shown: (head: string) => { url: string | null; asking: boolean };
+    caseView: (head: string, url: string) => void;
+    caseViewStands: (head: string) => boolean;
     answers: () => number;
-    tell: () => void;
+    completed: (head: string) => void;
   };
-  const answer = (p: Page, url: string) => p.evaluate((u) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.answer('h1', u), url);
-  const answers = (p: Page) => p.evaluate(() => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.answers());
+  const call = <K extends keyof Probe>(p: Page, method: K, ...args: Parameters<Probe[K]>): Promise<Awaited<ReturnType<Probe[K]>>> =>
+    p.evaluate(([m, a]) => ((window as unknown as { fcImageProbe: Record<string, (...x: unknown[]) => unknown> }).fcImageProbe[m]!(...a)), [method, args] as [string, unknown[]]) as Promise<Awaited<ReturnType<Probe[K]>>>;
   const sync = (url: string) => page.evaluate((u) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.syncOwned(['h1'], { h1: [{ url: u, primary: true }] }), url);
   await page.goto(`${origin}/`);
   await shellInstalled(page);
   const other = await context.newPage();
   await other.goto(`${origin}/`);
   await shellInstalled(other);
-  // Both tabs answered the figure page with the image; the first tab's syncs keep it, then withhold it.
-  expect(await answer(page, withheld)).toBe(true);
-  expect(await answer(other, withheld)).toBe(true);
+  // The first tab: its case view, and a figure page answer no page shows. The other tab: a figure page
+  // open on the figure, and an answer for another figure no page shows. All name the image.
+  await call(page, 'caseView', 'h1', withheld);
+  expect(await call(page, 'answer', 'h1', withheld)).toBe(true);
+  expect(await call(other, 'show', 'h1', withheld)).toBe(true);
+  expect(await call(other, 'answer', 'h2', withheld)).toBe(true);
+  // The first tab's syncs keep the image, then withhold it; its case view does what the app's does.
   await sync(withheld);
   await sync(replacement);
-  await page.evaluate(() => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.tell());
-  // The other tab drops its answer; the tab that told keeps its own (it never hears its own message).
-  await expect.poll(() => answers(other)).toBe(0);
-  expect(await answers(page)).toBe(1);
+  await call(page, 'completed', 'h1');
+  // The other tab: the open page answers the plate while its re-ask is still unanswered; the answer no page shows is gone.
+  await expect.poll(() => call(other, 'shown', 'h1')).toEqual({ url: null, asking: true });
+  expect(await call(other, 'answers')).toBe(1);
+  // The first tab dropped its own figure page answer and kept its case view's (it never hears its own message).
+  await expect.poll(() => call(page, 'answers')).toBe(0);
+  expect(await call(page, 'caseViewStands', 'h1')).toBe(true);
   await other.close();
 });
 

@@ -1,10 +1,12 @@
 // Runs in the page (bundled by web.ts): drives the app's own owned-image sync
 // (src/media/ownedImages.ts) against the browser's real caches and worker, with
-// the image lists given here instead of the coordinator's, and the message a
-// completed sync tells every other tab (src/hooks/imageAnswers.ts), heard by a
-// QueryClient of this document's own.
-import { QueryClient } from '@tanstack/react-query';
-import { hearOwnedSyncs, tellOwnedSync } from '../../src/hooks/imageAnswers';
+// the image lists given here instead of the coordinator's, and what the case view
+// does once a sync completes (src/hooks/useOwnedImages.ts): it drops this
+// document's image answers but its own and tells every other tab
+// (src/hooks/imageAnswers.ts), each heard by a QueryClient of its document's own.
+// The hooks' wiring of these is unit-tested (src/hooks/__tests__/imageAnswersAfterSync.test.tsx).
+import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { dropImageAnswers, hearOwnedSyncs, tellOwnedSync } from '../../src/hooks/imageAnswers';
 import { keptImage, syncOwnedImages, type OwnedImageSync } from '../../src/media/ownedImages';
 
 export interface ProbeImage {
@@ -33,21 +35,50 @@ export async function kept(head: string): Promise<string | null> {
 /** This document's QueryClient, as the app's: it hears other tabs' syncs once it answers an image. */
 const client = new QueryClient();
 
-/** The figure page's answer for a figure, as useProductImage gives it (in reach); this client hears from then on. */
+const pageKey = (head: string) => ['local', 'image', head, true];
+/** The case view's key in reach, its owned figures the one given (useOwnedImages). */
+const caseViewKey = (head: string) => ['local', 'owned-images', true, head];
+
+/** The figure page's answer for a figure, as useProductImage gives it (in reach), no page open; this client hears from then on. */
 export function answer(head: string, url: string): boolean {
-  client.setQueryData(['local', 'image', head, true], { url, width: 1, height: 1 });
+  client.setQueryData(pageKey(head), { url, width: 1, height: 1 });
   return hearOwnedSyncs(client) !== undefined;
 }
 
-/** The figure page answers this document's QueryClient holds. */
+/** A figure page open on the figure, showing this image; asked again, the coordinator never answers (a stalled link). */
+export function show(head: string, url: string): boolean {
+  client.setQueryData(pageKey(head), { url, width: 1, height: 1 });
+  new QueryObserver(client, { queryKey: pageKey(head), queryFn: () => new Promise<never>(() => {}), staleTime: Infinity }).subscribe(() => {});
+  return hearOwnedSyncs(client) !== undefined;
+}
+
+/** What the open figure page answers now (null: the plate), and whether it is asking again. */
+export function shown(head: string): { url: string | null; asking: boolean } {
+  const state = client.getQueryState<{ url: string } | null>(pageKey(head));
+  return { url: state?.data?.url ?? null, asking: state?.fetchStatus === 'fetching' };
+}
+
+/** The case view's own answer, as useOwnedImages gives it: the figure drawn with this image. */
+export function caseView(head: string, url: string): void {
+  client.setQueryData(caseViewKey(head), new Map([[head, { url, width: 1, height: 1, role: 'gallery', primary: true }]]));
+  hearOwnedSyncs(client);
+}
+
+/** Whether the case view's own answer still stands. */
+export function caseViewStands(head: string): boolean {
+  return client.getQueryData(caseViewKey(head)) !== undefined;
+}
+
+/** The figure page answers this document's QueryClient holds, shown or not. */
 export function answers(): number {
   return client.getQueryCache().findAll({ queryKey: ['local', 'image'] }).length;
 }
 
-/** Tell every other tab that this document's sync completed. */
-export function tell(): void {
+/** What the case view does once its sync completes: drop this document's image answers but its own, then tell every other tab. */
+export function completed(head: string): void {
+  void dropImageAnswers(client, caseViewKey(head));
   tellOwnedSync(client);
 }
 
 // Init scripts may be wrapped in a function scope; publish explicitly.
-(globalThis as unknown as { fcImageProbe: unknown }).fcImageProbe = { syncOwned, kept, answer, answers, tell };
+(globalThis as unknown as { fcImageProbe: unknown }).fcImageProbe = { syncOwned, kept, answer, show, shown, caseView, caseViewStands, answers, completed };

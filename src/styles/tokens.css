@@ -19,7 +19,7 @@
   --overlay: rgba(0, 0, 0, 0.6);
 
   /* ── Typography — fluid clamp() scale, markedly condensed ──────────────
-     Floors: 11px absolute (2xs), 11px xs. Fluid steps scale gently with
+     Floors: 11px absolute (2xs), 12px xs. Fluid steps scale gently with
      viewport width (360px → 674px reference range). Form inputs NEVER go
      below 16px (--font-input) or iOS Safari auto-zooms on focus.
      Desktop one notch up (Ross 2026-10-11): each fluid step's maximum is an
@@ -28,7 +28,7 @@
      their sizes and a desktop window reads like the old scale at 110 %. */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-2xs: 0.6875rem;                                    /* 11px static floor (Ross 2026-10-11: up from 10px) */
-  --font-xs: 0.6875rem;                                     /* 11px static */
+  --font-xs: 0.75rem;                                       /* 12px static (Ross 2026-10-11: up from 11px) */
   --font-sm: clamp(0.75rem, 0.7rem + 0.22vw, clamp(0.8125rem, 0.625rem + 0.3125vw, 0.875rem));       /* 12 → 13px, 14px desktop */
   --font-base: clamp(0.8125rem, 0.76rem + 0.24vw, clamp(0.875rem, 0.6875rem + 0.3125vw, 0.9375rem)); /* 13 → 14px, 15px desktop */
   --font-lg: clamp(0.9375rem, 0.88rem + 0.28vw, clamp(1rem, 0.8125rem + 0.3125vw, 1.0625rem));       /* 15 → 16px, 17px desktop */

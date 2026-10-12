@@ -37,7 +37,7 @@ import { cssSceneTransform } from './caseCamera';
 import { cabinetsInReach, frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
 import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
-import { useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
@@ -337,7 +337,12 @@ function ArtBody({ art, name, hidden = false }: { art: FigureArt; name: string; 
       />
     );
   }
-  if (art.kind === 'cutout') return <img class="cab-figure__art cab-figure__art--cutout" src={art.url} alt="" draggable={false} style={{ visibility }} />;
+  if (art.kind === 'cutout') {
+    // a cut-out's alpha is its own picture: once loaded, a read of it is a cache hit
+    return (
+      <img class="cab-figure__art cab-figure__art--cutout" src={art.url} alt="" draggable={false} style={{ visibility }} onLoad={() => alphaPictureLoaded(art.alphaUrl!)} />
+    );
+  }
   if (art.kind === 'framed') {
     return (
       <div class="cab-figure__frame">

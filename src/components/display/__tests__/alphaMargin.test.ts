@@ -669,11 +669,12 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
     renderHook(() => useAlphaMarginsOf(u));
     const counts: number[] = [];
-    for (let turn = 0; turn < 6; turn++) {
-      await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    for (let step = 0; step < 6 * 6; step++) {
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS / 6);
       counts.push(inFlight());
     }
-    expect(counts).toEqual(counts.map(() => 2 * ALPHA_READS_AT_ONCE));
+    // the room filled, and never more; a read abandoned waits out its backoff out of the room, so it is full only while reads wait
+    expect(Math.max(...counts), `in flight every ${ALPHA_READ_TURN_MS / 6} ms: ${counts}`).toBe(2 * ALPHA_READS_AT_ONCE);
   });
 
   it(`a read not done ${ALPHA_READ_DEADLINE_MS} ms after it starts is abandoned (its src cleared): its figure stays unknown, nothing is kept, and it is read again ${ALPHA_READ_BACKOFF_MS} ms on`, async () => {

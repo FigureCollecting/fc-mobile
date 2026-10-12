@@ -162,29 +162,46 @@ const contactBandCache = new Map<string, ContactBand | null>();
  * flight, a read ending when it lands or is abandoned at its deadline
  * (ALPHA_READ_DEADLINE_MS). So the case never decodes all of a long list's
  * pictures together for its canvas reads (margins, mask and contact band:
- * one read per picture), even on a stalled network.
+ * one read per picture), on a slow or stalled network too.
  */
 export const ALPHA_READS_AT_ONCE = 4;
 /**
- * A read still going after this long gives up its turn to the next picture
- * (while fewer than ALPHA_READS_AT_ONCE others are out of time) and goes on
- * until its deadline: up to ALPHA_READS_AT_ONCE stalled pictures hold the
- * rest up at most this long.
+ * A read still going after this long, slow or stalled, gives up its turn to
+ * the next picture (while fewer than ALPHA_READS_AT_ONCE others are out of
+ * time) and goes on until it lands or reaches its deadline. So up to
+ * ALPHA_READS_AT_ONCE slow or stalled reads hold the rest up at most this
+ * long; with more, the line moves as each read out of time lands or is
+ * abandoned.
  */
 export const ALPHA_READ_TURN_MS = 1500;
 /**
- * A read not done this long after it starts is abandoned: its src cleared,
- * so the browser cancels its request, and nothing of it is kept. So stalled
- * pictures leave the room they hold however many there are, and the rest
- * are read.
+ * A picture's first read not done this long after it starts is abandoned,
+ * and each later read of it is given twice the time of the one before, up
+ * to ALPHA_READ_DEADLINE_MAX_MS. Abandoned: its src cleared and nothing of
+ * it kept, so it leaves the room it holds. The browser drops its request
+ * when the read alone fetches the picture; when the figure's own copy is
+ * still downloading (cross-origin, HTTP cache on, as in production) that
+ * download goes on and the read was waiting on it, so abandoning frees a
+ * decode slot, not bandwidth. Running out of time is never a failed read:
+ * the figure stays a plate until a later read lands (ALPHA_READ_BACKOFF_MS,
+ * alphaPictureLoaded).
  */
 export const ALPHA_READ_DEADLINE_MS = 8000;
 /**
- * How many more times an abandoned picture is read, each behind the reads
- * waiting then, before it is taken as a failed read (all 0: packed by its
- * whole picture).
+ * The most time one read is given: a picture whose fetch takes longer than
+ * the first deadline, but no longer than this, is read on a later try with
+ * no HTTP cache to help; a stalled one holds its room at most this long a
+ * try.
  */
-export const ALPHA_READ_RETRIES = 2;
+export const ALPHA_READ_DEADLINE_MAX_MS = 32000;
+/**
+ * How long a picture whose read ran out of time waits before it is queued
+ * again, at the back of the line: this, doubling each time, up to
+ * ALPHA_READ_BACKOFF_MAX_MS, with no limit on tries while a view wants the
+ * picture. Its own picture loading (alphaPictureLoaded) ends the wait.
+ */
+export const ALPHA_READ_BACKOFF_MS = 1500;
+export const ALPHA_READ_BACKOFF_MAX_MS = 15000;
 /** Reads holding a turn. */
 let reading = 0;
 /** Reads that gave up their turn, still going: at most ALPHA_READS_AT_ONCE. */
@@ -205,14 +222,49 @@ function passTurn(): void {
   else reading--;
 }
 
+/** How many mounted hooks want each picture read: a read starts only while one does (the life of its view). */
+const wantedBy = new Map<string, number>();
+
+/** A hook wants `imageUrl` read until it calls what this returns. */
+function want(imageUrl: string): () => void {
+  wantedBy.set(imageUrl, (wantedBy.get(imageUrl) ?? 0) + 1);
+  return () => {
+    const left = wantedBy.get(imageUrl)! - 1;
+    if (left > 0) wantedBy.set(imageUrl, left);
+    else wantedBy.delete(imageUrl);
+  };
+}
+
+/** A picture being read until a read of it lands. */
+interface Reader {
+  /** How many of its reads ran out of time. */
+  timedOut: number;
+  /** Its own picture loaded while a read of it was in flight: if that read runs out of time, the next goes at once. */
+  loaded: boolean;
+  /** Set while it waits (out its backoff, or in line): sends it to the front of the line at once. */
+  hurry?: () => void;
+}
+const readers = new Map<string, Reader>();
+
 /**
- * Run one read when a turn is free. A finished read hands its turn to the
- * next one waiting; one out of time hands it on too, while fewer than
- * ALPHA_READS_AT_ONCE others are overdue, else when one of them ends.
+ * Run one read when a turn is free (`first`: at the front of the line). A
+ * finished read hands its turn to the next one waiting; one out of time
+ * hands it on too, while fewer than ALPHA_READS_AT_ONCE others are overdue,
+ * else when one of them ends.
  */
-async function inTurn<T>(read: () => Promise<T>): Promise<T> {
+async function inTurn<T>(read: () => Promise<T>, reader: Reader, first: boolean): Promise<T> {
   if (reading < ALPHA_READS_AT_ONCE) reading++;
-  else await new Promise<void>((go) => queued.push(go));
+  else {
+    await new Promise<void>((go) => {
+      if (first) queued.unshift(go);
+      else queued.push(go);
+      reader.hurry = () => {
+        const at = queued.indexOf(go);
+        if (at > 0) queued.unshift(...queued.splice(at, 1));
+      };
+    });
+    reader.hurry = undefined;
+  }
   let late = false;
   const giveUpTurn = () => {
     if (overdue >= ALPHA_READS_AT_ONCE) {
@@ -249,6 +301,8 @@ export function __clearAlphaMarginCache(): void {
   overdue = 0;
   queued.length = 0;
   outOfTime.length = 0;
+  wantedBy.clear();
+  readers.clear();
 }
 
 /**
@@ -271,8 +325,11 @@ interface AlphaRead {
 /** A read that failed: no margins, no mask, no contact band (the figure packed and grounded by its whole picture). */
 const FAILED_READ: AlphaRead = { margins: NO_MARGINS, mask: null, band: null };
 
-/** One canvas read of a picture; null when abandoned at its deadline (ALPHA_READ_DEADLINE_MS). Never throws. */
-async function readAlpha(imageUrl: string): Promise<AlphaRead | null> {
+/**
+ * One canvas read of a picture, given `deadlineMs`; null when abandoned at
+ * that deadline, a failed read only for a real error. Never throws.
+ */
+async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRead | null> {
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     const img = new Image();
@@ -281,11 +338,11 @@ async function readAlpha(imageUrl: string): Promise<AlphaRead | null> {
     const inTime = await Promise.race([
       img.decode().then(() => true),
       new Promise<false>((stop) => {
-        deadline = setTimeout(() => stop(false), ALPHA_READ_DEADLINE_MS);
+        deadline = setTimeout(() => stop(false), deadlineMs);
       }),
     ]);
     if (!inTime) {
-      // abandoned: the browser cancels its request; its decode, still pending, ends in nothing
+      // abandoned: dropped with nothing kept (its request too, unless the figure's own picture is fetching it)
       img.src = '';
       return null;
     }
@@ -293,10 +350,8 @@ async function readAlpha(imageUrl: string): Promise<AlphaRead | null> {
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
-    if (canvas.width === 0 || canvas.height === 0) return FAILED_READ;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return FAILED_READ;
+    // no 2D canvas (null) or a picture of no size (getImageData throws): a failed read, in the catch
+    const ctx = canvas.getContext('2d')!;
     ctx.drawImage(img, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     return {
@@ -305,37 +360,85 @@ async function readAlpha(imageUrl: string): Promise<AlphaRead | null> {
       band: computeContactBand(imageData),
     };
   } catch {
-    // Tainted canvas (cross-origin image without CORS headers), decode
-    // failure (broken URL), or no canvas 2D support — degrade to "no
-    // correction" (today's object-fit:bottom behavior) rather than crash
-    // the shelf over a single bad image.
+    // A real error, never a timeout: a broken picture (its decode fails), a
+    // tainted canvas (cross-origin without CORS headers), no canvas 2D
+    // support or no size — degrade to "no correction" (packed and grounded
+    // by its whole picture) rather than crash the shelf over one bad image.
     return FAILED_READ;
   } finally {
     clearTimeout(deadline);
   }
 }
 
-/** A picture read in turn (inTurn); one abandoned is read again behind the reads waiting, ALPHA_READ_RETRIES times, then failed. */
-async function readInTurn(imageUrl: string): Promise<AlphaRead> {
-  for (let tries = 0; tries <= ALPHA_READ_RETRIES; tries++) {
-    const read = await inTurn(() => readAlpha(imageUrl));
-    if (read) return read;
+/**
+ * A picture read in turn (inTurn) until a read lands; undefined when no
+ * view wants it any more as its turn comes. A read that runs out of time is
+ * never a failed read: the picture waits its backoff (ALPHA_READ_BACKOFF_MS)
+ * and is queued again at the back of the line, the next read given twice
+ * the time (ALPHA_READ_DEADLINE_MS); its own picture loading
+ * (alphaPictureLoaded) sends it to the front at once instead.
+ */
+async function readInTurn(imageUrl: string): Promise<AlphaRead | undefined> {
+  const reader: Reader = { timedOut: 0, loaded: false };
+  readers.set(imageUrl, reader);
+  let first = false;
+  for (;;) {
+    const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);
+    const read = await inTurn(async () => (wantedBy.has(imageUrl) ? readAlpha(imageUrl, deadlineMs) : undefined), reader, first);
+    if (read !== null) {
+      readers.delete(imageUrl);
+      return read;
+    }
+    reader.timedOut++;
+    first = reader.loaded;
+    reader.loaded = false;
+    if (!first) {
+      const backoffMs = Math.min(ALPHA_READ_BACKOFF_MS * 2 ** (reader.timedOut - 1), ALPHA_READ_BACKOFF_MAX_MS);
+      first = await new Promise<boolean>((go) => {
+        const wait = setTimeout(() => go(false), backoffMs);
+        reader.hurry = () => {
+          clearTimeout(wait);
+          go(true);
+        };
+      });
+      reader.hurry = undefined;
+    }
   }
-  return FAILED_READ;
 }
 
-/** A picture's clear margins, read once in turn (readInTurn) and cached by URL with its mask and contact band; known in the cache when this resolves. */
+/**
+ * The figure's own picture of `imageUrl` has loaded, so a read of it now is
+ * a cache hit: one that ran out of time is read again at once, at the front
+ * of the line, and one waiting in line moves to its front. A read in flight
+ * goes on; if it runs out of time, the next starts at once. A picture not
+ * being read: nothing.
+ */
+export function alphaPictureLoaded(imageUrl: string): void {
+  const reader = readers.get(imageUrl);
+  if (!reader) return;
+  if (reader.hurry) reader.hurry();
+  else reader.loaded = true;
+}
+
+/**
+ * A picture's clear margins, read once in turn (readInTurn) and cached by
+ * URL with its mask and contact band; known in the cache when this
+ * resolves. Never resolves when its view is gone before it is read: the
+ * next view to want it reads it afresh.
+ */
 function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
   const cached = marginCache.get(imageUrl);
   if (cached !== undefined) return Promise.resolve(cached);
   const inFlight = pending.get(imageUrl);
   if (inFlight) return inFlight;
 
-  const promise = readInTurn(imageUrl).then(({ margins, mask, band }) => {
+  const promise = readInTurn(imageUrl).then((read) => {
+    pending.delete(imageUrl);
+    if (!read) return new Promise<AlphaMargins>(() => {});
+    const { margins, mask, band } = read;
     marginCache.set(imageUrl, margins);
     maskCache.set(imageUrl, mask && mask.drawn > 0 ? mask : null);
     contactBandCache.set(imageUrl, band);
-    pending.delete(imageUrl);
     return margins;
   });
   pending.set(imageUrl, promise);
@@ -363,11 +466,13 @@ export function useBottomMarginFrac(imageUrl: string | undefined): number {
       return;
     }
     let cancelled = false;
+    const unwant = want(imageUrl);
     measureAlphaMargins(imageUrl).then((measured) => {
       if (!cancelled) setFrac(measured.bottom);
     });
     return () => {
       cancelled = true;
+      unwant();
     };
   }, [imageUrl]);
 
@@ -391,17 +496,23 @@ export const ALPHA_LANDING_BATCH_MS = 100;
  * The clear margins of each picture in `urls` (the case's whole list: it
  * packs every figure by what it draws) known so far, each read once and
  * cached by URL across lists. A picture is in the answer as soon as it is
- * read (a failed read is known too: all 0). A slow or stalled one keeps
- * only its own figure unknown: it gives up its turn after
- * ALPHA_READ_TURN_MS and is abandoned at ALPHA_READ_DEADLINE_MS, unknown
- * until it is read again (ALPHA_READ_RETRIES), and the others are read
- * meanwhile: stalls delay them at most ALPHA_READ_TURN_MS while no more
- * than ALPHA_READS_AT_ONCE stall together; more move through the room
- * 2 x ALPHA_READS_AT_ONCE at a time, each for at most
- * ALPHA_READ_DEADLINE_MS. Reads landing together are one answer
- * (ALPHA_LANDING_BATCH_MS), and the last picture of the list answers at
- * once. A list whose pictures are cached is known at once, and a new list
- * keeps every picture it shares with the old.
+ * read (a failed read, a real error such as a broken picture, is known
+ * too: all 0). A slow or stalled one keeps only its own figure unknown, a
+ * plate, and is never a failed read for running out of time: it gives up
+ * its turn after ALPHA_READ_TURN_MS and is abandoned at its deadline
+ * (ALPHA_READ_DEADLINE_MS, longer each try), then read again after a
+ * backoff (ALPHA_READ_BACKOFF_MS) for as long as this list is shown, and at
+ * once when its own picture loads (alphaPictureLoaded). So a picture that
+ * arrives is read, however slow the link: by the first try to find it in
+ * the HTTP cache (a cut-out's at once, as its own picture loads), or to be
+ * given the time its fetch takes (ALPHA_READ_DEADLINE_MAX_MS at most). The
+ * others are read meanwhile: slow or stalled reads delay them at most
+ * ALPHA_READ_TURN_MS while no more than ALPHA_READS_AT_ONCE are out of time
+ * together; more move through the room 2 x ALPHA_READS_AT_ONCE at a time,
+ * each until it lands or reaches its deadline. Reads landing together are
+ * one answer (ALPHA_LANDING_BATCH_MS), and the last picture of the list
+ * answers at once. A list whose pictures are cached is known at once, and a
+ * new list keeps every picture it shares with the old.
  */
 export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, AlphaMargins> {
   const key = urls.join('\n');
@@ -416,6 +527,7 @@ export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, 
     let current = true;
     let batch: ReturnType<typeof setTimeout> | undefined;
     let left = unread.length;
+    const unwant = unread.map(want);
     const answer = () => {
       clearTimeout(batch);
       batch = undefined;
@@ -432,6 +544,7 @@ export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, 
     return () => {
       current = false;
       clearTimeout(batch);
+      for (const done of unwant) done();
     };
   }, [key]);
 
@@ -542,11 +655,13 @@ export function useContactBand(imageUrl: string | undefined): ContactBand | null
       return;
     }
     let cancelled = false;
+    const unwant = want(imageUrl);
     measureContactBand(imageUrl).then((measured) => {
       if (!cancelled) setBand(measured);
     });
     return () => {
       cancelled = true;
+      unwant();
     };
   }, [imageUrl]);
 

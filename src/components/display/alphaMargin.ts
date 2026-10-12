@@ -451,7 +451,8 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * at once (`first`: from the start), once per load.
  */
 async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | undefined> {
-  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: false };
+  // `first`: sent by its own picture loading, whose read again it carries
+  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: first };
   readers.set(imageUrl, reader);
   for (;;) {
     const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);

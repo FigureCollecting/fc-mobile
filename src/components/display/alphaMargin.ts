@@ -162,7 +162,9 @@ const contactBandCache = new Map<string, ContactBand | null>();
  * flight, a read ending when it lands or is abandoned at its deadline
  * (ALPHA_READ_DEADLINE_MS). So the case never decodes all of a long list's
  * pictures together for its canvas reads (margins, mask and contact band:
- * one read per picture), on a slow or stalled network too.
+ * one read per picture), on a slow or stalled network too. Of those in
+ * flight, at most this many are re-reads of pictures whose read ran out of
+ * time, so re-reads never hold every turn.
  */
 export const ALPHA_READS_AT_ONCE = 4;
 /**
@@ -171,7 +173,8 @@ export const ALPHA_READS_AT_ONCE = 4;
  * time) and goes on until it lands or reaches its deadline. So up to
  * ALPHA_READS_AT_ONCE slow or stalled reads hold the rest up at most this
  * long; with more, the line moves as each read out of time lands or is
- * abandoned.
+ * abandoned. Once only re-reads of stalled pictures are left in flight, a
+ * new picture's first read starts within this long, however many stall.
  */
 export const ALPHA_READ_TURN_MS = 1500;
 /**
@@ -196,7 +199,7 @@ export const ALPHA_READ_DEADLINE_MS = 8000;
 export const ALPHA_READ_DEADLINE_MAX_MS = 32000;
 /**
  * How long a picture whose read ran out of time waits before it is queued
- * again, at the back of the line: this, doubling each time, up to
+ * again, behind every first read waiting: this, doubling each time, up to
  * ALPHA_READ_BACKOFF_MAX_MS, with no limit on tries while a view wants the
  * picture. Its own picture loading (alphaPictureLoaded) ends the wait.
  */
@@ -206,8 +209,25 @@ export const ALPHA_READ_BACKOFF_MAX_MS = 15000;
 let reading = 0;
 /** Reads that gave up their turn, still going: at most ALPHA_READS_AT_ONCE. */
 let overdue = 0;
-/** Reads waiting for a turn. */
-const queued: (() => void)[] = [];
+/**
+ * Re-reads in flight, holding a turn or given it up: reads of a picture
+ * whose last read ran out of time, but for one its own picture loading sent
+ * at once. At most ALPHA_READS_AT_ONCE, so however many pictures stall,
+ * their re-reads never hold every turn.
+ */
+let rereading = 0;
+/** A read waiting for a turn: `go` starts it, saying whether it counts as a re-read. */
+interface Waiting {
+  go: (again: boolean) => void;
+  /** A re-read: it starts only while fewer than ALPHA_READS_AT_ONCE re-reads are in flight. */
+  again: boolean;
+}
+/**
+ * Reads waiting for a turn: those sent at once by their picture loading,
+ * then first reads, then re-reads, each in the order they came. So a new
+ * picture never waits behind re-reads of stalled ones.
+ */
+const queued: Waiting[] = [];
 /**
  * Reads out of time, holding their turns until one of the overdue reads
  * ends. Which of them then gives its turn up is not observable: whichever
@@ -215,11 +235,24 @@ const queued: (() => void)[] = [];
  */
 const outOfTime: (() => void)[] = [];
 
-/** A turn ends: it goes to the next read waiting, or is free. */
+/** The read at the front of the line starts, unless it is a re-read and re-reads fill their room: whether it started. */
+function startNext(): boolean {
+  const next = queued[0];
+  if (!next || (next.again && rereading >= ALPHA_READS_AT_ONCE)) return false;
+  queued.shift();
+  if (next.again) rereading++;
+  next.go(next.again);
+  return true;
+}
+
+/** A turn ends: it goes to the next read that may start, or is free. */
 function passTurn(): void {
-  const next = queued.shift();
-  if (next) next();
-  else reading--;
+  if (!startNext()) reading--;
+}
+
+/** A read joins the line, a re-read ends or a load sends one at once: the read at the front starts if a turn is free. */
+function startOnFreeTurn(): void {
+  if (reading < ALPHA_READS_AT_ONCE && startNext()) reading++;
 }
 
 /** How many mounted hooks want each picture read: a read starts only while one does (the life of its view). */
@@ -247,24 +280,32 @@ interface Reader {
 const readers = new Map<string, Reader>();
 
 /**
- * Run one read when a turn is free (`first`: at the front of the line). A
- * finished read hands its turn to the next one waiting; one out of time
- * hands it on too, while fewer than ALPHA_READS_AT_ONCE others are overdue,
- * else when one of them ends.
+ * Run one read when a turn is free (`first`: sent at once by its picture
+ * loading, at the front of the line; else a first read goes ahead of the
+ * re-reads waiting, a re-read behind them all). A finished read hands its
+ * turn to the next one that may start; one out of time hands it on too,
+ * while fewer than ALPHA_READS_AT_ONCE others are overdue, else when one of
+ * them ends.
  */
 async function inTurn<T>(read: () => Promise<T>, reader: Reader, first: boolean): Promise<T> {
-  if (reading < ALPHA_READS_AT_ONCE) reading++;
-  else {
-    await new Promise<void>((go) => {
-      if (first) queued.unshift(go);
-      else queued.push(go);
-      reader.hurry = () => {
-        const at = queued.indexOf(go);
-        if (at > 0) queued.unshift(...queued.splice(at, 1));
-      };
-    });
-    reader.hurry = undefined;
-  }
+  const again = await new Promise<boolean>((go) => {
+    const waiting: Waiting = { go, again: reader.timedOut > 0 && !first };
+    if (first) queued.unshift(waiting);
+    else if (waiting.again) queued.push(waiting);
+    else {
+      const rereads = queued.findIndex((w) => w.again);
+      queued.splice(rereads < 0 ? queued.length : rereads, 0, waiting);
+    }
+    reader.hurry = () => {
+      // sent at once by its picture loading (a cache hit then): no longer held back as a re-read
+      waiting.again = false;
+      const at = queued.indexOf(waiting);
+      if (at > 0) queued.unshift(...queued.splice(at, 1));
+      startOnFreeTurn();
+    };
+    startOnFreeTurn();
+  });
+  reader.hurry = undefined;
   let late = false;
   const giveUpTurn = () => {
     if (overdue >= ALPHA_READS_AT_ONCE) {
@@ -280,9 +321,11 @@ async function inTurn<T>(read: () => Promise<T>, reader: Reader, first: boolean)
     return await read();
   } finally {
     clearTimeout(timer);
+    if (again) rereading--;
     if (late) {
       overdue--;
       outOfTime.shift()?.();
+      startOnFreeTurn();
     } else {
       const waiting = outOfTime.indexOf(giveUpTurn);
       if (waiting >= 0) outOfTime.splice(waiting, 1);
@@ -299,6 +342,7 @@ export function __clearAlphaMarginCache(): void {
   contactBandCache.clear();
   reading = 0;
   overdue = 0;
+  rereading = 0;
   queued.length = 0;
   outOfTime.length = 0;
   wantedBy.clear();
@@ -374,7 +418,7 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * A picture read in turn (inTurn) until a read lands; undefined when no
  * view wants it any more as its turn comes. A read that runs out of time is
  * never a failed read: the picture waits its backoff (ALPHA_READ_BACKOFF_MS)
- * and is queued again at the back of the line, the next read given twice
+ * and is queued again behind every first read, the next read given twice
  * the time (ALPHA_READ_DEADLINE_MS); its own picture loading
  * (alphaPictureLoaded) sends it to the front at once instead.
  */

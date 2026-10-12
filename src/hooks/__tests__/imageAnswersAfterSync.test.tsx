@@ -197,7 +197,7 @@ describe('what a completed sync leaves alone', () => {
 });
 
 describe('the case view\'s own answer', () => {
-  it('is not dropped by its own sync: a sync over an earlier answer (ten minutes on) runs once', async () => {
+  it('is not dropped by its own sync, nor by the message the sync tells: a sync over an earlier answer (ten minutes on) runs once and answers once', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }]);
     const client = appQueryClient();
@@ -211,6 +211,8 @@ describe('the case view\'s own answer', () => {
     await settle();
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
     expect(result.current.get(headOf(0))?.url).toBe(B);
+    // The document that told never hears its own message: a case view that did would answer again from the caches.
+    expect(client.getQueryCache().findAll({ queryKey: ['local', 'owned-images'] }).map((q) => q.state.dataUpdateCount)).toEqual([2]);
   });
 });
 

@@ -406,6 +406,8 @@ async function bringToOwned(
           heard();
           chunks.push(read.value);
         }
+        // All of it arrived: a slow write here is not a stalled link.
+        clearTimeout(quiet);
         await media.put(request, new Response(joined(chunks), { status: res.status, statusText: res.statusText, headers: res.headers }));
         result.added += 1;
       } catch {

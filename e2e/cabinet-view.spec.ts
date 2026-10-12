@@ -296,22 +296,40 @@ async function pictureAlpha(page: Page) {
 /**
  * Neighbours on one surface (all cabinets of the wall, one row per surface
  * height and depth), left to right: none reaches over the next, by its tap
- * box (data-world) or by what it draws (its opaque columns).
+ * box (data-world) or by what it draws (its opaque columns); and no figure
+ * draws past its surface's usable width into the cabinet's side panel (the
+ * default wall: KLINGSBOs).
  */
 async function expectNoOverlap(page: Page, label: string) {
   const rows = await drawnFigures(page);
+  const wall = wallLayout(Array.from({ length: rows.length }, () => IKEA_KLINGSBO)).cabinets;
+  const slots = surfaceSlots(IKEA_KLINGSBO);
+  const mm = (v: number) => v.toFixed(1);
+  const intoPanels: string[] = [];
+  for (const r of rows) {
+    const cx = (r.world.x0 + r.world.x1) / 2;
+    const cabinet = wall.find((c) => cx >= c.leftMm && cx <= c.rightMm)!;
+    const slot = slots.find((s) => Math.abs(s.topMm - r.world.surface) < 0.01)!;
+    const [lo, hi] = [cabinet.centerMm - slot.widthMm / 2, cabinet.centerMm + slot.widthMm / 2];
+    if (r.opaque.x0 < lo - 0.01 || r.opaque.x1 > hi + 0.01) intoPanels.push(`${r.kind} ${r.name} drawn [${mm(r.opaque.x0)}..${mm(r.opaque.x1)}], its surface [${mm(lo)}..${mm(hi)}]`);
+  }
   const rowsOf = new Map<string, typeof rows>();
   for (const r of rows) rowsOf.set(`${r.world.surface}:${r.world.z}`, [...(rowsOf.get(`${r.world.surface}:${r.world.z}`) ?? []), r]);
   let pairs = 0;
+  const tapOverlaps: string[] = [];
+  const drawnOverlaps: string[] = [];
   for (const row of rowsOf.values()) {
     row.sort((a, b) => a.world.x0 - b.world.x0);
     for (let i = 1; i < row.length; i++) {
       pairs++;
       const [a, b] = [row[i - 1], row[i]];
-      expect(b.world.x0, `${label}: tap boxes ${a.name} / ${b.name}`).toBeGreaterThanOrEqual(a.world.x1 - 1e-6);
-      expect(b.opaque.x0, `${label}: drawn ${a.kind} ${a.name} / ${b.kind} ${b.name}`).toBeGreaterThanOrEqual(a.opaque.x1 - 0.01);
+      if (b.world.x0 < a.world.x1 - 1e-6) tapOverlaps.push(`${a.name} / ${b.name}: ${mm(a.world.x1 - b.world.x0)} mm`);
+      if (b.opaque.x0 < a.opaque.x1 - 0.01) drawnOverlaps.push(`${a.kind} ${a.name} [${mm(a.opaque.x0)}..${mm(a.opaque.x1)}] / ${b.kind} ${b.name} [${mm(b.opaque.x0)}..${mm(b.opaque.x1)}]: ${mm(a.opaque.x1 - b.opaque.x0)} mm`);
     }
   }
+  expect.soft(tapOverlaps, `${label}: tap boxes overlap`).toEqual([]);
+  expect.soft(drawnOverlaps, `${label}: drawn neighbours overlap`).toEqual([]);
+  expect.soft(intoPanels, `${label}: drawn into the side panel`).toEqual([]);
   expect(pairs, label).toBeGreaterThan(0);
 }
 
@@ -390,6 +408,21 @@ for (const [widths, what] of [
     test(`no drawn figure reaches over its neighbour, ${what}: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
       await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxwidth=${widths}${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
       await expectNoOverlap(page, `${widths} ${branch || 'cut-out'}`);
+    });
+  }
+}
+
+// a figure off-centre in its picture (?fxasym=1: Rem 18 %, Spike 30 % of the picture's width right of its centre, Rem into her
+// neighbour, Spike into the side panel): the case centres the figure, not the picture
+for (const widths of ['', 'none', 'narrow'] as const) {
+  for (const branch of ['', 'masked'] as const) {
+    test(`no drawn figure reaches over its neighbour or into the side panel, off-centre art${widths ? `, widths ${widths}` : ''}: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
+      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxasym=1${widths ? `&fxwidth=${widths}` : ''}${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
+      const leaning = (await drawnFigures(page)).filter((r) => r.name === 'Rem' || r.name.startsWith('Spike'));
+      // the art under test: the figures stand off-centre in their pictures
+      expect(new Set(leaning.map((r) => r.name)).size).toBe(2);
+      for (const r of leaning) expect(Math.abs(r.clear.left - r.clear.right), r.name).toBeGreaterThan(0.3);
+      await expectNoOverlap(page, `off-centre ${widths || 'labelled'} ${branch || 'cut-out'}`);
     });
   }
 }

@@ -1137,6 +1137,63 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
+  it('a sync whose case view goes away while it writes the kept lists, after it recorded the image withheld: writes no more of them, tells it stopped, and another document\'s open figure page answers the plate', async () => {
+    let armed = false;
+    let aborted = false;
+    let putsAfterAbort = 0;
+    let reached = false;
+    let release!: () => void;
+    const first = new Promise<void>((res) => (release = res));
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== IMAGE_LISTS_CACHE) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        put: async (req: RequestInfo | URL, res: Response) => {
+          if (armed && aborted) putsAfterAbort += 1;
+          if (armed && !reached) {
+            reached = true;
+            await first;
+          }
+          return cache.put(req, res);
+        },
+      });
+    };
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned 1' }, { title: 'Owned 2' }, { title: 'Owned 3' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(lists([X], []));
+    const pageB = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(pageB.result.current.data?.url).toBe(X));
+    const listener = new BroadcastChannel(CHANNEL);
+    const heard: unknown[] = [];
+    listener.onmessage = (e) => heard.push(e.data);
+    // The takedown: X withheld from the first figure; the three others list an image each.
+    const others = [1, 2, 3].map((i) => ({ headId: headOf(i), images: [row(`${D}/${String(i).repeat(64)}`)] }));
+    r.clients.getProductImages.mockResolvedValue(create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [] }, ...others] }));
+    armed = true;
+    const viewA = caseView(docA);
+    try {
+      await waitFor(() => expect(reached).toBe(true));
+      expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+      viewA.unmount();
+      aborted = true;
+      release();
+      await waitFor(() => expect(heard).toEqual(['stopped']));
+      await waitFor(() => expect(pageB.result.current.data).toBeNull());
+      await idle(docA, docB);
+      expect(putsAfterAbort).toBe(0);
+      expect(heard).toEqual(['stopped']);
+      expect(pageB.result.current.data).toBeNull();
+      expect(held()).not.toContain(X);
+    } finally {
+      listener.close();
+      pageB.unmount();
+    }
+  });
+
   it('the case view whose own sync recorded the image withheld and stopped part way, opened again in that document: never names it', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);

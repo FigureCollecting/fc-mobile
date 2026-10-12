@@ -470,6 +470,36 @@ describe('cancelling a sync', () => {
     await expect(syncOwnedImages(['h1'], fetchLists, { storage, signal: abort.signal })).rejects.toThrow();
     expect(calls).toEqual([]);
   });
+
+  it('syncOwnedImages, aborted while it writes the kept lists, writes no more of them and fails, having recorded and deleted what it withholds, and fetches nothing', async () => {
+    const storage = device();
+    await syncOwnedImages(['h0'], async () => new Map([['h0', [img('f', { primary: true })]]]), { storage });
+    const abort = new AbortController();
+    let puts = 0;
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== IMAGE_LISTS_CACHE) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        put: async (req: RequestInfo | URL, res: Response) => {
+          puts += 1;
+          // The case view goes away while the first kept list is written.
+          abort.abort();
+          return cache.put(req, res);
+        },
+      });
+    };
+    const fetched = storage.added.length;
+    // f is withheld from h0 now; five other figures each list one image.
+    const heads = ['h1', 'h2', 'h3', 'h4', 'h5'];
+    const fetchLists = async () => new Map([['h0', []], ...heads.map((h, i) => [h, [img('abcde'[i]!, { primary: true })]] as [string, ProductImage[]])]);
+    await expect(syncOwnedImages(['h0', ...heads], fetchLists, { storage, signal: abort.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(puts).toBe(1);
+    expect([...(await withheldAmong([url('f')], storage))]).toEqual([url('f')]);
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([]);
+    expect(await recallImages('h0', storage)).toBeUndefined();
+    expect(storage.added).toHaveLength(fetched);
+  });
 });
 
 describe('the addresses a sync withheld (the tombstone the worker reads)', () => {

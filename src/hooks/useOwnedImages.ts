@@ -4,13 +4,17 @@
 // fetched, everything else evicted, a withheld address recorded); out of reach, or when that sync
 // fails, what the last one kept stands and nothing more is asked. A figure answers the image the last
 // sync kept, and only if its bytes were on the device when asked and no sync recorded it withheld; one
-// without is absent, and the case draws its plate. Once a sync completes, no earlier answer of this hook or of useProductImage stands,
-// offline or online, in the document that ran it or in any other open document of the app, each told
-// on a BroadcastChannel (src/hooks/imageAnswers.ts): one being read is read again, one a view shows is
-// asked again, any other is dropped, so neither answers an image that sync withheld
-// (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer that names an address that sync
-// withheld, shown or opened while the document reads what it withheld, stops naming it once that is
-// read, not once the coordinator answers. A case view told of another document's sync answers from what it kept, without a sync of its own.
+// without is absent, and the case draws its plate. Once a sync completes, or stops because its case
+// view went away after it read the lists (what it withholds then recorded), no earlier answer of this
+// hook or of useProductImage stands, offline or online, in the document that ran it or in any other
+// open document of the app, each told on a BroadcastChannel (src/hooks/imageAnswers.ts): one being
+// read is read again, one a view shows is asked again, any other is dropped, so neither answers an
+// image that sync withheld (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer that names
+// an address that sync withheld, shown or opened while the document reads what it withheld, stops
+// naming it once that is read, not once the coordinator answers. A case view told of another
+// document's completed sync answers from what it kept, without a sync of its own; told of a stopped
+// one, a case view inside its own sync (waiting for the lock, or holding it) is left to finish it,
+// its answer standing until then, and records what the lists it reads withhold.
 // Where the browser has Web Locks, documents sync one at a time (src/media/ownedImages.ts), so a sync
 // that read older lists never undoes what a later one withheld. A collection with no image costs a few
 // cache calls, not a few per figure, and a sync stops when the case view goes away (its fetches in
@@ -20,7 +24,7 @@ import { useCallback } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
 import { fetchImageLists, keptImages, syncOwnedImages, MAX_OWNED_FIGURES, type CachedImage } from '../media/ownedImages';
-import { answersFromKept, dropImageAnswers, hearOwnedSyncs, tellOwnedSync } from './imageAnswers';
+import { answersFromKept, dropImageAnswers, duringOwnSync, hearOwnedSyncs, tellOwnedSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
 
 const EMPTY: ReadonlyMap<string, CachedImage> = new Map();
@@ -45,9 +49,11 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
       const owned = (heads ?? []).slice(0, MAX_OWNED_FIGURES);
       if (reachable && !answersFromKept(client, queryKey)) {
         try {
-          await syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal });
+          await duringOwnSync(client, queryKey, () => syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal }));
           void dropImageAnswers(client, queryKey);
-          tellOwnedSync(client);
+          // Stopped part way by the case view going away, it may have recorded what it withholds: the
+          // other documents drop their answers too, and a sync of theirs under way runs on.
+          tellOwnedSync(client, signal.aborted ? 'stopped' : 'synced');
         } catch (err) {
           if (signal.aborted) throw err;
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.

@@ -6,10 +6,11 @@
 // (never itself); each other one drops all of its earlier answers when told. A case view open in a
 // document told answers again from what that sync kept, without a sync of its own, so two open case
 // views never sync each other. Where the browser has no BroadcastChannel, no other document is told.
-// An answer a view shows that names an address the sync withheld stops naming it before it is asked
-// again (the figure page answers the plate; the case view drops that figure, or only its mask), so
-// none waits on the coordinator's answer, which a stalled link can hold back for as long as the ask's
-// deadline. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
+// An answer that names an address the sync withheld, shown or opened while the drop reads the record,
+// stops naming it before it is asked again (the figure page answers the plate; the case view drops
+// that figure, or only its mask), so none waits on the coordinator's answer, which a stalled link can
+// hold back for as long as the ask's deadline. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in
+// Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { withheldAmong, type CachedImage } from '../media/ownedImages';
 
@@ -45,16 +46,17 @@ function without(key: QueryKey, data: unknown, withheld: ReadonlySet<string>): u
 /**
  * No earlier image answer of this client stands but `own`: one still being read is stopped, so it is
  * read again; one a view shows is asked again; any other is dropped, so a view that opens later asks.
- * A shown answer that names an address the sync recorded as withheld stops naming it at once, before
- * it is asked again: the re-ask of a figure page online is a coordinator round trip.
+ * Every answer, shown or not, that names an address the sync recorded as withheld stops naming it at
+ * once, before it is asked again (the re-ask of a figure page online is a coordinator round trip):
+ * so does one a view opens while the record is read, which is then shown and asked again.
  */
 export async function dropImageAnswers(client: QueryClient, own?: QueryKey): Promise<void> {
   const ownHash = own === undefined ? undefined : hashKey(own);
   const predicate = (q: { queryKey: QueryKey; queryHash: string }) => q.queryHash !== ownHash && isImageAnswer(q.queryKey);
   await client.cancelQueries({ fetchStatus: 'fetching', predicate });
-  const shown = client.getQueryCache().findAll({ type: 'active', predicate });
-  const withheld = await withheldAmong(shown.flatMap((q) => addressesIn(q.queryKey, q.state.data)));
-  for (const q of shown) {
+  const answers = client.getQueryCache().findAll({ predicate });
+  const withheld = await withheldAmong(answers.flatMap((q) => addressesIn(q.queryKey, q.state.data)));
+  for (const q of answers) {
     if (addressesIn(q.queryKey, q.state.data).some((u) => withheld.has(u))) client.setQueryData(q.queryKey, without(q.queryKey, q.state.data, withheld));
   }
   client.removeQueries({ type: 'inactive', predicate });

@@ -19,17 +19,18 @@
 //                       most MAX_WITHHELD, the oldest dropped first. Written before any kept list is
 //                       replaced or any byte evicted, so a sync that stops part way keeps it; an
 //                       address a fresh list carries again is forgotten before any fetch.
-//                       The worker refuses a recorded address (src/sw.ts), and useProductImage does
-//                       not answer it online, until a fresh list carries it again.
+//                       The worker refuses a recorded address (src/sw.ts), and neither keptImages
+//                       nor useProductImage online answers it, until a fresh list carries it again.
 //
 // So at each sync, an image or a mask a display restriction now withholds from an owned figure, or
 // that belonged to a figure no longer owned, is deleted from the owned and browsed caches, and a
 // withheld one is recorded, so a refill of the browsed cache after that sync is deleted at the next.
 // A figure no longer owned is not recorded: its figure page asks the coordinator, as for any figure
 // not owned. Both kept caches hold exactly the owned figures (at most MAX_OWNED_FIGURES of them).
-// Where the browser has Web Locks, the documents of the app sync one at a time (syncOwnedImages).
-// keptImage answers a figure's kept image only if its bytes are here when asked; otherwise the figure
-// is drawn as its plate. Nothing here is sent anywhere.
+// Where the browser has Web Locks, the documents of the app sync one at a time (syncOwnedImages), and
+// each network step of a sync ends within OWNED_SYNC_STEP_MS, or at once when its case view goes away.
+// keptImage answers a figure's kept image only if its bytes are here when asked and no sync recorded
+// it withheld; otherwise the figure is drawn as its plate. Nothing here is sent anywhere.
 // No fetch of the image address, here or in the worker, uses the HTTP cache, so neither answers an
 // evicted image from it. A document the worker does not control yet (a first visit before it claims,
 // a shift-reload) loads its <img>s through the HTTP cache, where the origin's immutable keeps a copy
@@ -60,8 +61,17 @@ export const IMAGE_PAGE_SIZE = 200;
 const MAX_HEADS_PER_CALL = 200;
 /** The Web Lock every document of the app syncs the owned images under: one name across builds. */
 export const OWNED_SYNC_LOCK = 'fc-owned-sync';
-/** How long a sync waits for another document's before it fails, and what the last sync kept stands. */
+/**
+ * How long a sync waits for another document's before it fails, having asked and touched nothing (what
+ * the last sync kept then stands). The other lets go when it completes or fails, and its case view
+ * going away or a step of it stalling ends it (OWNED_SYNC_STEP_MS).
+ */
 export const OWNED_SYNC_WAIT_MS = 10_000;
+/**
+ * The longest one network step of a sync may take (a GetProductImages call, an image fetch). A list
+ * call past it fails the sync; an image fetch past it is abandoned, and no other starts after it.
+ */
+export const OWNED_SYNC_STEP_MS = 20_000;
 
 export interface CachedImage {
   url: string;
@@ -141,8 +151,11 @@ export async function recallImages(headId: string, storage: CacheStorage | undef
 
 /**
  * Each figure's primary as kept, but only while its bytes are on the device: a kept list whose image
- * never cached (or was evicted) answers nothing, and the figure is drawn as its plate. Reads only the
- * figures that have a kept list, so a collection with no image costs two cache calls.
+ * never cached (or was evicted) answers nothing, and the figure is drawn as its plate. An address a
+ * sync recorded withheld is never answered, though a kept list still names it (another document's
+ * sync between its record and its list replacement): the figure is drawn as its plate, or without
+ * that mask. Reads only the figures that have a kept list, so a collection with no image costs two
+ * cache calls, and the withheld record in two however many figures it answers.
  */
 export async function keptImages(heads: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<Map<string, CachedImage>> {
   const out = new Map<string, CachedImage>();
@@ -152,9 +165,14 @@ export async function keptImages(heads: readonly string[], storage: CacheStorage
   const wanted = heads.filter((h) => recorded.has(h));
   if (wanted.length === 0) return out;
   const media = await storage.open(OWNED_MEDIA_CACHE);
+  const withheld = new Set((await (await storage.open(WITHHELD_CACHE)).keys()).map((k) => addressOfWithheldKey(k.url)));
   for (const head of wanted) {
     const image = primaryImage((await readList(records, head)) ?? []);
-    if (image !== undefined && (await media.match(image.url, IGNORE_VARY)) !== undefined) out.set(head, image);
+    if (image === undefined || withheld.has(image.url) || (await media.match(image.url, IGNORE_VARY)) === undefined) continue;
+    if (image.maskUrl !== undefined && withheld.has(image.maskUrl)) {
+      const { maskUrl: _withheld, ...rest } = image;
+      out.set(head, rest);
+    } else out.set(head, image);
   }
   return out;
 }
@@ -177,14 +195,14 @@ export async function withheldAmong(addresses: readonly string[], storage: Cache
 export interface ImageListClient {
   getProductImages(
     request: { headIds: string[]; pageSize?: number; pageToken?: string },
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<{ products: { headId: string; images: ProductImage[] }[]; nextPageToken: string }>;
 }
 
 /**
  * Every head's image list, in batches of 200 heads and pages of IMAGE_PAGE_SIZE rows, every page
  * followed, a head's rows joined across pages. An aborted signal stops it between calls and aborts the
- * call in flight.
+ * call in flight; a call the coordinator has not answered within OWNED_SYNC_STEP_MS fails it.
  */
 export async function fetchImageLists(client: ImageListClient, heads: readonly string[], signal?: AbortSignal): Promise<Map<string, ProductImage[]>> {
   const out = new Map<string, ProductImage[]>();
@@ -197,7 +215,7 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
       // fresh list would now withhold stays until a sync completes (an F6 follow-up of ADDR-1).
       if (pages === MAX_IMAGE_PAGES) throw new Error(`GetProductImages did not end within ${MAX_IMAGE_PAGES} pages`);
       const request = pageToken === '' ? { headIds, pageSize: IMAGE_PAGE_SIZE } : { headIds, pageSize: IMAGE_PAGE_SIZE, pageToken };
-      const res = await client.getProductImages(request, signal === undefined ? undefined : { signal });
+      const res = await client.getProductImages(request, signal === undefined ? { timeoutMs: OWNED_SYNC_STEP_MS } : { signal, timeoutMs: OWNED_SYNC_STEP_MS });
       for (const p of res.products) out.set(p.headId, [...(out.get(p.headId) ?? []), ...p.images]);
       pageToken = res.nextPageToken;
       if (pageToken === '') break;
@@ -225,10 +243,14 @@ interface SyncOptions {
  * OWNED_SYNC_LOCK from before it reads the lists until its last cache write, so a sync that read the
  * lists later also writes later, and one that read older lists never undoes what a later one
  * withheld. It waits at most `lockWaitMs` for another document's, then fails having asked and
- * touched nothing. Where the browser has no Web Locks (an older browser, a page not served
- * securely), syncs are not serialised, as before the lock: two documents syncing at once can finish
- * in the other order, and the one that read older lists then undoes, until the next sync, what the
- * other withheld.
+ * touched nothing. Every image fetch carries the sync's signal, so the case view going away aborts
+ * the fetches in flight (and fetchImageLists' call), and the sync lets go of the lock once they
+ * end. An image fetch past OWNED_SYNC_STEP_MS is abandoned and no other starts after it (what is
+ * still missing is fetched at the next sync), so the sync lets go of the lock at most that long
+ * after a fetch of it is abandoned, its case view open or not. Where the browser has no Web Locks
+ * (an older browser, a page not served securely), syncs are not serialised, as before the lock:
+ * two documents syncing at once can finish in the other order, and the one that read older lists
+ * then undoes, until the next sync, what the other withheld.
  */
 export async function syncOwnedImages(
   ownedHeads: readonly string[],
@@ -334,13 +356,26 @@ async function bringToOwned(
     for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);
   }
   const missing = [...keep].filter((u) => !have.has(u));
+  // Each fetch is aborted when the sync's signal aborts, or when it has not arrived within
+  // OWNED_SYNC_STEP_MS; then the link is taken as stalled and no other fetch starts.
+  let stalled = false;
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
-    for (let next = missing.shift(); next !== undefined && options.signal?.aborted !== true; next = missing.shift()) {
+    for (let next = missing.shift(); next !== undefined && options.signal?.aborted !== true && !stalled; next = missing.shift()) {
+      const step = new AbortController();
+      const late = setTimeout(() => {
+        stalled = true;
+        step.abort(new DOMException('the image did not arrive in time', 'TimeoutError'));
+      }, OWNED_SYNC_STEP_MS);
+      const stop = () => step.abort(options.signal?.reason);
+      options.signal?.addEventListener('abort', stop, { once: true });
       try {
-        await media.add(new Request(next, { mode: 'cors', credentials: 'omit', cache: 'no-store' }));
+        await media.add(new Request(next, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal: step.signal }));
         result.added += 1;
       } catch {
         result.failed += 1;
+      } finally {
+        clearTimeout(late);
+        options.signal?.removeEventListener('abort', stop);
       }
     }
   });

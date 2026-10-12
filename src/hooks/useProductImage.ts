@@ -2,7 +2,8 @@
 // image address (src/media/address.ts), never figure.imageUrl or a spine image claim, and never an
 // address the last owned sync withheld until a sync carries it again; out of reach (offline, or the
 // sync engine found the server unreachable) or when that call fails, the image kept for an owned
-// figure, if its bytes were on the device when asked (src/media/ownedImages.ts). An answer given
+// figure, if its bytes were on the device when asked and no sync recorded it withheld
+// (src/media/ownedImages.ts). An answer given
 // before a completed owned sync is not reused after it, in any open document of the app: the one that
 // ran the sync drops it and tells the others, which drop theirs (src/hooks/imageAnswers.ts), and the
 // page asks again; until it has, an answer that named an image that sync withheld is the plate. The

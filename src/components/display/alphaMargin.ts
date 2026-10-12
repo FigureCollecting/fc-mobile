@@ -154,31 +154,62 @@ const pending = new Map<string, Promise<AlphaMargins>>();
 /** null: measured, but no usable mask (unreadable, or nothing drawn). */
 const maskCache = new Map<string, AlphaMask | null>();
 
-/** How many pictures are read at once, so a long list never decodes all of its images together. */
+/**
+ * How many pictures are read at once, and how many more may still be going
+ * after running out of time (ALPHA_READ_TURN_MS): at most twice this in
+ * flight, so a long list never decodes all of its images together, even on
+ * a stalled network.
+ */
 export const ALPHA_READS_AT_ONCE = 4;
 /** A read still going after this long gives up its turn, so a stalled picture never holds the rest up; it lands when it lands. */
 export const ALPHA_READ_TURN_MS = 1500;
+/** Reads holding a turn. */
 let reading = 0;
+/** Reads that gave up their turn, still going: at most ALPHA_READS_AT_ONCE. */
+let overdue = 0;
+/** Reads waiting for a turn. */
 const queued: (() => void)[] = [];
+/** Reads out of time, holding their turns until one of the overdue reads ends. */
+const outOfTime: (() => void)[] = [];
 
-/** Run one read when a turn is free; a finished read, or one out of time, hands its turn straight to the next one waiting, once. */
+/** A turn ends: it goes to the next read waiting, or is free. */
+function passTurn(): void {
+  const next = queued.shift();
+  if (next) next();
+  else reading--;
+}
+
+/**
+ * Run one read when a turn is free. A finished read hands its turn to the
+ * next one waiting; one out of time hands it on too, while fewer than
+ * ALPHA_READS_AT_ONCE others are overdue, else when one of them ends.
+ */
 async function inTurn<T>(read: () => Promise<T>): Promise<T> {
   if (reading < ALPHA_READS_AT_ONCE) reading++;
   else await new Promise<void>((go) => queued.push(go));
-  let turnHandedOn = false;
-  const handOn = () => {
-    if (turnHandedOn) return;
-    turnHandedOn = true;
-    const next = queued.shift();
-    if (next) next();
-    else reading--;
+  let late = false;
+  const giveUpTurn = () => {
+    if (overdue >= ALPHA_READS_AT_ONCE) {
+      outOfTime.push(giveUpTurn);
+      return;
+    }
+    overdue++;
+    late = true;
+    passTurn();
   };
-  const outOfTime = setTimeout(handOn, ALPHA_READ_TURN_MS);
+  const timer = setTimeout(giveUpTurn, ALPHA_READ_TURN_MS);
   try {
     return await read();
   } finally {
-    clearTimeout(outOfTime);
-    handOn();
+    clearTimeout(timer);
+    if (late) {
+      overdue--;
+      outOfTime.shift()?.();
+    } else {
+      const waiting = outOfTime.indexOf(giveUpTurn);
+      if (waiting >= 0) outOfTime.splice(waiting, 1);
+      passTurn();
+    }
   }
 }
 
@@ -188,7 +219,9 @@ export function __clearAlphaMarginCache(): void {
   pending.clear();
   maskCache.clear();
   reading = 0;
+  overdue = 0;
   queued.length = 0;
+  outOfTime.length = 0;
 }
 
 /**
@@ -231,7 +264,7 @@ async function readAlpha(imageUrl: string): Promise<{ margins: AlphaMargins; mas
   }
 }
 
-/** A picture's clear margins, read once (ALPHA_READS_AT_ONCE at a time) and cached by URL; known in the cache when this resolves. */
+/** A picture's clear margins, read once in turn (inTurn) and cached by URL; known in the cache when this resolves. */
 function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
   const cached = marginCache.get(imageUrl);
   if (cached !== undefined) return Promise.resolve(cached);
@@ -310,7 +343,8 @@ export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, 
   const known = useMemo(() => knownMargins(urls), [key, answered]);
 
   useEffect(() => {
-    const unread = urls.filter((url) => !marginCache.has(url));
+    // what this render did not know: a read landing between the render and this effect is answered too
+    const unread = urls.filter((url) => !known.has(url));
     if (unread.length === 0) return;
     let current = true;
     let batch: ReturnType<typeof setTimeout> | undefined;

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { CASE_VIEWPORTS } from '../../../e2e/caseViewports';
 
 /**
- * Guards the design system's font-size floor (10px general, 16px inputs)
+ * Guards the design system's font-size floor (11px general, 16px inputs)
  * directly against the token source, so a future token addition can't
  * quietly slip under it. `--font-plate` / `--font-plate-sub` are the one
  * deliberate exception (Ross, nameplate/caption only) — this test makes
@@ -168,7 +168,7 @@ describe('design tokens: user text scaling (rem) applies to every font size', ()
   });
 });
 
-describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
+describe('design tokens: font-size floor (11px general, 16px inputs)', () => {
   it('marks the floor-exempt tokens with an explicit FLOOR-EXEMPT comment in tokens.css', () => {
     expect(tokensCss).toContain('FLOOR-EXEMPT');
     for (const name of FLOOR_EXEMPT) {
@@ -176,7 +176,7 @@ describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
     }
   });
 
-  it('keeps every non-exempt static --font-* token at or above the 10px floor', () => {
+  it('keeps every non-exempt static --font-* token at or above the 11px floor', () => {
     const declarations = [...tokensCss.matchAll(/(--font-[\w-]+):\s*([^;]+);/g)];
     expect(declarations.length).toBeGreaterThan(0);
 
@@ -184,8 +184,13 @@ describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
       if (name === '--font-family' || FLOOR_EXEMPT.has(name)) continue;
       const px = pxOf(rawValue);
       if (px === null) continue; // fluid clamp() step — its floor is its smallest operand, not this check
-      expect(px, `${name} = ${rawValue} is below the 10px floor`).toBeGreaterThanOrEqual(10);
+      expect(px, `${name} = ${rawValue} is below the 11px floor`).toBeGreaterThanOrEqual(11);
     }
+  });
+
+  it('sets --font-2xs, the smallest step, to 11px (Ross 2026-10-11: up from 10px), in rem', () => {
+    expect(getDeclaredValue('--font-2xs')).toBe('0.6875rem');
+    expect(pxOf(getDeclaredValue('--font-2xs'))).toBe(11);
   });
 
   it('keeps --font-input at the 16px iOS zoom guard', () => {

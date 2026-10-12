@@ -1,7 +1,9 @@
-// ADDR-1: in one document, an image a completed owned sync withheld is not answered again by the
-// case view's hook (useOwnedImages) or the figure page's (useProductImage), offline or online,
-// whatever answer either gave before the sync. The QueryClient has the app's defaults (src/app.tsx):
-// an answer no view shows is kept 30 minutes, and each hook keeps its answers fresh for 10.
+// ADDR-1: an image a completed owned sync withheld is not answered again by the case view's hook
+// (useOwnedImages) or the figure page's (useProductImage), offline or online, whatever answer either
+// gave before the sync: in the document that ran it, and in every other open document of the app (a
+// tab, the installed window), each with its own QueryClient over the same caches, told on a
+// BroadcastChannel. Each QueryClient has the app's defaults (src/app.tsx): an answer no view shows is
+// kept 30 minutes, and each hook keeps its answers fresh for 10.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
 import { create } from '@bufbuild/protobuf';
@@ -15,7 +17,7 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, rememberImages, withheldAmong } from '../../media/ownedImages';
+import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, rememberImages, withheldAmong } from '../../media/ownedImages';
 
 const D = 'https://images.figurecollecting.com/d';
 const X = `${D}/${'c'.repeat(64)}`;
@@ -27,8 +29,10 @@ let storage: FakeCaches;
 const appQueryClient = () =>
   new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 60_000, gcTime: 30 * 60_000, networkMode: 'offlineFirst' } } });
 /** The coordinator's list for the figure: the first image primary. None: every image withheld. */
-const listOf = (...urls: string[]) =>
-  create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: urls.map((u, i) => ({ derivativeId: u.slice(-64), role: 'gallery', primary: i === 0, url: u, width: 600, height: 800 })) }] });
+const listOf = (...urls: string[]) => listing(...urls.map((url, i) => ({ url, primary: i === 0 })));
+/** The coordinator's list for the figure, in this order, each marked primary or not. */
+const listing = (...images: { url: string; primary: boolean }[]) =>
+  create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: images.map((i) => ({ derivativeId: i.url.slice(-64), role: 'gallery', primary: i.primary, url: i.url, width: 600, height: 800 })) }] });
 const setOnline = (on: boolean) =>
   act(() => {
     window.dispatchEvent(new Event(on ? 'online' : 'offline'));
@@ -36,6 +40,10 @@ const setOnline = (on: boolean) =>
 const settle = () => new Promise((res) => setTimeout(res, 50));
 /** Every address any cache holds an entry for. */
 const held = () => [OWNED_MEDIA_CACHE, BROWSED_MEDIA_CACHE].flatMap((n) => [...(storage.stores.get(n)?.keys() ?? [])]);
+/** The channel each document of the app hears another's completed sync on: one name across builds. */
+const CHANNEL = 'fc-owned-images';
+/** The figure page's answers a document's QueryClient holds, shown or not. */
+const pageAnswers = (client: QueryClient) => client.getQueryCache().findAll({ queryKey: ['local', 'image'] }).length;
 
 /** The last sync kept X for the owned figure: its list and its bytes. */
 async function keptX(): Promise<void> {
@@ -158,6 +166,20 @@ describe('the figure page (useProductImage) after the case view\'s sync withheld
   });
 });
 
+describe('the figure page (useProductImage) online, the withheld address the primary but not listed first', () => {
+  it('answers the other image, never the withheld one', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const client = appQueryClient();
+    await caseViewSyncs(r, client, listOf());
+    expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+    client.clear();
+    r.clients.getProductImages.mockResolvedValue(listing({ url: Y, primary: false }, { url: X, primary: true }));
+    expect((await figurePage(client)).settled).toBe(Y);
+  });
+});
+
 describe('what a completed sync leaves alone', () => {
   it('drops no answer but the two image hooks\': another local answer, or another image answer, stays', async () => {
     const r = await localRig();
@@ -208,5 +230,166 @@ describe('a sync that does not complete', () => {
     setOnline(false);
     expect((await figurePage(client)).first).toBe(X);
     expect([...(storage.stores.get(IMAGE_LISTS_CACHE)?.keys() ?? [])]).toHaveLength(1);
+  });
+});
+
+describe('another open document of the app (a tab, the installed window): its own QueryClient, the same caches', () => {
+  it('the figure page, offline in both, then the first document\'s case view syncs online and withholds its image, then offline: both answer the plate', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    setOnline(false);
+    expect((await figurePage(docA)).settled).toBe(X);
+    expect((await figurePage(docB)).settled).toBe(X);
+    setOnline(true);
+    await caseViewSyncs(r, docA, listOf());
+    // Told of the sync, the other document drops the answer no view shows.
+    await waitFor(() => expect(pageAnswers(docB)).toBe(0));
+    setOnline(false);
+    expect(await figurePage(docA)).toEqual({ first: undefined, settled: null });
+    expect(await figurePage(docB)).toEqual({ first: undefined, settled: null });
+  });
+
+  it('the figure page, open online in the other document while the sync withholds its image: asks again and stops answering it', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(page.result.current.data?.url).toBe(X));
+    await caseViewSyncs(r, docA, listOf());
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+  });
+
+  it('the case view, open online in both: the other answers what the first one\'s sync kept, and neither syncs again', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
+    r.clients.getProductImages.mockResolvedValue(listOf(B));
+    const viewA = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(viewA.result.current.get(headOf(0))?.url).toBe(B));
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(B));
+    await settle();
+    expect(held()).not.toContain(X);
+    // One sync each: a document told of another's sync answers from what it kept, so two open case views never sync each other.
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+    expect(viewA.result.current.get(headOf(0))?.url).toBe(B);
+    expect(viewB.result.current.get(headOf(0))?.url).toBe(B);
+    // Only that once: the other document's next sync of its own asks the coordinator.
+    await act(() => docB.refetchQueries({ queryKey: ['local', 'owned-images'] }));
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+  });
+
+  it('a figure page answer still being read when the sync completes is read again, so it never answers the withheld image', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    // The other document's figure page has looked for a withheld record (none yet) and not answered.
+    let looked!: () => void;
+    const looking = new Promise<void>((res) => (looked = res));
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    let first = true;
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== WITHHELD_CACHE) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        match: async (req: RequestInfo | URL, o?: CacheQueryOptions) => {
+          const found = await cache.match(req, o);
+          if (first) {
+            first = false;
+            looked();
+            await gate;
+          }
+          return found;
+        },
+      });
+    };
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const answers: (string | null | undefined)[] = [];
+    const page = renderHook(
+      () => {
+        const q = useProductImage(headOf(0));
+        answers.push(q.data === undefined ? undefined : (q.data?.url ?? null));
+        return q;
+      },
+      { wrapper: queryWrapper(docB) },
+    );
+    await looking;
+    const asked = r.clients.getProductImages.mock.calls.length;
+    await caseViewSyncs(r, docA, listOf());
+    // The first document's sync asked once; told of it, the other stops that read and asks again.
+    await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBe(asked + 2));
+    release();
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+    await settle();
+    expect(page.result.current.data).toBeNull();
+    expect(answers).not.toContain(X);
+  });
+
+  it('a sync that does not complete tells no other document: their answers stand', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    setOnline(false);
+    expect((await figurePage(docB)).settled).toBe(X);
+    const listener = new BroadcastChannel(CHANNEL);
+    const heard: unknown[] = [];
+    listener.onmessage = (e) => heard.push(e.data);
+    setOnline(true);
+    r.clients.getProductImages.mockRejectedValue(new Error('unavailable'));
+    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+    await waitFor(() => expect(docA.isFetching()).toBe(0));
+    view.unmount();
+    // A completed sync's message arrives within milliseconds (the next test); none comes.
+    await settle();
+    await settle();
+    listener.close();
+    expect(heard).toEqual([]);
+    expect(pageAnswers(docB)).toBe(1);
+  });
+
+  it('a completed sync is told once, on the channel every document listens on', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const listener = new BroadcastChannel(CHANNEL);
+    const heard: unknown[] = [];
+    listener.onmessage = (e) => heard.push(e.data);
+    try {
+      await caseViewSyncs(r, appQueryClient(), listOf(B));
+      await waitFor(() => expect(heard).toHaveLength(1));
+      await settle();
+      expect(heard).toHaveLength(1);
+    } finally {
+      listener.close();
+    }
+  });
+
+  it('where the browser has no BroadcastChannel: nothing is told, and the document that ran the sync still drops its own answers', async () => {
+    vi.stubGlobal('BroadcastChannel', undefined);
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const client = appQueryClient();
+    setOnline(false);
+    expect((await figurePage(client)).settled).toBe(X);
+    setOnline(true);
+    await caseViewSyncs(r, client, listOf());
+    setOnline(false);
+    expect(await figurePage(client)).toEqual({ first: undefined, settled: null });
   });
 });

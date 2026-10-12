@@ -280,21 +280,23 @@ for (const [from, to] of [
 }
 
 /**
- * Every figure as drawn: its picture element on screen (relative to the
- * scene), its world boxes, and the clear fractions of its picture's alpha on
- * each side of the figure, measured here with a canvas on the picture itself
- * (the mask, for masked art), independent of the app's own measurement. A
- * framed copy or a plate is an opaque box: no clear margins.
+ * Every figure as drawn now: what it shows on screen (relative to the
+ * scene), its picture or, while that picture is read, its plate; its world
+ * boxes; and the clear fractions of its picture's alpha on each side of the
+ * figure, measured here with a canvas on the picture itself (the mask, for
+ * masked art), independent of the app's own measurement. A framed copy or a
+ * plate is an opaque box: no clear margins. A picture that has not arrived
+ * draws nothing.
  */
-async function drawnFigures(page: Page, stalled?: RegExp) {
+async function drawnFigures(page: Page) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
-  const rows = await page.locator('button.cab-figure').evaluateAll(async (els, skip) => {
+  const rows = await page.locator('button.cab-figure').evaluateAll(async (els) => {
     const out: { name: string; kind: string; world: string; art: string; left: number; width: number; top: number; height: number; clear: { above: number; below: number; left: number; right: number } }[] = [];
     for (const b of els as HTMLElement[]) {
-      // a figure whose picture is held back draws nothing yet
-      if (skip && new RegExp(skip).test(b.getAttribute('aria-label')!)) continue;
-      const kind = b.dataset.art!;
-      const el = b.querySelector<HTMLElement>('.cab-figure__box')!.firstElementChild as HTMLElement;
+      const box = b.querySelector<HTMLElement>('.cab-figure__box')!;
+      const el = Array.from(box.children).find((c) => getComputedStyle(c).visibility !== 'hidden') as HTMLElement | undefined;
+      if (!el || (el instanceof HTMLImageElement && !(el.complete && el.naturalWidth > 0))) continue;
+      const kind = el.classList.contains('cab-figure__plate') ? 'plate' : b.dataset.art!;
       const clear = { above: 0, below: 0, left: 0, right: 0 };
       if (kind === 'cutout' || kind === 'masked') {
         const img = new Image();
@@ -325,7 +327,7 @@ async function drawnFigures(page: Page, stalled?: RegExp) {
       out.push({ name: b.getAttribute('aria-label')!, kind, world: b.dataset.world!, art: b.dataset.artBox!, left: r.left, width: r.width, top: r.top, height: r.height, clear });
     }
     return out;
-  }, stalled?.source);
+  });
   return rows.map((r) => {
     const art = JSON.parse(r.art) as World;
     const w = art.x1 - art.x0;
@@ -347,8 +349,8 @@ async function pictureAlpha(page: Page) {
  * draws past its surface's usable width into the cabinet's side panel (the
  * default wall: KLINGSBOs).
  */
-async function expectNoOverlap(page: Page, label: string, stalled?: RegExp) {
-  const rows = await drawnFigures(page, stalled);
+async function expectNoOverlap(page: Page, label: string) {
+  const rows = await drawnFigures(page);
   const wall = wallLayout(Array.from({ length: rows.length }, () => IKEA_KLINGSBO)).cabinets;
   const slots = surfaceSlots(IKEA_KLINGSBO);
   const mm = (v: number) => v.toFixed(1);
@@ -501,8 +503,8 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       await openCase(page, size, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
       const stalled = await groundedOf(page, ryuko);
       expect(stalled.length).toBeGreaterThan(0);
-      expect(stalled, 'the stalled picture alone waits, on its label').toEqual(stalled.map(() => '0'));
-      await expectNoOverlap(page, `${size.name}, Ryuko stalled`, ryuko);
+      expect(stalled, 'the stalled picture alone waits, on its plate').toEqual(stalled.map(() => '0'));
+      await expectNoOverlap(page, `${size.name}, Ryuko stalled`);
     });
 
     test(`a picture 4 s late: the others grounded meanwhile, then it lands and the case relays out around it: ${size.name}`, async ({ page }) => {
@@ -515,7 +517,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       const late = await groundedOf(page, ryuko);
       expect(late.length).toBeGreaterThan(0);
       expect(late, 'still on its way').toEqual(late.map(() => '0'));
-      await expectNoOverlap(page, `${size.name}, Ryuko on its way`, ryuko);
+      await expectNoOverlap(page, `${size.name}, Ryuko on its way`);
       await settle(page);
       await expectNoOverlap(page, `${size.name}, Ryuko landed`);
     });
@@ -536,11 +538,81 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     await expect(page.locator('button.cab-figure[aria-label="Spike Spiegel"]').first()).toBeAttached();
     const during = await groundedOf(page, measured);
     expect(during, 'already measured: grounded at once').toEqual(during.map(() => '1'));
-    const newcomers = /^(Dark Angel Olivia|Madoka Kaname|Spike Spiegel|Ryuko Matoi)$/;
-    await expectNoOverlap(page, 'new pictures on their way', newcomers);
+    await expectNoOverlap(page, 'new pictures on their way');
     await settle(page);
     await expectNoOverlap(page, 'new pictures landed');
   });
+});
+
+test.describe('a picture whose alpha read is slow while the picture itself is on time draws its plate meanwhile, never over a neighbour', () => {
+  /**
+   * Hold the app's alpha reads (its crossOrigin canvas reads) of the
+   * pictures matching `slow` until the test releases them; every image the
+   * scene shows loads as usual. And watch every frame from the first: the
+   * names of figures not grounded whose picture shows.
+   */
+  async function holdReads(page: Page, slow: RegExp) {
+    await page.addInitScript((source) => {
+      const slowSrc = new RegExp(source);
+      const w = window as unknown as { __releaseReads: () => void; __shownUngrounded: string[] };
+      const held = new Promise<void>((r) => (w.__releaseReads = r));
+      const decode = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = function (this: HTMLImageElement) {
+        return this.crossOrigin === 'anonymous' && slowSrc.test(this.src) ? held.then(() => decode.call(this)) : decode.call(this);
+      };
+      w.__shownUngrounded = [];
+      const watch = () => {
+        for (const b of document.querySelectorAll<HTMLElement>('button.cab-figure[data-grounded="0"]')) {
+          const art = b.querySelector<HTMLElement>('.cab-figure__art');
+          if (!art || getComputedStyle(art).visibility === 'hidden') continue;
+          if (art instanceof HTMLImageElement && !(art.complete && art.naturalWidth > 0)) continue;
+          const name = b.getAttribute('aria-label')!;
+          if (!w.__shownUngrounded.includes(name)) w.__shownUngrounded.push(name);
+        }
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    }, slow.source);
+  }
+
+  async function groundedOf(page: Page, name: RegExp) {
+    const all = await page.locator('button.cab-figure').evaluateAll((els) => els.map((b) => ({ name: b.getAttribute('aria-label')!, grounded: (b as HTMLElement).dataset.grounded })));
+    return all.filter((f) => name.test(f.name)).map((f) => f.grounded);
+  }
+
+  const cases = [
+    ...FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open').flatMap((size) =>
+      (['', 'masked'] as const).map((branch) => ({ what: "Ryuko's read", slow: /\/ryuuko-[^/]*\.png$/, held: /^Ryuko/, size, branch })),
+    ),
+    // reads queued behind a long list: every picture shown before its read
+    ...(['', 'masked'] as const).map((branch) => ({ what: 'every read', slow: /\.png$/, held: /./, size: FOLD8.find((v) => v.name === 'fold8-open')!, branch })),
+  ];
+  for (const { what, slow, held, size, branch } of cases) {
+    test(`${what} slow, the pictures on time: a figure still being read draws its plate, over no neighbour or side panel; then its picture: ${branch || 'cut-out'}, ${size.name}`, async ({ page }) => {
+      await holdReads(page, slow);
+      // labels narrower than the cut-outs draw: a picture drawn on its label packing would overlap
+      await openCase(page, size, `&fx=3&fxwidth=narrow${branch ? '&fxbranch=masked' : ''}`, { view: 'wall' }, held);
+      // the pictures themselves are here: only their reads wait
+      await page.waitForFunction(
+        (source) =>
+          Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure'))
+            .filter((b) => new RegExp(source).test(b.getAttribute('aria-label')!))
+            .every((b) => Array.from(b.querySelectorAll('img')).every((img) => img.complete && img.naturalWidth > 0)),
+        held.source,
+      );
+      const waiting = await groundedOf(page, held);
+      expect(waiting.length).toBeGreaterThan(0);
+      expect(waiting, 'still being read').toEqual(waiting.map(() => '0'));
+      // each drawn as its plate, and checked with its neighbours
+      const plates = (await drawnFigures(page)).filter((r) => held.test(r.name)).map((r) => r.kind);
+      expect.soft(plates).toEqual(waiting.map(() => 'plate'));
+      await expectNoOverlap(page, `${size.name}, ${what} slow`);
+      await page.evaluate(() => (window as unknown as { __releaseReads: () => void }).__releaseReads());
+      await settle(page);
+      await expectNoOverlap(page, `${size.name}, ${what} landed`);
+      expect.soft(await page.evaluate(() => (window as unknown as { __shownUngrounded: string[] }).__shownUngrounded), 'a picture shown before it was read, at any frame').toEqual([]);
+    });
+  }
 });
 
 test('the case ends where the cabinets do: the room fills the rest, nothing stretches (Ross 09-26)', async ({ page }) => {

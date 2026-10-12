@@ -174,6 +174,53 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
   });
 });
 
+describe('CabinetScene: a picture not read yet is never drawn: its plate stands in its place, within the footprint it is packed by', () => {
+  const margins = { top: 0.3, bottom: 0.05, left: 0.04, right: 0.04 };
+  const masked = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800 });
+  const LABEL_MM = 20;
+
+  for (const [branch, imageFor] of [
+    ['cut-out', undefined],
+    ['masked', masked],
+  ] as const) {
+    it(`${branch}: the plate (its name) on the surface, no wider than its label, the picture loading hidden; once read, that same picture and no plate`, () => {
+      const figs = FIXTURE_FIGURES.map(labelled(LABEL_MM));
+      measured.fallback = margins;
+      // Spike's picture is still being read
+      const spikeUrl = imageFor ? imageFor(figs[4]).maskUrl : figs[4].imageUrl!;
+      measured.margins.set(spikeUrl, null);
+      const onSelect = vi.fn();
+      const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} imageFor={imageFor} />);
+      const rows = drawn(container);
+      const spike = rows.find((r) => r.name === figs[4].name)!;
+      expect(spike.grounded).toBe('0');
+      const plate = spike.picture.querySelector<HTMLElement>('.cab-figure__plate');
+      expect(plate?.textContent).toBe(figs[4].name);
+      const art = spike.picture.querySelector<HTMLElement>('.cab-figure__art')!;
+      expect(art.style.visibility).toBe('hidden');
+      // an opaque box standing on the surface, the figure's height, within the label it is packed by
+      expect(spike.art.x1 - spike.art.x0).toBeLessThanOrEqual(LABEL_MM + 1e-6);
+      expect(parseFloat(spike.picture.style.width)).toBeLessThanOrEqual(LABEL_MM + 1e-6);
+      expect(spike.art.y0).toBeCloseTo(spike.tap.surface, 6);
+      expect(spike.art.y1 - spike.art.y0).toBeCloseTo(spike.tap.y1 - spike.tap.y0, 6);
+      expect((spike.art.x0 + spike.art.x1) / 2).toBeCloseTo((spike.tap.x0 + spike.tap.x1) / 2, 6);
+      // the others draw their pictures
+      for (const r of rows.filter((x) => x !== spike)) {
+        expect(r.picture.querySelector('.cab-figure__plate'), r.name).toBeNull();
+        expect(r.picture.querySelector<HTMLElement>('.cab-figure__art')!.style.visibility, r.name).toBe('');
+      }
+      measured.margins.clear();
+      rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} imageFor={imageFor} />);
+      const read = drawn(container).find((r) => r.name === figs[4].name)!;
+      expect(read.grounded).toBe('1');
+      expect(read.picture.querySelector('.cab-figure__plate')).toBeNull();
+      // the same element, loaded meanwhile: shown at once
+      expect(read.picture.querySelector('.cab-figure__art')).toBe(art);
+      expect(art.style.visibility).toBe('');
+    });
+  }
+});
+
 describe('CabinetScene: a figure off-centre in its picture stands centred on its slot (its opaque columns, not its picture)', () => {
   /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, 1 px per mm. */
   const span = (el: HTMLElement) => ({ x: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: parseFloat(el.style.width) });

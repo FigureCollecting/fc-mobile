@@ -133,6 +133,28 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     }
   });
 
+  it('its pictures load as CORS images (ADDR-1: the service worker keeps only a CORS answer), cut-out or framed', () => {
+    const cut = scene(FIXTURE_FIGURES.slice(0, 1)).host;
+    expect(cut.querySelector('img.cab-figure__art--cutout')).toHaveAttribute('crossorigin', 'anonymous');
+    cleanup();
+    const framed = scene(getFixtureFigures(1, 'framed').slice(0, 1)).host;
+    expect(framed.querySelector('.cab-figure__frame img')).toHaveAttribute('crossorigin', 'anonymous');
+  });
+
+  it('a figure whose picture fails to load stands as its plate (ADDR-1), cut-out or framed', async () => {
+    const cutout = FIXTURE_FIGURES[0];
+    const framed = { ...getFixtureFigures(1, 'framed')[1], _id: 'framed-copy' };
+    expect(framed.name).not.toBe(cutout.name);
+    const { host } = scene([cutout, framed]);
+    const arts = () => Object.fromEntries(figureButtons(host).map((b) => [b.getAttribute('aria-label'), b.dataset.art]));
+    expect(arts()).toEqual({ [cutout.name]: 'cutout', [framed.name]: 'framed' });
+    fireEvent.error(host.querySelector('img.cab-figure__art--cutout')!);
+    await waitFor(() => expect(arts()).toEqual({ [cutout.name]: 'plate', [framed.name]: 'framed' }));
+    fireEvent.error(host.querySelector('.cab-figure__frame img')!);
+    await waitFor(() => expect(arts()).toEqual({ [cutout.name]: 'plate', [framed.name]: 'plate' }));
+    expect(host.querySelectorAll('.cab-figure img')).toHaveLength(0);
+  });
+
   it("a contact band from the image list places the shadow under the figure's real base", async () => {
     const at = (centerXFrac: number) => (f: Figure) => ({ url: `/c/${f._id}.png`, maskUrl: `/m/${f._id}.png`, bottomMarginFrac: 0.1, contactBand: { centerXFrac, widthFrac: 0.4 } });
     const shadowOf = async (centerXFrac: number) => {

@@ -603,9 +603,18 @@ test.describe('a picture whose alpha read is slow while the picture itself is on
       const waiting = await groundedOf(page, held);
       expect(waiting.length).toBeGreaterThan(0);
       expect(waiting, 'still being read').toEqual(waiting.map(() => '0'));
-      // each drawn as its plate, and checked with its neighbours
-      const plates = (await drawnFigures(page)).filter((r) => held.test(r.name)).map((r) => r.kind);
-      expect.soft(plates).toEqual(waiting.map(() => 'plate'));
+      // each drawn as its plate, where the camera puts its box in the world, and checked with its neighbours
+      const camera = await cameraOf(page);
+      const plates = (await drawnFigures(page)).filter((r) => held.test(r.name));
+      expect.soft(plates.map((r) => r.kind)).toEqual(waiting.map(() => 'plate'));
+      for (const r of plates) {
+        const corners = [r.art.x0, r.art.x1].flatMap((x) => [r.art.y0, r.art.y1].map((y) => project(camera, [x, y, r.art.z])));
+        const [xs, ys] = [corners.map((c) => c.x), corners.map((c) => c.y)];
+        expect.soft(Math.abs(r.left - Math.min(...xs)), `${r.name} plate left`).toBeLessThan(1.5);
+        expect.soft(Math.abs(r.left + r.width - Math.max(...xs)), `${r.name} plate right`).toBeLessThan(1.5);
+        expect.soft(Math.abs(r.top - Math.min(...ys)), `${r.name} plate top`).toBeLessThan(1.5);
+        expect.soft(Math.abs(r.top + r.height - Math.max(...ys)), `${r.name} plate bottom`).toBeLessThan(1.5);
+      }
       await expectNoOverlap(page, `${size.name}, ${what} slow`);
       await page.evaluate(() => (window as unknown as { __releaseReads: () => void }).__releaseReads());
       await settle(page);

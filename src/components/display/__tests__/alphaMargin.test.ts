@@ -549,7 +549,8 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
   it(`reads that ran out of time are at most another ${ALPHA_READS_AT_ONCE} at once: a stalled network never decodes a long list together`, async () => {
     vi.useFakeTimers();
     const urls = Array.from({ length: 40 }, (_, i) => `https://example.com/z${i}.png`);
-    const { release, started } = heldPictures(urls, urls);
+    const later = Array.from({ length: 10 }, (_, i) => `https://example.com/y${i}.png`);
+    const { release, started } = heldPictures([...urls, ...later], [...urls, ...later]);
     renderHook(() => useAlphaMarginsOf(urls));
     const inFlight: number[] = [];
     for (let turn = 0; turn < 10; turn++) {
@@ -569,6 +570,18 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     // and still no more than that in flight (two have landed), however long the rest stall
     await vi.advanceTimersByTimeAsync(5 * ALPHA_READ_TURN_MS);
     expect(started.length - 2).toBe(2 * ALPHA_READS_AT_ONCE);
+    // every read ends as it starts: then every turn and all the room are free again, and never one more
+    while (started.length < urls.length) {
+      for (const url of started) release(url);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    for (const url of started) release(url);
+    await vi.advanceTimersByTimeAsync(0);
+    renderHook(() => useAlphaMarginsOf(later));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started.slice(urls.length)).toEqual(later.slice(0, ALPHA_READS_AT_ONCE));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started.slice(urls.length)).toEqual(later.slice(0, 2 * ALPHA_READS_AT_ONCE));
   });
 
   it('a read landing after a new list renders but before its effect runs is answered (the browser runs effects after the frame)', async () => {

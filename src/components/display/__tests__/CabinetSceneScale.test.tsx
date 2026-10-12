@@ -219,6 +219,31 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
       expect(art.style.visibility).toBe('');
     });
   }
+
+  it('the plate a figure stands as while its picture is read is the plate of a figure without a picture: the same box on the surface, the same shadow under it', () => {
+    // a wide label, and an image list that says where the bottom and the base are: none of it is drawn before the read
+    const wide = (f: Figure) => ({ ...f, dimensions: { ...f.dimensions, widthMm: 300 } }) as Figure;
+    const reading = wide(FIXTURE_FIGURES[4]);
+    const bare = { ...wide(FIXTURE_FIGURES[4]), _id: 'bare', name: 'No picture', imageUrl: undefined } as Figure;
+    const ref = (f: Figure) => (f._id === reading._id ? { url: '/clean/r.png', maskUrl: '/mask/r.png', width: 400, height: 800, bottomMarginFrac: 0.1, contactBand: { centerXFrac: 0.2, widthFrac: 0.4 } } : undefined);
+    measured.margins.set('/mask/r.png', null);
+    const { container } = render(<CabinetScene figures={[reading, bare]} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
+    const rows = drawn(container);
+    const [a, b] = [rows.find((r) => r.name === reading.name)!, rows.find((r) => r.name === 'No picture')!];
+    expect(a.grounded).toBe('0');
+    const box = (r: typeof a) => ({ w: r.art.x1 - r.art.x0, h: r.art.y1 - r.art.y0, below: r.tap.surface - r.art.y0, off: (r.art.x0 + r.art.x1) / 2 - (r.tap.x0 + r.tap.x1) / 2 });
+    expect(box(a)).toEqual(box(b));
+    expect(box(a).below).toBe(0);
+    // the plate's own shape, narrower than the label and the picture's
+    expect(box(a).w).toBeCloseTo(0.75 * box(a).h, 6);
+    const shadowOf = (r: typeof a) => {
+      const el = r.picture.closest('button')!.previousElementSibling as HTMLElement;
+      const w = parseFloat(el.style.width);
+      return { w, centre: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]) + w / 2 - (r.art.x0 + r.art.x1) / 2 };
+    };
+    expect(shadowOf(a).w).toBeCloseTo(shadowOf(b).w, 6);
+    expect(shadowOf(a).centre).toBeCloseTo(0, 6);
+  });
 });
 
 describe('CabinetScene: a figure off-centre in its picture stands centred on its slot (its opaque columns, not its picture)', () => {

@@ -17,9 +17,9 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, rememberImages, syncOwnedImages, withheldAmong } from '../../media/ownedImages';
+import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, recallImages, rememberImages, syncOwnedImages, withheldAmong } from '../../media/ownedImages';
 import { tellOwnedSync } from '../imageAnswers';
-import { installFakeLocks } from '../../test/fakeLocks';
+import { fakeLocks, installFakeLocks, type FakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
 const X = `${D}/${'c'.repeat(64)}`;
@@ -769,5 +769,133 @@ describe('two documents sync at once, and the coordinator withholds the image be
     } finally {
       uninstall();
     }
+  });
+});
+
+describe('a sync stopped part way, its case view gone while an image fetch stalls, after it recorded what the coordinator withholds', () => {
+  const Z = `${D}/${'d'.repeat(64)}`;
+  const row = (url: string) => ({ derivativeId: url.slice(-64), role: 'gallery', primary: true, url, width: 600, height: 800 });
+  /** The coordinator's lists for two owned figures: the first's images, the second's. */
+  const lists = (first: string[], second: string[]) =>
+    create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: first.map(row) }, { headId: headOf(1), images: second.map(row) }] });
+  let locks: FakeLocks;
+  let uninstall: () => void = () => {};
+  beforeEach(() => {
+    locks = fakeLocks();
+    uninstall = installFakeLocks(locks);
+    // Z's first fetch stalls: only an abort of its request ends it. Every other fetch answers.
+    let zAsked = 0;
+    storage = fakeCaches((req) =>
+      req.url === Z && (zAsked += 1) === 1 ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('img')),
+    );
+    vi.stubGlobal('caches', storage);
+  });
+  afterEach(() => uninstall());
+  const caseView = (doc: QueryClient) => renderHook(() => useOwnedImages(), { wrapper: queryWrapper(doc) });
+  /** The first document's case view syncs, records what the lists withhold, stalls on Z's fetch, and goes away. */
+  async function stopsPartWay(docA: QueryClient, before?: () => Promise<void>): Promise<void> {
+    const viewA = caseView(docA);
+    await waitFor(() => expect(storage.added.map((q) => q.url)).toContain(Z));
+    await before?.();
+    viewA.unmount();
+  }
+  const idle = async (...docs: QueryClient[]) => {
+    await waitFor(() => expect(docs.reduce((n, d) => n + d.isFetching(), 0)).toBe(0));
+    await settle();
+    await waitFor(() => expect(docs.reduce((n, d) => n + d.isFetching(), 0)).toBe(0));
+  };
+
+  it.each([[0], [50]])('the case view of another document, waiting on the lock: syncs once it is free, records the withholding and answers the plate (its list read answered in %i ms)', async (latency) => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    await keptX();
+    let call = 0;
+    r.clients.getProductImages.mockImplementation(async () => {
+      call += 1;
+      // The first read (the first document's) comes before the restriction; every later one withholds X.
+      if (call === 1) return lists([X], [Z]);
+      await new Promise((res) => setTimeout(res, latency));
+      return lists([], [Z]);
+    });
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    let viewB!: ReturnType<typeof caseView>;
+    await stopsPartWay(docA, async () => {
+      viewB = caseView(docB);
+      await waitFor(() => expect(locks.asked).toHaveLength(2));
+    });
+    await idle(docA, docB);
+    expect(call).toBe(2);
+    expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+    expect(viewB.result.current.has(headOf(0))).toBe(false);
+    expect(viewB.result.current.get(headOf(1))?.url).toBe(Z);
+    expect(held()).not.toContain(X);
+    viewB.unmount();
+  });
+
+  it('the figure page open in another document, naming what the stopped sync recorded withheld: answers the plate', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(lists([X], []));
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(page.result.current.data?.url).toBe(X));
+    r.clients.getProductImages.mockResolvedValue(lists([], [Z]));
+    await stopsPartWay(docA, async () => expect([...(await withheldAmong([X], storage))]).toEqual([X]));
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+    await idle(docA, docB);
+    expect(page.result.current.data).toBeNull();
+    page.unmount();
+  });
+
+  it('the case view open in another document, its own sync done: answers the plate for the figure whose image the stopped sync recorded withheld', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(lists([X], []));
+    const viewB = caseView(docB);
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
+    await idle(docB);
+    r.clients.getProductImages.mockResolvedValue(lists([], [Z]));
+    await stopsPartWay(docA);
+    await waitFor(() => expect(viewB.result.current.has(headOf(0))).toBe(false));
+    await idle(docA, docB);
+    expect(viewB.result.current.has(headOf(0))).toBe(false);
+    viewB.unmount();
+  });
+
+  it('a sync that completes, by contrast: stops the case view of another document waiting on the lock, which answers from what that sync kept and keeps nothing of its own read (a takedown between their reads lands at its next sync)', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    let answer!: () => void;
+    const answered = new Promise<void>((res) => (answer = res));
+    let call = 0;
+    r.clients.getProductImages.mockImplementation(async () => {
+      call += 1;
+      // The first document's read answers when released: X. The other's, later and slower, lists Y instead.
+      if (call === 1) {
+        await answered;
+        return lists([X], []);
+      }
+      await new Promise((res) => setTimeout(res, 50));
+      return lists([Y], []);
+    });
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    const viewA = caseView(docA);
+    await waitFor(() => expect(call).toBe(1));
+    const viewB = caseView(docB);
+    await waitFor(() => expect(locks.asked).toHaveLength(2));
+    answer();
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
+    await idle(docA, docB);
+    expect(viewB.result.current.get(headOf(0))?.url).toBe(X);
+    expect(storage.added.map((q) => q.url)).not.toContain(Y);
+    expect((await recallImages(headOf(0), storage))?.map((i) => i.url)).toEqual([X]);
+    viewA.unmount();
+    viewB.unmount();
   });
 });

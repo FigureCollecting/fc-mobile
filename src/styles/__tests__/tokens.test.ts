@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CASE_VIEWPORTS } from '../../../e2e/caseViewports';
 
 /**
  * Guards the design system's font-size floor (10px general, 16px inputs)
@@ -31,6 +32,141 @@ function getDeclaredValue(name: string): string {
 }
 
 const FLOOR_EXEMPT = new Set(['--font-plate', '--font-plate-sub']);
+
+/** Root font size and viewport width, in px, that a CSS length is evaluated at. */
+interface CssContext {
+  rootPx: number;
+  viewportPx: number;
+}
+
+/**
+ * Evaluates a token's length to px the way the browser does: sums of rem,
+ * vw and px terms inside clamp(), min(), max() and calc(), nested at will.
+ * clamp(a, b, c) is max(a, min(b, c)), as CSS Values 4 defines it. Throws on
+ * anything else, so a token in some other form cannot pass unread.
+ */
+function cssPx(source: string, ctx: CssContext): number {
+  const tokens = source.match(/clamp\(|min\(|max\(|calc\(|[(),+-]|\d*\.?\d+(?:rem|vw|px)|\S/g) ?? [];
+  let i = 0;
+  const take = (expected?: string): string => {
+    const token = tokens[i++];
+    if (token === undefined || (expected !== undefined && token !== expected)) {
+      throw new Error(`cannot read ${expected ?? 'a term'} at token ${i} of ${source}`);
+    }
+    return token;
+  };
+  const term = (): number => {
+    const token = take();
+    const length = token.match(/^(\d*\.?\d+)(rem|vw|px)$/);
+    if (length) {
+      const n = parseFloat(length[1]);
+      if (length[2] === 'rem') return n * ctx.rootPx;
+      if (length[2] === 'vw') return (n * ctx.viewportPx) / 100;
+      return n;
+    }
+    const fn = token.match(/^(clamp|min|max|calc)\($/);
+    if (!fn) throw new Error(`cannot read ${token} in ${source}`);
+    const args = [sum()];
+    while (tokens[i] === ',') {
+      take(',');
+      args.push(sum());
+    }
+    take(')');
+    if (fn[1] === 'clamp') {
+      if (args.length !== 3) throw new Error(`clamp() takes 3 arguments in ${source}`);
+      return Math.max(args[0], Math.min(args[1], args[2]));
+    }
+    if (fn[1] === 'min') return Math.min(...args);
+    if (fn[1] === 'max') return Math.max(...args);
+    if (args.length !== 1) throw new Error(`calc() takes 1 argument in ${source}`);
+    return args[0];
+  };
+  const sum = (): number => {
+    let value = term();
+    while (tokens[i] === '+' || tokens[i] === '-') {
+      const op = take();
+      const next = term();
+      value = op === '+' ? value + next : value - next;
+    }
+    return value;
+  };
+  const value = sum();
+  if (i !== tokens.length) throw new Error(`unread ${tokens.slice(i).join(' ')} in ${source}`);
+  return value;
+}
+
+/** Every font-size token: all --font-* but the family and the weights. */
+const SIZE_TOKENS = [...tokensCss.matchAll(/(--font-[\w-]+):\s*[^;]+;/g)]
+  .map((m) => m[1])
+  .filter((name) => name !== '--font-family' && !name.startsWith('--font-weight-'));
+
+/** A token's size in px at a viewport width, on a 16 px root unless given. */
+function sizeAt(name: string, viewportPx: number, rootPx = REM_TO_PX): number {
+  return cssPx(getDeclaredValue(name), { rootPx, viewportPx });
+}
+
+/** The phone floor, every case viewport (the Fold8's four ways, android), and the desktop at 1280 and 1920. */
+const WIDTHS = [320, 360, ...CASE_VIEWPORTS.map((v) => v.width), 1024, 1280, 1536, 1920, 2560];
+
+describe('cssPx, the token evaluator these tests read sizes with', () => {
+  const ctx = { rootPx: 16, viewportPx: 1000 };
+
+  it('reads rem, vw and px terms, sums and differences, and the math functions, nested', () => {
+    expect(cssPx('0.75rem', ctx)).toBe(12);
+    expect(cssPx('10px', ctx)).toBe(10);
+    expect(cssPx('0.5rem + 1vw - 2px', ctx)).toBe(16);
+    expect(cssPx('calc(1rem + 1vw)', ctx)).toBe(26);
+    expect(cssPx('min(1rem, 2rem, 0.5rem)', ctx)).toBe(8);
+    expect(cssPx('max(1rem, 2rem)', ctx)).toBe(32);
+    expect(cssPx('clamp(1rem, 0.5rem + 1vw, 2rem)', ctx)).toBe(18);
+    expect(cssPx('clamp(1rem, 0.5rem, 2rem)', ctx)).toBe(16);
+    expect(cssPx('clamp(1rem, 3rem, 2rem)', ctx)).toBe(32);
+    expect(cssPx('clamp(1rem, 4rem, clamp(1rem, 0.5rem + 1vw, 2rem))', ctx)).toBe(18);
+    expect(cssPx('clamp(2rem, 1rem, 1rem)', ctx)).toBe(32); // the minimum wins, as in CSS
+  });
+
+  it('rejects what it cannot read rather than guess', () => {
+    expect(() => cssPx('1em', ctx)).toThrow();
+    expect(() => cssPx('clamp(1rem, 2rem)', ctx)).toThrow();
+    expect(() => cssPx('calc(1rem, 2rem)', ctx)).toThrow();
+    expect(() => cssPx('1rem 2rem', ctx)).toThrow();
+    expect(() => cssPx('min(1rem', ctx)).toThrow();
+    expect(() => cssPx('foo(1rem)', ctx)).toThrow();
+    expect(() => cssPx('1rem +', ctx)).toThrow();
+  });
+});
+
+describe('design tokens: user text scaling (rem) applies to every font size', () => {
+  it('finds the font-size tokens', () => {
+    expect(SIZE_TOKENS).toEqual(
+      expect.arrayContaining(['--font-2xs', '--font-xs', '--font-sm', '--font-base', '--font-lg', '--font-xl', '--font-2xl', '--font-input']),
+    );
+  });
+
+  it('declares every font size in rem and vw, never px, so a larger root font size reaches it', () => {
+    for (const name of SIZE_TOKENS) {
+      expect(getDeclaredValue(name), name).not.toMatch(/px/);
+      expect(getDeclaredValue(name), name).toMatch(/rem/);
+    }
+  });
+
+  it('scales every font token with a 125% root, at every phone, Fold8 and desktop width', () => {
+    for (const name of SIZE_TOKENS) {
+      const fluid = /vw/.test(getDeclaredValue(name));
+      for (const w of WIDTHS) {
+        const normal = sizeAt(name, w);
+        const large = sizeAt(name, w, REM_TO_PX * 1.25);
+        expect(large, `${name} at ${w}px`).toBeGreaterThan(normal);
+        // never smaller than 125% of its own floor, the size on the narrowest phone
+        expect(large, `${name} at ${w}px`).toBeGreaterThanOrEqual(sizeAt(name, 320) * 1.25 - 1e-9);
+        // a static step scales exactly; a fluid one by its rem parts, its vw parts held
+        if (!fluid) expect(large, `${name} at ${w}px`).toBeCloseTo(normal * 1.25, 9);
+      }
+      // the widest desktop has every fluid step at its maximum, which scales exactly
+      expect(sizeAt(name, 2560, REM_TO_PX * 1.25), name).toBeCloseTo(sizeAt(name, 2560) * 1.25, 9);
+    }
+  });
+});
 
 describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
   it('marks the floor-exempt tokens with an explicit FLOOR-EXEMPT comment in tokens.css', () => {

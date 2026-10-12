@@ -380,8 +380,7 @@ async function bringToOwned(
       recorded.add(u);
     }
   } catch (error) {
-    if (unrecorded.size === withheld.size) throw error;
-    // Another was recorded: the deletes below run, then the sync fails.
+    // The deletes below run, then the sync fails.
     refused = { error };
   }
   const oldestFirst = [...recorded];

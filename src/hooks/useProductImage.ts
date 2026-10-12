@@ -3,11 +3,12 @@
 // address the last owned sync withheld until a sync carries it again; out of reach (offline, or the
 // sync engine found the server unreachable) or when that call fails, the image kept for an owned
 // figure, if its bytes were on the device when asked and no sync recorded it withheld
-// (src/media/ownedImages.ts). An answer given
-// before a completed owned sync is not reused after it, in any open document of the app: the one that
-// ran the sync drops it and tells the others, which drop theirs (src/hooks/imageAnswers.ts), and the
-// page asks again; until it has, an answer that named an image that sync withheld is the plate. The
-// page waits IMAGE_ASK_TIMEOUT_MS at most for the coordinator, then answers as when the call fails.
+// (src/media/ownedImages.ts). An answer given before a completed owned sync is not reused after it,
+// in any open document of the app: the one that ran the sync drops it and tells the others, which
+// drop theirs (src/hooks/imageAnswers.ts), and the page asks again; once that document has read what
+// the sync withheld, an answer that named an image it withheld is the plate until the coordinator
+// answers. The page waits IMAGE_ASK_TIMEOUT_MS at most for the coordinator, then answers as when the
+// call fails.
 // Neither: the placeholder plate. The page draws the plate too when the image fails to load.
 import { useQuery } from '@tanstack/react-query';
 import { localSession } from '../local/session';

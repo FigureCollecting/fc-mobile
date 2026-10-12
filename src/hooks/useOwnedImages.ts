@@ -8,9 +8,9 @@
 // offline or online, in the document that ran it or in any other open document of the app, each told
 // on a BroadcastChannel (src/hooks/imageAnswers.ts): one being read is read again, one a view shows is
 // asked again, any other is dropped, so neither answers an image that sync withheld
-// (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer a view shows that names an address
-// that sync withheld stops naming it before it is asked again, not once the coordinator answers. A
-// case view told of another document's sync answers from what it kept, without a sync of its own.
+// (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer that names an address that sync
+// withheld, shown or opened while the document reads what it withheld, stops naming it once that is
+// read, not once the coordinator answers. A case view told of another document's sync answers from what it kept, without a sync of its own.
 // Where the browser has Web Locks, documents sync one at a time (src/media/ownedImages.ts), so a sync
 // that read older lists never undoes what a later one withheld. A collection with no image costs a few
 // cache calls, not a few per figure, and a sync stops when the case view goes away (its fetches in

@@ -469,6 +469,31 @@ describe('cancelling a sync', () => {
     expect(calls).toEqual([]);
   });
 
+  it('syncOwnedImages tells onListsRead once it has read the lists, its signal not aborted, before it touches any cache; never when the read fails or is aborted', async () => {
+    const storage = device();
+    const calls = countCalls(storage);
+    const at: string[][] = [];
+    const onListsRead = () => at.push([...calls]);
+    const options = { storage, onListsRead };
+    await syncOwnedImages(['h1'], async () => new Map([['h1', [img('a', { primary: true })]]]), options);
+    expect(at).toEqual([[]]);
+    // The coordinator did not answer.
+    await expect(
+      syncOwnedImages(['h1'], async () => {
+        throw new Error('unavailable');
+      }, options),
+    ).rejects.toThrow('unavailable');
+    // The case view went away while the lists were read, and they arrived anyway.
+    const abort = new AbortController();
+    const aborted = { storage, onListsRead, signal: abort.signal };
+    const fetchLists = async () => {
+      abort.abort();
+      return new Map([['h1', [img('b', { primary: true })]]]);
+    };
+    await expect(syncOwnedImages(['h1'], fetchLists, aborted)).rejects.toThrow();
+    expect(at).toEqual([[]]);
+  });
+
   it('syncOwnedImages, aborted while it writes the kept lists, writes no more of them and fails, having recorded and deleted what it withholds, and fetches nothing', async () => {
     const storage = device();
     await syncOwnedImages(['h0'], async () => new Map([['h0', [img('f', { primary: true })]]]), { storage });

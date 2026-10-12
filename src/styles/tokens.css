@@ -19,11 +19,11 @@
   --overlay: rgba(0, 0, 0, 0.6);
 
   /* ── Typography — fluid clamp() scale, markedly condensed ──────────────
-     Floors: 10px absolute (2xs), 11px xs. Fluid steps scale gently with
+     Floors: 11px absolute (2xs), 11px xs. Fluid steps scale gently with
      viewport width (360px → 674px reference range). Form inputs NEVER go
      below 16px (--font-input) or iOS Safari auto-zooms on focus. */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-2xs: 0.625rem;                                     /* 10px static floor */
+  --font-2xs: 0.6875rem;                                    /* 11px static floor (Ross 2026-10-11: up from 10px) */
   --font-xs: 0.6875rem;                                     /* 11px static */
   --font-sm: clamp(0.75rem, 0.7rem + 0.22vw, 0.8125rem);    /* 12 → 13px */
   --font-base: clamp(0.8125rem, 0.76rem + 0.24vw, 0.875rem);/* 13 → 14px */
@@ -32,7 +32,7 @@
   --font-2xl: clamp(1.25rem, 1.16rem + 0.4vw, 1.375rem);    /* 20 → 22px, hero numbers only */
   --font-input: 1rem;                                       /* 16px — iOS zoom guard */
   /* FLOOR-EXEMPT (Ross, explicit override, plates/captions ONLY — every
-     other consumer stays >= the 10px floor above): the on-display
+     other consumer stays >= the 11px floor above): the on-display
      nameplate is a decorative miniature label, not primary UI copy, and
      needs to fit a museum-plaque footprint. Do not reuse these for
      anything else. */

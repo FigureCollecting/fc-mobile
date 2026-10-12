@@ -193,6 +193,11 @@ describe('design tokens: font-size floor (11px general, 16px inputs)', () => {
     expect(pxOf(getDeclaredValue('--font-2xs'))).toBe(11);
   });
 
+  it('sets --font-xs to 12px (Ross 2026-10-11: up from 11px; revert this step alone if it reads too loose), in rem', () => {
+    expect(getDeclaredValue('--font-xs')).toBe('0.75rem');
+    expect(pxOf(getDeclaredValue('--font-xs'))).toBe(12);
+  });
+
   it('keeps --font-input at the 16px iOS zoom guard', () => {
     expect(pxOf(getDeclaredValue('--font-input'))).toBe(16);
   });

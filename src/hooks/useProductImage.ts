@@ -5,8 +5,9 @@
 // figure, if its bytes were on the device when asked (src/media/ownedImages.ts). An answer given
 // before a completed owned sync is not reused after it, in any open document of the app: the one that
 // ran the sync drops it and tells the others, which drop theirs (src/hooks/imageAnswers.ts), and the
-// page asks again. Neither: the placeholder plate. The page draws the plate too when the image fails
-// to load.
+// page asks again; until it has, an answer that named an image that sync withheld is the plate. The
+// page waits IMAGE_ASK_TIMEOUT_MS at most for the coordinator, then answers as when the call fails.
+// Neither: the placeholder plate. The page draws the plate too when the image fails to load.
 import { useQuery } from '@tanstack/react-query';
 import { localSession } from '../local/session';
 import { useAuthPhase } from '../local/useLocal';

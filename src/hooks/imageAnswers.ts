@@ -6,7 +6,10 @@
 // (never itself); each other one drops all of its earlier answers when told. A case view open in a
 // document told answers again from what that sync kept, without a sync of its own, so two open case
 // views never sync each other. Where the browser has no BroadcastChannel, no other document is told.
-// src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
+// An answer a view shows that names an address the sync withheld stops naming it before it is asked
+// again (the figure page answers the plate; the case view drops that figure, or only its mask), so
+// none waits on the coordinator's answer, which a stalled link can hold back for as long as the ask's
+// deadline. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { withheldAmong, type CachedImage } from '../media/ownedImages';
 

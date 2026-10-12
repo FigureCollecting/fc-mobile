@@ -27,6 +27,7 @@
 // withheld one is recorded, so a refill of the browsed cache after that sync is deleted at the next.
 // A figure no longer owned is not recorded: its figure page asks the coordinator, as for any figure
 // not owned. Both kept caches hold exactly the owned figures (at most MAX_OWNED_FIGURES of them).
+// Where the browser has Web Locks, the documents of the app sync one at a time (syncOwnedImages).
 // keptImage answers a figure's kept image only if its bytes are here when asked; otherwise the figure
 // is drawn as its plate. Nothing here is sent anywhere.
 // No fetch of the image address, here or in the worker, uses the HTTP cache, so neither answers an

@@ -351,8 +351,16 @@ async function pictureAlpha(page: Page) {
  * default wall: KLINGSBOs).
  */
 async function expectNoOverlap(page: Page, label: string) {
-  const rows = await drawnFigures(page);
-  const wall = wallLayout(Array.from({ length: rows.length }, () => IKEA_KLINGSBO)).cabinets;
+  const { tapOverlaps, drawnOverlaps, intoPanels, pairs } = overlapsOf(await drawnFigures(page));
+  expect.soft(tapOverlaps, `${label}: tap boxes overlap`).toEqual([]);
+  expect.soft(drawnOverlaps, `${label}: drawn neighbours overlap`).toEqual([]);
+  expect.soft(intoPanels, `${label}: drawn into the side panel`).toEqual([]);
+  expect(pairs, label).toBeGreaterThan(0);
+}
+
+/** What expectNoOverlap checks, on figures as drawn (their tap boxes and opaque columns), on a wall of `cabinets` KLINGSBOs at most. */
+function overlapsOf(rows: { name: string; kind: string; world: World; opaque: { x0: number; x1: number } }[], cabinets = rows.length) {
+  const wall = wallLayout(Array.from({ length: cabinets }, () => IKEA_KLINGSBO)).cabinets;
   const slots = surfaceSlots(IKEA_KLINGSBO);
   const mm = (v: number) => v.toFixed(1);
   const intoPanels: string[] = [];
@@ -377,10 +385,7 @@ async function expectNoOverlap(page: Page, label: string) {
       if (b.opaque.x0 < a.opaque.x1 - 0.01) drawnOverlaps.push(`${a.kind} ${a.name} [${mm(a.opaque.x0)}..${mm(a.opaque.x1)}] / ${b.kind} ${b.name} [${mm(b.opaque.x0)}..${mm(b.opaque.x1)}]: ${mm(a.opaque.x1 - b.opaque.x0)} mm`);
     }
   }
-  expect.soft(tapOverlaps, `${label}: tap boxes overlap`).toEqual([]);
-  expect.soft(drawnOverlaps, `${label}: drawn neighbours overlap`).toEqual([]);
-  expect.soft(intoPanels, `${label}: drawn into the side panel`).toEqual([]);
-  expect(pairs, label).toBeGreaterThan(0);
+  return { tapOverlaps, drawnOverlaps, intoPanels, pairs };
 }
 
 for (const branch of ['cut-out', 'masked'] as const) {
@@ -524,7 +529,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     });
   }
 
-  test(`8 pictures whose alpha reads stall for good: every other figure is still grounded, within the read deadline (${ALPHA_READ_DEADLINE_MS} ms)`, async ({ page }) => {
+  test(`8 pictures whose alpha reads stall for good: every other figure is still grounded within ${ALPHA_READ_DEADLINE_MS + 3 * ALPHA_READ_TURN_MS} ms (the stalled reads' first deadline, ${ALPHA_READ_DEADLINE_MS} ms, and three turns)`, async ({ page }) => {
     await page.addInitScript((n) => {
       // the app's alpha reads (its crossOrigin canvas reads) of the first n pictures it reads never end; the pictures themselves load
       const w = window as unknown as { __stalled: string[] };
@@ -547,7 +552,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
           grounded: b.dataset.grounded === '1',
         }));
       });
-    // the stalled reads are abandoned at their deadline, so the others are read meanwhile
+    // the stalled reads are abandoned at their first deadline, so the others are read meanwhile (in about 9 s here)
     await expect
       .poll(async () => (await stalledOf()).filter((f) => !f.stalled && !f.grounded).map((f) => f.name), { timeout: ALPHA_READ_DEADLINE_MS + 3 * ALPHA_READ_TURN_MS })
       .toEqual([]);
@@ -556,6 +561,104 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     expect(figures.filter((f) => !f.stalled).length).toBe(figures.length - 2 * ALPHA_READS_AT_ONCE);
     expect(figures.filter((f) => f.stalled && f.grounded), 'a stalled picture, still read again: on its plate').toEqual([]);
     await expectNoOverlap(page, '8 reads stalled');
+  });
+
+  test(`a slow link, no stall, the HTTP cache off (as under every e2e route): every picture ${ALPHA_READ_DEADLINE_MS + 2_000} ms on its way, longer than a read's first deadline; every figure ends grounded at true scale, and at no frame does a figure reach over its neighbour or into a side panel`, async ({ page }) => {
+    test.setTimeout(180_000);
+    const PICTURES = /\/assets\/[^/?]+\.png(\?copy=\d+)?$/;
+    await page.route(PICTURES, async (route) => {
+      await new Promise((r) => setTimeout(r, ALPHA_READ_DEADLINE_MS + 2_000));
+      // on to the hands-off guard, which sends it; a read abandoned meanwhile has dropped its request
+      await route.fallback().catch(() => {});
+    });
+    await page.addInitScript(() => {
+      // every layout the scene shows, frame by frame: per figure, what it draws (its plate, or its picture once loaded) and where
+      const w = window as unknown as { __layouts: { figures: number; rows: { name: string; kind: string; src: string; world: string; art: string }[] }[]; __alphaReads: number };
+      w.__layouts = [];
+      w.__alphaReads = 0;
+      const decode = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = function (this: HTMLImageElement) {
+        // the app's alpha reads: its crossOrigin canvas reads
+        if (this.crossOrigin === 'anonymous') w.__alphaReads++;
+        return decode.call(this);
+      };
+      const seen = new Set<string>();
+      const watch = () => {
+        const buttons = Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure'));
+        const rows = buttons.flatMap((b) => {
+          const box = b.querySelector<HTMLElement>('.cab-figure__box');
+          const el = box && (Array.from(box.children).find((c) => getComputedStyle(c).visibility !== 'hidden') as HTMLElement | undefined);
+          if (!el || (el instanceof HTMLImageElement && !(el.complete && el.naturalWidth > 0))) return [];
+          const plate = el.classList.contains('cab-figure__plate');
+          const src = plate ? '' : (el.dataset.maskUrl ?? (el as HTMLImageElement).src);
+          return [{ name: b.getAttribute('aria-label')!, kind: plate ? 'plate' : b.dataset.art!, src, world: b.dataset.world!, art: b.dataset.artBox! }];
+        });
+        const key = JSON.stringify(rows);
+        if (!seen.has(key)) {
+          seen.add(key);
+          w.__layouts.push({ figures: buttons.length, rows });
+        }
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    });
+    // each copy's picture at its own URL, labels narrower than the cut-outs draw: a picture drawn on its label packing would overlap
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxuniq=1&fxwidth=narrow', { view: 'wall' }, /./);
+    await expect
+      .poll(() => page.locator('button.cab-figure[data-grounded="0"]').count(), { timeout: 150_000, intervals: [1_000] })
+      .toBe(0);
+    const figures = await page.locator('button.cab-figure').count();
+    // the reads ran out of time and were read again: no picture read in one go
+    expect(await page.evaluate(() => (window as unknown as { __alphaReads: number }).__alphaReads)).toBeGreaterThan(figures);
+    await page.unroute(PICTURES);
+    const layouts = await page.evaluate(() => (window as unknown as { __layouts: { figures: number; rows: { name: string; kind: string; src: string; world: string; art: string }[] }[] }).__layouts);
+    expect(layouts.some((l) => l.rows.some((r) => r.kind === 'plate')), 'figures stood on their plates on the way').toBe(true);
+    // the clear sides of each picture drawn, measured here on the picture itself
+    const srcs = [...new Set(layouts.flatMap((l) => l.rows.map((r) => r.src)).filter((s) => s))];
+    const clear = await page.evaluate(async (urls) => {
+      const out: Record<string, { left: number; right: number }> = {};
+      for (const url of urls) {
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        const ctx = c.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        let [x0, x1] = [c.width, -1];
+        for (let y = 0; y < c.height; y++) {
+          for (let x = 0; x < c.width; x++) {
+            if (d[(y * c.width + x) * 4 + 3] <= 10) continue;
+            x0 = Math.min(x0, x);
+            x1 = Math.max(x1, x);
+          }
+        }
+        out[url] = { left: x0 / c.width, right: (c.width - 1 - x1) / c.width };
+      }
+      return out;
+    }, srcs);
+    const problems = layouts.flatMap((l, i) => {
+      const rows = l.rows.map((r) => {
+        const art = JSON.parse(r.art) as World;
+        const side = clear[r.src] ?? { left: 0, right: 0 };
+        const w = art.x1 - art.x0;
+        return { name: r.name, kind: r.kind, world: JSON.parse(r.world) as World, opaque: { x0: art.x0 + side.left * w, x1: art.x1 - side.right * w } };
+      });
+      const o = overlapsOf(rows, l.figures);
+      return [...o.tapOverlaps, ...o.drawnOverlaps, ...o.intoPanels].map((p) => `layout ${i + 1} of ${layouts.length}: ${p}`);
+    });
+    expect(problems).toEqual([]);
+    // at the end, every picture at true scale: its opaque rows from the surface to the labelled height
+    const rows = await pictureAlpha(page);
+    expect(rows).toHaveLength(figures);
+    for (const r of rows) {
+      const pictureH = r.art.y1 - r.art.y0;
+      expect(Math.abs(r.art.y0 + r.clearBelow * pictureH - r.world.surface), `${r.name} feet, mm`).toBeLessThan(0.5);
+      expect(Math.abs(r.art.y1 - r.clearAbove * pictureH - r.world.y1), `${r.name} head, mm`).toBeLessThan(0.5);
+    }
+    await expectNoOverlap(page, 'slow link, every picture read');
   });
 
   test('a filter removed: the figures already measured stay grounded while the new pictures load', async ({ page }) => {

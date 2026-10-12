@@ -10,8 +10,11 @@ import {
   ALPHA_READS_AT_ONCE,
   ALPHA_READ_TURN_MS,
   ALPHA_READ_DEADLINE_MS,
-  ALPHA_READ_RETRIES,
+  ALPHA_READ_DEADLINE_MAX_MS,
+  ALPHA_READ_BACKOFF_MS,
+  ALPHA_READ_BACKOFF_MAX_MS,
   ALPHA_LANDING_BATCH_MS,
+  alphaPictureLoaded,
   __clearAlphaMarginCache,
   computeContactBand,
   useContactBand,
@@ -289,15 +292,18 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
 
   /**
    * Pictures whose reads end only when the test says so; the others end at
-   * once. A read is in flight from its start until it lands or is abandoned:
-   * its src cleared, so the browser cancels its request.
+   * once. A read is in flight from its start until it lands or is abandoned
+   * (its src cleared). No HTTP cache here: every read is its own fetch.
    */
   function heldPictures(urls: readonly string[], held: readonly string[]) {
     const release = new Map<string, (() => void)[]>();
     const started: string[] = [];
+    /** When each read started (the fake clock, ms). */
+    const startedAt: number[] = [];
     const reads: { img: HTMLImageElement; landed: boolean }[] = [];
     mockPictures(Object.fromEntries(urls.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])), (src, img) => {
       started.push(src);
+      startedAt.push(Date.now());
       const read = { img, landed: !held.includes(src) };
       reads.push(read);
       if (read.landed) return Promise.resolve();
@@ -319,6 +325,7 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
         release.delete(src);
       },
       started,
+      startedAt,
       /** How many reads were abandoned. */
       abandoned: () => reads.filter((r) => abandoned(r.img)).length,
       /** Reads started that have neither landed nor been abandoned. */
@@ -449,12 +456,19 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(getImageData).toHaveBeenCalledTimes(2);
   });
 
-  it('a failed read is known too: all 0, never left unknown', async () => {
-    HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
+  it('a broken picture (its decode fails) is a failed read: known at once as all 0, never left unknown, and never read again', async () => {
+    vi.useFakeTimers();
+    const decode = vi.fn(() => Promise.reject(new Error('decode failed')));
+    HTMLImageElement.prototype.decode = decode;
     const { result } = renderHook(() => useAlphaMarginsOf([A]));
-    await waitFor(() => expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 }));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+    expect(decode).toHaveBeenCalledTimes(1);
   });
 
+  // the read itself has no guard for these: a picture of no size fails at getImageData, one with no 2D canvas at drawImage,
+  // both in its catch; this pins that result
   it('a picture of no size, or one with no 2D canvas to read it on, is a failed read at once: all 0, never read again', async () => {
     vi.useFakeTimers();
     const decode = vi.fn(() => Promise.resolve());
@@ -662,19 +676,23 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(counts).toEqual(counts.map(() => 2 * ALPHA_READS_AT_ONCE));
   });
 
-  it(`a read not done ${ALPHA_READ_DEADLINE_MS} ms after it starts is abandoned (its request cancelled): its figure stays unknown, nothing is kept, and it is read again`, async () => {
-    expect(ALPHA_READ_DEADLINE_MS).toBe(8000);
+  it(`a read not done ${ALPHA_READ_DEADLINE_MS} ms after it starts is abandoned (its src cleared): its figure stays unknown, nothing is kept, and it is read again ${ALPHA_READ_BACKOFF_MS} ms on`, async () => {
+    expect([ALPHA_READ_DEADLINE_MS, ALPHA_READ_BACKOFF_MS]).toEqual([8000, 1500]);
     vi.useFakeTimers();
     const { release, started, abandoned } = heldPictures([A], [A]);
     const { result } = renderHook(() => useAlphaMarginsOf([A]));
     await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS - 1);
     expect([started.length, abandoned()]).toEqual([1, 0]);
     await vi.advanceTimersByTimeAsync(1);
-    // its src cleared, so the browser cancels its request; none else waits, so it is read again at once
-    expect([started.length, abandoned()]).toEqual([2, 1]);
+    // its src cleared: it leaves the room it held, and waits out its backoff before it is read again
+    expect([started.length, abandoned()]).toEqual([1, 1]);
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(result.current.has(A), 'still unknown: its figure stays a plate').toBe(false);
     expect(getAlphaMask(A), 'nothing kept for it').toBeUndefined();
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_BACKOFF_MS - EFFECTS_MS - 1);
+    expect(started.length).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started.length).toBe(2);
     // the second read lands: the picture's own margins, not a failed read's, and a read that lands is never abandoned
     release(A);
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
@@ -686,25 +704,147 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect([started.length, abandoned()]).toEqual([2, 1]);
   });
 
-  it(`a picture whose every read stalls is read ${ALPHA_READ_RETRIES} more times, then known as a failed read: all 0 and no mask, packed by its whole picture`, async () => {
-    expect(ALPHA_READ_RETRIES).toBe(2);
+  it(`a picture whose every read stalls stays unknown (its plate) while its view lives, never a failed read: read again after a backoff of ${ALPHA_READ_BACKOFF_MS} ms doubling to ${ALPHA_READ_BACKOFF_MAX_MS} ms, each read given twice the time of the last up to ${ALPHA_READ_DEADLINE_MAX_MS} ms; never again once its view is gone`, async () => {
+    expect([ALPHA_READ_BACKOFF_MS, ALPHA_READ_BACKOFF_MAX_MS, ALPHA_READ_DEADLINE_MAX_MS]).toEqual([1500, 15000, 32000]);
     vi.useFakeTimers();
-    const { started, abandoned } = heldPictures([A], [A]);
-    const { result } = renderHook(() => useAlphaMarginsOf([A]));
-    await vi.advanceTimersByTimeAsync((1 + ALPHA_READ_RETRIES) * ALPHA_READ_DEADLINE_MS - 1);
-    expect(started).toEqual([A, A, A]);
-    expect(result.current.has(A)).toBe(false);
+    const { startedAt, abandoned } = heldPictures([A], [A]);
+    const t0 = Date.now();
+    const view = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    const at = startedAt.map((t) => t - t0);
+    // read 8 s, wait 1.5 s; 16 s, 3 s; 32 s, 6 s; 32 s, 12 s; then 32 s and 15 s each time
+    expect(at.slice(0, 7)).toEqual([0, 9_500, 28_500, 66_500, 110_500, 157_500, 204_500]);
+    expect(at).toHaveLength(15);
+    for (const t of at) expect(at.filter((u) => u >= t && u < t + 60_000).length, `reads in the minute from ${t} ms`).toBeLessThanOrEqual(3);
+    expect(view.result.current.has(A), 'never known: no failed read for running out of time').toBe(false);
     expect(getAlphaMask(A)).toBeUndefined();
-    await vi.advanceTimersByTimeAsync(1 + EFFECTS_MS);
-    expect(abandoned()).toBe(3);
-    expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
-    expect(getAlphaMask(A)).toBeNull();
-    // and never read again
-    await vi.advanceTimersByTimeAsync(5 * ALPHA_READ_DEADLINE_MS);
-    expect(started).toEqual([A, A, A]);
+    // its view goes: the read in flight runs out of time and none follows, nor any timer
+    view.unmount();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect([startedAt.length, abandoned()]).toEqual([15, 15]);
+    expect(vi.getTimerCount()).toBe(0);
+    // a view wants it again: read afresh, from the first deadline
+    renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS - 1);
+    expect([startedAt.length, abandoned()]).toEqual([16, 15]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(abandoned()).toBe(16);
   });
 
-  it('an abandoned read is read again behind the reads already waiting', async () => {
+  it('a read whose view is gone before its turn comes never starts; a view that wants the picture again reads it afresh', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: ALPHA_READS_AT_ONCE + 1 }, (_, i) => `https://example.com/g${i}.png`);
+    const { release, started } = heldPictures(urls, urls);
+    renderHook(() => useAlphaMarginsOf(urls.slice(0, ALPHA_READS_AT_ONCE)));
+    const gone = renderHook(() => useAlphaMarginsOf(urls.slice(ALPHA_READS_AT_ONCE)));
+    await vi.advanceTimersByTimeAsync(0);
+    gone.unmount();
+    for (const url of urls) release(url);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual(urls.slice(0, ALPHA_READS_AT_ONCE));
+    const again = renderHook(() => useAlphaMarginsOf(urls.slice(ALPHA_READS_AT_ONCE)));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual(urls);
+    release(urls[ALPHA_READS_AT_ONCE]);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(again.result.current.size).toBe(1);
+  });
+
+  it(`a slow link, no stall (no HTTP cache: every read is its own fetch): every read takes 1.5 x the first deadline, yet every picture ends read with its own margins, never as a failed read, never more than 2 x ${ALPHA_READS_AT_ONCE} in flight`, async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: 12 }, (_, i) => `https://example.com/slow${i}.png`);
+    const takes = 1.5 * ALPHA_READ_DEADLINE_MS;
+    const reads: { img: HTMLImageElement; landed: boolean }[] = [];
+    mockPictures(Object.fromEntries(urls.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])), (_src, img) => {
+      const read = { img, landed: false };
+      reads.push(read);
+      return new Promise<void>((r) =>
+        setTimeout(() => {
+          read.landed = true;
+          r();
+        }, takes),
+      );
+    });
+    const inFlight = () => reads.filter((r) => !r.landed && r.img.getAttribute('src') !== '').length;
+    const answers: ReadonlyMap<string, AlphaMargins>[] = [];
+    renderHook(() => {
+      const known = useAlphaMarginsOf(urls);
+      if (answers.at(-1) !== known) answers.push(known);
+      return known;
+    });
+    const own = { top: 0.25, bottom: 0.5, left: 0.25, right: 0.5 };
+    let most = 0;
+    let ms = 0;
+    for (; ms < 5 * 60_000 && answers.at(-1)!.size < urls.length; ms += 250) {
+      await vi.advanceTimersByTimeAsync(250);
+      most = Math.max(most, inFlight());
+    }
+    expect(answers.at(-1)).toEqual(new Map(urls.map((u) => [u, own])));
+    // every answer on the way: each picture it knows, known by its own margins
+    expect(answers.flatMap((a) => [...a.values()]).filter((m) => JSON.stringify(m) !== JSON.stringify(own))).toEqual([]);
+    expect(reads.length, 'the first reads ran out of time and were read again').toBeGreaterThan(urls.length);
+    expect(most).toBeLessThanOrEqual(2 * ALPHA_READS_AT_ONCE);
+    expect(ms, 'read within two minutes').toBeLessThanOrEqual(2 * 60_000);
+  });
+
+  it('a picture whose read ran out of time is read again at once when its own picture loads (a cache hit then), not after its backoff', async () => {
+    vi.useFakeTimers();
+    const { release, started } = heldPictures([A], [A]);
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + 100);
+    // waiting out its backoff
+    expect(started).toEqual([A]);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual([A, A]);
+    release(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.get(A)).toEqual({ top: 0.25, bottom: 0.5, left: 0.25, right: 0.5 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('its own picture loading while its read is in flight: if that read runs out of time, the next starts at once; one load, one read at once', async () => {
+    vi.useFakeTimers();
+    const { started, startedAt } = heldPictures([A], [A]);
+    renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(1000);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS - 1000);
+    expect(startedAt.map((t) => t - startedAt[0])).toEqual([0, ALPHA_READ_DEADLINE_MS]);
+    // that read, given twice the time, runs out of time too: the next waits its backoff (the second: twice the first)
+    await vi.advanceTimersByTimeAsync(2 * ALPHA_READ_DEADLINE_MS + 2 * ALPHA_READ_BACKOFF_MS - 1);
+    expect(started).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started).toHaveLength(3);
+  });
+
+  it('its own picture loading while it waits in line: it is read next, ahead of the line', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: 10 }, (_, i) => `https://example.com/f${i}.png`);
+    const { started } = heldPictures(urls, urls);
+    renderHook(() => useAlphaMarginsOf(urls));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual(urls.slice(0, ALPHA_READS_AT_ONCE));
+    alphaPictureLoaded(urls[9]);
+    // first in line already: it stays there
+    alphaPictureLoaded(urls[9]);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started).toEqual([...urls.slice(0, ALPHA_READS_AT_ONCE), urls[9], ...urls.slice(ALPHA_READS_AT_ONCE, 2 * ALPHA_READS_AT_ONCE - 1)]);
+  });
+
+  it('a load of a picture not being read (never asked for, or read already) starts no read', async () => {
+    vi.useFakeTimers();
+    const { started } = heldPictures([A, B], []);
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.has(A)).toBe(true);
+    alphaPictureLoaded(A);
+    alphaPictureLoaded(B);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toEqual([A]);
+  });
+
+  it('an abandoned read waits out its backoff, then is read again behind the reads waiting by then', async () => {
     vi.useFakeTimers();
     const urls = Array.from({ length: 12 }, (_, i) => `https://example.com/w${i}.png`);
     const { started } = heldPictures(urls, urls);
@@ -712,8 +852,8 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     // the first four, abandoned: the four still waiting take the room they leave
     await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS);
     expect(started).toEqual(urls);
-    // the next four, abandoned: the first four are read again, behind them
-    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    // their backoff over as the next four are abandoned: the first four are read again, behind them
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_BACKOFF_MS);
     expect(started).toEqual([...urls, ...urls.slice(0, ALPHA_READS_AT_ONCE)]);
   });
 

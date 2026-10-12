@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/preact';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
@@ -7,7 +7,7 @@ import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import type { PictureMargins } from '../figureArt';
 
 /** What the canvas read of each picture's alpha says, by URL; null while it is still measuring. */
-const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null }));
+const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null, loaded: [] as string[] }));
 
 vi.mock('../alphaMargin', async (importOriginal) => {
   const real = await importOriginal<typeof import('../alphaMargin')>();
@@ -20,6 +20,7 @@ vi.mock('../alphaMargin', async (importOriginal) => {
         return m ? [[u, m] as const] : [];
       })),
     useContactBand: () => null,
+    alphaPictureLoaded: (url: string) => measured.loaded.push(url),
   };
 });
 
@@ -27,6 +28,7 @@ afterEach(() => {
   cleanup();
   measured.margins.clear();
   measured.fallback = null;
+  measured.loaded.length = 0;
 });
 
 interface Box {
@@ -219,6 +221,22 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
       expect(art.style.visibility).toBe('');
     });
   }
+
+  it("a cut-out's own picture, loading hidden while it is read, tells the reads when it has loaded (a read of it out of time goes again at once); a framed copy, never read, tells nothing", () => {
+    const figs = FIXTURE_FIGURES.slice(0, 3);
+    const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
+    const cutouts = Array.from(container.querySelectorAll<HTMLImageElement>('img.cab-figure__art--cutout'));
+    expect(cutouts).toHaveLength(3);
+    fireEvent.load(cutouts[1]);
+    fireEvent.load(cutouts[2]);
+    expect(measured.loaded).toEqual([figs[1].imageUrl, figs[2].imageUrl]);
+    cleanup();
+    measured.loaded.length = 0;
+    const framed = { ...FIXTURE_FIGURES[0], _id: 'framed', imageUrl: '/plain.jpg' } as Figure;
+    const scene = render(<CabinetScene figures={[framed]} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
+    fireEvent.load(scene.container.querySelector('.cab-figure__frame img')!);
+    expect(measured.loaded).toEqual([]);
+  });
 
   it('the plate a figure stands as while its picture is read is the plate of a figure without a picture: the same box on the surface, the same shadow under it', () => {
     // a wide label, and an image list that says where the bottom and the base are: none of it is drawn before the read

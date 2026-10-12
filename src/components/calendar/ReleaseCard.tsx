@@ -172,12 +172,12 @@ const releaseCardStyles = `
   }
 
   .release-card__date {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     color: var(--text-tertiary);
   }
 
   .release-card__price {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     color: var(--text-secondary);
     font-weight: var(--font-weight-medium);
   }
@@ -191,7 +191,7 @@ const releaseCardStyles = `
   }
 
   .release-card__status {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     font-weight: var(--font-weight-semibold);
     padding: 2px 8px;
     border-radius: var(--radius-full);
@@ -210,7 +210,7 @@ const releaseCardStyles = `
   }
 
   .release-card__countdown {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     font-weight: var(--font-weight-semibold);
     white-space: nowrap;
     line-height: 1;

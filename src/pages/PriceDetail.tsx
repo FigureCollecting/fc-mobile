@@ -571,7 +571,7 @@ const styles = `
   }
 
   .price-detail__alert-status {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     font-weight: var(--font-weight-semibold);
     padding: 2px 8px;
     border-radius: var(--radius-full);

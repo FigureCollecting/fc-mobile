@@ -123,7 +123,7 @@ export function SitePrice({ data }: SitePriceProps) {
         .site-price__stock {
           display: inline-flex;
           align-items: center;
-          font-size: 0.625rem;
+          font-size: var(--font-2xs);
           font-weight: var(--font-weight-semibold);
           padding: 2px 8px;
           border-radius: var(--radius-full);

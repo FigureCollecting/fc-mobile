@@ -175,7 +175,7 @@ export function SyncProgress({
         }
 
         .sync-progress__phase-label {
-          font-size: 0.625rem;
+          font-size: var(--font-2xs);
           color: var(--text-tertiary);
           text-align: center;
           line-height: var(--line-height-tight);

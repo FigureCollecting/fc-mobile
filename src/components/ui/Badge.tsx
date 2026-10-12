@@ -24,7 +24,7 @@ export function Badge({ count }: BadgeProps) {
           border-radius: var(--radius-full);
           background: var(--accent-danger);
           color: white;
-          font-size: 0.625rem;
+          font-size: var(--font-2xs);
           font-weight: var(--font-weight-bold);
           line-height: 18px;
           text-align: center;

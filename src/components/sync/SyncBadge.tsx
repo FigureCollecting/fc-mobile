@@ -40,8 +40,8 @@ export function SyncBadge({ sync, asOf, id, now, timeZone }: SyncBadgeProps) {
           max-width: 100%;
           padding: 1px 6px;
           border-radius: 8px;
-          font-size: 10px;
-          line-height: 13px;
+          font-size: var(--font-2xs);
+          line-height: 1.2;
           font-weight: 600;
           overflow-wrap: anywhere;
         }

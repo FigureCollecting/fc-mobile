@@ -205,7 +205,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
         }
 
         .jrows__plate-name {
-          font-size: var(--font-xs, 11px);
+          font-size: var(--font-xs);
           font-weight: 600;
           color: var(--text-primary);
           display: -webkit-box;
@@ -215,7 +215,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
         }
 
         .jrows__plate-mfr {
-          font-size: 10px;
+          font-size: var(--font-2xs);
           color: var(--text-tertiary);
           white-space: nowrap;
           overflow: hidden;
@@ -231,7 +231,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
           border-radius: 999px;
           background: var(--brand-500);
           color: #fff;
-          font-size: 11px;
+          font-size: var(--font-xs);
           font-weight: 700;
           line-height: 16px;
         }

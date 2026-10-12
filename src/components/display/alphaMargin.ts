@@ -279,12 +279,16 @@ function want(imageUrl: string): () => void {
 interface Reader {
   /** How many of its reads ran out of time. */
   timedOut: number;
-  /** Its own picture loaded while a read of it was in flight: if that read runs out of time or never decodes, the next goes at once. */
+  /** Its own picture loaded while a read of it was in flight: if that read runs out of time, the next goes at once. */
   loaded: boolean;
   /** Set while it waits (out its backoff, or in line): sends it to the front of the line at once. */
   hurry?: () => void;
-  /** Its read was sent so by its own picture loading: if that read never decodes the picture, the read's fetch failed. */
-  sentByLoad: boolean;
+  /**
+   * Its own picture has loaded, so it decodes: the next read that never
+   * decodes it, whenever it runs, failed to fetch it and goes again at once.
+   * One load, one read again.
+   */
+  retryUndecoded: boolean;
 }
 const readers = new Map<string, Reader>();
 
@@ -441,20 +445,19 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * never a failed read: the picture waits its backoff (ALPHA_READ_BACKOFF_MS)
  * and is queued again behind every first read, the next read given twice
  * the time (ALPHA_READ_DEADLINE_MS); its own picture loading
- * (alphaPictureLoaded) sends it to the front at once instead, and when it
- * loads before or during a read that then never decodes the picture, the
- * read's own fetch failed: it is read again at once (`first`: from the
- * start).
+ * (alphaPictureLoaded) sends it to the front at once instead. Once it has
+ * loaded, a read that never decodes the picture (the one its load sends, one
+ * in flight as it loads, or any later) failed to fetch it: it is read again
+ * at once (`first`: from the start), once per load.
  */
 async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | undefined> {
-  const reader: Reader = { timedOut: 0, loaded: false, sentByLoad: false };
+  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: false };
   readers.set(imageUrl, reader);
   for (;;) {
     const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);
     const read = await inTurn(async () => (wantedBy.has(imageUrl) ? readAlpha(imageUrl, deadlineMs) : undefined), reader, first);
-    const byLoad = reader.sentByLoad;
-    reader.sentByLoad = false;
-    if (read === UNDECODED && (reader.loaded || byLoad)) {
+    if (read === UNDECODED && reader.retryUndecoded) {
+      reader.retryUndecoded = false;
       reader.loaded = false;
       first = true;
       continue;
@@ -483,10 +486,10 @@ async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | 
 /**
  * The figure's own picture of `imageUrl` has loaded, so a read of it now is
  * a cache hit: one that ran out of time is read again at once, at the front
- * of the line, and one waiting in line moves to its front; a read so sent
- * that never decodes the picture failed to fetch it, and the next starts at
- * once. A read in flight goes on; if it runs out of time or never decodes
- * the picture, the next starts at once. A picture whose last read never
+ * of the line, and one waiting in line moves to its front. A read in flight
+ * goes on; if it runs out of time, the next starts at once. The next read
+ * that never decodes the picture, whenever it runs, failed to fetch it: it
+ * is read again at once, once per load. A picture whose last read never
  * decoded it (the read failed to fetch it) is read again, at the front of
  * the line, and the views showing it learn what that read gives. Any other:
  * nothing.
@@ -494,10 +497,9 @@ async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | 
 export function alphaPictureLoaded(imageUrl: string): void {
   const reader = readers.get(imageUrl);
   if (reader) {
-    if (reader.hurry) {
-      reader.sentByLoad = true;
-      reader.hurry();
-    } else reader.loaded = true;
+    reader.retryUndecoded = true;
+    if (reader.hurry) reader.hurry();
+    else reader.loaded = true;
   } else if (undecoded.has(imageUrl)) {
     void readInTurn(imageUrl, true).then((read) => {
       // its views gone before its turn: nothing kept, its next load reads it again

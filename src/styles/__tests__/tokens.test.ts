@@ -280,6 +280,95 @@ const LITERAL_SIZE_EXEMPT: Record<string, string> = {
   'components/display/CabinetScene.tsx': 'in-scene labels, sized in scene px and scaled by the case camera',
 };
 
+/** The font sizes under 12px that `source` (the file at `rel`, under src/) declares outside the tokens, as `rel:line declaration`. */
+function literalSizeOffenders(source: string, rel: string): string[] {
+  if (rel in LITERAL_SIZE_EXEMPT) return [];
+  const offenders: string[] = [];
+  source.split('\n').forEach((line, i) => {
+    for (const m of line.matchAll(/\bfont(-size)?:\s*([^;`{}]*)/g)) {
+      const size = m[2].match(/(?:^|\s)(\d*\.?\d+)(px|rem|em)\b/);
+      if (!size) continue;
+      const px = parseFloat(size[1]) * (size[2] === 'px' ? 1 : REM_TO_PX);
+      if (px < 12) offenders.push(`${rel}:${i + 1} ${m[0].trim()}`);
+    }
+  });
+  return offenders;
+}
+
+describe('the literal-size guard reads every way a font size is written', () => {
+  const offences = (source: string, rel = 'components/Sample.tsx') => literalSizeOffenders(source, rel);
+
+  it('flags px, rem, em and percent sizes under 12px, also inside calc(), min(), max(), clamp() and a var() fallback', () => {
+    for (const value of [
+      '10px',
+      '0.625rem',
+      '0.7em',
+      '62.5%',
+      'calc(10px)',
+      'min(10px, 2.5vw)',
+      'max(9px, 0.5rem)',
+      'clamp(0.5rem, 1vw, 0.7rem)',
+      'min(var(--font-sm), 2.5vw)',
+      'var(--font-xs, 11px)',
+      'calc(var(--font-2xs) - 1px)',
+    ]) {
+      expect(offences(`.a {\n  font-size: ${value};\n}`), value).toEqual([`components/Sample.tsx:2 font-size: ${value}`]);
+    }
+    expect(offences('.a { font: 600 11px/1 system-ui; }')).toHaveLength(1);
+  });
+
+  it('flags the keyword sizes under 12px, and smaller', () => {
+    for (const value of ['xx-small', 'x-small', 'smaller']) expect(offences(`.a { font-size: ${value}; }`), value).toHaveLength(1);
+  });
+
+  it('flags camelCase fontSize in style objects and attributes, a font-size attribute, a font in a style object and a canvas font', () => {
+    for (const source of [
+      '<span style={{ fontSize: 9 }} />',
+      "<span style={{ fontSize: '10px' }} />",
+      '<text fontSize={10}>x</text>',
+      '<text font-size="10">x</text>',
+      "ctx.font = '10px sans-serif';",
+      "const s = { font: '600 10px/1 system-ui' };",
+    ]) {
+      expect(offences(source), source).toHaveLength(1);
+    }
+  });
+
+  it('flags a size it cannot read rather than guess: an interpolation or a variable', () => {
+    expect(offences('const css = `.a { font-size: ${10}px; }`;')).toHaveLength(1);
+    expect(offences('<span style={{ fontSize: size }} />')).toHaveLength(1);
+  });
+
+  it('passes the tokens, sizes from 12px, the keywords from small, a line height under 12px and the other font properties', () => {
+    for (const source of [
+      '.a { font-size: var(--font-2xs); }',
+      '.a { font-size: var(--font-xs); }',
+      '.a { font-size: 12px; }',
+      '.a { font-size: 0.75rem; }',
+      '.a { font-size: small; }',
+      '.a { font-size: 100%; }',
+      '.a { font-size: inherit; }',
+      '.a { font: 600 14px/10px system-ui; }',
+      '.a { font-size: max(1rem, var(--font-input, 1rem)) !important; }',
+      '.a { font-size: calc(var(--font-sm) + 2px); }',
+      "<span style={{ fontSize: 'var(--font-xs)' }} />",
+      '<text fontSize={14}>x</text>',
+      '.a { font-weight: 400; font-family: system-ui; }',
+    ]) {
+      expect(offences(source), source).toEqual([]);
+    }
+  });
+
+  it("exempts the case's in-scene plates in CabinetScene.tsx only, not the rest of that file", () => {
+    const cabinet = 'components/display/CabinetScene.tsx';
+    expect(offences('  .cabinet-scene .cab-plate {\n    font: 600 11px/1 system-ui;\n  }', cabinet)).toEqual([]);
+    expect(offences('  .cabinet-scene .cab-figure__plate {\n    font: 600 9px/1.2 system-ui;\n  }', cabinet)).toEqual([]);
+    expect(offences('  .cabinet-scene__fit {\n    font: 600 9px/1.3 system-ui;\n  }', cabinet)).toHaveLength(1);
+    expect(offences('  .cabinet-scene .cab-figure__plate--reading { font-size: 9px; }', cabinet)).toHaveLength(1);
+    expect(offences('  .cabinet-scene .cab-plate {\n    font: 600 11px/1 system-ui;\n  }')).toHaveLength(1);
+  });
+});
+
 describe('design tokens: the smallest text goes through the tokens', () => {
   it('declares no font size under 12px outside tokens.css (use --font-2xs or --font-xs), so TYPE-1 and user text scaling reach it', () => {
     const srcRoot = path.resolve(path.dirname(tokensPath), '..');
@@ -293,18 +382,7 @@ describe('design tokens: the smallest text goes through the tokens', () => {
           continue;
         }
         if (!/\.(tsx?|css)$/.test(entry.name) || full === tokensPath) continue;
-        const rel = path.relative(srcRoot, full);
-        if (rel in LITERAL_SIZE_EXEMPT) continue;
-        fs.readFileSync(full, 'utf-8')
-          .split('\n')
-          .forEach((line, i) => {
-            for (const m of line.matchAll(/\bfont(-size)?:\s*([^;`{}]*)/g)) {
-              const size = m[2].match(/(?:^|\s)(\d*\.?\d+)(px|rem|em)\b/);
-              if (!size) continue;
-              const px = parseFloat(size[1]) * (size[2] === 'px' ? 1 : REM_TO_PX);
-              if (px < 12) offenders.push(`${rel}:${i + 1} ${m[0].trim()}`);
-            }
-          });
+        offenders.push(...literalSizeOffenders(fs.readFileSync(full, 'utf-8'), path.relative(srcRoot, full)));
       }
     };
     walk(srcRoot);

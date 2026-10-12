@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { NavigationRoute } from 'workbox-routing';
-import { API_NAVIGATION, API_PATH, DERIVATIVE_PATH, isApiPath, isDerivativeRequest } from '../routes';
+import { API_NAVIGATION, API_PATH, isApiPath, isDerivativeRequest } from '../routes';
 
 const ORIGIN = 'https://figurecollecting.com';
 const HEX64 = 'a'.repeat(32) + '0123456789abcdef'.repeat(2);
@@ -61,19 +61,23 @@ describe('API_NAVIGATION, in the real NavigationRoute', () => {
 });
 
 describe('isDerivativeRequest', () => {
-  it('takes a same-origin GET of /media/d/<64 lowercase hex>', () => {
-    expect(isDerivativeRequest(req(`/media/d/${HEX64}`))).toBe(true);
-    expect(DERIVATIVE_PATH.test(`/media/d/${HEX64}`)).toBe(true);
+  const MEDIA = 'https://images.figurecollecting.com';
+
+  it('takes a GET of the one public image address, <base>/<64 lowercase hex>, cross-origin', () => {
+    expect(isDerivativeRequest(req(`/d/${HEX64}`, { origin: MEDIA }))).toBe(true);
   });
 
-  it('refuses anything else', () => {
-    expect(isDerivativeRequest(req(`/media/d/${HEX64}`, { origin: 'https://images.figurecollecting.com' }))).toBe(false);
-    expect(isDerivativeRequest(req(`/media/d/${HEX64}`, { method: 'POST' }))).toBe(false);
-    expect(isDerivativeRequest(req(`/media/d/${HEX64.toUpperCase()}`))).toBe(false);
-    expect(isDerivativeRequest(req(`/media/d/${HEX64.slice(1)}`))).toBe(false);
-    expect(isDerivativeRequest(req(`/media/d/${HEX64}0`))).toBe(false);
-    expect(isDerivativeRequest(req(`/media/d/${HEX64}/x`))).toBe(false);
-    expect(isDerivativeRequest(req(`/api/media/d/${HEX64}`))).toBe(false);
+  it('refuses anything else: another method, path, host, case or length, and the retired same-origin /media/d', () => {
+    expect(isDerivativeRequest(req(`/d/${HEX64}`, { origin: MEDIA, method: 'POST' }))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64.toUpperCase()}`, { origin: MEDIA }))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64.slice(1)}`, { origin: MEDIA }))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64}0`, { origin: MEDIA }))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64}/x`, { origin: MEDIA }))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64}?raw=1`, { origin: MEDIA }))).toBe(false);
+    expect(isDerivativeRequest(req('/serve/1@2', { origin: MEDIA }))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64}`))).toBe(false);
+    expect(isDerivativeRequest(req(`/media/d/${HEX64}`))).toBe(false);
+    expect(isDerivativeRequest(req(`/d/${HEX64}`, { origin: 'https://static.myfigurecollection.net' }))).toBe(false);
   });
 
   it('never matches an /api path, whatever follows', () => {

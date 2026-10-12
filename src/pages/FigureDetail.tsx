@@ -18,6 +18,7 @@ import { SyncBadge, formatAsOf } from '../components/sync/SyncBadge';
 import { showToast } from '../stores/toast';
 import type { Disposal } from '../storage/userStore';
 import { Style } from '../styles/Style';
+import { useBrokenImages } from '../hooks/useBrokenImages';
 
 function SkeletonDetail() {
   return (
@@ -60,6 +61,8 @@ export function FigureDetail() {
   const phase = useAuthPhase();
   const { data: figure, isLoading, isError } = useFigure(params?.id);
   const image = useProductImage(figure?.local.headId);
+  // An image that fails to load is drawn as the plate (ADDR-1), never a blank box.
+  const images = useBrokenImages();
   const collections = useCollections();
   const updateMutation = useUpdateFigure();
   const deleteMutation = useDeleteFigure();
@@ -143,8 +146,8 @@ export function FigureDetail() {
         <button class="figure-detail__back-btn figure-detail__back-btn--floating" onClick={handleBack} aria-label="Go back" type="button">
           <BackIcon />
         </button>
-        {image.data ? (
-          <img class="figure-detail__image" src={image.data.url} alt={figure.name} />
+        {image.data && !images.broken(image.data.url) ? (
+          <img class="figure-detail__image" src={image.data.url} alt={figure.name} crossOrigin="anonymous" onError={() => images.failed(image.data!.url)} />
         ) : (
           // The placeholder plate (MG-2): no derivative, so no image of any kind.
           <div class="figure-detail__plate" aria-hidden="true">

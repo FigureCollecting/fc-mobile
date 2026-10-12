@@ -30,6 +30,10 @@ import { renderWithProviders } from '../../test/testUtils';
 import { localRig } from '../../local/__tests__/localHarness';
 import { seedFigures, type SeedFigure } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
+import { create } from '@bufbuild/protobuf';
+import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
+import { headOf } from '../../sync/__tests__/engineSupport';
+import { fakeCaches } from '../../test/fakeCaches';
 
 /** The local store holding `figs` (on the local data no figure has an image: MG-2). */
 async function respondWith(figs: SeedFigure[]) {
@@ -163,6 +167,47 @@ describe('Collection page (rebuilt display layer)', () => {
     await user.click(screen.getByRole('button', { name: /show 1/i }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Info' })).toBeDisabled();
+  });
+
+  it('stands an owned figure\'s kept image in the case (ADDR-1), a CORS image, and keeps the others as plates', async () => {
+    const storage = fakeCaches();
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    try {
+      const r = await localRig();
+      const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: src, width: 600, height: 800 }] }] }),
+      );
+      await seedFigures(r, [makeFigure('1'), makeFigure('2')]);
+      renderWithProviders(<Collection />, { initialPath: '/' });
+      await waitFor(() => expect(document.querySelector(`img[src="${src}"]`)).not.toBeNull());
+      expect(document.querySelector(`img[src="${src}"]`)).toHaveAttribute('crossorigin', 'anonymous');
+      expect(document.querySelectorAll('.cab-figure img')).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps an owned figure as its plate when its image bytes could not be kept (ADDR-1)', async () => {
+    const storage = fakeCaches(async () => new Response('', { status: 404 }));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    try {
+      const r = await localRig();
+      const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: src, width: 600, height: 800 }] }] }),
+      );
+      await seedFigures(r, [makeFigure('1'), makeFigure('2')]);
+      const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+      await waitFor(() => expect(container.querySelectorAll('.cab-figure__plate')).toHaveLength(2));
+      await new Promise((res) => setTimeout(res, 50));
+      expect(document.querySelector('.cab-figure img')).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('honors the layout URL param for Display B', async () => {

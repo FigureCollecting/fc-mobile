@@ -66,18 +66,37 @@ export function openEdge(coordinator: string, web: WebContainer): Promise<Edge> 
 }
 
 /** The real v2 store and UserStore, bundled so a test can queue edits in the page. */
-export async function bundleOutboxProbe(): Promise<string> {
+export function bundleOutboxProbe(): Promise<string> {
+  return bundlePageProbe('./outboxProbe.ts', 'fcOutboxProbe');
+}
+
+/** The app's own owned-image sync, for the page (e2e/pwa/imageProbe.ts). */
+export function bundleImageProbe(): Promise<string> {
+  return bundlePageProbe('./imageProbe.ts', 'fcImageProbe');
+}
+
+// The app runs React libraries on preact (vite.config.ts); so does a probe that imports one. A library
+// build leaves process.env.NODE_ENV in, which a page has no process for: the app's build replaces it.
+const PREACT_FOR_REACT = [
+  { find: /^react$/, replacement: 'preact/compat' },
+  { find: 'react/jsx-runtime', replacement: 'preact/jsx-runtime' },
+];
+const AS_BUILT = { 'process.env.NODE_ENV': JSON.stringify('production') };
+
+async function bundlePageProbe(entry: string, name: string): Promise<string> {
   const out = await build({
     configFile: false,
     logLevel: 'silent',
+    resolve: { alias: PREACT_FOR_REACT },
+    define: AS_BUILT,
     build: {
       write: false,
       minify: false,
-      lib: { entry: new URL('./outboxProbe.ts', import.meta.url).pathname, formats: ['iife'], name: 'fcOutboxProbe' },
+      lib: { entry: new URL(entry, import.meta.url).pathname, formats: ['iife'], name },
     },
   });
   const [bundle] = Array.isArray(out) ? out : [out];
   const chunk = (bundle as { output: Array<{ type: string; code?: string }> }).output.find((o) => o.type === 'chunk');
-  if (chunk?.code === undefined) throw new Error('outbox probe did not bundle');
+  if (chunk?.code === undefined) throw new Error(`${entry} did not bundle`);
   return chunk.code;
 }

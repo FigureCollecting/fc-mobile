@@ -689,6 +689,38 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(marginsOf(answers.at(-1)!.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
   });
 
+  for (const { when, loadAt, reads } of [
+    // its first read out of time at 8 s, its load in the backoff; the read the load sends out of time too (16 s), then its second backoff (3 s)
+    { when: 'during its backoff', loadAt: ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS / 2, reads: ['hang', 'hang', 'fail', 'fail'] },
+    // its first read out of time at 8 s, its load meanwhile: the next sent at once
+    { when: 'while its read is in flight', loadAt: 1000, reads: ['hang', 'fail', 'fail'] },
+  ] as const) {
+    it(`its own picture loading ${when}, a read then running out of time and a later one never decoding (its fetch failed): read again at once; one load, one read again`, async () => {
+      vi.useFakeTimers();
+      const startedAt: number[] = [];
+      mockPictures(pictures(), () => {
+        const read = reads[startedAt.length] ?? 'ok';
+        startedAt.push(Date.now());
+        if (read === 'ok') return Promise.resolve();
+        return read === 'fail' ? Promise.reject(neverDecoded()) : new Promise<void>(() => {});
+      });
+      const t0 = Date.now();
+      const { result } = renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(loadAt);
+      alphaPictureLoaded(A);
+      await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+      // the read that never decoded it failed to fetch it (its picture is here): the next goes at once; that one failing too, all 0
+      const failedAt = startedAt[reads.length - 2] - t0;
+      expect(startedAt.map((t) => t - t0).slice(reads.length - 2)).toEqual([failedAt, failedAt]);
+      expect(startedAt).toHaveLength(reads.length);
+      expect(result.current.get(A)).toEqual(NONE);
+      alphaPictureLoaded(A);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(startedAt).toHaveLength(reads.length + 1);
+      expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+    });
+  }
+
   it('a list changed to show a picture that never decoded: its own picture loading reads it again, and the changed list learns its margins', async () => {
     vi.useFakeTimers();
     let readsOfA = 0;

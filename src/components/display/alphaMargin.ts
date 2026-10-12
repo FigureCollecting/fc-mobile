@@ -157,7 +157,7 @@ const maskCache = new Map<string, AlphaMask | null>();
 const contactBandCache = new Map<string, ContactBand | null>();
 /** Pictures whose last read never decoded them (UNDECODED): their own picture loading reads them again. */
 const undecoded = new Set<string>();
-/** Pictures whose own picture loaded before any read of them: their first read carries a read again (Reader.retryUndecoded). */
+/** Pictures whose own picture loaded before any read of them landed: each reader of them carries a read again (Reader.retryUndecoded). */
 const loadedUnread = new Set<string>();
 /** What each view does when a picture is read again on its own load after it never decoded (alphaPictureLoaded). */
 const rereadViews = new Set<(imageUrl: string, read: AlphaRead) => void>();
@@ -454,8 +454,8 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * at once (`first`: from the start), once per load.
  */
 async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | undefined> {
-  // `first`: sent by its own picture loading, whose read again it carries, as does a load before any read
-  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: loadedUnread.delete(imageUrl) || first };
+  // `first`: sent by its own picture loading, whose read again it carries, as does a load before any read landed
+  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: first || loadedUnread.has(imageUrl) };
   readers.set(imageUrl, reader);
   for (;;) {
     const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);
@@ -520,6 +520,7 @@ function keep(imageUrl: string, read: AlphaRead): void {
   marginCache.set(imageUrl, read.margins);
   maskCache.set(imageUrl, read.mask && read.mask.drawn > 0 ? read.mask : null);
   contactBandCache.set(imageUrl, read.band);
+  loadedUnread.delete(imageUrl);
   if (read === UNDECODED) undecoded.add(imageUrl);
   else undecoded.delete(imageUrl);
 }

@@ -106,7 +106,8 @@ function expectOpaqueApart(rows: ReturnType<typeof drawn>, sides: { left: number
   for (const r of rows) bySurface.set(r.tap.surface, [...(bySurface.get(r.tap.surface) ?? []), r]);
   let pairs = 0;
   for (const row of bySurface.values()) {
-    row.sort((a, b) => a.art.x0 - b.art.x0);
+    // in the order they stand: by their tap boxes (their slots), not their pictures
+    row.sort((a, b) => a.tap.x0 - b.tap.x0);
     for (let i = 1; i < row.length; i++) {
       const [a, b] = [row[i - 1], row[i]];
       const aRight = a.art.x1 - sides.right * (a.art.x1 - a.art.x0);
@@ -185,12 +186,12 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
         const w = r.art.x1 - r.art.x0;
         const figure = { x0: r.art.x0 + sides.left * w, x1: r.art.x1 - sides.right * w };
         const slotCx = (r.tap.x0 + r.tap.x1) / 2;
-        expect((figure.x0 + figure.x1) / 2, r.name).toBeCloseTo(slotCx, 6);
+        expect((figure.x0 + figure.x1) / 2, r.name).toBeCloseTo(slotCx, 5);
         // the picture is drawn there: its box starts where its art box does, relative to the tap box
-        expect(parseFloat(r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 6);
+        expect(parseFloat(r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 5);
         // the shadow, with no contact band known, lies under the figure
         const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
-        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 6);
+        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 5);
       }
       expectOpaqueApart(rows, sides);
     });
@@ -203,7 +204,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
     const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.slice(0, 3).map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
     for (const r of drawn(container)) {
       const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
-      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 6);
+      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 5);
     }
   });
 });

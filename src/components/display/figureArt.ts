@@ -111,11 +111,24 @@ export function pictureBox(kind: FigureArtKind, heightMm: number, aspect: number
  * mm: the picture sized by pictureBox, less its clear columns left and
  * right. Wider than aspect x height when the clear rows are tall (wings over
  * a small figure); the case packs such art by it, never by less (a label
- * fitted to nothing, or none at all), so no figure reaches over a neighbour.
+ * fitted to nothing, or none at all), and centres those columns, not the
+ * picture, on the slot (pictureOffsetMm), so no figure reaches over a
+ * neighbour or past its surface.
  */
 export function drawnWidthMm(heightMm: number, aspect: number, margins: PictureMargins): number {
   const picture = pictureBox('cutout', heightMm, aspect, margins, Infinity);
   return picture.widthMm * Math.max(0, 1 - clearFrac(margins.left ?? 0) - clearFrac(margins.right ?? 0));
+}
+
+/**
+ * How far along the wall a picture widthMm wide is moved so the figure in
+ * it, its opaque columns, stands centred on its slot rather than the
+ * picture: half its clear right less its clear left, of its width (a figure
+ * leaning right in its picture moves it left). 0 when the sides are not
+ * known: framed and plate art, or a picture not read yet.
+ */
+export function pictureOffsetMm(widthMm: number, margins: PictureMargins): number {
+  return ((clearFrac(margins.right ?? 0) - clearFrac(margins.left ?? 0)) / 2) * widthMm;
 }
 
 /** The part of a coordinator.v1.ProductImage the case reads. */

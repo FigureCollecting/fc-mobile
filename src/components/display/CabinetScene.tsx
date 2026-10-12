@@ -35,7 +35,7 @@ import {
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
 import { cabinetsInReach, frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
-import { figureArt, pictureBox, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
+import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 
@@ -387,9 +387,12 @@ function SceneFigure({
   const { item } = placed;
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
   const grounded = margins !== null;
-  const picture = pictureBox(art.kind, placed.heightMm, aspect, margins ?? { top: 0, bottom: art.bottomMarginFrac ?? 0 }, item.widthMm);
+  const known = margins ?? { top: 0, bottom: art.bottomMarginFrac ?? 0 };
+  const picture = pictureBox(art.kind, placed.heightMm, aspect, known, item.widthMm);
   const boxH = picture.heightMm;
   const boxW = picture.widthMm;
+  // the picture's centre: moved so the figure in it, not the picture, stands centred on its slot
+  const artCx = cx + pictureOffsetMm(boxW, known);
   const yBottom = slot.topMm - picture.belowMm;
   const z = placed.zMm;
   // the tap box: the figure standing on its surface, never wider than its footprint and half the gap each side,
@@ -397,10 +400,12 @@ function SceneFigure({
   const tapW = Math.min(boxW, item.widthMm + FIGURE_GAP_MM);
   const tapX0 = cx - tapW / 2;
   const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0]);
-  const contact = art.contactBand ?? band ?? { centerXFrac: 0.5, widthFrac: art.kind === 'cutout' || art.kind === 'masked' ? 0.6 : 0.9 };
+  // no contact band known: the shadow lies under the figure, the middle of its picture's opaque columns
+  const contact = art.contactBand ??
+    band ?? { centerXFrac: 0.5 + (cx - artCx) / boxW, widthFrac: art.kind === 'cutout' || art.kind === 'masked' ? 0.6 : 0.9 };
   const shadowW = Math.max(20, contact.widthFrac * boxW * 1.15);
   const shadowD = Math.min(slot.depthMm, Math.max(40, item.depthMm));
-  const shadowX = cx - boxW / 2 + contact.centerXFrac * boxW;
+  const shadowX = artCx - boxW / 2 + contact.centerXFrac * boxW;
   const plateW = Math.min(PLATE_MAX_MM, item.widthMm);
   const box = (x0: number, x1: number, y0: number, y1: number) =>
     JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
@@ -416,13 +421,13 @@ function SceneFigure({
         data-figure-id={item.figure._id}
         data-grounded={grounded ? '1' : '0'}
         data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
-        data-art-box={box(cx - boxW / 2, cx + boxW / 2, yBottom, yBottom + boxH)}
+        data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
         onClick={onSelect}
       >
         <span
           class="cab-figure__box"
           style={{
-            left: `${fmt(cx - boxW / 2 - tapX0)}px`,
+            left: `${fmt(artCx - boxW / 2 - tapX0)}px`,
             // the button's top is the figure's head; the picture rises above it by its clear top margin
             top: `${fmt(slot.topMm + placed.heightMm - (yBottom + boxH))}px`,
             width: `${fmt(boxW)}px`,

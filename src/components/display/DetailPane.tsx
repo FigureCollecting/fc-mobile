@@ -1,6 +1,7 @@
 import type { Figure } from '@figurecollecting/fc-shared';
 import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
+import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 interface DetailPaneProps {
   figure: Figure;
@@ -17,6 +18,9 @@ interface DetailPaneProps {
  * visible and interactive alongside it.
  */
 export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
+  // An image that fails to load is drawn as the placeholder (ADDR-1), never a blank box.
+  const images = useBrokenImages();
+  const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
   return (
     <aside class="detail-pane">
       <button class="detail-pane__close" type="button" onClick={onClose} aria-label="Close detail">
@@ -26,8 +30,8 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
         </svg>
       </button>
 
-      {figure.imageUrl ? (
-        <img class="detail-pane__image" src={figure.imageUrl} alt={figure.name} />
+      {imageUrl ? (
+        <img class="detail-pane__image" src={imageUrl} alt={figure.name} crossOrigin="anonymous" onError={() => images.failed(imageUrl)} />
       ) : (
         <div class="detail-pane__placeholder" aria-hidden="true" />
       )}

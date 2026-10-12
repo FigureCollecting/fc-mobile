@@ -31,8 +31,10 @@ describe('nginx security headers', () => {
     expect(csp['default-src']).toEqual(["'self'"]);
     expect(csp['script-src']).toEqual(["'self'"]);
     expect(csp['style-src']).toEqual(["'self'"]);
-    // Same-origin coordinator under /api plus the IdP's token endpoint.
-    expect(csp['connect-src']).toEqual(["'self'", 'https://auth.mindsignals1.com']);
+    // Same-origin coordinator under /api, the IdP's token endpoint, and the ONE public image address
+    // (ADDR-1, https://images.figurecollecting.com/d): the service worker fetches derivatives and
+    // masks there to cache them for the owned figures, and fetch is governed by connect-src.
+    expect(csp['connect-src']).toEqual(["'self'", 'https://auth.mindsignals1.com', 'https://images.figurecollecting.com']);
     expect(csp['img-src']).toEqual(["'self'", 'data:', 'https://images.figurecollecting.com']);
     expect(csp['worker-src']).toEqual(["'self'"]);
     expect(csp['manifest-src']).toEqual(["'self'"]);
@@ -69,6 +71,15 @@ describe('previewHeaders (vite preview, for the e2e suite)', () => {
     for (const name of Object.keys(base).filter((d) => d !== 'connect-src' && d !== 'img-src')) {
       expect(csp[name]).toEqual(base[name]);
     }
+  });
+
+  it("adds a mode's public image address to img-src AND connect-src, and nothing else", () => {
+    const out = previewHeaders(conf, { VITE_MEDIA_PUBLIC_BASE_URL: 'http://localhost:8480/media/d' });
+    const csp = parseCsp(out['Content-Security-Policy'] as string);
+    const base = parseCsp(nginx['Content-Security-Policy'] as string);
+    expect(csp['connect-src']).toEqual([...(base['connect-src'] as string[]), 'http://localhost:8480']);
+    expect(csp['img-src']).toEqual([...(base['img-src'] as string[]), 'http://localhost:8480']);
+    expect(previewHeaders(conf, { VITE_MEDIA_PUBLIC_BASE_URL: 'https://images.figurecollecting.com/d' })).toEqual(nginx);
   });
 
   it('does not repeat a host the policy already lists', () => {

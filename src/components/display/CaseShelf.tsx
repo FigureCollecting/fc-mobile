@@ -19,6 +19,7 @@ import { useScrollParent } from '../../hooks/useScrollParent';
 import { CASE_AT_REST, nextPress, pressTapTarget } from './figureHitTest';
 import type { CasePress } from './figureHitTest';
 import { Style } from '../../styles/Style';
+import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 export type { PlacementStrategy };
 
@@ -247,6 +248,9 @@ function ShelfFigure({
   shelfLineY: number;
 }) {
   const { figure, meta, w, h } = item;
+  // An image that fails to load stands as the plate (ADDR-1), never a blank tile.
+  const images = useBrokenImages();
+  const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
 
   // Real per-image alpha measurement: every matted PNG has a different
   // amount of transparent padding below the figure's actual feet. Ungrounded
@@ -254,7 +258,7 @@ function ShelfFigure({
   // shifts the IMAGE ONLY (not the button, shadow, or nameplate — all three
   // are already correctly anchored to the shelf line) down by that margin
   // so the real feet meet it instead.
-  const bottomMarginFrac = useBottomMarginFrac(meta.matted ? figure.imageUrl : undefined);
+  const bottomMarginFrac = useBottomMarginFrac(meta.matted ? imageUrl : undefined);
   const groundingShiftPx = Math.round(bottomMarginFrac * h);
 
   const figX = ROW_PADDING_X_PX + item.left;
@@ -274,18 +278,20 @@ function ShelfFigure({
       data-index={item.index}
       data-synthetic-base={meta.matted && !meta.baseRecovered ? 'true' : undefined}
     >
-      {figure.imageUrl ? (
+      {imageUrl ? (
         meta.matted ? (
           <img
             class="shelf-figure__img"
-            src={figure.imageUrl}
+            src={imageUrl}
             alt=""
             loading="lazy"
+            crossOrigin="anonymous"
+            onError={() => images.failed(imageUrl)}
             style={groundingShiftPx ? { transform: `translateY(${groundingShiftPx}px)` } : undefined}
           />
         ) : (
           <span class="shelf-figure__frame">
-            <img class="shelf-figure__img shelf-figure__img--photo" src={figure.imageUrl} alt="" loading="lazy" />
+            <img class="shelf-figure__img shelf-figure__img--photo" src={imageUrl} alt="" loading="lazy" crossOrigin="anonymous" onError={() => images.failed(imageUrl)} />
           </span>
         )
       ) : (

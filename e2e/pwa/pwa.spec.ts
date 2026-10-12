@@ -8,7 +8,7 @@ import type { StackState } from '../stack/src/stack.js';
 import { expect, test, watchCsp } from '../fixtures';
 import { HANDS_OFF_LAUNCH_ARGS, blockHandsOff } from '../handsOff';
 import type { Edge } from '../stack/src/edge.js';
-import { bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb, type WebContainer } from './web';
+import { bundleImageProbe, bundleOutboxProbe, exec, imageUser, openEdge, requireImage, runWeb, type WebContainer } from './web';
 
 const IMAGE = requireImage('FC_WEB_IMAGE');
 const IMAGE_NEXT = requireImage('FC_WEB_IMAGE_NEXT');
@@ -161,31 +161,211 @@ test('(b) /api reaches the coordinator online, fails offline, and the image 404s
   }
 });
 
-test('(b) derivatives: same-origin CacheFirst, and only a 200 is kept', async ({ page }) => {
+test('(b) derivatives: the one public image address, kept by the worker for an <img> on a CORS 200 only, and served offline', async ({ context, page }) => {
   const { origin } = stackState();
+  const MEDIA = 'https://images.figurecollecting.com/d';
+  const present = `${MEDIA}/${'ab'.repeat(32)}`;
+  const missing = `${MEDIA}/${HEX64}`;
+  const fetched = `${MEDIA}/${'ef'.repeat(32)}`;
+  const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
+  const hits: string[] = [];
+  let down = false;
+  // The media origin, as the edge README's contract says it answers: the bytes, immutable, CORS for the app.
+  await context.route(/^https:\/\/images\.figurecollecting\.com\//, (route) => {
+    const url = route.request().url();
+    hits.push(url);
+    if (down) return route.abort('internetdisconnected');
+    const headers = { 'access-control-allow-origin': origin, 'cache-control': 'public, max-age=31536000, immutable', vary: 'Origin' };
+    if (url === missing) return route.fulfill({ status: 404, headers });
+    return route.fulfill({ status: 200, contentType: 'image/png', body: png, headers });
+  });
   await page.goto(`${origin}/`);
   await shellInstalled(page);
-  const get = (path: string) => page.evaluate((p) => fetch(p).then((r) => r.status), path);
-  const logged = (await stack.edge.log()).length;
-  const hits = async (path: string) => (await stack.edge.log()).slice(logged).filter((e) => e.path === path).length;
+  const get = (url: string) =>
+    page.evaluate((u) => fetch(u, { mode: 'cors', credentials: 'omit' }).then((r) => r.status, (e: Error) => `error ${e.name}`), url);
+  // An <img> of the address, as the app draws one: whether it decoded.
+  const show = (url: string, cors = true) =>
+    page.evaluate(
+      async ([src, c]) => {
+        const img = document.createElement('img');
+        if (c) img.crossOrigin = 'anonymous';
+        img.src = src;
+        document.body.appendChild(img);
+        await img.decode().catch(() => undefined);
+        const ok = img.complete && img.naturalWidth > 0;
+        img.remove();
+        return ok;
+      },
+      [url, cors] as const,
+    );
+  const browsed = () => page.evaluate(async () => (await (await caches.open('fc-derivatives-v2')).keys()).map((r) => r.url).sort());
+  const owned = () => page.evaluate(async () => (await (await caches.open('fc-owned-media-v1')).keys()).map((r) => r.url).sort());
+  /** Each cache the page or the worker keeps that holds this address. */
+  const cachesHolding = (url: string) =>
+    page.evaluate(async (u) => {
+      const out: string[] = [];
+      for (const name of await caches.keys()) if ((await (await caches.open(name)).match(u, { ignoreVary: true })) !== undefined) out.push(name);
+      return out;
+    }, url);
+  const count = (url: string) => hits.filter((h) => h === url).length;
+  // Each answer the worker gave this page for the address, as Chromium reports it: the address and its Cache-Control.
+  const answers: string[] = [];
+  page.on('response', (r) => {
+    if (r.fromServiceWorker() && r.url().startsWith(`${MEDIA}/`)) answers.push(`${r.url()} ${r.headers()['cache-control']}`);
+  });
+  const notNoStore = () => answers.filter((a) => !a.endsWith(' no-store'));
+  // A document keeps the images it decoded and draws them again without a request, so each offline check
+  // runs in a fresh document: a reload in this tab. A Playwright route turns off Chromium's HTTP cache and
+  // the tab's memory cache (any route: the hands-off guard's too), so here what answers that check is the
+  // worker. In a tab with no route, the memory cache can answer a fresh document's <img> from an earlier
+  // document's immutable answer without asking the worker (measured outside this suite), so every answer
+  // the worker gives but an opaque one is no-store, as checked below.
+  const freshDocument = async () => {
+    await page.reload();
+    await shellInstalled(page);
+  };
 
-  const missing = `/media/d/${HEX64}`;
-  expect(await get(missing)).toBe(404);
-  expect(await get(missing)).toBe(404);
-  expect(await hits(missing)).toBe(2);
+  // A 404 is never kept, nor an opaque (no-cors) answer.
+  expect(await show(missing)).toBe(false);
+  const opaqueFrom = answers.length;
+  expect(await show(present, false)).toBe(true);
+  // An opaque answer cannot be copied, so the worker passes it as it is, the origin's immutable with it.
+  expect(answers.splice(opaqueFrom)).toEqual([`${present} public, max-age=31536000, immutable`]);
+  expect(await browsed()).toEqual([]);
+  // A CORS 200 an <img> shows is kept. Workbox writes the cache after it answers (waitUntil).
+  expect(await show(present)).toBe(true);
+  await expect.poll(browsed).toEqual([present]);
+  // The page's own fetch of an image goes to the origin and is never kept: only what an <img> shows is.
+  expect(await get(fetched)).toBe(200);
 
-  const present = `/media/d/${'ab'.repeat(32)}`;
-  await stack.edge.fault({ match: `^${present}$`, action: 'status', status: 200, times: 1 });
-  expect(await get(present)).toBe(200);
-  await stack.edge.stop();
-  try {
-    expect(await get(present)).toBe(200);
-  } finally {
-    await stack.edge.start();
-  }
-  expect(await hits(present)).toBe(1);
-  const cached = await page.evaluate(async () => (await (await caches.open('fc-derivatives-v1')).keys()).map((r) => new URL(r.url).pathname));
-  expect(cached).toEqual([present]);
+  down = true;
+  await freshDocument();
+  expect(await show(present)).toBe(true);
+  expect(await show(missing)).toBe(false);
+  expect(await get(fetched)).toBe('error TypeError');
+  expect(await browsed()).toEqual([present]);
+  // The no-cors <img> and the CORS one; nothing after the origin went down.
+  expect(count(present)).toBe(2);
+
+  // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): the sync stores them
+  // in the owned cache only, and the worker serves them from it first, offline too. A withheld one is
+  // deleted from every CacheStorage cache, and the worker refuses it with a network error, online and
+  // offline, though an <img> showed it online before it was owned and offline while it was. Every answer the worker gave this
+  // page for it was marked no-store. With this context's caches off, the test cannot show what Chromium's
+  // HTTP cache or the tab's memory cache would keep: src/sw/__tests__/sw.test.ts and
+  // src/media/__tests__/ownedImages.test.ts pin each fetch of an image address to cache 'no-store', and
+  // sw.test.ts each answer to the page to Cache-Control no-store.
+  down = false;
+  await context.addInitScript({ content: await bundleImageProbe() });
+  await freshDocument();
+  type Probe = { syncOwned: (heads: string[], lists: Record<string, { url: string; primary?: boolean }[]>) => Promise<unknown>; kept: (head: string) => Promise<string | null> };
+  const sync = (lists: Record<string, { url: string; primary?: boolean }[]>) =>
+    page.evaluate((l) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.syncOwned(Object.keys(l), l), lists);
+  const kept = (head: string) => page.evaluate((h) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.kept(h), head);
+  const ownedImage = `${MEDIA}/${'cd'.repeat(32)}`;
+  const replacement = `${MEDIA}/${'0d'.repeat(32)}`;
+  // Shown once before the figure was owned: the browsed cache holds it too.
+  expect(await show(ownedImage)).toBe(true);
+  await expect.poll(browsed).toEqual([present, ownedImage].sort());
+  expect(await sync({ h1: [{ url: ownedImage, primary: true }] })).toMatchObject({ figures: 1, images: 1, added: 1, failed: 0 });
+  expect(await owned()).toEqual([ownedImage]);
+  // While it is owned, the <img>'s copy stays in the browsed cache too, until the sync evicts the image.
+  expect((await cachesHolding(ownedImage)).sort()).toEqual(['fc-derivatives-v2', 'fc-owned-media-v1']);
+  expect(await kept('h1')).toBe(ownedImage);
+  // As a sync in a document the worker does not control stores it: the origin's answer, immutable. The
+  // worker's answers from the owned cache below are no-store all the same.
+  await page.evaluate(async (u) => {
+    const cache = await caches.open('fc-owned-media-v1');
+    const stored = await cache.match(u, { ignoreVary: true });
+    if (stored === undefined) throw new Error(`${u} is not kept`);
+    const headers = new Headers(stored.headers);
+    headers.set('cache-control', 'public, max-age=31536000, immutable');
+    await cache.put(u, new Response(await stored.blob(), { headers }));
+  }, ownedImage);
+  down = true;
+  await freshDocument();
+  const before = count(ownedImage);
+  expect(await get(ownedImage)).toBe(200);
+  expect(await show(ownedImage)).toBe(true);
+  expect(count(ownedImage)).toBe(before);
+  // Shown from the origin, fetched by the sync, then read and shown from the owned cache: each answer no-store.
+  expect(answers.filter((a) => a.startsWith(`${ownedImage} `))).toEqual(Array(4).fill(`${ownedImage} no-store`));
+
+  // Withheld: the fresh list carries another image. The old one leaves both caches and fails offline.
+  down = false;
+  expect(await sync({ h1: [{ url: replacement, primary: true }] })).toMatchObject({ added: 1, evicted: 1 });
+  // The sync's own fetch of the replacement was never kept by the worker.
+  expect(await browsed()).toEqual([present]);
+  expect(await owned()).toEqual([replacement]);
+  expect(await kept('h1')).toBe(replacement);
+  expect(await cachesHolding(ownedImage)).toEqual([]);
+  // The sync recorded it as withheld: in a fresh document the worker refuses it, online too, though the
+  // origin still serves it. No request leaves for it, no cache takes it again, and the next sync finds
+  // nothing to evict.
+  await freshDocument();
+  const asked = count(ownedImage);
+  expect(await show(ownedImage)).toBe(false);
+  expect(await get(ownedImage)).toBe('error TypeError');
+  expect(count(ownedImage)).toBe(asked);
+  expect(await cachesHolding(ownedImage)).toEqual([]);
+  expect(await sync({ h1: [{ url: replacement, primary: true }] })).toMatchObject({ added: 0, evicted: 0 });
+  down = true;
+  await freshDocument();
+  expect(await show(ownedImage)).toBe(false);
+  expect(await get(ownedImage)).toBe('error TypeError');
+  expect(await show(replacement)).toBe(true);
+  expect(await cachesHolding(ownedImage)).toEqual([]);
+  expect(await cachesHolding(replacement)).toEqual(['fc-owned-media-v1']);
+  // Every answer but the opaque one, from either cache or the origin, the sync's own fetches too.
+  expect(answers.length).toBeGreaterThan(0);
+  expect(notNoStore()).toEqual([]);
+});
+
+test('(b) another tab: told on a BroadcastChannel when a tab\'s owned sync completes, it drops its image answers, and an open page stops naming the withheld image before its re-ask answers', async ({ context, page }) => {
+  const { origin } = stackState();
+  const MEDIA = 'https://images.figurecollecting.com/d';
+  const withheld = `${MEDIA}/${'cd'.repeat(32)}`;
+  const replacement = `${MEDIA}/${'0d'.repeat(32)}`;
+  const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
+  await context.route(/^https:\/\/images\.figurecollecting\.com\//, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: png, headers: { 'access-control-allow-origin': origin, 'cache-control': 'public, max-age=31536000, immutable', vary: 'Origin' } }),
+  );
+  await context.addInitScript({ content: await bundleImageProbe() });
+  type Probe = {
+    syncOwned: (heads: string[], lists: Record<string, { url: string; primary?: boolean }[]>) => Promise<unknown>;
+    answer: (head: string, url: string) => boolean;
+    show: (head: string, url: string) => boolean;
+    shown: (head: string) => { url: string | null; asking: boolean };
+    caseView: (head: string, url: string) => void;
+    caseViewStands: (head: string) => boolean;
+    answers: () => number;
+    completed: (head: string) => void;
+  };
+  const call = <K extends keyof Probe>(p: Page, method: K, ...args: Parameters<Probe[K]>): Promise<Awaited<ReturnType<Probe[K]>>> =>
+    p.evaluate(([m, a]) => ((window as unknown as { fcImageProbe: Record<string, (...x: unknown[]) => unknown> }).fcImageProbe[m]!(...a)), [method, args] as [string, unknown[]]) as Promise<Awaited<ReturnType<Probe[K]>>>;
+  const sync = (url: string) => page.evaluate((u) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.syncOwned(['h1'], { h1: [{ url: u, primary: true }] }), url);
+  await page.goto(`${origin}/`);
+  await shellInstalled(page);
+  const other = await context.newPage();
+  await other.goto(`${origin}/`);
+  await shellInstalled(other);
+  // The first tab: its case view, and a figure page answer no page shows. The other tab: a figure page
+  // open on the figure, and an answer for another figure no page shows. All name the image.
+  await call(page, 'caseView', 'h1', withheld);
+  expect(await call(page, 'answer', 'h1', withheld)).toBe(true);
+  expect(await call(other, 'show', 'h1', withheld)).toBe(true);
+  expect(await call(other, 'answer', 'h2', withheld)).toBe(true);
+  // The first tab's syncs keep the image, then withhold it; its case view does what the app's does.
+  await sync(withheld);
+  await sync(replacement);
+  await call(page, 'completed', 'h1');
+  // The other tab: the open page answers the plate while its re-ask is still unanswered; the answer no page shows is gone.
+  await expect.poll(() => call(other, 'shown', 'h1')).toEqual({ url: null, asking: true });
+  expect(await call(other, 'answers')).toBe(1);
+  // The first tab dropped its own figure page answer and kept its case view's (it never hears its own message).
+  await expect.poll(() => call(page, 'answers')).toBe(0);
+  expect(await call(page, 'caseViewStands', 'h1')).toBe(true);
+  await other.close();
 });
 
 test.describe('(c) build N+1 ships while 2 edits are pending', () => {
@@ -351,7 +531,7 @@ test('(d) img-src: same-origin and images.figurecollecting.com images load, a ho
   const { origin } = stackState();
   const src = {
     self: `${origin}/icons/icon-192.png`,
-    derivative: 'https://images.figurecollecting.com/serve/1@2',
+    derivative: `https://images.figurecollecting.com/d/${HEX64}`,
     hotlinked: 'https://static.myfigurecollection.net/upload/items/1/12345-abcde.jpg',
   };
   const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { fireEvent, screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { JustifiedRows } from '../JustifiedRows';
@@ -24,6 +24,28 @@ describe('JustifiedRows (Display B)', () => {
     for (const f of FIXTURE_FIGURES) {
       expect(screen.getByRole('button', { name: f.name })).toBeInTheDocument();
     }
+  });
+
+  it('asks for every image with crossorigin anonymous, a CORS request (src/sw.ts)', () => {
+    const figs = FIXTURE_FIGURES.filter((f) => f.imageUrl).slice(0, 3);
+    const { container } = renderWithProviders(<JustifiedRows figures={figs} density="compact" />);
+    const imgs = [...container.querySelectorAll('.jrows__img')];
+    expect(imgs).toHaveLength(3);
+    for (const img of imgs) expect(img).toHaveAttribute('crossorigin', 'anonymous');
+  });
+
+  it('draws the placeholder plate, with no caption, for a figure whose image fails to load', async () => {
+    const figs = FIXTURE_FIGURES.filter((f) => f.imageUrl).slice(0, 2);
+    const { container } = renderWithProviders(<JustifiedRows figures={figs} density="compact" labels />);
+    const first = screen.getByRole('button', { name: figs[0]!.name });
+    expect(first.querySelector('.jrows__img')).not.toBeNull();
+    expect(first.querySelector('.jrows__caption')).not.toBeNull();
+    fireEvent.error(first.querySelector('.jrows__img')!);
+    await waitFor(() => expect(first.querySelector('.jrows__plate')).not.toBeNull());
+    expect(first.querySelector('.jrows__img')).toBeNull();
+    expect(first.querySelector('.jrows__caption')).toBeNull();
+    // The other figure keeps its image.
+    expect(container.querySelectorAll('.jrows__img')).toHaveLength(1);
   });
 
   it('lays out fixed-height rows with native-aspect item widths', () => {

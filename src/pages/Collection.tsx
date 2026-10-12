@@ -25,6 +25,7 @@ import { MoveSheet, type MoveTarget } from '../components/collection/MoveSheet';
 import { showToast } from '../stores/toast';
 import { useFigureListParams } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useOwnedImages } from '../hooks/useOwnedImages';
 import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, countActiveFilters } from '../utils/facets';
@@ -138,7 +139,19 @@ export function Collection() {
   const syncState = localSession.value?.engine.state.value;
   const outOfReach = !online.value || syncState?.reachability === 'unreachable';
 
-  const figures: Figure[] = fixtureMode ? (fixturesQuery.data ?? []) : (collectionQuery.data?.data ?? []);
+  // ADDR-1: an owned figure stands in the case as its kept image (online or off); the rest as plates.
+  const ownedImages = useOwnedImages();
+  const localFigures = collectionQuery.data?.data;
+  const withImages = useMemo(
+    () =>
+      (localFigures ?? []).map((f) => {
+        // Kept for the owned figures only; the same product on another tab shows the same image.
+        const image = ownedImages.get(f.local.headId);
+        return image === undefined ? f : { ...f, imageUrl: image.url };
+      }),
+    [localFigures, ownedImages],
+  );
+  const figures: Figure[] = fixtureMode ? (fixturesQuery.data ?? []) : withImages;
   const isLoading = fixtureMode ? fixturesQuery.isLoading : phase === 'loading' || collectionQuery.isLoading;
   const isError = fixtureMode ? fixturesQuery.isError : collectionQuery.isError;
   const total = fixtureMode ? figures.length : (collectionQuery.data?.total ?? figures.length);

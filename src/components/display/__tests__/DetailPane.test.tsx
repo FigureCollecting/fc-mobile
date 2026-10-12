@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { fireEvent, screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { DetailPane } from '../DetailPane';
@@ -17,6 +17,21 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     // No PhotoSwipe root, no fixed full-screen sheet — just the pane.
     expect(container.querySelector('.pswp')).toBeNull();
     expect(document.body.querySelector('.figure-viewer-sheet')).toBeNull();
+  });
+
+  it('asks for its image with crossorigin anonymous, a CORS request (src/sw.ts)', () => {
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    expect(container.querySelector('.detail-pane__image')).toHaveAttribute('crossorigin', 'anonymous');
+  });
+
+  it('draws the placeholder when the image fails to load', async () => {
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    expect(container.querySelector('.detail-pane__placeholder')).toBeNull();
+    fireEvent.error(container.querySelector('.detail-pane__image')!);
+    await waitFor(() => expect(container.querySelector('.detail-pane__placeholder')).not.toBeNull());
+    expect(container.querySelector('.detail-pane__image')).toBeNull();
   });
 
   it('calls onClose when the close button is tapped', async () => {

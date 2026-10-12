@@ -1,3 +1,5 @@
+import { isMediaUrl } from '../media/address';
+
 // Request classes the service worker decides on. The coordinator shares this
 // origin under /api, so the worker must never answer, cache or replay it.
 
@@ -10,9 +12,6 @@ export const API_PATH = /^\/api(\/.*)?$/;
  */
 export const API_NAVIGATION = /^\/api(?:[/?]|$)/;
 
-/** A display derivative, addressed by the SHA-256 of its bytes, so immutable. */
-export const DERIVATIVE_PATH = /^\/media\/d\/[0-9a-f]{64}$/;
-
 export function isApiPath(pathname: string): boolean {
   return API_PATH.test(pathname);
 }
@@ -23,7 +22,10 @@ export interface RouteRequest {
   sameOrigin: boolean;
 }
 
-/** Same-origin only: a cross-origin no-cors image is opaque and must never be cached. */
-export function isDerivativeRequest({ url, request, sameOrigin }: RouteRequest): boolean {
-  return sameOrigin && request.method === 'GET' && DERIVATIVE_PATH.test(url.pathname);
+/**
+ * A derivative or mask on the ONE public image address (src/media/address.ts), content-addressed
+ * so immutable. Cross-origin: the strategy keeps only a CORS 200, never an opaque response.
+ */
+export function isDerivativeRequest({ url, request }: RouteRequest): boolean {
+  return request.method === 'GET' && isMediaUrl(url);
 }

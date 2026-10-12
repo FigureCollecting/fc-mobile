@@ -384,12 +384,14 @@ async function bringToOwned(
 
   // Deletes need no quota, and every one comes before the first kept list is written: what this sync
   // withholds, and what it no longer keeps, leaves the device even when a later write fails. The kept
-  // list of a figure no longer kept, or that names a recorded address, is deleted, unless it names one
-  // the device refused to record: the next sync records that from it.
+  // list of a figure no longer kept is deleted, and when a record was refused, so is one that names a
+  // recorded address; but not one that names an address the device refused to record: the next sync
+  // records that from it.
+  const namesRecorded = (head: string) => (beforeOf.get(head) ?? []).some((u) => recorded.has(u));
   for (const key of recordKeys) {
     const head = headOfKey(key.url);
     const names = beforeOf.get(head) ?? [];
-    if ((!kept.has(head) || names.some((u) => recorded.has(u))) && !names.some((u) => unrecorded.has(u))) await records.delete(key);
+    if ((!kept.has(head) || (refused !== undefined && namesRecorded(head))) && !names.some((u) => unrecorded.has(u))) await records.delete(key);
   }
   const have = new Set<string>();
   for (const key of mediaKeys) {
@@ -406,10 +408,24 @@ async function bringToOwned(
   }
   if (refused !== undefined) throw refused.error;
 
+  const listOf = (list: readonly CachedImage[]) => new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } });
+  // A kept list naming a recorded address is replaced next, the case view gone or not; one the device
+  // refuses to write is deleted instead, with every such list not written yet, and the sync fails. So
+  // no kept list names a recorded address once these writes end, however the sync ends.
+  const replaced = [...kept.keys()].filter(namesRecorded);
+  const replacedFirst = new Set(replaced);
+  let at = 0;
+  try {
+    for (; at < replaced.length; at += 1) await records.put(listKey(replaced[at]!), listOf(kept.get(replaced[at]!)!));
+  } catch (error) {
+    for (const head of replaced.slice(at)) await records.delete(listKey(head));
+    throw error;
+  }
   for (const [head, list] of kept) {
+    if (replacedFirst.has(head)) continue;
     // Cancelled (the case view went away): no other kept list is written, and nothing is fetched.
     options.signal?.throwIfAborted();
-    await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
+    await records.put(listKey(head), listOf(list));
   }
   const missing = [...keep].filter((u) => !have.has(u));
   // Each fetch is aborted when the sync's signal aborts, or when it has received nothing (its headers,

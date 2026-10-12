@@ -289,7 +289,7 @@ for (const [from, to] of [
 async function drawnFigures(page: Page, stalled?: RegExp) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const rows = await page.locator('button.cab-figure').evaluateAll(async (els, skip) => {
-    const out: { name: string; kind: string; world: string; art: string; top: number; height: number; clear: { above: number; below: number; left: number; right: number } }[] = [];
+    const out: { name: string; kind: string; world: string; art: string; left: number; width: number; top: number; height: number; clear: { above: number; below: number; left: number; right: number } }[] = [];
     for (const b of els as HTMLElement[]) {
       // a figure whose picture is held back draws nothing yet
       if (skip && new RegExp(skip).test(b.getAttribute('aria-label')!)) continue;
@@ -322,7 +322,7 @@ async function drawnFigures(page: Page, stalled?: RegExp) {
         Object.assign(clear, { above: y0 / c.height, below: (c.height - 1 - y1) / c.height, left: x0 / c.width, right: (c.width - 1 - x1) / c.width });
       }
       const r = el.getBoundingClientRect();
-      out.push({ name: b.getAttribute('aria-label')!, kind, world: b.dataset.world!, art: b.dataset.artBox!, top: r.top, height: r.height, clear });
+      out.push({ name: b.getAttribute('aria-label')!, kind, world: b.dataset.world!, art: b.dataset.artBox!, left: r.left, width: r.width, top: r.top, height: r.height, clear });
     }
     return out;
   }, stalled?.source);
@@ -331,7 +331,7 @@ async function drawnFigures(page: Page, stalled?: RegExp) {
     const w = art.x1 - art.x0;
     // where the figure itself is drawn along the wall, mm: its opaque columns
     const opaque = { x0: art.x0 + r.clear.left * w, x1: art.x1 - r.clear.right * w };
-    return { ...r, top: r.top - scene.y, world: JSON.parse(r.world) as World, art, opaque, clearAbove: r.clear.above, clearBelow: r.clear.below };
+    return { ...r, left: r.left - scene.x, top: r.top - scene.y, world: JSON.parse(r.world) as World, art, opaque, clearAbove: r.clear.above, clearBelow: r.clear.below };
   });
 }
 
@@ -403,22 +403,29 @@ for (const branch of ['cut-out', 'masked'] as const) {
     });
   }
 
-  test(`true scale, ${branch}: the tilted cabinet view draws each picture where its world box is, the figure in it its labelled height`, async ({ page }) => {
-    await openCase(page, FOLD8[0], branch === 'masked' ? '&fxbranch=masked' : '', { view: 'cabinet' });
-    const camera = await cameraOf(page);
-    for (const r of await pictureAlpha(page)) {
-      const pictureH = r.art.y1 - r.art.y0;
-      // in the world: the opaque rows of the picture run from the surface to the labelled height above it
-      expect(Math.abs(r.art.y0 + r.clearBelow * pictureH - r.world.surface), `${r.name} feet, mm`).toBeLessThan(0.5);
-      expect(Math.abs(r.art.y1 - r.clearAbove * pictureH - r.world.y1), `${r.name} head, mm`).toBeLessThan(0.5);
-      // and the browser draws the picture exactly over that world box
-      const cx = (r.art.x0 + r.art.x1) / 2;
-      const top = project(camera, [cx, r.art.y1, r.art.z]).y;
-      const bottom = project(camera, [cx, r.art.y0, r.art.z]).y;
-      expect(Math.abs(r.top - top), `${r.name} picture top`).toBeLessThan(1.5);
-      expect(Math.abs(r.top + r.height - bottom), `${r.name} picture bottom`).toBeLessThan(1.5);
-    }
-  });
+  // the committed art and the off-centre art (?fxasym=1), whose pictures are moved so the figures stand centred
+  for (const asym of ['', '&fxasym=1'] as const) {
+    test(`true scale, ${branch}${asym ? ', off-centre art' : ''}: the tilted cabinet view draws each picture where its world box is, the figure in it its labelled height`, async ({ page }) => {
+      await openCase(page, FOLD8[0], `${branch === 'masked' ? '&fxbranch=masked' : ''}${asym}`, { view: 'cabinet' });
+      const camera = await cameraOf(page);
+      for (const r of await pictureAlpha(page)) {
+        const pictureH = r.art.y1 - r.art.y0;
+        // in the world: the opaque rows of the picture run from the surface to the labelled height above it
+        expect(Math.abs(r.art.y0 + r.clearBelow * pictureH - r.world.surface), `${r.name} feet, mm`).toBeLessThan(0.5);
+        expect(Math.abs(r.art.y1 - r.clearAbove * pictureH - r.world.y1), `${r.name} head, mm`).toBeLessThan(0.5);
+        // and the browser draws the picture exactly over that world box
+        const cx = (r.art.x0 + r.art.x1) / 2;
+        const top = project(camera, [cx, r.art.y1, r.art.z]).y;
+        const bottom = project(camera, [cx, r.art.y0, r.art.z]).y;
+        expect(Math.abs(r.top - top), `${r.name} picture top`).toBeLessThan(1.5);
+        expect(Math.abs(r.top + r.height - bottom), `${r.name} picture bottom`).toBeLessThan(1.5);
+        // and along the wall: its corners where the camera puts the art box's
+        const xs = [r.art.x0, r.art.x1].flatMap((x) => [r.art.y0, r.art.y1].map((y) => project(camera, [x, y, r.art.z]).x));
+        expect(Math.abs(r.left - Math.min(...xs)), `${r.name} picture left`).toBeLessThan(1.5);
+        expect(Math.abs(r.left + r.width - Math.max(...xs)), `${r.name} picture right`).toBeLessThan(1.5);
+      }
+    });
+  }
 }
 
 // the labelled widths as given, none at all, and labels narrower than the cut-outs draw (as the real sign-off cut-outs have)

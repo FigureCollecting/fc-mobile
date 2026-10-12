@@ -330,6 +330,7 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
   });
 
   it(`reads landing apart while the list is read are one answer every ${ALPHA_LANDING_BATCH_MS} ms; the last of the list answers at once`, async () => {
+    expect(ALPHA_LANDING_BATCH_MS).toBe(100);
     vi.useFakeTimers();
     const C = 'https://example.com/c.png';
     const { release } = heldPictures([A, B, C], [A, B, C]);
@@ -347,6 +348,42 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     release(C);
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(result.current.size).toBe(3);
+  });
+
+  it('a steady stream of reads is answered every batch, never held back until it pauses', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: 5 }, (_, i) => `https://example.com/t${i}.png`);
+    const { release } = heldPictures(urls, urls);
+    const { result } = renderHook(() => useAlphaMarginsOf(urls));
+    await vi.advanceTimersByTimeAsync(0);
+    // one lands every 60 ms, each sooner than a batch; the last never
+    release(urls[0]);
+    await vi.advanceTimersByTimeAsync(60);
+    release(urls[1]);
+    await vi.advanceTimersByTimeAsync(60);
+    // the first batch closed 100 ms after the first landing, with what had landed by then
+    expect([...result.current.keys()]).toEqual(urls.slice(0, 2));
+    release(urls[2]);
+    await vi.advanceTimersByTimeAsync(60);
+    release(urls[3]);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect([...result.current.keys()]).toEqual(urls.slice(0, 4));
+  });
+
+  it('a list changed while a batch waits: the old list never answers', async () => {
+    vi.useFakeTimers();
+    const { release } = heldPictures([A, B], [A, B]);
+    const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [A, B] } });
+    await vi.advanceTimersByTimeAsync(0);
+    release(A);
+    await vi.advanceTimersByTimeAsync(0);
+    // A has landed, its batch still open: now the list is A alone, known at once from the cache
+    rerender({ urls: [A] });
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    const shown = result.current;
+    expect([...shown.keys()]).toEqual([A]);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(result.current).toBe(shown);
   });
 
   it('known at once when every picture is cached, a part of a measured list too, with no second read', async () => {
@@ -467,6 +504,7 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
   });
 
   it(`a read still going after ${ALPHA_READ_TURN_MS} ms hands its turn on (stalled pictures never hold the rest up), and only once`, async () => {
+    expect(ALPHA_READ_TURN_MS).toBe(1500);
     vi.useFakeTimers();
     const slow = Array.from({ length: 4 }, (_, i) => `https://example.com/s${i}.png`);
     const next = Array.from({ length: 4 }, (_, i) => `https://example.com/n${i}.png`);

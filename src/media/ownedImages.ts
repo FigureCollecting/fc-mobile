@@ -237,7 +237,7 @@ export async function syncOwnedImages(
 ): Promise<OwnedImageSync> {
   const storage = 'storage' in options ? options.storage : browserCaches();
   if (storage === undefined) return { figures: 0, images: 0, added: 0, evicted: 0, failed: 0 };
-  const locks = typeof navigator === 'undefined' ? undefined : (navigator as { locks?: LockManager }).locks;
+  const locks = (navigator as { locks?: LockManager }).locks;
   if (locks === undefined) return bringToOwned(ownedHeads, fetchLists, storage, options);
   const wait = new AbortController();
   const timer = setTimeout(

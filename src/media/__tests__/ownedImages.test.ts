@@ -992,6 +992,28 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(owned(storage)).toEqual([]);
   });
 
+  it('a slow write to the owned cache is not a stalled link: the images after it are still fetched', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const storage = device();
+    // Each write of an image's bytes takes 25 s (a device short of space).
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== OWNED_MEDIA_CACHE) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        put: async (req: RequestInfo | URL, res: Response) => {
+          await new Promise((done) => setTimeout(done, 25_000));
+          return cache.put(req, res);
+        },
+      });
+    };
+    const sync = syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] }), { storage, concurrency: 1 });
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(await sync).toMatchObject({ added: 2, failed: 0 });
+    expect(owned(storage)).toEqual([url('a'), url('b')]);
+  });
+
   it('where the browser has no Web Locks, a sync runs at once: syncs in two documents are not serialised', async () => {
     expect((navigator as unknown as { locks?: unknown }).locks).toBeUndefined();
     const storage = device();

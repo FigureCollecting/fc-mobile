@@ -273,25 +273,136 @@ describe('design tokens: one notch up at desktop widths, the phone and Fold8 siz
 });
 
 /**
- * Files whose small literal font sizes are not UI text at the reader's scale:
- * the case's in-scene labels are drawn in scene px and scaled by the camera.
+ * The small literal font sizes allowed outside tokens.css, by file and CSS
+ * rule: the case's in-scene plates, drawn in scene px and scaled by the case
+ * camera. Every other rule of those files is guarded like any file.
  */
-const LITERAL_SIZE_EXEMPT: Record<string, string> = {
-  'components/display/CabinetScene.tsx': 'in-scene labels, sized in scene px and scaled by the case camera',
+const LITERAL_SIZE_EXEMPT: Record<string, { rule: RegExp; why: string }> = {
+  'components/display/CabinetScene.tsx': {
+    rule: /^\.cabinet-scene \.(?:cab-plate|cab-figure__plate)$/,
+    why: 'the in-scene plates, sized in scene px and scaled by the case camera',
+  },
 };
+
+/**
+ * Every way a source file sets a font size: CSS font-size and font (in a
+ * stylesheet or a style object), camelCase fontSize (a style object or an
+ * attribute), the font-size attribute, and a canvas's font. `js` values are
+ * expressions: a number (bare, or quoted in an attribute) is px, another
+ * string is CSS, and anything else is unreadable.
+ */
+const SIZE_SETTERS: { re: RegExp; shorthand: boolean; js: boolean }[] = [
+  { re: /\bfont-size\s*:\s*((?:\$\{[^}]*\}|[^;`{}\n])*)/g, shorthand: false, js: false },
+  { re: /\bfont\s*:\s*((?:\$\{[^}]*\}|[^;`{}\n])*)/g, shorthand: true, js: false },
+  { re: /\bfontSize\s*[:=]\s*(\{[^}\n]*\}|'[^'\n]*'|"[^"\n]*"|`[^`\n]*`|[^,;}\s]+)/g, shorthand: false, js: true },
+  { re: /\bfont-size\s*=\s*(\{[^}\n]*\}|'[^'\n]*'|"[^"\n]*")/g, shorthand: false, js: true },
+  { re: /\.font\s*=\s*('[^'\n]*'|"[^"\n]*"|`[^`\n]*`)/g, shorthand: true, js: true },
+];
+
+/** A length's px on a 16 px root (em and % taken against it). */
+const LENGTH = /(?<![\w.-])(\d*\.?\d+)(px|rem|em|%)(?![\w-])/g;
+const lengthPx = (n: string, unit: string) => parseFloat(n) * (unit === 'px' ? 1 : unit === '%' ? REM_TO_PX / 100 : REM_TO_PX);
+
+/** The top-level calc(), min(), max() and clamp() calls in a CSS value. */
+function mathCalls(value: string): string[] {
+  const calls: string[] = [];
+  for (let i = 0; i < value.length; i++) {
+    const head = value.slice(i).match(/^(?:calc|min|max|clamp)\(/);
+    if (!head || /[\w-]/.test(value[i - 1] ?? '')) continue;
+    let depth = 0;
+    let j = i + head[0].length - 1;
+    for (; j < value.length; j++) {
+      if (value[j] === '(') depth++;
+      else if (value[j] === ')' && --depth === 0) break;
+    }
+    calls.push(value.slice(i, j + 1));
+    i = j;
+  }
+  return calls;
+}
+
+/**
+ * A math size's smallest px at every width the tokens are checked at, the
+ * font tokens it names put in (a var() of anything else takes its fallback),
+ * and the floor it answers to: 12px, or its smallest token's own size when
+ * that is less (calc(var(--font-2xs)) is the token itself). Null if unreadable.
+ */
+function mathSize(expr: string): { px: number; floor: number } | null {
+  let floor = 12;
+  let unreadable = false;
+  const filled = expr
+    .replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*))?\)/g, (_, name: string, fallback?: string) => {
+      if (SIZE_TOKENS.includes(name)) {
+        floor = Math.min(floor, ...WIDTHS.map((w) => sizeAt(name, w)));
+        return `calc(${getDeclaredValue(name)})`;
+      }
+      if (fallback === undefined) unreadable = true;
+      return `calc(${fallback ?? '0px'})`;
+    })
+    .replace(LENGTH, (_, n: string, unit: string) => (unit === 'px' ? `${n}px` : `${lengthPx(n, unit) / REM_TO_PX}rem`));
+  if (unreadable) return null;
+  try {
+    return { px: Math.min(...WIDTHS.map((w) => cssPx(filled, { rootPx: REM_TO_PX, viewportPx: w }))), floor };
+  } catch {
+    return null;
+  }
+}
+
+/** Why a CSS font or font-size value sets text under 12px outside the tokens, or null when it does not. */
+function cssSizeOffence(value: string, shorthand: boolean): string | null {
+  let v = value.replace(/!important/g, '').trim();
+  if (v.includes('${')) return 'an interpolated size the guard cannot read';
+  // The font shorthand's line height follows its size after a slash.
+  if (shorthand) v = v.replace(/(\d*\.?\d+(?:px|rem|em|%)|\))\s*\/\s*\S+/g, '$1');
+  const keyword = v.match(/(?:^|[\s,(])(xx-small|x-small|smaller)(?=$|[\s,)])/);
+  if (keyword) return `the keyword ${keyword[1]}`;
+  let rest = v;
+  for (const call of mathCalls(v)) {
+    rest = rest.replace(call, ' ');
+    const size = mathSize(call);
+    if (size === null) return `${call}, a size the guard cannot read`;
+    if (size.px < size.floor - 1e-9) return `${call} reaches ${+size.px.toFixed(2)}px`;
+  }
+  for (const [, n, unit] of rest.matchAll(LENGTH)) {
+    if (lengthPx(n, unit) < 12) return `${n}${unit}`;
+  }
+  return null;
+}
+
+/** The enclosing CSS rule's selector at `at` in `source`, '' when outside a rule. */
+function ruleAt(source: string, at: number): string {
+  const open = source.lastIndexOf('{', at);
+  if (open < 0 || source.lastIndexOf('}', at) > open) return '';
+  const start = Math.max(source.lastIndexOf('}', open), source.lastIndexOf(';', open), source.lastIndexOf('`', open)) + 1;
+  return source.slice(start, open).replace(/\/\*[\s\S]*?\*\//g, '').trim().replace(/\s+/g, ' ');
+}
 
 /** The font sizes under 12px that `source` (the file at `rel`, under src/) declares outside the tokens, as `rel:line declaration`. */
 function literalSizeOffenders(source: string, rel: string): string[] {
-  if (rel in LITERAL_SIZE_EXEMPT) return [];
+  const exempt = LITERAL_SIZE_EXEMPT[rel];
   const offenders: string[] = [];
-  source.split('\n').forEach((line, i) => {
-    for (const m of line.matchAll(/\bfont(-size)?:\s*([^;`{}]*)/g)) {
-      const size = m[2].match(/(?:^|\s)(\d*\.?\d+)(px|rem|em)\b/);
-      if (!size) continue;
-      const px = parseFloat(size[1]) * (size[2] === 'px' ? 1 : REM_TO_PX);
-      if (px < 12) offenders.push(`${rel}:${i + 1} ${m[0].trim()}`);
+  for (const { re, shorthand, js } of SIZE_SETTERS) {
+    for (const m of source.matchAll(re)) {
+      let value = m[1].trim();
+      let offence: string | null;
+      if (js) {
+        if (value.startsWith('{') && value.endsWith('}')) value = value.slice(1, -1).trim();
+        // A number, bare or quoted (an SVG attribute), is px; another string is CSS.
+        const quoted = value.match(/^(['"`])([\s\S]*)\1$/);
+        const inner = quoted ? quoted[2].trim() : value;
+        if (/^\d*\.?\d+$/.test(inner)) offence = parseFloat(inner) < 12 ? `${inner} (px)` : null;
+        else if (quoted) offence = cssSizeOffence(inner, shorthand);
+        else offence = `${value}, a size the guard cannot read`;
+      } else {
+        offence = cssSizeOffence(value, shorthand);
+      }
+      if (offence === null) continue;
+      const selector = ruleAt(source, m.index!);
+      if (exempt && selector && selector.split(',').every((part) => exempt.rule.test(part.trim()))) continue;
+      const line = source.slice(0, m.index).split('\n').length;
+      offenders.push(`${rel}:${line} ${m[0].trim()}`);
     }
-  });
+  }
   return offenders;
 }
 
@@ -337,6 +448,7 @@ describe('the literal-size guard reads every way a font size is written', () => 
   it('flags a size it cannot read rather than guess: an interpolation or a variable', () => {
     expect(offences('const css = `.a { font-size: ${10}px; }`;')).toHaveLength(1);
     expect(offences('<span style={{ fontSize: size }} />')).toHaveLength(1);
+    expect(offences('.a { font-size: max(var(--unknown), 14px); }')).toHaveLength(1);
   });
 
   it('passes the tokens, sizes from 12px, the keywords from small, a line height under 12px and the other font properties', () => {
@@ -351,6 +463,7 @@ describe('the literal-size guard reads every way a font size is written', () => 
       '.a { font: 600 14px/10px system-ui; }',
       '.a { font-size: max(1rem, var(--font-input, 1rem)) !important; }',
       '.a { font-size: calc(var(--font-sm) + 2px); }',
+      '.a { font-size: max(var(--font-2xs), 2vw); }',
       "<span style={{ fontSize: 'var(--font-xs)' }} />",
       '<text fontSize={14}>x</text>',
       '.a { font-weight: 400; font-family: system-ui; }',

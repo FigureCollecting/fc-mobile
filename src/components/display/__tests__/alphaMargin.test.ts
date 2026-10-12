@@ -599,12 +599,13 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await vi.advanceTimersByTimeAsync(0);
     expect(started).toEqual(urls.slice(0, 2 * ALPHA_READS_AT_ONCE + 2));
     expect(inFlight()).toBe(2 * ALPHA_READS_AT_ONCE);
-    // however long the rest stall, each abandoned at its deadline and read again later: the list moves on, never more in flight
+    // however long the rest stall, each abandoned at its deadline and read again later: the list moves on, the room
+    // full while reads wait and never more in flight
     for (let turn = 0; turn < 12; turn++) {
       await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
       counts.push(inFlight());
     }
-    expect(Math.max(...counts)).toBe(2 * ALPHA_READS_AT_ONCE);
+    expect(counts).toEqual(counts.map(() => 2 * ALPHA_READS_AT_ONCE));
     expect(new Set(started).size).toBeGreaterThan(4 * ALPHA_READS_AT_ONCE);
     // every read ends as it starts: then every turn and all the room are free again, and never one more
     for (let round = 0; round < 50 && inFlight() > 0; round++) {

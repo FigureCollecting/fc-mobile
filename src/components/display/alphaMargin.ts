@@ -153,16 +153,36 @@ const marginCache = new Map<string, AlphaMargins>();
 const pending = new Map<string, Promise<AlphaMargins>>();
 /** null: measured, but no usable mask (unreadable, or nothing drawn). */
 const maskCache = new Map<string, AlphaMask | null>();
+/** null: measured, but no contact band (unreadable, or nothing drawn); filled by the same read as the margins. */
+const contactBandCache = new Map<string, ContactBand | null>();
 
 /**
  * How many pictures are read at once, and how many more may still be going
  * after running out of time (ALPHA_READ_TURN_MS): at most twice this in
- * flight, so a long list never decodes all of its images together, even on
- * a stalled network.
+ * flight, a read ending when it lands or is abandoned at its deadline
+ * (ALPHA_READ_DEADLINE_MS). So the case never decodes all of a long list's
+ * pictures together for its canvas reads (margins, mask and contact band:
+ * one read per picture), even on a stalled network.
  */
 export const ALPHA_READS_AT_ONCE = 4;
-/** A read still going after this long gives up its turn, so a stalled picture never holds the rest up; it lands when it lands. */
+/**
+ * A read still going after this long gives up its turn to the next picture
+ * (while fewer than ALPHA_READS_AT_ONCE others are out of time) and goes on
+ * until its deadline, so one stalled picture never holds the rest up.
+ */
 export const ALPHA_READ_TURN_MS = 1500;
+/**
+ * A read not done this long after it starts is abandoned: its src cleared,
+ * so the browser cancels its request, and nothing of it is kept. So however
+ * many pictures stall, the rest wait at most this long for room to be read.
+ */
+export const ALPHA_READ_DEADLINE_MS = 8000;
+/**
+ * How many more times an abandoned picture is read, each behind the reads
+ * waiting then, before it is taken as a failed read (all 0: packed by its
+ * whole picture).
+ */
+export const ALPHA_READ_RETRIES = 2;
 /** Reads holding a turn. */
 let reading = 0;
 /** Reads that gave up their turn, still going: at most ALPHA_READS_AT_ONCE. */
@@ -218,6 +238,7 @@ export function __clearAlphaMarginCache(): void {
   marginCache.clear();
   pending.clear();
   maskCache.clear();
+  contactBandCache.clear();
   reading = 0;
   overdue = 0;
   queued.length = 0;
@@ -234,46 +255,80 @@ export function getAlphaMask(imageUrl: string): AlphaMask | null | undefined {
   return maskCache.get(imageUrl);
 }
 
-/** One canvas read of a picture: its clear margins and its drawn-pixel mask. Never throws. */
-async function readAlpha(imageUrl: string): Promise<{ margins: AlphaMargins; mask: AlphaMask | null }> {
+/** What one canvas read of a picture gives: its clear margins, its drawn-pixel mask and its contact band. */
+interface AlphaRead {
+  margins: AlphaMargins;
+  mask: AlphaMask | null;
+  band: ContactBand | null;
+}
+
+/** A read that failed: no margins, no mask, no contact band (the figure packed and grounded by its whole picture). */
+const FAILED_READ: AlphaRead = { margins: NO_MARGINS, mask: null, band: null };
+
+/** One canvas read of a picture; null when abandoned at its deadline (ALPHA_READ_DEADLINE_MS). Never throws. */
+async function readAlpha(imageUrl: string): Promise<AlphaRead | null> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = imageUrl;
-    await img.decode();
+    const inTime = await Promise.race([
+      img.decode().then(() => true),
+      new Promise<false>((stop) => {
+        deadline = setTimeout(() => stop(false), ALPHA_READ_DEADLINE_MS);
+      }),
+    ]);
+    if (!inTime) {
+      // abandoned: the browser cancels its request; its decode, still pending, ends in nothing
+      img.src = '';
+      return null;
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
-    if (canvas.width === 0 || canvas.height === 0) return { margins: NO_MARGINS, mask: null };
+    if (canvas.width === 0 || canvas.height === 0) return FAILED_READ;
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) return { margins: NO_MARGINS, mask: null };
+    if (!ctx) return FAILED_READ;
     ctx.drawImage(img, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     return {
       margins: { top: computeTopMarginFrac(imageData), bottom: computeBottomMarginFrac(imageData), ...computeSideMarginFracs(imageData) },
       mask: computeAlphaMask(imageData),
+      band: computeContactBand(imageData),
     };
   } catch {
     // Tainted canvas (cross-origin image without CORS headers), decode
     // failure (broken URL), or no canvas 2D support — degrade to "no
     // correction" (today's object-fit:bottom behavior) rather than crash
     // the shelf over a single bad image.
-    return { margins: NO_MARGINS, mask: null };
+    return FAILED_READ;
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
-/** A picture's clear margins, read once in turn (inTurn) and cached by URL; known in the cache when this resolves. */
+/** A picture read in turn (inTurn); one abandoned is read again behind the reads waiting, ALPHA_READ_RETRIES times, then failed. */
+async function readInTurn(imageUrl: string): Promise<AlphaRead> {
+  for (let tries = 0; tries <= ALPHA_READ_RETRIES; tries++) {
+    const read = await inTurn(() => readAlpha(imageUrl));
+    if (read) return read;
+  }
+  return FAILED_READ;
+}
+
+/** A picture's clear margins, read once in turn (readInTurn) and cached by URL with its mask and contact band; known in the cache when this resolves. */
 function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
   const cached = marginCache.get(imageUrl);
   if (cached !== undefined) return Promise.resolve(cached);
   const inFlight = pending.get(imageUrl);
   if (inFlight) return inFlight;
 
-  const promise = inTurn(() => readAlpha(imageUrl)).then(({ margins, mask }) => {
+  const promise = readInTurn(imageUrl).then(({ margins, mask, band }) => {
     marginCache.set(imageUrl, margins);
     maskCache.set(imageUrl, mask && mask.drawn > 0 ? mask : null);
+    contactBandCache.set(imageUrl, band);
     pending.delete(imageUrl);
     return margins;
   });
@@ -331,7 +386,11 @@ export const ALPHA_LANDING_BATCH_MS = 100;
  * packs every figure by what it draws) known so far, each read once and
  * cached by URL across lists. A picture is in the answer as soon as it is
  * read (a failed read is known too: all 0), so a slow or stalled one holds
- * back only its own figure; reads landing together are one answer
+ * back only its own figure: it gives up its turn (ALPHA_READ_TURN_MS) and
+ * is abandoned at its deadline (ALPHA_READ_DEADLINE_MS), so the others
+ * are read meanwhile (when more than ALPHA_READS_AT_ONCE stall together,
+ * the next wait at most that deadline), and it is read again later
+ * (ALPHA_READ_RETRIES), unknown till then; reads landing together are one answer
  * (ALPHA_LANDING_BATCH_MS), and the last picture of the list answers at
  * once. A list whose pictures are cached is known at once, and a new list
  * keeps every picture it shares with the old.
@@ -437,56 +496,24 @@ export function computeContactBand(buffer: AlphaBuffer): ContactBand | null {
   };
 }
 
-const contactBandCache = new Map<string, ContactBand | null>();
-const contactBandPending = new Map<string, Promise<ContactBand | null>>();
-
-/** Test-only: reset module-level caches between test cases. */
+/** Test-only: reset the contact bands known (the reads that fill them are reset by __clearAlphaMarginCache, which clears these too). */
 export function __clearContactBandCache(): void {
   contactBandCache.clear();
-  contactBandPending.clear();
-}
-
-async function measureContactBand(imageUrl: string): Promise<ContactBand | null> {
-  const cached = contactBandCache.get(imageUrl);
-  if (cached !== undefined) return cached;
-  const inFlight = contactBandPending.get(imageUrl);
-  if (inFlight) return inFlight;
-
-  const promise = (async () => {
-    try {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.src = imageUrl;
-      await img.decode();
-
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      if (canvas.width === 0 || canvas.height === 0) return null;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      return computeContactBand(imageData);
-    } catch {
-      // Tainted canvas / decode failure / no canvas 2D support — degrade to
-      // null (caller falls back to the hand-set meta fields), never crash
-      // the shelf over a single bad image.
-      return null;
-    } finally {
-      contactBandPending.delete(imageUrl);
-    }
-  })();
-
-  contactBandPending.set(imageUrl, promise);
-  const result = await promise;
-  contactBandCache.set(imageUrl, result);
-  return result;
 }
 
 /**
- * Measured contact-band center/width for a figure's image, cached by URL.
+ * A picture's contact band, from the same read in turn as its margins
+ * (measureAlphaMargins): one decode per picture, in the case's read queue;
+ * null when that read failed or the picture draws nothing.
+ */
+async function measureContactBand(imageUrl: string): Promise<ContactBand | null> {
+  await measureAlphaMargins(imageUrl);
+  return contactBandCache.get(imageUrl) ?? null;
+}
+
+/**
+ * Measured contact-band center/width for a figure's image, cached by URL
+ * and read with its margins (measureContactBand: one read per picture, in turn).
  * Returns null — "not yet measured, or measurement failed" — until the
  * async measurement resolves; callers fall back to the hand-set
  * meta.footprintCenterX/footprintWidth in that case (the SAME

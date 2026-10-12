@@ -247,10 +247,8 @@ export async function syncOwnedImages(
   if (options.signal?.aborted === true) stop();
   options.signal?.addEventListener('abort', stop, { once: true });
   try {
-    return await locks.request(OWNED_SYNC_LOCK, { signal: wait.signal }, () => {
-      clearTimeout(timer);
-      return bringToOwned(ownedHeads, fetchLists, storage, options);
-    });
+    // Once the lock is granted, the browser ignores the signal (Web Locks): the timer stops nothing more.
+    return await locks.request(OWNED_SYNC_LOCK, { signal: wait.signal }, () => bringToOwned(ownedHeads, fetchLists, storage, options));
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', stop);

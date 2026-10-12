@@ -175,6 +175,25 @@ describe('useBottomMarginFrac (canvas-backed, real image measurement)', () => {
     await waitFor(() => expect(result.current).toBe(0));
   });
 
+  it('a picture that never decoded whose own picture loads after all (the read failed to fetch it): the margin of the read its load sends', async () => {
+    let fails = 1;
+    mockDecode(() => (fails-- > 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve()));
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 10, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const buf = bufferWithBottomMargin(10, 100, 78);
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => buf,
+    } as unknown as CanvasRenderingContext2D);
+    const url = 'https://example.com/refetched.png';
+    const { result } = renderHook(() => useBottomMarginFrac(url));
+    await waitFor(() => expect(fails).toBe(0));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current).toBe(0);
+    alphaPictureLoaded(url);
+    await waitFor(() => expect(result.current).toBeCloseTo(22 / 100, 5));
+  });
+
   it('returns 0 for an undefined image URL without measuring anything', () => {
     const { result } = renderHook(() => useBottomMarginFrac(undefined));
     expect(result.current).toBe(0);
@@ -469,7 +488,7 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
 
   // the read itself has no guard for these: a picture of no size fails at getImageData, one with no 2D canvas at drawImage,
   // both in its catch; this pins that result
-  it('a picture of no size, or one with no 2D canvas to read it on, is a failed read at once: all 0, never read again', async () => {
+  it('a picture of no size, or one with no 2D canvas to read it on, is a failed read at once: all 0, never read again, its own picture loading or not', async () => {
     vi.useFakeTimers();
     const decode = vi.fn(() => Promise.resolve());
     HTMLImageElement.prototype.decode = decode;
@@ -487,8 +506,110 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     expect(result.current.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    // they decoded: the failure is the canvas's, no fetch to try again
+    alphaPictureLoaded(A);
+    alphaPictureLoaded(B);
     await vi.advanceTimersByTimeAsync(3 * ALPHA_READ_DEADLINE_MS);
     expect(decode).toHaveBeenCalledTimes(2);
+  });
+
+  /** A picture's margins, rounded: top, bottom, left, right. */
+  const marginsOf = (m: AlphaMargins | undefined) => m && [m.top, m.bottom, m.left, m.right].map((v) => Math.round(v * 1e9) / 1e9);
+  const NONE = { top: 0, bottom: 0, left: 0, right: 0 };
+  /** decode() rejects so for a broken picture and for a fetch that failed alike. */
+  const neverDecoded = () => new DOMException('network error', 'EncodingError');
+
+  it('a picture that never decoded (a broken picture, or its fetch failed: a network or HTTP error) is all 0; when its own picture loads after all, it is read again, ahead of the line, and known by its own margins; one load, one read', async () => {
+    vi.useFakeTimers();
+    const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/k${i}.png`);
+    const after = 'https://example.com/after.png';
+    const started: string[] = [];
+    let fails = 1;
+    mockPictures({ ...pictures(), ...Object.fromEntries([...held, after].map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])) }, (src) => {
+      started.push(src);
+      if (src === A) return fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+      return held.includes(src) ? new Promise<void>(() => {}) : Promise.resolve();
+    });
+    const { result } = renderHook(() => useAlphaMarginsOf([A, ...held, after]));
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(result.current.get(A)).toEqual(NONE);
+    expect(getAlphaMask(A)).toBeNull();
+    // its own picture loads while the held reads keep their turns and `after` waits in line
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS + ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(started).toEqual([A, ...held, A, after]);
+    expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+    expect(getAlphaMask(A)).not.toBeNull();
+    // read now: another load reads nothing
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started.filter((s) => s === A)).toHaveLength(2);
+  });
+
+  it('its own picture loading while its read is in flight, that read then never decoding: read again at once, never answered all 0 meanwhile; failing again, all 0 until its next load reads it', async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    const failNext: (() => void)[] = [];
+    let fails = 2;
+    mockPictures(pictures(), (src) => {
+      started.push(src);
+      if (fails-- <= 0) return Promise.resolve();
+      return new Promise<void>((_, no) => failNext.push(() => no(neverDecoded())));
+    });
+    const answers: ReadonlyMap<string, AlphaMargins>[] = [];
+    renderHook(() => {
+      const known = useAlphaMarginsOf([A]);
+      if (answers.at(-1) !== known) answers.push(known);
+      return known;
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    alphaPictureLoaded(A);
+    failNext.shift()!();
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    // its picture is here, so the read's own fetch failed: read again at once
+    expect(started).toEqual([A, A]);
+    expect(answers.at(-1)!.has(A), 'never answered all 0 meanwhile').toBe(false);
+    // that read fails too: one load, one read; all 0 now, and no read without a load
+    failNext.shift()!();
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(answers.at(-1)!.get(A)).toEqual(NONE);
+    await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toEqual([A, A]);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A, A, A]);
+    expect(marginsOf(answers.at(-1)!.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
+  it('a picture read again on its own load whose view is gone before its turn: nothing kept, all 0 still, and its next load reads it again; a list not showing it is never answered anew', async () => {
+    vi.useFakeTimers();
+    const held = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/m${i}.png`);
+    const started: string[] = [];
+    let fails = 1;
+    mockPictures({ ...pictures(), ...Object.fromEntries(held.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])) }, (src) => {
+      started.push(src);
+      if (src === A) return fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+      return new Promise<void>(() => {});
+    });
+    const shown = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(shown.result.current.get(A)).toEqual(NONE);
+    const others = renderHook(() => useAlphaMarginsOf(held));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    const othersAnswer = others.result.current;
+    // its picture loads with every turn taken: its read waits at the front of the line, and its view goes meanwhile
+    alphaPictureLoaded(A);
+    shown.unmount();
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started.filter((s) => s === A)).toHaveLength(1);
+    // a view of it again: all 0 from the cache at once; its next load reads it, and that view learns its own margins
+    const again = renderHook(() => useAlphaMarginsOf([A]));
+    expect(again.result.current.get(A)).toEqual(NONE);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started.filter((s) => s === A)).toHaveLength(2);
+    expect(marginsOf(again.result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+    expect(others.result.current, 'a list not showing it: no new answer').toBe(othersAnswer);
   });
 
   it('a list with a new picture keeps what it knows: only the new one is unknown, until it is read', async () => {
@@ -1211,6 +1332,25 @@ describe('useContactBand (canvas-backed, real image measurement)', () => {
     } as unknown as CanvasRenderingContext2D);
 
     const { result } = renderHook(() => useContactBand('https://example.com/measured.png'));
+    await waitFor(() => expect(result.current?.centerXFrac).toBeCloseTo(19.5 / 100, 5));
+  });
+
+  it('a picture that never decoded whose own picture loads after all (the read failed to fetch it): the band of the read its load sends', async () => {
+    let fails = 1;
+    mockDecode(() => (fails-- > 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve()));
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 100, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const buf = bufferWithContactBand(100, 100, 8, 10, 30);
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => buf,
+    } as unknown as CanvasRenderingContext2D);
+    const url = 'https://example.com/refetched-band.png';
+    const { result } = renderHook(() => useContactBand(url));
+    await waitFor(() => expect(fails).toBe(0));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current).toBeNull();
+    alphaPictureLoaded(url);
     await waitFor(() => expect(result.current?.centerXFrac).toBeCloseTo(19.5 / 100, 5));
   });
 

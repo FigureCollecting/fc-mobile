@@ -529,6 +529,38 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     });
   }
 
+  test(`a cut-out whose alpha read fails to fetch its picture (a network error) before its own picture loads: that load reads it again, and it ends at true scale`, async ({ page }) => {
+    // its own picture comes 3 s late; the app's first alpha read of it (its crossOrigin canvas read) fails at once, as a
+    // network error does: decode() rejects for it as for a broken picture
+    await page.route(RYUKO, async (route) => {
+      await new Promise((r) => setTimeout(r, 3_000));
+      await route.fallback();
+    });
+    await page.addInitScript(() => {
+      const w = window as unknown as { __ryukoReads: number };
+      w.__ryukoReads = 0;
+      const decode = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = function (this: HTMLImageElement) {
+        if (this.crossOrigin !== 'anonymous' || !/\/ryuuko-[^/]*\.png$/.test(this.src)) return decode.call(this);
+        return w.__ryukoReads++ === 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : decode.call(this);
+      };
+    });
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
+    // the most any Ryuko is off true scale, mm: its opaque rows from the surface to its labelled height (none drawn yet: Infinity)
+    const offTrueScale = async () => {
+      const rows = (await pictureAlpha(page)).filter((r) => ryuko.test(r.name));
+      const off = rows.flatMap((r) => {
+        const h = r.art.y1 - r.art.y0;
+        return [Math.abs(r.art.y0 + r.clearBelow * h - r.world.surface), Math.abs(r.art.y1 - r.clearAbove * h - r.world.y1)];
+      });
+      return off.length > 0 ? Math.max(...off) : Infinity;
+    };
+    await expect.poll(offTrueScale, { timeout: 15_000, intervals: [500] }).toBeLessThan(0.5);
+    // read twice: the failed read, then the one its load sent
+    expect(await page.evaluate(() => (window as unknown as { __ryukoReads: number }).__ryukoReads)).toBe(2);
+    await expectNoOverlap(page, 'Ryuko read again on its load');
+  });
+
   test(`8 pictures whose alpha reads stall for good: every other figure is still grounded within ${ALPHA_READ_DEADLINE_MS + 3 * ALPHA_READ_TURN_MS} ms (the stalled reads' first deadline, ${ALPHA_READ_DEADLINE_MS} ms, and three turns)`, async ({ page }) => {
     await page.addInitScript((n) => {
       // the app's alpha reads (its crossOrigin canvas reads) of the first n pictures it reads never end; the pictures themselves load

@@ -118,14 +118,16 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
                       )}
                     </span>
                   )}
-                  {quantity > 1 && (
-                    <span class="jrows__count" aria-hidden="true">
-                      ×{quantity}
-                    </span>
-                  )}
-                  {local !== undefined && (
-                    <span class="jrows__sync" aria-hidden="true">
-                      <SyncBadge sync={local.sync} asOf={local.asOf} id={badgeId!} />
+                  {(quantity > 1 || local !== undefined) && (
+                    // The count and the badge share the top edge: the count at the right, the badge
+                    // beside it where it fits whole, else on the line below, so each word stays whole.
+                    <span class="jrows__corner" aria-hidden="true">
+                      {quantity > 1 && <span class="jrows__count">×{quantity}</span>}
+                      {local !== undefined && (
+                        <span class="jrows__sync">
+                          <SyncBadge sync={local.sync} asOf={local.asOf} id={badgeId!} />
+                        </span>
+                      )}
                     </span>
                   )}
                   <span class="sr-only">{item.figure.name}</span>
@@ -222,11 +224,21 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
           text-overflow: ellipsis;
         }
 
-        .jrows__count {
+        .jrows__corner {
           position: absolute;
           top: 4px;
+          left: 4px;
           right: 4px;
           z-index: 2;
+          display: flex;
+          flex-direction: row-reverse;
+          flex-wrap: wrap;
+          align-items: flex-start;
+          gap: 2px;
+        }
+
+        .jrows__count {
+          flex: none;
           padding: 0 5px;
           border-radius: 999px;
           background: var(--brand-500);
@@ -237,11 +249,8 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
         }
 
         .jrows__sync {
-          position: absolute;
-          top: 4px;
-          left: 4px;
-          right: 28px; /* clear of the xN count */
-          z-index: 2;
+          min-width: 0;
+          margin-right: auto;
           text-align: left;
         }
 

@@ -195,7 +195,7 @@ describe('JustifiedRows on local figures (WK-15)', () => {
     const rule = (selector: string) => css.match(new RegExp(`${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))?.[1].replace(/\s+/g, ' ') ?? '';
     expect(rule('.jrows__corner')).toMatch(/display: flex;.*flex-direction: row-reverse;.*flex-wrap: wrap;/);
     expect(rule('.jrows__count')).not.toMatch(/position: absolute/);
-    expect(rule('.jrows__sync')).not.toMatch(/position: absolute|right:/);
+    expect(rule('.jrows__sync')).not.toMatch(/position: absolute|(?:^|;)\s*right:/);
   });
 
   it('shows selection in select mode', () => {

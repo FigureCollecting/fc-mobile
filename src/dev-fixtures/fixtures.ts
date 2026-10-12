@@ -80,6 +80,10 @@ const ART: FixtureArt = {
 /** The masked branch's halves (CASE-ADAPT): an opaque clean copy and a separate mask, both synthetic. */
 const CLEAN: Record<string, string> = import.meta.glob('./synthetic/clean/*.png', { eager: true, import: 'default', query: '?url' });
 const MASK: Record<string, string> = import.meta.glob('./synthetic/mask/*.png', { eager: true, import: 'default', query: '?url' });
+/** The same three for the figures drawn off-centre in their pictures (?fxasym=1). */
+const ASYM: Record<string, string> = import.meta.glob('./synthetic/asym/*.png', { eager: true, import: 'default', query: '?url' });
+const ASYM_CLEAN: Record<string, string> = import.meta.glob('./synthetic/asym/clean/*.png', { eager: true, import: 'default', query: '?url' });
+const ASYM_MASK: Record<string, string> = import.meta.glob('./synthetic/asym/mask/*.png', { eager: true, import: 'default', query: '?url' });
 
 function img(name: string): string | undefined {
   return resolveFixtureArt(name, ART);
@@ -329,16 +333,35 @@ function withWidths(figure: Figure, widths: FixtureWidths): Figure {
   return { ...figure, dimensions: widths === 'none' ? { heightMm } : { heightMm, widthMm: Math.round(widthMm! / 2) } };
 }
 
+const FIXTURE_ASYM_PARAM = 'fxasym';
+
+/**
+ * Dev-only switch for art whose figure stands off-centre in its picture, as
+ * a real cut-out can (a staff held out, a base off to one side):
+ * `?fxasym=1` draws Rem 18 % of her picture's width left of its centre and
+ * Spike 30 % right (synthetic/asym), in every branch. Off for anything else.
+ */
+export function getFixtureAsym(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_ASYM_PARAM) === '1';
+}
+
 const artName = (figureId: string) => figureId.replace(/^fx-/, '').replace(/(-x\d+)?(-masked|-framed)?$/, '');
 
-function toBranch(figure: Figure, branch: FixtureBranch): Figure {
+/** A fixture's cut-out, clean copy and mask: the off-centre ones under ?fxasym=1 where it has them. */
+function artFiles(name: string, asym: boolean) {
+  const moved = asym ? ASYM[`./synthetic/asym/${name}.png`] : undefined;
+  if (!moved) return { cutout: undefined, clean: CLEAN[`./synthetic/clean/${name}.png`], mask: MASK[`./synthetic/mask/${name}.png`] };
+  return { cutout: moved, clean: ASYM_CLEAN[`./synthetic/asym/clean/${name}.png`], mask: ASYM_MASK[`./synthetic/asym/mask/${name}.png`] };
+}
+
+function toBranch(figure: Figure, branch: FixtureBranch, asym: boolean): Figure {
   // An id outside the fixture manifest resolves UNMATTED_META, exactly like
   // a real figure without displayMeta.
-  const clean = CLEAN[`./synthetic/clean/${artName(figure._id)}.png`];
+  const { cutout, clean } = artFiles(artName(figure._id), asym);
   if (branch === 'masked') return { ...figure, _id: `${figure._id}-masked`, imageUrl: clean };
   if (branch === 'framed') return { ...figure, _id: `${figure._id}-framed`, imageUrl: clean };
   if (branch === 'silhouette') return { ...figure, imageUrl: undefined };
-  return figure;
+  return cutout ? { ...figure, imageUrl: cutout } : figure;
 }
 
 /**
@@ -349,8 +372,7 @@ function toBranch(figure: Figure, branch: FixtureBranch): Figure {
 export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
   if (!figure._id.endsWith('-masked')) return undefined;
   const name = artName(figure._id);
-  const url = CLEAN[`./synthetic/clean/${name}.png`];
-  const maskUrl = MASK[`./synthetic/mask/${name}.png`];
+  const { clean: url, mask: maskUrl } = artFiles(name, getFixtureAsym());
   const meta = FIXTURE_META[`fx-${name}`];
   if (!url || !maskUrl || !meta) return undefined;
   return { url, maskUrl, width: meta.width, height: meta.height };
@@ -362,14 +384,20 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * resolve the original matte metadata, so every repeated copy still renders
  * matted (not a generic framed-photo fallback) — unless `?fxbranch` asks
  * for another branch (getFixtureBranch); `?fxwidth` changes their labelled
- * widths (getFixtureWidths).
+ * widths (getFixtureWidths), `?fxasym=1` draws two of them off-centre in
+ * their pictures (getFixtureAsym).
  */
-export function getFixtureFigures(multiplier = getFixtureMultiplier(), branch = getFixtureBranch(), widths = getFixtureWidths()): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled') return FIXTURE_FIGURES;
+export function getFixtureFigures(
+  multiplier = getFixtureMultiplier(),
+  branch = getFixtureBranch(),
+  widths = getFixtureWidths(),
+  asym = getFixtureAsym(),
+): Figure[] {
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const base of FIXTURE_FIGURES) {
-      out.push(withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch), widths));
+      out.push(withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch, asym), widths));
     }
   }
   return out;

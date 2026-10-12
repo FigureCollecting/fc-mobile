@@ -4,7 +4,8 @@
 // clean checkouts and CI render the case's matted branch. Beside each, the
 // two halves of the masked branch (CASE-ADAPT): clean/<name>.png, the figure
 // on an opaque studio backdrop (RGB, like a clean re-encoded product photo),
-// and mask/<name>.png, white whose alpha is exactly the cut-out's. No
+// and mask/<name>.png, white whose alpha is exactly the cut-out's; asym/
+// holds the same three for figures moved off-centre in their pictures. No
 // photos, no dependencies. Re-run after changing a shape:
 // node scripts/synthetic-fixtures.mjs
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -220,10 +221,31 @@ function write(file, png, size) {
   console.log(`${path.relative(process.cwd(), file)} ${size[0]}x${size[1]} ${png.length} bytes`);
 }
 
-for (const dir of [OUT, path.join(OUT, 'clean'), path.join(OUT, 'mask')]) mkdirSync(dir, { recursive: true });
+/** The cut-out moved sideways by dx px (clear where it moved from). */
+function shifted([w, h], rgba, dx) {
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = Math.max(0, -dx); x < Math.min(w, w - dx); x++) rgba.copy(out, (y * w + x + dx) * 4, (y * w + x) * 4, (y * w + x + 1) * 4);
+  }
+  return out;
+}
+
+/** The cut-out, its clean copy and its mask, under `dir`. */
+function writeAll(dir, name, size, rgba) {
+  for (const sub of [dir, path.join(dir, 'clean'), path.join(dir, 'mask')]) mkdirSync(sub, { recursive: true });
+  write(path.join(dir, `${name}.png`), encodePng(size, rgba), size);
+  write(path.join(dir, 'clean', `${name}.png`), encodePng(size, cleanCopy(size, rgba), 3), size);
+  write(path.join(dir, 'mask', `${name}.png`), encodePng(size, maskOf(size, rgba)), size);
+}
+
+// Off-centre stand-ins (?fxasym=1): the same figure moved sideways in its
+// picture, as a real cut-out can stand (a staff held out, a base off to one
+// side). Moved by whole pixels, so it is exactly the figure above: Rem 88 px
+// left (2 % clear left, 38 % right), Spike 165 px right (70 % left, 10 % right).
+const ASYM = { rem: -88, spike: 165 };
+
 for (const [name, { size, shapes }] of Object.entries(FIGURES)) {
   const rgba = rasterize(size, shapes);
-  write(path.join(OUT, `${name}.png`), encodePng(size, rgba), size);
-  write(path.join(OUT, 'clean', `${name}.png`), encodePng(size, cleanCopy(size, rgba), 3), size);
-  write(path.join(OUT, 'mask', `${name}.png`), encodePng(size, maskOf(size, rgba)), size);
+  writeAll(OUT, name, size, rgba);
+  if (ASYM[name]) writeAll(path.join(OUT, 'asym'), name, size, shifted(size, rgba, ASYM[name]));
 }

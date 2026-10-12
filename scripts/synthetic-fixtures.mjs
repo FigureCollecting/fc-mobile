@@ -240,9 +240,9 @@ function writeAll(dir, name, size, rgba) {
 
 // Off-centre stand-ins (?fxasym=1): the same figure moved sideways in its
 // picture, as a real cut-out can stand (a staff held out, a base off to one
-// side). Moved by whole pixels, so it is exactly the figure above: Rem 88 px
-// left (2 % clear left, 38 % right), Spike 165 px right (70 % left, 10 % right).
-const ASYM = { rem: -88, spike: 165 };
+// side). Moved by whole pixels, so it is exactly the figure above: Rem 110 px
+// right (38 % clear left, 2 % right), Spike 165 px (70 % left, 10 % right).
+const ASYM = { rem: 110, spike: 165 };
 
 for (const [name, { size, shapes }] of Object.entries(FIGURES)) {
   const rgba = rasterize(size, shapes);

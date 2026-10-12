@@ -367,9 +367,9 @@ function opaqueBounds(png: ReturnType<typeof pngPixels>, channels = 4) {
 
 describe('fixture off-centre art (?fxasym=1): figures standing off-centre in their pictures, as real cut-outs can', () => {
   const SYNTHETIC_DIR = path.resolve(import.meta.dirname, '../synthetic');
-  /** Rem leans left in her picture, Spike right: the figure's centre this far off the picture's, in picture widths. */
+  /** Both lean right in their pictures: the figure's centre this far right of the picture's, in picture widths. */
   const LEANS = [
-    { name: 'rem', off: -0.18 },
+    { name: 'rem', off: 0.18 },
     { name: 'spike', off: 0.3 },
   ] as const;
 

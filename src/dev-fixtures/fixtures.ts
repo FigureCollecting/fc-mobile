@@ -338,8 +338,8 @@ const FIXTURE_ASYM_PARAM = 'fxasym';
 /**
  * Dev-only switch for art whose figure stands off-centre in its picture, as
  * a real cut-out can (a staff held out, a base off to one side):
- * `?fxasym=1` draws Rem 18 % of her picture's width left of its centre and
- * Spike 30 % right (synthetic/asym), in every branch. Off for anything else.
+ * `?fxasym=1` draws Rem 18 % of her picture's width right of its centre
+ * and Spike 30 % (synthetic/asym), in every branch. Off for anything else.
  */
 export function getFixtureAsym(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_ASYM_PARAM) === '1';

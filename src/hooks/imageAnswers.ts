@@ -7,13 +7,15 @@
 // document told answers again from what that sync kept, without a sync of its own, so two open case
 // views never sync each other. A sync whose case view went away part way, once it may have recorded
 // what it withholds, is told too, as stopped: a case view of the told document inside its own sync
-// (waiting for the lock, or holding it) is then left to finish it, reading the lists itself. Where
-// the browser has no BroadcastChannel, no other document is told.
-// An answer that names an address the sync withheld, shown or opened while the drop reads the record,
-// stops naming it once the record is read, before the drop asks it again (the figure page answers the
-// plate; the case view drops that figure, or only its mask), so none waits on the coordinator's
-// answer, which a stalled link can hold back for as long as the ask's deadline. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in
-// Chromium, e2e/pwa (b) another tab.
+// (waiting for the lock, or holding it) is then left to finish it, reading the lists itself, neither
+// stopped nor asked again. Where the browser has no BroadcastChannel, no other document is told.
+// Every answer that names an address the sync withheld, that case view's too, shown or opened while
+// the drop reads the record, stops naming it once the record is read, before the drop asks it again
+// (the figure page answers the plate; the case view drops that figure, or only its mask), so none
+// waits on the coordinator's answer, which a stalled link can hold back for as long as the ask's
+// deadline, nor on that case view's own sync. An answer that stops naming an address keeps its age:
+// that case view gone before its sync ends answers, opened again, the answer without the address, and
+// syncs as it would have. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { withheldAmong, type CachedImage } from '../media/ownedImages';
 
@@ -51,20 +53,26 @@ function without(key: QueryKey, data: unknown, withheld: ReadonlySet<string>): u
 }
 
 /**
- * No earlier image answer of this client stands but `own`: one still being read is stopped, so it is
- * read again; one a view shows is asked again; any other is dropped, so a view that opens later asks.
- * Every answer, shown or not, that names an address the sync recorded as withheld stops naming it as
- * soon as the record is read, before this asks it again (the re-ask of a figure page online is a
- * coordinator round trip); so does one a view opens while the record is read, even one already asking.
+ * No earlier image answer of this client stands but `own` and the `spare`d ones (a case view inside its
+ * own sync, told of a stopped one): one still being read is stopped, so it is read again; one a view
+ * shows is asked again; any other is dropped, so a view that opens later asks. A spared answer is
+ * neither stopped nor asked again: its own sync answers next. Every answer but `own`, shown or not,
+ * spared or not, that names an address the sync recorded as withheld stops naming it as soon as the
+ * record is read, before this asks it again (the re-ask of a figure page online is a coordinator round
+ * trip); so does one a view opens while the record is read, even one already asking. It keeps its age
+ * (dataUpdatedAt), so a spared answer its case view's going away reverts to it is as old as before.
  */
 export async function dropImageAnswers(client: QueryClient, own?: QueryKey, spare: ReadonlySet<string> = new Set()): Promise<void> {
   const ownHash = own === undefined ? undefined : hashKey(own);
-  const predicate = (q: { queryKey: QueryKey; queryHash: string }) => q.queryHash !== ownHash && !spare.has(q.queryHash) && isImageAnswer(q.queryKey);
+  const named = (q: { queryKey: QueryKey; queryHash: string }) => q.queryHash !== ownHash && isImageAnswer(q.queryKey);
+  const predicate = (q: { queryKey: QueryKey; queryHash: string }) => named(q) && !spare.has(q.queryHash);
   await client.cancelQueries({ fetchStatus: 'fetching', predicate });
-  const answers = client.getQueryCache().findAll({ predicate });
+  const answers = client.getQueryCache().findAll({ predicate: named });
   const withheld = await withheldAmong(answers.flatMap((q) => addressesIn(q.queryKey, q.state.data)));
   for (const q of answers) {
-    if (addressesIn(q.queryKey, q.state.data).some((u) => withheld.has(u))) client.setQueryData(q.queryKey, without(q.queryKey, q.state.data, withheld));
+    if (addressesIn(q.queryKey, q.state.data).some((u) => withheld.has(u))) {
+      client.setQueryData(q.queryKey, without(q.queryKey, q.state.data, withheld), { updatedAt: q.state.dataUpdatedAt });
+    }
   }
   client.removeQueries({ type: 'inactive', predicate });
   await client.invalidateQueries({ predicate });
@@ -73,7 +81,8 @@ export async function dropImageAnswers(client: QueryClient, own?: QueryKey, spar
 /**
  * Another document's sync completed, or its case view stopped it part way: drop every image answer, an
  * open case view answering from what that sync kept. Told of a stopped sync, a case view inside its own
- * sync is left to finish it: it reads the lists after the other let go of the lock.
+ * sync is left to finish it: it reads the lists after the other let go of the lock, its answer
+ * meanwhile naming nothing the record withholds.
  */
 async function toldOfAnotherSync(client: QueryClient, end: OwnedSyncEnd): Promise<void> {
   const syncing = new Set(end === 'stopped' ? [...(inOwnSync.get(client) ?? [])].map((run) => run.hash) : []);

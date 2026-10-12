@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import type { ItemSync } from '../../local/figures';
 import { Style } from '../../styles/Style';
 
@@ -27,13 +28,29 @@ export interface SyncBadgeProps extends AsOfOptions {
 
 const LABEL: Record<Exclude<ItemSync, 'offline-stale'>, string> = { known: 'Synced', pending: 'Pending' };
 
+const CLOCK = /\d{1,2}:\d{2}/;
+
+/** The badge's text with its clock time (14:05) in one piece, so a narrow tile never breaks it. */
+function withClockWhole(text: string): ComponentChildren {
+  const clock = CLOCK.exec(text);
+  if (clock === null) return text;
+  const end = clock.index + clock[0].length;
+  return (
+    <>
+      {text.slice(0, clock.index)}
+      <span class="sync-badge__time">{clock[0]}</span>
+      {text.slice(end)}
+    </>
+  );
+}
+
 // One badge per item: known (quiet: a screen reader hears it), pending, or offline-stale with when
 // its data was last current.
 export function SyncBadge({ sync, asOf, id, now, timeZone }: SyncBadgeProps) {
   const text = sync === 'offline-stale' ? (asOf === null ? 'Offline' : formatAsOf(asOf, { now, timeZone })) : LABEL[sync];
   return (
     <span id={id} class={`sync-badge sync-badge--${sync}`} data-sync={sync}>
-      {text}
+      {withClockWhole(text)}
       <Style css={`
         .sync-badge {
           display: inline-block;
@@ -44,6 +61,9 @@ export function SyncBadge({ sync, asOf, id, now, timeZone }: SyncBadgeProps) {
           line-height: 1.2;
           font-weight: 600;
           overflow-wrap: anywhere;
+        }
+        .sync-badge__time {
+          white-space: nowrap;
         }
         .sync-badge--pending {
           background: var(--accent-warning, #d97706);

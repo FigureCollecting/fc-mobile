@@ -303,7 +303,7 @@ describe('another open document of the app (a tab, the installed window): its ow
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
     // The first document, in reach, completes a sync the coordinator's lists withhold the image in.
     await syncOwnedImages([headOf(0)], async () => new Map(), { storage });
-    tellOwnedSync(docA);
+    tellOwnedSync(docA, 'synced');
     await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
     expect(r.clients.getProductImages).not.toHaveBeenCalled();
   });
@@ -519,7 +519,7 @@ describe('an answer a view shows, while it is asked again after a sync that with
   async function anotherDocumentSyncs(fresh: ReturnType<typeof listOf>, onTold: () => void): Promise<void> {
     await syncOwnedImages([headOf(0)], async () => new Map([[headOf(0), fresh.products[0]?.images ?? []]]), { storage });
     onTold();
-    tellOwnedSync(appQueryClient());
+    tellOwnedSync(appQueryClient(), 'synced');
   }
 
   /** Holds the next read of the kept lists (the case view answering again from what the sync kept) until released. */
@@ -575,7 +575,7 @@ describe('an answer a view shows, while it is asked again after a sync that with
     const kept = holdNextKeptRead();
     await syncOwnedImages([headOf(0), headOf(1)], async () => new Map([[headOf(1), listOf(Y).products[0]!.images]]), { storage });
     kept.hold();
-    tellOwnedSync(appQueryClient());
+    tellOwnedSync(appQueryClient(), 'synced');
     await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
     expect(viewB.result.current.get(headOf(1))?.url).toBe(Y);
     expect(docB.isFetching()).toBe(1);

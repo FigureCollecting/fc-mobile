@@ -79,7 +79,7 @@ async function toldOfAnotherSync(client: QueryClient, end: OwnedSyncEnd): Promis
   const syncing = new Set(end === 'stopped' ? [...(inOwnSync.get(client) ?? [])].map((run) => run.hash) : []);
   const open = client
     .getQueryCache()
-    .findAll({ type: 'active', predicate: (q) => q.queryKey[0] === 'local' && q.queryKey[1] === 'owned-images' && !syncing.has(q.queryHash) })
+    .findAll({ type: 'active', predicate: (q) => q.queryKey[0] === 'local' && q.queryKey[1] === 'owned-images' })
     .map((q) => q.queryHash);
   const told = toldOfSync.get(client) ?? new Set<string>();
   toldOfSync.set(client, told);
@@ -107,7 +107,7 @@ export function hearOwnedSyncs(client: QueryClient): BroadcastChannel | undefine
 }
 
 /** Tell every other document a sync completed or stopped, on this client's own channel, which never hears its own message. */
-export function tellOwnedSync(client: QueryClient, end: OwnedSyncEnd = 'synced'): void {
+export function tellOwnedSync(client: QueryClient, end: OwnedSyncEnd): void {
   hearOwnedSyncs(client)?.postMessage(end);
 }
 

@@ -77,7 +77,7 @@ export function answers(): number {
 /** What the case view does once its sync completes: drop this document's image answers but its own, then tell every other tab. */
 export function completed(head: string): void {
   void dropImageAnswers(client, caseViewKey(head));
-  tellOwnedSync(client);
+  tellOwnedSync(client, 'synced');
 }
 
 // Init scripts may be wrapped in a function scope; publish explicitly.

@@ -508,7 +508,8 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     test(`a picture 4 s late: the others grounded meanwhile, then it lands and the case relays out around it: ${size.name}`, async ({ page }) => {
       await page.route(RYUKO, async (route) => {
         await new Promise((r) => setTimeout(r, 4_000));
-        await route.continue();
+        // on to the hands-off guard, which sends it
+        await route.fallback();
       });
       await openCase(page, size, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
       const late = await groundedOf(page, ryuko);
@@ -528,7 +529,8 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
     const NEW = /\/assets\/(dark-angel|madoka|spike|ryuuko)-[^/]*\.png$/;
     await page.route(NEW, async (route) => {
       await new Promise((r) => setTimeout(r, 2_000));
-      await route.continue();
+      // on to the hands-off guard, which sends it
+      await route.fallback();
     });
     await page.getByRole('listitem', { name: 'Remove filter Good Smile Company' }).click();
     await expect(page.locator('button.cab-figure[aria-label="Spike Spiegel"]').first()).toBeAttached();

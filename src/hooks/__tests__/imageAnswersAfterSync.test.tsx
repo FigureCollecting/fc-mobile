@@ -1356,6 +1356,44 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     }
   });
 
+  it('a sync whose case view goes away while it reads the lists, which then arrive withholding the image, touches no cache and tells nothing: another document\'s figure page goes on answering the image, as the last sync kept it', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    r.clients.getProductImages.mockResolvedValue(lists([X], []));
+    const pageB = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(pageB.result.current.data?.url).toBe(X));
+    const listener = new BroadcastChannel(CHANNEL);
+    const heard: unknown[] = [];
+    listener.onmessage = (e) => heard.push(e.data);
+    // The takedown, in lists that arrive only once the case view has gone away.
+    let answer!: () => void;
+    const answered = new Promise<void>((res) => (answer = res));
+    r.clients.getProductImages.mockImplementation(async () => {
+      await answered;
+      return lists([], [B]);
+    });
+    const reads = syncReads(r);
+    const viewA = caseView(docA);
+    try {
+      await waitFor(() => expect(syncReads(r)).toBe(reads + 1));
+      viewA.unmount();
+      answer();
+      await idle(docA, docB);
+      await settle();
+      expect(heard).toEqual([]);
+      expect(pageB.result.current.data?.url).toBe(X);
+      expect([...(await withheldAmong([X], storage))]).toEqual([]);
+      expect(held()).toContain(X);
+      expect((await recallImages(headOf(0), storage))?.map((i) => i.url)).toEqual([X]);
+    } finally {
+      listener.close();
+      pageB.unmount();
+    }
+  });
+
   it('a sync whose first record the device refuses (its quota) evicts the image it withholds, keeps the kept list naming it, tells it stopped and runs once: no document answers the image, online or offline', async () => {
     let armed = false;
     const open = storage.open.bind(storage);

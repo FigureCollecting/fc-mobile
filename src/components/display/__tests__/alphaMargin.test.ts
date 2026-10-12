@@ -798,6 +798,8 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     alphaPictureLoaded(A);
     await vi.advanceTimersByTimeAsync(0);
     expect(started).toEqual([A, A]);
+    // its backoff is over: the timers left are the new read's turn and deadline
+    expect(vi.getTimerCount()).toBe(2);
     // with no cache that read is slow too: one load, one read at once; the next waits its (second) backoff
     await vi.advanceTimersByTimeAsync(2 * ALPHA_READ_DEADLINE_MS + 2 * ALPHA_READ_BACKOFF_MS - 1);
     expect(started).toHaveLength(2);

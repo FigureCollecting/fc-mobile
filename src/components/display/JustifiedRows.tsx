@@ -249,7 +249,6 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
         }
 
         .jrows__sync {
-          min-width: 0;
           margin-right: auto;
           text-align: left;
         }

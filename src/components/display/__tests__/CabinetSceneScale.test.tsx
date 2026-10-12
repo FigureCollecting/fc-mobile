@@ -5,7 +5,6 @@ import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import type { PictureMargins } from '../figureArt';
-import { FIGURE_GAP_MM } from '../packCabinets';
 
 /** What the canvas read of each picture's alpha says, by URL; null while it is still measuring. */
 const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null }));
@@ -151,7 +150,7 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
     for (let i = 1; i < centres.length; i++) expect(centres[i] - centres[i - 1]).toBeGreaterThanOrEqual(400 + 10 - 1e-6);
   });
 
-  it('a picture still measuring holds back only its own figure: it stands by its label, ungrounded; the rest are grounded and packed by what they draw', () => {
+  it('a picture still measuring holds back only its own figure: it stands as its plate on its label, ungrounded; the rest are grounded and packed by what they draw', () => {
     const figs = FIXTURE_FIGURES.map(labelled(20));
     measured.fallback = margins;
     // Spike's picture is still being read
@@ -161,8 +160,9 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
     const before = drawn(container);
     const spike = before.find((r) => r.name === figs[4].name)!;
     expect(spike.grounded).toBe('0');
-    // by its 20 mm label: its tap box that and half the gap each side
-    expect(spike.tap.x1 - spike.tap.x0).toBeCloseTo(20 + FIGURE_GAP_MM, 6);
+    // packed by its 20 mm label: its plate that wide, and the plate takes its taps
+    expect(spike.tap.x1 - spike.tap.x0).toBeCloseTo(20, 6);
+    expect(spike.art.x1 - spike.art.x0).toBeCloseTo(20, 6);
     const others = before.filter((r) => r !== spike);
     expect(others.map((r) => r.grounded)).toEqual(others.map(() => '1'));
     expectOpaqueApart(others, margins);

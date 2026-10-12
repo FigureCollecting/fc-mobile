@@ -319,7 +319,9 @@ interface FigureDraw {
   readonly cx: number;
 }
 
-function ArtBody({ art, name }: { art: FigureArt; name: string }) {
+/** `hidden`: loaded but not drawn (a picture whose alpha is still being read). */
+function ArtBody({ art, name, hidden = false }: { art: FigureArt; name: string; hidden?: boolean }) {
+  const visibility = hidden ? 'hidden' : undefined;
   if (art.kind === 'masked') {
     return (
       <div
@@ -330,11 +332,12 @@ function ArtBody({ art, name }: { art: FigureArt; name: string }) {
           backgroundImage: `url(${JSON.stringify(art.url)})`,
           WebkitMaskImage: `url(${JSON.stringify(art.maskUrl)})`,
           maskImage: `url(${JSON.stringify(art.maskUrl)})`,
+          visibility,
         }}
       />
     );
   }
-  if (art.kind === 'cutout') return <img class="cab-figure__art cab-figure__art--cutout" src={art.url} alt="" draggable={false} />;
+  if (art.kind === 'cutout') return <img class="cab-figure__art cab-figure__art--cutout" src={art.url} alt="" draggable={false} style={{ visibility }} />;
   if (art.kind === 'framed') {
     return (
       <div class="cab-figure__frame">
@@ -345,9 +348,12 @@ function ArtBody({ art, name }: { art: FigureArt; name: string }) {
   return <div class="cab-figure__plate">{name}</div>;
 }
 
+/** A plate's aspect: a figure without a picture, or one whose picture is still being read. */
+const PLATE_ASPECT = 0.75;
+
 /** Aspect of what the figure draws: the image's own when the list gives it, else the display meta's. */
 function artAspect(art: FigureArt, image: FigureImageRef | undefined, metaAspect: number): number {
-  if (art.kind === 'plate') return 0.75;
+  if (art.kind === 'plate') return PLATE_ASPECT;
   if (image?.width && image.height) return image.width / image.height;
   return metaAspect;
 }
@@ -378,7 +384,7 @@ function SceneFigure({
   draw: FigureDraw;
   art: FigureArt;
   aspect: number;
-  /** null while its picture's alpha is still being read: drawn meanwhile on what the image list says, not grounded. */
+  /** null while its picture's alpha is still being read: drawn meanwhile as its plate, not grounded. */
   margins: PictureMargins | null;
   labels: boolean;
   onSelect: () => void;
@@ -387,8 +393,11 @@ function SceneFigure({
   const { item } = placed;
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
   const grounded = margins !== null;
-  const known = margins ?? { top: 0, bottom: art.bottomMarginFrac ?? 0 };
-  const picture = pictureBox(art.kind, placed.heightMm, aspect, known, item.widthMm);
+  // until its picture is read, a figure draws its plate, within the footprint it is packed by, never the picture at a width
+  // its packing may not hold; the picture loads meanwhile, hidden, and shows the moment it is read
+  const drawnKind = grounded ? art.kind : 'plate';
+  const known = margins ?? OPAQUE;
+  const picture = pictureBox(drawnKind, placed.heightMm, grounded ? aspect : PLATE_ASPECT, known, item.widthMm);
   const boxH = picture.heightMm;
   const boxW = picture.widthMm;
   // the picture's centre: moved so the figure in it, not the picture, stands centred on its slot
@@ -401,8 +410,10 @@ function SceneFigure({
   const tapX0 = cx - tapW / 2;
   const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0]);
   // no contact band known: the shadow lies under the figure, the middle of its picture's opaque columns
-  const contact = art.contactBand ??
-    band ?? { centerXFrac: 0.5 + (cx - artCx) / boxW, widthFrac: art.kind === 'cutout' || art.kind === 'masked' ? 0.6 : 0.9 };
+  const contact = (grounded ? (art.contactBand ?? band) : null) ?? {
+    centerXFrac: 0.5 + (cx - artCx) / boxW,
+    widthFrac: drawnKind === 'cutout' || drawnKind === 'masked' ? 0.6 : 0.9,
+  };
   const shadowW = Math.max(20, contact.widthFrac * boxW * 1.15);
   const shadowD = Math.min(slot.depthMm, Math.max(40, item.depthMm));
   const shadowX = artCx - boxW / 2 + contact.centerXFrac * boxW;
@@ -435,7 +446,8 @@ function SceneFigure({
             pointerEvents: 'none',
           }}
         >
-          <ArtBody art={art} name={item.figure.name} />
+          <ArtBody art={art} name={item.figure.name} hidden={!grounded} />
+          {!grounded && <div class="cab-figure__plate cab-figure__plate--reading">{item.figure.name}</div>}
         </span>
       </button>
       {labels && (
@@ -510,7 +522,7 @@ export function CabinetScene({
   );
   const alphaUrls = useMemo(() => [...new Set(arts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [arts]);
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
-  // one still being read stands on its label meanwhile, holding back no other
+  // one still being read stands as its plate on its label meanwhile, holding back no other
   const alpha = useAlphaMarginsOf(alphaUrls);
 
   const packed = useMemo(() => {
@@ -858,6 +870,7 @@ const styles = `
     text-align: center;
     overflow: hidden;
   }
+  .cabinet-scene .cab-figure__plate--reading { position: absolute; inset: 0; }
   .cabinet-scene .cab-plate {
     display: flex;
     align-items: center;

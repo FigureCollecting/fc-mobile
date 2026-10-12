@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
+import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
@@ -32,6 +32,11 @@ function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial
 }
 
 const figureButtons = (root: ParentNode) => Array.from(root.querySelectorAll<HTMLButtonElement>('button.cab-figure'));
+
+/** Once every picture is read (in jsdom a read fails, known as all clear, unless a test says what the canvas reads): each figure drawn as its picture. */
+async function grounded(host: HTMLElement) {
+  await waitFor(() => expect(figureButtons(host).every((b) => b.dataset.grounded === '1')).toBe(true));
+}
 
 function drag(el: HTMLElement, dx: number) {
   fireEvent.pointerDown(el, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
@@ -128,11 +133,16 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     }
   });
 
-  it("a contact band from the image list places the shadow under the figure's real base", () => {
+  it("a contact band from the image list places the shadow under the figure's real base", async () => {
     const at = (centerXFrac: number) => (f: Figure) => ({ url: `/c/${f._id}.png`, maskUrl: `/m/${f._id}.png`, bottomMarginFrac: 0.1, contactBand: { centerXFrac, widthFrac: 0.4 } });
-    const left = scene(FIXTURE_FIGURES, {}, { imageFor: at(0.2) }).host.querySelector<HTMLElement>('.cab-shadow')!.style.transform;
+    const shadowOf = async (centerXFrac: number) => {
+      const { host } = scene(FIXTURE_FIGURES, {}, { imageFor: at(centerXFrac) });
+      await grounded(host);
+      return host.querySelector<HTMLElement>('.cab-shadow')!.style.transform;
+    };
+    const left = await shadowOf(0.2);
     cleanup();
-    const right = scene(FIXTURE_FIGURES, {}, { imageFor: at(0.8) }).host.querySelector<HTMLElement>('.cab-shadow')!.style.transform;
+    const right = await shadowOf(0.8);
     const tx = (t: string) => Number(t.replace(/^matrix3d\(/, '').split(',')[12]);
     expect(tx(right)).toBeGreaterThan(tx(left));
   });
@@ -409,8 +419,26 @@ describe('CabinetScene: one figure, one tap box (CASE-FIX dead tap)', () => {
   // masked art whose transparent margin is a third of the picture: the pictures overlap their neighbours' margins
   const marginRef = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800, bottomMarginFrac: 0.3 });
 
-  it("neighbours' tap boxes never overlap, even where their pictures' transparent margins do", () => {
+  /** Every mask as the canvas reads it: drawn from top to bottom, but for a fifth of its width clear at the left and at the right. */
+  function masksClearAtTheSides() {
+    const [w, h] = [20, 20];
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 4; x < 16; x++) data[(y * w + x) * 4 + 3] = 255;
+    (HTMLImageElement.prototype as { decode?: () => Promise<void> }).decode = () => Promise.resolve();
+    vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(w);
+    vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(h);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage: () => {}, getImageData: () => ({ width: w, height: h, data }) } as unknown as CanvasRenderingContext2D);
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  it("neighbours' tap boxes never overlap, even where their pictures' transparent margins do", async () => {
+    masksClearAtTheSides();
     const { host } = scene(FIXTURE_FIGURES, {}, { imageFor: marginRef });
+    await grounded(host);
     let artOverlaps = 0;
     for (const row of bySurface(host)) {
       for (let i = 1; i < row.length; i++) {
@@ -422,8 +450,9 @@ describe('CabinetScene: one figure, one tap box (CASE-FIX dead tap)', () => {
     expect(artOverlaps).toBeGreaterThan(0);
   });
 
-  it('the tap box is the figure standing on its surface, inside its picture; the picture never takes a tap', () => {
+  it('the tap box is the figure standing on its surface, inside its picture; the picture never takes a tap', async () => {
     const { host } = scene(FIXTURE_FIGURES, {}, { imageFor: marginRef });
+    await grounded(host);
     for (const row of bySurface(host)) {
       for (const r of row) {
         expect(r.tap.y0).toBe(r.tap.surface);
@@ -609,9 +638,10 @@ describe('CabinetScene: the picture, its tap box and its shadow, at the edges', 
     expect(r.tap.x1 - r.tap.x0).toBeCloseTo(r.art.x1 - r.art.x0, 6);
   });
 
-  it('a contact shadow is never thinner than 20 mm, nor deeper than the surface it lies on', () => {
+  it('a contact shadow is never thinner than 20 mm, nor deeper than the surface it lies on', async () => {
     const thin = { ...FIXTURE_FIGURES[0], _id: 'thin' } as Figure;
     const { host } = scene([thin], {}, { imageFor: () => ({ url: '/c.png', maskUrl: '/m.png', width: 550, height: 800, contactBand: { centerXFrac: 0.5, widthFrac: 0.001 } }) });
+    await grounded(host);
     expect(host.querySelector<HTMLElement>('.cab-shadow')!.style.width).toBe('20px');
     cleanup();
     // deeper than the KLINGSBO's glass plates (314 mm): it overhangs, its shadow stays on the plate

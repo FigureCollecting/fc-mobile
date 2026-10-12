@@ -16,6 +16,7 @@
  */
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { FigureImageRef } from '../components/display/figureArt';
+import type { ItemSync, LocalMeta } from '../local/figures';
 
 /**
  * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
@@ -357,6 +358,59 @@ export function getFixtureUnique(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_UNIQUE_PARAM) === '1';
 }
 
+const FIXTURE_SYNC_PARAM = 'fxsync';
+
+/**
+ * Dev-only switch for the local store's state on each tile, as a signed-in
+ * collection draws it: `?fxsync=1` gives every fixture a sync badge and a
+ * count from SYNC_STATES in turn (`?fx=2` shows them all): Pending, Offline,
+ * an as-of of today and of another day, each with no count, x2 and x12, and
+ * a quiet synced one. Off for anything else.
+ */
+export function getFixtureSync(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_SYNC_PARAM) === '1';
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Each state's badge (sync, and how long ago its data was current; null for none) and count. */
+const SYNC_STATES: { sync: ItemSync; agoMs: number | null; quantity: number }[] = [
+  { sync: 'pending', agoMs: null, quantity: 1 },
+  { sync: 'offline-stale', agoMs: 0, quantity: 2 },
+  { sync: 'offline-stale', agoMs: 2 * DAY_MS, quantity: 12 },
+  { sync: 'offline-stale', agoMs: null, quantity: 1 },
+  { sync: 'pending', agoMs: null, quantity: 2 },
+  { sync: 'offline-stale', agoMs: 0, quantity: 12 },
+  { sync: 'offline-stale', agoMs: 2 * DAY_MS, quantity: 1 },
+  { sync: 'offline-stale', agoMs: null, quantity: 2 },
+  { sync: 'pending', agoMs: null, quantity: 12 },
+  { sync: 'offline-stale', agoMs: 0, quantity: 1 },
+  { sync: 'offline-stale', agoMs: 2 * DAY_MS, quantity: 2 },
+  { sync: 'offline-stale', agoMs: null, quantity: 12 },
+  { sync: 'known', agoMs: null, quantity: 3 },
+];
+
+/** A fixture as the local store gives it: its id is its head; no copies, card or facets. */
+function withSync(figure: Figure, index: number, now: number): Figure {
+  const state = SYNC_STATES[index % SYNC_STATES.length];
+  const local: LocalMeta = {
+    headId: figure._id,
+    heads: [figure._id],
+    kind: figure.collectionStatus as LocalMeta['kind'],
+    copies: [],
+    sync: state.sync,
+    asOf: state.agoMs === null ? null : new Date(now - state.agoMs).toISOString(),
+    factsAsOf: null,
+    hasCard: false,
+    character: null,
+    series: null,
+    gtin14s: [],
+    uf: {},
+    ufTarget: { score: figure._id, note: figure._id, wishability: figure._id },
+  };
+  return { ...figure, quantity: state.quantity, local } as Figure;
+}
+
 /** A repeated copy's picture at its own URL under ?fxuniq=1. */
 function copyUrl<T extends string | undefined>(url: T, figureId: string, unique: boolean): T {
   const copy = /-x(\d+)(?:-masked|-framed)?$/.exec(figureId)?.[1];
@@ -405,7 +459,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * for another branch (getFixtureBranch); `?fxwidth` changes their labelled
  * widths (getFixtureWidths), `?fxasym=1` draws two of them off-centre in
  * their pictures (getFixtureAsym), `?fxuniq=1` draws each copy at its own
- * picture URL (getFixtureUnique).
+ * picture URL (getFixtureUnique), `?fxsync=1` gives each a sync badge and a
+ * count (getFixtureSync).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -413,8 +468,9 @@ export function getFixtureFigures(
   widths = getFixtureWidths(),
   asym = getFixtureAsym(),
   unique = getFixtureUnique(),
+  sync = getFixtureSync(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const base of FIXTURE_FIGURES) {
@@ -422,5 +478,7 @@ export function getFixtureFigures(
       out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }
-  return out;
+  if (!sync) return out;
+  const now = Date.now();
+  return out.map((figure, index) => withSync(figure, index, now));
 }

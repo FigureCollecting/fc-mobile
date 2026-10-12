@@ -5,7 +5,8 @@
 // fails, what the last one kept stands and nothing more is asked. A figure answers the image the last
 // sync kept, and only if its bytes were on the device when asked and no sync recorded it withheld; one
 // without is absent, and the case draws its plate. Once a sync completes, or stops because its case
-// view went away after it read the lists (what it withholds then recorded), no earlier answer of this
+// view went away after it read the lists (what it withholds then recorded), or leaves an image
+// unfetched (abandoned on a stalled link, refused) and so is told as stopped, no earlier answer of this
 // hook or of useProductImage stands, offline or online, in the document that ran it or in any other
 // open document of the app, each told on a BroadcastChannel (src/hooks/imageAnswers.ts): one being
 // read is read again, one a view shows is asked again, any other is dropped, so neither answers an
@@ -50,11 +51,12 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
       const owned = (heads ?? []).slice(0, MAX_OWNED_FIGURES);
       if (reachable && !answersFromKept(client, queryKey)) {
         try {
-          await duringOwnSync(client, queryKey, () => syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal }));
+          const synced = await duringOwnSync(client, queryKey, () => syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal }));
           void dropImageAnswers(client, queryKey);
-          // Stopped part way by the case view going away, it may have recorded what it withholds: the
-          // other documents drop their answers too, and a sync of theirs under way runs on.
-          tellOwnedSync(client, signal.aborted ? 'stopped' : 'synced');
+          // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
+          // stalled link, refused), it may have recorded what it withholds: the other documents drop
+          // their answers too, and a sync of theirs under way runs on.
+          tellOwnedSync(client, signal.aborted || synced.failed > 0 ? 'stopped' : 'synced');
         } catch (err) {
           if (signal.aborted) throw err;
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.

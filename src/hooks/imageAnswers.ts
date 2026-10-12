@@ -6,9 +6,11 @@
 // (never itself); each other one drops all of its earlier answers when told. A case view open in a
 // document told answers again from what that sync kept, without a sync of its own, so two open case
 // views never sync each other. A sync whose case view went away part way, once it may have recorded
-// what it withholds, is told too, as stopped: a case view of the told document inside its own sync
-// (waiting for the lock, or holding it) is then left to finish it, reading the lists itself, neither
-// stopped nor asked again. Where the browser has no BroadcastChannel, no other document is told.
+// what it withholds, is told too, as stopped, and so is one that left an image unfetched (abandoned
+// on a stalled link, refused), its case view open or not: a case view of the told document inside
+// its own sync (waiting for the lock, or holding it) is then left to finish it, reading the lists
+// itself, neither stopped nor asked again. Where the browser has no BroadcastChannel, no other
+// document is told.
 // Every answer that names an address the sync withheld, that case view's too, shown or opened while
 // the drop reads the record, stops naming it once the record is read, before the drop asks it again
 // (the figure page answers the plate; the case view drops that figure, or only its mask), so none
@@ -28,7 +30,7 @@ const channels = new WeakMap<QueryClient, BroadcastChannel>();
 const toldOfSync = new WeakMap<QueryClient, Set<string>>();
 /** Per QueryClient, each run of a case view (its query hash) inside its own sync. */
 const inOwnSync = new WeakMap<QueryClient, Set<{ hash: string }>>();
-/** What a document tells the others of its sync: it completed, or its case view stopped it part way. */
+/** What a document tells the others of its sync: it completed, or it stopped part way (its case view went away) or left an image unfetched. */
 export type OwnedSyncEnd = 'synced' | 'stopped';
 
 /** The addresses an image answer names: the figure page's image; each of the case view's images and masks. */
@@ -79,10 +81,10 @@ export async function dropImageAnswers(client: QueryClient, own?: QueryKey, spar
 }
 
 /**
- * Another document's sync completed, or its case view stopped it part way: drop every image answer, an
- * open case view answering from what that sync kept. Told of a stopped sync, a case view inside its own
- * sync is left to finish it: it reads the lists after the other let go of the lock, its answer
- * meanwhile naming nothing the record withholds.
+ * Another document's sync completed, or stopped part way or left an image unfetched: drop every image
+ * answer, an open case view answering from what that sync kept. Told of a stopped sync, a case view
+ * inside its own sync is left to finish it: it reads the lists after the other let go of the lock, its
+ * answer meanwhile naming nothing the record withholds.
  */
 async function toldOfAnotherSync(client: QueryClient, end: OwnedSyncEnd): Promise<void> {
   const syncing = new Set(end === 'stopped' ? [...(inOwnSync.get(client) ?? [])].map((run) => run.hash) : []);

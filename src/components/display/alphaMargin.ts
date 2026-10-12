@@ -168,13 +168,15 @@ export const ALPHA_READS_AT_ONCE = 4;
 /**
  * A read still going after this long gives up its turn to the next picture
  * (while fewer than ALPHA_READS_AT_ONCE others are out of time) and goes on
- * until its deadline, so one stalled picture never holds the rest up.
+ * until its deadline: up to ALPHA_READS_AT_ONCE stalled pictures hold the
+ * rest up at most this long.
  */
 export const ALPHA_READ_TURN_MS = 1500;
 /**
  * A read not done this long after it starts is abandoned: its src cleared,
- * so the browser cancels its request, and nothing of it is kept. So however
- * many pictures stall, the rest wait at most this long for room to be read.
+ * so the browser cancels its request, and nothing of it is kept. So stalled
+ * pictures leave the room they hold however many there are, and the rest
+ * are read.
  */
 export const ALPHA_READ_DEADLINE_MS = 8000;
 /**
@@ -189,7 +191,11 @@ let reading = 0;
 let overdue = 0;
 /** Reads waiting for a turn. */
 const queued: (() => void)[] = [];
-/** Reads out of time, holding their turns until one of the overdue reads ends. */
+/**
+ * Reads out of time, holding their turns until one of the overdue reads
+ * ends. Which of them then gives its turn up is not observable: whichever
+ * it is, each later end frees the same room.
+ */
 const outOfTime: (() => void)[] = [];
 
 /** A turn ends: it goes to the next read waiting, or is free. */
@@ -385,12 +391,14 @@ export const ALPHA_LANDING_BATCH_MS = 100;
  * The clear margins of each picture in `urls` (the case's whole list: it
  * packs every figure by what it draws) known so far, each read once and
  * cached by URL across lists. A picture is in the answer as soon as it is
- * read (a failed read is known too: all 0), so a slow or stalled one holds
- * back only its own figure: it gives up its turn (ALPHA_READ_TURN_MS) and
- * is abandoned at its deadline (ALPHA_READ_DEADLINE_MS), so the others
- * are read meanwhile (when more than ALPHA_READS_AT_ONCE stall together,
- * the next wait at most that deadline), and it is read again later
- * (ALPHA_READ_RETRIES), unknown till then; reads landing together are one answer
+ * read (a failed read is known too: all 0). A slow or stalled one keeps
+ * only its own figure unknown: it gives up its turn after
+ * ALPHA_READ_TURN_MS and is abandoned at ALPHA_READ_DEADLINE_MS, unknown
+ * until it is read again (ALPHA_READ_RETRIES), and the others are read
+ * meanwhile: stalls delay them at most ALPHA_READ_TURN_MS while no more
+ * than ALPHA_READS_AT_ONCE stall together; more move through the room
+ * 2 x ALPHA_READS_AT_ONCE at a time, each for at most
+ * ALPHA_READ_DEADLINE_MS. Reads landing together are one answer
  * (ALPHA_LANDING_BATCH_MS), and the last picture of the list answers at
  * once. A list whose pictures are cached is known at once, and a new list
  * keeps every picture it shares with the old.

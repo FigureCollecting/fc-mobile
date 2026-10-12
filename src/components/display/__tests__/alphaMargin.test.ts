@@ -693,15 +693,23 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(started).toEqual([...urls, ...urls.slice(0, ALPHA_READS_AT_ONCE)]);
   });
 
-  for (const stalled of [8, 12]) {
-    it(`${stalled} reads of a 20-picture list stalled for good: every other picture is still read, within ${ALPHA_READ_DEADLINE_MS} ms and two turns`, async () => {
+  // when the others are read: a turn on while the stalled fit in the turns, else as the stalled move through the room
+  for (const [stalled, by] of [
+    [ALPHA_READS_AT_ONCE, ALPHA_READ_TURN_MS],
+    [2 * ALPHA_READS_AT_ONCE, ALPHA_READ_DEADLINE_MS],
+    [3 * ALPHA_READS_AT_ONCE, ALPHA_READ_DEADLINE_MS + ALPHA_READ_TURN_MS],
+  ] as const) {
+    it(`${stalled} reads at the head of a 20-picture list stalled for good: every other picture is still read, ${by} ms on`, async () => {
       vi.useFakeTimers();
       const urls = Array.from({ length: 20 }, (_, i) => `https://example.com/v${i}.png`);
-      heldPictures(urls, urls.slice(0, stalled));
+      const [stalledUrls, fine] = [urls.slice(0, stalled), urls.slice(stalled)];
+      heldPictures(urls, stalledUrls);
       const { result } = renderHook(() => useAlphaMarginsOf(urls));
-      await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + 2 * ALPHA_READ_TURN_MS);
-      expect(urls.slice(stalled).filter((u) => !result.current.has(u)), 'fine pictures still unknown').toEqual([]);
-      expect(urls.slice(0, stalled).filter((u) => result.current.has(u)), 'stalled pictures known').toEqual([]);
+      await vi.advanceTimersByTimeAsync(by - 1);
+      expect(fine.filter((u) => result.current.has(u)), 'fine pictures read before the stalled make room').toEqual([]);
+      await vi.advanceTimersByTimeAsync(1 + ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+      expect(fine.filter((u) => !result.current.has(u)), 'fine pictures still unknown').toEqual([]);
+      expect(stalledUrls.filter((u) => result.current.has(u)), 'stalled pictures known').toEqual([]);
     });
   }
 

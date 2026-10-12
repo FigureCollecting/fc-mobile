@@ -345,6 +345,24 @@ export function getFixtureAsym(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_ASYM_PARAM) === '1';
 }
 
+const FIXTURE_UNIQUE_PARAM = 'fxuniq';
+
+/**
+ * Dev-only switch for a long list of distinct pictures, as a real
+ * collection has: `?fxuniq=1` draws each repeated copy (`?fx=N`, copy 2 and
+ * on) at its own picture URL, the same picture. Off (the copies share their
+ * pictures) for anything else.
+ */
+export function getFixtureUnique(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_UNIQUE_PARAM) === '1';
+}
+
+/** A repeated copy's picture at its own URL under ?fxuniq=1. */
+function copyUrl<T extends string | undefined>(url: T, figureId: string, unique: boolean): T {
+  const copy = /-x(\d+)(?:-masked|-framed)?$/.exec(figureId)?.[1];
+  return (unique && url && copy ? `${url}?copy=${copy}` : url) as T;
+}
+
 const artName = (figureId: string) => figureId.replace(/^fx-/, '').replace(/(-x\d+)?(-masked|-framed)?$/, '');
 
 /** A fixture's cut-out, clean copy and mask: the off-centre ones under ?fxasym=1 where it has them. */
@@ -375,7 +393,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
   const { clean: url, mask: maskUrl } = artFiles(name, getFixtureAsym());
   const meta = FIXTURE_META[`fx-${name}`];
   if (!url || !maskUrl || !meta) return undefined;
-  return { url, maskUrl, width: meta.width, height: meta.height };
+  const unique = getFixtureUnique();
+  return { url: copyUrl(url, figure._id, unique), maskUrl: copyUrl(maskUrl, figure._id, unique), width: meta.width, height: meta.height };
 }
 
 /**
@@ -385,19 +404,22 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * matted (not a generic framed-photo fallback) — unless `?fxbranch` asks
  * for another branch (getFixtureBranch); `?fxwidth` changes their labelled
  * widths (getFixtureWidths), `?fxasym=1` draws two of them off-centre in
- * their pictures (getFixtureAsym).
+ * their pictures (getFixtureAsym), `?fxuniq=1` draws each copy at its own
+ * picture URL (getFixtureUnique).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
   branch = getFixtureBranch(),
   widths = getFixtureWidths(),
   asym = getFixtureAsym(),
+  unique = getFixtureUnique(),
 ): Figure[] {
   if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const base of FIXTURE_FIGURES) {
-      out.push(withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch, asym), widths));
+      const figure = withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch, asym), widths);
+      out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }
   return out;

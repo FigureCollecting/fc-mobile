@@ -851,6 +851,39 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(started).toHaveLength(3);
   });
 
+  it('its own picture loading during a read that waited in line for its turn: if that read runs out of time, the next starts at once', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: ALPHA_READS_AT_ONCE + 1 }, (_, i) => `https://example.com/q${i}.png`);
+    const last = urls[ALPHA_READS_AT_ONCE];
+    const { started, startedAt } = heldPictures(urls, urls);
+    const t0 = Date.now();
+    const readsOfLast = () => startedAt.filter((_, i) => started[i] === last).map((t) => t - t0);
+    renderHook(() => useAlphaMarginsOf(urls));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    // it waited in line, then took the turn handed on
+    expect(readsOfLast()).toEqual([ALPHA_READ_TURN_MS]);
+    await vi.advanceTimersByTimeAsync(1000);
+    alphaPictureLoaded(last);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + 100);
+    // that read runs out of time: the load sends the next at once, not after its backoff
+    expect(readsOfLast()).toEqual([ALPHA_READ_TURN_MS, ALPHA_READ_TURN_MS + ALPHA_READ_DEADLINE_MS]);
+  });
+
+  it('its own picture loading during a re-read that started from its backoff: if that read runs out of time, the next starts at once', async () => {
+    vi.useFakeTimers();
+    const { startedAt } = heldPictures([A], [A]);
+    const t0 = Date.now();
+    const reads = () => startedAt.map((t) => t - t0);
+    renderHook(() => useAlphaMarginsOf([A]));
+    const second = ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS;
+    await vi.advanceTimersByTimeAsync(second + 500);
+    expect(reads()).toEqual([0, second]);
+    alphaPictureLoaded(A);
+    // the second read, given twice the time, runs out of time: the load sends the next at once, not after its backoff
+    await vi.advanceTimersByTimeAsync(2 * ALPHA_READ_DEADLINE_MS);
+    expect(reads()).toEqual([0, second, second + 2 * ALPHA_READ_DEADLINE_MS]);
+  });
+
   it('its own picture loading while it waits in line: it is read next, ahead of the line', async () => {
     vi.useFakeTimers();
     const urls = Array.from({ length: 10 }, (_, i) => `https://example.com/f${i}.png`);

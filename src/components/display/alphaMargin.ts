@@ -595,29 +595,29 @@ export const ALPHA_LANDING_BATCH_MS = 100;
  * The clear margins of each picture in `urls` (the case's whole list: it
  * packs every figure by what it draws) known so far, each read once and
  * cached by URL across lists. A picture is in the answer as soon as it is
- * read. A failed read is known too, all 0: no 2D canvas or no size, or a
- * picture that never decoded, broken or failing to fetch (a network or HTTP
- * error during the read, or no CORS answer); decode() cannot tell those
- * apart, so one whose own picture then loads (alphaPictureLoaded: a
- * cut-out's) is read again and answered anew. A slow or stalled one keeps
- * only its own figure unknown, a plate, and is never a failed read for
- * running out of time: it gives up its turn after ALPHA_READ_TURN_MS and is
- * abandoned at its deadline (ALPHA_READ_DEADLINE_MS, longer each try), then
- * read again after a backoff (ALPHA_READ_BACKOFF_MS) for as long as this
- * list is shown, and at once when its own picture loads
- * (alphaPictureLoaded). So a picture that arrives is read, however slow the
- * link: by the first try to find it in the HTTP cache (a cut-out's at once,
- * as its own picture loads), or to be given the time its fetch takes
- * (ALPHA_READ_DEADLINE_MAX_MS at most). The others are read meanwhile: slow
- * or stalled reads delay them at most ALPHA_READ_TURN_MS while no more than
- * ALPHA_READS_AT_ONCE are out of time together; more move through the room
- * 2 x ALPHA_READS_AT_ONCE at a time, each until it lands or reaches its
- * deadline. A new picture never waits behind re-reads: first reads go ahead
- * of them in line, and re-reads hold at most ALPHA_READS_AT_ONCE of the
- * room. Reads landing together are one answer (ALPHA_LANDING_BATCH_MS), and
- * the last picture of the list answers at once. A list whose pictures are
- * cached is known at once, and a new list keeps every picture it shares with
- * the old.
+ * read. A failed read is known too, all 0: no 2D canvas, no size or a
+ * tainted canvas, or a picture that never decoded, broken or failing to
+ * fetch (a network or HTTP error during the read, or no CORS answer);
+ * decode() cannot tell those apart, so one whose own picture then loads
+ * (alphaPictureLoaded: a cut-out's) is read again and answered anew. A slow
+ * or stalled one keeps only its own figure unknown, a plate, and is never a
+ * failed read for running out of time: it gives up its turn after
+ * ALPHA_READ_TURN_MS and is abandoned at its deadline
+ * (ALPHA_READ_DEADLINE_MS, longer each try), then read again after a backoff
+ * (ALPHA_READ_BACKOFF_MS) for as long as this list is shown, and at once
+ * when its own picture loads (alphaPictureLoaded). So a picture that arrives
+ * is read, however slow the link: by the first try to find it in the HTTP
+ * cache (a cut-out's at once, as its own picture loads), or to be given the
+ * time its fetch takes (ALPHA_READ_DEADLINE_MAX_MS at most). The others are
+ * read meanwhile: slow or stalled reads delay them at most
+ * ALPHA_READ_TURN_MS while no more than ALPHA_READS_AT_ONCE are out of time
+ * together; more move through the room 2 x ALPHA_READS_AT_ONCE at a time,
+ * each until it lands or reaches its deadline. A new picture never waits
+ * behind re-reads: first reads go ahead of them in line, and re-reads hold
+ * at most ALPHA_READS_AT_ONCE of the room. Reads landing together are one
+ * answer (ALPHA_LANDING_BATCH_MS), and the last picture of the list answers
+ * at once. A list whose pictures are cached is known at once, and a new list
+ * keeps every picture it shares with the old.
  */
 export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, AlphaMargins> {
   const key = urls.join('\n');

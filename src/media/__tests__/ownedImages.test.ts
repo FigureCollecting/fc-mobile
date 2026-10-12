@@ -759,6 +759,20 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect(owned(storage)).toEqual([url('b'), url('2')].sort());
   });
 
+  it('a kept-list replacement the device refuses part way: the lists replaced stay, and the refused one and every other list naming a withheld address go, so none names one', async () => {
+    const storage = device();
+    await syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })], h3: [img('e', { primary: true })] }), { storage });
+    const restore = refusePuts(storage, IMAGE_LISTS_CACHE, (n) => n === 2);
+    const fresh = lists({ h1: [img('b', { primary: true })], h2: [img('d', { primary: true })], h3: [img('f', { primary: true })] });
+    await expect(syncOwnedImages(['h1', 'h2', 'h3'], fresh, { storage })).rejects.toThrow('quota');
+    restore();
+    expect(await withheld(storage, ['a', 'c', 'e'])).toEqual([url('a'), url('c'), url('e')].sort());
+    expect((await recallImages('h1', storage))?.map((i) => i.url)).toEqual([url('b')]);
+    expect(await recallImages('h2', storage)).toBeUndefined();
+    expect(await recallImages('h3', storage)).toBeUndefined();
+    expect(await named(storage)).toEqual([url('b')]);
+  });
+
   it('tells onRecorded each time it has written a record, the record already there; never when it withholds nothing, nor when the record is refused', async () => {
     const storage = device();
     const at: number[] = [];

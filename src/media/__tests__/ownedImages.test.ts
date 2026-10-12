@@ -763,24 +763,25 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
 
   it('a record the device refuses after another was written (its quota on the second): the sync deletes as it would, but keeps the kept list naming what it could not record, writes no kept list, fails, and the next sync records it', async () => {
     const storage = device();
-    // h2 names a too, and c, which is not its primary.
-    await syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('2', { primary: true }), img('c'), img('a')], h3: [img('e', { primary: true })] }), { storage });
+    // h2 names a too, and c, which is not its primary; h4 names neither.
+    await syncOwnedImages(['h1', 'h2', 'h3', 'h4'], lists({ h1: [img('a', { primary: true })], h2: [img('2', { primary: true }), img('c'), img('a')], h3: [img('e', { primary: true })], h4: [img('4', { primary: true })] }), { storage });
     for (const c of ['a', 'c', 'e', '2']) await shown(storage, url(c));
     const restore = refusePuts(storage, WITHHELD_CACHE, (n) => n === 2);
-    // a and c withheld (a recorded first), h3 left the collection.
-    const fresh = lists({ h1: [img('b', { primary: true })], h2: [img('2', { primary: true })] });
-    await expect(syncOwnedImages(['h1', 'h2'], fresh, { storage })).rejects.toThrow('quota');
+    // a and c withheld (a recorded first), h3 left the collection, h4 is as it was.
+    const fresh = lists({ h1: [img('b', { primary: true })], h2: [img('2', { primary: true })], h4: [img('4', { primary: true })] });
+    await expect(syncOwnedImages(['h1', 'h2', 'h4'], fresh, { storage })).rejects.toThrow('quota');
     restore();
     expect(await withheld(storage, ['a', 'c', 'e'])).toEqual([url('a')]);
-    expect(owned(storage)).toEqual([url('2')]);
+    expect(owned(storage)).toEqual([url('2'), url('4')].sort());
     expect(browsed(storage)).toEqual([url('2')]);
     expect(await recallImages('h1', storage)).toBeUndefined();
     expect((await recallImages('h2', storage))?.map((i) => i.url)).toEqual([url('2'), url('c'), url('a')]);
     expect(await recallImages('h3', storage)).toBeUndefined();
-    await syncOwnedImages(['h1', 'h2'], fresh, { storage });
+    expect((await recallImages('h4', storage))?.map((i) => i.url)).toEqual([url('4')]);
+    await syncOwnedImages(['h1', 'h2', 'h4'], fresh, { storage });
     expect(await withheld(storage, ['a', 'c', 'e'])).toEqual([url('a'), url('c')].sort());
-    expect(await named(storage)).toEqual([url('b'), url('2')].sort());
-    expect(owned(storage)).toEqual([url('b'), url('2')].sort());
+    expect(await named(storage)).toEqual([url('b'), url('2'), url('4')].sort());
+    expect(owned(storage)).toEqual([url('b'), url('2'), url('4')].sort());
   });
 
   it('a kept-list replacement the device refuses part way: the lists replaced stay, and the refused one and every other list naming a withheld address go, so none names one', async () => {

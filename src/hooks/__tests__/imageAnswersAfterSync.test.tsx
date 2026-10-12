@@ -814,6 +814,9 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     await settle();
     await waitFor(() => expect(docs.reduce((n, d) => n + d.isFetching(), 0)).toBe(0));
   };
+  /** The case view syncs' reads of the lists so far (the figure page asks without a page size). */
+  const syncReads = (r: LocalRig) => r.clients.getProductImages.mock.calls.filter(([req]) => req.pageSize !== undefined).length;
+
   /** A case view and every address it answered for the first figure, render by render (undefined: its plate). */
   const watchedCaseView = (doc: QueryClient) => {
     const named: (string | undefined)[] = [];
@@ -1114,6 +1117,7 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
       r.clients.getProductImages.mockResolvedValue(lists([], [W]));
       armed = true;
       const asked = r.clients.getProductImages.mock.calls.length;
+      const reads = syncReads(r);
       const viewA = caseView(docA);
       await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked));
       await idle(docA, docB);
@@ -1122,6 +1126,8 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
         await waitFor(() => expect(pageB.result.current.data).toBeNull());
         await idle(docA, docB);
         expect(heard).toEqual(['stopped']);
+        // Its own sync is neither cancelled nor run again while the device still refuses the write.
+        expect(syncReads(r)).toBe(reads + 1);
         expect([...(await withheldAmong([X], storage))]).toEqual([X]);
         expect(pageB.result.current.data).toBeNull();
         expect(pageAnswers(docA)).toBe(0);
@@ -1249,9 +1255,6 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
-  /** The case view syncs' reads of the lists so far (the figure page asks without a page size). */
-  const syncReads = (r: LocalRig) => r.clients.getProductImages.mock.calls.filter(([req]) => req.pageSize !== undefined).length;
-
   it.each([['another document'], ['the same document']])(
     'a sync whose case view goes away while it writes the kept lists, having recorded nothing (no kept list named the image the lists now withhold), tells it stopped: the figure page open in %s, which answered the image from the coordinator, answers the plate',
     async (where) => {
@@ -1331,18 +1334,20 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     const heard: unknown[] = [];
     listener.onmessage = (e) => heard.push(e.data);
     // The takedown: the first figure lists nothing now; the second lists B, and the device refuses its list.
-    r.clients.getProductImages.mockResolvedValue(lists([], [B]));
-    armed = true;
+    // A sync run again would wait on its read of the lists, never answered.
     const reads = syncReads(r);
+    r.clients.getProductImages.mockImplementation(async (req) => (req.pageSize !== undefined && syncReads(r) > reads + 1 ? new Promise<never>(() => {}) : lists([], [B])));
+    armed = true;
     const viewA = caseView(docA);
     try {
       await waitFor(() => expect(heard).toEqual(['stopped']));
       await waitFor(() => expect(pageB.result.current.data).toBeNull());
+      await settle();
+      // Its own sync is neither cancelled nor run again while the device still refuses the write.
+      expect(syncReads(r)).toBe(reads + 1);
       await idle(docA, docB);
       expect(heard).toEqual(['stopped']);
       expect(pageB.result.current.data).toBeNull();
-      // Its own sync is neither cancelled nor run again while the device still refuses the write.
-      expect(syncReads(r)).toBe(reads + 1);
     } finally {
       listener.close();
       armed = false;

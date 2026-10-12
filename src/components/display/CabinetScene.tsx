@@ -38,6 +38,7 @@ import { cabinetsInReach, frameCase, panLimitsPx, swipeCamera, wallPages, wallRe
 import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
@@ -319,8 +320,12 @@ interface FigureDraw {
   readonly cx: number;
 }
 
-/** `hidden`: loaded but not drawn (a picture whose alpha is still being read). */
-function ArtBody({ art, name, hidden = false }: { art: FigureArt; name: string; hidden?: boolean }) {
+/**
+ * `hidden`: loaded but not drawn (a picture whose alpha is still being read).
+ * Pictures load as CORS images (ADDR-1: the service worker keeps only a CORS
+ * answer); `onBroken` hears of one that fails to load.
+ */
+function ArtBody({ art, name, hidden = false, onBroken }: { art: FigureArt; name: string; hidden?: boolean; onBroken: (url: string) => void }) {
   const visibility = hidden ? 'hidden' : undefined;
   if (art.kind === 'masked') {
     return (
@@ -340,13 +345,22 @@ function ArtBody({ art, name, hidden = false }: { art: FigureArt; name: string; 
   if (art.kind === 'cutout') {
     // a cut-out's alpha is its own picture: once loaded, a read of it is a cache hit
     return (
-      <img class="cab-figure__art cab-figure__art--cutout" src={art.url} alt="" draggable={false} style={{ visibility }} onLoad={() => alphaPictureLoaded(art.alphaUrl!)} />
+      <img
+        class="cab-figure__art cab-figure__art--cutout"
+        src={art.url}
+        alt=""
+        draggable={false}
+        crossOrigin="anonymous"
+        style={{ visibility }}
+        onLoad={() => alphaPictureLoaded(art.alphaUrl!)}
+        onError={() => onBroken(art.url!)}
+      />
     );
   }
   if (art.kind === 'framed') {
     return (
       <div class="cab-figure__frame">
-        <img class="cab-figure__art" src={art.url} alt="" draggable={false} />
+        <img class="cab-figure__art" src={art.url} alt="" draggable={false} crossOrigin="anonymous" onError={() => onBroken(art.url!)} />
       </div>
     );
   }
@@ -385,6 +399,7 @@ function SceneFigure({
   margins,
   labels,
   onSelect,
+  onBroken,
 }: {
   draw: FigureDraw;
   art: FigureArt;
@@ -393,6 +408,7 @@ function SceneFigure({
   margins: PictureMargins | null;
   labels: boolean;
   onSelect: () => void;
+  onBroken: (url: string) => void;
 }) {
   const { placed, slot, cx } = draw;
   const { item } = placed;
@@ -451,7 +467,7 @@ function SceneFigure({
             pointerEvents: 'none',
           }}
         >
-          <ArtBody art={art} name={item.figure.name} hidden={!grounded} />
+          <ArtBody art={art} name={item.figure.name} hidden={!grounded} onBroken={onBroken} />
           {!grounded && <div class="cab-figure__plate cab-figure__plate--reading">{item.figure.name}</div>}
         </span>
       </button>
@@ -514,16 +530,19 @@ export function CabinetScene({
   const ceilingMm = prefs.ceilingMm;
   const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
 
+  // a picture that fails to load stands as its plate (ADDR-1), never a blank space
+  const images = useBrokenImages();
   // what the case draws for each figure, in the shape it draws it (the image list's own size when it gives one)
   const arts = useMemo(
     () =>
       figures.map((f) => {
         const meta = getDisplayMeta(f);
         const image = imageFor?.(f);
-        const art = figureArt(f, meta, image);
+        const drawn = figureArt(f, meta, image);
+        const art: FigureArt = images.broken(drawn.url) ? { kind: 'plate' } : drawn;
         return { meta, art, aspect: artAspect(art, image, meta.aspect) };
       }),
-    [figures, imageFor],
+    [figures, imageFor, images.broken],
   );
   const alphaUrls = useMemo(() => [...new Set(arts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [arts]);
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
@@ -727,6 +746,7 @@ export function CabinetScene({
                   margins={pictureMargins(art, alpha)}
                   labels={labels}
                   onSelect={() => onSelect(figure, index)}
+                  onBroken={images.failed}
                 />
               );
             })}

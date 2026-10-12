@@ -27,8 +27,9 @@
 // withheld one is recorded, so a refill of the browsed cache after that sync is deleted at the next.
 // A figure no longer owned is not recorded: its figure page asks the coordinator, as for any figure
 // not owned. Both kept caches hold exactly the owned figures (at most MAX_OWNED_FIGURES of them).
-// Where the browser has Web Locks, the documents of the app sync one at a time (syncOwnedImages). Each
-// network step of a sync ends within OWNED_SYNC_STEP_MS, or as soon as its case view goes away.
+// Where the browser has Web Locks, the documents of the app sync one at a time (syncOwnedImages). A list
+// call of a sync ends within OWNED_SYNC_STEP_MS, an image fetch once it has received nothing for that
+// long, and either as soon as its case view goes away.
 // keptImage answers a figure's kept image only if its bytes are here when asked and no sync recorded
 // it withheld; otherwise the figure is drawn as its plate. Nothing here is sent anywhere.
 // No fetch of the image address, here or in the worker, uses the HTTP cache, so neither answers an
@@ -64,13 +65,19 @@ export const OWNED_SYNC_LOCK = 'fc-owned-sync';
 /**
  * How long a sync waits for another document's before it fails, having asked and touched nothing (what
  * the last sync kept then stands). The other lets go when it completes or fails: once its fetches in
- * flight end when its case view goes away, and at most OWNED_SYNC_STEP_MS after a step of it outlasts
- * OWNED_SYNC_STEP_MS (syncOwnedImages).
+ * flight end when its case view goes away, and at most OWNED_SYNC_STEP_MS after its fetches in flight
+ * stop receiving anything (syncOwnedImages). While their bytes keep coming (a large first sync, a slow
+ * link) it holds the lock, and this wait runs out first. A document whose sync failed here answers
+ * from what was kept, the other's sync told to it or not, until a sync of its own: its case view
+ * opened again once its answer is ten minutes old, or the owned figures or the reach changing. So a
+ * takedown the other's lists did not carry yet lands there only then, as one between two documents'
+ * list reads does.
  */
 export const OWNED_SYNC_WAIT_MS = 10_000;
 /**
- * The longest one network step of a sync may take (a GetProductImages call, an image fetch). A list
- * call past it fails the sync; an image fetch past it is abandoned, and no other starts after it.
+ * The longest a GetProductImages call of a sync may take, and the longest an image fetch may go
+ * without receiving anything (its headers, a byte of its body). A list call past it fails the sync; an
+ * image fetch that receives nothing for that long is abandoned, and no other starts after it.
  */
 export const OWNED_SYNC_STEP_MS = 20_000;
 
@@ -246,9 +253,11 @@ interface SyncOptions {
  * withheld. It waits at most `lockWaitMs` for another document's, then fails having asked and
  * touched nothing. Every image fetch carries the sync's signal, so the case view going away aborts
  * the fetches in flight (and fetchImageLists' call), and the sync lets go of the lock once they
- * end. An image fetch past OWNED_SYNC_STEP_MS is abandoned and no other starts after it (what is
- * still missing is fetched at the next sync), so the sync lets go of the lock at most that long
- * after a fetch of it is abandoned, its case view open or not. Where the browser has no Web Locks
+ * end. An image fetch that receives nothing (its headers, a byte of its body) for OWNED_SYNC_STEP_MS
+ * is abandoned and no other starts after it; what is still missing is fetched at a later sync that
+ * the link brings bytes to. So the sync lets go of the lock at most that long after its fetches in
+ * flight stop receiving anything, its case view open or not; while their bytes keep coming, however
+ * slowly, it fetches on, and a slow but working link keeps every image. Where the browser has no Web Locks
  * (an older browser, a page not served securely), syncs are not serialised, as before the lock:
  * two documents syncing at once can finish in the other order, and the one that read older lists
  * then undoes, until the next sync, what the other withheld.
@@ -277,6 +286,17 @@ export async function syncOwnedImages(
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', stop);
   }
+}
+
+/** One body of the chunks a reader read, in order. */
+function joined(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
 }
 
 async function bringToOwned(
@@ -357,25 +377,41 @@ async function bringToOwned(
     for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);
   }
   const missing = [...keep].filter((u) => !have.has(u));
-  // Each fetch is aborted when the sync's signal aborts, or when it has not arrived within
-  // OWNED_SYNC_STEP_MS; then the link is taken as stalled and no other fetch starts.
+  // Each fetch is aborted when the sync's signal aborts, or when it has received nothing (its headers,
+  // a byte of its body) for OWNED_SYNC_STEP_MS; then the link is taken as stalled and no other fetch
+  // starts. Only an ok answer with a body is kept (Cache.add kept any ok one), once all of it arrived.
   let stalled = false;
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
     for (let next = missing.shift(); next !== undefined && options.signal?.aborted !== true && !stalled; next = missing.shift()) {
       const step = new AbortController();
-      const late = setTimeout(() => {
-        stalled = true;
-        step.abort(new DOMException('the image did not arrive in time', 'TimeoutError'));
-      }, OWNED_SYNC_STEP_MS);
+      let quiet: ReturnType<typeof setTimeout> | undefined;
+      const heard = () => {
+        clearTimeout(quiet);
+        quiet = setTimeout(() => {
+          stalled = true;
+          step.abort(new DOMException('the image link sent nothing in time', 'TimeoutError'));
+        }, OWNED_SYNC_STEP_MS);
+      };
       const stop = () => step.abort(options.signal?.reason);
       options.signal?.addEventListener('abort', stop, { once: true });
       try {
-        await media.add(new Request(next, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal: step.signal }));
+        heard();
+        const request = new Request(next, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal: step.signal });
+        const res = await fetch(request);
+        heard();
+        if (!res.ok || res.body === null) throw new TypeError(`the image link answered ${res.status} without an image`);
+        const chunks: Uint8Array[] = [];
+        const reader = res.body.getReader();
+        for (let read = await reader.read(); !read.done; read = await reader.read()) {
+          heard();
+          chunks.push(read.value);
+        }
+        await media.put(request, new Response(joined(chunks), { status: res.status, statusText: res.statusText, headers: res.headers }));
         result.added += 1;
       } catch {
         result.failed += 1;
       } finally {
-        clearTimeout(late);
+        clearTimeout(quiet);
         options.signal?.removeEventListener('abort', stop);
       }
     }

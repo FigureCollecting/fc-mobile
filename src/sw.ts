@@ -24,7 +24,7 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { deny
 // answers it, nothing is fetched or stored, online or offline. The owned figures' images come next,
 // from the cache the page fills and evicts with the collection. Any other image an <img> shows is
 // CacheFirst in its own bounded cache. The page's own fetch of an image (the
-// owned sync's Cache.add) goes to the origin and is never stored here a second time. Every fetch this
+// owned sync's fetch) goes to the origin and is never stored here a second time. Every fetch this
 // route sends is cache 'no-store', so it neither reads nor fills the browser's HTTP cache: the origin
 // answers immutable, and a copy there would outlive the sync's eviction. For the same reason the page
 // gets every answer as a copy marked Cache-Control: no-store. Chromium's memory cache inside a tab

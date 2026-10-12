@@ -634,6 +634,26 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(marginsOf(answers.at(-1)!.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
   });
 
+  it('its own picture loading while its read is in flight, that read never decoding and the read again running out of time: the next waits its backoff; one load, one read at once', async () => {
+    vi.useFakeTimers();
+    const startedAt: number[] = [];
+    let failFirst!: () => void;
+    mockPictures(pictures(), () => {
+      startedAt.push(Date.now());
+      if (startedAt.length === 1) return new Promise<void>((_, no) => (failFirst = () => no(neverDecoded())));
+      return startedAt.length === 2 ? new Promise<void>(() => {}) : Promise.resolve();
+    });
+    const t0 = Date.now();
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(1000);
+    alphaPictureLoaded(A);
+    failFirst();
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS + EFFECTS_MS);
+    // read again at once; out of time at its deadline, the next waits its backoff: the load is spent
+    expect(startedAt.map((t) => t - t0)).toEqual([0, 1000, 1000 + ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS]);
+    expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
   it('its own picture loading while its read is in flight, that read then never decoding: the read again goes ahead of the line', async () => {
     vi.useFakeTimers();
     const held = Array.from({ length: ALPHA_READS_AT_ONCE - 1 }, (_, i) => `https://example.com/h${i}.png`);

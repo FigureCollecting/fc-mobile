@@ -945,7 +945,7 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
-  it('the case view of another document, its answer stripped of the image inside its own sync, then gone before that sync ends: opened again, never names it, and syncs again, its answer as old as before', async () => {
+  it('the case view of another document, its answer stripped of the image inside its own sync, then gone before that sync ends: opened again, never names it, and syncs again, its answer as stale as before', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
     const docA = appQueryClient();

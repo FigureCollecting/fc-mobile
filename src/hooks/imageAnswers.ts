@@ -5,20 +5,21 @@
 // sync drops its earlier answers but the sync's own, and tells every other one on a BroadcastChannel
 // (never itself); each other one drops all of its earlier answers when told. A case view open in a
 // document told answers again from what that sync kept, without a sync of its own, so two open case
-// views never sync each other. A sync whose case view went away part way, once it may have recorded
-// what it withholds, is told too, as stopped, and so is one that left an image unfetched (abandoned
-// on a stalled link, refused), its case view open or not: a case view of the told document inside
-// its own sync (waiting for the lock, or holding it) is then left to finish it, reading the lists
-// itself, neither stopped nor asked again. Where the browser has no BroadcastChannel, no other
-// document is told.
+// views never sync each other. A sync that recorded what it withholds and then failed or was
+// cancelled (a write the device refused, its case view gone) is told too, as stopped; so is one whose
+// case view went away once it began its last kept-list write (while it fetches the images), and one
+// that left an image unfetched (abandoned on a stalled link, refused), its case view open or not: a
+// case view of the told document inside its own sync (waiting for the lock, or holding it) is then
+// left to finish it, reading the lists itself, neither stopped nor asked again. Where the browser has
+// no BroadcastChannel, no other document is told.
 // Every answer that names an address the sync withheld, that case view's too, and the sync's own
 // (the answer its case view's going away reverted it to), shown or opened while the drop reads the
 // record, stops naming it once the record is read, before the drop asks it again (the figure page
 // answers the plate; the case view drops that figure, or only its mask), so none waits on the
 // coordinator's answer, which a stalled link can hold back for as long as the ask's deadline, nor on
-// that case view's own sync. An answer that stops naming an address keeps its age: a case view gone
-// before its sync ends answers, opened again, the answer without the address, and syncs as it would
-// have. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
+// that case view's own sync. An answer that stops naming an address stays as stale as before: a case
+// view gone before its sync ends answers, opened again, the answer without the address, and syncs as
+// it would have. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { withheldAmong, type CachedImage } from '../media/ownedImages';
 
@@ -31,7 +32,7 @@ const channels = new WeakMap<QueryClient, BroadcastChannel>();
 const toldOfSync = new WeakMap<QueryClient, Set<string>>();
 /** Per QueryClient, each run of a case view (its query hash) inside its own sync. */
 const inOwnSync = new WeakMap<QueryClient, Set<{ hash: string }>>();
-/** What a document tells the others of its sync: it completed, or it stopped part way (its case view went away) or left an image unfetched. */
+/** What a document tells the others of its sync: it completed, or it stopped part way (its case view went away, a write refused after its record) or left an image unfetched. */
 export type OwnedSyncEnd = 'synced' | 'stopped';
 
 /** The addresses an image answer names: the figure page's image; each of the case view's images and masks. */
@@ -63,8 +64,8 @@ function without(key: QueryKey, data: unknown, withheld: ReadonlySet<string>): u
  * spared ones too, that names an address the sync recorded as withheld stops naming it as soon as the
  * record is read, before this asks it again (the re-ask of a figure page online is a coordinator round
  * trip); so does one a view opens while the record is read, even one already asking, and the answer a
- * case view's going away reverted its stopped sync to. It keeps its age (dataUpdatedAt), so an answer
- * reverted to it later is as old as before.
+ * case view's going away reverted its stopped sync to. It keeps its dataUpdatedAt, so an answer
+ * reverted to it later stays as stale as before.
  */
 export async function dropImageAnswers(client: QueryClient, own?: QueryKey, spare: ReadonlySet<string> = new Set()): Promise<void> {
   const ownHash = own === undefined ? undefined : hashKey(own);

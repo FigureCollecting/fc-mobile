@@ -6,9 +6,10 @@
 // sync kept, and only if its bytes were on the device when asked and no sync recorded it withheld; one
 // without is absent, and the case draws its plate. Once a sync completes, or stops because its case
 // view went away after it read the lists (what it withholds then recorded), or leaves an image
-// unfetched (abandoned on a stalled link, refused) and so is told as stopped, no earlier answer of this
-// hook or of useProductImage stands, offline or online, in the document that ran it or in any other
-// open document of the app, each told on a BroadcastChannel (src/hooks/imageAnswers.ts): one being
+// unfetched (abandoned on a stalled link, refused), or fails after it recorded what it withholds (a
+// write the device refused), each of these told as stopped, no earlier answer of this hook or of
+// useProductImage stands, offline or online, in the document that ran it or in any other open
+// document of the app, each told on a BroadcastChannel (src/hooks/imageAnswers.ts): one being
 // read is read again, one a view shows is asked again, any other is dropped, so neither answers an
 // image that sync withheld (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer that names
 // an address that sync withheld, shown or opened while the document reads what it withheld, stops

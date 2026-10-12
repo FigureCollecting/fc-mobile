@@ -616,6 +616,72 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('b')]);
   });
 
+  /** The cache `name`, whose `n`th put from now on throws the device's quota error where `refuse(n)`. */
+  const refusePuts = (storage: ReturnType<typeof fakeCaches>, name: string, refuse: (n: number) => boolean) => {
+    const open = storage.open.bind(storage);
+    let puts = 0;
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (n: string) => {
+      const cache = await open(n);
+      if (n !== name) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        put: async (req: RequestInfo | URL, res: Response) => {
+          puts += 1;
+          if (refuse(puts)) throw new DOMException('quota', 'QuotaExceededError');
+          return cache.put(req, res);
+        },
+      });
+    };
+    return () => {
+      (storage as unknown as { open: unknown }).open = open;
+    };
+  };
+  /** Every address a kept list names, and every address the owned cache holds bytes for. */
+  const named = async (storage: ReturnType<typeof fakeCaches>) => {
+    const out: string[] = [];
+    for (const res of storage.stores.get(IMAGE_LISTS_CACHE)?.values() ?? []) {
+      for (const i of JSON.parse(await res.clone().text()) as CachedImage[]) out.push(...(i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
+    }
+    return out.sort();
+  };
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+
+  it('a kept-list write the device refuses (its quota) after the record: nothing it withholds or no longer keeps stays on the device, as bytes, a shown copy, or in a kept list', async () => {
+    const storage = device();
+    await syncOwnedImages(['h1', 'h2', 'h3', 'h4'], lists({ h1: [img('a', { primary: true, mask: mask('f') })], h2: [img('c', { primary: true })], h3: [img('e', { primary: true })], h4: [img('g', { primary: true })] }), { storage });
+    for (const c of ['a', 'c', 'e', 'f', 'g']) await shown(storage, url(c));
+    const restore = refusePuts(storage, IMAGE_LISTS_CACHE, () => true);
+    // h1 shows b now (a and its mask f withheld), h2 lists nothing (c withheld), h3 left the collection, h4 is as it was.
+    const fresh = lists({ h1: [img('b', { primary: true })], h2: [], h4: [img('g', { primary: true })] });
+    await expect(syncOwnedImages(['h1', 'h2', 'h4'], fresh, { storage })).rejects.toThrow('quota');
+    restore();
+    expect(await withheld(storage, ['a', 'c', 'e', 'f'])).toEqual([url('a'), url('c'), url('f')].sort());
+    expect(owned(storage)).toEqual([url('g')]);
+    expect(browsed(storage)).toEqual([url('g')]);
+    expect(await named(storage)).toEqual([url('g')]);
+  });
+
+  it('a record the device refuses after another was written (its quota on the second): the sync deletes as it would, but keeps the kept list naming what it could not record, writes no kept list, fails, and the next sync records it', async () => {
+    const storage = device();
+    // h2 names a too, and c, which is not its primary.
+    await syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('p', { primary: true }), img('c'), img('a')], h3: [img('e', { primary: true })] }), { storage });
+    for (const c of ['a', 'c', 'e', 'p']) await shown(storage, url(c));
+    const restore = refusePuts(storage, WITHHELD_CACHE, (n) => n === 2);
+    // a and c withheld (a recorded first), h3 left the collection.
+    const fresh = lists({ h1: [img('b', { primary: true })], h2: [img('p', { primary: true })] });
+    await expect(syncOwnedImages(['h1', 'h2'], fresh, { storage })).rejects.toThrow('quota');
+    restore();
+    expect(await withheld(storage, ['a', 'c', 'e'])).toEqual([url('a')]);
+    expect(owned(storage)).toEqual([url('p')]);
+    expect(browsed(storage)).toEqual([url('p')]);
+    expect(await recallImages('h1', storage)).toBeUndefined();
+    expect((await recallImages('h2', storage))?.map((i) => i.url)).toEqual([url('p'), url('c'), url('a')]);
+    expect(await recallImages('h3', storage)).toBeUndefined();
+    await syncOwnedImages(['h1', 'h2'], fresh, { storage });
+    expect(await withheld(storage, ['a', 'c', 'e'])).toEqual([url('a'), url('c')].sort());
+    expect(await named(storage)).toEqual([url('b'), url('p')].sort());
+    expect(owned(storage)).toEqual([url('b'), url('p')].sort());
+  });
+
   it('deletes a refill of a withheld address from the browsed cache at every later sync', async () => {
     const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });

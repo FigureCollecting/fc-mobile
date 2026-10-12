@@ -157,6 +157,8 @@ const maskCache = new Map<string, AlphaMask | null>();
 const contactBandCache = new Map<string, ContactBand | null>();
 /** Pictures whose last read never decoded them (UNDECODED): their own picture loading reads them again. */
 const undecoded = new Set<string>();
+/** Pictures whose own picture loaded before any read of them: their first read carries a read again (Reader.retryUndecoded). */
+const loadedUnread = new Set<string>();
 /** What each view does when a picture is read again on its own load after it never decoded (alphaPictureLoaded). */
 const rereadViews = new Set<(imageUrl: string, read: AlphaRead) => void>();
 
@@ -361,6 +363,7 @@ export function __clearAlphaMarginCache(): void {
   wantedBy.clear();
   readers.clear();
   undecoded.clear();
+  loadedUnread.clear();
 }
 
 /**
@@ -451,8 +454,8 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * at once (`first`: from the start), once per load.
  */
 async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | undefined> {
-  // `first`: sent by its own picture loading, whose read again it carries
-  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: first };
+  // `first`: sent by its own picture loading, whose read again it carries, as does a load before any read
+  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: loadedUnread.delete(imageUrl) || first };
   readers.set(imageUrl, reader);
   for (;;) {
     const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);
@@ -492,8 +495,9 @@ async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | 
  * that never decodes the picture, whenever it runs, failed to fetch it: it
  * is read again at once, once per load. A picture whose last read never
  * decoded it (the read failed to fetch it) is read again, at the front of
- * the line, and the views showing it learn what that read gives. Any other:
- * nothing.
+ * the line, and the views showing it learn what that read gives. One not
+ * read yet: its first read, if it never decodes the picture, goes again at
+ * once. Any other (read already): nothing.
  */
 export function alphaPictureLoaded(imageUrl: string): void {
   const reader = readers.get(imageUrl);
@@ -508,7 +512,7 @@ export function alphaPictureLoaded(imageUrl: string): void {
       keep(imageUrl, read);
       for (const tell of rereadViews) tell(imageUrl, read);
     });
-  }
+  } else if (!marginCache.has(imageUrl)) loadedUnread.add(imageUrl);
 }
 
 /** What a read of a picture gives, kept by its URL. */

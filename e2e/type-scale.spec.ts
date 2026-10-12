@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
@@ -35,8 +37,23 @@ const FLUID_BEFORE: Record<string, string> = {
 /** One notch up at desktop widths: each fluid step's maximum, 1 px more. */
 const DESKTOP_PX: Record<string, number> = { '--font-sm': 14, '--font-base': 15, '--font-lg': 17, '--font-xl': 19 };
 
+const TOKENS_CSS = readFileSync(fileURLToPath(new URL('../src/styles/tokens.css', import.meta.url)), 'utf-8');
+
+/**
+ * A static step's declared size in px on a 16 px root, read from tokens.css:
+ * the unit tests pin the numbers (2xs 11, xs 12) in the commit of each step,
+ * so the xs step reverts alone, its test with it.
+ */
+function declaredPx(token: string): number {
+  const m = TOKENS_CSS.match(new RegExp(`${token}:\\s*(\\d*\\.?\\d+)rem;`));
+  if (!m) throw new Error(`${token} is not a static rem step in tokens.css`);
+  return parseFloat(m[1]) * 16;
+}
+
 /** The static steps, in px on a 16 px root. */
-const STATIC_PX: Record<string, number> = { '--font-2xs': 11, '--font-xs': 12, '--font-input': 16, '--font-plate': 7, '--font-plate-sub': 6 };
+const STATIC_PX: Record<string, number> = Object.fromEntries(
+  ['--font-2xs', '--font-xs', '--font-input', '--font-plate', '--font-plate-sub'].map((t) => [t, declaredPx(t)]),
+);
 
 const WIDTHS = [
   ...CASE_VIEWPORTS.map(({ name, width, height }) => ({ name, width, height })),
@@ -82,7 +99,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('navigation', { name: /main navigation/i })).toBeVisible({ timeout: 15_000 });
 });
 
-test('2xs 11 px and xs 12 px everywhere; the fluid steps as before on phones and the Fold8, 1 px up on the desktop', async ({ page }) => {
+test('the static steps at their declared sizes everywhere; the fluid steps as before on phones and the Fold8, 1 px up on the desktop', async ({ page }) => {
   for (const v of WIDTHS) {
     await page.setViewportSize({ width: v.width, height: v.height });
     const { now, before } = await computedSizes(page);

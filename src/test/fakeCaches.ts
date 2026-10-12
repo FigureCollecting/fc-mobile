@@ -1,11 +1,15 @@
-// An in-memory CacheStorage for tests: open/match/put/add/delete/keys, and caches.delete/keys.
-// `add` fetches through the given function and refuses a response that is not ok, as Cache.add does.
+// An in-memory CacheStorage for tests: open/match/put/add/delete/keys, and caches.delete/keys, with
+// `fetch`, the network behind it: both `fetch` and `add` ask the given function, and `added` records
+// every request either asked. `add` refuses a response that is not ok, and stores it only once its
+// whole body has arrived, as Cache.add does.
 // Matching honours Vary as Chromium does (measured in e2e/pwa (b)): a response stored with
 // `Vary: Origin` for a request that carried an Origin matches a query without one (a bare url) only
 // with { ignoreVary: true }.
 export interface FakeCaches extends CacheStorage {
   readonly stores: Map<string, Map<string, Response>>;
   readonly added: Request[];
+  /** The network: install it as the global fetch (vi.stubGlobal('fetch', storage.fetch)). */
+  readonly fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
 export function fakeCaches(fetcher: (request: Request) => Promise<Response> = async () => new Response('img')): FakeCaches {
@@ -50,7 +54,7 @@ export function fakeCaches(fetcher: (request: Request) => Promise<Response> = as
         added.push(request);
         const res = await fetcher(request);
         if (!res.ok) throw new TypeError(`Cache.add: ${res.status}`);
-        keep(request, res);
+        keep(request, res.body === null ? res : new Response(await res.arrayBuffer(), res));
       },
       delete: async (r: RequestInfo | URL, options?: CacheQueryOptions) => {
         const key = hit(r, options);
@@ -65,6 +69,11 @@ export function fakeCaches(fetcher: (request: Request) => Promise<Response> = as
   return {
     stores,
     added,
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request && init === undefined ? input : new Request(input, init);
+      added.push(request);
+      return fetcher(request);
+    },
     open,
     has: async (name: string) => stores.has(name),
     delete: async (name: string) => stores.delete(name),

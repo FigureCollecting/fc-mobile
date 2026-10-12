@@ -79,6 +79,7 @@ async function figurePage(client: QueryClient): Promise<{ first: string | null |
 beforeEach(() => {
   storage = fakeCaches();
   vi.stubGlobal('caches', storage);
+  vi.stubGlobal('fetch', storage.fetch);
   renderHook(() => useOnlineStatus());
 });
 afterEach(() => {
@@ -713,6 +714,7 @@ describe('two documents sync at once, and the coordinator withholds the image be
         return new Response('img');
       });
       vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
       const forgotten: string[] = [];
       const open = storage.open.bind(storage);
       (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
@@ -789,6 +791,7 @@ describe('a sync stopped part way, its case view gone while an image fetch stall
       req.url === Z && (zAsked += 1) === 1 ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('img')),
     );
     vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
   });
   afterEach(() => uninstall());
   const caseView = (doc: QueryClient) => renderHook(() => useOwnedImages(), { wrapper: queryWrapper(doc) });

@@ -30,6 +30,7 @@ const settle = () => new Promise((res) => setTimeout(res, 50));
 beforeEach(() => {
   storage = fakeCaches();
   vi.stubGlobal('caches', storage);
+  vi.stubGlobal('fetch', storage.fetch);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -98,6 +99,7 @@ describe('useOwnedImages', () => {
   it('answers no image for a figure whose bytes are not on the device, so the case draws its plate', async () => {
     storage = fakeCaches(async () => new Response('nope', { status: 404 }));
     vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(
       create(GetProductImagesResponseSchema, {
@@ -135,6 +137,7 @@ describe('useOwnedImages', () => {
       // An image link that never answers: only an abort of the request's own signal ends the fetch.
       storage = fakeCaches((req) => new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))));
       vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
       const r = await localRig();
       r.clients.getProductImages.mockResolvedValue(
         create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), role: 'gallery', primary: true, url: url('a'), width: 1, height: 1 }] }] }),

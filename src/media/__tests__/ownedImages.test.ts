@@ -35,6 +35,15 @@ const hex = (c: string) => c.repeat(64);
 const url = (c: string) => `${D}/${hex(c)}`;
 const img = (c: string, over: MessageInitShape<typeof ProductImageSchema> = {}): ProductImage =>
   create(ProductImageSchema, { derivativeId: hex(c), role: 'gallery', primary: false, url: url(c), width: 600, height: 800, ...over });
+/** The device's caches, and the network a sync fetches the images from (each request recorded in `added`). */
+function device(fetcher?: (request: Request) => Promise<Response>): ReturnType<typeof fakeCaches> {
+  const storage = fakeCaches(fetcher);
+  vi.stubGlobal('fetch', storage.fetch);
+  return storage;
+}
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('toCachedImages', () => {
   it('keeps the address, size, role and primary of every image on the public address, with its mask and grounding', () => {
@@ -74,7 +83,7 @@ describe('primaryImage', () => {
 
 describe('rememberImages / recallImages', () => {
   it('keeps a figure\'s list and gives it back, and forgets it when the fresh list is empty', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const list = toCachedImages([img('a', { primary: true })]);
     await rememberImages('h1', list, storage);
     expect(await recallImages('h1', storage)).toEqual(list);
@@ -84,7 +93,7 @@ describe('rememberImages / recallImages', () => {
   });
 
   it('reads nothing from a record it cannot parse', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await (await storage.open(IMAGE_LISTS_CACHE)).put(new Request('http://localhost:3000/__fc/image-list/h1'), new Response('{'));
     expect(await recallImages('h1', storage)).toBeUndefined();
   });
@@ -100,7 +109,7 @@ describe('syncOwnedImages', () => {
   const owned = async (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
 
   it('caches the primary image and its mask of every owned figure, by a CORS request without credentials or the HTTP cache', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const fetchLists = lists({
       h1: [img('a', { primary: true, mask: { maskId: hex('f'), contentType: 'image/png', url: url('f') } }), img('b')],
       h2: [img('c')],
@@ -117,7 +126,7 @@ describe('syncOwnedImages', () => {
   });
 
   it('evicts with the collection: a figure no longer owned loses its list and its images', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
     const result = await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     expect(await owned(storage)).toEqual([url('a')]);
@@ -126,7 +135,7 @@ describe('syncOwnedImages', () => {
   });
 
   it('replaces a figure\'s list with the fresh one: a withdrawn image or mask is dropped from the cache', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: { maskId: hex('f'), contentType: '', url: url('f') } })] }), { storage });
     await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
     expect(await owned(storage)).toEqual([url('b')]);
@@ -134,7 +143,7 @@ describe('syncOwnedImages', () => {
   });
 
   it('keeps at most `max` figures, the first in the order given', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const fetchLists = lists({ h1: [img('a')], h2: [img('b')], h3: [img('c')] });
     await syncOwnedImages(['h1', 'h1', 'h2', 'h3'], fetchLists, { storage, max: 2 });
     expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2']);
@@ -142,10 +151,18 @@ describe('syncOwnedImages', () => {
   });
 
   it('counts an image it could not fetch and carries on', async () => {
-    const storage = fakeCaches(async (r) => (r.url === url('a') ? new Response('', { status: 404 }) : new Response('img')));
+    const storage = device(async (r) => (r.url === url('a') ? new Response('', { status: 404 }) : new Response('img')));
     const result = await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a')], h2: [img('b')] }), { storage, concurrency: 1 });
     expect(await owned(storage)).toEqual([url('b')]);
     expect(result).toMatchObject({ added: 1, failed: 1 });
+  });
+
+  it('keeps no image answered without a body (a 204): it counts as not fetched, and the figure is drawn as its plate', async () => {
+    const storage = device(async (r) => (r.url === url('a') ? new Response(null, { status: 204 }) : new Response('img')));
+    const result = await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] }), { storage });
+    expect(result).toMatchObject({ added: 1, failed: 1 });
+    expect(await owned(storage)).toEqual([url('b')]);
+    expect(await keptImage('h1', storage)).toBeUndefined();
   });
 
   it('does nothing where the browser has no Cache API', async () => {
@@ -197,7 +214,7 @@ describe('fetchImageLists', () => {
   });
 
   it('fails a sync whose lists run past the page budget before it touches any cache: nothing is evicted, what was kept stays', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], async () => new Map([['h1', [img('a', { primary: true })]]]), { storage });
     const calls = countCalls(storage);
     const getProductImages = vi.fn(async () => ({ products: [], nextPageToken: 'again' }));
@@ -234,7 +251,7 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
   });
 
   it('deletes there too an image or a mask a fresh list no longer carries, so a withheld one leaves the device', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') }), img('b')] }), { storage });
     await shown(storage, url('a'));
     await shown(storage, url('f'));
@@ -245,7 +262,7 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
   });
 
   it('deletes there too the images of a figure that left the collection', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
     await shown(storage, url('c'));
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
@@ -253,7 +270,7 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
   });
 
   it('leaves there what a fresh list still carries, primary or not, and every image no kept list ever named', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true }), img('b'), img('c')], h2: [img('d', { primary: true }), img('e')] }), { storage });
     for (const c of ['b', 'c', 'e', 'z']) await shown(storage, url(c));
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('b', { primary: true })], h2: [img('d', { primary: true }), img('e')] }), { storage });
@@ -261,7 +278,7 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
   });
 
   it('deletes there a withheld mask whose bytes were never kept', async () => {
-    const storage = fakeCaches(async (r) => (r.url === url('f') ? new Response('', { status: 404 }) : new Response('img')));
+    const storage = device(async (r) => (r.url === url('f') ? new Response('', { status: 404 }) : new Response('img')));
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
     await shown(storage, url('f'));
@@ -270,7 +287,7 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
   });
 
   it('deletes there an address only the owned cache still held (the residue of an interrupted sync)', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await (await storage.open(OWNED_MEDIA_CACHE)).put(url('r'), new Response('img'));
     await shown(storage, url('r'));
     const result = await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
@@ -281,7 +298,7 @@ describe('syncOwnedImages and the worker\'s browsed cache (src/sw.ts)', () => {
 
 describe('keptImage', () => {
   it('answers a figure\'s primary only while its bytes are on the device', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await rememberImages('h1', toCachedImages([img('b'), img('a', { primary: true })]), storage);
     expect(await keptImage('h1', storage)).toBeUndefined();
     // Stored as Cache.add stores it, with the origin's Vary: Origin.
@@ -290,13 +307,13 @@ describe('keptImage', () => {
   });
 
   it('answers nothing without a kept list, or without the Cache API', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     expect(await keptImage('h1', storage)).toBeUndefined();
     expect(await keptImage('h1', undefined)).toBeUndefined();
   });
 
   it('read while a sync runs, after it recorded what it withholds and before it replaces the kept lists: never answers a recorded address', async () => {
-    const base = fakeCaches();
+    const base = device();
     await syncOwnedImages(['h1'], async () => new Map([['h1', [img('a', { primary: true })]]]), { storage: base });
     expect((await keptImage('h1', base))?.url).toBe(url('a'));
     // The next sync (a display restriction now withholds a) is held at its first kept-list write.
@@ -329,7 +346,7 @@ describe('keptImage', () => {
   });
 
   it('answers a figure whose kept mask is recorded withheld without that mask, and every other figure as kept', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
     await syncOwnedImages(['h1', 'h2', 'h3'], async () => new Map([
       ['h1', [img('a', { primary: true, mask: mask('f') })]],
@@ -373,7 +390,7 @@ describe('a large collection with no image yet costs a few cache calls, not a fe
   const heads = Array.from({ length: 1200 }, (_, i) => `h${i}`);
 
   it('syncOwnedImages: nothing per figure when every list is empty and nothing was kept', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const calls = countCalls(storage);
     const result = await syncOwnedImages(heads, async () => new Map(), { storage });
     expect(result).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0 });
@@ -381,7 +398,7 @@ describe('a large collection with no image yet costs a few cache calls, not a fe
   });
 
   it('keptImages: nothing per figure when no list was kept, and only the kept ones otherwise', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await rememberImages('h7', toCachedImages([img('a', { primary: true })]), storage);
     await (await storage.open(OWNED_MEDIA_CACHE)).put(url('a'), new Response('img'));
     const calls = countCalls(storage);
@@ -389,14 +406,14 @@ describe('a large collection with no image yet costs a few cache calls, not a fe
     expect([...got.keys()]).toEqual(['h7']);
     expect(got.get('h7')?.url).toBe(url('a'));
     expect(calls.length).toBeLessThanOrEqual(7);
-    const empty = fakeCaches();
+    const empty = device();
     const emptyCalls = countCalls(empty);
     expect((await keptImages(heads, empty)).size).toBe(0);
     expect(emptyCalls).toEqual([`open ${IMAGE_LISTS_CACHE}`, `keys ${IMAGE_LISTS_CACHE}`]);
   });
 
   it('keptImages reads what syncs withheld in two cache calls, however many figures it answers', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const many = heads.slice(0, 300);
     await syncOwnedImages(many, async (hs) => new Map(hs.map((h, i) => [h, [img('a', { primary: true, url: `${D}/${i.toString(16).padStart(64, '0')}` })]])), { storage });
     const calls = countCalls(storage);
@@ -430,7 +447,7 @@ describe('cancelling a sync', () => {
 
   it('syncOwnedImages fetches no more bytes once its signal is aborted', async () => {
     const abort = new AbortController();
-    const storage = fakeCaches(async () => {
+    const storage = device(async () => {
       abort.abort();
       return new Response('img');
     });
@@ -441,7 +458,7 @@ describe('cancelling a sync', () => {
   });
 
   it('syncOwnedImages touches no cache once its signal is aborted', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const calls = countCalls(storage);
     const abort = new AbortController();
     const fetchLists = async () => {
@@ -462,7 +479,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   const withheld = async (storage: ReturnType<typeof fakeCaches>, cs: string[]) => [...(await withheldAmong(cs.map(url), storage))].sort();
 
   it('remembers each image and mask a fresh list withholds from a figure still owned, not those of a figure that left the collection', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true, mask: mask('f') }), img('b')], h2: [img('c', { primary: true })] }), { storage });
     expect(await withheld(storage, ['a', 'b', 'c', 'f'])).toEqual([]);
     await syncOwnedImages(['h1'], lists({ h1: [img('d', { primary: true })] }), { storage });
@@ -470,14 +487,14 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('remembers every kept address of a figure still owned whose fresh list is empty, or that the coordinator left out', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [] }), { storage });
     expect(await withheld(storage, ['a', 'c'])).toEqual([url('a'), url('c')].sort());
   });
 
   it('never remembers an address no kept list named (the residue of an interrupted sync), nor one another fresh list still carries', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await (await storage.open(OWNED_MEDIA_CACHE)).put(url('r'), new Response('img'));
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] }), { storage });
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('c', { primary: true })], h2: [img('b', { primary: true }), img('a')] }), { storage });
@@ -485,7 +502,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('reads a kept list it cannot parse as naming nothing: nothing withheld, and the fresh list replaces it', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await (await storage.open(IMAGE_LISTS_CACHE)).put(new Request('http://localhost:3000/__fc/image-list/h1'), new Response('{'));
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     expect([...(storage.stores.get(WITHHELD_CACHE)?.keys() ?? [])]).toEqual([]);
@@ -493,7 +510,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('keeps no image there: each record is on the app\'s origin, not the image address, and has no body', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     await syncOwnedImages(['h1'], lists({ h1: [] }), { storage });
     const records = [...(storage.stores.get(WITHHELD_CACHE)?.entries() ?? [])];
@@ -503,7 +520,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('remembers an address before it evicts its bytes or its shown copy, so the worker never serves it in between', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     await shown(storage, url('a'));
     const atDelete: string[] = [];
@@ -546,7 +563,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   };
 
   it('remembers what it withholds before it replaces or deletes any kept list', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })], h3: [img('e', { primary: true })] }), { storage });
     const atWrite: string[][] = [];
     onListWrite(storage, async () => {
@@ -558,7 +575,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('a sync that stops after replacing a kept list (a quota error, the page killed) leaves what it withheld recorded, so a later sync deletes a refill', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('c', { primary: true })] }), { storage });
     const restore = onListWrite(storage, async (n) => {
       if (n === 2) throw new DOMException('quota', 'QuotaExceededError');
@@ -577,7 +594,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('replaces no kept list and evicts nothing when it cannot record what it withholds', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     const open = storage.open.bind(storage);
     (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
@@ -600,7 +617,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('deletes a refill of a withheld address from the browsed cache at every later sync', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });
     await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), { storage });
     // Refilled after the sync that withheld them (a document still drawing them, an older worker).
@@ -617,7 +634,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
 
   it('forgets an address once a fresh list carries it again, before it fetches it, and leaves its shown copy', async () => {
     const atFetch: string[][] = [];
-    const storage: ReturnType<typeof fakeCaches> = fakeCaches(async (r) => {
+    const storage: ReturnType<typeof fakeCaches> = device(async (r) => {
       atFetch.push([...(await withheldAmong([r.url], storage))]);
       return new Response('img');
     });
@@ -638,7 +655,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it(`keeps at most MAX_WITHHELD (${MAX_WITHHELD}) addresses, the oldest dropped first`, async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const many = Array.from({ length: MAX_WITHHELD + 1 }, (_, i) => `${D}/${i.toString(16).padStart(64, '0')}`);
     const asImg = (u: string, primary = false) => create(ProductImageSchema, { derivativeId: u.slice(-64), role: 'gallery', primary, url: u, width: 1, height: 1 });
     await syncOwnedImages(['h1'], lists({ h1: many.map((u, i) => asImg(u, i === 0)) }), { storage });
@@ -656,7 +673,7 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
   });
 
   it('reads the remembered addresses in a few cache calls, not one per address', async () => {
-    const storage = fakeCaches();
+    const storage = device();
     const many = Array.from({ length: 500 }, (_, i) => `${D}/${i.toString(16).padStart(64, '0')}`);
     await syncOwnedImages(['h1'], lists({ h1: many.map((u, i) => create(ProductImageSchema, { derivativeId: u.slice(-64), role: 'gallery', primary: i === 0, url: u, width: 1, height: 1 })) }), { storage });
     await syncOwnedImages(['h1'], lists({ h1: [] }), { storage });
@@ -710,13 +727,13 @@ describe('syncs in different documents of the app (a tab, the installed window):
   it('asks for the one lock every document syncs under, by a name that holds across builds', async () => {
     const locks = fakeLocks();
     uninstall = installFakeLocks(locks);
-    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage: fakeCaches() });
+    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage: device() });
     expect(locks.asked).toEqual(['fc-owned-sync']);
   });
 
   it('a sync that read the lists later writes later: one that read older lists, finishing last, never undoes what the later one withheld', async () => {
     uninstall = installFakeLocks();
-    const storage = fakeCaches();
+    const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
     const events: string[] = [];
     // Document B reads the lists before a display restriction withholds a (it still lists a); its read
@@ -750,7 +767,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
 
   it('a sync waiting for another document\'s stops when its signal aborts: it asks nothing and touches no cache', async () => {
     uninstall = installFakeLocks();
-    const storage = fakeCaches();
+    const storage = device();
     let answerB!: () => void;
     const syncB = syncOwnedImages(['h1'], async () => {
       await new Promise<void>((res) => (answerB = res));
@@ -774,7 +791,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
   it('a sync waits at most 10 s (OWNED_SYNC_WAIT_MS) for another document\'s: then it fails, having asked nothing and touched no cache', async () => {
     expect(OWNED_SYNC_WAIT_MS).toBe(10_000);
     uninstall = installFakeLocks();
-    const storage = fakeCaches();
+    const storage = device();
     let answerB!: () => void;
     const syncB = syncOwnedImages(['h1'], async () => {
       await new Promise<void>((res) => (answerB = res));
@@ -792,7 +809,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
 
   it('a sync whose signal is already aborted does not wait for another document\'s: it stops at once, having asked nothing', async () => {
     uninstall = installFakeLocks();
-    const storage = fakeCaches();
+    const storage = device();
     let answerB!: () => void;
     const syncB = syncOwnedImages(['h1'], async () => {
       await new Promise<void>((res) => (answerB = res));
@@ -812,7 +829,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
   it('a sync waits 10 s (OWNED_SYNC_WAIT_MS) for another document\'s when no wait is given, as the case view syncs: then it fails, having asked nothing', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();
-    const storage = fakeCaches();
+    const storage = device();
     let answerB!: () => void;
     const syncB = syncOwnedImages(['h1'], async () => {
       await new Promise<void>((res) => (answerB = res));
@@ -833,7 +850,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
 
   it('a sync whose case view goes away aborts its image fetch in flight, so it lets go of the lock: the next sync runs and records what it withholds', async () => {
     uninstall = installFakeLocks();
-    const storage = fakeCaches(stalling('a'));
+    const storage = device(stalling('a'));
     const abort = new AbortController();
     const a = track(syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage, signal: abort.signal }));
     await settle();
@@ -855,7 +872,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
   it('an image fetch that does not arrive within 20 s (OWNED_SYNC_STEP_MS) is abandoned and no other starts after it, so a sync on a stalled link lets go of the lock while its case view stays open', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();
-    const storage = fakeCaches(stalling('a', 'b', 'd'));
+    const storage = device(stalling('a', 'b', 'd'));
     const a = track(syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })] }), { storage, concurrency: 1 }));
     await vi.advanceTimersByTimeAsync(15_000);
     // Another document's sync, the lists now withholding a; it waits OWNED_SYNC_WAIT_MS for this one.
@@ -878,7 +895,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();
     const stalled = stalling('a', 'd', 'e');
-    const storage = fakeCaches((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
+    const storage = device((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
     const fetchLists = lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })], h4: [img('e', { primary: true })] });
     const sync = syncOwnedImages(['h1', 'h2', 'h3', 'h4'], fetchLists, { storage, concurrency: 2 });
     const a = track(sync);
@@ -895,16 +912,89 @@ describe('syncs in different documents of the app (a tab, the installed window):
   it('a slow link that brings each image within 20 s brings them all: the deadline is each fetch\'s, not the sync\'s', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();
-    const storage = fakeCaches(() => new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)));
+    const storage = device(() => new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)));
     const sync = syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })] }), { storage, concurrency: 1 });
     await vi.advanceTimersByTimeAsync(45_000);
     expect(await sync).toMatchObject({ added: 3, failed: 0 });
     expect(owned(storage)).toEqual([url('a'), url('b'), url('d')]);
   });
 
+  /**
+   * A link that answers each image's headers after `headersMs`, then brings `bytes` bytes, one every
+   * `everyMs`, and ends the body, or, when it `stalls`, sends nothing more. An abort of the request's
+   * own signal ends the fetch, or errors the body, as the browser's does.
+   */
+  const link = ({ headersMs = 0, bytes = 0, everyMs = 0, stalls = false }) => (req: Request): Promise<Response> =>
+    new Promise<Response>((answer, fail) => {
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      let body: ReadableStreamDefaultController<Uint8Array> | undefined;
+      req.signal.addEventListener('abort', () => {
+        for (const t of timers) clearTimeout(t);
+        fail(req.signal.reason);
+        body?.error(req.signal.reason);
+      });
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          body = c;
+          for (let i = 1; i <= bytes; i += 1) {
+            timers.push(setTimeout(() => {
+              c.enqueue(new Uint8Array([i]));
+              if (i === bytes && !stalls) c.close();
+            }, headersMs + i * everyMs));
+          }
+          if (bytes === 0 && !stalls) c.close();
+        },
+      });
+      timers.push(setTimeout(() => answer(new Response(stream, { headers: { 'Content-Type': 'image/webp' } })), headersMs));
+    });
+
+  it('a slow link whose bytes keep coming keeps every image, though each takes longer than 20 s, over successive syncs: the deadline is on the bytes stopping', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    // Four fetches at a time share the link: each image's 5 bytes come one every 5 s, 25 s in all.
+    const storage = device(link({ bytes: 5, everyMs: 5_000 }));
+    const cs = ['a', 'b', 'c', 'd', 'e', 'f', '1', '2'];
+    const heads = cs.map((c) => `h${c}`);
+    const fetchLists = lists(Object.fromEntries(cs.map((c) => [`h${c}`, [img(c, { primary: true })]])));
+    const sync = syncOwnedImages(heads, fetchLists, { storage });
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(await sync).toMatchObject({ added: 8, failed: 0 });
+    expect(owned(storage)).toEqual(cs.map(url).sort());
+    const kept = await (await storage.open(OWNED_MEDIA_CACHE)).match(url('a'));
+    expect(new Uint8Array(await kept!.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
+    expect(kept!.headers.get('Content-Type')).toBe('image/webp');
+    // The next sync over the same link keeps them all, fetching none again.
+    const next = syncOwnedImages(heads, fetchLists, { storage });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await next).toMatchObject({ added: 0, failed: 0, evicted: 0 });
+    expect(owned(storage)).toEqual(cs.map(url).sort());
+    expect(storage.added).toHaveLength(8);
+  });
+
+  it.each([
+    ['answers the headers, then sends no byte', { stalls: true }, 20_000],
+    ['answers the headers, sends a byte every 5 s for 15 s, then none', { bytes: 3, everyMs: 5_000, stalls: true }, 35_000],
+    ['answers the headers only after 15 s, then sends no byte', { headersMs: 15_000, stalls: true }, 35_000],
+  ])('an image fetch whose link %s is abandoned 20 s (OWNED_SYNC_STEP_MS) after the last thing it sent, and no other starts after it', async (_name, how, at) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const stalls = link(how);
+    const storage = device((req) => (req.url === url('a') ? stalls(req) : Promise.resolve(new Response('img'))));
+    const sync = syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] }), { storage, concurrency: 1 });
+    const a = track(sync);
+    await vi.advanceTimersByTimeAsync(at - 1);
+    expect(a()).toBe('running');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(a()).toBe('settled');
+    expect(await sync).toMatchObject({ added: 0, failed: 1 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    expect(storage.added[0]!.signal.aborted).toBe(true);
+    expect(owned(storage)).toEqual([]);
+  });
+
   it('where the browser has no Web Locks, a sync runs at once: syncs in two documents are not serialised', async () => {
     expect((navigator as unknown as { locks?: unknown }).locks).toBeUndefined();
-    const storage = fakeCaches();
+    const storage = device();
     const events: string[] = [];
     let answerB!: () => void;
     const syncB = syncOwnedImages(['h1'], async () => {

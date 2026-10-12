@@ -76,6 +76,7 @@ describe('Collection page (rebuilt display layer)', () => {
   it('stands an owned figure\'s kept image in the case (ADDR-1), a CORS image, and keeps the others as plates', async () => {
     const storage = fakeCaches();
     vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
     try {
       const r = await localRig();
       const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;
@@ -95,6 +96,7 @@ describe('Collection page (rebuilt display layer)', () => {
   it('keeps an owned figure as its plate when its image bytes could not be kept (ADDR-1)', async () => {
     const storage = fakeCaches(async () => new Response('', { status: 404 }));
     vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
     try {
       const r = await localRig();
       const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;

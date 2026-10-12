@@ -260,6 +260,17 @@ describe('design tokens: one notch up at desktop widths, the phone and Fold8 siz
       }
     });
 
+    it(`${name} climbs between 60R and 80R px wide on a root of R px, as tokens.css notes`, () => {
+      for (const R of [12, 14, 16, 20]) {
+        const at = (w: number) => sizeAt(name, w, R);
+        const old = (w: number) => cssPx(FLUID_BEFORE[name], { rootPx: R, viewportPx: w });
+        expect(at(60 * R), `R=${R} at 60R`).toBeCloseTo(old(60 * R), 9);
+        expect(at(60 * R + 8), `R=${R} past 60R`).toBeGreaterThan(old(60 * R + 8) + 1e-6);
+        expect(at(80 * R), `R=${R} at 80R`).toBeCloseTo((px * R) / REM_TO_PX, 9);
+        expect(at(80 * R - 8), `R=${R} short of 80R`).toBeLessThan((px * R) / REM_TO_PX - 1e-6);
+      }
+    });
+
     it(`${name} climbs smoothly as the window widens: never shrinks, never jumps`, () => {
       let last = sizeAt(name, 320);
       for (let w = 328; w <= 2560; w += 8) {

@@ -75,10 +75,20 @@ export function bundleImageProbe(): Promise<string> {
   return bundlePageProbe('./imageProbe.ts', 'fcImageProbe');
 }
 
+// The app runs React libraries on preact (vite.config.ts); so does a probe that imports one. A library
+// build leaves process.env.NODE_ENV in, which a page has no process for: the app's build replaces it.
+const PREACT_FOR_REACT = [
+  { find: /^react$/, replacement: 'preact/compat' },
+  { find: 'react/jsx-runtime', replacement: 'preact/jsx-runtime' },
+];
+const AS_BUILT = { 'process.env.NODE_ENV': JSON.stringify('production') };
+
 async function bundlePageProbe(entry: string, name: string): Promise<string> {
   const out = await build({
     configFile: false,
     logLevel: 'silent',
+    resolve: { alias: PREACT_FOR_REACT },
+    define: AS_BUILT,
     build: {
       write: false,
       minify: false,

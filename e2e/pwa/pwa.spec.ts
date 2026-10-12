@@ -321,6 +321,42 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   expect(notNoStore()).toEqual([]);
 });
 
+test('(b) another tab: told on a BroadcastChannel when a tab\'s owned sync completes, it drops its image answers', async ({ context, page }) => {
+  const { origin } = stackState();
+  const MEDIA = 'https://images.figurecollecting.com/d';
+  const withheld = `${MEDIA}/${'cd'.repeat(32)}`;
+  const replacement = `${MEDIA}/${'0d'.repeat(32)}`;
+  const png = readFileSync(new URL('../../public/icons/icon-192.png', import.meta.url));
+  await context.route(/^https:\/\/images\.figurecollecting\.com\//, (route) =>
+    route.fulfill({ status: 200, contentType: 'image/png', body: png, headers: { 'access-control-allow-origin': origin, 'cache-control': 'public, max-age=31536000, immutable', vary: 'Origin' } }),
+  );
+  await context.addInitScript({ content: await bundleImageProbe() });
+  type Probe = {
+    syncOwned: (heads: string[], lists: Record<string, { url: string; primary?: boolean }[]>) => Promise<unknown>;
+    answer: (head: string, url: string) => boolean;
+    answers: () => number;
+    tell: () => void;
+  };
+  const answer = (p: Page, url: string) => p.evaluate((u) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.answer('h1', u), url);
+  const answers = (p: Page) => p.evaluate(() => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.answers());
+  const sync = (url: string) => page.evaluate((u) => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.syncOwned(['h1'], { h1: [{ url: u, primary: true }] }), url);
+  await page.goto(`${origin}/`);
+  await shellInstalled(page);
+  const other = await context.newPage();
+  await other.goto(`${origin}/`);
+  await shellInstalled(other);
+  // Both tabs answered the figure page with the image; the first tab's syncs keep it, then withhold it.
+  expect(await answer(page, withheld)).toBe(true);
+  expect(await answer(other, withheld)).toBe(true);
+  await sync(withheld);
+  await sync(replacement);
+  await page.evaluate(() => (window as unknown as { fcImageProbe: Probe }).fcImageProbe.tell());
+  // The other tab drops its answer; the tab that told keeps its own (it never hears its own message).
+  await expect.poll(() => answers(other)).toBe(0);
+  expect(await answers(page)).toBe(1);
+  await other.close();
+});
+
 test.describe('(c) build N+1 ships while 2 edits are pending', () => {
   let n: WebContainer;
   let next: WebContainer;

@@ -27,8 +27,8 @@ test.describe('overlay layout and stacking (real browser, fixture mode)', () => 
 
   test('filter sheet is viewport-anchored, not nested inside a transformed ancestor', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 780 });
-    await page.goto('/?layout=case&motif=detolf-dark');
-    await page.waitForSelector('button.shelf-figure');
+    await page.goto('/?layout=case');
+    await page.waitForSelector('button.cab-figure');
 
     await page.locator('.filter-bar__btn').first().click();
     const sheet = page.locator('.detent-sheet[data-detent="half"]');
@@ -83,16 +83,16 @@ test.describe('overlay layout and stacking (real browser, fixture mode)', () => 
 
   test('labels toggle shows museum nameplates on the display', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 780 });
-    await page.goto('/?layout=case&motif=detolf-dark');
-    await page.waitForSelector('button.shelf-figure');
+    await page.goto('/?layout=case');
+    await page.waitForSelector('button.cab-figure');
 
-    expect(await page.locator('.shelf-figure__plate').count()).toBe(0);
+    expect(await page.locator('.cab-plate').count()).toBe(0);
 
     await page.getByRole('button', { name: /labels: off/i }).click();
 
-    const plate = page.locator('.shelf-figure__plate').first();
+    const plate = page.locator('.cab-plate').first();
     await expect(plate).toBeVisible();
-    await expect(plate.locator('.shelf-figure__plate-name')).not.toBeEmpty();
+    await expect(plate).not.toBeEmpty();
     await expect(page).toHaveURL(/labels=1/);
   });
 

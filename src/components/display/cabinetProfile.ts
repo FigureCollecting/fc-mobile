@@ -71,6 +71,10 @@ export interface CabinetSurface {
   readonly maxLoadKg: number | null;
   /** Provenance of topMm. */
   readonly provenance: Provenance;
+  /** This surface is the profile's shelf plate (smaller than the interior, set back from the front). */
+  readonly plate?: boolean;
+  /** An open shelf outside the doors (the KLINGSBO's shelf below its glass case): nothing in front of it. */
+  readonly outsideDoor?: boolean;
 }
 
 /** CC5: 'fit shelves to figures' exists only for adjustable profiles. */
@@ -81,6 +85,8 @@ export interface LegSpec {
   readonly insetXMm?: number;
   readonly insetZMm?: number;
   readonly taper?: boolean;
+  /** The legs splay out below the body: the footprint (CabinetProfile.footprint) is wider than the body. */
+  readonly splay?: boolean;
 }
 
 export interface ProfileProvenance {
@@ -92,10 +98,20 @@ export interface ProfileProvenance {
   /** Fixed or adjustable, and the pin pitch. */
   readonly shelves: Provenance;
   readonly base: Provenance;
+  readonly footprint?: Provenance;
   readonly glass?: Provenance;
   readonly plate?: Provenance;
   readonly rack?: Provenance;
   readonly loads?: Provenance;
+}
+
+/** Where a profile's sizes come from: the exact page, image or document, and the snapshot (or fetch) date. */
+export interface ProfileSource {
+  readonly url: string;
+  /** YYYY-MM-DD: the Wayback snapshot's date, or the day a live document was fetched. */
+  readonly date: string;
+  /** What this source says, in short. */
+  readonly facts: string;
 }
 
 export interface CabinetProfile {
@@ -124,6 +140,18 @@ export interface CabinetProfile {
   readonly base: { readonly style: BaseStyle; readonly heightMm: number; readonly leg?: LegSpec };
   /** Open-rack frames: corner posts (they are the legs) and the front beam under each level. */
   readonly rack?: { readonly postMm: number; readonly beamMm: number };
+  /**
+   * Where the legs meet the floor when they reach beyond the body (splayed
+   * legs): centred on the body's width, reaching frontOverhangMm in front of
+   * its front. Absent = the cabinet stands within its own body outline.
+   */
+  readonly footprint?: { readonly widthMm: number; readonly depthMm: number; readonly frontOverhangMm: number };
+  /** No longer sold: the screen never offers a buy link for it. */
+  readonly discontinued: boolean;
+  /** Where to buy it, while it is sold. */
+  readonly buyUrl?: string;
+  /** Every published source the sizes were taken from (empty for a cabinet measured by its owner). */
+  readonly sources: readonly ProfileSource[];
   readonly provenance: ProfileProvenance;
 }
 
@@ -207,7 +235,7 @@ export function stackSumMm(profile: CabinetProfile): number {
 }
 
 /** The registry invariant checks, in the order they run. */
-export type ProfileCheck = 'dimensions' | 'ascending' | 'gap' | 'top-height' | 'stack-sum' | 'clearance' | 'interior';
+export type ProfileCheck = 'dimensions' | 'ascending' | 'gap' | 'top-height' | 'stack-sum' | 'clearance' | 'interior' | 'footprint';
 
 const isPositive = (v: number) => Number.isFinite(v) && v > 0;
 const isNonNegative = (v: number) => Number.isFinite(v) && v >= 0;
@@ -257,6 +285,17 @@ function interiorOk(p: CabinetProfile): boolean {
   return fitsWidth && fitsDepth && plateFits;
 }
 
+function footprintOk(p: CabinetProfile): boolean {
+  const f = p.footprint;
+  if (!f) return true;
+  return (
+    f.widthMm >= p.outer.widthMm &&
+    f.depthMm >= p.outer.depthMm &&
+    f.frontOverhangMm >= 0 &&
+    f.frontOverhangMm <= f.depthMm - p.outer.depthMm
+  );
+}
+
 /**
  * G19 registry invariant. Returns the names of the checks the profile FAILS
  * (empty = valid). Each check is written so a NaN in the profile fails it; a
@@ -271,6 +310,7 @@ function interiorOk(p: CabinetProfile): boolean {
  *   no interior shelf or board can fail it
  * - clearance: the cabinet fits the room: raw ceiling - height >= 0 (the floored value never fails)
  * - interior: the interior fits inside the walls (or rack posts, front and back too) and the shelf plate inside the interior
+ * - footprint: splayed legs reach at least the body's width and depth, and their front overhang lies within the extra depth
  */
 export function checkCabinetProfile(profile: CabinetProfile, ceilingMm: number = CEILING_DEFAULT_MM): ProfileCheck[] {
   const { surfaces, outer } = profile;
@@ -283,6 +323,7 @@ export function checkCabinetProfile(profile: CabinetProfile, ceilingMm: number =
     ['stack-sum', Math.abs(stackSumMm(profile) - outer.heightMm) <= STACK_TOLERANCE_MM],
     ['clearance', topClearanceRawMm(profile, ceilingMm) >= 0],
     ['interior', interiorOk(profile)],
+    ['footprint', footprintOk(profile)],
   ];
   return results.filter(([, ok]) => !ok).map(([name]) => name);
 }
@@ -324,16 +365,22 @@ export function unverifiedFields(profile: CabinetProfile): UnverifiedField[] {
   return flagged;
 }
 
+/** How far a cabinet's feet reach beyond its body on each side (half the extra footprint width); 0 without a footprint. */
+export function sideOverhangMm(profile: CabinetProfile): number {
+  const f = profile.footprint;
+  return f ? (f.widthMm - profile.outer.widthMm) / 2 : 0;
+}
+
 /**
- * Thin adapter for CaseShelf's fixed mode until CAB-RENDER-1 moves it onto
- * caseCamera (remove it then). Today every shelf band is drawn at one height,
- * so fixed mode needs ONE compartment height as its mm -> px anchor: the
- * smallest interior clear height, so a figure that fits the band fits every
- * compartment. null when the profile has no compartments, or when the
- * smallest is zero, negative or NaN (no mm -> px scale can be anchored on it);
- * CaseShelf then uses its dynamic default.
+ * The closest two cabinets can stand side by side, body to body: the left
+ * one's feet plus the right one's (Ross 2026-10-11: splayed legs keep two
+ * KLINGSBOs from touching; Detolf owners butt theirs together, gap 0).
  */
-export function fixedModeCompartmentMm(profile: CabinetProfile): number | null {
-  const smallest = Math.min(...clearHeightsMm(profile));
-  return Number.isFinite(smallest) && smallest > 0 ? smallest : null;
+export function adjacencyGapMm(left: CabinetProfile, right: CabinetProfile): number {
+  return sideOverhangMm(left) + sideOverhangMm(right);
+}
+
+/** The cabinet's buy link, or null: never one for a discontinued cabinet (Ross 2026-10-11), nor when none is known. */
+export function buyLink(profile: CabinetProfile): string | null {
+  return !profile.discontinued && profile.buyUrl ? profile.buyUrl : null;
 }

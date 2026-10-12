@@ -63,7 +63,7 @@ describe('design tokens: font-size floor (10px general, 16px inputs)', () => {
 
   it('fences --font-plate / --font-plate-sub to the nameplate and caption components only', () => {
     const srcRoot = path.resolve(path.dirname(tokensPath), '..');
-    const allowedFiles = new Set(['CaseShelf.tsx', 'JustifiedRows.tsx']);
+    const allowedFiles = new Set(['JustifiedRows.tsx']);
 
     const offenders: string[] = [];
     const walk = (dir: string) => {

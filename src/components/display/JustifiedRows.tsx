@@ -274,7 +274,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
 
         /* Ross: explicit floor exemption for this decorative miniature
            caption only (--font-plate / --font-plate-sub, see tokens.css) —
-           7px / 6px, same as CaseShelf's plate, so most real names render
+           7px / 6px, so most real names render
            fully instead of ellipsizing. */
         .jrows__caption-name {
           font-size: var(--font-plate);

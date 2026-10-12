@@ -867,8 +867,8 @@ test.describe('the vite dev server (npm run dev, and any spike page it serves)',
       localStorage.setItem('fc-fixture-mode', 'on');
     });
 
-    await page.goto(`${origin}/?layout=case&motif=detolf-dark&density=compact`);
-    await page.locator('button.shelf-figure').first().waitFor({ timeout: 90_000 });
+    await page.goto(`${origin}/?layout=case`);
+    await page.locator('button.cab-figure').first().waitFor({ timeout: 90_000 });
     await expect.poll(() => sockets.some((u) => u.startsWith(origin.replace(/^http/, 'ws')))).toBe(true);
     expect(handsOffBlocked).toEqual([]);
     // The cspViolations fixture fails the test on any violation (an inline script or style, the HMR socket).

@@ -13,7 +13,7 @@ function Probe() {
     <div>
       <span data-testid="layout">{p.layout}</span>
       <span data-testid="density">{p.density}</span>
-      <span data-testid="motif">{p.motif}</span>
+      <span data-testid="keys">{Object.keys(p).filter((k) => /motif/i.test(k)).join(',')}</span>
       <span data-testid="mfr">{p.filters.mfr.join(',')}</span>
       <span data-testid="cat">{p.filters.cat.join(',')}</span>
       <span data-testid="type">{p.filters.type.join(',')}</span>
@@ -31,11 +31,11 @@ function Probe() {
 }
 
 describe('useFigureListParams', () => {
-  it('defaults: case layout, compact density, detolf motif, Prepainted+Figures preselected', () => {
+  it('defaults: case layout, compact density, Prepainted+Figures preselected; no case motif (the cabinet profile replaced it)', () => {
     renderWithProviders(<Probe />);
     expect(screen.getByTestId('layout').textContent).toBe('case');
     expect(screen.getByTestId('density').textContent).toBe('compact');
-    expect(screen.getByTestId('motif').textContent).toBe('detolf-dark');
+    expect(screen.getByTestId('keys').textContent).toBe('');
     expect(screen.getByTestId('cat').textContent).toBe(DEFAULT_CAT.join(','));
     expect(screen.getByTestId('type').textContent).toBe(DEFAULT_TYPE.join(','));
     expect(screen.getByTestId('sort').textContent).toBe('activity:asc');

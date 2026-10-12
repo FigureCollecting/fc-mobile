@@ -1,6 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 import { SHOT_VIEWPORTS } from './e2e/caseViewports';
 import { HANDS_OFF_LAUNCH_OPTIONS } from './e2e/handsOff';
+import { e2eServers } from './e2e/e2eServers';
+
+// Each seat on a shared host serves its own ports (E2E_PORT, E2E_PROD_PORT) and never reuses a server it did not start.
+const servers = e2eServers();
 
 /**
  * E2E config: runs tests from ./e2e against a production build served by
@@ -20,7 +24,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [['list']],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: servers.appUrl,
     trace: 'off',
     screenshot: 'off',
     video: 'off',
@@ -60,9 +64,9 @@ export default defineConfig({
       // NOT .env.production's real https://figurecollecting.com/api. Without
       // this, a production build talks to the live backend for real — the
       // network mocks below are anchored to :5080 and silently never match it.
-      command: 'npm run build -- --mode test && npm run preview -- --mode test --port 5173 --strictPort',
-      url: 'http://localhost:5173',
-      reuseExistingServer: !process.env.CI,
+      command: `npm run build -- --mode test && npm run preview -- --mode test --port ${servers.appPort} --strictPort`,
+      url: servers.appUrl,
+      reuseExistingServer: servers.reuseExistingServer,
       timeout: 120_000,
     },
     {
@@ -71,9 +75,9 @@ export default defineConfig({
       // e2e/dead-screens.spec.ts that needs the REAL production config —
       // specifically, that .env.production never sets VITE_ALLOW_FIXTURE_OVERRIDE
       // (see src/dev-fixtures/fixtures.ts), unlike the --mode test build above.
-      command: 'npm run build -- --outDir dist-prod-e2e && npm run preview -- --outDir dist-prod-e2e --port 4174 --strictPort',
-      url: 'http://localhost:4174',
-      reuseExistingServer: !process.env.CI,
+      command: `npm run build -- --outDir dist-prod-e2e && npm run preview -- --outDir dist-prod-e2e --port ${servers.prodPort} --strictPort`,
+      url: servers.prodUrl,
+      reuseExistingServer: servers.reuseExistingServer,
       timeout: 120_000,
     },
   ],

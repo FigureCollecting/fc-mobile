@@ -275,7 +275,7 @@ test('(a) with 1,200 holdings the last tile is reached by scrolling, IndexedDB h
   await shot(page, testInfo, 'collection-rows-end');
 
   await navigate(page, '/?layout=case');
-  await expect(page.locator('button.shelf-figure').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
   await shot(page, testInfo, 'collection-case');
 
   const limit20 = sent.filter((s) => /[?&]limit=20\b|"limit"\s*:\s*20\b/.test(s));

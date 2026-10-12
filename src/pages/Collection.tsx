@@ -5,7 +5,10 @@ import { SlimHeader } from '../components/layout/SlimHeader';
 import { PullToRefresh } from '../components/ui/PullToRefresh';
 import { ErrorState } from '../components/ui/ErrorState';
 import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
-import { CaseShelf } from '../components/display/CaseShelf';
+import { CabinetScene } from '../components/display/CabinetScene';
+import { CaseTabs, type CaseCard } from '../components/display/CaseTabs';
+import { CaseViewCard } from '../components/display/CaseViewCard';
+import { useCasePrefs } from '../components/display/casePrefs';
 import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
@@ -30,7 +33,7 @@ import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, countActiveFilters } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
-import { getFixtureFigures, isFixtureMode } from '../dev-fixtures/fixtures';
+import { getFixtureFigures, getFixtureImageRef, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
 
 /** Fold-open near-square threshold: at or above this container width, the
@@ -98,7 +101,6 @@ export function Collection() {
   const {
     layout,
     density,
-    motif,
     filters,
     sort,
     order,
@@ -107,13 +109,16 @@ export function Collection() {
     setTab,
     setLayout,
     setDensity,
-    setMotif,
     setFilters,
     setSort,
     setLabels,
   } = useFigureListParams({ labelsDefault: !fixtureMode });
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // the figure last opened, by id: the Info tab opens it again wherever a re-sort or filter has moved it
+  const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
+  const [caseCard, setCaseCard] = useState<CaseCard | null>(null);
+  const [casePrefs, setCasePrefs] = useCasePrefs();
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [moveOpen, setMoveOpen] = useState(false);
@@ -162,6 +167,7 @@ export function Collection() {
     () => sortFigures(applyFilters(figures, filters), sort, order),
     [figures, filters, sort, order],
   );
+  const lastOpened = lastOpenedId === null ? -1 : visible.findIndex((f) => f._id === lastOpenedId);
 
   const handleRefresh = useCallback(async () => {
     if (fixtureMode) await fixturesQuery.refetch();
@@ -172,6 +178,7 @@ export function Collection() {
     (figure: Figure, index: number) => {
       if (!selecting) {
         setViewerIndex(index);
+        setLastOpenedId(figure._id);
         return;
       }
       setSelected((prev) => {
@@ -231,11 +238,9 @@ export function Collection() {
       <DisplayToggle
         layout={layout}
         density={density}
-        motif={motif}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}
-        onMotif={setMotif}
         onLabels={setLabels}
       />
     </>
@@ -284,7 +289,7 @@ export function Collection() {
   const shownLayout = selecting ? 'rows' : layout;
 
   return (
-    <div class="page-collection cq-grid" data-density={density} ref={pageRef}>
+    <div class={`page-collection cq-grid ${shownLayout === 'case' ? 'page-collection--case' : ''}`} data-density={density} ref={pageRef}>
       <SlimHeader context={<span>Collection ({total})</span>} actions={headerActions} />
       {!fixtureMode && outOfReach && <LastSyncedBadge timestamp={lastSynced} />}
       {!fixtureMode && <CollectionTabs tab={tab} counts={counts} onChange={(t) => { endSelect(); setViewerIndex(null); setTab(t); }} />}
@@ -309,14 +314,13 @@ export function Collection() {
             ) : !fixtureMode && tab === 'former' ? (
               <FormerList figures={visible as LocalFigure[]} onOpen={(f) => setViewerIndex(visible.indexOf(f))} />
             ) : shownLayout === 'case' ? (
-              <div class="page-collection__display">
-                <CaseShelf
+              <div class="page-collection__display page-collection__display--case">
+                <CabinetScene
                   figures={visible}
-                  motif={motif}
-                  density={density}
                   onSelect={handleSelect}
+                  prefs={casePrefs}
                   labels={labels}
-                  watermark={<BrandWatermark />}
+                  imageFor={fixtureMode ? getFixtureImageRef : undefined}
                 />
               </div>
             ) : (
@@ -366,6 +370,21 @@ export function Collection() {
         onClose={() => setMoveOpen(false)}
       />
 
+      {shownLayout === 'case' && !selecting && (
+        <CaseTabs
+          order={casePrefs.tabOrder}
+          infoEnabled={lastOpened >= 0}
+          open={caseCard ?? (filterOpen ? 'refine' : null)}
+          onTab={(tab) => {
+            if (tab === 'view') setCaseCard('view');
+            else if (tab === 'refine') setFilterOpen(true);
+            else if (lastOpened >= 0) setViewerIndex(lastOpened);
+          }}
+        />
+      )}
+
+      <CaseViewCard open={caseCard === 'view'} prefs={casePrefs} onChange={setCasePrefs} onClose={() => setCaseCard(null)} />
+
       <TabbedFilterSheet
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
@@ -405,6 +424,42 @@ const styles = `
   /* justified rows go edge-to-edge */
   .page-collection__display--flush {
     padding: 0 0 var(--space-4);
+  }
+
+  /* the cabinets fill the frame left above the tabs; the room, not padding, takes any spare space */
+  .page-collection__display--case {
+    padding: 0;
+    height: 100%;
+  }
+
+  /* The case ends above the pull-up tabs (B1), in CSS so it follows any change above it (the offline
+     banner, the chips row) and a turn of the phone: the page is the content area, which ends at the tab
+     bar, less the pull-up tabs (32 px) and a 4 px gap; a column whose header, filter bar and chips take
+     what they need and whose body, down to the scene, the rest. The camera re-frames on the scene's own
+     resize (CabinetScene's useFrame). */
+  .animated-route:has(> .page-collection--case) {
+    height: 100%;
+  }
+
+  .page-collection--case {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-sizing: border-box;
+    padding-bottom: 36px;
+  }
+
+  .page-collection--case > * {
+    flex-shrink: 0;
+  }
+
+  .page-collection--case > .page-collection__body {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .page-collection__display--case > .cabinet-scene {
+    height: 100%;
   }
 
   /* Fold dual-pane (>= 640px container width): grid condenses left, detail

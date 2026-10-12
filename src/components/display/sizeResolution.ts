@@ -9,20 +9,15 @@ import type { FigureDisplayMeta } from './displayMeta';
  */
 const NOMINAL_CHARACTER_HEIGHT_MM = 1600;
 
-/** Below this, a figure reads as "essentially nothing" next to a collection
- *  outlier — floor it so tap targets and visibility stay reasonable. */
-const MIN_REL_HEIGHT = 0.25;
-
 /**
  * No real figure exceeds roughly 2000mm (a large 1/1 life-size statue tops
- * out around ~1700mm) — a SECONDARY safety net, not the primary defense
- * (that's case-anchoring itself, below): a resolvable heightMm above this
- * is scraper-corrupted data (notably the pre-fix Cheerio concat bug that
- * produced values like "660580570" from concatenated H/W/D strings), and
- * gets capped here so it renders merely gargantuan rather than blowing the
- * row/virtualizer layout math up with an effectively-infinite px height.
+ * out around ~1700mm): a resolvable heightMm above this is scraper-corrupted
+ * data (notably the pre-fix Cheerio concat bug that produced values like
+ * "660580570" from concatenated H/W/D strings). The case packer caps at it
+ * (measureCaseFigure), so such a figure is a too-tall violator, never an
+ * effectively infinite one.
  */
-const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
+export const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
 
 export type HeightSource = 'labeled' | 'scale-estimate';
 
@@ -49,9 +44,9 @@ function parseScaleFraction(scale: string | undefined): number | null {
  * is present:
  *   1. labeled heightMm, if present and sane (finite, > 0).
  *   2. scale fraction (e.g. "1/7") x nominal 1600mm character height.
- *   3. null — the caller falls back to a per-figure default (see
- *      resolveRelHeights), since there's no physical signal left to
- *      estimate from.
+ *   3. null — the caller falls back to a default height (packCabinets'
+ *      DEFAULT_FIGURE_HEIGHT_MM, flagged as estimated), since there's no
+ *      physical signal left to estimate from.
  */
 export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
   const labeled = figure.dimensions?.heightMm;
@@ -63,52 +58,6 @@ export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
     return { heightMm: fraction * NOMINAL_CHARACTER_HEIGHT_MM, source: 'scale-estimate' };
   }
   return null;
-}
-
-/**
- * Compute each figure's relHeight — its resolved physical height as a
- * fraction of `anchorMm` (1.0 == exactly fills the compartment) — CASE-
- * anchored, not figure-anchored (Ross's correction, replacing an earlier
- * design that anchored to the tallest figure IN THE DISPLAYED SET, which
- * meant one scraper-corrupted heightMm became the anchor and silently
- * shrank every other figure toward 0). `anchorMm` is the case/compartment's
- * own real or assumed physical height in mm — the CALLER's job (CaseShelf
- * resolves it from caseMode/caseProfile: the cabinet profile's smallest
- * compartment (fixedModeCompartmentMm) in fixed mode, a documented default
- * virtual-compartment height in dynamic mode) — this module only relates a
- * figure's own mm to whatever anchor it's given, it has no opinion on
- * cabinets.
- *
- * relHeight is intentionally NOT clamped to <= 1: a figure genuinely taller
- * than the compartment is supposed to overflow it (render taller than the
- * shelf band — in fixed mode that's a "won't fit" violator, in dynamic
- * mode it just visibly dominates its row) rather than being quietly capped
- * to look like it fits. MAX_PLAUSIBLE_HEIGHT_MM is the only ceiling
- * applied, and only to reject scraper-corrupted values (see its own doc) —
- * it still lets a real, plausible oversized figure overflow freely.
- *
- * Figures with no resolvable heightMm keep their existing FigureDisplayMeta
- * relHeight — a per-figure default, not forced onto the mm-relative scale,
- * since there's no physical data to relate it to anything else by. This is
- * the tree's final "isolated figure, default band" rung.
- */
-export function resolveRelHeights(
-  figures: Figure[],
-  getMeta: (figure: Figure) => FigureDisplayMeta,
-  anchorMm: number,
-): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const figure of figures) {
-    const height = resolveHeightMm(figure);
-    if (height && anchorMm > 0) {
-      const sanitizedMm = Math.min(height.heightMm, MAX_PLAUSIBLE_HEIGHT_MM);
-      const rel = sanitizedMm / anchorMm;
-      out.set(figure._id, Math.max(MIN_REL_HEIGHT, rel));
-    } else {
-      out.set(figure._id, getMeta(figure).relHeight);
-    }
-  }
-  return out;
 }
 
 /** Typical depth-to-width ratio for a figure's footprint — Ross's estimate
@@ -143,7 +92,7 @@ function isPositiveFinite(value: unknown): value is number {
  *   1. labeled depthMm (MFC "L"/"D"), if present and sane.
  *   2. ~0.65x a resolvable widthMm — labeled widthMm if present, else
  *      width derived from the figure's own pixel aspect x its resolved
- *      render height (the same resolvedHeightMm resolveRelHeights already
+ *      render height (the same resolved height measureCaseFigure already
  *      computed for this figure — passed in rather than re-derived here,
  *      so height and depth share one resolution pass).
  *   3. square-footprint fallback (depth = the resolved width, uncorrected)

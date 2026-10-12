@@ -15,6 +15,7 @@
  * .env.test), never the git-ignored files.
  */
 import type { Figure } from '@figurecollecting/fc-shared';
+import type { FigureImageRef } from '../components/display/figureArt';
 
 /**
  * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
@@ -23,7 +24,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
  * — the two are different shapes serving different purposes: this one is
  * hand-authored per dev fixture, that one is produced by image-manager for
  * real synced figures. displayMeta.ts's getDisplayMeta() maps the latter
- * into the former's shape (the local render meta CaseShelf/packShelves/
+ * into the former's shape (the local render meta CabinetScene/packCabinets/
  * packJustified/sizeResolution/FigureViewer all consume) when a real
  * figure's displayMeta is present.
  */
@@ -76,6 +77,14 @@ const ART: FixtureArt = {
   syntheticOnly: import.meta.env.VITE_FIXTURE_ART === 'synthetic',
 };
 
+/** The masked branch's halves (CASE-ADAPT): an opaque clean copy and a separate mask, both synthetic. */
+const CLEAN: Record<string, string> = import.meta.glob('./synthetic/clean/*.png', { eager: true, import: 'default', query: '?url' });
+const MASK: Record<string, string> = import.meta.glob('./synthetic/mask/*.png', { eager: true, import: 'default', query: '?url' });
+/** The same three for the figures drawn off-centre in their pictures (?fxasym=1). */
+const ASYM: Record<string, string> = import.meta.glob('./synthetic/asym/*.png', { eager: true, import: 'default', query: '?url' });
+const ASYM_CLEAN: Record<string, string> = import.meta.glob('./synthetic/asym/clean/*.png', { eager: true, import: 'default', query: '?url' });
+const ASYM_MASK: Record<string, string> = import.meta.glob('./synthetic/asym/mask/*.png', { eager: true, import: 'default', query: '?url' });
+
 function img(name: string): string | undefined {
   return resolveFixtureArt(name, ART);
 }
@@ -95,6 +104,14 @@ interface FixtureDef {
    *  these actual commercial figure lines — drives proportional sizing the
    *  same way a real synced figure's scraped dimensions would. */
   heightMm: number;
+  /** Labelled width, mm, the way a real synced figure's ProductCard gives
+   *  one. Here it is how wide the SYNTHETIC stand-in's cut-out draws at
+   *  heightMm over its clear margins (true scale), rounded up, so the
+   *  default fixtures pack by their labels. A real cut-out can draw wider
+   *  than its label (the sign-off Madoka's wings: 155 mm drawn, 86 mm
+   *  labelled); the case packs cut-out and masked art by the wider of the
+   *  two once it has read the picture's alpha (?fxwidth exercises that). */
+  widthMm: number;
   meta: FixtureDisplayMeta;
 }
 
@@ -109,6 +126,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['maid', 'blue hair'],
     heightMm: 230,
+    widthMm: 121,
     meta: { width: 550, height: 800, aspect: 0.688, relHeight: 1.0, footprintCenterX: 0.48, footprintWidth: 0.58, matted: true, baseRecovered: true },
   },
   {
@@ -121,6 +139,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['wings', 'dark'],
     heightMm: 260,
+    widthMm: 245,
     meta: { width: 600, height: 738, aspect: 0.813, relHeight: 0.98, footprintCenterX: 0.52, footprintWidth: 0.66, matted: true, baseRecovered: true },
   },
   {
@@ -133,6 +152,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['chibi', 'twin tails'],
     heightMm: 100,
+    widthMm: 85,
     meta: { width: 523, height: 550, aspect: 0.951, relHeight: 0.69, footprintCenterX: 0.5, footprintWidth: 0.55, matted: true, baseRecovered: true },
   },
   {
@@ -145,6 +165,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['magical girl'],
     heightMm: 180,
+    widthMm: 86,
     meta: { width: 600, height: 712, aspect: 0.843, relHeight: 0.94, footprintCenterX: 0.5, footprintWidth: 0.7, matted: true, baseRecovered: false },
   },
   {
@@ -157,6 +178,7 @@ const DEFS: FixtureDef[] = [
     status: 'owned',
     tags: ['suit'],
     heightMm: 220,
+    widthMm: 35,
     meta: { width: 550, height: 800, aspect: 0.688, relHeight: 1.0, footprintCenterX: 0.5, footprintWidth: 0.4, matted: true, baseRecovered: false },
   },
   {
@@ -171,6 +193,7 @@ const DEFS: FixtureDef[] = [
     // Low reclining diorama pose — much shorter off the base than a
     // standing 1/8 figure despite the same nominal scale.
     heightMm: 150,
+    widthMm: 286,
     meta: { width: 600, height: 400, aspect: 1.5, relHeight: 0.72, footprintCenterX: 0.5, footprintWidth: 0.8, matted: true, baseRecovered: true },
   },
   {
@@ -183,6 +206,7 @@ const DEFS: FixtureDef[] = [
     status: 'wished',
     tags: ['school uniform'],
     heightMm: 230,
+    widthMm: 339,
     meta: { width: 600, height: 412, aspect: 1.456, relHeight: 0.7, footprintCenterX: 0.5, footprintWidth: 0.72, matted: true, baseRecovered: true },
   },
 ];
@@ -199,7 +223,7 @@ function toFigure(def: FixtureDef): Figure {
     tags: def.tags,
     collectionStatus: def.status,
     imageUrl: img(def.id.replace(/^fx-/, '')),
-    dimensions: { heightMm: def.heightMm },
+    dimensions: { heightMm: def.heightMm, widthMm: def.widthMm },
     companyRoles: [
       { companyId: `c-${def.id}`, companyName: def.distributor, roleId: 'r-dist', roleName: 'Distributor' },
     ],
@@ -270,27 +294,107 @@ export function getFixtureMultiplier(): number {
   }
 }
 
-export type FixtureBranch = 'matted' | 'framed' | 'silhouette';
+export type FixtureBranch = 'matted' | 'masked' | 'framed' | 'silhouette';
 
 const FIXTURE_BRANCH_PARAM = 'fxbranch';
 
 /**
- * Dev-only switch for the case's three render branches: `?fxbranch=framed`
- * draws the fixtures as a real figure without matting data draws today (a
- * framed photo), `?fxbranch=silhouette` as one without an image. Matted
- * (the fixtures as they are) for anything else.
+ * Dev-only switch for the case's render branches: `?fxbranch=masked` draws
+ * the fixtures as the image list will give a masked figure (a clean copy
+ * plus its separate mask, getFixtureImageRef), `?fxbranch=framed` as a real
+ * figure without a mask draws today (its clean copy, framed),
+ * `?fxbranch=silhouette` as one without an image. Matted (the fixtures as
+ * they are: cut-outs) for anything else.
  */
 export function getFixtureBranch(): FixtureBranch {
   const raw = new URLSearchParams(location.search).get(FIXTURE_BRANCH_PARAM);
-  return raw === 'framed' || raw === 'silhouette' ? raw : 'matted';
+  return raw === 'masked' || raw === 'framed' || raw === 'silhouette' ? raw : 'matted';
 }
 
-function toBranch(figure: Figure, branch: FixtureBranch): Figure {
+export type FixtureWidths = 'labelled' | 'none' | 'narrow';
+
+const FIXTURE_WIDTHS_PARAM = 'fxwidth';
+
+/**
+ * Dev-only switch for the fixtures' labelled widths, the shapes a real
+ * collection brings to the case: `?fxwidth=none` drops them (a figure the
+ * catalogue gives no width), `?fxwidth=narrow` halves them, under what each
+ * cut-out draws at true scale, as the real sign-off cut-outs are. As
+ * labelled for anything else.
+ */
+export function getFixtureWidths(): FixtureWidths {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_WIDTHS_PARAM);
+  return raw === 'none' || raw === 'narrow' ? raw : 'labelled';
+}
+
+function withWidths(figure: Figure, widths: FixtureWidths): Figure {
+  if (widths === 'labelled') return figure;
+  const { heightMm, widthMm } = figure.dimensions!;
+  return { ...figure, dimensions: widths === 'none' ? { heightMm } : { heightMm, widthMm: Math.round(widthMm! / 2) } };
+}
+
+const FIXTURE_ASYM_PARAM = 'fxasym';
+
+/**
+ * Dev-only switch for art whose figure stands off-centre in its picture, as
+ * a real cut-out can (a staff held out, a base off to one side):
+ * `?fxasym=1` draws Rem 18 % of her picture's width right of its centre
+ * and Spike 30 % (synthetic/asym), in every branch. Off for anything else.
+ */
+export function getFixtureAsym(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_ASYM_PARAM) === '1';
+}
+
+const FIXTURE_UNIQUE_PARAM = 'fxuniq';
+
+/**
+ * Dev-only switch for a long list of distinct pictures, as a real
+ * collection has: `?fxuniq=1` draws each repeated copy (`?fx=N`, copy 2 and
+ * on) at its own picture URL, the same picture. Off (the copies share their
+ * pictures) for anything else.
+ */
+export function getFixtureUnique(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_UNIQUE_PARAM) === '1';
+}
+
+/** A repeated copy's picture at its own URL under ?fxuniq=1. */
+function copyUrl<T extends string | undefined>(url: T, figureId: string, unique: boolean): T {
+  const copy = /-x(\d+)(?:-masked|-framed)?$/.exec(figureId)?.[1];
+  return (unique && url && copy ? `${url}?copy=${copy}` : url) as T;
+}
+
+const artName = (figureId: string) => figureId.replace(/^fx-/, '').replace(/(-x\d+)?(-masked|-framed)?$/, '');
+
+/** A fixture's cut-out, clean copy and mask: the off-centre ones under ?fxasym=1 where it has them. */
+function artFiles(name: string, asym: boolean) {
+  const moved = asym ? ASYM[`./synthetic/asym/${name}.png`] : undefined;
+  if (!moved) return { cutout: undefined, clean: CLEAN[`./synthetic/clean/${name}.png`], mask: MASK[`./synthetic/mask/${name}.png`] };
+  return { cutout: moved, clean: ASYM_CLEAN[`./synthetic/asym/clean/${name}.png`], mask: ASYM_MASK[`./synthetic/asym/mask/${name}.png`] };
+}
+
+function toBranch(figure: Figure, branch: FixtureBranch, asym: boolean): Figure {
   // An id outside the fixture manifest resolves UNMATTED_META, exactly like
   // a real figure without displayMeta.
-  if (branch === 'framed') return { ...figure, _id: `${figure._id}-framed` };
+  const { cutout, clean } = artFiles(artName(figure._id), asym);
+  if (branch === 'masked') return { ...figure, _id: `${figure._id}-masked`, imageUrl: clean };
+  if (branch === 'framed') return { ...figure, _id: `${figure._id}-framed`, imageUrl: clean };
   if (branch === 'silhouette') return { ...figure, imageUrl: undefined };
-  return figure;
+  return cutout ? { ...figure, imageUrl: cutout } : figure;
+}
+
+/**
+ * The image list's entry for a fixture of the masked branch (what
+ * GetProductImages will give a figure with a mask): its clean copy, its
+ * mask and their native size. Undefined for every other figure.
+ */
+export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
+  if (!figure._id.endsWith('-masked')) return undefined;
+  const name = artName(figure._id);
+  const { clean: url, mask: maskUrl } = artFiles(name, getFixtureAsym());
+  const meta = FIXTURE_META[`fx-${name}`];
+  if (!url || !maskUrl || !meta) return undefined;
+  const unique = getFixtureUnique();
+  return { url: copyUrl(url, figure._id, unique), maskUrl: copyUrl(maskUrl, figure._id, unique), width: meta.width, height: meta.height };
 }
 
 /**
@@ -298,14 +402,24 @@ function toBranch(figure: Figure, branch: FixtureBranch): Figure {
  * (`fx-rem-x1`, `fx-rem-x2`, ...). getDisplayMeta strips the `-xN` suffix to
  * resolve the original matte metadata, so every repeated copy still renders
  * matted (not a generic framed-photo fallback) — unless `?fxbranch` asks
- * for another branch (getFixtureBranch).
+ * for another branch (getFixtureBranch); `?fxwidth` changes their labelled
+ * widths (getFixtureWidths), `?fxasym=1` draws two of them off-centre in
+ * their pictures (getFixtureAsym), `?fxuniq=1` draws each copy at its own
+ * picture URL (getFixtureUnique).
  */
-export function getFixtureFigures(multiplier = getFixtureMultiplier(), branch = getFixtureBranch()): Figure[] {
-  if (multiplier <= 1 && branch === 'matted') return FIXTURE_FIGURES;
+export function getFixtureFigures(
+  multiplier = getFixtureMultiplier(),
+  branch = getFixtureBranch(),
+  widths = getFixtureWidths(),
+  asym = getFixtureAsym(),
+  unique = getFixtureUnique(),
+): Figure[] {
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const base of FIXTURE_FIGURES) {
-      out.push(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch));
+      const figure = withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch, asym), widths);
+      out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }
   return out;

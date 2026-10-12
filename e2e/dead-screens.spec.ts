@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { e2eServers } from './e2eServers';
 
 /**
  * WK-04: analytics/notifications/prices/push/export/calendar/collection-dna/
@@ -69,11 +70,11 @@ test('idle app makes no requests to dead endpoints, and /analytics redirects to 
 });
 
 // This one needs the REAL production build (.env.production, no
-// VITE_ALLOW_FIXTURE_OVERRIDE) — the shared :5173 server above is built with
+// VITE_ALLOW_FIXTURE_OVERRIDE) — the shared E2E_PORT server above is built with
 // --mode test, which sets that var for the overlay/smoke suites. See
 // playwright.config.ts's second webServer entry.
 test.describe('real production build', () => {
-  test.use({ baseURL: 'http://localhost:4174' });
+  test.use({ baseURL: e2eServers().prodUrl });
 
   test('ignores fc-fixture-mode=on and still asks to sign in', async ({ page }) => {
     await page.route('https://figurecollecting.com/api/**', (route) =>

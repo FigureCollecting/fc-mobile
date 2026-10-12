@@ -60,17 +60,113 @@ afterEach(() => {
   localSession.value = undefined;
 });
 
-/** Where a finger lands on a case figure: its drawn part (its box takes no taps). */
+/** Where a finger lands on a case figure: its tap box (the picture hanging from it takes no taps). */
 function drawnPart(name: string): Element {
-  return screen.getByRole('button', { name }).firstElementChild!;
+  return screen.getByRole('button', { name });
 }
 
 describe('Collection page (rebuilt display layer)', () => {
-  it('renders the virtual case by default with figures standing on shelves', async () => {
+  it('renders the faithful cabinets by default: the KLINGSBO, figures standing on its surfaces', async () => {
     await respondWith([makeFigure('1'), makeFigure('2')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(container.querySelector('.case[data-motif="detolf-dark"]')).not.toBeNull();
+    expect(container.querySelector('.cabinet-scene[data-pattern="ikea-klingsbo"]')).not.toBeNull();
+    expect(container.querySelector('.cab[data-profile="ikea-klingsbo"]')).not.toBeNull();
+    // no image on the local data yet (MG-2): every figure stands as a plate with its name
+    expect(screen.getByRole('button', { name: 'Figure 1' }).dataset.art).toBe('plate');
+  });
+
+  it('the case page is a column the scene fills down to the pull-up tabs (CSS, B1); the rows page is not', async () => {
+    await respondWith([makeFigure('1')]);
+    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(true);
+    const scene = container.querySelector('.page-collection__display--case > .cabinet-scene') as HTMLElement;
+    // its height is the page's to give: nothing measured once and left stale when the layout above changes
+    expect(scene.style.height).toBe('');
+    unmount();
+    const rows = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(rows.container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(false);
+  });
+
+  it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the rows do not', async () => {
+    await respondWith([makeFigure('1')]);
+    const { unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
+      'view',
+      'reserved',
+      'dock',
+      'info',
+      'refine',
+    ]);
+    unmount();
+    const rows = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(rows.container.ownerDocument.querySelector('.case-tabs')).toBeNull();
+  });
+
+  it('the View tab opens the case card; its choices are kept on this device (CC14)', async () => {
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(await screen.findByRole('radio', { name: 'Pan the wall' }));
+    await user.click(screen.getByRole('radio', { name: 'One cabinet' }));
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-swipe="pan"][data-view="cabinet"]')).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ swipe: 'pan', view: 'cabinet' });
+  });
+
+  it('the Refine tab opens the filter sheet; Info reopens the last figure tapped', async () => {
+    await respondWith([makeFigure('1'), makeFigure('2')]);
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 2' });
+    expect(screen.getByRole('button', { name: 'Info' })).toBeDisabled();
+    await user.click(drawnPart('Figure 2'));
+    await waitFor(() => expect(instances).toHaveLength(1));
+    instances[0].destroy();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Info' })).not.toBeDisabled());
+    await user.click(screen.getByRole('button', { name: 'Info' }));
+    await waitFor(() => expect(instances).toHaveLength(2));
+    expect(instances[1].options.index).toBe(1);
+    instances[1].destroy();
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    expect(await screen.findByRole('button', { name: /show \d/i })).toBeInTheDocument();
+  });
+
+  it('Info reopens the figure last tapped even after the list is filtered; disabled once that figure is filtered out', async () => {
+    await respondWith([
+      makeFigure('1', { manufacturer: 'Alter' }),
+      makeFigure('2', { manufacturer: 'Kotobukiya' }),
+      makeFigure('3', { manufacturer: 'Kotobukiya' }),
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 2' });
+    await user.click(drawnPart('Figure 2'));
+    await waitFor(() => expect(instances).toHaveLength(1));
+    expect(instances[0].options.index).toBe(1);
+    instances[0].destroy();
+    // the list changes under it: Figure 1 filtered out, so Figure 2 now sits first
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.click(await screen.findByRole('button', { name: 'Kotobukiya2' }));
+    await user.click(screen.getByRole('button', { name: /show 2/i }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 1' })).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Info' }));
+    await waitFor(() => expect(instances).toHaveLength(2));
+    expect(instances[1].options.index).toBe(0);
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    instances[1].destroy();
+    // filtered out altogether: nothing to reopen
+    await user.click(screen.getByRole('listitem', { name: /remove filter kotobukiya/i }));
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.click(await screen.findByRole('button', { name: 'Alter1' }));
+    await user.click(screen.getByRole('button', { name: /show 1/i }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Info' })).toBeDisabled();
   });
 
   it('stands an owned figure\'s kept image in the case (ADDR-1), a CORS image, and keeps the others as plates', async () => {
@@ -87,7 +183,7 @@ describe('Collection page (rebuilt display layer)', () => {
       renderWithProviders(<Collection />, { initialPath: '/' });
       await waitFor(() => expect(document.querySelector(`img[src="${src}"]`)).not.toBeNull());
       expect(document.querySelector(`img[src="${src}"]`)).toHaveAttribute('crossorigin', 'anonymous');
-      expect(document.querySelectorAll('.shelf-figure img')).toHaveLength(1);
+      expect(document.querySelectorAll('.cab-figure img')).toHaveLength(1);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -106,9 +202,9 @@ describe('Collection page (rebuilt display layer)', () => {
       await seedFigures(r, [makeFigure('1'), makeFigure('2')]);
       const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
       await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
-      await waitFor(() => expect(container.querySelectorAll('.shelf-figure__silhouette')).toHaveLength(2));
+      await waitFor(() => expect(container.querySelectorAll('.cab-figure__plate')).toHaveLength(2));
       await new Promise((res) => setTimeout(res, 50));
-      expect(document.querySelector('.shelf-figure img')).toBeNull();
+      expect(document.querySelector('.cab-figure img')).toBeNull();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -119,18 +215,7 @@ describe('Collection page (rebuilt display layer)', () => {
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
     await screen.findByRole('button', { name: 'Figure 1' });
     expect(container.querySelector('.jrows')).not.toBeNull();
-    expect(container.querySelector('.case')).toBeNull();
-  });
-
-  it('switches motif from the header cycler', async () => {
-    await respondWith([makeFigure('1')]);
-    const user = userEvent.setup();
-    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByRole('button', { name: 'Figure 1' });
-    await user.click(screen.getByRole('button', { name: /case motif/i }));
-    await waitFor(() => {
-      expect(container.querySelector('.case[data-motif="glass-clear"]')).not.toBeNull();
-    });
+    expect(container.querySelector('.cabinet-scene')).toBeNull();
   });
 
   it('opens the full-screen viewer on tap with the tapped index', async () => {

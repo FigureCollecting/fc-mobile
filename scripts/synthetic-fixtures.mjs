@@ -1,8 +1,13 @@
 // Draws the committed stand-in art for the seven dev fixtures:
 // src/dev-fixtures/synthetic/<name>.png. Our own flat geometric figures on
 // a transparent background (RGBA), at each fixture's native pixel size, so
-// clean checkouts and CI render the case's matted branch. No photos, no
-// dependencies. Re-run after changing a shape: node scripts/synthetic-fixtures.mjs
+// clean checkouts and CI render the case's matted branch. Beside each, the
+// two halves of the masked branch (CASE-ADAPT): clean/<name>.png, the figure
+// on an opaque studio backdrop (RGB, like a clean re-encoded product photo),
+// and mask/<name>.png, white whose alpha is exactly the cut-out's; asym/
+// holds the same three for figures moved off-centre in their pictures. No
+// photos, no dependencies. Re-run after changing a shape:
+// node scripts/synthetic-fixtures.mjs
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 import path from 'node:path';
@@ -168,14 +173,14 @@ function chunk(type, data) {
   crc.writeUInt32BE(crc32(body));
   return Buffer.concat([len, body, crc]);
 }
-function encodePng([w, h], rgba) {
+function encodePng([w, h], pixels, channels = 4) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0);
   ihdr.writeUInt32BE(h, 4);
   ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // RGBA
-  const raw = Buffer.alloc((w * 4 + 1) * h);
-  for (let y = 0; y < h; y++) rgba.copy(raw, y * (w * 4 + 1) + 1, y * w * 4, (y + 1) * w * 4);
+  ihdr[9] = channels === 4 ? 6 : 2; // RGBA or RGB
+  const raw = Buffer.alloc((w * channels + 1) * h);
+  for (let y = 0; y < h; y++) pixels.copy(raw, y * (w * channels + 1) + 1, y * w * channels, (y + 1) * w * channels);
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
@@ -184,10 +189,63 @@ function encodePng([w, h], rgba) {
   ]);
 }
 
-mkdirSync(OUT, { recursive: true });
-for (const [name, { size, shapes }] of Object.entries(FIGURES)) {
-  const file = path.join(OUT, `${name}.png`);
-  const png = encodePng(size, rasterize(size, shapes));
+// A soft grey studio sweep, lighter at the top: the clean copy's backdrop.
+function backdrop(h, y) {
+  const v = Math.round(236 - (24 * y) / Math.max(1, h - 1));
+  return [v, v, v + 2];
+}
+
+/** The cut-out over the backdrop, opaque (RGB). */
+function cleanCopy([w, h], rgba) {
+  const rgb = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) {
+    const bg = backdrop(h, y);
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const a = rgba[i * 4 + 3] / 255;
+      for (let c = 0; c < 3; c++) rgb[i * 3 + c] = Math.round(rgba[i * 4 + c] * a + bg[c] * (1 - a));
+    }
+  }
+  return rgb;
+}
+
+/** White, with the cut-out's alpha: what CSS mask-image reads. */
+function maskOf([w, h], rgba) {
+  const mask = Buffer.alloc(w * h * 4, 255);
+  for (let i = 0; i < w * h; i++) mask[i * 4 + 3] = rgba[i * 4 + 3];
+  return mask;
+}
+
+function write(file, png, size) {
   writeFileSync(file, png);
   console.log(`${path.relative(process.cwd(), file)} ${size[0]}x${size[1]} ${png.length} bytes`);
+}
+
+/** The cut-out moved sideways by dx px (clear where it moved from). */
+function shifted([w, h], rgba, dx) {
+  const out = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = Math.max(0, -dx); x < Math.min(w, w - dx); x++) rgba.copy(out, (y * w + x + dx) * 4, (y * w + x) * 4, (y * w + x + 1) * 4);
+  }
+  return out;
+}
+
+/** The cut-out, its clean copy and its mask, under `dir`. */
+function writeAll(dir, name, size, rgba) {
+  for (const sub of [dir, path.join(dir, 'clean'), path.join(dir, 'mask')]) mkdirSync(sub, { recursive: true });
+  write(path.join(dir, `${name}.png`), encodePng(size, rgba), size);
+  write(path.join(dir, 'clean', `${name}.png`), encodePng(size, cleanCopy(size, rgba), 3), size);
+  write(path.join(dir, 'mask', `${name}.png`), encodePng(size, maskOf(size, rgba)), size);
+}
+
+// Off-centre stand-ins (?fxasym=1): the same figure moved sideways in its
+// picture, as a real cut-out can stand (a staff held out, a base off to one
+// side). Moved by whole pixels, so it is exactly the figure above: Rem 110 px
+// right (38 % clear left, 2 % right), Spike 165 px (70 % left, 10 % right).
+const ASYM = { rem: 110, spike: 165 };
+
+for (const [name, { size, shapes }] of Object.entries(FIGURES)) {
+  const rgba = rasterize(size, shapes);
+  writeAll(OUT, name, size, rgba);
+  if (ASYM[name]) writeAll(path.join(OUT, 'asym'), name, size, shifted(size, rgba, ASYM[name]));
 }

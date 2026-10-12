@@ -59,10 +59,9 @@ export function buildMatteServeUrl(
  * Resolves the image URL to actually render for a figure: the matted
  * derivative when the matting pipeline produced one (figure.displayMeta),
  * else the figure's plain (unmatted) source image. Standalone from
- * getDisplayMeta's render-metadata mapping (displayMeta.ts) — CaseShelf and
- * FigureViewer both read `figure.imageUrl` directly rather than through
- * getDisplayMeta, so this is the seam a future task wires the matted URL
- * into those `<img src>` reads.
+ * getDisplayMeta's render-metadata mapping (displayMeta.ts). The case
+ * reads it through figureArt when the image list has no entry for a
+ * figure; FigureViewer still reads `figure.imageUrl` directly.
  */
 export function resolveFigureImageUrl(
   figure: Figure,

@@ -1,20 +1,16 @@
 import { hapticLight } from '../../utils/haptics';
 import { DENSITIES } from './density';
 import type { Density } from './density';
-import { CASE_MOTIFS } from './CaseShelf';
-import type { CaseMotif } from './CaseShelf';
 import type { LayoutMode } from '../../hooks/useFigureListParams';
 import { Style } from '../../styles/Style';
 
 interface DisplayToggleProps {
   layout: LayoutMode;
   density: Density;
-  motif: CaseMotif;
   /** Nameplate overlay toggle — defaults off. */
   labels?: boolean;
   onLayout: (layout: LayoutMode) => void;
   onDensity: (density: Density) => void;
-  onMotif: (motif: CaseMotif) => void;
   onLabels?: (labels: boolean) => void;
 }
 
@@ -26,16 +22,15 @@ const DENSITY_LABEL: Record<Density, string> = {
 
 /**
  * Header display controls: A/B layout toggle (virtual case vs justified
- * rows), density cycler, and — in case mode — the case motif cycler.
+ * rows), the rows' density cycler, and the nameplate labels. The case's own
+ * look (cabinets, view, swipe) lives in its View card (CaseViewCard).
  */
 export function DisplayToggle({
   layout,
   density,
-  motif,
   labels = false,
   onLayout,
   onDensity,
-  onMotif,
   onLabels,
 }: DisplayToggleProps) {
   const cycleDensity = () => {
@@ -43,15 +38,6 @@ export function DisplayToggle({
     hapticLight();
     onDensity(next);
   };
-
-  const cycleMotif = () => {
-    const values = CASE_MOTIFS.map((m) => m.value);
-    const next = values[(values.indexOf(motif) + 1) % values.length];
-    hapticLight();
-    onMotif(next);
-  };
-
-  const motifLabel = CASE_MOTIFS.find((m) => m.value === motif)?.label ?? motif;
 
   return (
     <div class="display-toggle">
@@ -89,32 +75,18 @@ export function DisplayToggle({
         </button>
       </div>
 
-      <button
-        class="display-toggle__cycle"
-        type="button"
-        aria-label={`Density: ${DENSITY_LABEL[density]}`}
-        title={`Density: ${DENSITY_LABEL[density]}`}
-        onClick={cycleDensity}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-          {density === 'comfortable' && <><rect x="2" y="2" width="12" height="12" rx="1" /></>}
-          {density === 'compact' && <><rect x="2" y="2" width="5.5" height="5.5" rx="0.5" /><rect x="8.5" y="2" width="5.5" height="5.5" rx="0.5" /><rect x="2" y="8.5" width="5.5" height="5.5" rx="0.5" /><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="0.5" /></>}
-          {density === 'gallery' && <><rect x="1.5" y="1.5" width="3.6" height="3.6" /><rect x="6.2" y="1.5" width="3.6" height="3.6" /><rect x="10.9" y="1.5" width="3.6" height="3.6" /><rect x="1.5" y="6.2" width="3.6" height="3.6" /><rect x="6.2" y="6.2" width="3.6" height="3.6" /><rect x="10.9" y="6.2" width="3.6" height="3.6" /><rect x="1.5" y="10.9" width="3.6" height="3.6" /><rect x="6.2" y="10.9" width="3.6" height="3.6" /><rect x="10.9" y="10.9" width="3.6" height="3.6" /></>}
-        </svg>
-      </button>
-
-      {layout === 'case' && (
+      {layout === 'rows' && (
         <button
           class="display-toggle__cycle"
           type="button"
-          aria-label={`Case motif: ${motifLabel}`}
-          title={`Case: ${motifLabel}`}
-          onClick={cycleMotif}
+          aria-label={`Density: ${DENSITY_LABEL[density]}`}
+          title={`Density: ${DENSITY_LABEL[density]}`}
+          onClick={cycleDensity}
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2.5" y="1.5" width="11" height="13" rx="1" />
-            <path d="M2.5 8h11" />
-            <path d="M5.5 5.5l5-3" opacity="0.6" />
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            {density === 'comfortable' && <><rect x="2" y="2" width="12" height="12" rx="1" /></>}
+            {density === 'compact' && <><rect x="2" y="2" width="5.5" height="5.5" rx="0.5" /><rect x="8.5" y="2" width="5.5" height="5.5" rx="0.5" /><rect x="2" y="8.5" width="5.5" height="5.5" rx="0.5" /><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="0.5" /></>}
+            {density === 'gallery' && <><rect x="1.5" y="1.5" width="3.6" height="3.6" /><rect x="6.2" y="1.5" width="3.6" height="3.6" /><rect x="10.9" y="1.5" width="3.6" height="3.6" /><rect x="1.5" y="6.2" width="3.6" height="3.6" /><rect x="6.2" y="6.2" width="3.6" height="3.6" /><rect x="10.9" y="6.2" width="3.6" height="3.6" /><rect x="1.5" y="10.9" width="3.6" height="3.6" /><rect x="6.2" y="10.9" width="3.6" height="3.6" /><rect x="10.9" y="10.9" width="3.6" height="3.6" /></>}
           </svg>
         </button>
       )}

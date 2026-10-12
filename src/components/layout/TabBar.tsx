@@ -220,9 +220,10 @@ export function TabBar() {
             position: relative;
           }
 
+          /* IC1-R2 (Ross 2026-10-09): the + is raised on every screen, between the case's pull-up tabs */
           .tab-bar__add {
             position: absolute;
-            top: calc(var(--fab-size) / -3);
+            top: calc(var(--fab-size) / -1.25);
             width: var(--fab-size);
             height: var(--fab-size);
             border-radius: var(--radius-full);
@@ -230,7 +231,7 @@ export function TabBar() {
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: var(--shadow-md);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
             transition: transform var(--transition-fast);
           }
 

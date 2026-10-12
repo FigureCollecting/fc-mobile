@@ -235,6 +235,14 @@ FC_WEB_IMAGE=fc-mobile-web:n FC_WEB_IMAGE_NEXT=fc-mobile-web:n1 FC_STACK_WEB_IMA
   npx playwright test -c playwright.pwa.config.ts
 ```
 
+Named flakes of this suite in `web-image.yml` (rerun the failed job once; a second failure is real):
+
+- `(c) build N+1 ships while 2 edits are pending › a second tab with no controller at load follows
+  the tab that took N+1`: times out at 31 s.
+- `(b) /api reaches the coordinator online, fails offline, and the image 404s it`: `shellInstalled`
+  times out at 90 s, the page at the bare shell, right after `(a)` restarts the edge. Seen on a branch
+  without the image work too (run 38190788749, attempt 1).
+
 `npm run dev` proxies `/api` to a coordinator on `http://127.0.0.1:5052`
 (`FC_COORDINATOR_URL` overrides) with the path and Host unchanged; start it with
 `COORDINATOR_PUBLIC_ORIGIN=http://localhost:5173 COORDINATOR_ROUTE_PREFIX=/api`.

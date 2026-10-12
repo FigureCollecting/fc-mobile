@@ -575,6 +575,30 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(started.filter((s) => s === A)).toHaveLength(2);
   });
 
+  it('a picture that never decoded whose own picture loads after all, the read that load sends never decoding it either (its fetch failed again): read again at once; one load, one read again', async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    let fails = 3;
+    mockPictures(pictures(), (src) => {
+      started.push(src);
+      return fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+    });
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.get(A)).toEqual(NONE);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    // its picture is here, so the read its load sent failed to fetch it: read again at once; that one failing too, all 0
+    expect(started).toEqual([A, A, A]);
+    expect(result.current.get(A)).toEqual(NONE);
+    await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toHaveLength(3);
+    alphaPictureLoaded(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toHaveLength(4);
+    expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
   it('its own picture loading while its read is in flight, that read then never decoding: read again at once, never answered all 0 meanwhile; failing again, all 0 until its next load reads it', async () => {
     vi.useFakeTimers();
     const started: string[] = [];

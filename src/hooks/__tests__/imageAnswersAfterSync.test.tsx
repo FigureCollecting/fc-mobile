@@ -561,6 +561,30 @@ describe('an answer a view shows, while it is asked again after a sync that with
     expect(viewB.result.current.get(headOf(0))?.url).toBe(after);
   });
 
+  it('the case view, told of a sync that withheld one figure\'s image: every other figure stays drawn while it answers again', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    await keptX();
+    await rememberImages(headOf(1), [{ url: Y, width: 600, height: 800, role: 'gallery', primary: true }], storage);
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(Y, new Response('bytes'));
+    const docB = appQueryClient();
+    setOnline(false);
+    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(viewB.result.current.get(headOf(1))?.url).toBe(Y));
+    expect(viewB.result.current.get(headOf(0))?.url).toBe(X);
+    const kept = holdNextKeptRead();
+    await syncOwnedImages([headOf(0), headOf(1)], async () => new Map([[headOf(1), listOf(Y).products[0]!.images]]), { storage });
+    kept.hold();
+    tellOwnedSync(appQueryClient());
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
+    expect(viewB.result.current.get(headOf(1))?.url).toBe(Y);
+    expect(docB.isFetching()).toBe(1);
+    kept.release();
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    expect(viewB.result.current.get(headOf(0))).toBeUndefined();
+    expect(viewB.result.current.get(headOf(1))?.url).toBe(Y);
+  });
+
   it('the case view, told of a sync that withheld only a figure\'s mask: names the image without the mask before it answers again', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }]);

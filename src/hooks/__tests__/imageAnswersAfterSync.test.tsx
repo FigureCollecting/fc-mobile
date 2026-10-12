@@ -17,7 +17,8 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, rememberImages, withheldAmong } from '../../media/ownedImages';
+import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, rememberImages, syncOwnedImages, withheldAmong } from '../../media/ownedImages';
+import { tellOwnedSync } from '../imageAnswers';
 
 const D = 'https://images.figurecollecting.com/d';
 const X = `${D}/${'c'.repeat(64)}`;
@@ -286,6 +287,22 @@ describe('another open document of the app (a tab, the installed window): its ow
     await act(() => docB.refetchQueries({ queryKey: ['local', 'owned-images'] }));
     await waitFor(() => expect(docB.isFetching()).toBe(0));
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+  });
+
+  it('the case view, open out of reach in the other document: told of a sync that withheld its image, answers the plate', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    await keptX();
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    setOnline(false);
+    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
+    // The first document, in reach, completes a sync the coordinator's lists withhold the image in.
+    await syncOwnedImages([headOf(0)], async () => new Map(), { storage });
+    tellOwnedSync(docA);
+    await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
+    expect(r.clients.getProductImages).not.toHaveBeenCalled();
   });
 
   it('a figure page answer still being read when the sync completes is read again, so it never answers the withheld image', async () => {

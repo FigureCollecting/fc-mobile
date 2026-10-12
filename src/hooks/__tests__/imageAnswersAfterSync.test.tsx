@@ -782,13 +782,20 @@ describe('a sync stopped part way, its case view gone while an image fetch stall
     create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: first.map(row) }, { headId: headOf(1), images: second.map(row) }] });
   let locks: FakeLocks;
   let uninstall: () => void = () => {};
+  /** How a later fetch of Z is answered, where a test sets it: by default at once. */
+  let laterZ: (() => Promise<Response>) | undefined;
   beforeEach(() => {
     locks = fakeLocks();
     uninstall = installFakeLocks(locks);
+    laterZ = undefined;
     // Z's first fetch stalls: only an abort of its request ends it. Every other fetch answers.
     let zAsked = 0;
     storage = fakeCaches((req) =>
-      req.url === Z && (zAsked += 1) === 1 ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('img')),
+      req.url === Z && (zAsked += 1) === 1
+        ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason)))
+        : req.url === Z && laterZ !== undefined
+          ? laterZ()
+          : Promise.resolve(new Response('img')),
     );
     vi.stubGlobal('caches', storage);
     vi.stubGlobal('fetch', storage.fetch);
@@ -807,6 +814,36 @@ describe('a sync stopped part way, its case view gone while an image fetch stall
     await settle();
     await waitFor(() => expect(docs.reduce((n, d) => n + d.isFetching(), 0)).toBe(0));
   };
+  /** A case view and every address it answered for the first figure, render by render (undefined: its plate). */
+  const watchedCaseView = (doc: QueryClient) => {
+    const named: (string | undefined)[] = [];
+    const view = renderHook(
+      () => {
+        const images = useOwnedImages();
+        named.push(images.get(headOf(0))?.url);
+        return images;
+      },
+      { wrapper: queryWrapper(doc) },
+    );
+    return { view, named };
+  };
+  /** The second document's case view synced before the takedown, answering X, and went away; its answer is now ten minutes old. */
+  async function answeredXLongAgo(r: LocalRig, docB: QueryClient): Promise<void> {
+    r.clients.getProductImages.mockResolvedValue(lists([X], []));
+    const first = caseView(docB);
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
+    await idle(docB);
+    first.unmount();
+    const [answer] = docB.getQueryCache().findAll({ queryKey: ['local', 'owned-images'] });
+    docB.setQueryData(answer!.queryKey, answer!.state.data, { updatedAt: Date.now() - 11 * 60_000 });
+  }
+  /** The first document's case view reads lists that withhold X, records it, and stalls on Z's fetch, holding the lock. */
+  async function recordsXAndStalls(docA: QueryClient): Promise<ReturnType<typeof caseView>> {
+    const viewA = caseView(docA);
+    await waitFor(() => expect(storage.added.map((q) => q.url)).toContain(Z));
+    expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+    return viewA;
+  }
 
   it.each([[0], [50]])('the case view of another document, waiting on the lock: syncs once it is free, records the withholding and answers the plate (its list read answered in %i ms)', async (latency) => {
     const r = await localRig();
@@ -868,6 +905,78 @@ describe('a sync stopped part way, its case view gone while an image fetch stall
     await idle(docA, docB);
     expect(viewB.result.current.has(headOf(0))).toBe(false);
     viewB.unmount();
+  });
+
+  it.each([['reads its lists'], ['fetches an image']])(
+    'the case view of another document, opened again on its ten-minute-old answer naming the image, inside its own sync that %s: stops naming it once the record is read, while that sync runs on and records the withholding',
+    async (where) => {
+      const r = await localRig();
+      await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+      const docA = appQueryClient();
+      const docB = appQueryClient();
+      await answeredXLongAgo(r, docB);
+      // The takedown: every later read withholds X, the first document's first, then B's. B's sync is
+      // held where it is until released.
+      let releaseB!: () => void;
+      const heldB = new Promise<void>((res) => (releaseB = res));
+      let call = 0;
+      r.clients.getProductImages.mockImplementation(async () => {
+        call += 1;
+        if (call === 2 && where === 'reads its lists') await heldB;
+        return lists([], [Z]);
+      });
+      if (where === 'fetches an image') laterZ = () => heldB.then(() => new Response('img'));
+      const viewA = await recordsXAndStalls(docA);
+      const b = watchedCaseView(docB);
+      expect(b.named).toEqual([X]);
+      await waitFor(() => expect(locks.asked).toHaveLength(3));
+      viewA.unmount();
+      await waitFor(() => expect(b.view.result.current.get(headOf(0))?.url).not.toBe(X));
+      // B's own sync is still under way, held.
+      expect(docB.isFetching()).toBe(1);
+      releaseB();
+      await idle(docA, docB);
+      expect(call).toBe(2);
+      expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+      expect(b.view.result.current.has(headOf(0))).toBe(false);
+      expect(b.view.result.current.get(headOf(1))?.url).toBe(Z);
+      expect(b.named.slice(b.named.findIndex((u) => u !== X))).not.toContain(X);
+      b.view.unmount();
+    },
+  );
+
+  it('the case view of another document, its answer stripped of the image inside its own sync, then gone before that sync ends: opened again, never names it, and syncs again, its answer as old as before', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    await answeredXLongAgo(r, docB);
+    let releaseB!: () => void;
+    const heldB = new Promise<void>((res) => (releaseB = res));
+    let call = 0;
+    r.clients.getProductImages.mockImplementation(async () => {
+      call += 1;
+      if (call === 2) await heldB;
+      return lists([], [Z]);
+    });
+    const viewA = await recordsXAndStalls(docA);
+    const b = watchedCaseView(docB);
+    await waitFor(() => expect(locks.asked).toHaveLength(3));
+    viewA.unmount();
+    await waitFor(() => expect(b.view.result.current.get(headOf(0))?.url).not.toBe(X));
+    await waitFor(() => expect(call).toBe(2));
+    // B's case view goes away while its sync reads the lists: the query is cancelled and reverts.
+    b.view.unmount();
+    releaseB();
+    await idle(docA, docB);
+    const again = watchedCaseView(docB);
+    await waitFor(() => expect(call).toBe(3));
+    await idle(docB);
+    expect(again.named).not.toContain(X);
+    expect(again.view.result.current.has(headOf(0))).toBe(false);
+    expect(again.view.result.current.get(headOf(1))?.url).toBe(Z);
+    expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+    again.view.unmount();
   });
 
   it('a sync that completes, by contrast: stops the case view of another document waiting on the lock, which answers from what that sync kept and keeps nothing of its own read (a takedown between their reads lands at its next sync)', async () => {

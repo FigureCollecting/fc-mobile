@@ -874,6 +874,24 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(OWNED_SYNC_STEP_MS).toBe(20_000);
   });
 
+  it('once an image fetch is abandoned no other starts, so the sync lets go of the lock at most 20 s later, when the fetches already under way end', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const stalled = stalling('a', 'd', 'e');
+    const storage = fakeCaches((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
+    const fetchLists = lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })], h4: [img('e', { primary: true })] });
+    const sync = syncOwnedImages(['h1', 'h2', 'h3', 'h4'], fetchLists, { storage, concurrency: 2 });
+    const a = track(sync);
+    // a is abandoned at 20 s; d, started at 15 s when b arrived, at 35 s; e is never asked.
+    await vi.advanceTimersByTimeAsync(34_999);
+    expect(a()).toBe('running');
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d')]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(a()).toBe('settled');
+    expect(await sync).toMatchObject({ added: 1, failed: 2 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d')]);
+  });
+
   it('a slow link that brings each image within 20 s brings them all: the deadline is each fetch\'s, not the sync\'s', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();

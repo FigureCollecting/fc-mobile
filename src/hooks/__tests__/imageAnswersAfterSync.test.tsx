@@ -1194,6 +1194,61 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     }
   });
 
+  it.each([['a kept list'], ['an image\'s bytes']])(
+    'a sync whose case view goes away while it writes %s, having recorded nothing, is not told completed: the case view of another document, waiting on the lock, syncs and records the withholding its own read carries',
+    async (what) => {
+      let armed = false;
+      let reached = false;
+      let release!: () => void;
+      const writing = new Promise<void>((res) => (release = res));
+      storage = fakeCaches(() => Promise.resolve(new Response('img')));
+      const open = storage.open.bind(storage);
+      const slow = what === 'a kept list' ? IMAGE_LISTS_CACHE : OWNED_MEDIA_CACHE;
+      (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+        const cache = await open(name);
+        if (name !== slow) return cache;
+        return Object.assign(Object.create(cache) as Cache, {
+          put: async (req: RequestInfo | URL, res: Response) => {
+            if (armed && !reached) {
+              reached = true;
+              await writing;
+            }
+            return cache.put(req, res);
+          },
+        });
+      };
+      vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
+      const r = await localRig();
+      await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+      await keptX();
+      armed = true;
+      let call = 0;
+      r.clients.getProductImages.mockImplementation(async () => {
+        call += 1;
+        // The first document's read comes before the restriction; the other's, answered in 50 ms, withholds X.
+        if (call === 1) return lists([X], [Z]);
+        await new Promise((res) => setTimeout(res, 50));
+        return lists([], [Z]);
+      });
+      const docA = appQueryClient();
+      const docB = appQueryClient();
+      const viewA = caseView(docA);
+      await waitFor(() => expect(reached).toBe(true));
+      const viewB = caseView(docB);
+      await waitFor(() => expect(locks.asked).toHaveLength(2));
+      // The first document's case view goes away while its write is under way; then the write finishes.
+      viewA.unmount();
+      release();
+      await idle(docA, docB);
+      expect(call).toBe(2);
+      expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+      expect(viewB.result.current.has(headOf(0))).toBe(false);
+      expect(viewB.result.current.get(headOf(1))?.url).toBe(Z);
+      viewB.unmount();
+    },
+  );
+
   it('the case view whose own sync recorded the image withheld and stopped part way, opened again in that document: never names it', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);

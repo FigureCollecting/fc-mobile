@@ -1021,6 +1021,61 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
+  it.each([['the link refuses it (404)'], ['the device refuses its write (quota)']])(
+    'a sync whose case view stays open and that leaves an image unfetched, as %s, tells it stopped: the case view of another document waiting on the lock syncs and records the withholding its own read carries',
+    async (how) => {
+      const W = `${D}/${'f'.repeat(64)}`;
+      const byLink = how.startsWith('the link');
+      storage = fakeCaches((req) => Promise.resolve(req.url === W && byLink ? new Response('', { status: 404 }) : new Response('img')));
+      const open = storage.open.bind(storage);
+      (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+        const cache = await open(name);
+        if (name !== OWNED_MEDIA_CACHE || byLink) return cache;
+        return Object.assign(Object.create(cache) as Cache, {
+          put: async (req: RequestInfo | URL, res: Response) => {
+            if ((req instanceof Request ? req.url : String(req)) === W) throw new DOMException('quota', 'QuotaExceededError');
+            return cache.put(req, res);
+          },
+        });
+      };
+      vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
+      const r = await localRig();
+      await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+      await keptX();
+      let answerA!: () => void;
+      const answered = new Promise<void>((res) => (answerA = res));
+      let call = 0;
+      r.clients.getProductImages.mockImplementation(async () => {
+        call += 1;
+        // The first document's read, answered once the other waits on the lock, comes before the
+        // restriction; the other's, answered in 50 ms, withholds X.
+        if (call === 1) {
+          await answered;
+          return lists([X], [W]);
+        }
+        await new Promise((res) => setTimeout(res, 50));
+        return lists([], [W]);
+      });
+      const docA = appQueryClient();
+      const docB = appQueryClient();
+      const viewA = caseView(docA);
+      await waitFor(() => expect(call).toBe(1));
+      const viewB = caseView(docB);
+      await waitFor(() => expect(locks.asked).toHaveLength(2));
+      answerA();
+      await idle(docA, docB);
+      expect(call).toBe(2);
+      expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+      expect(viewB.result.current.has(headOf(0))).toBe(false);
+      expect(held()).not.toContain(X);
+      // The first document's case view, still open, is told of the other's sync: it answers the plate too.
+      await waitFor(() => expect(viewA.result.current.has(headOf(0))).toBe(false));
+      viewA.unmount();
+      viewB.unmount();
+    },
+  );
+
   it('the case view whose own sync recorded the image withheld and stopped part way, opened again in that document: never names it', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);

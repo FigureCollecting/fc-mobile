@@ -158,7 +158,7 @@ const contactBandCache = new Map<string, ContactBand | null>();
 /** Pictures whose last read never decoded them (UNDECODED): their own picture loading reads them again. */
 const undecoded = new Set<string>();
 /** What each view does when a picture is read again on its own load after it never decoded (alphaPictureLoaded). */
-const rereadViews = new Set<(imageUrl: string) => void>();
+const rereadViews = new Set<(imageUrl: string, read: AlphaRead) => void>();
 
 /**
  * How many pictures are read at once, and how many more may still be going
@@ -494,7 +494,7 @@ export function alphaPictureLoaded(imageUrl: string): void {
       // its views gone before its turn: nothing kept, its next load reads it again
       if (!read) return;
       keep(imageUrl, read);
-      for (const tell of rereadViews) tell(imageUrl);
+      for (const tell of rereadViews) tell(imageUrl, read);
     });
   }
 }
@@ -509,7 +509,7 @@ function keep(imageUrl: string, read: AlphaRead): void {
 }
 
 /** While mounted, `tell` hears of each picture read again on its own load after it never decoded (alphaPictureLoaded). */
-function useRereads(tell: (imageUrl: string) => void, key: string | undefined): void {
+function useRereads(tell: (imageUrl: string, read: AlphaRead) => void, key: string | undefined): void {
   useEffect(() => {
     rereadViews.add(tell);
     return () => {
@@ -549,8 +549,8 @@ function measureAlphaMargins(imageUrl: string): Promise<AlphaMargins> {
  */
 export function useBottomMarginFrac(imageUrl: string | undefined): number {
   const [frac, setFrac] = useState(() => (imageUrl ? (marginCache.get(imageUrl)?.bottom ?? 0) : 0));
-  useRereads((url) => {
-    if (url === imageUrl) setFrac(marginCache.get(url)!.bottom);
+  useRereads((url, read) => {
+    if (url === imageUrl) setFrac(read.margins.bottom);
   }, imageUrl);
 
   useEffect(() => {
@@ -755,8 +755,8 @@ async function measureContactBand(imageUrl: string): Promise<ContactBand | null>
  */
 export function useContactBand(imageUrl: string | undefined): ContactBand | null {
   const [band, setBand] = useState<ContactBand | null>(() => (imageUrl ? (contactBandCache.get(imageUrl) ?? null) : null));
-  useRereads((url) => {
-    if (url === imageUrl) setBand(contactBandCache.get(url) ?? null);
+  useRereads((url, read) => {
+    if (url === imageUrl) setBand(read.band);
   }, imageUrl);
 
   useEffect(() => {

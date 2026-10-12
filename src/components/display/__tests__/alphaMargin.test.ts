@@ -798,10 +798,40 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     alphaPictureLoaded(A);
     await vi.advanceTimersByTimeAsync(0);
     expect(started).toEqual([A, A]);
+    // with no cache that read is slow too: one load, one read at once; the next waits its (second) backoff
+    await vi.advanceTimersByTimeAsync(2 * ALPHA_READ_DEADLINE_MS + 2 * ALPHA_READ_BACKOFF_MS - 1);
+    expect(started).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started).toHaveLength(3);
     release(A);
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(result.current.get(A)).toEqual({ top: 0.25, bottom: 0.5, left: 0.25, right: 0.5 });
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a read sent again by its own picture loading goes ahead of the reads waiting in line, from its read out of time or from its backoff', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: 20 }, (_, i) => `https://example.com/h${i}.png`);
+    const { started } = heldPictures(urls, urls);
+    renderHook(() => useAlphaMarginsOf(urls));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS - 100);
+    // h1's picture loads while its read is in flight; h0's once its read has run out of time
+    alphaPictureLoaded(urls[1]);
+    await vi.advanceTimersByTimeAsync(200);
+    alphaPictureLoaded(urls[0]);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started.slice(2 * ALPHA_READS_AT_ONCE)).toEqual([urls[8], urls[9], urls[1], urls[10], urls[0], urls[11], urls[12], urls[13]]);
+  });
+
+  it('a picture two views want is read again while either still does', async () => {
+    vi.useFakeTimers();
+    const { startedAt } = heldPictures([A], [A]);
+    const one = renderHook(() => useAlphaMarginsOf([A]));
+    renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(1000);
+    one.unmount();
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS);
+    expect(startedAt).toHaveLength(2);
   });
 
   it('its own picture loading while its read is in flight: if that read runs out of time, the next starts at once; one load, one read at once', async () => {

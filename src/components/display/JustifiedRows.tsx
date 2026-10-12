@@ -118,14 +118,16 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
                       )}
                     </span>
                   )}
-                  {quantity > 1 && (
-                    <span class="jrows__count" aria-hidden="true">
-                      ×{quantity}
-                    </span>
-                  )}
-                  {local !== undefined && (
-                    <span class="jrows__sync" aria-hidden="true">
-                      <SyncBadge sync={local.sync} asOf={local.asOf} id={badgeId!} />
+                  {(quantity > 1 || local !== undefined) && (
+                    // The count and the badge share the top edge: the count at the right, the badge
+                    // beside it where it fits whole, else on the line below, so each word stays whole.
+                    <span class="jrows__corner" aria-hidden="true">
+                      {quantity > 1 && <span class="jrows__count">×{quantity}</span>}
+                      {local !== undefined && (
+                        <span class="jrows__sync">
+                          <SyncBadge sync={local.sync} asOf={local.asOf} id={badgeId!} />
+                        </span>
+                      )}
                     </span>
                   )}
                   <span class="sr-only">{item.figure.name}</span>
@@ -205,7 +207,7 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
         }
 
         .jrows__plate-name {
-          font-size: var(--font-xs, 11px);
+          font-size: var(--font-xs);
           font-weight: 600;
           color: var(--text-primary);
           display: -webkit-box;
@@ -215,33 +217,39 @@ export function JustifiedRows({ figures, density, onSelect, labels, watermark, i
         }
 
         .jrows__plate-mfr {
-          font-size: 10px;
+          font-size: var(--font-2xs);
           color: var(--text-tertiary);
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
         }
 
-        .jrows__count {
+        .jrows__corner {
           position: absolute;
           top: 4px;
+          left: 4px;
           right: 4px;
           z-index: 2;
+          display: flex;
+          flex-direction: row-reverse;
+          flex-wrap: wrap;
+          align-items: flex-start;
+          gap: 2px;
+        }
+
+        .jrows__count {
+          flex: none;
           padding: 0 5px;
           border-radius: 999px;
           background: var(--brand-500);
           color: #fff;
-          font-size: 11px;
+          font-size: var(--font-xs);
           font-weight: 700;
           line-height: 16px;
         }
 
         .jrows__sync {
-          position: absolute;
-          top: 4px;
-          left: 4px;
-          right: 28px; /* clear of the xN count */
-          z-index: 2;
+          margin-right: auto;
           text-align: left;
         }
 

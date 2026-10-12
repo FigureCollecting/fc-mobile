@@ -33,7 +33,7 @@ export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
         }
 
         .status-badge--sm {
-          font-size: 0.625rem;
+          font-size: var(--font-2xs);
           padding: 3px 8px;
         }
 

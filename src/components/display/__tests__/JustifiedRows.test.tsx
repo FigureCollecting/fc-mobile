@@ -171,6 +171,33 @@ describe('JustifiedRows on local figures (WK-15)', () => {
     expect(screen.getByRole('button', { name: 'Figure b' })).toHaveAccessibleDescription('Synced');
   });
 
+  it('lays the sync badge and the xN count out in one wrapping corner row, so neither holds room for the other (TYPE-1)', () => {
+    const pending = { headId: 'x', kind: 'owned', sync: 'pending', asOf: null };
+    const { container } = renderWithProviders(
+      <JustifiedRows
+        figures={[
+          local('both', { quantity: 3, local: { ...pending, headId: 'both' } }),
+          local('badge', { local: { ...pending, headId: 'badge' } }),
+          { ...FIXTURE_FIGURES[0]!, quantity: 2 },
+          FIXTURE_FIGURES[1]!,
+        ]}
+        density="compact"
+      />,
+    );
+    const corner = (name: string) => screen.getByRole('button', { name }).querySelector('.jrows__corner');
+    expect([...corner('Figure both')!.children].map((c) => c.className)).toEqual(['jrows__count', 'jrows__sync']);
+    expect([...corner('Figure badge')!.children].map((c) => c.className)).toEqual(['jrows__sync']);
+    expect([...corner(FIXTURE_FIGURES[0]!.name)!.children].map((c) => c.className)).toEqual(['jrows__count']);
+    expect(corner(FIXTURE_FIGURES[1]!.name)).toBeNull();
+    expect(container.querySelectorAll('.jrows__item > .jrows__count, .jrows__item > .jrows__sync')).toHaveLength(0);
+
+    const css = Array.from(document.head.querySelectorAll('style'), (el) => el.textContent ?? '').join('\n');
+    const rule = (selector: string) => css.match(new RegExp(`${selector.replace('.', '\\.')}\\s*\\{([^}]*)\\}`))?.[1].replace(/\s+/g, ' ') ?? '';
+    expect(rule('.jrows__corner')).toMatch(/display: flex;.*flex-direction: row-reverse;.*flex-wrap: wrap;/);
+    expect(rule('.jrows__count')).not.toMatch(/position: absolute/);
+    expect(rule('.jrows__sync')).not.toMatch(/position: absolute|(?:^|;)\s*right:/);
+  });
+
   it('shows selection in select mode', () => {
     renderWithProviders(<JustifiedRows figures={[local('a'), local('b')]} density="compact" isSelected={(f) => f._id === 'b'} />);
     expect(screen.getByRole('button', { name: 'Figure a' })).toHaveAttribute('aria-pressed', 'false');

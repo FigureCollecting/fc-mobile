@@ -311,7 +311,7 @@ const styles = `
   }
 
   .rc-summary__label {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     color: var(--text-tertiary);
     white-space: nowrap;
   }
@@ -343,7 +343,7 @@ const styles = `
   }
 
   .rc-summary__legend-text {
-    font-size: 0.625rem;
+    font-size: var(--font-2xs);
     color: var(--text-tertiary);
   }
 

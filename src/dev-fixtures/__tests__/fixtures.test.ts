@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { inflateSync } from 'node:zlib';
@@ -13,12 +13,15 @@ import {
   getFixtureWidths,
   getFixtureAsym,
   getFixtureUnique,
+  getFixtureSync,
   getFixtureImageRef,
   resolveFixtureArt,
 } from '../fixtures';
 import { getDisplayMeta } from '../../components/display/displayMeta';
 import { figureArt } from '../../components/display/figureArt';
 import { measureCaseFigure } from '../../components/display/packCabinets';
+import { formatAsOf } from '../../components/sync/SyncBadge';
+import type { LocalMeta } from '../../local/figures';
 import type { Figure } from '@figurecollecting/fc-shared';
 
 /** The unfiltered pixels of a PNG this repo's script wrote (one IDAT, filter 0 on every row). */
@@ -495,5 +498,60 @@ describe('fixture distinct pictures (?fxuniq=1): each repeated copy at its own p
     }
     window.history.pushState({}, '', '/?fx=3&fxuniq=1&fxbranch=silhouette');
     expect(getFixtureFigures().every((f) => f.imageUrl === undefined)).toBe(true);
+  });
+});
+
+describe('fixture sync states (?fxsync=1): the tiles\' sync badge and xN count, as a local collection draws them', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+    vi.useRealTimers();
+  });
+
+  const localOf = (f: Figure) => (f as Figure & { local?: LocalMeta }).local;
+
+  /** What a tile's badge says: the quiet known badge, Pending, Offline, or an as-of of today or another day. */
+  const badge = (local: LocalMeta) => {
+    if (local.sync !== 'offline-stale') return local.sync;
+    if (local.asOf === null) return 'offline';
+    return /^as of \d\d:\d\d /.test(formatAsOf(local.asOf)) ? 'as-of-today' : 'as-of-another-day';
+  };
+
+  it('off unless asked for: no local state and no counts, in every branch', () => {
+    for (const query of ['/', '/?fxsync=0', '/?fxsync=bogus', '/?fx=2', '/?fxbranch=silhouette']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureSync(), query).toBe(false);
+      for (const f of getFixtureFigures()) {
+        expect(localOf(f), `${query} ${f._id}`).toBeUndefined();
+        expect(f.quantity, `${query} ${f._id}`).toBeUndefined();
+      }
+    }
+  });
+
+  it('?fxsync=1&fx=2: every badge text with no count, x2 and x12, and a quiet synced one', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-13T19:05:00Z'));
+    window.history.pushState({}, '', '/?fx=2&fxsync=1');
+    expect(getFixtureSync()).toBe(true);
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
+    const seen = new Set<string>();
+    for (const f of figures) {
+      const local = localOf(f);
+      expect(local, f._id).toBeDefined();
+      expect(local!.headId).toBe(f._id);
+      expect(local!.heads).toEqual([f._id]);
+      expect(local!.kind).toBe(f.collectionStatus);
+      seen.add(`${badge(local!)} x${f.quantity ?? 1}`);
+    }
+    const texts = ['pending', 'offline', 'as-of-today', 'as-of-another-day'];
+    for (const text of texts) for (const n of [1, 2, 12]) expect(seen, `${text} x${n}`).toContain(`${text} x${n}`);
+    expect([...seen].some((s) => s.startsWith('known x'))).toBe(true);
+  });
+
+  it('combines with the plate branch, keeping the figures\' ids', () => {
+    window.history.pushState({}, '', '/?fxsync=1&fxbranch=silhouette');
+    const figures = getFixtureFigures();
+    expect(figures.map((f) => f._id)).toEqual(FIXTURE_FIGURES.map((f) => f._id));
+    expect(figures.every((f) => f.imageUrl === undefined && localOf(f) !== undefined)).toBe(true);
   });
 });

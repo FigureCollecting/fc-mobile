@@ -455,6 +455,28 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await waitFor(() => expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 }));
   });
 
+  it('a picture of no size, or one with no 2D canvas to read it on, is a failed read at once: all 0, never read again', async () => {
+    vi.useFakeTimers();
+    const decode = vi.fn(() => Promise.resolve());
+    HTMLImageElement.prototype.decode = decode;
+    // A decodes to no size; B to 10 x 10, with no 2D canvas
+    for (const side of ['naturalWidth', 'naturalHeight']) {
+      Object.defineProperty(HTMLImageElement.prototype, side, {
+        configurable: true,
+        get(this: HTMLImageElement) {
+          return this.src === B ? 10 : 0;
+        },
+      });
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const { result } = renderHook(() => useAlphaMarginsOf([A, B]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    expect(result.current.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    await vi.advanceTimersByTimeAsync(3 * ALPHA_READ_DEADLINE_MS);
+    expect(decode).toHaveBeenCalledTimes(2);
+  });
+
   it('a list with a new picture keeps what it knows: only the new one is unknown, until it is read', async () => {
     let releaseB!: () => void;
     mockPictures(pictures(), (src) => (src === B ? new Promise<void>((r) => (releaseB = r)) : Promise.resolve()));

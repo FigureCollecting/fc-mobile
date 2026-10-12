@@ -7,6 +7,8 @@ import {
   useAlphaMarginsOf,
   computeSideMarginFracs,
   ALPHA_READS_AT_ONCE,
+  ALPHA_READ_TURN_MS,
+  ALPHA_LANDING_BATCH_MS,
   __clearAlphaMarginCache,
   computeContactBand,
   useContactBand,
@@ -234,7 +236,7 @@ describe('computeSideMarginFracs: the clear columns left and right of the figure
   });
 });
 
-describe('useAlphaMarginsOf: every picture of a list measured, known all at once (one relayout)', () => {
+describe('useAlphaMarginsOf: each picture of a list known as soon as it is read, kept across lists', () => {
   /** Each image's alpha by its URL: the canvas reads the image last drawn on it. */
   function mockPictures(buffers: Record<string, AlphaBuffer>, decode: (src: string) => Promise<void> = () => Promise.resolve()) {
     HTMLImageElement.prototype.decode = vi.fn(function (this: HTMLImageElement) {
@@ -274,75 +276,109 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
   });
 
-  it('null while any picture is measuring, then all four margins of every picture, one canvas read each', async () => {
+  /** Pictures whose reads end only when the test says so; the others end at once. */
+  function heldPictures(urls: readonly string[], held: readonly string[]) {
+    const release = new Map<string, () => void>();
+    const started: string[] = [];
+    mockPictures(Object.fromEntries(urls.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])), (src) => {
+      started.push(src);
+      return held.includes(src) ? new Promise<void>((r) => release.set(src, r)) : Promise.resolve();
+    });
+    return { release: (src: string) => release.get(src)!(), started };
+  }
+
+  it('nothing known while its pictures are read (an empty answer), then all four margins of every picture, one canvas read each', async () => {
     const getImageData = mockPictures(pictures());
-    const seen: (ReadonlyMap<string, unknown> | null)[] = [];
-    const { result } = renderHook(() => {
+    const { result } = renderHook(() => useAlphaMarginsOf([A, B]));
+    expect(result.current.size).toBe(0);
+    await waitFor(() => expect(result.current.size).toBe(2));
+    const a = result.current.get(A)!;
+    expect([a.top, a.bottom, a.left, a.right].map((v) => Math.round(v * 1e9) / 1e9)).toEqual([0.2, 0.1, 0.1, 0.2]);
+    expect(result.current.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    expect(getImageData).toHaveBeenCalledTimes(2);
+  });
+
+  it('a list whose pictures are read together is one answer: the case lays out once', async () => {
+    mockPictures(pictures());
+    const seen: ReadonlyMap<string, unknown>[] = [];
+    renderHook(() => {
       const r = useAlphaMarginsOf([A, B]);
       seen.push(r);
       return r;
     });
-    expect(result.current).toBeNull();
-    await waitFor(() => expect(result.current).not.toBeNull());
-    const a = result.current!.get(A)!;
-    expect([a.top, a.bottom, a.left, a.right].map((v) => Math.round(v * 1e9) / 1e9)).toEqual([0.2, 0.1, 0.1, 0.2]);
-    expect(result.current!.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
-    // never a part of the list: null, then the whole list, once
-    const known = seen.filter((r) => r !== null);
-    expect(new Set(known).size).toBe(1);
-    expect(known[0]!.size).toBe(2);
-    expect(getImageData).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(seen.at(-1)!.size).toBe(2));
+    // the empty answer, then both: never one of them alone
+    expect(new Set(seen).size).toBe(2);
   });
 
-  it('waits for the slowest picture: no figure is laid out on a part of the list', async () => {
+  it('a slow picture never holds the others back: each is known as soon as it is read', async () => {
     let releaseB!: () => void;
     mockPictures(pictures(), (src) => (src === B ? new Promise<void>((r) => (releaseB = r)) : Promise.resolve()));
     const { result } = renderHook(() => useAlphaMarginsOf([A, B]));
-    await waitFor(() => expect(releaseB).toBeTypeOf('function'));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(result.current).toBeNull();
+    await waitFor(() => expect(result.current.has(A)).toBe(true));
+    expect(result.current.has(B)).toBe(false);
     releaseB();
-    await waitFor(() => expect(result.current?.size).toBe(2));
+    await waitFor(() => expect(result.current.size).toBe(2));
+  });
+
+  it(`reads landing apart while the list is read are one answer every ${ALPHA_LANDING_BATCH_MS} ms; the last of the list answers at once`, async () => {
+    vi.useFakeTimers();
+    const C = 'https://example.com/c.png';
+    const { release } = heldPictures([A, B, C], [A, B, C]);
+    const { result } = renderHook(() => useAlphaMarginsOf([A, B, C]));
+    await vi.advanceTimersByTimeAsync(0);
+    release(A);
+    await vi.advanceTimersByTimeAsync(10);
+    release(B);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS - 11);
+    expect(result.current.size).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    // A and B together, one relayout
+    expect([...result.current.keys()].sort()).toEqual([A, B]);
+    release(C);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(result.current.size).toBe(3);
   });
 
   it('known at once when every picture is cached, a part of a measured list too, with no second read', async () => {
     const getImageData = mockPictures(pictures());
     const first = renderHook(() => useAlphaMarginsOf([A, B]));
-    await waitFor(() => expect(first.result.current).not.toBeNull());
+    await waitFor(() => expect(first.result.current.size).toBe(2));
     const again = renderHook(() => useAlphaMarginsOf([B, A]));
     const atOnce = again.result.current;
-    expect(atOnce?.size).toBe(2);
+    expect(atOnce.size).toBe(2);
     // and it stays that answer: nothing is read again, the case never lays out a second time
     await new Promise((r) => setTimeout(r, 20));
     again.rerender();
     expect(again.result.current).toBe(atOnce);
-    expect(renderHook(() => useAlphaMarginsOf([B])).result.current?.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    expect(renderHook(() => useAlphaMarginsOf([B])).result.current.get(B)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     // the grounding hook shares the same read
     expect(renderHook(() => useBottomMarginFrac(A)).result.current).toBeCloseTo(0.1, 9);
     expect(getImageData).toHaveBeenCalledTimes(2);
   });
 
-  it('a failed read is known too: all 0, never stuck at null', async () => {
+  it('a failed read is known too: all 0, never left unknown', async () => {
     HTMLImageElement.prototype.decode = vi.fn(() => Promise.reject(new Error('decode failed')));
     const { result } = renderHook(() => useAlphaMarginsOf([A]));
-    await waitFor(() => expect(result.current?.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 }));
+    await waitFor(() => expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 }));
   });
 
-  it('a list with a new picture starts over: null until that one is known too', async () => {
+  it('a list with a new picture keeps what it knows: only the new one is unknown, until it is read', async () => {
     let releaseB!: () => void;
     mockPictures(pictures(), (src) => (src === B ? new Promise<void>((r) => (releaseB = r)) : Promise.resolve()));
     const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [A] } });
-    await waitFor(() => expect(result.current?.size).toBe(1));
+    await waitFor(() => expect(result.current.size).toBe(1));
     rerender({ urls: [A, B] });
-    expect(result.current).toBeNull();
+    expect([...result.current.keys()]).toEqual([A]);
     await new Promise((r) => setTimeout(r, 20));
-    expect(result.current).toBeNull();
+    expect([...result.current.keys()]).toEqual([A]);
     releaseB();
-    await waitFor(() => expect(result.current?.size).toBe(2));
+    await waitFor(() => expect(result.current.size).toBe(2));
   });
 
   it('a list it no longer shows never lands: the answer is for the list it shows now', async () => {
@@ -351,18 +387,18 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
     const { result, rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [B] } });
     await waitFor(() => expect(releaseB).toBeTypeOf('function'));
     rerender({ urls: [A] });
-    await waitFor(() => expect(result.current?.size).toBe(1));
+    await waitFor(() => expect(result.current.size).toBe(1));
     const shown = result.current;
     releaseB();
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, ALPHA_LANDING_BATCH_MS + 20));
     // the same answer, untouched: the old list's read does not make the case lay out again
     expect(result.current).toBe(shown);
-    expect([...result.current!.keys()]).toEqual([A]);
+    expect([...result.current.keys()]).toEqual([A]);
   });
 
   it('no pictures: an empty answer at once', () => {
     const { result } = renderHook(() => useAlphaMarginsOf([]));
-    expect(result.current?.size).toBe(0);
+    expect(result.current.size).toBe(0);
   });
 
   it(`reads at most ${ALPHA_READS_AT_ONCE} pictures at once, however long the list`, async () => {
@@ -388,7 +424,7 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
       expect(reading).toBeLessThanOrEqual(ALPHA_READS_AT_ONCE);
       waiting.shift()!();
     }
-    await waitFor(() => expect(result.current?.size).toBe(urls.length));
+    await waitFor(() => expect(result.current.size).toBe(urls.length));
     expect(most).toBe(ALPHA_READS_AT_ONCE);
   });
 
@@ -422,8 +458,46 @@ describe('useAlphaMarginsOf: every picture of a list measured, known all at once
       waiting.shift()!();
       await new Promise((r) => setTimeout(r, 0));
     }
-    await waitFor(() => expect(result.current?.size).toBe(1));
+    await waitFor(() => expect(result.current.size).toBe(1));
     expect(most).toBe(ALPHA_READS_AT_ONCE);
+  });
+
+  it(`a read still going after ${ALPHA_READ_TURN_MS} ms hands its turn on (stalled pictures never hold the rest up), and only once`, async () => {
+    vi.useFakeTimers();
+    const slow = Array.from({ length: 4 }, (_, i) => `https://example.com/s${i}.png`);
+    const next = Array.from({ length: 4 }, (_, i) => `https://example.com/n${i}.png`);
+    const last = 'https://example.com/last.png';
+    const { release, started } = heldPictures([...slow, ...next, last], [...slow, ...next]);
+    const { result } = renderHook(() => useAlphaMarginsOf([...slow, ...next, last]));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS - 1);
+    expect(started).toEqual(slow);
+    // the four stalled reads give their turns to the next four, still reading in the background
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started).toEqual([...slow, ...next]);
+    // a stalled read that ends has handed its turn on already: the next in line still waits
+    release(slow[0]);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS);
+    expect(result.current.has(slow[0])).toBe(true);
+    expect(started).not.toContain(last);
+    // until the four after it run out of time too
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS - ALPHA_LANDING_BATCH_MS);
+    expect(started).toContain(last);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS);
+    expect(result.current.has(last)).toBe(true);
+  });
+
+  it('a stalled read that hands its turn on with none waiting frees it once: later lists still read at most the limit at once', async () => {
+    vi.useFakeTimers();
+    const lone = 'https://example.com/lone.png';
+    const later = Array.from({ length: 6 }, (_, i) => `https://example.com/l${i}.png`);
+    const { release, started } = heldPictures([lone, ...later], [lone, ...later]);
+    renderHook(() => useAlphaMarginsOf([lone]));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    release(lone);
+    await vi.advanceTimersByTimeAsync(0);
+    renderHook(() => useAlphaMarginsOf(later));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toEqual([lone, ...later.slice(0, ALPHA_READS_AT_ONCE)]);
   });
 });
 

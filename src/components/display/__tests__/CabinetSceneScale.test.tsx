@@ -5,6 +5,7 @@ import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import type { PictureMargins } from '../figureArt';
+import { FIGURE_GAP_MM } from '../packCabinets';
 
 /** What the canvas read of each picture's alpha says, by URL; null while it is still measuring. */
 const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null }));
@@ -13,11 +14,12 @@ vi.mock('../alphaMargin', async (importOriginal) => {
   const real = await importOriginal<typeof import('../alphaMargin')>();
   return {
     ...real,
-    // the whole list or nothing: null while any of its pictures is still measuring
-    useAlphaMarginsOf: (urls: readonly string[]) => {
-      const all = urls.map((u) => (measured.margins.has(u) ? measured.margins.get(u)! : measured.fallback));
-      return all.some((m) => m === null) ? null : new Map(urls.map((u, i) => [u, all[i]!]));
-    },
+    // each picture of the list known once it is read; one still measuring is left out
+    useAlphaMarginsOf: (urls: readonly string[]) =>
+      new Map(urls.flatMap((u) => {
+        const m = measured.margins.has(u) ? measured.margins.get(u)! : measured.fallback;
+        return m ? [[u, m] as const] : [];
+      })),
     useContactBand: () => null,
   };
 });
@@ -149,17 +151,21 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
     for (let i = 1; i < centres.length; i++) expect(centres[i] - centres[i - 1]).toBeGreaterThanOrEqual(400 + 10 - 1e-6);
   });
 
-  it('one relayout: while any picture is measuring every figure stands by its label, none grounded; then all at once', () => {
+  it('a picture still measuring holds back only its own figure: it stands by its label, ungrounded; the rest are grounded and packed by what they draw', () => {
     const figs = FIXTURE_FIGURES.map(labelled(20));
     measured.fallback = margins;
+    // Spike's picture is still being read
     measured.margins.set(figs[4].imageUrl!, null);
     const onSelect = vi.fn();
     const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
     const before = drawn(container);
-    expect(before.map((r) => r.grounded)).toEqual(before.map(() => '0'));
-    // by the 20 mm labels: tap boxes 20 mm wide, 30 mm apart centre to centre
-    const xs = before.filter((r) => r.tap.surface === before[0].tap.surface).map((r) => (r.tap.x0 + r.tap.x1) / 2).sort((a, b) => a - b);
-    expect(xs[1] - xs[0]).toBeCloseTo(30, 6);
+    const spike = before.find((r) => r.name === figs[4].name)!;
+    expect(spike.grounded).toBe('0');
+    // by its 20 mm label: its tap box that and half the gap each side
+    expect(spike.tap.x1 - spike.tap.x0).toBeCloseTo(20 + FIGURE_GAP_MM, 6);
+    const others = before.filter((r) => r !== spike);
+    expect(others.map((r) => r.grounded)).toEqual(others.map(() => '1'));
+    expectOpaqueApart(others, margins);
     measured.margins.clear();
     rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
     const after = drawn(container);

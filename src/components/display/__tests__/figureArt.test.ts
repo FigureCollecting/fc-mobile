@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { MAX_MARGINS_FRAC, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox } from '../figureArt';
+import { MAX_MARGINS_FRAC, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox, pictureOffsetMm } from '../figureArt';
 import { UNMATTED_META } from '../displayMeta';
 import type { FigureDisplayMeta } from '../displayMeta';
 
@@ -132,6 +132,46 @@ describe('drawnWidthMm: how wide the figure in a cut-out or masked picture draws
   it(`keeps the ${MAX_MARGINS_FRAC * 100} % cap on the rows, and never goes below 0 however clear the sides say they are`, () => {
     expect(drawnWidthMm(100, 1, { top: 0.95, bottom: 0.05, left: 0, right: 0 })).toBeCloseTo(1000, 6);
     expect(drawnWidthMm(100, 1, { top: 0, bottom: 0, left: 0.7, right: 0.6 })).toBe(0);
+  });
+});
+
+describe('pictureOffsetMm: a picture moved so the figure in it, not the picture, stands centred on its slot', () => {
+  /** Where the figure's opaque columns sit along the wall when its picture, widthMm wide, is drawn at slot centre cx and moved by the offset. */
+  const opaque = (cx: number, widthMm: number, sides: { left: number; right: number }) => {
+    const x = cx + pictureOffsetMm(widthMm, { top: 0, bottom: 0, ...sides });
+    return { x0: x - widthMm / 2 + sides.left * widthMm, x1: x + widthMm / 2 - sides.right * widthMm };
+  };
+
+  it('a figure leaning right in its picture moves the picture left by half the difference of its clear sides', () => {
+    expect(pictureOffsetMm(200, { top: 0.2, bottom: 0.03, left: 0.38, right: 0.02 })).toBeCloseTo(-36, 9);
+    const o = opaque(500, 200, { left: 0.38, right: 0.02 });
+    expect((o.x0 + o.x1) / 2).toBeCloseTo(500, 9);
+  });
+
+  it('one leaning left moves it right', () => {
+    expect(pictureOffsetMm(100, { top: 0, bottom: 0, left: 0.1, right: 0.7 })).toBeCloseTo(30, 9);
+    const o = opaque(-40, 100, { left: 0.1, right: 0.7 });
+    expect((o.x0 + o.x1) / 2).toBeCloseTo(-40, 9);
+  });
+
+  it('centres every figure, whatever its clear sides', () => {
+    for (let left = 0; left < 0.9; left += 0.05) {
+      for (let right = 0; left + right < 0.95; right += 0.05) {
+        const o = opaque(120, 250, { left, right });
+        expect((o.x0 + o.x1) / 2, `${left} ${right}`).toBeCloseTo(120, 9);
+      }
+    }
+  });
+
+  it('a centred figure, or sides not known (framed, plate, not read yet): not moved', () => {
+    expect(pictureOffsetMm(180, { top: 0.1, bottom: 0.1, left: 0.25, right: 0.25 })).toBe(0);
+    expect(pictureOffsetMm(180, { top: 0.1, bottom: 0.1 })).toBe(0);
+  });
+
+  it('a negative clear side, or none measured (NaN), is 0', () => {
+    expect(pictureOffsetMm(100, { top: 0, bottom: 0, left: -0.2, right: Number.NaN })).toBe(0);
+    expect(pictureOffsetMm(100, { top: 0, bottom: 0, left: 0.3, right: -0.1 })).toBeCloseTo(-15, 9);
+    expect(pictureOffsetMm(100, { top: 0, bottom: 0, left: Number.NaN, right: 0.3 })).toBeCloseTo(15, 9);
   });
 });
 

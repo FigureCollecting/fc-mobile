@@ -166,3 +166,44 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
     expectOpaqueApart(after, margins);
   });
 });
+
+describe('CabinetScene: a figure off-centre in its picture stands centred on its slot (its opaque columns, not its picture)', () => {
+  /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, 1 px per mm. */
+  const span = (el: HTMLElement) => ({ x: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: parseFloat(el.style.width) });
+
+  for (const sides of [
+    { left: 0.38, right: 0.02 },
+    { left: 0.02, right: 0.38 },
+    { left: 0.7, right: 0.1 },
+  ]) {
+    it(`clear ${sides.left} left, ${sides.right} right: the figure centred on its tap box, never over a neighbour; its shadow under it`, () => {
+      measured.fallback = { top: 0.2, bottom: 0.03, ...sides };
+      const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
+      const rows = drawn(container);
+      expect(rows).toHaveLength(FIXTURE_FIGURES.length);
+      for (const r of rows) {
+        const w = r.art.x1 - r.art.x0;
+        const figure = { x0: r.art.x0 + sides.left * w, x1: r.art.x1 - sides.right * w };
+        const slotCx = (r.tap.x0 + r.tap.x1) / 2;
+        expect((figure.x0 + figure.x1) / 2, r.name).toBeCloseTo(slotCx, 6);
+        // the picture is drawn there: its box starts where its art box does, relative to the tap box
+        expect(parseFloat(r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 6);
+        // the shadow, with no contact band known, lies under the figure
+        const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
+        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 6);
+      }
+      expectOpaqueApart(rows, sides);
+    });
+  }
+
+  it("a contact band from the image list moves with the picture: the shadow stays under the figure's base", () => {
+    measured.fallback = { top: 0.2, bottom: 0.03, left: 0.7, right: 0.1 };
+    // the figure stands in columns 0.7..0.9 of its picture, its base centred under it
+    const ref = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800, contactBand: { centerXFrac: 0.8, widthFrac: 0.15 } });
+    const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.slice(0, 3).map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
+    for (const r of drawn(container)) {
+      const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
+      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 6);
+    }
+  });
+});

@@ -1076,6 +1076,67 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
+  it.each([['a kept list'], ['an image\'s bytes']])(
+    'a sync whose case view stays open, that records the image withheld and then has its write of %s refused by the device (its quota), tells it stopped: another document\'s open figure page answers the plate, its own document keeps no answer naming the image, and no cache holds it',
+    async (what) => {
+      const W = `${D}/${'f'.repeat(64)}`;
+      let armed = false;
+      storage = fakeCaches(() => Promise.resolve(new Response('img')));
+      const open = storage.open.bind(storage);
+      const refused = what === 'a kept list' ? IMAGE_LISTS_CACHE : OWNED_MEDIA_CACHE;
+      (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+        const cache = await open(name);
+        if (name !== refused) return cache;
+        return Object.assign(Object.create(cache) as Cache, {
+          put: async (req: RequestInfo | URL, res: Response) => {
+            if (armed) throw new DOMException('quota', 'QuotaExceededError');
+            return cache.put(req, res);
+          },
+        });
+      };
+      vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
+      const r = await localRig();
+      await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+      await keptX();
+      const docA = appQueryClient();
+      const docB = appQueryClient();
+      r.clients.getProductImages.mockResolvedValue(lists([X], [W]));
+      const pageB = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+      await waitFor(() => expect(pageB.result.current.data?.url).toBe(X));
+      const pageA = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docA) });
+      await waitFor(() => expect(pageA.result.current.data?.url).toBe(X));
+      pageA.unmount();
+      const listener = new BroadcastChannel(CHANNEL);
+      const heard: unknown[] = [];
+      listener.onmessage = (e) => heard.push(e.data);
+      // The takedown: the case view's sync reads lists that withhold X, records it, and the device refuses the write.
+      r.clients.getProductImages.mockResolvedValue(lists([], [W]));
+      armed = true;
+      const asked = r.clients.getProductImages.mock.calls.length;
+      const viewA = caseView(docA);
+      await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked));
+      await idle(docA, docB);
+      try {
+        await waitFor(() => expect(heard).toEqual(['stopped']));
+        await waitFor(() => expect(pageB.result.current.data).toBeNull());
+        await idle(docA, docB);
+        expect(heard).toEqual(['stopped']);
+        expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+        expect(pageB.result.current.data).toBeNull();
+        expect(pageAnswers(docA)).toBe(0);
+        expect(viewA.result.current.has(headOf(0))).toBe(false);
+        expect(held()).not.toContain(X);
+        expect(await recallImages(headOf(0), storage)).toBeUndefined();
+      } finally {
+        listener.close();
+        armed = false;
+        viewA.unmount();
+        pageB.unmount();
+      }
+    },
+  );
+
   it('the case view whose own sync recorded the image withheld and stopped part way, opened again in that document: never names it', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);

@@ -398,7 +398,11 @@ async function bringToOwned(
   }
   if (refused !== undefined) throw refused.error;
 
-  for (const [head, list] of kept) await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
+  for (const [head, list] of kept) {
+    // Cancelled (the case view went away): no other kept list is written, and nothing is fetched.
+    options.signal?.throwIfAborted();
+    await records.put(listKey(head), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } }));
+  }
   const missing = [...keep].filter((u) => !have.has(u));
   // Each fetch is aborted when the sync's signal aborts, or when it has received nothing (its headers,
   // a byte of its body) for OWNED_SYNC_STEP_MS; then the link is taken as stalled and no other fetch

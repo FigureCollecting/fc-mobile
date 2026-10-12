@@ -992,6 +992,17 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(owned(storage)).toEqual([]);
   });
 
+  it('an image the link refuses leaves no deadline behind: a slow image after it, its bytes coming, is kept, and the next is fetched', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const slow = link({ bytes: 5, everyMs: 5_000 });
+    const storage = device((req) => (req.url === url('a') ? Promise.resolve(new Response('', { status: 404 })) : req.url === url('b') ? slow(req) : Promise.resolve(new Response('img'))));
+    const sync = syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('c', { primary: true })] }), { storage, concurrency: 1 });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await sync).toMatchObject({ added: 2, failed: 1 });
+    expect(owned(storage)).toEqual([url('b'), url('c')]);
+  });
+
   it('a slow write to the owned cache is not a stalled link: the images after it are still fetched', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();

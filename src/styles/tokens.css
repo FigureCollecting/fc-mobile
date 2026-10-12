@@ -25,7 +25,10 @@
      Desktop one notch up (Ross 2026-10-11): each fluid step's maximum is an
      inner clamp that climbs 1px from 960px to 1280px wide (+0.3125vw from
      its old maximum less 3px), so phones and the Fold8 (up to 870px) keep
-     their sizes and a desktop window reads like the old scale at 110 %. */
+     their sizes and a desktop window reads like the old scale at 110 %.
+     The inner clamp mixes rem and vw, so on a root font size of R px the
+     climb runs from 60R to 80R px wide (960-1280 at the 16px default): a
+     larger text setting moves it wider, a smaller one onto the Fold8. */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-2xs: 0.6875rem;                                    /* 11px static floor (Ross 2026-10-11: up from 10px) */
   --font-xs: 0.75rem;                                       /* 12px static (Ross 2026-10-11: up from 11px) */

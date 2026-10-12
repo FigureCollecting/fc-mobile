@@ -12,11 +12,12 @@
 // read is read again, one a view shows is asked again, any other is dropped, so neither answers an
 // image that sync withheld (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer that names
 // an address that sync withheld, shown or opened while the document reads what it withheld, stops
-// naming it once that is read, not once the coordinator answers. A case view told of another
-// document's completed sync answers from what it kept, without a sync of its own; told of a stopped
-// one, a case view inside its own sync (waiting for the lock, or holding it) is left to finish it,
-// its answer standing until then without what that sync withheld, and records what the lists it reads
-// withhold.
+// naming it once that is read, not once the coordinator answers; so does the answer a stopped sync's
+// case view, going away, reverted it to, which stands for when it opens again. A case view told of
+// another document's completed sync answers from what it kept, without a sync of its own; told of a
+// stopped one, a case view inside its own sync (waiting for the lock, or holding it) is left to finish
+// it, its answer standing until then without what that sync withheld, and records what the lists it
+// reads withhold.
 // Where the browser has Web Locks, documents sync one at a time (src/media/ownedImages.ts), so a sync
 // that read older lists never undoes what a later one withheld. A collection with no image costs a few
 // cache calls, not a few per figure, and a sync stops when the case view goes away (its fetches in

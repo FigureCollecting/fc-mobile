@@ -1025,6 +1025,25 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(owned(storage)).toEqual([url('a'), url('b')]);
   });
 
+  it('a write of an image\'s bytes the device refuses (its quota) keeps nothing and counts the image failed, not added: the images after it are still fetched', async () => {
+    uninstall = installFakeLocks();
+    const storage = device();
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== OWNED_MEDIA_CACHE) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        put: async (req: RequestInfo | URL, res: Response) => {
+          if ((req instanceof Request ? req.url : String(req)) === url('a')) throw new DOMException('quota', 'QuotaExceededError');
+          return cache.put(req, res);
+        },
+      });
+    };
+    const synced = await syncOwnedImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] }), { storage, concurrency: 1 });
+    expect(synced).toMatchObject({ added: 1, failed: 1 });
+    expect(owned(storage)).toEqual([url('b')]);
+  });
+
   it('where the browser has no Web Locks, a sync runs at once: syncs in two documents are not serialised', async () => {
     expect((navigator as unknown as { locks?: unknown }).locks).toBeUndefined();
     const storage = device();

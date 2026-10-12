@@ -1021,6 +1021,51 @@ describe('a sync stopped part way, after it recorded what the coordinator withho
     },
   );
 
+  it('one mark per run of a case view: a run that ends after its case view opened again (a slow cache write) leaves the later run marked, so a stopped sync told then leaves it to finish', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
+    // The write of X's bytes is held until released (a device short of space).
+    let releaseWrite!: () => void;
+    const written = new Promise<void>((res) => (releaseWrite = res));
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      const cache = await open(name);
+      if (name !== OWNED_MEDIA_CACHE) return cache;
+      return Object.assign(Object.create(cache) as Cache, {
+        put: async (req: RequestInfo | URL, res: Response) => {
+          if ((req instanceof Request ? req.url : String(req)) === X) await written;
+          return cache.put(req, res);
+        },
+      });
+    };
+    let call = 0;
+    r.clients.getProductImages.mockImplementation(async () => {
+      call += 1;
+      // B's first run reads X; every later read withholds it.
+      return call === 1 ? lists([X], []) : lists([], [Z]);
+    });
+    const docA = appQueryClient();
+    const docB = appQueryClient();
+    const first = caseView(docB);
+    await waitFor(() => expect(storage.added.map((q) => q.url)).toContain(X));
+    const viewA = caseView(docA);
+    await waitFor(() => expect(locks.asked).toHaveLength(2));
+    // B's case view goes away while its first run writes X, and opens again: a second run, waiting on the lock.
+    first.unmount();
+    const viewB = caseView(docB);
+    await waitFor(() => expect(locks.asked).toHaveLength(3));
+    // The first run ends; the first document's sync records X, stalls on Z and is stopped by its case view going away.
+    releaseWrite();
+    await waitFor(() => expect(storage.added.map((q) => q.url)).toContain(Z));
+    viewA.unmount();
+    await idle(docA, docB);
+    expect(call).toBe(3);
+    expect([...(await withheldAmong([X], storage))]).toEqual([X]);
+    expect(viewB.result.current.has(headOf(0))).toBe(false);
+    expect(viewB.result.current.get(headOf(1))?.url).toBe(Z);
+    viewB.unmount();
+  });
+
   it('a sync that completes, by contrast: stops the case view of another document waiting on the lock, which answers from what that sync kept and keeps nothing of its own read (a takedown between their reads lands at its next sync)', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);

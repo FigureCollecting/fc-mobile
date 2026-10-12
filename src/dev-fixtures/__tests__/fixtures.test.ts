@@ -11,6 +11,7 @@ import {
   getFixtureFigures,
   getFixtureBranch,
   getFixtureWidths,
+  getFixtureAsym,
   getFixtureImageRef,
   resolveFixtureArt,
 } from '../fixtures';
@@ -348,6 +349,108 @@ describe('fixture labelled widths (?fxwidth=none|narrow): the shapes a real coll
     for (const f of figures) {
       expect(f._id).toMatch(/-masked$/);
       expect(f.dimensions?.widthMm).toBeUndefined();
+    }
+  });
+});
+
+/** Where a PNG of this repo's script draws: its first and last opaque column and row (alpha past 10). */
+function opaqueBounds(png: ReturnType<typeof pngPixels>, channels = 4) {
+  let [x0, x1, y0, y1] = [png.width, -1, png.height, -1];
+  for (let y = 0; y < png.height; y++) {
+    for (let x = 0; x < png.width; x++) {
+      if (png.rows[y][x * channels + 3] <= 10) continue;
+      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
+    }
+  }
+  return { x0, x1, y0, y1, left: x0 / png.width, right: (png.width - 1 - x1) / png.width };
+}
+
+describe('fixture off-centre art (?fxasym=1): figures standing off-centre in their pictures, as real cut-outs can', () => {
+  const SYNTHETIC_DIR = path.resolve(import.meta.dirname, '../synthetic');
+  /** Rem leans left in her picture, Spike right: the figure's centre this far off the picture's, in picture widths. */
+  const LEANS = [
+    { name: 'rem', off: -0.18 },
+    { name: 'spike', off: 0.3 },
+  ] as const;
+
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('off unless asked for: the fixture set itself', () => {
+    for (const query of ['/', '/?fxasym=0', '/?fxasym=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureAsym()).toBe(false);
+      expect(getFixtureFigures()).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('the same figure moved sideways in its picture: its pixels, rows and drawn width kept, its centre well off the picture\'s', () => {
+    for (const { name, off } of LEANS) {
+      const cut = pngPixels(path.join(SYNTHETIC_DIR, `${name}.png`));
+      const asym = pngPixels(path.join(SYNTHETIC_DIR, 'asym', `${name}.png`));
+      expect([asym.width, asym.height, asym.channels]).toEqual([cut.width, cut.height, 4]);
+      const a = opaqueBounds(asym);
+      const c = opaqueBounds(cut);
+      expect([a.y0, a.y1, a.x1 - a.x0], name).toEqual([c.y0, c.y1, c.x1 - c.x0]);
+      // the figure's centre against the picture's: (left - right) / 2 of its width
+      expect((a.left - a.right) / 2, name).toBeCloseTo(off, 2);
+      const dx = a.x0 - c.x0;
+      let moved = 0;
+      for (let y = 0; y < cut.height; y++) {
+        for (let x = c.x0; x <= c.x1; x++) {
+          for (let k = 0; k < 4; k++) if (asym.rows[y][(x + dx) * 4 + k] !== cut.rows[y][x * 4 + k]) moved++;
+        }
+      }
+      expect({ name, moved }).toEqual({ name, moved: 0 });
+    }
+  });
+
+  it('with its masked halves: an opaque clean copy and a mask whose alpha IS the off-centre cut-out\'s', () => {
+    for (const { name } of LEANS) {
+      const asym = pngPixels(path.join(SYNTHETIC_DIR, 'asym', `${name}.png`));
+      const clean = pngPixels(path.join(SYNTHETIC_DIR, 'asym', 'clean', `${name}.png`));
+      const mask = pngPixels(path.join(SYNTHETIC_DIR, 'asym', 'mask', `${name}.png`));
+      expect([clean.width, clean.height, clean.channels]).toEqual([asym.width, asym.height, 3]);
+      expect([mask.width, mask.height, mask.channels]).toEqual([asym.width, asym.height, 4]);
+      let alphaOff = 0;
+      for (let y = 0; y < asym.height; y++) {
+        for (let x = 0; x < asym.width; x++) if (mask.rows[y][x * 4 + 3] !== asym.rows[y][x * 4 + 3]) alphaOff++;
+      }
+      expect({ name, alphaOff }).toEqual({ name, alphaOff: 0 });
+    }
+  });
+
+  it('?fxasym=1 draws Rem and Spike off-centre in every branch; the others as they are', () => {
+    const leans = (id: string) => /^fx-(rem|spike)(-|$)/.test(id);
+    window.history.pushState({}, '', '/?fxasym=1');
+    expect(getFixtureAsym()).toBe(true);
+    const cutouts = getFixtureFigures();
+    expect(cutouts).toHaveLength(FIXTURE_FIGURES.length);
+    cutouts.forEach((f, i) => {
+      const name = FIXTURE_FIGURES[i]._id.replace(/^fx-/, '');
+      expect(f._id).toBe(FIXTURE_FIGURES[i]._id);
+      if (leans(f._id)) expect(f.imageUrl).toMatch(new RegExp(`/synthetic/asym/${name}\\.png$`));
+      else expect(f.imageUrl).toBe(FIXTURE_FIGURES[i].imageUrl);
+      expect(figureArt(f, getDisplayMeta(f), getFixtureImageRef(f)).kind).toBe('cutout');
+    });
+
+    window.history.pushState({}, '', '/?fxasym=1&fxbranch=masked&fx=2');
+    const masked = getFixtureFigures();
+    expect(masked).toHaveLength(FIXTURE_FIGURES.length * 2);
+    for (const f of masked) {
+      const name = f._id.replace(/^fx-/, '').replace(/(-x\d+)?-masked$/, '');
+      const dir = leans(f._id) ? 'synthetic/asym' : 'synthetic';
+      const ref = getFixtureImageRef(f);
+      expect(ref?.url, f._id).toMatch(new RegExp(`/${dir}/clean/${name}\\.png$`));
+      expect(ref?.maskUrl, f._id).toMatch(new RegExp(`/${dir}/mask/${name}\\.png$`));
+      expect(f.imageUrl).toBe(ref?.url);
+    }
+
+    window.history.pushState({}, '', '/?fxasym=1&fxbranch=framed');
+    for (const f of getFixtureFigures()) {
+      const name = f._id.replace(/^fx-/, '').replace(/-framed$/, '');
+      expect(f.imageUrl, f._id).toMatch(new RegExp(`/${leans(f._id) ? 'synthetic/asym' : 'synthetic'}/clean/${name}\\.png$`));
     }
   });
 });

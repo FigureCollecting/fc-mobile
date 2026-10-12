@@ -360,9 +360,9 @@ const OPAQUE: PictureMargins = { top: 0, bottom: 0 };
  * bottom when it gives one, the rest from the picture's alpha; null while
  * the alpha is still being read.
  */
-function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins> | null): PictureMargins | null {
+function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins>): PictureMargins | null {
   if (!art.alphaUrl) return OPAQUE;
-  const read = alpha?.get(art.alphaUrl);
+  const read = alpha.get(art.alphaUrl);
   if (!read) return null;
   return { top: read.top, bottom: art.bottomMarginFrac ?? read.bottom, left: read.left, right: read.right };
 }
@@ -509,7 +509,8 @@ export function CabinetScene({
     [figures, imageFor],
   );
   const alphaUrls = useMemo(() => [...new Set(arts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [arts]);
-  // every picture's clear margins, known all at once: the case lays out once on them, never on a part of the list
+  // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
+  // one still being read stands on its label meanwhile, holding back no other
   const alpha = useAlphaMarginsOf(alphaUrls);
 
   const packed = useMemo(() => {

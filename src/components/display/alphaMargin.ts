@@ -156,19 +156,29 @@ const maskCache = new Map<string, AlphaMask | null>();
 
 /** How many pictures are read at once, so a long list never decodes all of its images together. */
 export const ALPHA_READS_AT_ONCE = 4;
+/** A read still going after this long gives up its turn, so a stalled picture never holds the rest up; it lands when it lands. */
+export const ALPHA_READ_TURN_MS = 1500;
 let reading = 0;
 const queued: (() => void)[] = [];
 
-/** Run one read when a turn is free; a finished read hands its turn straight to the next one waiting. */
+/** Run one read when a turn is free; a finished read, or one out of time, hands its turn straight to the next one waiting, once. */
 async function inTurn<T>(read: () => Promise<T>): Promise<T> {
   if (reading < ALPHA_READS_AT_ONCE) reading++;
   else await new Promise<void>((go) => queued.push(go));
-  try {
-    return await read();
-  } finally {
+  let turnHandedOn = false;
+  const handOn = () => {
+    if (turnHandedOn) return;
+    turnHandedOn = true;
     const next = queued.shift();
     if (next) next();
     else reading--;
+  };
+  const outOfTime = setTimeout(handOn, ALPHA_READ_TURN_MS);
+  try {
+    return await read();
+  } finally {
+    clearTimeout(outOfTime);
+    handOn();
   }
 }
 
@@ -270,38 +280,57 @@ export function useBottomMarginFrac(imageUrl: string | undefined): number {
   return frac;
 }
 
-/** Every picture's margins from the cache, or null when any is not known yet. */
-function cachedMargins(urls: readonly string[]): Map<string, AlphaMargins> | null {
+/** The margins of every picture in `urls` the cache knows; one not read yet is left out. */
+function knownMargins(urls: readonly string[]): Map<string, AlphaMargins> {
   const out = new Map<string, AlphaMargins>();
   for (const url of urls) {
     const margins = marginCache.get(url);
-    if (margins === undefined) return null;
-    out.set(url, margins);
+    if (margins !== undefined) out.set(url, margins);
   }
   return out;
 }
 
+/** Reads that land within this long of the first one not yet answered are answered together: one relayout, not one per picture. */
+export const ALPHA_LANDING_BATCH_MS = 100;
+
 /**
- * The clear margins of every picture in `urls` (the case's whole list: it
- * packs every figure by what it draws), each read once and cached by URL.
- * null until every one is known (a failed read is known: all 0), then all
- * of them at once, so the case lays out once on them and never on a part of
- * the list. A list whose pictures are all cached is known at once.
+ * The clear margins of each picture in `urls` (the case's whole list: it
+ * packs every figure by what it draws) known so far, each read once and
+ * cached by URL across lists. A picture is in the answer as soon as it is
+ * read (a failed read is known too: all 0), so a slow or stalled one holds
+ * back only its own figure; reads landing together are one answer
+ * (ALPHA_LANDING_BATCH_MS), and the last picture of the list answers at
+ * once. A list whose pictures are cached is known at once, and a new list
+ * keeps every picture it shares with the old.
  */
-export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, AlphaMargins> | null {
+export function useAlphaMarginsOf(urls: readonly string[]): ReadonlyMap<string, AlphaMargins> {
   const key = urls.join('\n');
-  const [settled, setSettled] = useState(0);
+  const [answered, setAnswered] = useState(0);
   // `key` stands for `urls` (a new array on every render of the same list)
-  const known = useMemo(() => cachedMargins(urls), [key, settled]);
+  const known = useMemo(() => knownMargins(urls), [key, answered]);
 
   useEffect(() => {
-    if (known) return;
+    const unread = urls.filter((url) => !marginCache.has(url));
+    if (unread.length === 0) return;
     let current = true;
-    void Promise.all(urls.map(measureAlphaMargins)).then(() => {
-      if (current) setSettled((n) => n + 1);
-    });
+    let batch: ReturnType<typeof setTimeout> | undefined;
+    let left = unread.length;
+    const answer = () => {
+      clearTimeout(batch);
+      batch = undefined;
+      setAnswered((n) => n + 1);
+    };
+    for (const url of unread) {
+      void measureAlphaMargins(url).then(() => {
+        if (!current) return;
+        left--;
+        if (left === 0) answer();
+        else batch ??= setTimeout(answer, ALPHA_LANDING_BATCH_MS);
+      });
+    }
     return () => {
       current = false;
+      clearTimeout(batch);
     };
   }, [key]);
 

@@ -281,6 +281,9 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
   });
 
+  /** Long enough, under fake timers, for renderHook's result to follow a render (its effect flushes after a 35 ms frame). */
+  const EFFECTS_MS = 50;
+
   /** Pictures whose reads end only when the test says so; the others end at once. */
   function heldPictures(urls: readonly string[], held: readonly string[]) {
     const release = new Map<string, () => void>();
@@ -337,11 +340,12 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     release(B);
     await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS - 11);
     expect(result.current.size).toBe(0);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1 + EFFECTS_MS);
     // A and B together, one relayout
     expect([...result.current.keys()].sort()).toEqual([A, B]);
+    // C completes the list: answered without waiting for a batch
     release(C);
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(result.current.size).toBe(3);
   });
 
@@ -474,16 +478,18 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     // the four stalled reads give their turns to the next four, still reading in the background
     await vi.advanceTimersByTimeAsync(1);
     expect(started).toEqual([...slow, ...next]);
-    // a stalled read that ends has handed its turn on already: the next in line still waits
+    // a stalled read that ends lands, but it has handed its turn on already: the next in line still waits
     release(slow[0]);
-    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
     expect(result.current.has(slow[0])).toBe(true);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS - ALPHA_LANDING_BATCH_MS - EFFECTS_MS - 1);
     expect(started).not.toContain(last);
     // until the four after it run out of time too
-    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS - ALPHA_LANDING_BATCH_MS);
+    await vi.advanceTimersByTimeAsync(1);
     expect(started).toContain(last);
-    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
     expect(result.current.has(last)).toBe(true);
+    expect(result.current.has(slow[1])).toBe(false);
   });
 
   it('a stalled read that hands its turn on with none waiting frees it once: later lists still read at most the limit at once', async () => {

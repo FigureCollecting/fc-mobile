@@ -438,6 +438,7 @@ async function readInTurn(imageUrl: string): Promise<AlphaRead | undefined> {
     reader.loaded = false;
     if (!first) {
       const backoffMs = Math.min(ALPHA_READ_BACKOFF_MS * 2 ** (reader.timedOut - 1), ALPHA_READ_BACKOFF_MAX_MS);
+      // its wait in line (inTurn) replaces this hurry at once, and clears it as its read starts
       first = await new Promise<boolean>((go) => {
         const wait = setTimeout(() => go(false), backoffMs);
         reader.hurry = () => {
@@ -445,7 +446,6 @@ async function readInTurn(imageUrl: string): Promise<AlphaRead | undefined> {
           go(true);
         };
       });
-      reader.hurry = undefined;
     }
   }
 }

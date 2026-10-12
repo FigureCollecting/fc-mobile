@@ -333,22 +333,37 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
   it(`reads landing apart while the list is read are one answer every ${ALPHA_LANDING_BATCH_MS} ms; the last of the list answers at once`, async () => {
     expect(ALPHA_LANDING_BATCH_MS).toBe(100);
     vi.useFakeTimers();
-    const C = 'https://example.com/c.png';
-    const { release } = heldPictures([A, B, C], [A, B, C]);
-    const { result } = renderHook(() => useAlphaMarginsOf([A, B, C]));
+    const urls = Array.from({ length: 5 }, (_, i) => `https://example.com/b${i}.png`);
+    const { release } = heldPictures(urls, urls);
+    // each answer the hook gives (a new map): one relayout of the case
+    const answers: ReadonlyMap<string, AlphaMargins>[] = [];
+    renderHook(() => {
+      const known = useAlphaMarginsOf(urls);
+      if (answers.at(-1) !== known) answers.push(known);
+      return known;
+    });
+    const sizes = () => answers.map((a) => a.size);
     await vi.advanceTimersByTimeAsync(0);
-    release(A);
+    release(urls[0]);
     await vi.advanceTimersByTimeAsync(10);
-    release(B);
-    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS - 11);
-    expect(result.current.size).toBe(0);
+    release(urls[1]);
+    await vi.advanceTimersByTimeAsync(10);
+    release(urls[2]);
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS - 21);
+    expect(sizes()).toEqual([0]);
     await vi.advanceTimersByTimeAsync(1 + EFFECTS_MS);
-    // A and B together, one relayout
-    expect([...result.current.keys()].sort()).toEqual([A, B]);
-    // C completes the list: answered without waiting for a batch
-    release(C);
+    // the three together, one relayout, and no other for them however long it waits
+    expect([...answers.at(-1)!.keys()]).toEqual(urls.slice(0, 3));
+    await vi.advanceTimersByTimeAsync(3 * ALPHA_LANDING_BATCH_MS);
+    expect(sizes()).toEqual([0, 3]);
+    // the fourth opens a batch; the fifth completes the list while it waits: answered at once, and that batch never answers again
+    release(urls[3]);
+    await vi.advanceTimersByTimeAsync(10);
+    release(urls[4]);
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
-    expect(result.current.size).toBe(3);
+    expect(sizes()).toEqual([0, 3, 5]);
+    await vi.advanceTimersByTimeAsync(3 * ALPHA_LANDING_BATCH_MS);
+    expect(sizes()).toEqual([0, 3, 5]);
   });
 
   it('a steady stream of reads is answered every batch, never held back until it pauses', async () => {

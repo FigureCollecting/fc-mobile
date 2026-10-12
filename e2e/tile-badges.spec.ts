@@ -6,8 +6,9 @@ import { CASE_VIEWPORTS } from './caseViewports';
  * count, drawn by the real JustifiedRows from the ?fxsync=1 fixtures, in the
  * narrow tiles of the Fold8's cover: every tile width from 76 to 95 px, the
  * width each tile is set to through the CSSOM (which the CSP allows). A word
- * of the badge never splits across lines, the badge stays inside its tile,
- * and it never sits over the count. TYPE-1 raised the badge to --font-2xs
+ * of the badge never splits across lines, the badge stays inside its tile at
+ * its left edge, and it never sits over the count, which keeps the top-right
+ * corner. TYPE-1 raised the badge to --font-2xs
  * (11 px) and the count to --font-xs (12 px); this is where they meet.
  */
 
@@ -92,8 +93,10 @@ for (const name of ['fold8-cover', 'fold8-cover-sideways']) {
           const split = splitWords(badge);
           if (split.length) failures.push(`${at}: splits ${split.join(', ')}`);
           if (b.left < tile.left - 0.5 || b.right > tile.right + 0.5) failures.push(`${at}: leaves the tile (${b.left - tile.left}..${b.right - tile.left} of ${w})`);
+          if (Math.abs(b.left - tile.left - 4) > 0.5) failures.push(`${at}: off the tile's left edge (${(b.left - tile.left).toFixed(1)} px in)`);
           if (count) {
             const c = count.getBoundingClientRect();
+            if (Math.abs(tile.right - c.right - 4) > 0.5 || Math.abs(c.top - tile.top - 4) > 0.5) failures.push(`${at}: the count left the top-right corner`);
             const x = Math.min(b.right, c.right) - Math.max(b.left, c.left);
             const y = Math.min(b.bottom, c.bottom) - Math.max(b.top, c.top);
             if (x > 0.5 && y > 0.5) failures.push(`${at}: over the count by ${x.toFixed(1)} x ${y.toFixed(1)} px`);

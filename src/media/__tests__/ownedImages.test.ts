@@ -695,29 +695,6 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort()).toEqual([url('b'), url('d')].sort());
   });
 
-  it('replaces no kept list and evicts nothing when it cannot record what it withholds', async () => {
-    const storage = device();
-    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage });
-    const open = storage.open.bind(storage);
-    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
-      const cache = await open(name);
-      if (name !== WITHHELD_CACHE) return cache;
-      return Object.assign(Object.create(cache) as Cache, {
-        put: async () => {
-          throw new DOMException('quota', 'QuotaExceededError');
-        },
-      });
-    };
-    const fresh = lists({ h1: [img('b', { primary: true })] });
-    await expect(syncOwnedImages(['h1'], fresh, { storage })).rejects.toThrow('quota');
-    expect((await recallImages('h1', storage))?.map((i) => i.url)).toEqual([url('a')]);
-    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
-    (storage as unknown as { open: unknown }).open = open;
-    await syncOwnedImages(['h1'], fresh, { storage });
-    expect(await withheld(storage, ['a'])).toEqual([url('a')]);
-    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('b')]);
-  });
-
   /** The cache `name`, whose `n`th put from now on throws the device's quota error where `refuse(n)`. */
   const refusePuts = (storage: ReturnType<typeof fakeCaches>, name: string, refuse: (n: number) => boolean) => {
     const open = storage.open.bind(storage);
@@ -760,6 +737,28 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect(owned(storage)).toEqual([url('1')]);
     expect(browsed(storage)).toEqual([url('1')]);
     expect(await named(storage)).toEqual([url('1')]);
+  });
+
+  it('a first record the device refuses (its quota): the sync still deletes what it withholds and no longer keeps, as bytes and shown copies, keeps the kept list naming what it could not record and every other kept figure\'s, writes no kept list, fails, and the next sync records it', async () => {
+    const storage = device();
+    await syncOwnedImages(['h1', 'h3', 'h4'], lists({ h1: [img('a', { primary: true })], h3: [img('e', { primary: true })], h4: [img('4', { primary: true })] }), { storage });
+    for (const c of ['a', 'e', '4']) await shown(storage, url(c));
+    const restore = refusePuts(storage, WITHHELD_CACHE, () => true);
+    // a withheld (h1 shows b now), h3 left the collection, h4 is as it was.
+    const fresh = lists({ h1: [img('b', { primary: true })], h4: [img('4', { primary: true })] });
+    await expect(syncOwnedImages(['h1', 'h4'], fresh, { storage })).rejects.toThrow('quota');
+    restore();
+    expect(await withheld(storage, ['a', 'e'])).toEqual([]);
+    expect(owned(storage)).toEqual([url('4')]);
+    expect(browsed(storage)).toEqual([url('4')]);
+    expect((await recallImages('h1', storage))?.map((i) => i.url)).toEqual([url('a')]);
+    expect(await keptImage('h1', storage)).toBeUndefined();
+    expect(await recallImages('h3', storage)).toBeUndefined();
+    expect((await recallImages('h4', storage))?.map((i) => i.url)).toEqual([url('4')]);
+    await syncOwnedImages(['h1', 'h4'], fresh, { storage });
+    expect(await withheld(storage, ['a', 'e'])).toEqual([url('a')]);
+    expect(await named(storage)).toEqual([url('b'), url('4')].sort());
+    expect(owned(storage)).toEqual([url('b'), url('4')].sort());
   });
 
   it('a record the device refuses after another was written (its quota on the second): the sync deletes as it would, but keeps the kept list naming what it could not record, writes no kept list, fails, and the next sync records it', async () => {

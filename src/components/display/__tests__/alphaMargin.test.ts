@@ -943,6 +943,38 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     });
   }
 
+  // a new picture never waits behind stalled re-reads: first reads go ahead of re-reads in line, and re-reads hold at
+  // most ALPHA_READS_AT_ONCE of the room, so a turn is always at most one turn away for a first read
+  for (const stalledCount of [2, 4, 8, 16].map((n) => n * ALPHA_READS_AT_ONCE)) {
+    it(`${stalledCount} pictures stalled for good on show for 3 minutes (every read of them a re-read by then): a new picture's first read starts within one turn (${ALPHA_READ_TURN_MS} ms), each time one comes; the re-reads never more than ${ALPHA_READS_AT_ONCE} in flight`, async () => {
+      vi.useFakeTimers();
+      const stalled = Array.from({ length: stalledCount }, (_, i) => `https://example.com/st${i}.png`);
+      const fresh = Array.from({ length: 12 }, (_, i) => `https://example.com/new${i}.png`);
+      const { started, startedAt, inFlight } = heldPictures([...stalled, ...fresh], stalled);
+      renderHook(() => useAlphaMarginsOf(stalled));
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
+      const waited: number[] = [];
+      const unknown: string[] = [];
+      const rereading: number[] = [];
+      for (const url of fresh) {
+        const asked = Date.now();
+        const view = renderHook(() => useAlphaMarginsOf([url]));
+        for (let ms = 0; ms < 60_000 && !started.includes(url); ms += 50) await vi.advanceTimersByTimeAsync(50);
+        waited.push(started.includes(url) ? startedAt[started.indexOf(url)] - asked : Infinity);
+        await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+        if (!view.result.current.has(url)) unknown.push(url);
+        // the next one comes 7 s on (a different point of the stalled reads' cycle each time)
+        for (let ms = 0; ms < 7000; ms += 250) {
+          await vi.advanceTimersByTimeAsync(250);
+          rereading.push(inFlight());
+        }
+      }
+      expect(waited.filter((ms) => ms > ALPHA_READ_TURN_MS), `waits for a turn: ${waited}`).toEqual([]);
+      expect(unknown, 'new pictures unknown once read').toEqual([]);
+      expect(Math.max(...rereading)).toBe(ALPHA_READS_AT_ONCE);
+    });
+  }
+
   it('a read landing after a new list renders but before its effect runs is answered (the browser runs effects after the frame)', async () => {
     vi.useFakeTimers();
     const { release, started } = heldPictures([A, B], [A, B]);

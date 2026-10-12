@@ -14,6 +14,7 @@ import {
   MAX_OWNED_FIGURES,
   MAX_WITHHELD,
   OWNED_MEDIA_CACHE,
+  OWNED_SYNC_STEP_MS,
   OWNED_SYNC_WAIT_MS,
   WITHHELD_CACHE,
   fetchImageLists,
@@ -25,6 +26,7 @@ import {
   syncOwnedImages,
   toCachedImages,
   withheldAmong,
+  withheldKey,
   type CachedImage,
 } from '../ownedImages';
 
@@ -292,6 +294,58 @@ describe('keptImage', () => {
     expect(await keptImage('h1', storage)).toBeUndefined();
     expect(await keptImage('h1', undefined)).toBeUndefined();
   });
+
+  it('read while a sync runs, after it recorded what it withholds and before it replaces the kept lists: never answers a recorded address', async () => {
+    const base = fakeCaches();
+    await syncOwnedImages(['h1'], async () => new Map([['h1', [img('a', { primary: true })]]]), { storage: base });
+    expect((await keptImage('h1', base))?.url).toBe(url('a'));
+    // The next sync (a display restriction now withholds a) is held at its first kept-list write.
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    let reached = false;
+    const open = base.open.bind(base);
+    const storage = Object.assign(Object.create(base) as CacheStorage, {
+      open: async (name: string) => {
+        const cache = await open(name);
+        if (name !== IMAGE_LISTS_CACHE) return cache;
+        return Object.assign(Object.create(cache) as Cache, {
+          put: async (r: RequestInfo, res: Response) => {
+            reached = true;
+            await held;
+            return cache.put(r, res);
+          },
+        });
+      },
+    });
+    const sync = syncOwnedImages(['h1'], async () => new Map([['h1', [img('c', { primary: true })]]]), { storage });
+    while (!reached) await new Promise((res) => setTimeout(res, 5));
+    expect([...(await withheldAmong([url('a')], base))]).toEqual([url('a')]);
+    expect((await recallImages('h1', base))?.map((i) => i.url)).toEqual([url('a')]);
+    expect(await keptImage('h1', base)).toBeUndefined();
+    expect((await keptImages(['h1'], base)).size).toBe(0);
+    release();
+    await sync;
+    expect((await keptImage('h1', base))?.url).toBe(url('c'));
+  });
+
+  it('answers a figure whose kept mask is recorded withheld without that mask, and every other figure as kept', async () => {
+    const storage = fakeCaches();
+    const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+    await syncOwnedImages(['h1', 'h2', 'h3'], async () => new Map([
+      ['h1', [img('a', { primary: true, mask: mask('f') })]],
+      ['h2', [img('b', { primary: true, mask: mask('e') })]],
+      ['h3', [img('d', { primary: true })]],
+    ]), { storage });
+    const tomb = await storage.open(WITHHELD_CACHE);
+    await tomb.put(withheldKey(url('a')), new Response(null));
+    await tomb.put(withheldKey(url('e')), new Response(null));
+    const got = await keptImages(['h1', 'h2', 'h3'], storage);
+    expect([...got.keys()]).toEqual(['h2', 'h3']);
+    expect(got.get('h2')).toEqual({ url: url('b'), width: 600, height: 800, role: 'gallery', primary: true });
+    expect(got.get('h3')?.url).toBe(url('d'));
+    expect(await keptImage('h1', storage)).toBeUndefined();
+    expect((await keptImage('h2', storage))?.maskUrl).toBeUndefined();
+  });
 });
 
 /** Every Cache Storage call the code makes: an open, or a method on an opened cache. */
@@ -334,11 +388,20 @@ describe('a large collection with no image yet costs a few cache calls, not a fe
     const got = await keptImages(heads, storage);
     expect([...got.keys()]).toEqual(['h7']);
     expect(got.get('h7')?.url).toBe(url('a'));
-    expect(calls.length).toBeLessThanOrEqual(6);
+    expect(calls.length).toBeLessThanOrEqual(7);
     const empty = fakeCaches();
     const emptyCalls = countCalls(empty);
     expect((await keptImages(heads, empty)).size).toBe(0);
     expect(emptyCalls).toEqual([`open ${IMAGE_LISTS_CACHE}`, `keys ${IMAGE_LISTS_CACHE}`]);
+  });
+
+  it('keptImages reads what syncs withheld in two cache calls, however many figures it answers', async () => {
+    const storage = fakeCaches();
+    const many = heads.slice(0, 300);
+    await syncOwnedImages(many, async (hs) => new Map(hs.map((h, i) => [h, [img('a', { primary: true, url: `${D}/${i.toString(16).padStart(64, '0')}` })]])), { storage });
+    const calls = countCalls(storage);
+    expect((await keptImages(heads, storage)).size).toBe(300);
+    expect(calls.filter((c) => c.endsWith(WITHHELD_CACHE))).toEqual([`open ${WITHHELD_CACHE}`, `keys ${WITHHELD_CACHE}`]);
   });
 });
 
@@ -352,7 +415,17 @@ describe('cancelling a sync', () => {
     const heads = Array.from({ length: 401 }, (_, i) => `h${i}`);
     await expect(fetchImageLists({ getProductImages } as never, heads, abort.signal)).rejects.toThrow();
     expect(getProductImages).toHaveBeenCalledTimes(1);
-    expect(getProductImages.mock.calls[0]![1]).toEqual({ signal: abort.signal });
+    expect(getProductImages.mock.calls[0]![1]).toEqual({ signal: abort.signal, timeoutMs: 20_000 });
+  });
+
+  it('fetchImageLists gives every call a deadline of 20 s (OWNED_SYNC_STEP_MS), signal or not, so a stalled list read fails the sync', async () => {
+    const getProductImages = vi.fn(async (_req: { headIds: string[]; pageToken?: string }, _opts?: { signal?: AbortSignal; timeoutMs?: number }) => ({
+      products: [],
+      nextPageToken: _req.pageToken === undefined ? 'p2' : '',
+    }));
+    await fetchImageLists({ getProductImages } as never, ['h1']);
+    expect(getProductImages.mock.calls.map((c) => c[1])).toEqual([{ timeoutMs: 20_000 }, { timeoutMs: 20_000 }]);
+    expect(OWNED_SYNC_STEP_MS).toBe(20_000);
   });
 
   it('syncOwnedImages fetches no more bytes once its signal is aborted', async () => {
@@ -603,7 +676,21 @@ describe('syncs in different documents of the app (a tab, the installed window):
   const withheld = async (storage: ReturnType<typeof fakeCaches>, cs: string[]) => [...(await withheldAmong(cs.map(url), storage))].sort();
   const settle = () => new Promise((res) => setTimeout(res, 20));
   let uninstall: () => void = () => {};
-  afterEach(() => uninstall());
+  afterEach(() => {
+    uninstall();
+    vi.useRealTimers();
+  });
+  /** An image link that never answers: only an abort of the request's own signal ends a fetch of these. */
+  const stalling = (...cs: string[]) => (req: Request): Promise<Response> =>
+    cs.some((c) => req.url === url(c))
+      ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason)))
+      : Promise.resolve(new Response('img'));
+  /** Where a sync is, read without waiting for it. */
+  function track(p: Promise<unknown>): () => string {
+    let state = 'running';
+    p.then(() => (state = 'settled'), (e: unknown) => (state = (e as { name?: string }).name ?? 'threw'));
+    return () => state;
+  }
 
   /** Another document's CacheStorage over the same caches (one origin), its next open held until released. */
   function otherDocument(storage: ReturnType<typeof fakeCaches>): { storage: CacheStorage; holdNextOpen: () => void; release: () => void } {
@@ -720,6 +807,81 @@ describe('syncs in different documents of the app (a tab, the installed window):
     answerB();
     await syncB;
     expect(fetchA).not.toHaveBeenCalled();
+  });
+
+  it('a sync waits 10 s (OWNED_SYNC_WAIT_MS) for another document\'s when no wait is given, as the case view syncs: then it fails, having asked nothing', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const storage = fakeCaches();
+    let answerB!: () => void;
+    const syncB = syncOwnedImages(['h1'], async () => {
+      await new Promise<void>((res) => (answerB = res));
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    }, { storage });
+    await vi.advanceTimersByTimeAsync(0);
+    const fetchA = vi.fn(lists({ h1: [img('c', { primary: true })] }));
+    const a = track(syncOwnedImages(['h1'], fetchA, { storage }));
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(a()).toBe('running');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(a()).toBe('TimeoutError');
+    answerB();
+    await vi.advanceTimersByTimeAsync(0);
+    await syncB;
+    expect(fetchA).not.toHaveBeenCalled();
+  });
+
+  it('a sync whose case view goes away aborts its image fetch in flight, so it lets go of the lock: the next sync runs and records what it withholds', async () => {
+    uninstall = installFakeLocks();
+    const storage = fakeCaches(stalling('a'));
+    const abort = new AbortController();
+    const a = track(syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage, signal: abort.signal }));
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    expect(storage.added[0]!.signal.aborted).toBe(false);
+    abort.abort();
+    await settle();
+    expect(storage.added[0]!.signal.aborted).toBe(true);
+    expect(a()).toBe('settled');
+    // A display restriction now withholds a: the next sync, in another document or a new case view here.
+    const fetchB = vi.fn(lists({ h1: [img('c', { primary: true })] }));
+    const b = await syncOwnedImages(['h1'], fetchB, { storage, lockWaitMs: 300 }).then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
+    expect(b).toBe('synced');
+    expect(fetchB).toHaveBeenCalledTimes(1);
+    expect(await withheld(storage, ['a', 'c'])).toEqual([url('a')]);
+    expect(owned(storage)).toEqual([url('c')]);
+  });
+
+  it('an image fetch that does not arrive within 20 s (OWNED_SYNC_STEP_MS) is abandoned and no other starts after it, so a sync on a stalled link lets go of the lock while its case view stays open', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const storage = fakeCaches(stalling('a', 'b', 'd'));
+    const a = track(syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })] }), { storage, concurrency: 1 }));
+    await vi.advanceTimersByTimeAsync(15_000);
+    // Another document's sync, the lists now withholding a; it waits OWNED_SYNC_WAIT_MS for this one.
+    const fetchB = vi.fn(lists({ h1: [img('c', { primary: true })] }));
+    const b = track(syncOwnedImages(['h1'], fetchB, { storage }));
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect([a(), b()]).toEqual(['running', 'running']);
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect([a(), b()]).toEqual(['settled', 'settled']);
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('c')]);
+    expect(storage.added[0]!.signal.aborted).toBe(true);
+    expect(fetchB).toHaveBeenCalledTimes(1);
+    expect(await withheld(storage, ['a', 'b', 'c', 'd'])).toEqual([url('a')]);
+    expect(owned(storage)).toEqual([url('c')]);
+    expect(OWNED_SYNC_STEP_MS).toBe(20_000);
+  });
+
+  it('a slow link that brings each image within 20 s brings them all: the deadline is each fetch\'s, not the sync\'s', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const storage = fakeCaches(() => new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)));
+    const sync = syncOwnedImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })] }), { storage, concurrency: 1 });
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(await sync).toMatchObject({ added: 3, failed: 0 });
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('d')]);
   });
 
   it('where the browser has no Web Locks, a sync runs at once: syncs in two documents are not serialised', async () => {

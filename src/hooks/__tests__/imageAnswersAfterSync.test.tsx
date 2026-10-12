@@ -415,14 +415,14 @@ describe('another open document of the app (a tab, the installed window): its ow
 });
 
 describe('an answer a view shows, while it is asked again after a sync that withheld its image: it never waits on the coordinator to stop naming it', () => {
-  /** The coordinator withholds X now; its first answer (the case view's sync) comes at once, every later one waits for `answer`. */
-  function laterAnswersWait(r: LocalRig): { answer: () => void; asked: () => number } {
+  /** The coordinator withholds X now; its first answer (the case view's sync) comes at once, every later one waits for `answer`. With `from` 1, every answer waits. */
+  function laterAnswersWait(r: LocalRig, from = 2): { answer: () => void; asked: () => number } {
     let answer!: () => void;
     const later = new Promise<void>((res) => (answer = res));
     let n = 0;
     r.clients.getProductImages.mockImplementation(async () => {
       n += 1;
-      if (n >= 2) await later;
+      if (n >= from) await later;
       return listOf();
     });
     return { answer, asked: () => n };
@@ -603,6 +603,102 @@ describe('an answer a view shows, while it is asked again after a sync that with
     expect(viewB.result.current.get(headOf(0))?.url).toBe(X);
     kept.release();
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.maskUrl).toBe(M2));
+  });
+  /** Holds every open of the withheld record after the first `skip` (a sync's own), until released: the drop's lookup. */
+  function holdWithheldLookups(skip: number): { reached: () => boolean; release: () => void } {
+    let seen = 0;
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const open = storage.open.bind(storage);
+    (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
+      if (name === WITHHELD_CACHE) {
+        seen += 1;
+        if (seen > skip) await held;
+      }
+      return open(name);
+    };
+    return { reached: () => seen > skip, release };
+  }
+
+  it.each([
+    ['another document, its answer stale', true, true],
+    ['another document, its answer fresh', true, false],
+    ['the document that ran the sync, its answer stale', false, true],
+    ['the document that ran the sync, its answer fresh', false, false],
+  ])('the figure page, opened again in %s while the drop looks up what the sync withheld: answers the plate before the coordinator answers its re-ask', async (_where, other, stale) => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const docA = appQueryClient();
+    const docB = other ? appQueryClient() : docA;
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
+    first.unmount();
+    // The figure page answered X, and the user left it: its answer is kept, no view shows it.
+    const left = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(left.result.current.data?.url).toBe(X));
+    left.unmount();
+    if (stale) docB.getQueryCache().findAll({ queryKey: ['local', 'image'] }).forEach((q) => q.setState({ dataUpdatedAt: Date.now() - 11 * 60_000 }));
+    let lookup: ReturnType<typeof holdWithheldLookups>;
+    let coordinator: ReturnType<typeof laterAnswersWait>;
+    let view: { unmount: () => void } | undefined;
+    if (other) {
+      // The first document's sync withholds X; then this document's drop, told, looks up the record.
+      coordinator = laterAnswersWait(r, 1);
+      await anotherDocumentSyncs(listOf(), () => (lookup = holdWithheldLookups(0)));
+    } else {
+      // This document's case view syncs and withholds X; its own open of the record goes, its drop's lookup waits.
+      coordinator = laterAnswersWait(r);
+      lookup = holdWithheldLookups(1);
+      docA.removeQueries({ queryKey: ['local', 'owned-images'] });
+      view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    }
+    await waitFor(() => expect(lookup!.reached()).toBe(true));
+    // The user opens the figure page again while the lookup runs.
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    lookup!.release();
+    // Its re-ask is with the coordinator: its answer is already the plate.
+    await waitFor(() => expect(docB.isFetching()).toBeGreaterThan(0));
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+    await new Promise((res) => setTimeout(res, 300));
+    expect(page.result.current.data).toBeNull();
+    expect(docB.getQueryState(['local', 'image', headOf(0), true])?.fetchStatus).toBe('fetching');
+    coordinator.answer();
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    expect(page.result.current.data).toBeNull();
+    page.unmount();
+    view?.unmount();
+  });
+
+  it.each([
+    ['another document', true],
+    ['the document that ran the sync', false],
+  ])('the figure page, open online in %s beside an open page that answers the plate: answers the plate before the coordinator answers its re-ask', async (_where, other) => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'No image' }]);
+    const docA = appQueryClient();
+    const docB = other ? appQueryClient() : docA;
+    r.clients.getProductImages.mockResolvedValue(listOf(X));
+    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
+    first.unmount();
+    const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
+    const plate = renderHook(() => useProductImage(headOf(1)), { wrapper: queryWrapper(docB) });
+    await waitFor(() => expect(page.result.current.data?.url).toBe(X));
+    await waitFor(() => expect(plate.result.current.data).toBeNull());
+    const coordinator = laterAnswersWait(r);
+    docA.removeQueries({ queryKey: ['local', 'owned-images'] });
+    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    await waitFor(() => expect(coordinator.asked()).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(page.result.current.data).toBeNull());
+    expect(docB.getQueryState(['local', 'image', headOf(0), true])?.fetchStatus).toBe('fetching');
+    coordinator.answer();
+    await waitFor(() => expect(docB.isFetching()).toBe(0));
+    expect(page.result.current.data).toBeNull();
+    expect(plate.result.current.data).toBeNull();
+    page.unmount();
+    plate.unmount();
+    view.unmount();
   });
 });
 

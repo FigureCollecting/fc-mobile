@@ -13,7 +13,8 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { OWNED_MEDIA_CACHE, rememberImages } from '../../media/ownedImages';
+import { OWNED_MEDIA_CACHE, rememberImages, syncOwnedImages } from '../../media/ownedImages';
+import { installFakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
 const url = (c: string) => `${D}/${c.repeat(64)}`;
@@ -126,6 +127,31 @@ describe('useOwnedImages', () => {
     unmount();
     await waitFor(() => expect(seen?.aborted).toBe(true));
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels its sync when the case view goes away: an image fetch in flight is aborted too, so the sync lets go of the lock', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      // An image link that never answers: only an abort of the request's own signal ends the fetch.
+      storage = fakeCaches((req) => new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))));
+      vi.stubGlobal('caches', storage);
+      const r = await localRig();
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), role: 'gallery', primary: true, url: url('a'), width: 1, height: 1 }] }] }),
+      );
+      await seedFigures(r, [{ title: 'Owned' }]);
+      const { unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+      await waitFor(() => expect(storage.added).toHaveLength(1));
+      const fetching = storage.added[0]!.signal;
+      expect(fetching.aborted).toBe(false);
+      unmount();
+      await waitFor(() => expect(fetching.aborted).toBe(true));
+      // The lock is free: the next sync (another document's) runs at once.
+      const next = await syncOwnedImages([headOf(0)], async () => new Map(), { storage, lockWaitMs: 100 }).then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
+      expect(next).toBe('synced');
+    } finally {
+      uninstall();
+    }
   });
 
   it('answers nothing while signed out', async () => {

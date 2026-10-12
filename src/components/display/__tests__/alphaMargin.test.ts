@@ -699,7 +699,7 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
       vi.useFakeTimers();
       const startedAt: number[] = [];
       mockPictures(pictures(), () => {
-        const read = reads[startedAt.length] ?? 'ok';
+        const read = startedAt.length < reads.length ? reads[startedAt.length] : 'ok';
         startedAt.push(Date.now());
         if (read === 'ok') return Promise.resolve();
         return read === 'fail' ? Promise.reject(neverDecoded()) : new Promise<void>(() => {});

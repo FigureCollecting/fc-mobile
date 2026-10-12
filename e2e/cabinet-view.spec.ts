@@ -163,9 +163,9 @@ async function openFramed(page: Page, size: { width: number; height: number }, v
 }
 
 /**
- * The scene runs from wherever the layout above it ends down to the
- * pull-up tabs (their 4 px gap), never under them, and the camera frames
- * the cabinet (its feet, or the shelf's edge) inside it.
+ * The scene runs from wherever the layout above it ends down to 4 px above
+ * the pull-up tabs, never under them, and the camera frames the cabinet
+ * (its feet, or the shelf's edge) inside it.
  */
 async function expectFramedAboveTabs(page: Page, view: View, label: string) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
@@ -174,11 +174,36 @@ async function expectFramedAboveTabs(page: Page, view: View, label: string) {
     ...(await page.locator('.case-tabs [data-tab]').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top))),
   );
   const sceneBottom = scene.y + scene.height;
-  expect(sceneBottom, `${label}: the scene ends above the tabs`).toBeLessThanOrEqual(tabsTop + 1);
+  expect(sceneBottom, `${label}: the scene ends 4 px above the tabs`).toBeLessThanOrEqual(tabsTop - 3);
   expect(sceneBottom, `${label}: the scene reaches down to the tabs`).toBeGreaterThanOrEqual(tabsTop - 6);
   const bottom = scene.y + (await framedBottomPx(page, view));
   expect(bottom, `${label}: framed inside the scene`).toBeLessThanOrEqual(sceneBottom);
   expect(bottom, `${label}: framed above the tabs`).toBeLessThanOrEqual(tabsTop);
+}
+
+/**
+ * The filter sheet at rest, up at its detent: unmoved for ten frames. A
+ * press while it still springs up stops it where it is (framer-motion's
+ * drag), and two still frames can be the top of its overshoot.
+ */
+async function expectSheetAtRest(page: Page) {
+  await expect
+    .poll(() =>
+      page.locator('.detent-sheet').evaluate(
+        (el) =>
+          new Promise<boolean>((done) => {
+            const top = el.getBoundingClientRect().top;
+            let frames = 0;
+            const step = () => {
+              if (Math.abs(el.getBoundingClientRect().top - top) > 0.01) return done(false);
+              if (++frames < 10) requestAnimationFrame(step);
+              else done(top < innerHeight * 0.9);
+            };
+            requestAnimationFrame(step);
+          }),
+      ),
+    )
+    .toBe(true);
 }
 
 /** expectFramedAboveTabs once the scene and its camera have followed a change of layout. */
@@ -219,14 +244,26 @@ for (const size of FOLD8) {
       }
       await expectFramedAboveTabs(page, view, 'reloaded without chips');
       await page.getByRole('button', { name: 'Refine' }).click();
-      // a press on the sheet while it still springs up stops it where it is (framer-motion's drag): wait for it to rest
-      await expect(page.locator('.detent-sheet')).toHaveAttribute('style', /translateY\(48%\)/);
+      await expectSheetAtRest(page);
       await page.getByRole('button', { name: 'owned', exact: true }).click();
       await page.locator('.filter-sheet2__btn--apply').click();
       await expect(page.locator('.applied-chips__chip')).toHaveCount(1);
       await expectReframedAboveTabs(page, view, 'a chip added');
     });
   }
+}
+
+// the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
+for (const size of FOLD8.filter((v) => v.name === 'fold8-open' || v.name === 'fold8-open-rotated')) {
+  test(`still above the tabs with the detail pane open, then offline: ${size.name}`, async ({ page, context }) => {
+    await openFramed(page, size, 'cabinet');
+    await page.locator('button.cab-figure').nth(1).tap();
+    await expect(page.locator('.detail-pane')).toBeVisible();
+    await expectReframedAboveTabs(page, 'cabinet', 'detail pane open');
+    await context.setOffline(true);
+    await expect(page.locator('.offline-banner')).toBeVisible();
+    await expectReframedAboveTabs(page, 'cabinet', 'detail pane open, offline');
+  });
 }
 
 for (const [from, to] of [

@@ -12,12 +12,14 @@ import {
   getFixtureBranch,
   getFixtureWidths,
   getFixtureAsym,
+  getFixtureUnique,
   getFixtureImageRef,
   resolveFixtureArt,
 } from '../fixtures';
 import { getDisplayMeta } from '../../components/display/displayMeta';
 import { figureArt } from '../../components/display/figureArt';
 import { measureCaseFigure } from '../../components/display/packCabinets';
+import type { Figure } from '@figurecollecting/fc-shared';
 
 /** The unfiltered pixels of a PNG this repo's script wrote (one IDAT, filter 0 on every row). */
 function pngPixels(file: string): { width: number; height: number; channels: number; rows: Buffer[] } {
@@ -452,5 +454,44 @@ describe('fixture off-centre art (?fxasym=1): figures standing off-centre in the
       const name = f._id.replace(/^fx-/, '').replace(/-framed$/, '');
       expect(f.imageUrl, f._id).toMatch(new RegExp(`/${leans(f._id) ? 'synthetic/asym' : 'synthetic'}/clean/${name}\\.png$`));
     }
+  });
+});
+
+describe('fixture distinct pictures (?fxuniq=1): each repeated copy at its own picture URL, as a real collection has', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  /** What the case reads of each figure: its image list entry's picture and mask, else its own picture. */
+  const pictures = (f: Figure) => {
+    const ref = getFixtureImageRef(f);
+    return ref ? [ref.url, ref.maskUrl] : [f.imageUrl];
+  };
+
+  it('off unless asked for: the copies share their pictures', () => {
+    for (const query of ['/?fx=3', '/?fx=3&fxuniq=0', '/?fx=3&fxuniq=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureUnique()).toBe(false);
+      expect(new Set(getFixtureFigures().map((f) => f.imageUrl)).size).toBe(FIXTURE_FIGURES.length);
+    }
+  });
+
+  it('?fxuniq=1: every copy of every branch draws the same picture at its own URL, the first copy at the fixture\'s', () => {
+    for (const branch of ['', '&fxbranch=masked', '&fxbranch=framed']) {
+      window.history.pushState({}, '', `/?fx=3&fxuniq=1${branch}`);
+      expect(getFixtureUnique()).toBe(true);
+      const figures = getFixtureFigures();
+      expect(figures).toHaveLength(FIXTURE_FIGURES.length * 3);
+      const urls = figures.flatMap(pictures);
+      expect(new Set(urls).size, branch).toBe(urls.length);
+      figures.forEach((f, i) => {
+        const copy = Math.floor(i / FIXTURE_FIGURES.length) + 1;
+        const first = pictures(figures[i % FIXTURE_FIGURES.length]);
+        expect(pictures(f), f._id).toEqual(first.map((u) => (copy === 1 ? u : `${u}?copy=${copy}`)));
+        if (getFixtureImageRef(f)) expect(f.imageUrl).toBe(getFixtureImageRef(f)?.url);
+      });
+    }
+    window.history.pushState({}, '', '/?fx=3&fxuniq=1&fxbranch=silhouette');
+    expect(getFixtureFigures().every((f) => f.imageUrl === undefined)).toBe(true);
   });
 });

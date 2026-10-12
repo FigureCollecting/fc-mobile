@@ -9,6 +9,8 @@ import {
   computeSideMarginFracs,
   ALPHA_READS_AT_ONCE,
   ALPHA_READ_TURN_MS,
+  ALPHA_READ_DEADLINE_MS,
+  ALPHA_READ_RETRIES,
   ALPHA_LANDING_BATCH_MS,
   __clearAlphaMarginCache,
   computeContactBand,
@@ -239,9 +241,9 @@ describe('computeSideMarginFracs: the clear columns left and right of the figure
 
 describe('useAlphaMarginsOf: each picture of a list known as soon as it is read, kept across lists', () => {
   /** Each image's alpha by its URL: the canvas reads the image last drawn on it. */
-  function mockPictures(buffers: Record<string, AlphaBuffer>, decode: (src: string) => Promise<void> = () => Promise.resolve()) {
+  function mockPictures(buffers: Record<string, AlphaBuffer>, decode: (src: string, img: HTMLImageElement) => Promise<void> = () => Promise.resolve()) {
     HTMLImageElement.prototype.decode = vi.fn(function (this: HTMLImageElement) {
-      return decode(this.src);
+      return decode(this.src, this);
     });
     let drawn = '';
     const getImageData = vi.fn(() => buffers[drawn]);
@@ -285,15 +287,43 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
   /** Long enough, under fake timers, for renderHook's result to follow a render (its effect flushes after a 35 ms frame). */
   const EFFECTS_MS = 50;
 
-  /** Pictures whose reads end only when the test says so; the others end at once. */
+  /**
+   * Pictures whose reads end only when the test says so; the others end at
+   * once. A read is in flight from its start until it lands or is abandoned:
+   * its src cleared, so the browser cancels its request.
+   */
   function heldPictures(urls: readonly string[], held: readonly string[]) {
-    const release = new Map<string, () => void>();
+    const release = new Map<string, (() => void)[]>();
     const started: string[] = [];
-    mockPictures(Object.fromEntries(urls.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])), (src) => {
+    const reads: { img: HTMLImageElement; landed: boolean }[] = [];
+    mockPictures(Object.fromEntries(urls.map((u) => [u, bufferWithPixels(4, 4, [[1, 1]])])), (src, img) => {
       started.push(src);
-      return held.includes(src) ? new Promise<void>((r) => release.set(src, r)) : Promise.resolve();
+      const read = { img, landed: !held.includes(src) };
+      reads.push(read);
+      if (read.landed) return Promise.resolve();
+      return new Promise<void>((r) =>
+        release.set(src, [
+          ...(release.get(src) ?? []),
+          () => {
+            read.landed = true;
+            r();
+          },
+        ]),
+      );
     });
-    return { release: (src: string) => release.get(src)!(), started };
+    const abandoned = (img: HTMLImageElement) => img.getAttribute('src') === '';
+    return {
+      /** Every read of `src` still held lands now. */
+      release: (src: string) => {
+        for (const go of release.get(src) ?? []) go();
+        release.delete(src);
+      },
+      started,
+      /** How many reads were abandoned. */
+      abandoned: () => reads.filter((r) => abandoned(r.img)).length,
+      /** Reads started that have neither landed nor been abandoned. */
+      inFlight: () => reads.filter((r) => !r.landed && !abandoned(r.img)).length,
+    };
   }
 
   it('nothing known while its pictures are read (an empty answer), then all four margins of every picture, one canvas read each', async () => {
@@ -546,20 +576,21 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(result.current.has(slow[1])).toBe(false);
   });
 
-  it(`reads that ran out of time are at most another ${ALPHA_READS_AT_ONCE} at once: a stalled network never decodes a long list together`, async () => {
+  it(`reads in flight (started, not yet landed or abandoned) are never more than 2 x ${ALPHA_READS_AT_ONCE}: a stalled network never decodes a long list together`, async () => {
     vi.useFakeTimers();
     const urls = Array.from({ length: 40 }, (_, i) => `https://example.com/z${i}.png`);
     const later = Array.from({ length: 10 }, (_, i) => `https://example.com/y${i}.png`);
-    const { release, started } = heldPictures([...urls, ...later], [...urls, ...later]);
+    const { release, started, inFlight } = heldPictures([...urls, ...later], [...urls, ...later]);
     renderHook(() => useAlphaMarginsOf(urls));
-    const inFlight: number[] = [];
-    for (let turn = 0; turn < 10; turn++) {
+    const counts: number[] = [];
+    for (let turn = 0; turn < 4; turn++) {
       await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
-      inFlight.push(started.length);
+      counts.push(inFlight());
     }
     // the first four gave their turns to the next four, which then keep theirs: no room left for more reads out of time
-    expect(inFlight).toEqual(inFlight.map(() => 2 * ALPHA_READS_AT_ONCE));
-    // one read out of time ends: the oldest out of time still holding a turn gives it up, and one more picture is read
+    expect(counts).toEqual(counts.map(() => 2 * ALPHA_READS_AT_ONCE));
+    expect(started).toEqual(urls.slice(0, 2 * ALPHA_READS_AT_ONCE));
+    // one read out of time ends: a read out of time still holding a turn gives it up, and one more picture is read
     release(urls[0]);
     await vi.advanceTimersByTimeAsync(0);
     expect(started).toEqual(urls.slice(0, 2 * ALPHA_READS_AT_ONCE + 1));
@@ -567,22 +598,111 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     release(urls[ALPHA_READS_AT_ONCE + 1]);
     await vi.advanceTimersByTimeAsync(0);
     expect(started).toEqual(urls.slice(0, 2 * ALPHA_READS_AT_ONCE + 2));
-    // and still no more than that in flight (two have landed), however long the rest stall
-    await vi.advanceTimersByTimeAsync(5 * ALPHA_READ_TURN_MS);
-    expect(started.length - 2).toBe(2 * ALPHA_READS_AT_ONCE);
+    expect(inFlight()).toBe(2 * ALPHA_READS_AT_ONCE);
+    // however long the rest stall, each abandoned at its deadline and read again later: the list moves on, never more in flight
+    for (let turn = 0; turn < 12; turn++) {
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+      counts.push(inFlight());
+    }
+    expect(Math.max(...counts)).toBe(2 * ALPHA_READS_AT_ONCE);
+    expect(new Set(started).size).toBeGreaterThan(4 * ALPHA_READS_AT_ONCE);
     // every read ends as it starts: then every turn and all the room are free again, and never one more
-    while (started.length < urls.length) {
-      for (const url of started) release(url);
+    for (let round = 0; round < 50 && inFlight() > 0; round++) {
+      for (const url of urls) release(url);
       await vi.advanceTimersByTimeAsync(0);
     }
-    for (const url of started) release(url);
-    await vi.advanceTimersByTimeAsync(0);
+    expect(inFlight()).toBe(0);
+    const before = started.length;
     renderHook(() => useAlphaMarginsOf(later));
     await vi.advanceTimersByTimeAsync(0);
-    expect(started.slice(urls.length)).toEqual(later.slice(0, ALPHA_READS_AT_ONCE));
+    expect(started.slice(before)).toEqual(later.slice(0, ALPHA_READS_AT_ONCE));
     await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
-    expect(started.slice(urls.length)).toEqual(later.slice(0, 2 * ALPHA_READS_AT_ONCE));
+    expect(started.slice(before)).toEqual(later.slice(0, 2 * ALPHA_READS_AT_ONCE));
   });
+
+  it(`reads running out of time a few at a time (4, then 1, then 4 more): still never more than 2 x ${ALPHA_READS_AT_ONCE} in flight`, async () => {
+    vi.useFakeTimers();
+    const s = Array.from({ length: 4 }, (_, i) => `https://example.com/s${i}.png`);
+    const t = ['https://example.com/t0.png'];
+    const u = Array.from({ length: 4 }, (_, i) => `https://example.com/u${i}.png`);
+    const { inFlight } = heldPictures([...s, ...t, ...u], [...s, ...t, ...u]);
+    renderHook(() => useAlphaMarginsOf(s));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    renderHook(() => useAlphaMarginsOf(t));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    renderHook(() => useAlphaMarginsOf(u));
+    const counts: number[] = [];
+    for (let turn = 0; turn < 6; turn++) {
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+      counts.push(inFlight());
+    }
+    expect(counts).toEqual(counts.map(() => 2 * ALPHA_READS_AT_ONCE));
+  });
+
+  it(`a read not done ${ALPHA_READ_DEADLINE_MS} ms after it starts is abandoned (its request cancelled): its figure stays unknown, nothing is kept, and it is read again`, async () => {
+    expect(ALPHA_READ_DEADLINE_MS).toBe(8000);
+    vi.useFakeTimers();
+    const { release, started, abandoned } = heldPictures([A], [A]);
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS - 1);
+    expect([started.length, abandoned()]).toEqual([1, 0]);
+    await vi.advanceTimersByTimeAsync(1);
+    // its src cleared, so the browser cancels its request; none else waits, so it is read again at once
+    expect([started.length, abandoned()]).toEqual([2, 1]);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.has(A), 'still unknown: its figure stays a plate').toBe(false);
+    expect(getAlphaMask(A), 'nothing kept for it').toBeUndefined();
+    // the second read lands: the picture's own margins, not a failed read's, and a read that lands is never abandoned
+    release(A);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(result.current.get(A)).toEqual({ top: 0.25, bottom: 0.5, left: 0.25, right: 0.5 });
+    expect(getAlphaMask(A)).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(2 * ALPHA_READ_DEADLINE_MS);
+    expect([started.length, abandoned()]).toEqual([2, 1]);
+  });
+
+  it(`a picture whose every read stalls is read ${ALPHA_READ_RETRIES} more times, then known as a failed read: all 0 and no mask, packed by its whole picture`, async () => {
+    expect(ALPHA_READ_RETRIES).toBe(2);
+    vi.useFakeTimers();
+    const { started, abandoned } = heldPictures([A], [A]);
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync((1 + ALPHA_READ_RETRIES) * ALPHA_READ_DEADLINE_MS - 1);
+    expect(started).toEqual([A, A, A]);
+    expect(result.current.has(A)).toBe(false);
+    expect(getAlphaMask(A)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1 + EFFECTS_MS);
+    expect(abandoned()).toBe(3);
+    expect(result.current.get(A)).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    expect(getAlphaMask(A)).toBeNull();
+    // and never read again
+    await vi.advanceTimersByTimeAsync(5 * ALPHA_READ_DEADLINE_MS);
+    expect(started).toEqual([A, A, A]);
+  });
+
+  it('an abandoned read is read again behind the reads already waiting', async () => {
+    vi.useFakeTimers();
+    const urls = Array.from({ length: 12 }, (_, i) => `https://example.com/w${i}.png`);
+    const { started } = heldPictures(urls, urls);
+    renderHook(() => useAlphaMarginsOf(urls));
+    // the first four, abandoned: the four still waiting take the room they leave
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS);
+    expect(started).toEqual(urls);
+    // the next four, abandoned: the first four are read again, behind them
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_TURN_MS);
+    expect(started).toEqual([...urls, ...urls.slice(0, ALPHA_READS_AT_ONCE)]);
+  });
+
+  for (const stalled of [8, 12]) {
+    it(`${stalled} reads of a 20-picture list stalled for good: every other picture is still read, within ${ALPHA_READ_DEADLINE_MS} ms and two turns`, async () => {
+      vi.useFakeTimers();
+      const urls = Array.from({ length: 20 }, (_, i) => `https://example.com/v${i}.png`);
+      heldPictures(urls, urls.slice(0, stalled));
+      const { result } = renderHook(() => useAlphaMarginsOf(urls));
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + 2 * ALPHA_READ_TURN_MS);
+      expect(urls.slice(stalled).filter((u) => !result.current.has(u)), 'fine pictures still unknown').toEqual([]);
+      expect(urls.slice(0, stalled).filter((u) => result.current.has(u)), 'stalled pictures known').toEqual([]);
+    });
+  }
 
   it('a read landing after a new list renders but before its effect runs is answered (the browser runs effects after the frame)', async () => {
     vi.useFakeTimers();
@@ -701,11 +821,61 @@ describe('useContactBand (canvas-backed, real image measurement)', () => {
 
   beforeEach(() => {
     __clearContactBandCache();
+    __clearAlphaMarginCache();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     getContextSpy?.mockRestore();
     delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  it("is read in the same read as the picture's margins: one decode and one canvas read for both", async () => {
+    mockDecode(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 100, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    const getImageData = vi.fn(() => bufferWithContactBand(100, 100, 8, 10, 30));
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData,
+    } as unknown as CanvasRenderingContext2D);
+    const url = 'https://example.com/shared.png';
+    const margins = renderHook(() => useAlphaMarginsOf([url]));
+    const band = renderHook(() => useContactBand(url));
+    await waitFor(() => expect(band.result.current?.centerXFrac).toBeCloseTo(19.5 / 100, 5));
+    await waitFor(() => expect(margins.result.current.has(url)).toBe(true));
+    expect(HTMLImageElement.prototype.decode).toHaveBeenCalledTimes(1);
+    expect(getImageData).toHaveBeenCalledTimes(1);
+  });
+
+  it(`waits its turn with the alpha reads: while ${ALPHA_READS_AT_ONCE} pictures are read, it decodes nothing until one ends`, async () => {
+    vi.useFakeTimers();
+    const decoded: string[] = [];
+    const held: (() => void)[] = [];
+    HTMLImageElement.prototype.decode = vi.fn(function (this: HTMLImageElement) {
+      decoded.push(this.src);
+      return new Promise<void>((r) => held.push(r));
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 100, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 100, configurable: true });
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: () => bufferWithContactBand(100, 100, 8, 40, 60),
+    } as unknown as CanvasRenderingContext2D);
+    const busy = Array.from({ length: ALPHA_READS_AT_ONCE }, (_, i) => `https://example.com/busy${i}.png`);
+    const own = 'https://example.com/band.png';
+    renderHook(() => useAlphaMarginsOf(busy));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(decoded).toEqual(busy);
+    const band = renderHook(() => useContactBand(own));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(decoded).toEqual(busy);
+    held.shift()!();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(decoded).toEqual([...busy, own]);
+    while (held.length > 0) held.shift()!();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(band.result.current?.centerXFrac).toBeCloseTo(49.5 / 100, 5);
   });
 
   it('returns null synchronously (no flash of a wrong center) before measurement resolves', () => {

@@ -6,6 +6,7 @@ import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox } from '../src/components/display/caseFraming';
 import { boxCorners } from '../src/components/display/caseCamera';
+import { ALPHA_READS_AT_ONCE, ALPHA_READ_DEADLINE_MS, ALPHA_READ_TURN_MS } from '../src/components/display/alphaMargin';
 
 /**
  * The faithful cabinets in a real browser (CASE-FIX, CASE-CABINET,
@@ -522,6 +523,40 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       await expectNoOverlap(page, `${size.name}, Ryuko landed`);
     });
   }
+
+  test(`8 pictures whose alpha reads stall for good: every other figure is still grounded, within the read deadline (${ALPHA_READ_DEADLINE_MS} ms)`, async ({ page }) => {
+    await page.addInitScript((n) => {
+      // the app's alpha reads (its crossOrigin canvas reads) of the first n pictures it reads never end; the pictures themselves load
+      const w = window as unknown as { __stalled: string[] };
+      w.__stalled = [];
+      const decode = HTMLImageElement.prototype.decode;
+      HTMLImageElement.prototype.decode = function (this: HTMLImageElement) {
+        if (this.crossOrigin !== 'anonymous') return decode.call(this);
+        if (!w.__stalled.includes(this.src) && w.__stalled.length < n) w.__stalled.push(this.src);
+        return w.__stalled.includes(this.src) ? new Promise<void>(() => {}) : decode.call(this);
+      };
+    }, 2 * ALPHA_READS_AT_ONCE);
+    // each copy's picture at its own URL, as a real collection's: 21 pictures; no figure is waited for here
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxuniq=1', { view: 'wall' }, /./);
+    const stalledOf = () =>
+      page.evaluate(() => {
+        const stalled = (window as unknown as { __stalled: string[] }).__stalled;
+        return Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => ({
+          name: b.getAttribute('aria-label')!,
+          stalled: stalled.includes(b.querySelector<HTMLImageElement>('img.cab-figure__art')?.src ?? ''),
+          grounded: b.dataset.grounded === '1',
+        }));
+      });
+    // the stalled reads are abandoned at their deadline, so the others are read meanwhile
+    await expect
+      .poll(async () => (await stalledOf()).filter((f) => !f.stalled && !f.grounded).map((f) => f.name), { timeout: ALPHA_READ_DEADLINE_MS + 3 * ALPHA_READ_TURN_MS })
+      .toEqual([]);
+    const figures = await stalledOf();
+    expect(figures.filter((f) => f.stalled)).toHaveLength(2 * ALPHA_READS_AT_ONCE);
+    expect(figures.filter((f) => !f.stalled).length).toBe(figures.length - 2 * ALPHA_READS_AT_ONCE);
+    expect(figures.filter((f) => f.stalled && f.grounded), 'a stalled picture, still read again: on its plate').toEqual([]);
+    await expectNoOverlap(page, '8 reads stalled');
+  });
 
   test('a filter removed: the figures already measured stay grounded while the new pictures load', async ({ page }) => {
     await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow&mfr=Good%20Smile%20Company', { view: 'wall' });

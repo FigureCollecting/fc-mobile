@@ -6,8 +6,8 @@ import { CASE_VIEWPORTS } from './caseViewports';
  * count, drawn by the real JustifiedRows from the ?fxsync=1 fixtures, in the
  * narrow tiles of the Fold8's cover: every tile width from 76 to 95 px, the
  * width each tile is set to through the CSSOM (which the CSP allows). A word
- * of the badge never splits across lines, the badge stays inside its tile at
- * its left edge, and it never sits over the count, which keeps the top-right
+ * of the badge never splits across lines, the badge and its text stay inside
+ * the tile, at its left edge, and it never sits over the count, which keeps the top-right
  * corner. TYPE-1 raised the badge to --font-2xs
  * (11 px) and the count to --font-xs (12 px); this is where they meet.
  */
@@ -41,27 +41,31 @@ for (const name of ['fold8-cover', 'fold8-cover-sideways']) {
     await page.evaluate(() => document.fonts.ready);
 
     const reading: Reading = await page.evaluate((widths) => {
-      /** The words of `el`'s text that start on one line and end on another. */
-      const splitWords = (el: Element): string[] => {
-        const chars: { ch: string; top: number | null }[] = [];
+      /** Each character of `el`'s text and the box it is drawn in (null for none: a space at a line end). */
+      const charBoxes = (el: Element): { ch: string; box: DOMRect | null }[] => {
+        const chars: { ch: string; box: DOMRect | null }[] = [];
         const range = document.createRange();
         const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
           for (let i = 0; i < node.data.length; i++) {
             range.setStart(node, i);
             range.setEnd(node, i + 1);
-            const box = [...range.getClientRects()].find((r) => r.width > 0);
-            chars.push({ ch: node.data[i], top: box ? box.top : null });
+            chars.push({ ch: node.data[i], box: [...range.getClientRects()].find((r) => r.width > 0) ?? null });
           }
         }
+        return chars;
+      };
+
+      /** The words of `el`'s text that start on one line and end on another. */
+      const splitWords = (el: Element): string[] => {
         const split: string[] = [];
-        let word: typeof chars = [];
-        for (const c of [...chars, { ch: ' ', top: null }]) {
+        let word: { ch: string; box: DOMRect | null }[] = [];
+        for (const c of [...charBoxes(el), { ch: ' ', box: null }]) {
           if (!/\s/.test(c.ch)) {
             word.push(c);
             continue;
           }
-          const tops = word.flatMap((w) => (w.top === null ? [] : [w.top]));
+          const tops = word.flatMap((w) => (w.box === null ? [] : [w.box.top]));
           if (tops.length && Math.max(...tops) - Math.min(...tops) > 3) split.push(word.map((w) => w.ch).join(''));
           word = [];
         }
@@ -92,7 +96,10 @@ for (const name of ['fold8-cover', 'fold8-cover-sideways']) {
           const b = badge.getBoundingClientRect();
           const split = splitWords(badge);
           if (split.length) failures.push(`${at}: splits ${split.join(', ')}`);
-          if (b.left < tile.left - 0.5 || b.right > tile.right + 0.5) failures.push(`${at}: leaves the tile (${b.left - tile.left}..${b.right - tile.left} of ${w})`);
+          const ink = charBoxes(badge).flatMap((c) => (c.box === null ? [] : [c.box]));
+          const left = Math.min(b.left, ...ink.map((r) => r.left));
+          const right = Math.max(b.right, ...ink.map((r) => r.right));
+          if (left < tile.left - 0.5 || right > tile.right + 0.5) failures.push(`${at}: leaves the tile (${(left - tile.left).toFixed(1)}..${(right - tile.left).toFixed(1)} of ${w})`);
           if (Math.abs(b.left - tile.left - 4) > 0.5) failures.push(`${at}: off the tile's left edge (${(b.left - tile.left).toFixed(1)} px in)`);
           if (count) {
             const c = count.getBoundingClientRect();

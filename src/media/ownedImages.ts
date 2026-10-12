@@ -250,8 +250,6 @@ interface SyncOptions {
   signal?: AbortSignal;
   /** How long to wait for another document's sync (OWNED_SYNC_WAIT_MS). */
   lockWaitMs?: number;
-  /** Called each time the sync has written the record of an address it withholds. */
-  onRecorded?: () => void;
   /** Called once the sync has read the lists, its signal not aborted, before it touches any cache. */
   onListsRead?: () => void;
 }
@@ -380,7 +378,6 @@ async function bringToOwned(
       await tomb.put(withheldKey(u), new Response(null));
       unrecorded.delete(u);
       recorded.add(u);
-      options.onRecorded?.();
     }
   } catch (error) {
     if (unrecorded.size === withheld.size) throw error;

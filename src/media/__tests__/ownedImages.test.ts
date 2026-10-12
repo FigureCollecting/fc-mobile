@@ -798,20 +798,6 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect(await named(storage)).toEqual([url('b')]);
   });
 
-  it('tells onRecorded each time it has written a record, the record already there; never when it withholds nothing, nor when the record is refused', async () => {
-    const storage = device();
-    const at: number[] = [];
-    const options = { storage, onRecorded: () => at.push(storage.stores.get(WITHHELD_CACHE)?.size ?? 0) };
-    await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), options);
-    expect(at).toEqual([]);
-    await syncOwnedImages(['h1'], lists({ h1: [img('b', { primary: true })] }), options);
-    expect(at).toEqual([1, 2]);
-    const restore = refusePuts(storage, WITHHELD_CACHE, () => true);
-    await expect(syncOwnedImages(['h1'], lists({ h1: [img('c', { primary: true })] }), options)).rejects.toThrow('quota');
-    restore();
-    expect(at).toEqual([1, 2]);
-  });
-
   it('deletes a refill of a withheld address from the browsed cache at every later sync', async () => {
     const storage = device();
     await syncOwnedImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('f') })] }), { storage });

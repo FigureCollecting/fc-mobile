@@ -624,6 +624,55 @@ test.describe('a picture whose alpha read is slow while the picture itself is on
   }
 });
 
+test.describe('a read landing after a new list is drawn, before its effects run, still grounds its figure', () => {
+  for (const when of ['between the render and its effects', 'after the effects (control)'] as const) {
+    test(`Ryuko's read lands ${when}: grounded on the narrowed list`, async ({ page }) => {
+      await page.addInitScript((mode) => {
+        // the app's alpha reads of Ryuko and Spike decode for real, then wait for the test before they answer
+        const held = new Map<string, () => void>();
+        const w = window as unknown as { __release: (re: string) => void; __released: string[] };
+        w.__released = [];
+        w.__release = (re: string) => {
+          for (const [src, go] of held) {
+            if (!new RegExp(re).test(src)) continue;
+            go();
+            w.__released.push(src);
+            held.delete(src);
+          }
+        };
+        const decode = HTMLImageElement.prototype.decode;
+        HTMLImageElement.prototype.decode = function (this: HTMLImageElement) {
+          const real = decode.call(this);
+          if (this.crossOrigin !== 'anonymous' || !/\/(ryuuko|spike)-[^/]*\.png$/.test(this.src)) return real;
+          const src = this.src;
+          return real.then(() => new Promise<void>((go) => held.set(src, go)));
+        };
+        // Ryuko's read answers the moment the narrowed list is in the DOM: a microtask, before the next frame runs its effects
+        if (mode === 'between the render and its effects') {
+          new MutationObserver(() => {
+            const names = Array.from(document.querySelectorAll('button.cab-figure')).map((b) => b.getAttribute('aria-label'));
+            if (names.length > 0 && names.every((n) => n === 'Ryuko Matoi')) w.__release('ryuuko');
+          }).observe(document, { subtree: true, childList: true });
+        }
+      }, when);
+      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3', { view: 'wall' }, /^(Ryuko|Spike)/);
+      // the list narrows to the wished figures: Ryuko alone, still being read
+      await page.getByRole('button', { name: 'Refine' }).click();
+      await expectSheetAtRest(page);
+      await page.getByRole('button', { name: 'wished', exact: true }).click();
+      await page.locator('.filter-sheet2__btn--apply').click();
+      await expect(page.locator('button.cab-figure')).toHaveCount(3);
+      if (when === 'after the effects (control)') {
+        await page.waitForTimeout(500);
+        await page.evaluate(() => (window as unknown as { __release: (re: string) => void }).__release('ryuuko'));
+      }
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __released: string[] }).__released.length)).toBeGreaterThan(0);
+      // answered: grounded within a frame or two of the read, never left on its plate until the list changes again
+      await expect(page.locator('button.cab-figure[data-grounded="0"]')).toHaveCount(0, { timeout: 3_000 });
+    });
+  }
+});
+
 test('the case ends where the cabinets do: the room fills the rest, nothing stretches (Ross 09-26)', async ({ page }) => {
   const size = FOLD8.find((v) => v.name === 'fold8-cover')!;
   await openCase(page, size);

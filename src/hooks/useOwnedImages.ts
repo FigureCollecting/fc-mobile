@@ -4,21 +4,25 @@
 // fetched, everything else evicted, a withheld address recorded); out of reach, or when that sync
 // fails, what the last one kept stands and nothing more is asked. A figure answers the image the last
 // sync kept, and only if its bytes were on the device when asked and no sync recorded it withheld; one
-// without is absent, and the case draws its plate. Once a sync completes, or stops because its case
-// view went away after it read the lists (what it withholds then recorded), or leaves an image
-// unfetched (abandoned on a stalled link, refused), or fails after it recorded what it withholds (a
-// write the device refused), each of these told as stopped, no earlier answer of this hook or of
-// useProductImage stands, offline or online, in the document that ran it or in any other open
-// document of the app, each told on a BroadcastChannel (src/hooks/imageAnswers.ts): one being
-// read is read again, one a view shows is asked again, any other is dropped, so neither answers an
-// image that sync withheld (src/hooks/__tests__/imageAnswersAfterSync.test.tsx). An answer that names
-// an address that sync withheld, shown or opened while the document reads what it withheld, stops
-// naming it once that is read, not once the coordinator answers; so does the answer a stopped sync's
-// case view, going away, reverted it to, which stands for when it opens again. A case view told of
-// another document's completed sync answers from what it kept, without a sync of its own; told of a
-// stopped one, a case view inside its own sync (waiting for the lock, or holding it) is left to finish
-// it, its answer standing until then without what that sync withheld, and records what the lists it
-// reads withhold.
+// without is absent, and the case draws its plate.
+// One rule for what a sync tells. Once it has read the lists (they arrived, its case view still open),
+// however it ends, no earlier answer of this hook or of useProductImage stands, offline or online, in
+// the document that ran it or in any other open document of the app, each told on a BroadcastChannel
+// (src/hooks/imageAnswers.ts): as synced when it completes with every image fetched; as stopped when it
+// ends any other way (its case view gone, an image left unfetched: abandoned on a stalled link,
+// refused; a write the device refused, its first record's too). One being read is read again, one a
+// view shows is asked again, any other is dropped, so neither answers an image that sync withheld
+// (src/hooks/__tests__/imageAnswersAfterSync.test.tsx); a withheld mask whose record the device
+// refused is the exception: the case view names it until a later sync records it, though its bytes
+// are gone (src/media/ownedImages.ts). A sync whose read of the lists fails, or whose
+// case view goes away before they arrive, touches no cache and tells nothing: what the last one kept
+// stands. An answer that names an address that sync withheld, shown or opened while the document reads
+// what it withheld, stops naming it once that is read, not once the coordinator answers; so does the
+// answer a stopped sync's case view, going away, reverted it to, which stands for when it opens again.
+// A case view told of another document's completed sync answers from what it kept, without a sync of
+// its own; told of a stopped one, a case view inside its own sync (waiting for the lock, or holding
+// it) is left to finish it, its answer standing until then without what that sync withheld, and
+// records what the lists it reads withhold.
 // Where the browser has Web Locks, documents sync one at a time (src/media/ownedImages.ts), so a sync
 // that read older lists never undoes what a later one withheld. A collection with no image costs a few
 // cache calls, not a few per figure, and a sync stops when the case view goes away (its fetches in
@@ -59,12 +63,13 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
           );
           void dropImageAnswers(client, queryKey);
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
-          // stalled link, refused), it may have recorded what it withholds: the other documents drop
-          // their answers too, and a sync of theirs under way runs on.
+          // stalled link, refused): the other documents drop their answers too, and a sync of theirs
+          // under way runs on.
           tellOwnedSync(client, signal.aborted || synced.failed > 0 ? 'stopped' : 'synced');
         } catch (err) {
-          // Failed after it recorded what it withholds (a later write refused): told as stopped, as one
-          // that leaves an image unfetched is.
+          // Failed or stopped after it read the lists (a write refused, its case view gone): told as
+          // stopped, as one that leaves an image unfetched is. Its own run is spared, neither stopped
+          // nor run again.
           if (read) {
             void dropImageAnswers(client, queryKey);
             tellOwnedSync(client, 'stopped');

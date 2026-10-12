@@ -1,17 +1,17 @@
-// ADDR-1: what a completed owned sync (src/hooks/useOwnedImages.ts) does to the image answers of the
-// case view's hook (useOwnedImages) and the figure page's (useProductImage), in every open document
-// of the app. Each document (a tab, the installed window) has its own QueryClient over the same
-// caches, which hears other documents' syncs from its first image answer on. The one that ran the
-// sync drops its earlier answers but the sync's own, and tells every other one on a BroadcastChannel
-// (never itself); each other one drops all of its earlier answers when told. A case view open in a
-// document told answers again from what that sync kept, without a sync of its own, so two open case
-// views never sync each other. A sync that recorded what it withholds and then failed or was
-// cancelled (a write the device refused, its case view gone) is told too, as stopped; so is one whose
-// case view went away once it began its last kept-list write (while it fetches the images), and one
-// that left an image unfetched (abandoned on a stalled link, refused), its case view open or not: a
-// case view of the told document inside its own sync (waiting for the lock, or holding it) is then
-// left to finish it, reading the lists itself, neither stopped nor asked again. Where the browser has
-// no BroadcastChannel, no other document is told.
+// ADDR-1: what an owned sync (src/hooks/useOwnedImages.ts) that read the lists does to the image
+// answers of the case view's hook (useOwnedImages) and the figure page's (useProductImage), in every
+// open document of the app, however it ends. Each document (a tab, the installed window) has its own
+// QueryClient over the same caches, which hears other documents' syncs from its first image answer on.
+// The one that ran the sync drops its earlier answers but the sync's own, and tells every other one on
+// a BroadcastChannel (never itself); each other one drops all of its earlier answers when told. A sync
+// that completes with every image fetched is told as synced: a case view open in a document told
+// answers again from what that sync kept, without a sync of its own, so two open case views never sync
+// each other. One that ends any other way (its case view gone, an image left unfetched: abandoned on a
+// stalled link, refused; a write the device refused, its first record's too) is told as stopped, its
+// case view open or not: a case view of the told document inside its own sync (waiting for the lock,
+// or holding it) is then left to finish it, reading the lists itself, neither stopped nor asked again.
+// A sync whose read of the lists fails, or whose case view goes away before they arrive, tells nothing.
+// Where the browser has no BroadcastChannel, no other document is told.
 // Every answer that names an address the sync withheld, that case view's too, and the sync's own
 // (the answer its case view's going away reverted it to), shown or opened while the drop reads the
 // record, stops naming it once the record is read, before the drop asks it again (the figure page
@@ -32,7 +32,7 @@ const channels = new WeakMap<QueryClient, BroadcastChannel>();
 const toldOfSync = new WeakMap<QueryClient, Set<string>>();
 /** Per QueryClient, each run of a case view (its query hash) inside its own sync. */
 const inOwnSync = new WeakMap<QueryClient, Set<{ hash: string }>>();
-/** What a document tells the others of its sync: it completed, or it stopped part way (its case view went away, a write refused after its record) or left an image unfetched. */
+/** What a document tells the others of its sync once it read the lists: it completed with every image fetched, or it ended any other way (stopped). */
 export type OwnedSyncEnd = 'synced' | 'stopped';
 
 /** The addresses an image answer names: the figure page's image; each of the case view's images and masks. */
@@ -83,8 +83,8 @@ export async function dropImageAnswers(client: QueryClient, own?: QueryKey, spar
 }
 
 /**
- * Another document's sync completed, or stopped part way or left an image unfetched: drop every image
- * answer, an open case view answering from what that sync kept. Told of a stopped sync, a case view
+ * Another document's sync, past its read of the lists, completed or stopped: drop every image answer,
+ * an open case view answering from what that sync kept. Told of a stopped sync, a case view
  * inside its own sync is left to finish it: it reads the lists after the other let go of the lock, its
  * answer meanwhile naming nothing the record withholds.
  */

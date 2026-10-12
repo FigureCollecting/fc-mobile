@@ -21,9 +21,13 @@
 //                       its bytes and its shown copy are deleted (deletes need no quota), and every
 //                       kept list naming it is replaced, or deleted where the device refuses that
 //                       write, before any other kept list is written, so a write refused or a case
-//                       view gone after that leaves none of them (a record refused part way keeps
-//                       the kept list naming an address it could not record, for the next sync to
-//                       record). An address a fresh list carries again is forgotten before any fetch.
+//                       view gone after that leaves none of them. A record the device refuses, the
+//                       first or a later one, still lets every delete run, then the sync fails,
+//                       keeping the kept list naming the address it could not record for the next
+//                       sync to record: that address's bytes and shown copy are gone, so no kept
+//                       answer names it as an image, but a withheld mask is still named with its
+//                       figure's kept image until that sync. An address a fresh list carries again
+//                       is forgotten before any fetch.
 //                       The worker refuses a recorded address (src/sw.ts), and neither keptImages
 //                       nor useProductImage online answers it, until a fresh list carries it again.
 //
@@ -260,7 +264,9 @@ interface SyncOptions {
  * that named a recorded address, then write every other figure's fresh list and keep exactly each
  * figure's primary image and its mask, fetching what is missing (`concurrency` at a time). Every
  * address a record named before and no fresh list carries is deleted from the worker's browsed cache
- * too, before any list is written.
+ * too, before any list is written. A record the device refuses, even the first, fails the sync once
+ * the deletes ran. `onListsRead` is told once the lists arrived with the signal not aborted, before
+ * any cache is touched: from then on the caller tells the sync's end, however it ends.
  *
  * One document of the app at a time (a tab, the installed window): the sync holds the Web Lock
  * OWNED_SYNC_LOCK from before it reads the lists until its last cache write, so a sync that read the
@@ -361,8 +367,9 @@ async function bringToOwned(
   // Withheld: an address the kept list of a figure still owned named and no fresh list carries. It is
   // remembered before any kept list is replaced or any byte evicted, so a sync that stops part way
   // (a quota error, the page killed) loses no record of it, and the worker refuses it from then on
-  // (src/sw.ts). An address a fresh list carries again is forgotten before any fetch below. When the
-  // first record cannot be written, the sync fails here, having replaced and evicted nothing.
+  // (src/sw.ts). An address a fresh list carries again is forgotten before any fetch below. When a
+  // record cannot be written, the first or a later one, the deletes below still run, then the sync
+  // fails.
   const tomb = await storage.open(WITHHELD_CACHE);
   const remembered = (await tomb.keys()).map((k) => addressOfWithheldKey(k.url));
   const withheld = new Set<string>();
@@ -390,7 +397,8 @@ async function bringToOwned(
   // withholds, and what it no longer keeps, leaves the device even when a later write fails. The kept
   // list of a figure no longer kept is deleted, and when a record was refused, so is one that names a
   // recorded address; but not one that names an address the device refused to record: the next sync
-  // records that from it.
+  // records that from it. That address's bytes and shown copy are deleted all the same (keptImages
+  // then answers no image of it; a mask of it stays named with its figure's image until then).
   const namesRecorded = (head: string) => (beforeOf.get(head) ?? []).some((u) => recorded.has(u));
   for (const key of recordKeys) {
     const head = headOfKey(key.url);

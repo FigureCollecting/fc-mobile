@@ -1,8 +1,8 @@
-// ADDR-1: an image a completed owned sync withheld is not answered again by the case view's hook
-// (useOwnedImages) or the figure page's (useProductImage), offline or online, whatever answer either
-// gave before the sync: in the document that ran it, and in every other open document of the app (a
-// tab, the installed window), each with its own QueryClient over the same caches, told on a
-// BroadcastChannel. Each QueryClient has the app's defaults (src/app.tsx): an answer no view shows is
+// ADDR-1: an image an owned sync withheld, once it read the lists, however it ends, is not answered
+// again by the case view's hook (useOwnedImages) or the figure page's (useProductImage), offline or
+// online, whatever answer either gave before the sync: in the document that ran it, and in every other
+// open document of the app (a tab, the installed window), each with its own QueryClient over the same
+// caches, told on a BroadcastChannel. Each QueryClient has the app's defaults (src/app.tsx): an answer no view shows is
 // kept 30 minutes, and each hook keeps its answers fresh for 10.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
@@ -218,7 +218,7 @@ describe('the case view\'s own answer', () => {
   });
 });
 
-describe('a sync that does not complete', () => {
+describe('a sync whose read of the lists fails', () => {
   it('drops no answer: offline the figure page still answers the kept image, its bytes still on the device', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }]);
@@ -359,7 +359,7 @@ describe('another open document of the app (a tab, the installed window): its ow
     expect(answers).not.toContain(X);
   });
 
-  it('a sync that does not complete tells no other document: their answers stand', async () => {
+  it('a sync whose read of the lists fails tells no other document: their answers stand', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }]);
     await keptX();
@@ -774,7 +774,7 @@ describe('two documents sync at once, and the coordinator withholds the image be
   });
 });
 
-describe('a sync stopped part way, after it recorded what the coordinator withholds: its case view gone while an image fetch stalls, or the stalled fetch abandoned', () => {
+describe('a sync stopped part way, after it read the lists: its case view gone, an image fetch stalled or refused, or a write the device refused', () => {
   const Z = `${D}/${'d'.repeat(64)}`;
   const row = (url: string) => ({ derivativeId: url.slice(-64), role: 'gallery', primary: true, url, width: 600, height: 800 });
   /** The coordinator's lists for two owned figures: the first's images, the second's. */

@@ -51,14 +51,23 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
       hearOwnedSyncs(client);
       const owned = (heads ?? []).slice(0, MAX_OWNED_FIGURES);
       if (reachable && !answersFromKept(client, queryKey)) {
+        let recorded = false;
         try {
-          const synced = await duringOwnSync(client, queryKey, () => syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal }));
+          const synced = await duringOwnSync(client, queryKey, () =>
+            syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal, onRecorded: () => (recorded = true) }),
+          );
           void dropImageAnswers(client, queryKey);
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
           // stalled link, refused), it may have recorded what it withholds: the other documents drop
           // their answers too, and a sync of theirs under way runs on.
           tellOwnedSync(client, signal.aborted || synced.failed > 0 ? 'stopped' : 'synced');
         } catch (err) {
+          // Failed after it recorded what it withholds (a later write refused): told as stopped, as one
+          // that leaves an image unfetched is.
+          if (recorded) {
+            void dropImageAnswers(client, queryKey);
+            tellOwnedSync(client, 'stopped');
+          }
           if (signal.aborted) throw err;
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
         }

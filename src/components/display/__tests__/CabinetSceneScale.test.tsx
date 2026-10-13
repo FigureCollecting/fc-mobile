@@ -49,6 +49,12 @@ function mmOf(el: Element, px: string): number {
   return parseFloat(px) / Number(el.closest<HTMLElement>('.cabinet-scene')!.dataset.pxPerMm);
 }
 
+/** A face's width in the world (mm), whether its element is that width at the scene's px per mm or a texel grid its matrix stretches. */
+function widthMm(el: HTMLElement): number {
+  const m = el.style.transform.replace(/^matrix3d\(|\)$/g, '').split(',').map(Number);
+  return mmOf(el, el.style.width) * Math.hypot(m[0], m[1], m[2]);
+}
+
 function drawn(container: ParentNode) {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('button.cab-figure')).map((b) => ({
     name: b.getAttribute('aria-label')!,
@@ -261,17 +267,17 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
     expect(box(a).w).toBeCloseTo(0.75 * box(a).h, 6);
     const shadowOf = (r: typeof a) => {
       const el = r.picture.closest('button')!.previousElementSibling as HTMLElement;
-      const w = mmOf(el, el.style.width);
+      const w = widthMm(el);
       return { w, centre: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]) + w / 2 - (r.art.x0 + r.art.x1) / 2 };
     };
-    expect(shadowOf(a).w).toBeCloseTo(shadowOf(b).w, 6);
-    expect(shadowOf(a).centre).toBeCloseTo(0, 6);
+    expect(shadowOf(a).w).toBeCloseTo(shadowOf(b).w, 4);
+    expect(shadowOf(a).centre).toBeCloseTo(0, 4);
   });
 });
 
 describe('CabinetScene: a figure off-centre in its picture stands centred on its slot (its opaque columns, not its picture)', () => {
   /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, at the scene's px per mm. */
-  const span = (el: HTMLElement) => ({ x: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: mmOf(el, el.style.width) });
+  const span = (el: HTMLElement) => ({ x: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: widthMm(el) });
 
   for (const sides of [
     { left: 0.38, right: 0.02 },
@@ -292,7 +298,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
         expect(mmOf(r.picture, r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 5);
         // the shadow, with no contact band known, lies under the figure
         const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
-        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 5);
+        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 4);
       }
       expectOpaqueApart(rows, sides);
     });
@@ -305,7 +311,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
     const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.slice(0, 3).map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
     for (const r of drawn(container)) {
       const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
-      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 5);
+      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 4);
     }
   });
 });

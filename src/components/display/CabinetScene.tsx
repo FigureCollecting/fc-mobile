@@ -42,7 +42,20 @@ import {
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
 import { cabinetBox, frameCase, panFraming, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
-import { cullRect, figuresToDraw, nearestCabinets, opaqueBoards, stickyView, texelScale, trimFace, type CullView, type Rect } from './caseCull';
+import {
+  FLAT_GRID,
+  GRADIENT_GRID,
+  cullRect,
+  figuresToDraw,
+  nearestCabinets,
+  opaqueBoards,
+  stickyView,
+  texelScale,
+  trimFace,
+  type CullView,
+  type Rect,
+  type TexelGrid,
+} from './caseCull';
 import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
@@ -61,12 +74,6 @@ const fmt = (v: number): string => {
   return Object.is(r, -0) ? '0' : String(r);
 };
 const num = (v: number): number => Number(fmt(v));
-
-/** A face's own element size in px, when it is not its size in the world at S px per mm. */
-export interface TexelGrid {
-  u: number;
-  v: number;
-}
 
 /**
  * The room's wall and floor are flat gradients, so they are drawn on this
@@ -149,19 +156,19 @@ interface BoxProps {
   faces?: readonly ('front' | 'back' | 'left' | 'right' | 'top' | 'bottom')[];
 }
 
-/** An axis-aligned box as up to six faces, each carrying `cls` plus its own face class for shading. */
+/** An axis-aligned box of one flat colour (steel, wood, a rod) as up to six faces, each carrying `cls` plus its own face class for shading. */
 function Box({ x0, x1, y0, y1, z0, z1, cls, faces = ['front', 'back', 'left', 'right', 'top', 'bottom'] }: BoxProps) {
   const w = x1 - x0;
   const h = y1 - y0;
   const d = z1 - z0;
   const out: ComponentChildren[] = [];
   for (const f of faces) {
-    if (f === 'front') out.push(<Quad key={f} cls={`${cls} f-front`} a={[x0, y1, z1]} u={[w, 0, 0]} v={[0, -h, 0]} />);
-    if (f === 'back') out.push(<Quad key={f} cls={`${cls} f-back`} a={[x0, y1, z0]} u={[w, 0, 0]} v={[0, -h, 0]} />);
-    if (f === 'left') out.push(<Quad key={f} cls={`${cls} f-side`} a={[x0, y1, z0]} u={[0, 0, d]} v={[0, -h, 0]} />);
-    if (f === 'right') out.push(<Quad key={f} cls={`${cls} f-side`} a={[x1, y1, z0]} u={[0, 0, d]} v={[0, -h, 0]} />);
-    if (f === 'top') out.push(<Quad key={f} cls={`${cls} f-top`} a={[x0, y1, z0]} u={[w, 0, 0]} v={[0, 0, d]} />);
-    if (f === 'bottom') out.push(<Quad key={f} cls={`${cls} f-bottom`} a={[x0, y0, z0]} u={[w, 0, 0]} v={[0, 0, d]} />);
+    if (f === 'front') out.push(<Quad key={f} grid={FLAT_GRID} cls={`${cls} f-front`} a={[x0, y1, z1]} u={[w, 0, 0]} v={[0, -h, 0]} />);
+    if (f === 'back') out.push(<Quad key={f} grid={FLAT_GRID} cls={`${cls} f-back`} a={[x0, y1, z0]} u={[w, 0, 0]} v={[0, -h, 0]} />);
+    if (f === 'left') out.push(<Quad key={f} grid={FLAT_GRID} cls={`${cls} f-side`} a={[x0, y1, z0]} u={[0, 0, d]} v={[0, -h, 0]} />);
+    if (f === 'right') out.push(<Quad key={f} grid={FLAT_GRID} cls={`${cls} f-side`} a={[x1, y1, z0]} u={[0, 0, d]} v={[0, -h, 0]} />);
+    if (f === 'top') out.push(<Quad key={f} grid={FLAT_GRID} cls={`${cls} f-top`} a={[x0, y1, z0]} u={[w, 0, 0]} v={[0, 0, d]} />);
+    if (f === 'bottom') out.push(<Quad key={f} grid={FLAT_GRID} cls={`${cls} f-bottom`} a={[x0, y0, z0]} u={[w, 0, 0]} v={[0, 0, d]} />);
   }
   return <>{out}</>;
 }
@@ -181,21 +188,46 @@ function caseFloor(p: CabinetProfile): CabinetSurface {
 const PANE_EDGE_MM = 1;
 
 /**
- * One glass pane a + s u + t v as its four lit edges, clear between them (CC13: edges only, no tint to speak
- * of): a full pane was a layer as large as the cabinet that showed nothing but its edges, and five cabinets of
- * them were half the case's pixels (MOB-NAV-2).
+ * The four edges, `mm` wide, of a flat face a + s u + t v, inside it and meeting at its corners: two along u, two
+ * along v between them. One flat colour each, so each on the flat texel grid.
  */
-function Pane({ a, u, v, cls }: { a: V3; u: V3; v: V3; cls: string }) {
+function Edges({ a, u, v, cls, mm }: { a: V3; u: V3; v: V3; cls: string; mm: number }) {
   const lu = Math.hypot(u[0], u[1], u[2]);
   const lv = Math.hypot(v[0], v[1], v[2]);
-  const eu = times(u, PANE_EDGE_MM / lu);
-  const ev = times(v, PANE_EDGE_MM / lv);
+  const eu = times(u, mm / lu);
+  const ev = times(v, mm / lv);
+  const inner = times(v, 1 - (2 * mm) / lv);
   return (
     <>
-      <Quad cls={cls} a={a} u={u} v={ev} />
-      <Quad cls={cls} a={along(a, u, v, 0, 1 - PANE_EDGE_MM / lv)} u={u} v={ev} />
-      <Quad cls={cls} a={a} u={eu} v={v} />
-      <Quad cls={cls} a={along(a, u, v, 1 - PANE_EDGE_MM / lu, 0)} u={eu} v={v} />
+      <Quad grid={FLAT_GRID} cls={cls} a={a} u={u} v={ev} />
+      <Quad grid={FLAT_GRID} cls={cls} a={along(a, u, v, 0, 1 - mm / lv)} u={u} v={ev} />
+      <Quad grid={FLAT_GRID} cls={cls} a={along(a, u, v, 0, mm / lv)} u={eu} v={inner} />
+      <Quad grid={FLAT_GRID} cls={cls} a={along(a, u, v, 1 - mm / lu, mm / lv)} u={eu} v={inner} />
+    </>
+  );
+}
+
+/**
+ * One glass pane as its four lit edges, clear between them (CC13: edges only, no tint to speak of): a full pane
+ * was a layer as large as the cabinet that showed nothing but its edges, and five cabinets of them were half the
+ * case's pixels (MOB-NAV-2).
+ */
+function Pane({ a, u, v, cls }: { a: V3; u: V3; v: V3; cls: string }) {
+  return <Edges a={a} u={u} v={v} cls={cls} mm={PANE_EDGE_MM} />;
+}
+
+/** How far a rim lies above the face it rims: off its plane, so the two never fight over which draws on top. */
+const RIM_LIFT_MM = 0.3;
+
+/**
+ * A flat horizontal face a + s u + t v (u along x, v along z) of one clear colour with a rim `mm` wide of another,
+ * as its CSS inset edge drew it: the fill and the rim's four edges, each on the flat texel grid.
+ */
+function RimmedFace({ a, u, v, cls, rimCls, mm }: { a: V3; u: V3; v: V3; cls: string; rimCls: string; mm: number }) {
+  return (
+    <>
+      <Quad grid={FLAT_GRID} cls={cls} a={a} u={u} v={v} />
+      <Edges a={[a[0], a[1] + RIM_LIFT_MM, a[2]]} u={u} v={v} cls={rimCls} mm={mm} />
     </>
   );
 }
@@ -225,6 +257,10 @@ function Panes({ slot }: { slot: WallSlot }) {
   return <>{out}</>;
 }
 
+/** A glass shelf's lit rim and a glass top's steel one, mm across (their CSS inset edges before MOB-NAV-2). */
+const GLASS_RIM_MM = 2;
+const GLASS_TOP_RIM_MM = 3;
+
 /** The surfaces inside the body: plates of glass, framed floors, open mesh shelves, wood boards. */
 function Surfaces({ slot }: { slot: WallSlot }) {
   const p = slot.profile;
@@ -242,7 +278,11 @@ function Surfaces({ slot }: { slot: WallSlot }) {
           return (
             <Part key={i} cls={`cab-top ${wood ? 'cab-board' : 'cab-top--framed'}`}>
               <Box x0={x0} x1={x1} y0={y0} y1={s.topMm} z0={-D} z1={0} cls={wood ? 'm-wood' : 'm-steel'} faces={['front', 'left', 'right', 'bottom']} />
-              <Quad cls={wood ? 'm-wood f-top' : 'm-glass-top'} a={[x0, s.topMm, -D]} u={[x1 - x0, 0, 0]} v={[0, 0, D]} />
+              {wood ? (
+                <Quad grid={FLAT_GRID} cls="m-wood f-top" a={[x0, s.topMm, -D]} u={[x1 - x0, 0, 0]} v={[0, 0, D]} />
+              ) : (
+                <RimmedFace cls="m-glass-top" rimCls="m-steel f-rim" mm={GLASS_TOP_RIM_MM} a={[x0, s.topMm, -D]} u={[x1 - x0, 0, 0]} v={[0, 0, D]} />
+              )}
             </Part>
           );
         }
@@ -260,8 +300,8 @@ function Surfaces({ slot }: { slot: WallSlot }) {
           const framed = s.thicknessMm > 8;
           return (
             <Part key={i} cls="cab-shelf cab-shelf--glass">
-              <Quad cls="m-glass-plate" a={[cx - w / 2, s.topMm, zb]} u={[w, 0, 0]} v={[0, 0, zf - zb]} />
-              <Quad cls={framed ? 'm-steel f-front' : 'm-glass-edge'} a={[cx - w / 2, s.topMm, zf]} u={[w, 0, 0]} v={[0, -s.thicknessMm, 0]} />
+              <RimmedFace cls="m-glass-plate" rimCls="m-glass-rim" mm={GLASS_RIM_MM} a={[cx - w / 2, s.topMm, zb]} u={[w, 0, 0]} v={[0, 0, zf - zb]} />
+              <Quad grid={FLAT_GRID} cls={framed ? 'm-steel f-front' : 'm-glass-edge'} a={[cx - w / 2, s.topMm, zf]} u={[w, 0, 0]} v={[0, -s.thicknessMm, 0]} />
             </Part>
           );
         }
@@ -271,14 +311,18 @@ function Surfaces({ slot }: { slot: WallSlot }) {
           return (
             <Part key={i} cls="cab-shelf cab-shelf--open">
               <Quad cls="m-mesh" a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
-              <Quad cls="m-steel f-front" a={[x0, s.topMm, 0]} u={[x1 - x0, 0, 0]} v={[0, -s.thicknessMm, 0]} />
+              <Quad grid={FLAT_GRID} cls="m-steel f-front" a={[x0, s.topMm, 0]} u={[x1 - x0, 0, 0]} v={[0, -s.thicknessMm, 0]} />
             </Part>
           );
         }
         return (
           <Part key={i} cls="cab-shelf cab-shelf--floor">
-            <Quad cls={s.material === 'glass' ? 'm-glass-plate' : 'm-mesh'} a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
-            <Quad cls="m-steel f-front" a={[x0, s.topMm, 0]} u={[x1 - x0, 0, 0]} v={[0, -s.thicknessMm, 0]} />
+            {s.material === 'glass' ? (
+              <RimmedFace cls="m-glass-plate" rimCls="m-glass-rim" mm={GLASS_RIM_MM} a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
+            ) : (
+              <Quad cls="m-mesh" a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
+            )}
+            <Quad grid={FLAT_GRID} cls="m-steel f-front" a={[x0, s.topMm, 0]} u={[x1 - x0, 0, 0]} v={[0, -s.thicknessMm, 0]} />
           </Part>
         );
       })}
@@ -312,9 +356,9 @@ function FrameAndLegs({ slot }: { slot: WallSlot }) {
       ))}
       {corners.map((c, i) => (
         <Part key={`l${i}`} cls={`cab-leg ${splay ? 'cab-leg--splay' : ''}`}>
-          <Quad cls="m-steel f-front" a={[c.x, legTop, c.z + sec]} u={[sec, 0, 0]} v={[c.dx, -legTop, c.dz]} />
-          <Quad cls="m-steel f-side" a={[c.dx < 0 ? c.x : c.x + sec, legTop, c.z]} u={[0, 0, sec]} v={[c.dx, -legTop, c.dz]} />
-          <Quad cls="m-steel f-top cab-foot" a={[c.x + c.dx - 6, 0.5, c.z + c.dz - 4]} u={[sec + 12, 0, 0]} v={[0, 0, sec + 8]} />
+          <Quad grid={FLAT_GRID} cls="m-steel f-front" a={[c.x, legTop, c.z + sec]} u={[sec, 0, 0]} v={[c.dx, -legTop, c.dz]} />
+          <Quad grid={FLAT_GRID} cls="m-steel f-side" a={[c.dx < 0 ? c.x : c.x + sec, legTop, c.z]} u={[0, 0, sec]} v={[c.dx, -legTop, c.dz]} />
+          <Quad grid={FLAT_GRID} cls="m-steel f-top cab-foot" a={[c.x + c.dx - 6, 0.5, c.z + c.dz - 4]} u={[sec + 12, 0, 0]} v={[0, 0, sec + 8]} />
         </Part>
       ))}
     </>
@@ -364,7 +408,7 @@ function Rack({ slot }: { slot: WallSlot }) {
       {p.surfaces.map((s, i) => (
         <Part key={i} cls={`cab-beam ${i === p.surfaces.length - 1 ? 'cab-top' : ''}`}>
           <Box x0={x0} x1={x1} y0={s.topMm - s.thicknessMm} y1={s.topMm} z0={-D} z1={0} cls="m-steel" faces={['front', 'left', 'right', 'bottom']} />
-          <Quad cls="m-board" a={[x0 + post / 2, s.topMm, -D + post / 2]} u={[x1 - x0 - post, 0, 0]} v={[0, 0, D - post]} />
+          <Quad grid={GRADIENT_GRID} cls="m-board" a={[x0 + post / 2, s.topMm, -D + post / 2]} u={[x1 - x0 - post, 0, 0]} v={[0, 0, D - post]} />
         </Part>
       ))}
     </>
@@ -522,7 +566,7 @@ function SceneFigure({
     JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
   return (
     <>
-      <Quad cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, z - shadowD / 2]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} />
+      <Quad grid={GRADIENT_GRID} cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, z - shadowD / 2]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} />
       <button
         type="button"
         class={`q cab-figure ${placed.tooDeep ? 'cab-figure--overhang' : ''}`}
@@ -664,9 +708,13 @@ export function CabinetScene({
 
   const lastIndex = wall.cabinets.length - 1;
   const focusIdx = Math.min(focus, lastIndex);
-  const framingInput = { frame, wall, headroomMm, view: prefs.view, focus: focusIdx, shelf, ceilingMm };
-  const base = frameCase(framingInput);
-  const pages = prefs.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i]);
+  // the framing and the wall's pages hold for a whole swipe: worked out once per view, not at every finger move
+  const framingInput = useMemo(
+    () => ({ frame, wall, headroomMm, view: prefs.view, focus: focusIdx, shelf, ceilingMm }),
+    [frame, wall, headroomMm, prefs.view, focusIdx, shelf, ceilingMm],
+  );
+  const base = useMemo(() => frameCase(framingInput), [framingInput]);
+  const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
   const pageIdx = pages.findIndex((p) => p.includes(focusIdx));
   const walked = walkX === null ? base : { ...base, camera: { ...base.camera, x: walkX }, look: [walkX, base.look[1], base.look[2]] as const };
   const swiping = prefs.swipe === 'camera' && liveDx !== 0;
@@ -968,8 +1016,9 @@ const styles = `
       #2c2e33;
   }
   /* CC13: glass is clear, edges only, no reflections or tint to speak of (Ross 09-27) */
-  .cabinet-scene .m-glass-plate { background: rgba(190, 226, 230, 0.07); box-shadow: inset 0 0 0 calc(2px * var(--s, 1)) rgba(196, 236, 236, 0.45); }
-  .cabinet-scene .m-glass-top { background: rgba(190, 226, 230, 0.10); box-shadow: inset 0 0 0 calc(3px * var(--s, 1)) #1d1e22; }
+  .cabinet-scene .m-glass-plate { background: rgba(190, 226, 230, 0.07); }
+  .cabinet-scene .m-glass-rim { background: rgba(196, 236, 236, 0.45); }
+  .cabinet-scene .m-glass-top { background: rgba(190, 226, 230, 0.10); }
   .cabinet-scene .m-glass-edge { background: rgba(176, 232, 232, 0.8); }
   .cabinet-scene .cab-pane { background: rgba(190, 236, 236, 0.25); }
   .cabinet-scene .cab-shadow {
@@ -1032,7 +1081,8 @@ const styles = `
     text-overflow: ellipsis;
     padding: 0 calc(4px * var(--s, 1));
   }
-  .cabinet-scene__nav { position: absolute; inset: 0; pointer-events: none; }
+  /* no box of its own: a layer the size of the scene over the 3D faces, for two buttons (MOB-NAV-2) */
+  .cabinet-scene__nav { display: contents; }
   .cabinet-scene__step {
     position: absolute;
     top: 50%;

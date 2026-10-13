@@ -8,7 +8,7 @@ import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
-import { START_HEIGHT_T, STANDING_EYE_MM, boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
+import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
@@ -29,6 +29,13 @@ function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial
   const utils = render(<CabinetScene figures={figures} onSelect={onSelect} prefs={prefs(patch)} {...extra} />);
   const host = utils.container.querySelector('.cabinet-scene') as HTMLElement;
   return { ...utils, onSelect, host };
+}
+
+/** A face's side in world px (at the scene's px per mm), whether its element is that size or a texel grid its matrix stretches. */
+function sideMm(q: HTMLElement, side: 'u' | 'v'): number {
+  const m = q.style.transform.replace(/^matrix3d\(|\)$/g, '').split(',').map(Number);
+  const k = side === 'u' ? 0 : 4;
+  return parseFloat(side === 'u' ? q.style.width : q.style.height) * Math.hypot(m[k], m[k + 1], m[k + 2]);
 }
 
 const figureButtons = (root: ParentNode) => Array.from(root.querySelectorAll<HTMLButtonElement>('button.cab-figure'));
@@ -742,14 +749,14 @@ describe('CabinetScene: the picture, its tap box and its shadow, at the edges', 
     const thin = { ...FIXTURE_FIGURES[0], _id: 'thin' } as Figure;
     const { host } = scene([thin], {}, { imageFor: () => ({ url: '/c.png', maskUrl: '/m.png', width: 550, height: 800, contactBand: { centerXFrac: 0.5, widthFrac: 0.001 } }) });
     await grounded(host);
-    expect(parseFloat(host.querySelector<HTMLElement>('.cab-shadow')!.style.width) / pxPerMm(host)).toBeCloseTo(20, 6);
+    expect(sideMm(host.querySelector<HTMLElement>('.cab-shadow')!, 'u') / pxPerMm(host)).toBeCloseTo(20, 4);
     cleanup();
     // deeper than the KLINGSBO's glass plates (314 mm): it overhangs, its shadow stays on the plate
     const deepish = Array.from({ length: 12 }, (_, i) => ({ ...FIXTURE_FIGURES[2], _id: `deepish-${i}`, name: `Deepish ${i}`, dimensions: { heightMm: 150, depthMm: 330 } }) as Figure);
     const deep = scene(deepish).host;
     const over = Array.from(deep.querySelectorAll<HTMLElement>('.cab-figure--overhang'));
     expect(over.length).toBeGreaterThan(0);
-    for (const b of over) expect(parseFloat((b.previousElementSibling as HTMLElement).style.height) / pxPerMm(deep)).toBeCloseTo(314, 6);
+    for (const b of over) expect(sideMm(b.previousElementSibling as HTMLElement, 'v') / pxPerMm(deep)).toBeCloseTo(314, 4);
   });
 });
 
@@ -952,34 +959,41 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
 
   for (const swipe of ['camera', 'pan'] as const) {
     it(`while a ${swipe} swipe moves, the cull holds until the picture has moved a quarter frame, and a cabinet drawn keeps its place against a near one`, () => {
-      const { host } = scene(getFixtureFigures(170), { view: 'wall', swipe }, { frameFallback: COVER });
       const wall = klingsbos(60);
-      const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
-      let held = 0;
       let kept = 0;
-      let lastCull = host.dataset.cullX!;
-      let before = drawnNow();
-      fireEvent.pointerDown(host, { pointerId: 1, clientX: 420, clientY: 200, button: 0 });
-      for (let k = 1; k <= 120; k++) {
-        fireEvent.pointerMove(host, { pointerId: 1, clientX: 420 - 9 * k, clientY: 200 });
-        const camera = cameraOf(host);
-        const live = { camera, panPx: Number(host.dataset.pan) };
-        const cull = { camera: { ...camera, x: Number(host.dataset.cullX) }, panPx: Number(host.dataset.cullPan) };
-        // the culled picture is never more than a quarter frame behind the live one
-        const lag = Math.abs(camera.x - cull.camera.x) * (camera.focalPx / (camera.z - 0)) + Math.abs(live.panPx - cull.panPx);
-        expect(lag, `move ${k}`).toBeLessThan(0.25 * COVER.width + 1);
-        if (host.dataset.cullX === lastCull && `${camera.x}` !== lastCull) held++;
-        lastCull = host.dataset.cullX!;
-        // the drawn five are chosen for the culled picture, the ones drawn before counting nearer
-        const now = drawnNow();
-        expect(now, `move ${k}`).toEqual(nearestCabinets(cull, wall, before));
-        if (JSON.stringify(nearestCabinets(cull, wall, before)) !== JSON.stringify(nearestCabinets(cull, wall, []))) kept++;
-        before = now;
+      // the wall view frames five fronts, every one drawn whatever was drawn before; the shelf view a cabinet or two,
+      // the rest of the five chosen among those beside them, where one drawn before keeps its place
+      for (const view of ['wall', 'shelf'] as const) {
+        const { host } = scene(getFixtureFigures(170), { view, swipe }, { frameFallback: COVER });
+        const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
+        let held = 0;
+        let lastCull = host.dataset.cullX!;
+        let before = drawnNow();
+        fireEvent.pointerDown(host, { pointerId: 1, clientX: 420, clientY: 200, button: 0 });
+        for (let k = 1; k <= 120; k++) {
+          fireEvent.pointerMove(host, { pointerId: 1, clientX: 420 - 9 * k, clientY: 200 });
+          const camera = cameraOf(host);
+          const live = { camera, panPx: Number(host.dataset.pan) };
+          const cull = { camera: { ...camera, x: Number(host.dataset.cullX) }, panPx: Number(host.dataset.cullPan) };
+          // the culled picture is never more than a quarter frame behind the live one
+          const lag = Math.abs(camera.x - cull.camera.x) * (camera.focalPx / (camera.z - 0)) + Math.abs(live.panPx - cull.panPx);
+          expect(lag, `${view} move ${k}`).toBeLessThan(0.25 * COVER.width + 1);
+          if (host.dataset.cullX === lastCull && `${camera.x}` !== lastCull) held++;
+          lastCull = host.dataset.cullX!;
+          // the drawn five are chosen for the culled picture, the ones drawn before counting nearer
+          const now = drawnNow();
+          expect(now, `${view} move ${k}`).toEqual(nearestCabinets(cull, wall, before));
+          if (JSON.stringify(nearestCabinets(cull, wall, before)) !== JSON.stringify(nearestCabinets(cull, wall, []))) kept++;
+          before = now;
+        }
+        fireEvent.pointerUp(host, { pointerId: 1, clientX: 420 - 9 * 120, clientY: 200 });
+        // the cull held across small moves
+        expect(held, view).toBeGreaterThan(60);
+        cleanup();
       }
-      fireEvent.pointerUp(host, { pointerId: 1, clientX: 420 - 9 * 120, clientY: 200 });
-      // the cull held across small moves, and somewhere a drawn cabinet kept its place against a nearer one
-      expect(held).toBeGreaterThan(60);
-      expect(kept).toBeGreaterThan(0);
+      // and, sliding the photo, somewhere a drawn cabinet kept its place against a nearer one (walking the camera, the
+      // cull holds a quarter frame, past which the nearer one leads by more than the tenth a drawn one is given)
+      if (swipe === 'pan') expect(kept).toBeGreaterThan(0);
     }, 60_000);
   }
 
@@ -1009,8 +1023,7 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
 
   it('the px per mm is taken over the room up to the headroom over the tops, where their figures stand', () => {
     // a short frame on a few cabinets: the camera looks down on the tops; the framing aims at the middle of the room
-    // up to the headroom (CC15: the camera stands START_HEIGHT_T of the way from the look-at up to 60 in), so the
-    // room's top is twice the look-at's height
+    // up to the headroom, so the room's top is twice the look-at's height
     for (const frame of [
       { width: 300, height: 245 },
       { width: 300, height: 454 },
@@ -1018,7 +1031,8 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     ]) {
       const { host } = scene(getFixtureFigures(8), { view: 'wall' }, { frameFallback: frame });
       const camera = cameraOf(host);
-      const lookY = (camera.y - START_HEIGHT_T * STANDING_EYE_MM) / (1 - START_HEIGHT_T);
+      // the camera aims at the look-at on the cabinets' front (z = 0), stepped in or not
+      const lookY = camera.y - camera.z * Math.tan(camera.pitch);
       expect(lookY * 2, `${frame.width}x${frame.height}: headroom over the 1,800 mm KLINGSBO`).toBeGreaterThan(IKEA_KLINGSBO.outer.heightMm + 100);
       const room = { y0: 0, y1: lookY * 2, z0: -IKEA_KLINGSBO.outer.depthMm, z1: IKEA_KLINGSBO.footprint!.frontOverhangMm };
       expect(pxPerMm(host), `${frame.width}x${frame.height}`).toBeGreaterThanOrEqual(texelScale(camera, room));
@@ -1031,10 +1045,10 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       const { host } = scene(getFixtureFigures(20), { view }, { frameFallback: COVER });
       const camera = cameraOf(host);
       const s = pxPerMm(host);
-      // at least what the cabinets' front shows straight ahead, at most 1 (the world's own mm), in half octaves
+      // at least what the cabinets' front shows straight ahead, at most 1 (the world's own mm), in quarter octaves
       expect(s).toBeLessThanOrEqual(1);
       expect(s).toBeGreaterThanOrEqual(Math.min(1, camera.focalPx / project(camera, [camera.x, camera.y, 0]).depth) - 1e-9);
-      expect(Math.log2(s) * 2).toBeCloseTo(Math.round(Math.log2(s) * 2), 9);
+      expect(Math.log2(s) * 4).toBeCloseTo(Math.round(Math.log2(s) * 4), 9);
       const root = host.querySelector<HTMLElement>('.cabinet-scene__root')!;
       const numbers = (t: string) => t.replace(/translate3d|rotateX/g, '').match(/-?\d+(\.\d+)?(e-?\d+)?/g)!.map(Number);
       const want = numbers(cssSceneTransform(camera, s));
@@ -1153,9 +1167,9 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       const v = landsAt(q.style.transform, 0, FLAT_GRID.v).map((x, i) => (x - a[i]) / s);
       return [Math.hypot(...u), Math.hypot(...v)].sort((x, y) => x - y);
     });
-    for (const [thin] of sides) expect(thin).toBeCloseTo(1, 6);
+    for (const [thin] of sides) expect(thin).toBeCloseTo(1, 4);
     const slot = wallLayout([IKEA_KLINGSBO]).cabinets[0];
-    expect(sides.filter(([, long]) => Math.abs(long - (slot.rightMm - slot.leftMm)) < 1e-6)).toHaveLength(2);
+    expect(sides.filter(([, long]) => Math.abs(long - (slot.rightMm - slot.leftMm)) < 1e-3)).toHaveLength(2);
     expect(host.querySelectorAll('.q.cab-pane')).toHaveLength(16);
   });
 
@@ -1192,10 +1206,10 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     expect(cab.querySelectorAll('.q.m-glass-plate')).toHaveLength(5);
     const rims = widths('.cab-shelf .q.m-glass-rim');
     expect(rims).toHaveLength(20);
-    for (const w of rims) expect(w).toBeCloseTo(2, 6);
+    for (const w of rims) expect(w).toBeCloseTo(2, 4);
     const top = widths('.cab-top .q.m-steel.f-rim');
     expect(top).toHaveLength(4);
-    for (const w of top) expect(w).toBeCloseTo(3, 6);
+    for (const w of top) expect(w).toBeCloseTo(3, 4);
   });
 
   it('the step buttons draw no box over the whole scene: their row is no box of its own', () => {

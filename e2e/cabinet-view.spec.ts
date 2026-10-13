@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
+import { atRest, takesTap } from './sheetRest';
 import { project, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
@@ -977,6 +978,29 @@ test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; the View ca
   await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-swipe', 'pan');
   expect(JSON.parse((await page.evaluate(() => localStorage.getItem('fc-case-prefs')))!).swipe).toBe('pan');
 });
+
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  test(`CC5 ${size.name}: the View card ends at the tab bar and a tap reaches every choice in it`, async ({ page }) => {
+    await openCase(page, size);
+    await page.getByRole('button', { name: 'View' }).click();
+    const card = page.locator('.bottom-sheet');
+    await atRest(card);
+    const bar = (await page.locator('.tab-bar').boundingBox())!;
+    const shown = (await card.boundingBox())!;
+    expect.soft(shown.y + shown.height, 'the card ends at the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
+    const choices = card.locator('label.case-card__choice');
+    // three views, the cabinet walls, the two swipes
+    expect(await choices.count()).toBeGreaterThanOrEqual(7);
+    const missed: string[] = [];
+    for (const choice of await choices.all()) {
+      const { hit, at } = await takesTap(choice, '.bottom-sheet__content');
+      if (!hit) missed.push(`${(await choice.innerText()).trim()} @${at}`);
+    }
+    expect(missed).toEqual([]);
+    // the card scrolled itself, never the screen behind it
+    expect(await page.locator('.app-content').evaluate((el) => el.scrollTop)).toBe(0);
+  });
+}
 
 test('masked art: the clean copy composited with its mask at display time (CSS mask-image)', async ({ page }) => {
   await openCase(page, FOLD8[0], '&fxbranch=masked', { view: 'shelf' });

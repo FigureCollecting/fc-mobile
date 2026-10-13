@@ -5,10 +5,10 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, trimFace } from '../caseCull';
+import { MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
-import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
+import { START_HEIGHT_T, STANDING_EYE_MM, boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
@@ -947,6 +947,39 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     });
   }
 
+  for (const swipe of ['camera', 'pan'] as const) {
+    it(`while a ${swipe} swipe moves, the cull holds until the picture has moved a quarter frame, and a cabinet drawn keeps its place against a near one`, () => {
+      const { host } = scene(getFixtureFigures(170), { view: 'wall', swipe }, { frameFallback: COVER });
+      const wall = klingsbos(60);
+      const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
+      let held = 0;
+      let kept = 0;
+      let lastCull = host.dataset.cullX!;
+      let before = drawnNow();
+      fireEvent.pointerDown(host, { pointerId: 1, clientX: 420, clientY: 200, button: 0 });
+      for (let k = 1; k <= 120; k++) {
+        fireEvent.pointerMove(host, { pointerId: 1, clientX: 420 - 9 * k, clientY: 200 });
+        const camera = cameraOf(host);
+        const live = { camera, panPx: Number(host.dataset.pan) };
+        const cull = { camera: { ...camera, x: Number(host.dataset.cullX) }, panPx: Number(host.dataset.cullPan) };
+        // the culled picture is never more than a quarter frame behind the live one
+        const lag = Math.abs(camera.x - cull.camera.x) * (camera.focalPx / (camera.z - 0)) + Math.abs(live.panPx - cull.panPx);
+        expect(lag, `move ${k}`).toBeLessThan(0.25 * COVER.width + 1);
+        if (host.dataset.cullX === lastCull && `${camera.x}` !== lastCull) held++;
+        lastCull = host.dataset.cullX!;
+        // the drawn five are chosen for the culled picture, the ones drawn before counting nearer
+        const now = drawnNow();
+        expect(now, `move ${k}`).toEqual(nearestCabinets(cull, wall, before));
+        if (JSON.stringify(nearestCabinets(cull, wall, before)) !== JSON.stringify(nearestCabinets(cull, wall, []))) kept++;
+        before = now;
+      }
+      fireEvent.pointerUp(host, { pointerId: 1, clientX: 420 - 9 * 120, clientY: 200 });
+      // the cull held across small moves, and somewhere a drawn cabinet kept its place against a nearer one
+      expect(held).toBeGreaterThan(60);
+      expect(kept).toBeGreaterThan(0);
+    });
+  }
+
   it('a dense wall (some 1,500 small figures) draws at most 250 of them, in every view, walked or panned (Ross 12:2xC)', () => {
     const small = FIXTURE_FIGURES.filter((f) => f._id === 'fx-spike' || f._id === 'fx-miku-nendo');
     expect(small).toHaveLength(2);
@@ -969,6 +1002,25 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     }
     // the wall is dense: the case draws far more of it than of an ordinary one
     expect(most).toBeGreaterThan(100);
+  });
+
+  it('the px per mm is taken over the room up to the headroom over the tops, where their figures stand', () => {
+    // a short frame on a few cabinets: the camera looks down on the tops; the framing aims at the middle of the room
+    // up to the headroom (CC15: the camera stands START_HEIGHT_T of the way from the look-at up to 60 in), so the
+    // room's top is twice the look-at's height
+    for (const frame of [
+      { width: 300, height: 245 },
+      { width: 300, height: 454 },
+      { width: 360, height: 245 },
+    ]) {
+      const { host } = scene(getFixtureFigures(8), { view: 'wall' }, { frameFallback: frame });
+      const camera = cameraOf(host);
+      const lookY = (camera.y - START_HEIGHT_T * STANDING_EYE_MM) / (1 - START_HEIGHT_T);
+      expect(lookY * 2, `${frame.width}x${frame.height}: headroom over the 1,800 mm KLINGSBO`).toBeGreaterThan(IKEA_KLINGSBO.outer.heightMm + 100);
+      const room = { y0: 0, y1: lookY * 2, z0: -IKEA_KLINGSBO.outer.depthMm, z1: IKEA_KLINGSBO.footprint!.frontOverhangMm };
+      expect(pxPerMm(host), `${frame.width}x${frame.height}`).toBeGreaterThanOrEqual(texelScale(camera, room));
+      cleanup();
+    }
   });
 
   it('the faces are drawn at the px per mm the screen shows them, and the camera draws them there', () => {

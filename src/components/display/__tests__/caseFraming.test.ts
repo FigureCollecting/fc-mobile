@@ -8,7 +8,10 @@ import {
   STEP_BACK_MAX_MM,
   cabinetBox,
   frameCase,
+  PAN_EDGE_TAN_MAX,
+  panFraming,
   panLimitsPx,
+  panSlideMaxPx,
   swipeCamera,
   cabinetsInReach,
   wallPages,
@@ -222,6 +225,70 @@ describe('CC4 swipe: move the camera along the wall, or pan the drawn wall like 
       }),
     );
   });
+});
+
+describe('CC4 pan: the photo slides at most until its edge looks PAN_EDGE_TAN_MAX off the axis; past that it is retaken farther along', () => {
+  // about 1,200 figures: a hundred KLINGSBOs, panned from one end of the wall to the other
+  const long = wallLayout(Array(100).fill(IKEA_KLINGSBO));
+  const headroomMm = Array(100).fill(300);
+  const room = {
+    y0: 0,
+    y1: 2438.4,
+    z0: -IKEA_KLINGSBO.outer.depthMm,
+    z1: IKEA_KLINGSBO.footprint?.frontOverhangMm ?? 0,
+  };
+  for (const [name, frame] of [['cover', COVER], ['open', OPEN]] as const) {
+    const base = frameCase(input({ frame, wall: long, headroomMm, view: 'wall' }));
+    const [panMin] = panLimitsPx(base, long);
+    const slide = panSlideMaxPx(base.camera);
+
+    it(`${name}: the slide ends where the frame's edge looks PAN_EDGE_TAN_MAX off the axis`, () => {
+      expect(slide).toBeCloseTo(base.camera.focalPx * PAN_EDGE_TAN_MAX - frame.width / 2, 9);
+      expect(slide).toBeGreaterThan(frame.width / 2);
+      expect(panSlideMaxPx({ ...base.camera, focalPx: 1 })).toBe(0);
+    });
+
+    it(`${name}: within the slide the camera stays and the picture slides by the pan`, () => {
+      const r = panFraming(base, -slide + 1);
+      expect(r.framing).toBe(base);
+      expect(r.panPx).toBe(-slide + 1);
+      expect(panFraming(base, slide).panPx).toBe(slide);
+    });
+
+    it(`${name}: past it the camera walks by the rest; the look line draws where the slid photo puts it`, () => {
+      fc.assert(
+        fc.property(fc.double({ min: panMin, max: -panMin, noNaN: true }), fc.double({ min: -20000, max: 100000, noNaN: true }), (pan, x) => {
+          const r = panFraming(base, pan);
+          expect(Math.abs(r.panPx)).toBeLessThanOrEqual(slide + 1e-9);
+          expect(Math.sign(r.panPx)).toBe(Math.sign(pan));
+          expect(r.framing.camera.y).toBe(base.camera.y);
+          expect(r.framing.camera.pitch).toBe(base.camera.pitch);
+          expect(r.framing.look[0] - r.framing.camera.x).toBeCloseTo(base.look[0] - base.camera.x, 6);
+          const p = [x, base.look[1], base.look[2]] as const;
+          expect(project(r.framing.camera, p).x + r.panPx).toBeCloseTo(project(base.camera, p).x + pan, 6);
+        }),
+      );
+    });
+
+    it(`${name}: the cabinets drawn stay bounded however far the wall is panned, and its far end is reached`, () => {
+      const reach = (pan: number) => {
+        const r = panFraming(base, pan);
+        return wallReachMm(r.framing.camera, r.panPx, room, 600);
+      };
+      const width = (pan: number) => reach(pan)[1] - reach(pan)[0];
+      const drawn = (pan: number) => cabinetsInReach(long, reach(pan));
+      // the stretch that can draw never grows past where the photo stops sliding, so a few more cabinets
+      // than at rest are drawn at most (the unbounded photo drew 34 of them at -8000 px)
+      const widest = width(-slide);
+      const most = drawn(0).length + 5;
+      for (let pan = 0; pan >= panMin; pan -= 400) {
+        expect(width(pan), `pan ${pan}`).toBeLessThanOrEqual(widest + 1e-6);
+        expect(drawn(pan).length, `pan ${pan}`).toBeLessThanOrEqual(most);
+      }
+      expect(width(panMin)).toBeCloseTo(widest, 6);
+      expect(drawn(panMin)).toContain(99);
+    });
+  }
 });
 
 describe('wallReachMm: the stretch of wall that can draw into the frame', () => {

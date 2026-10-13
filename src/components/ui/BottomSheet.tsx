@@ -3,7 +3,8 @@ import { type ComponentChildren } from 'preact';
 import { motion, AnimatePresence, useDragControls } from 'framer-motion';
 import { Style } from '../../styles/Style';
 
-type SnapPoint = 'closed' | 'half' | 'full';
+/** 'fit': as tall as its content, at most 85 % of the space it opens in and never past its top, its body scrolling the rest; its bottom just above the raised +. */
+type SnapPoint = 'closed' | 'half' | 'full' | 'fit';
 
 interface BottomSheetProps {
   open: boolean;
@@ -16,6 +17,7 @@ const SNAP_POSITIONS = {
   closed: '100%',
   half: '50%',
   full: '6%',
+  fit: '0%',
 } as const;
 
 export function BottomSheet({ open, onClose, snapPoint = 'half', children }: BottomSheetProps) {
@@ -48,7 +50,7 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
 
           <motion.div
             ref={sheetRef}
-            class="bottom-sheet"
+            class={snapPoint === 'fit' ? 'bottom-sheet bottom-sheet--fit' : 'bottom-sheet'}
             initial={{ y: '100%' }}
             animate={{ y: SNAP_POSITIONS[snapPoint] }}
             exit={{ y: '100%' }}
@@ -91,6 +93,19 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
               display: flex;
               flex-direction: column;
               touch-action: none;
+            }
+
+            /* it ends above the + the tab bar raises into the screen (IC1-R2: top = fab / -1.25), so nothing covers it;
+               on a short panel it stops 8px below the top of the space above the tab bar, never past it */
+            .bottom-sheet--fit {
+              bottom: calc(var(--fab-size) / 1.25 + 4px);
+              height: auto;
+              max-height: min(85%, calc(100% - var(--fab-size) / 1.25 - 4px - 8px));
+            }
+
+            .bottom-sheet--fit .bottom-sheet__content {
+              flex: 0 1 auto;
+              min-height: 0;
             }
 
             .bottom-sheet__handle-area {

@@ -5,6 +5,8 @@
  * playable toggle so Ross decides hands-on), the room's ceiling (CC9, which
  * limits what may stand on a top) and which side the tabs sit on.
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
+ * The card fits above the tab bar and scrolls its body, so a tap reaches
+ * every choice on either Fold8 panel (CC5).
  */
 import { BottomSheet } from '../ui/BottomSheet';
 import { Style } from '../../styles/Style';
@@ -33,7 +35,7 @@ interface CaseViewCardProps {
 export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
   return (
-    <BottomSheet open={open} onClose={onClose} snapPoint="half">
+    <BottomSheet open={open} onClose={onClose} snapPoint="fit">
       <div class="case-card">
         <fieldset class="case-card__group">
           <legend>View</legend>

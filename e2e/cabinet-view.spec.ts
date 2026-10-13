@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
+import { atRest, takesTap } from './sheetRest';
 import { project, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
@@ -73,9 +74,10 @@ async function cameraOf(page: Page): Promise<Camera> {
   return { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
 }
 
-/** Each figure's on-screen box (CSS px, relative to the scene) and the box the camera maths predicts for it. */
+/** Each figure's on-screen box (CSS px, relative to the scene) and the box the camera maths predicts for it, slid by the pan. */
 async function drawnVsPredicted(page: Page) {
   const camera = await cameraOf(page);
+  const pan = Number(await page.locator('.cabinet-scene').getAttribute('data-pan'));
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const figures = await page.locator('button.cab-figure').evaluateAll((els) =>
     els.map((el) => {
@@ -91,8 +93,8 @@ async function drawnVsPredicted(page: Page) {
       world: w,
       drawn: { left: f.left - scene.x, right: f.right - scene.x, top: f.top - scene.y, bottom: f.bottom - scene.y },
       predicted: {
-        left: Math.min(...corners.map((c) => c.x)),
-        right: Math.max(...corners.map((c) => c.x)),
+        left: Math.min(...corners.map((c) => c.x)) + pan,
+        right: Math.max(...corners.map((c) => c.x)) + pan,
         top: Math.min(...corners.map((c) => c.y)),
         bottom: Math.max(...corners.map((c) => c.y)),
       },
@@ -134,6 +136,25 @@ for (const size of FOLD8) {
       }
     });
   }
+}
+
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  test(`the browser draws every figure where the camera maths puts it: panned past the slide, the photo retaken farther along, ${size.name}`, async ({ page }) => {
+    // about 1,200 figures, the whole wall; six swipes slide the picture to its edge and walk its camera on (CC6)
+    await openCase(page, size, '&fx=170', { view: 'wall', swipe: 'pan' });
+    const x0 = (await cameraOf(page)).x;
+    for (let i = 0; i < 6; i++) await swipe(page, -400);
+    await settle(page);
+    expect((await cameraOf(page)).x, 'the camera walked on').toBeGreaterThan(x0 + 1000);
+    expect(Number(await page.locator('.cabinet-scene').getAttribute('data-pan')), 'the picture slid').toBeLessThan(-100);
+    const rows = await drawnVsPredicted(page);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      for (const edge of ['left', 'right', 'top', 'bottom'] as const) {
+        expect(Math.abs(r.drawn[edge] - r.predicted[edge]), `${r.name} ${edge}`).toBeLessThan(1.5);
+      }
+    }
+  });
 }
 
 /** The lowest scene y (CSS px) of what the view frames: the focus cabinet's front feet, or the shelf view's surface edge. */
@@ -977,6 +998,55 @@ test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; the View ca
   await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-swipe', 'pan');
   expect(JSON.parse((await page.evaluate(() => localStorage.getItem('fc-case-prefs')))!).swipe).toBe('pan');
 });
+
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  test(`CC5 ${size.name}: the View card ends above the tab bar and its + and a tap reaches every choice in it`, async ({ page }) => {
+    await openCase(page, size);
+    await page.getByRole('button', { name: 'View' }).click();
+    const card = page.locator('.bottom-sheet');
+    await atRest(card);
+    const bar = (await page.locator('.tab-bar').boundingBox())!;
+    const shown = (await card.boundingBox())!;
+    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    expect.soft(shown.y + shown.height, 'the card ends above the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
+    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    const choices = card.locator('label.case-card__choice');
+    // three views, the cabinet walls, the two swipes
+    expect(await choices.count()).toBeGreaterThanOrEqual(7);
+    const missed: string[] = [];
+    for (const choice of await choices.all()) {
+      const { hit, at } = await takesTap(choice, '.bottom-sheet__content');
+      if (!hit) missed.push(`${(await choice.innerText()).trim()} @${at}`);
+    }
+    expect(missed).toEqual([]);
+    // the card scrolled itself, never the screen behind it
+    expect(await page.locator('.app-content').evaluate((el) => el.scrollTop)).toBe(0);
+  });
+}
+
+for (const routePx of [325, 301]) {
+  test(`CC5 a ${routePx} px route box (a short panel): the View card never rises past the top edge, and a tap reaches every choice`, async ({ page }) => {
+    const sideways = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover-sideways')!;
+    await openCase(page, sideways);
+    // the route box runs from the top of the screen down to the tab bar: size the window so it is routePx tall
+    const barAt = (await page.locator('.tab-bar').boundingBox())!.y;
+    await page.setViewportSize({ width: sideways.width, height: Math.round(sideways.height + routePx - barAt) });
+    await expect.poll(async () => Math.round((await page.locator('.tab-bar').boundingBox())!.y)).toBe(routePx);
+    await page.getByRole('button', { name: 'View' }).click();
+    const card = page.locator('.bottom-sheet');
+    await atRest(card);
+    const shown = (await card.boundingBox())!;
+    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    expect.soft(shown.y, 'the card keeps a gap below the top edge').toBeGreaterThanOrEqual(4);
+    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    const missed: string[] = [];
+    for (const choice of await card.locator('label.case-card__choice').all()) {
+      const { hit, at } = await takesTap(choice, '.bottom-sheet__content');
+      if (!hit) missed.push(`${(await choice.innerText()).trim()} @${at}`);
+    }
+    expect(missed).toEqual([]);
+  });
+}
 
 test('masked art: the clean copy composited with its mask at display time (CSS mask-image)', async ({ page }) => {
   await openCase(page, FOLD8[0], '&fxbranch=masked', { view: 'shelf' });

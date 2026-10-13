@@ -8,7 +8,7 @@ import { IKEA_KLINGSBO } from '../cabinetPresets';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, wallReachMm } from '../caseFraming';
 import { CEILING_DEFAULT_MM } from '../cabinetProfile';
-import { boxCorners, project, type Camera } from '../caseCamera';
+import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
@@ -323,6 +323,50 @@ describe('CabinetScene: views and navigation', () => {
     expect(Number(host.dataset.pan)).toBeLessThan(0);
     expect(Math.max(...after)).toBeGreaterThan(Math.max(...before));
   });
+
+  it('pan mode: however far a long wall is panned, a bounded handful of cabinets is drawn, and its far end comes into view', () => {
+    // about 1,200 figures, the whole wall view; ten swipes of 800 px, then on to the wall's end (MOB-NAV-1)
+    const lots = getFixtureFigures(170);
+    const { host } = scene(lots, { swipe: 'pan', view: 'wall' });
+    const atRest = host.querySelectorAll('.cab').length;
+    const x0 = Number(host.dataset.cameraX);
+    const slid: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      drag(host, -800);
+      slid.push(Number(host.dataset.pan));
+      // the unbounded photo drew 39 cabinets here at -8000 px
+      expect(host.querySelectorAll('.cab').length, `after ${i + 1} swipes`).toBeLessThanOrEqual(atRest * 2);
+    }
+    // the picture slides no farther than a frame's worth; the rest of the swipes walk the photo's camera along
+    expect(Math.min(...slid)).toBeGreaterThan(-1000);
+    expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
+    // on to the wall's end: every pan stops at it
+    drag(host, -100_000);
+    const shown = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+    expect(shown.length).toBeLessThanOrEqual(atRest * 2);
+    cleanup();
+    // the wall's last cabinet: where the walking camera stops
+    const walker = scene(lots, { swipe: 'camera', view: 'wall' }).host;
+    drag(walker, -1_000_000);
+    const last = Math.max(...Array.from(walker.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
+    expect(last).toBeGreaterThan(50);
+    expect(Math.max(...shown)).toBe(last);
+  }, 20_000);
+
+  it('pan mode, panned past the slide: the scene is drawn from the walked camera it reports, never the one it walked from', () => {
+    const { host } = scene(getFixtureFigures(170), { swipe: 'pan', view: 'wall' });
+    const x0 = Number(host.dataset.cameraX);
+    for (let i = 0; i < 6; i++) drag(host, -800);
+    const camera = cameraOf(host);
+    // the photo was retaken farther along the wall
+    expect(camera.x).toBeGreaterThan(x0 + 1000);
+    // the root's transform is that camera at 1 px per mm (the scene's scale)
+    const numbers = (t: string) => t.replace(/translate3d|rotateX/g, '').match(/-?\d+(\.\d+)?(e-?\d+)?/g)!.map(Number);
+    const drawn = numbers(host.querySelector<HTMLElement>('.cabinet-scene__root')!.style.transform);
+    const want = numbers(cssSceneTransform(camera, 1));
+    expect(drawn).toHaveLength(want.length);
+    drawn.forEach((v, i) => expect(v, `term ${i}`).toBeCloseTo(want[i], 2));
+  }, 20_000);
 
   it('with nothing to show it still stands one empty cabinet', () => {
     const { host } = scene([]);
@@ -696,6 +740,76 @@ describe('quadStyle: one flat face of the mm world as a CSS 3D element', () => {
     expect(parseFloat(leg.height)).toBeCloseTo(Math.hypot(47.5, 155, 50), 6);
     expect(quadStyle([0, 0, 0], [0, 0, 0], [0, 10, 0])).toBeNull();
     expect(quadStyle([0, 0, 0], [10, 0, 0], [0, 0, 0])).toBeNull();
+  });
+});
+
+/** Where a quad's element point (x, y) px lands in the world, in CSS px (y down): its matrix3d applied. */
+function landsAt(transform: string, x: number, y: number): number[] {
+  const m = transform.replace(/^matrix3d\(|\)$/g, '').split(',').map(Number);
+  return [0, 1, 2].map((i) => m[i] * x + m[4 + i] * y + m[12 + i]);
+}
+
+const near = (got: number[], want: number[]) => got.forEach((g, i) => expect(g).toBeCloseTo(want[i], 6));
+
+describe('quadStyle on a texel grid (MOB-NAV-1)', () => {
+  it('the element is the grid, however large the face; its corners still land on the face', () => {
+    const a = [-6000, 0, -850] as const;
+    const q = quadStyle(a, [24000, 0, 0], [0, 0, 6500], { u: 64, v: 256 })!;
+    expect([q.width, q.height]).toEqual(['64px', '256px']);
+    near(landsAt(q.transform, 0, 0), [-6000, 0, -850]);
+    near(landsAt(q.transform, 64, 0), [18000, 0, -850]);
+    near(landsAt(q.transform, 0, 256), [-6000, 0, 5650]);
+    near(landsAt(q.transform, 64, 256), [18000, 0, 5650]);
+  });
+
+  it('a slanted face on a grid keeps its true extent; without a grid nothing changes (1 px per mm)', () => {
+    const q = quadStyle([0, 155, 0], [33, 0, 0], [-47.5, -155, 50], { u: 8, v: 32 })!;
+    near(landsAt(q.transform, 8, 32), [33 - 47.5, -(155 - 155), 50]);
+    expect(quadStyle([10, 200, -5], [100, 0, 0], [0, -50, 0], undefined)).toEqual(quadStyle([10, 200, -5], [100, 0, 0], [0, -50, 0]));
+    expect(quadStyle([0, 0, 0], [0, 0, 0], [0, 10, 0], { u: 8, v: 8 })).toBeNull();
+  });
+});
+
+describe("CabinetScene: the room's wall and floor never cost the screen its chrome (MOB-NAV-1)", () => {
+  // At 1 px per mm the floor was the wall plus 12 m long and 6.5 m deep: a 1,190-figure wall made a 105 m x 6.5 m
+  // element (680 M px, 5 G px at the Fold8's 2.8125), whose tiles ran Chrome's compositor out of tile memory, so
+  // it left the header, the collection tabs, the filters and the tab bar undrawn.
+  const ROOM_MAX_PX = 64 * 256;
+  const area = (q: HTMLElement) => parseFloat(q.style.width) * parseFloat(q.style.height);
+
+  it('the wall and the floor are small elements, the same size for one cabinet and a hundred', () => {
+    const sizes: number[][] = [];
+    for (const n of [1, 170]) {
+      const { host } = scene(getFixtureFigures(n));
+      for (const cls of ['room-wall', 'room-floor']) {
+        const q = host.querySelector(`.q.${cls}`) as HTMLElement;
+        expect(area(q), `${cls} at ${n * 7} figures`).toBeLessThanOrEqual(ROOM_MAX_PX);
+        sizes.push([n, area(q)]);
+      }
+      cleanup();
+    }
+    expect(sizes.map(([, px]) => px)).toEqual([sizes[0][1], sizes[1][1], sizes[0][1], sizes[1][1]]);
+  });
+
+  it('they still stand where they stood: 6 m past each end of the wall, the floor 6.5 m deep, the wall 3.2 m tall', () => {
+    const { host } = scene(FIXTURE_FIGURES);
+    const wall = wallLayout([IKEA_KLINGSBO]);
+    const zBack = -IKEA_KLINGSBO.outer.depthMm - 450;
+    const [x0, x1] = [wall.leftMm - 6000, wall.rightMm + 6000];
+    const floor = host.querySelector('.q.room-floor') as HTMLElement;
+    const [fw, fh] = [parseFloat(floor.style.width), parseFloat(floor.style.height)];
+    near(landsAt(floor.style.transform, 0, 0), [x0, -0, zBack]);
+    near(landsAt(floor.style.transform, fw, fh), [x1, -0, zBack + 6500]);
+    const back = host.querySelector('.q.room-wall') as HTMLElement;
+    const [ww, wh] = [parseFloat(back.style.width), parseFloat(back.style.height)];
+    near(landsAt(back.style.transform, 0, 0), [x0, -3200, zBack]);
+    near(landsAt(back.style.transform, ww, wh), [x1, -0, zBack]);
+  });
+
+  it('the cabinets keep their 1 px per mm: a door pane is its own size in px', () => {
+    const { host } = scene(FIXTURE_FIGURES);
+    const door = host.querySelector('.q.cab-pane--door') as HTMLElement;
+    expect(parseFloat(door.style.width)).toBeGreaterThan(300);
   });
 });
 

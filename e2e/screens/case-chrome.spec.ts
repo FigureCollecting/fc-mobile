@@ -42,8 +42,9 @@ const SHAPE_PREFIX = 'occ/c4e50000-';
 const shapeOcc = (i: number): string => `c4e50000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`;
 /**
  * A control is drawn when this share of its pixels is off its background: its label, icon or edge. An undrawn
- * one is a flat colour (0). Each control is read by its own box (a card's choice by its radio), never a
- * full-width row, so the faintest drawn one carries several per cent (each run attaches what it read).
+ * one is a flat colour (0). Each control is read by its own box (a card's choice by its radio, a filter group
+ * by its tab), never a full-width row: the faintest drawn one, a tab-bar item on the open panel, reads about
+ * 1.3 % (each run attaches every share it read).
  */
 const MIN_INK = 0.01;
 /** Every ink share read, by step and control: the threshold's evidence. */
@@ -249,7 +250,7 @@ test("the case screen's chrome and cards are drawn after every collection switch
   // the filters, from the filter bar (every build has it) and from the case's Refine tab
   const filterSheet = page.locator('.detent-sheet');
   const filterControls: [string, Locator][] = [
-    ['the filter groups', page.locator('.filter-sheet2__tabs')],
+    ['the first filter group', page.locator('.filter-sheet2__tab').first()],
     ['Clear', page.locator('.filter-sheet2__btn--clear')],
     ['Apply', page.locator('.filter-sheet2__btn--apply')],
   ];

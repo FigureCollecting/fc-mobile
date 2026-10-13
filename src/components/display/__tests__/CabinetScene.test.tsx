@@ -340,13 +340,14 @@ describe('CabinetScene: views and navigation', () => {
     // the picture slides no farther than a frame's worth; the rest of the swipes walk the photo's camera along
     expect(Math.min(...slid)).toBeGreaterThan(-1000);
     expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
-    for (let i = 0; i < 400; i++) drag(host, -400);
+    // on to the wall's end: every pan stops at it
+    drag(host, -100_000);
     const shown = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
     expect(shown.length).toBeLessThanOrEqual(atRest * 2);
     cleanup();
     // the wall's last cabinet: where the walking camera stops
     const walker = scene(lots, { swipe: 'camera', view: 'wall' }).host;
-    for (let i = 0; i < 400; i++) drag(walker, -400);
+    drag(walker, -1_000_000);
     const last = Math.max(...Array.from(walker.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
     expect(last).toBeGreaterThan(50);
     expect(Math.max(...shown)).toBe(last);

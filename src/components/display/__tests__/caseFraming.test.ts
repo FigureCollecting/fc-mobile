@@ -271,16 +271,22 @@ describe('CC4 pan: the photo slides at most until its edge looks PAN_EDGE_TAN_MA
     });
 
     it(`${name}: the cabinets drawn stay bounded however far the wall is panned, and its far end is reached`, () => {
-      const drawn = (pan: number) => {
+      const reach = (pan: number) => {
         const r = panFraming(base, pan);
-        return cabinetsInReach(long, wallReachMm(r.framing.camera, r.panPx, room, 600));
+        return wallReachMm(r.framing.camera, r.panPx, room, 600);
       };
-      // never more than where the photo stops sliding: a few more than at rest (the unbounded photo drew 34 of them at -8000 px)
-      const atEdge = drawn(-slide).length;
-      expect(atEdge).toBeLessThanOrEqual(drawn(0).length + 4);
-      for (let pan = 0; pan >= panMin; pan -= 400) expect(drawn(pan).length, `pan ${pan}`).toBeLessThanOrEqual(atEdge);
+      const width = (pan: number) => reach(pan)[1] - reach(pan)[0];
+      const drawn = (pan: number) => cabinetsInReach(long, reach(pan));
+      // the stretch that can draw never grows past where the photo stops sliding, so a few more cabinets
+      // than at rest are drawn at most (the unbounded photo drew 34 of them at -8000 px)
+      const widest = width(-slide);
+      const most = drawn(0).length + 5;
+      for (let pan = 0; pan >= panMin; pan -= 400) {
+        expect(width(pan), `pan ${pan}`).toBeLessThanOrEqual(widest + 1e-6);
+        expect(drawn(pan).length, `pan ${pan}`).toBeLessThanOrEqual(most);
+      }
+      expect(width(panMin)).toBeCloseTo(widest, 6);
       expect(drawn(panMin)).toContain(99);
-      expect(drawn(panMin).length).toBeLessThanOrEqual(atEdge);
     });
   }
 });

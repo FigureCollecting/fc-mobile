@@ -30,6 +30,7 @@ import {
 } from './caseCamera';
 import { surfaceSlots, type WallLayout, type WallSlot } from './packCabinets';
 import type { CaseView } from './casePrefs';
+import { MAX_DRAWN_CABINETS } from './caseCull';
 
 /** CC4b: how far past the width fit the camera may step back at a cabinet's top. */
 export const STEP_BACK_MAX_MM = 3 * IN_MM;
@@ -112,7 +113,8 @@ const distanceOf = (f: Framing) => f.camera.z - f.look[2];
 /**
  * The wall cut into pages left to right: each page takes the next cabinet
  * while the page still fits no farther back than its farthest single
- * cabinet needs (so a narrow screen pages one cabinet at a time).
+ * cabinet needs (so a narrow screen pages one cabinet at a time), and holds
+ * no more than the case draws at a time (MAX_DRAWN_CABINETS).
  */
 export function wallPages(input: FramingInput): number[][] {
   const n = input.wall.cabinets.length;
@@ -123,7 +125,7 @@ export function wallPages(input: FramingInput): number[][] {
     const page = [i];
     let limit = single[i];
     let j = i + 1;
-    while (j < n) {
+    while (j < n && page.length < MAX_DRAWN_CABINETS) {
       const nextLimit = Math.max(limit, single[j]);
       if (distanceOf(fitCabinets(input, [...page, j])) > nextLimit + SAME_DISTANCE_MM) break;
       page.push(j);

@@ -59,11 +59,12 @@ describe('trimFace: the part of a face that draws in the frame and its margin', 
     const u: Vec3 = [WALL.rightMm + 12000, 0, 0];
     const v: Vec3 = [0, -3200, 0];
     const t = trimFace(view, a, u, v, rect)!;
-    expect(t.s1 - t.s0).toBeLessThan(0.05);
-    const left = screen(view, at(a, u, v, t.s0, 0.5)).x;
-    const right = screen(view, at(a, u, v, t.s1, 0.5)).x;
-    expect(Math.min(left, right)).toBeCloseTo(rect.x0, 3);
-    expect(Math.max(left, right)).toBeCloseTo(rect.x1, 3);
+    // a few metres of a wall some 60 m long
+    expect((t.s1 - t.s0) * u[0]).toBeLessThan(12_000);
+    // the cut's ends: the frame's side (with its margin) runs through one corner of each, the other lies past it
+    const xs = (s: number) => [t.t0, t.t1].map((tt) => screen(view, at(a, u, v, s, tt)).x);
+    expect(Math.max(...xs(t.s0))).toBeCloseTo(rect.x0, 3);
+    expect(Math.min(...xs(t.s1))).toBeCloseTo(rect.x1, 3);
   });
 
   it('the room floor, reaching past the camera, stops at the near plane in front of it', () => {
@@ -76,7 +77,7 @@ describe('trimFace: the part of a face that draws in the frame and its margin', 
   });
 
   it('a pan shifts what is seen: a face the slid picture brings in is drawn', () => {
-    const slot = WALL.cabinets[14];
+    const slot = WALL.cabinets[20];
     const face: [Vec3, Vec3, Vec3] = [[slot.leftMm, 1000, 0], [slot.rightMm - slot.leftMm, 0, 0], [0, -500, 0]];
     const camera = framing().camera;
     const shift = screen(viewOf(camera), [slot.centerMm, 1000, 0]).x;
@@ -133,8 +134,8 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     expect(nearestCabinets(viewOf(framing().camera), wall, [])).toEqual([0, 1, 2]);
   });
 
-  it('a cabinet already drawn keeps its place until another is nearer the centre by a quarter of the frame', () => {
-    expect(CABINET_HYSTERESIS).toBe(0.25);
+  it('a cabinet already drawn keeps its place until another is nearer the centre by a tenth of the frame', () => {
+    expect(CABINET_HYSTERESIS).toBe(0.1);
     const camera = framing(OPEN, 10).camera;
     const fresh = nearestCabinets(viewOf(camera), WALL, []);
     // walk the camera along the wall so the rightmost not drawn comes nearer than the leftmost drawn, by a little
@@ -144,7 +145,7 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     expect(kept).toEqual(fresh);
     expect(nearestCabinets(viewOf(little), WALL, [])).not.toEqual(fresh);
     // and a walk of a few cabinets replaces it
-    const far = { ...camera, x: camera.x + step * 6 };
+    const far = { ...camera, x: camera.x + step * 10 };
     expect(nearestCabinets(viewOf(far), WALL, fresh)).toEqual(nearestCabinets(viewOf(far), WALL, []));
   });
 

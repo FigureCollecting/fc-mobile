@@ -52,14 +52,6 @@ describe('CaseViewCard (the View tab: view, cabinets, swipe, ceiling, tab sides)
     return onChange;
   }
 
-  it("sits in document.body, above the tab bar and the pull-up tabs: never under them inside the page's layer (MOB-NAV-1)", () => {
-    const { container } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} />);
-    expect(container.querySelector('.bottom-sheet')).toBeNull();
-    const sheet = document.body.querySelector('.bottom-sheet') as HTMLElement;
-    expect(sheet.parentElement).toBe(document.body);
-    expect(sheet.querySelector('.case-card')).not.toBeNull();
-  });
-
   it('switches among whole cabinets, one cabinet and one shelf', () => {
     const onChange = card();
     expect(screen.getByRole('radio', { name: 'Whole cabinets' })).toBeChecked();

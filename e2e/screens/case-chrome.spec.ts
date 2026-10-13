@@ -309,10 +309,11 @@ test('after the wall is panned far (CC4 pan, 20 swipes of 400 px), the chrome, t
   const failures: string[] = [];
   const top = { x: page.viewportSize()!.width / 2, y: 12 };
 
-  const x0 = await scene.getAttribute('data-camera-x');
+  const farthest = () => page.locator('.cab').evaluateAll((els) => Math.max(...els.map((e) => Number((e as HTMLElement).dataset.index))));
+  const before = await farthest();
   for (let i = 0; i < 20; i++) await swipe(page, -400);
-  // 8,000 px along a wall of some hundred cabinets: far past the photo's own slide
-  await expect(scene).not.toHaveAttribute('data-camera-x', x0!);
+  // 8,000 px along a wall of some hundred cabinets: cabinets far down the wall are drawn now
+  await expect.poll(farthest).toBeGreaterThan(before + 5);
   await check(page, testInfo, failures, 'after 20 swipes', chrome(page));
   for (const name of ['Wished', 'Owned'] as const) {
     await showTab(page, name);

@@ -820,6 +820,8 @@ export function CabinetScene({
       })}
       data-pan={String(Math.round(panPx))}
       data-px-per-mm={String(s)}
+      data-cull-x={String(cull.camera.x)}
+      data-cull-pan={String(cull.panPx)}
       data-drawn-cabinets={String(drawnCabs.length)}
       data-drawn-figures={String(onShow.length)}
       data-hidden-figures={String(hidden)}

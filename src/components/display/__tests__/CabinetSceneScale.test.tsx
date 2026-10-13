@@ -44,6 +44,11 @@ function figures(figs: Figure[], extra: Partial<Parameters<typeof CabinetScene>[
   return drawn(container);
 }
 
+/** A length the scene draws, in mm: its px over the scene's px per mm (MOB-NAV-2 texelScale). */
+function mmOf(el: Element, px: string): number {
+  return parseFloat(px) / Number(el.closest<HTMLElement>('.cabinet-scene')!.dataset.pxPerMm);
+}
+
 function drawn(container: ParentNode) {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('button.cab-figure')).map((b) => ({
     name: b.getAttribute('aria-label')!,
@@ -68,9 +73,9 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
       // the head: the highest opaque row is the labelled height above the surface
       expect(r.art.y1 - 0.25 * pictureH, r.name).toBeCloseTo(r.tap.surface + labelled, 3);
       expect(r.grounded).toBe('1');
-      // drawn there: the picture rises above the tap box (the figure) by its clear top margin, 1 px per mm
-      expect(parseFloat(r.picture.style.top), r.name).toBeCloseTo(-(r.art.y1 - r.tap.y1), 3);
-      expect(parseFloat(r.picture.style.height), r.name).toBeCloseTo(pictureH, 3);
+      // drawn there: the picture rises above the tap box (the figure) by its clear top margin, at the scene's px per mm
+      expect(mmOf(r.picture, r.picture.style.top), r.name).toBeCloseTo(-(r.art.y1 - r.tap.y1), 3);
+      expect(mmOf(r.picture, r.picture.style.height), r.name).toBeCloseTo(pictureH, 3);
     }
   });
 
@@ -202,7 +207,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
       expect(art.style.visibility).toBe('hidden');
       // an opaque box standing on the surface, the figure's height, within the label it is packed by
       expect(spike.art.x1 - spike.art.x0).toBeLessThanOrEqual(LABEL_MM + 1e-6);
-      expect(parseFloat(spike.picture.style.width)).toBeLessThanOrEqual(LABEL_MM + 1e-6);
+      expect(mmOf(spike.picture, spike.picture.style.width)).toBeLessThanOrEqual(LABEL_MM + 1e-6);
       expect(spike.art.y0).toBeCloseTo(spike.tap.surface, 6);
       expect(spike.art.y1 - spike.art.y0).toBeCloseTo(spike.tap.y1 - spike.tap.y0, 6);
       expect((spike.art.x0 + spike.art.x1) / 2).toBeCloseTo((spike.tap.x0 + spike.tap.x1) / 2, 6);
@@ -256,8 +261,8 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
     expect(box(a).w).toBeCloseTo(0.75 * box(a).h, 6);
     const shadowOf = (r: typeof a) => {
       const el = r.picture.closest('button')!.previousElementSibling as HTMLElement;
-      const w = parseFloat(el.style.width);
-      return { w, centre: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]) + w / 2 - (r.art.x0 + r.art.x1) / 2 };
+      const w = mmOf(el, el.style.width);
+      return { w, centre: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]) + w / 2 - (r.art.x0 + r.art.x1) / 2 };
     };
     expect(shadowOf(a).w).toBeCloseTo(shadowOf(b).w, 6);
     expect(shadowOf(a).centre).toBeCloseTo(0, 6);
@@ -265,8 +270,8 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
 });
 
 describe('CabinetScene: a figure off-centre in its picture stands centred on its slot (its opaque columns, not its picture)', () => {
-  /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, 1 px per mm. */
-  const span = (el: HTMLElement) => ({ x: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: parseFloat(el.style.width) });
+  /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, at the scene's px per mm. */
+  const span = (el: HTMLElement) => ({ x: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: mmOf(el, el.style.width) });
 
   for (const sides of [
     { left: 0.38, right: 0.02 },
@@ -284,7 +289,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
         const slotCx = (r.tap.x0 + r.tap.x1) / 2;
         expect((figure.x0 + figure.x1) / 2, r.name).toBeCloseTo(slotCx, 5);
         // the picture is drawn there: its box starts where its art box does, relative to the tap box
-        expect(parseFloat(r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 5);
+        expect(mmOf(r.picture, r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 5);
         // the shadow, with no contact band known, lies under the figure
         const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
         expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 5);

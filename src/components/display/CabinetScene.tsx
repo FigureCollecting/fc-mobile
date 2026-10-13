@@ -15,8 +15,15 @@
  * length in px and the root's transform is the camera (cssSceneTransform),
  * so the browser's own perspective divide draws exactly what project() says.
  * Only figures take pointer events: the cabinet never catches a tap.
+ *
+ * MOB-NAV-2 (caseCull): at most five cabinets are drawn, the ones nearest the
+ * frame centre; each face is cut to the frame and half a viewport round it;
+ * a figure past it, or hidden under a board, is not drawn; and the world is
+ * drawn at the px per mm the screen shows it (texelScale), never at 1 px per
+ * mm, as Chrome rasters each face at the device pixel ratio per element px.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { createContext } from 'preact';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren, JSX } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { Style } from '../../styles/Style';
@@ -34,7 +41,8 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { cabinetsInReach, frameCase, panFraming, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
+import { frameCase, panFraming, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
+import { cullRect, figuresToDraw, nearestCabinets, opaqueBoards, stickyView, texelScale, trimFace, type CullView, type Rect } from './caseCull';
 import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
@@ -42,13 +50,9 @@ import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
-/** px per mm in the authored world: figures are drawn at their own pixels, never resampled small. */
-const S = 1;
 const DEFAULT_FRAME = { width: 360, height: 480 };
 /** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
 const PLATE_MAX_MM = 110;
-/** What may hang past a cabinet's box along the wall (pictures' clear margins, plates, shadows): drawn this far out of view. */
-const REACH_MARGIN_MM = 600;
 
 type V3 = readonly [number, number, number];
 
@@ -75,32 +79,61 @@ const ROOM_GRID: TexelGrid = { u: 64, v: 256 };
 
 /**
  * One flat face: corner `a` (world mm), its local x along `u` and local y
- * (down the element) along `v`. The element is |u| x |v| px, or `grid`'s
- * size when given; matrix3d maps it onto the face. null when the face has no
- * area.
+ * (down the element) along `v`, in a world drawn at `s` px per mm. The
+ * element is |u| x |v| mm at s px per mm, or `grid`'s size when given;
+ * matrix3d maps it onto the face. null when the face has no area.
  */
-export function quadStyle(a: V3, u: V3, v: V3, grid?: TexelGrid): { width: string; height: string; transform: string } | null {
+export function quadStyle(a: V3, u: V3, v: V3, grid?: TexelGrid, s = 1): { width: string; height: string; transform: string } | null {
   const lu = Math.hypot(u[0], u[1], u[2]);
   const lv = Math.hypot(v[0], v[1], v[2]);
   if (!(lu > 0) || !(lv > 0)) return null;
-  const pu = grid?.u ?? lu * S;
-  const pv = grid?.v ?? lv * S;
-  // world px per element px along each side: 1 at S px per mm
-  const su = (lu * S) / pu;
-  const sv = (lv * S) / pv;
+  const pu = grid?.u ?? lu * s;
+  const pv = grid?.v ?? lv * s;
+  // world px per element px along each side: 1 off a grid
+  const su = (lu * s) / pu;
+  const sv = (lv * s) / pv;
   const U = [u[0] / lu, -u[1] / lu, u[2] / lu];
   const V = [v[0] / lv, -v[1] / lv, v[2] / lv];
   const n = [U[1] * V[2] - U[2] * V[1], U[2] * V[0] - U[0] * V[2], U[0] * V[1] - U[1] * V[0]];
   const ln = Math.hypot(n[0], n[1], n[2]) || 1;
   const N = n.map((c) => c / ln);
-  const cols = [...U.map((c) => c * su), 0, ...V.map((c) => c * sv), 0, ...N, 0, a[0] * S, -a[1] * S, a[2] * S, 1];
+  const cols = [...U.map((c) => c * su), 0, ...V.map((c) => c * sv), 0, ...N, 0, a[0] * s, -a[1] * s, a[2] * s, 1];
   return { width: `${fmt(pu)}px`, height: `${fmt(pv)}px`, transform: `matrix3d(${cols.map(fmt).join(',')})` };
 }
 
+/** What the scene draws now: the picture it culls for, the frame and its margin, and the px per mm (caseCull). */
+interface Draw {
+  readonly view: CullView;
+  readonly rect: Rect;
+  readonly s: number;
+}
+
+const DrawContext = createContext<Draw | null>(null);
+
+const along = (a: V3, u: V3, v: V3, s: number, t: number): V3 => [a[0] + s * u[0] + t * v[0], a[1] + s * u[1] + t * v[1], a[2] + s * u[2] + t * v[2]];
+const times = (u: V3, k: number): V3 => [u[0] * k, u[1] * k, u[2] * k];
+
+/**
+ * A face, cut to the part that draws in the frame and its margin (nothing when none does); a cut face's
+ * background is laid on the whole face, its element a window onto it, so a gradient stays where it was.
+ */
 function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid }) {
-  const q = quadStyle(a, u, v, grid);
+  const draw = useContext(DrawContext);
+  const s = draw?.s ?? 1;
+  let face: [V3, V3, V3] = [a, u, v];
+  let window: JSX.CSSProperties | undefined;
+  const cut = draw ? trimFace(draw.view, a, u, v, draw.rect) : { s0: 0, s1: 1, t0: 0, t1: 1 };
+  if (!cut) return null;
+  const ds = cut.s1 - cut.s0;
+  const dt = cut.t1 - cut.t0;
+  if (ds < 1 || dt < 1) face = [along(a, u, v, cut.s0, cut.t0), times(u, ds), times(v, dt)];
+  const q = quadStyle(...face, grid, s);
   if (!q) return null;
-  return <div class={`q ${cls}`} style={{ ...q, ...style }} />;
+  if (ds < 1 || dt < 1) {
+    const [pu, pv] = [parseFloat(q.width) / ds, parseFloat(q.height) / dt];
+    window = { backgroundSize: `${fmt(pu)}px ${fmt(pv)}px`, backgroundPosition: `${fmt(-cut.s0 * pu)}px ${fmt(-cut.t0 * pv)}px` };
+  }
+  return <div class={`q ${cls}`} style={{ ...q, ...window, ...style }} />;
 }
 
 interface BoxProps {
@@ -143,7 +176,30 @@ function caseFloor(p: CabinetProfile): CabinetSurface {
   return p.surfaces.find((s) => !s.outsideDoor) ?? p.surfaces[0];
 }
 
-/** Glass sides, back and door: clear panes with lit edges (CC13: see-through, one glass box per cabinet). */
+/** A pane's lit edge, mm across: CC13 (Ross 09-27) glass is clear, edges only. */
+const PANE_EDGE_MM = 1;
+
+/**
+ * One glass pane a + s u + t v as its four lit edges, clear between them (CC13: edges only, no tint to speak
+ * of): a full pane was a layer as large as the cabinet that showed nothing but its edges, and five cabinets of
+ * them were half the case's pixels (MOB-NAV-2).
+ */
+function Pane({ a, u, v, cls }: { a: V3; u: V3; v: V3; cls: string }) {
+  const lu = Math.hypot(u[0], u[1], u[2]);
+  const lv = Math.hypot(v[0], v[1], v[2]);
+  const eu = times(u, PANE_EDGE_MM / lu);
+  const ev = times(v, PANE_EDGE_MM / lv);
+  return (
+    <>
+      <Quad cls={cls} a={a} u={u} v={ev} />
+      <Quad cls={cls} a={along(a, u, v, 0, 1 - PANE_EDGE_MM / lv)} u={u} v={ev} />
+      <Quad cls={cls} a={a} u={eu} v={v} />
+      <Quad cls={cls} a={along(a, u, v, 1 - PANE_EDGE_MM / lu, 0)} u={eu} v={v} />
+    </>
+  );
+}
+
+/** Glass sides, back and door: clear panes, their edges lit (CC13: see-through, one glass box per cabinet). */
 function Panes({ slot }: { slot: WallSlot }) {
   const p = slot.profile;
   const { leftMm: x0, rightMm: x1 } = slot;
@@ -156,14 +212,14 @@ function Panes({ slot }: { slot: WallSlot }) {
   const inset = p.panels.sideMm / 2;
   const out: ComponentChildren[] = [];
   if (p.materials.sides === 'glass') {
-    out.push(<Quad key="l" cls="cab-pane cab-pane--side" a={[x0 + inset, hi, -D]} u={[0, 0, D]} v={[0, -h, 0]} />);
-    out.push(<Quad key="r" cls="cab-pane cab-pane--side" a={[x1 - inset, hi, -D]} u={[0, 0, D]} v={[0, -h, 0]} />);
+    out.push(<Pane key="l" cls="cab-pane cab-pane--side" a={[x0 + inset, hi, -D]} u={[0, 0, D]} v={[0, -h, 0]} />);
+    out.push(<Pane key="r" cls="cab-pane cab-pane--side" a={[x1 - inset, hi, -D]} u={[0, 0, D]} v={[0, -h, 0]} />);
   }
   if (p.materials.back === 'glass') {
-    out.push(<Quad key="b" cls="cab-pane cab-pane--back" a={[x0, hi, -D + p.panels.backMm / 2]} u={[x1 - x0, 0, 0]} v={[0, -h, 0]} />);
+    out.push(<Pane key="b" cls="cab-pane cab-pane--back" a={[x0, hi, -D + p.panels.backMm / 2]} u={[x1 - x0, 0, 0]} v={[0, -h, 0]} />);
   }
   if (p.materials.front === 'glassDoor') {
-    out.push(<Quad key="d" cls="cab-pane cab-pane--door" a={[x0, hi, -1]} u={[x1 - x0, 0, 0]} v={[0, -h, 0]} />);
+    out.push(<Pane key="d" cls="cab-pane cab-pane--door" a={[x0, hi, -1]} u={[x1 - x0, 0, 0]} v={[0, -h, 0]} />);
   }
   return <>{out}</>;
 }
@@ -433,6 +489,7 @@ function SceneFigure({
 }) {
   const { placed, slot, cx } = draw;
   const { item } = placed;
+  const s = useContext(DrawContext)?.s ?? 1;
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
   const grounded = margins !== null;
   // until its picture is read, a figure draws its plate, within the footprint it is packed by, never the picture at a width
@@ -450,7 +507,7 @@ function SceneFigure({
   // so neighbours' boxes meet at most; the picture hangs from it by its transparent margins and takes no taps
   const tapW = Math.min(boxW, item.widthMm + FIGURE_GAP_MM);
   const tapX0 = cx - tapW / 2;
-  const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0]);
+  const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0], undefined, s);
   // no contact band known: the shadow lies under the figure, the middle of its picture's opaque columns
   const contact = (grounded ? (art.contactBand ?? band) : null) ?? {
     centerXFrac: 0.5 + (cx - artCx) / boxW,
@@ -480,11 +537,11 @@ function SceneFigure({
         <span
           class="cab-figure__box"
           style={{
-            left: `${fmt(artCx - boxW / 2 - tapX0)}px`,
+            left: `${fmt((artCx - boxW / 2 - tapX0) * s)}px`,
             // the button's top is the figure's head; the picture rises above it by its clear top margin
-            top: `${fmt(slot.topMm + placed.heightMm - (yBottom + boxH))}px`,
-            width: `${fmt(boxW)}px`,
-            height: `${fmt(boxH)}px`,
+            top: `${fmt((slot.topMm + placed.heightMm - (yBottom + boxH)) * s)}px`,
+            width: `${fmt(boxW * s)}px`,
+            height: `${fmt(boxH * s)}px`,
             pointerEvents: 'none',
           }}
         >
@@ -493,7 +550,7 @@ function SceneFigure({
         </span>
       </button>
       {labels && (
-        <div class="q cab-plate" style={quadStyle([cx - plateW / 2, slot.topMm + 1, slot.frontZMm + 1], [plateW, 0, 0], [0, -30, 0]) ?? undefined}>
+        <div class="q cab-plate" style={quadStyle([cx - plateW / 2, slot.topMm + 1, slot.frontZMm + 1], [plateW, 0, 0], [0, -30, 0], undefined, s) ?? undefined}>
           {item.figure.name}
         </div>
       )}
@@ -620,18 +677,28 @@ export function CabinetScene({
   const { panPx } = shown;
   const { camera } = shown.framing;
 
-  // draw only the cabinets that can draw into the frame where the panned picture now sits: never the whole wall
-  // (a hundred cabinets of preserve-3d faces stall the browser); the room's far floor reaches widest
-  const room = useMemo(
+  // MOB-NAV-2: cull for the picture last culled for until the camera changes or the picture moves a quarter frame
+  // (the half-viewport margin still covers the frame); draw the five cabinets nearest its centre, a cabinet
+  // already drawn keeping its place against a small move; draw the faces at the px per mm the screen shows the
+  // cabinets' room (floor to headroom, back to the front of the feet) at its nearest
+  const culled = useRef<CullView | null>(null);
+  const cull = stickyView(culled.current, { camera, panPx });
+  culled.current = cull;
+  const chosen = useRef<number[]>([]);
+  const drawnCabs = nearestCabinets(cull, wall, chosen.current);
+  chosen.current = drawnCabs;
+  const visible = drawnCabs.map((i) => ({ slot: wall.cabinets[i], i }));
+  const span = useMemo(
     () => ({
       y0: 0,
-      y1: Math.max(ceilingMm, ...wall.cabinets.map((c) => c.profile.outer.heightMm)),
+      y1: Math.max(...wall.cabinets.map((c, i) => c.profile.outer.heightMm + headroomMm[i])),
       z0: -Math.max(...wall.cabinets.map((c) => c.profile.outer.depthMm)),
       z1: Math.max(...wall.cabinets.map((c) => c.profile.footprint?.frontOverhangMm ?? 0)),
     }),
-    [wall, ceilingMm],
+    [wall, headroomMm],
   );
-  const visible = cabinetsInReach(wall, wallReachMm(camera, panPx, room, REACH_MARGIN_MM)).map((i) => ({ slot: wall.cabinets[i], i }));
+  const s = texelScale(camera, span);
+  const draw: Draw = { view: cull, rect: cullRect(camera.frame), s };
 
   // --- swipe (CC4) and tap
   const press = useRef<{ id: number; x0: number; active: boolean } | null>(null);
@@ -707,7 +774,19 @@ export function CabinetScene({
       }
     }
   });
-  const shownCabs = new Set(visible.map((v) => v.i));
+  // a figure is drawn when it draws into the frame and its margin and no board of its cabinet hides it from the camera
+  const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
+  const { shown: showIdx, hidden } = figuresToDraw(
+    cull,
+    draw.rect,
+    inDrawn.map(({ cab, draw: { placed, slot, cx } }) => {
+      const half = Math.max(placed.item.widthMm, placed.item.billboardWidthMm) / 2;
+      return { cab, x0: cx - half, x1: cx + half, y0: slot.topMm, y1: slot.topMm + placed.heightMm, z: placed.zMm };
+    }),
+    new Set(drawnCabs),
+    (cab) => opaqueBoards(wall.cabinets[cab]),
+  );
+  const onShow = showIdx.map((i) => inDrawn[i]);
   const overhangs = draws.filter((d) => d.draw.placed.tooDeep);
   const flagged = packed.violators.length + overhangs.length;
   const activeName = pattern[0].name;
@@ -739,6 +818,10 @@ export function CabinetScene({
         height: camera.frame.height,
       })}
       data-pan={String(Math.round(panPx))}
+      data-px-per-mm={String(s)}
+      data-drawn-cabinets={String(drawnCabs.length)}
+      data-drawn-figures={String(onShow.length)}
+      data-hidden-figures={String(hidden)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endPress(e, true)}
@@ -749,21 +832,20 @@ export function CabinetScene({
         class="cabinet-scene__viewport"
         style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx ? `translateX(${panPx}px)` : undefined }}
       >
-        <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, S) }}>
-          <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} grid={ROOM_GRID} />
-          <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} grid={ROOM_GRID} />
-          {visible.map(({ slot, i }) => (
-            <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
-          ))}
-          {draws
-            .filter((d) => shownCabs.has(d.cab))
-            .map(({ draw }) => {
-              const { figure, index } = draw.placed.item;
+        <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
+          <DrawContext.Provider value={draw}>
+            <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} grid={ROOM_GRID} />
+            <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} grid={ROOM_GRID} />
+            {visible.map(({ slot, i }) => (
+              <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
+            ))}
+            {onShow.map(({ draw: fig }) => {
+              const { figure, index } = fig.placed.item;
               const { art, aspect } = arts[index];
               return (
                 <SceneFigure
                   key={figure._id}
-                  draw={draw}
+                  draw={fig}
                   art={art}
                   aspect={aspect}
                   margins={pictureMargins(art, alpha)}
@@ -773,6 +855,7 @@ export function CabinetScene({
                 />
               );
             })}
+          </DrawContext.Provider>
         </div>
       </div>
 
@@ -834,7 +917,8 @@ export function CabinetScene({
   );
 }
 
-// The page sizes the scene (Collection: down to the pull-up tabs); 60vh only where nothing does.
+// The page sizes the scene (Collection: down to the pull-up tabs); 60vh only where nothing does. Inside the scene
+// root a length is a length in the world at its --s px per mm (texelScale), so every px there is scaled by it.
 const styles = `
   .cabinet-scene {
     position: relative;
@@ -862,15 +946,15 @@ const styles = `
   .cabinet-scene .m-board { background: linear-gradient(0deg, #5a4a3a, #47392d); }
   .cabinet-scene .m-mesh {
     background:
-      repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.55) 0 3px, transparent 3px 11px),
-      repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.55) 0 3px, transparent 3px 11px),
+      repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.55) 0 calc(3px * var(--s, 1)), transparent calc(3px * var(--s, 1)) calc(11px * var(--s, 1))),
+      repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.55) 0 calc(3px * var(--s, 1)), transparent calc(3px * var(--s, 1)) calc(11px * var(--s, 1))),
       #2c2e33;
   }
   /* CC13: glass is clear, edges only, no reflections or tint to speak of (Ross 09-27) */
-  .cabinet-scene .m-glass-plate { background: rgba(190, 226, 230, 0.07); box-shadow: inset 0 0 0 2px rgba(196, 236, 236, 0.45); }
-  .cabinet-scene .m-glass-top { background: rgba(190, 226, 230, 0.10); box-shadow: inset 0 0 0 3px #1d1e22; }
+  .cabinet-scene .m-glass-plate { background: rgba(190, 226, 230, 0.07); box-shadow: inset 0 0 0 calc(2px * var(--s, 1)) rgba(196, 236, 236, 0.45); }
+  .cabinet-scene .m-glass-top { background: rgba(190, 226, 230, 0.10); box-shadow: inset 0 0 0 calc(3px * var(--s, 1)) #1d1e22; }
   .cabinet-scene .m-glass-edge { background: rgba(176, 232, 232, 0.8); }
-  .cabinet-scene .cab-pane { background: rgba(190, 226, 230, 0.035); box-shadow: inset 0 0 0 1px rgba(190, 236, 236, 0.22); }
+  .cabinet-scene .cab-pane { background: rgba(190, 236, 236, 0.25); }
   .cabinet-scene .cab-shadow {
     background: radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.3) 45%, rgba(0, 0, 0, 0) 72%);
   }
@@ -900,7 +984,7 @@ const styles = `
     padding: 5%;
     box-sizing: border-box;
     background: #f4f1ea;
-    box-shadow: inset 0 0 0 3px #b9b2a4;
+    box-shadow: inset 0 0 0 calc(3px * var(--s, 1)) #b9b2a4;
   }
   .cabinet-scene .cab-figure__frame img { width: 100%; height: 100%; object-fit: contain; }
   .cabinet-scene .cab-figure__plate {
@@ -912,9 +996,9 @@ const styles = `
     padding: 8%;
     box-sizing: border-box;
     background: #3a3d45;
-    border-radius: 6px;
+    border-radius: calc(6px * var(--s, 1));
     color: #e6e8ee;
-    font: 600 22px/1.2 var(--font-sans, system-ui);
+    font: 600 calc(22px * var(--s, 1))/1.2 var(--font-sans, system-ui);
     text-align: center;
     overflow: hidden;
   }
@@ -925,11 +1009,11 @@ const styles = `
     justify-content: center;
     background: #d9cfb8;
     color: #2b2620;
-    font: 600 11px/1 var(--font-sans, system-ui);
+    font: 600 calc(11px * var(--s, 1))/1 var(--font-sans, system-ui);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    padding: 0 4px;
+    padding: 0 calc(4px * var(--s, 1));
   }
   .cabinet-scene__nav { position: absolute; inset: 0; pointer-events: none; }
   .cabinet-scene__step {

@@ -6,6 +6,7 @@
  * limits what may stand on a top) and which side the tabs sit on.
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
  */
+import { createPortal } from 'preact/compat';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Style } from '../../styles/Style';
 import { inchesToMm } from './cabinetProfile';
@@ -32,7 +33,9 @@ interface CaseViewCardProps {
 
 export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
-  return (
+  // In document.body, like the pull-up tabs and the filter sheet: inside the page, the route's own layer held the
+  // card under the tab bar and the pull-up tabs, which then covered its lower choices (MOB-NAV-1).
+  return createPortal(
     <BottomSheet open={open} onClose={onClose} snapPoint="half">
       <div class="case-card">
         <fieldset class="case-card__group">
@@ -90,7 +93,8 @@ export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardPro
         </button>
       </div>
       <Style css={styles} />
-    </BottomSheet>
+    </BottomSheet>,
+    document.body,
   );
 }
 

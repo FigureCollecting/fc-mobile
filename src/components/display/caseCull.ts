@@ -13,7 +13,8 @@
  */
 import { project, unprojectToPlaneZ, type Camera, type Frame, type Vec3 } from './caseCamera';
 import type { RoomSpan } from './caseFraming';
-import type { WallLayout } from './packCabinets';
+import { sideOverhangMm } from './cabinetProfile';
+import type { WallLayout, WallSlot } from './packCabinets';
 
 /** Ross 2026-10-13: the most cabinets drawn at a time (and so on one wall page). */
 export const MAX_DRAWN_CABINETS = 5;
@@ -144,9 +145,11 @@ export function trimFace(view: CullView, a: Vec3, u: Vec3, v: Vec3, rect: Rect):
 }
 
 /**
- * The cabinets drawn (by wall index, ascending): at most `cap`, those whose middle (on their front, half their
- * height up) draws nearest the frame centre; one drawn before counts `hysteresis` of the frame width nearer, so
- * a small move never swaps two cabinets back and forth. One behind the camera comes last.
+ * The cabinets drawn (by wall index, ascending): at most `cap`, those whose box (floor to top, back to the
+ * front of the feet) draws nearest the frame centre: first every one the frame shows, then the rest, each by
+ * how far its span on screen lies from the centre, then by its middle. One drawn before counts `hysteresis` of
+ * the frame width nearer, so a small move never swaps two cabinets back and forth. One behind the camera comes
+ * last.
  */
 export function nearestCabinets(
   view: CullView,
@@ -158,12 +161,26 @@ export function nearestCabinets(
   const { camera, panPx } = view;
   const kept = new Set(previous);
   const bonus = hysteresis * camera.frame.width;
+  const centre = camera.frame.width / 2;
   const ranked = wall.cabinets.map((slot, i) => {
-    const p = project(camera, [slot.centerMm, slot.profile.outer.heightMm / 2, 0]);
-    const off = p.depth > NEAR_MM ? Math.abs(p.x + panPx - camera.frame.width / 2) : Infinity;
-    return { i, d: kept.has(i) ? off - bonus : off };
+    const p = slot.profile;
+    const feet = sideOverhangMm(p);
+    const xs: number[] = [];
+    for (const x of [slot.leftMm - feet, slot.rightMm + feet]) {
+      for (const y of [0, p.outer.heightMm]) {
+        for (const z of [-p.outer.depthMm, p.footprint?.frontOverhangMm ?? 0]) {
+          const q = project(camera, [x, y, z]);
+          if (q.depth > NEAR_MM) xs.push(q.x + panPx);
+        }
+      }
+    }
+    if (xs.length === 0) return { i, shown: false, d: Infinity, mid: Infinity };
+    const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
+    const shown = x1 >= 0 && x0 <= camera.frame.width;
+    const off = x1 < centre ? centre - x1 : x0 > centre ? x0 - centre : 0;
+    return { i, shown, d: kept.has(i) ? off - bonus : off, mid: Math.abs((x0 + x1) / 2 - centre) };
   });
-  ranked.sort((x, y) => x.d - y.d || x.i - y.i);
+  ranked.sort((x, y) => Number(y.shown) - Number(x.shown) || x.d - y.d || x.mid - y.mid || x.i - y.i);
   return ranked
     .slice(0, cap)
     .map((r) => r.i)
@@ -191,8 +208,9 @@ export function stickyView(previous: CullView | null, next: CullView, share: num
 
 /**
  * The px per mm the faces are drawn at: what the screen shows at the nearest point of `span` (the cabinets'
- * room: floor to headroom, back to the front of their feet), rounded up to a half octave so a camera walking
- * the wall keeps it and nothing is drawn coarser than it shows; at most 1 (the world's own mm), at least 1/64.
+ * room: floor to headroom, back to the front of their feet), rounded up to a quarter octave so a camera
+ * walking the wall keeps it and nothing is drawn coarser than it shows; at most 1 (the world's own mm), at
+ * least 1/64.
  */
 export function texelScale(camera: Camera, span: RoomSpan): number {
   const sin = Math.sin(camera.pitch);
@@ -201,7 +219,7 @@ export function texelScale(camera: Camera, span: RoomSpan): number {
   const nearest = Math.max(NEAR_MM, Math.min(...depths));
   const shown = camera.focalPx / nearest;
   if (shown >= 1) return 1;
-  return Math.max(TEXEL_SCALE_MIN, 2 ** (Math.ceil(2 * Math.log2(shown)) / 2));
+  return Math.max(TEXEL_SCALE_MIN, 2 ** (Math.ceil(4 * Math.log2(shown)) / 4));
 }
 
 /** An opaque horizontal board: x0..x1 along the wall, z0..z1 back to front, its underside y0 and its top y1. */
@@ -232,4 +250,58 @@ export function hiddenUnder(camera: Camera, corners: readonly Vec3[], board: Boa
     const z = camera.z + t * (p[2] - camera.z);
     return x >= board.x0 && x <= board.x1 && z >= board.z0 && z <= board.z1;
   });
+}
+
+/** A cabinet's opaque boards (wood shelves and tops, a rack's boards): what may hide a figure under or over it. */
+export function opaqueBoards(slot: WallSlot): Board[] {
+  const p = slot.profile;
+  const D = p.outer.depthMm;
+  if (p.frame === 'open-rack') {
+    const post = p.rack?.postMm ?? 38;
+    return p.surfaces.map((x) => ({ x0: slot.leftMm + post / 2, x1: slot.rightMm - post / 2, y0: x.topMm - x.thicknessMm, y1: x.topMm, z0: -D + post / 2, z1: -post / 2 }));
+  }
+  return p.surfaces
+    .filter((x) => x.material === 'wood')
+    .map((x) => ({ x0: slot.leftMm, x1: slot.rightMm, y0: x.topMm - x.thicknessMm, y1: x.topMm, z0: -D, z1: 0 }));
+}
+
+/** A figure as the cull sees it: its cabinet (wall index) and the flat box it stands in (x0..x1, y0..y1 at z). */
+export interface FigureBox {
+  readonly cab: number;
+  readonly x0: number;
+  readonly x1: number;
+  readonly y0: number;
+  readonly y1: number;
+  readonly z: number;
+}
+
+/**
+ * The figures drawn (their indices in `figures`): those of a drawn cabinet whose box draws into `rect` and that
+ * no board of their cabinet hides from the camera; and how many a board hid.
+ */
+export function figuresToDraw(
+  view: CullView,
+  rect: Rect,
+  figures: readonly FigureBox[],
+  drawn: ReadonlySet<number>,
+  boards: (cab: number) => readonly Board[],
+): { shown: number[]; hidden: number } {
+  const shown: number[] = [];
+  let hidden = 0;
+  figures.forEach((f, i) => {
+    if (!drawn.has(f.cab)) return;
+    if (!trimFace(view, [f.x0, f.y0, f.z], [f.x1 - f.x0, 0, 0], [0, f.y1 - f.y0, 0], rect)) return;
+    const corners: Vec3[] = [
+      [f.x0, f.y0, f.z],
+      [f.x1, f.y0, f.z],
+      [f.x0, f.y1, f.z],
+      [f.x1, f.y1, f.z],
+    ];
+    if (boards(f.cab).some((b) => hiddenUnder(view.camera, corners, b))) {
+      hidden++;
+      return;
+    }
+    shown.push(i);
+  });
+  return { shown, hidden };
 }

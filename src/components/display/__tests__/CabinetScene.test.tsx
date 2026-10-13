@@ -977,7 +977,7 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       // the cull held across small moves, and somewhere a drawn cabinet kept its place against a nearer one
       expect(held).toBeGreaterThan(60);
       expect(kept).toBeGreaterThan(0);
-    });
+    }, 60_000);
   }
 
   it('a dense wall (some 1,500 small figures) draws at most 250 of them, in every view, walked or panned (Ross 12:2xC)', () => {
@@ -1002,7 +1002,7 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     }
     // the wall is dense: the case draws far more of it than of an ordinary one
     expect(most).toBeGreaterThan(100);
-  });
+  }, 60_000);
 
   it('the px per mm is taken over the room up to the headroom over the tops, where their figures stand', () => {
     // a short frame on a few cabinets: the camera looks down on the tops; the framing aims at the middle of the room

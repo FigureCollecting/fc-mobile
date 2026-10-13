@@ -77,6 +77,15 @@ describe('CaseViewCard (the View tab: view, cabinets, swipe, ceiling, tab sides)
     expect(onChange).toHaveBeenCalledWith({ swipe: 'pan' });
   });
 
+  it('CC5: the card fits its content above the tab bar and scrolls its body, never running under the bar', () => {
+    card();
+    const sheet = document.querySelector('.bottom-sheet') as HTMLElement;
+    expect(sheet.classList.contains('bottom-sheet--fit')).toBe(true);
+    const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent ?? '').join('\n');
+    expect(css).toMatch(/\.bottom-sheet--fit\s*\{[^}]*height:\s*auto;[^}]*max-height:\s*85%;/);
+    expect(css).toMatch(/\.bottom-sheet--fit \.bottom-sheet__content\s*\{[^}]*min-height:\s*0;/);
+  });
+
   it('CC9: the room ceiling in inches, kept in mm; nonsense is ignored', () => {
     const onChange = card();
     const input = screen.getByRole('spinbutton', { name: /ceiling/i }) as HTMLInputElement;

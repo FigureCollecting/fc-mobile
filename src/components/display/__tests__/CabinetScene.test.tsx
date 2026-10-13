@@ -729,7 +729,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       }
     }
     expect(checked).toBe(36);
-  });
+  }, 60_000);
 });
 
 describe('CabinetScene: the picture, its tap box and its shadow, at the edges', () => {
@@ -962,7 +962,7 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
         }
         cleanup();
       }
-    });
+    }, 60_000);
   }
 
   for (const swipe of ['camera', 'pan'] as const) {

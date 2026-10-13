@@ -324,9 +324,10 @@ describe('texelScale: faces drawn at the px per mm the screen shows them, never 
   });
 
   it('never more than a quarter octave over what the nearest point shows, wherever the camera stands', () => {
+    const framed = framing(COVER).camera;
     fc.assert(
       fc.property(fc.double({ min: 400, max: 30_000, noNaN: true }), fc.double({ min: 0, max: 0.6, noNaN: true }), (z, pitch) => {
-        const camera = { ...framing(COVER).camera, z, pitch };
+        const camera = { ...framed, z, pitch };
         const need = nearest(camera);
         if (need >= 2 ** -0.25 || need <= 1 / 64) return;
         const s = texelScale(camera, span);

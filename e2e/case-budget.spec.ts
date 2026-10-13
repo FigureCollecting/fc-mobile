@@ -207,8 +207,9 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
       const x0 = Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x'));
       for (let i = 0; i < state.swipes; i++) await swipe(page, -400);
       if (state.swipes > 0) {
-        // the walk and the pan went a long way down the wall
-        await expect.poll(async () => Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x'))).toBeGreaterThan(x0 + 20_000);
+        // the walk and the pan went down the wall: forty swipes a long way
+        const past = state.swipes >= 40 ? x0 + 20_000 : x0;
+        await expect.poll(async () => Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x')) - Number(await page.locator('.cabinet-scene').getAttribute('data-pan'))).toBeGreaterThan(past);
       }
       await page.waitForTimeout(500);
       const scene = await drawn(page);

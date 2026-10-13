@@ -41,7 +41,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { frameCase, panFraming, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
+import { cabinetBox, frameCase, panFraming, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
 import { cullRect, figuresToDraw, nearestCabinets, opaqueBoards, stickyView, texelScale, trimFace, type CullView, type Rect } from './caseCull';
 import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
@@ -698,6 +698,17 @@ export function CabinetScene({
     }),
     [wall, headroomMm],
   );
+  // each cabinet's box on the wall (feet and body), published for the e2e to check the frame against
+  const wallBoxes = useMemo(
+    () =>
+      JSON.stringify(
+        wall.cabinets.map((slot) => {
+          const b = cabinetBox(slot, 0);
+          return [b.x0, b.x1, b.y1, b.z0, b.z1];
+        }),
+      ),
+    [wall],
+  );
   const s = texelScale(camera, span);
   const draw: Draw = { view: cull, rect: cullRect(camera.frame), s };
 
@@ -822,6 +833,7 @@ export function CabinetScene({
       data-px-per-mm={String(s)}
       data-cull-x={String(cull.camera.x)}
       data-cull-pan={String(cull.panPx)}
+      data-wall={wallBoxes}
       data-drawn-cabinets={String(drawnCabs.length)}
       data-drawn-figures={String(onShow.length)}
       data-hidden-figures={String(hidden)}

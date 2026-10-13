@@ -74,9 +74,10 @@ async function cameraOf(page: Page): Promise<Camera> {
   return { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
 }
 
-/** Each figure's on-screen box (CSS px, relative to the scene) and the box the camera maths predicts for it. */
+/** Each figure's on-screen box (CSS px, relative to the scene) and the box the camera maths predicts for it, slid by the pan. */
 async function drawnVsPredicted(page: Page) {
   const camera = await cameraOf(page);
+  const pan = Number(await page.locator('.cabinet-scene').getAttribute('data-pan'));
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const figures = await page.locator('button.cab-figure').evaluateAll((els) =>
     els.map((el) => {
@@ -92,8 +93,8 @@ async function drawnVsPredicted(page: Page) {
       world: w,
       drawn: { left: f.left - scene.x, right: f.right - scene.x, top: f.top - scene.y, bottom: f.bottom - scene.y },
       predicted: {
-        left: Math.min(...corners.map((c) => c.x)),
-        right: Math.max(...corners.map((c) => c.x)),
+        left: Math.min(...corners.map((c) => c.x)) + pan,
+        right: Math.max(...corners.map((c) => c.x)) + pan,
         top: Math.min(...corners.map((c) => c.y)),
         bottom: Math.max(...corners.map((c) => c.y)),
       },
@@ -135,6 +136,25 @@ for (const size of FOLD8) {
       }
     });
   }
+}
+
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  test(`the browser draws every figure where the camera maths puts it: panned past the slide, the photo retaken farther along, ${size.name}`, async ({ page }) => {
+    // about 1,200 figures, the whole wall; six swipes slide the picture to its edge and walk its camera on (CC6)
+    await openCase(page, size, '&fx=170', { view: 'wall', swipe: 'pan' });
+    const x0 = (await cameraOf(page)).x;
+    for (let i = 0; i < 6; i++) await swipe(page, -400);
+    await settle(page);
+    expect((await cameraOf(page)).x, 'the camera walked on').toBeGreaterThan(x0 + 1000);
+    expect(Number(await page.locator('.cabinet-scene').getAttribute('data-pan')), 'the picture slid').toBeLessThan(-100);
+    const rows = await drawnVsPredicted(page);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      for (const edge of ['left', 'right', 'top', 'bottom'] as const) {
+        expect(Math.abs(r.drawn[edge] - r.predicted[edge]), `${r.name} ${edge}`).toBeLessThan(1.5);
+      }
+    }
+  });
 }
 
 /** The lowest scene y (CSS px) of what the view frames: the focus cabinet's front feet, or the shelf view's surface edge. */

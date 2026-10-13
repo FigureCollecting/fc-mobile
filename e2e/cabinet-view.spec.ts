@@ -980,14 +980,16 @@ test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; the View ca
 });
 
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
-  test(`CC5 ${size.name}: the View card ends at the tab bar and a tap reaches every choice in it`, async ({ page }) => {
+  test(`CC5 ${size.name}: the View card ends above the tab bar and its + and a tap reaches every choice in it`, async ({ page }) => {
     await openCase(page, size);
     await page.getByRole('button', { name: 'View' }).click();
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     const bar = (await page.locator('.tab-bar').boundingBox())!;
     const shown = (await card.boundingBox())!;
-    expect.soft(shown.y + shown.height, 'the card ends at the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
+    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    expect.soft(shown.y + shown.height, 'the card ends above the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
+    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
     const choices = card.locator('label.case-card__choice');
     // three views, the cabinet walls, the two swipes
     expect(await choices.count()).toBeGreaterThanOrEqual(7);

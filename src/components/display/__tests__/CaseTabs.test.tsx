@@ -82,7 +82,7 @@ describe('CaseViewCard (the View tab: view, cabinets, swipe, ceiling, tab sides)
     const sheet = document.querySelector('.bottom-sheet') as HTMLElement;
     expect(sheet.classList.contains('bottom-sheet--fit')).toBe(true);
     const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent ?? '').join('\n');
-    expect(css).toMatch(/\.bottom-sheet--fit\s*\{[^}]*bottom:\s*calc\(var\(--fab-size\) \/ 1\.25 \+ 4px\);[^}]*height:\s*auto;[^}]*max-height:\s*85%;/);
+    expect(css).toMatch(/\.bottom-sheet--fit\s*\{[^}]*bottom:\s*calc\(var\(--fab-size\) \/ 1\.25 \+ 4px\);[^}]*height:\s*auto;[^}]*max-height:\s*min\(85%, calc\(100% - var\(--fab-size\) \/ 1\.25 - 4px - 8px\)\);/);
     expect(css).toMatch(/\.bottom-sheet--fit \.bottom-sheet__content\s*\{[^}]*min-height:\s*0;/);
   });
 

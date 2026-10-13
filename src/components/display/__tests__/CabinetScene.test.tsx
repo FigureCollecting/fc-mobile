@@ -5,7 +5,7 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { CULL_MARGIN, MAX_DRAWN_CABINETS, RECULL_SHARE, hiddenUnder, opaqueBoards } from '../caseCull';
+import { MAX_DRAWN_CABINETS, cullRect, hiddenUnder, opaqueBoards, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
@@ -912,41 +912,58 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     }
   });
 
-  for (const swipe of ['camera', 'pan'] as const) {
-    it(`every face is cut to the frame and half of it round it, and no figure lies wholly past it, after ${swipe} swipes`, () => {
-      const { host } = scene(getFixtureFigures(170), { view: 'wall', swipe }, { frameFallback: COVER });
+  for (const [view, swipe] of [
+    ['wall', 'camera'],
+    ['wall', 'pan'],
+    ['shelf', 'camera'],
+  ] as const) {
+    it(`every face is cut to what the frame and half of it round it see, and no figure lies wholly past it, ${view} view, after ${swipe} swipes`, () => {
+      const { host } = scene(getFixtureFigures(170), { view, swipe }, { frameFallback: COVER });
       for (const dx of [0, -300, -300, -900, 250]) {
         if (dx !== 0) drag(host, dx);
         const camera = cameraOf(host);
-        const pan = Number(host.dataset.pan);
         const s = pxPerMm(host);
-        const toScreen = (q: HTMLElement, x: number, y: number) => {
+        // the picture the scene last culled for: the camera walked to its x, the photo slid by its pan
+        const cull = { camera: { ...camera, x: Number(host.dataset.cullX) }, panPx: Number(host.dataset.cullPan) };
+        const rect = cullRect(COVER);
+        const world = (q: HTMLElement, x: number, y: number): [number, number, number] => {
           const [wx, wy, wz] = landsAt(q.style.transform, x, y);
-          const p = project(camera, [wx / s, -wy / s, wz / s]);
-          return { x: p.x + pan, y: p.y, depth: p.depth };
+          return [wx / s, -wy / s, wz / s];
         };
-        // the cull follows the camera a quarter frame behind at most: the frame and a quarter round it, at least, is cut to
-        const [mx, my] = [COVER.width, COVER.height].map((d) => d * (CULL_MARGIN + RECULL_SHARE) + 1);
+        let cut = 0;
         for (const q of quads(host)) {
           const [w, h] = [parseFloat(q.style.width), parseFloat(q.style.height)];
-          const corners = [toScreen(q, 0, 0), toScreen(q, w, 0), toScreen(q, 0, h), toScreen(q, w, h)];
+          const a = world(q, 0, 0);
+          const [pu, pv] = [world(q, w, 0), world(q, 0, h)];
+          const u: [number, number, number] = [pu[0] - a[0], pu[1] - a[1], pu[2] - a[2]];
+          const v: [number, number, number] = [pv[0] - a[0], pv[1] - a[1], pv[2] - a[2]];
           const label = `${q.className} after ${dx}`;
-          // the room is drawn on its texel grid: what it costs is that grid, wherever its cut reaches (MOB-NAV-1)
-          if (q.matches('.room-wall, .room-floor')) continue;
-          if (q.matches('.cab-figure, .cab-shadow, .cab-plate')) {
-            const xs = corners.map((c) => c.x);
-            expect(Math.max(...xs), label).toBeGreaterThan(-COVER.width * CULL_MARGIN - 1);
-            expect(Math.min(...xs), label).toBeLessThan(COVER.width * (1 + CULL_MARGIN) + 1);
+          if (q.matches('.cab-figure')) {
+            // a figure is drawn whole when what it stands in (its footprint or its picture, the wider) shows
+            const tap = JSON.parse(q.dataset.world!) as WorldBox & { z: number };
+            const art = JSON.parse(q.dataset.artBox!) as WorldBox;
+            const wide = Math.max(tap.x1 - tap.x0, art.x1 - art.x0);
+            const [x0, x1] = [Math.min(tap.x0, art.x0) - wide, Math.max(tap.x1, art.x1) + wide];
+            const [y0, y1] = [Math.min(tap.y0, art.y0), Math.max(tap.y1, art.y1)];
+            expect(trimFace(cull, [x0, y0, tap.z], [x1 - x0, 0, 0], [0, y1 - y0, 0], rect), label).not.toBeNull();
             continue;
           }
-          for (const c of corners) {
-            expect(c.depth, label).toBeGreaterThan(0);
-            expect(c.x, label).toBeGreaterThanOrEqual(-mx);
-            expect(c.x, label).toBeLessThanOrEqual(COVER.width + mx);
-            expect(c.y, label).toBeGreaterThanOrEqual(-my);
-            expect(c.y, label).toBeLessThanOrEqual(COVER.height + my);
+          if (q.matches('.cab-shadow, .cab-plate')) continue;
+          // every other face is already cut to what shows: cutting it again leaves it as it is
+          const t = trimFace(cull, a, u, v, rect);
+          expect(t, label).not.toBeNull();
+          for (const [got, want] of [
+            [t!.s0, 0],
+            [t!.s1, 1],
+            [t!.t0, 0],
+            [t!.t1, 1],
+          ]) {
+            expect(Math.abs(got - want), label).toBeLessThan(1e-4);
           }
+          if (q.style.backgroundSize) cut++;
         }
+        // and some faces were cut on the way
+        if (dx === 0) expect(cut, 'faces cut').toBeGreaterThan(0);
       }
     });
   }

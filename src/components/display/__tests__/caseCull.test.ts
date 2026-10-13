@@ -78,6 +78,19 @@ describe('trimFace: the part of a face that draws in the frame and its margin', 
     for (const s of [t.s0, t.s1]) for (const tt of [t.t0, t.t1]) expect(screen(view, at(a, u, v, s, tt)).depth).toBeGreaterThanOrEqual(NEAR_MM - 1e-6);
   });
 
+  it('a face running from in front of the camera to behind it stops at the near plane', () => {
+    // a level camera; the face is the vertical plane through it along its axis, a hand either side of its eye
+    const camera: Camera = { x: 0, y: 1000, z: 1000, pitch: 0, focalPx: 300, frame: COVER };
+    const a: Vec3 = [0, 1100, -2000];
+    const u: Vec3 = [0, 0, 4000];
+    const v: Vec3 = [0, -200, 0];
+    const t = trimFace(viewOf(camera), a, u, v, rect)!;
+    expect(t).not.toBeNull();
+    // the part kept reaches to the near plane and no nearer
+    const depth = (s: number) => screen(viewOf(camera), at(a, u, v, s, 0.5)).depth;
+    expect(Math.min(depth(t.s0), depth(t.s1))).toBeCloseTo(NEAR_MM, 6);
+  });
+
   it('a face that only touches the rect along its edge is not drawn', () => {
     // a level camera whose frame centre sits on the rect's left side: that side's plane is x = 0 exactly
     const camera: Camera = { x: 0, y: 0, z: 1000, pitch: 0, focalPx: 100, frame: { width: 200, height: 200 } };
@@ -181,13 +194,35 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
         checked++;
         const got = nearestCabinets(view, wall, []);
         for (const i of shows) expect(got, `camera at ${x}: cabinet ${i} shows at ${span(i).map((v) => v.toFixed(0))}`).toContain(i);
-        // and a cabinet drawn before keeps no place against one the frame shows
-        const kept = got.filter((i) => !shows.includes(i));
-        expect(nearestCabinets(view, wall, [...kept, x % 2 ? 0 : 29])).toEqual(expect.arrayContaining(shows));
+        // and cabinets drawn before keep no place against one the frame shows, however many there are
+        const kept = wall.cabinets.map((_, i) => i).filter((i) => !shows.includes(i) && Math.abs(i - shows[0]) <= 4);
+        expect(nearestCabinets(view, wall, kept)).toEqual(expect.arrayContaining(shows));
       }
       expect(checked).toBeGreaterThan(50);
     });
   }
+
+  it('a corner behind the camera never stretches a cabinet across the frame', () => {
+    // the camera stands inside the cabinets' depth, looking at their backs: their fronts are behind it
+    const wall = wallLayout(Array.from({ length: 20 }, () => IKEA_KLINGSBO));
+    const x = wall.cabinets[10].centerMm;
+    const camera: Camera = { x, y: 1000, z: -200, pitch: 0, focalPx: 300, frame: COVER };
+    // the photo slid right: the backs the frame centre sees are those of the cabinets left of the camera
+    const view = viewOf(camera, 900);
+    const backs = (i: number) => [wall.cabinets[i].leftMm - 47.5, wall.cabinets[i].rightMm + 47.5].map((wx) => screen(view, [wx, 1000, -400]).x);
+    const off = (i: number) => {
+      const [x0, x1] = backs(i);
+      return x1 < COVER.width / 2 ? COVER.width / 2 - x1 : x0 > COVER.width / 2 ? x0 - COVER.width / 2 : 0;
+    };
+    const want = wall.cabinets
+      .map((_, i) => i)
+      .sort((a, b) => off(a) - off(b) || a - b)
+      .slice(0, 5)
+      .sort((a, b) => a - b);
+    expect(nearestCabinets(view, wall, [])).toEqual(want);
+    // slid by 900 px at 1.5 px per mm at their backs: some 600 mm, a cabinet and more, to the left of the camera's
+    expect(want).toEqual([7, 8, 9, 10, 11]);
+  });
 
   it('a cabinet behind the camera is never chosen over one in front', () => {
     const camera = { ...framing().camera, z: -1000 };

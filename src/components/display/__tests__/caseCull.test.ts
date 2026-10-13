@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { IKEA_KLINGSBO } from '../cabinetPresets';
-import { lensFocalPx, project, type Camera, type Vec3 } from '../caseCamera';
-import { frameCase, wallPages, type FramingInput } from '../caseFraming';
+import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
+import { boxCorners, lensFocalPx, project, type Camera, type Vec3 } from '../caseCamera';
+import { cabinetBox, frameCase, wallPages, type FramingInput } from '../caseFraming';
 import { wallLayout } from '../packCabinets';
 import {
   CABINET_HYSTERESIS,
@@ -11,7 +11,9 @@ import {
   NEAR_MM,
   RECULL_SHARE,
   cullRect,
+  figuresToDraw,
   hiddenUnder,
+  opaqueBoards,
   nearestCabinets,
   stickyView,
   texelScale,
@@ -119,7 +121,7 @@ describe('trimFace: the part of a face that draws in the frame and its margin', 
 });
 
 describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the frame centre, steady against small moves`, () => {
-  it('a long wall on the open panel: the five whose middles draw nearest the frame centre', () => {
+  it('a long wall on the open panel: the five whose fronts draw nearest the frame centre', () => {
     const camera = framing(OPEN, 10).camera;
     const got = nearestCabinets(viewOf(camera), WALL, []);
     expect(got).toHaveLength(MAX_DRAWN_CABINETS);
@@ -148,6 +150,36 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     const far = { ...camera, x: camera.x + step * 10 };
     expect(nearestCabinets(viewOf(far), WALL, fresh)).toEqual(nearestCabinets(viewOf(far), WALL, []));
   });
+
+  const MIXED = wallLayout(Array.from({ length: 30 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+  for (const [name, wall] of [
+    ['KLINGSBOs', WALL],
+    ['KLINGSBO, Detolf, rack', MIXED],
+  ] as const) {
+    it(`a cabinet the frame shows comes before one it does not, wherever along the wall the camera stands: ${name}`, () => {
+      // a narrow frame shows four cabinets or so: the fifth drawn is one it shows at its edge, never one wholly past it
+      const narrow = { width: 360, height: 480 };
+      const base = frameCase({ frame: narrow, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 3, shelf: 0 }).camera;
+      let checked = 0;
+      for (let x = wall.cabinets[2].centerMm; x <= wall.cabinets[8].centerMm; x += 7) {
+        const view = viewOf({ ...base, x });
+        const span = (i: number) => {
+          const b = cabinetBox(wall.cabinets[i], 0);
+          const xs = boxCorners(b.x0, b.x1, b.y0, wall.cabinets[i].profile.outer.heightMm, b.z0, b.z1).map((c) => screen(view, c).x);
+          return [Math.min(...xs), Math.max(...xs)];
+        };
+        const shows = wall.cabinets.map((_, i) => i).filter((i) => span(i)[1] >= 0 && span(i)[0] <= narrow.width);
+        if (shows.length > MAX_DRAWN_CABINETS) continue;
+        checked++;
+        const got = nearestCabinets(view, wall, []);
+        for (const i of shows) expect(got, `camera at ${x}: cabinet ${i} shows at ${span(i).map((v) => v.toFixed(0))}`).toContain(i);
+        // and a cabinet drawn before keeps no place against one the frame shows
+        const kept = got.filter((i) => !shows.includes(i));
+        expect(nearestCabinets(view, wall, [...kept, x % 2 ? 0 : 29])).toEqual(expect.arrayContaining(shows));
+      }
+      expect(checked).toBeGreaterThan(50);
+    });
+  }
 
   it('a cabinet behind the camera is never chosen over one in front', () => {
     const camera = { ...framing().camera, z: -1000 };
@@ -205,18 +237,32 @@ describe('texelScale: faces drawn at the px per mm the screen shows them, never 
     ['wall, open', framing(OPEN)],
     ['cabinet, cover', framing(COVER, 10, 'cabinet')],
     ['shelf, open', framing(OPEN, 10, 'shelf')],
-  ])('%s: at least what the nearest point shows, under 1.42 times it, at most 1 px per mm', (_, f) => {
+  ])('%s: at least what the nearest point shows, under 1.19 times it, at most 1 px per mm', (_, f) => {
     const s = texelScale(f.camera, span);
     const need = nearest(f.camera);
     expect(s).toBeLessThanOrEqual(1);
     expect(s).toBeGreaterThanOrEqual(Math.min(1, need) - 1e-9);
-    if (need < 1 / Math.SQRT2) expect(s).toBeLessThan(need * Math.SQRT2 + 1e-9);
+    if (need < 2 ** -0.25) expect(s).toBeLessThan(need * 2 ** 0.25 + 1e-9);
   });
 
-  it('steps by half octaves, so a camera walking the wall keeps it', () => {
+  it('never more than a quarter octave over what the nearest point shows, wherever the camera stands', () => {
+    fc.assert(
+      fc.property(fc.double({ min: 400, max: 30_000, noNaN: true }), fc.double({ min: 0, max: 0.6, noNaN: true }), (z, pitch) => {
+        const camera = { ...framing(COVER).camera, z, pitch };
+        const need = nearest(camera);
+        if (need >= 2 ** -0.25 || need <= 1 / 64) return;
+        const s = texelScale(camera, span);
+        expect(s).toBeGreaterThanOrEqual(need - 1e-12);
+        expect(s).toBeLessThan(need * 2 ** 0.25 + 1e-12);
+      }),
+      { numRuns: 400 },
+    );
+  });
+
+  it('steps by quarter octaves, so a camera walking the wall keeps it', () => {
     const f = framing(COVER);
     const s = texelScale(f.camera, span);
-    expect(Math.log2(s) * 2).toBeCloseTo(Math.round(Math.log2(s) * 2), 9);
+    expect(Math.log2(s) * 4).toBeCloseTo(Math.round(Math.log2(s) * 4), 9);
     expect(texelScale({ ...f.camera, x: f.camera.x + 20_000 }, span)).toBe(s);
   });
 
@@ -271,5 +317,56 @@ describe(`wallPages: a page holds at most ${MAX_DRAWN_CABINETS} cabinets, the mo
     const pages = wallPages({ frame: OPEN, wall: WALL, headroomMm: WALL.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
     expect(Math.max(...pages.map((p) => p.length))).toBe(MAX_DRAWN_CABINETS);
     expect(pages.flat()).toEqual(WALL.cabinets.map((_, i) => i));
+  });
+});
+
+describe('opaqueBoards: what may hide a figure in a cabinet', () => {
+  it('a KLINGSBO is glass and mesh: none; a Detolf its wood boards; a rack every board, inside its posts', () => {
+    expect(opaqueBoards(wallLayout([IKEA_KLINGSBO]).cabinets[0])).toEqual([]);
+    const detolf = wallLayout([IKEA_DETOLF]).cabinets[0];
+    const wood = IKEA_DETOLF.surfaces.filter((x) => x.material === 'wood');
+    expect(wood.length).toBeGreaterThan(0);
+    expect(opaqueBoards(detolf)).toEqual(
+      wood.map((x) => ({ x0: detolf.leftMm, x1: detolf.rightMm, y0: x.topMm - x.thicknessMm, y1: x.topMm, z0: -IKEA_DETOLF.outer.depthMm, z1: 0 })),
+    );
+    const rack = wallLayout([OPEN_STEEL_RACK]).cabinets[0];
+    const post = OPEN_STEEL_RACK.rack!.postMm;
+    const D = OPEN_STEEL_RACK.outer.depthMm;
+    expect(opaqueBoards(rack)).toEqual(
+      OPEN_STEEL_RACK.surfaces.map((x) => ({ x0: rack.leftMm + post / 2, x1: rack.rightMm - post / 2, y0: x.topMm - x.thicknessMm, y1: x.topMm, z0: -D + post / 2, z1: -post / 2 })),
+    );
+  });
+
+  it('a rack without its post size given stands on 38 mm posts', () => {
+    const bare = { ...OPEN_STEEL_RACK, rack: undefined };
+    const slot = wallLayout([bare]).cabinets[0];
+    expect(opaqueBoards(slot)[0].x0).toBe(slot.leftMm + 19);
+  });
+});
+
+describe('figuresToDraw: in a drawn cabinet, in the frame and its margin, under no board', () => {
+  const rack = wallLayout([OPEN_STEEL_RACK, OPEN_STEEL_RACK, OPEN_STEEL_RACK]);
+  const slot = rack.cabinets[0];
+  const [, b1, b2] = OPEN_STEEL_RACK.surfaces;
+  // a camera close above the rack, looking steeply down into it
+  const camera: Camera = { x: slot.centerMm, y: 2600, z: 500, pitch: 1.1, focalPx: 300, frame: COVER };
+  const view = viewOf(camera);
+  const rect = cullRect(COVER);
+  const fig = (cab: number, y0: number, y1: number, z: number, x = rack.cabinets[cab].centerMm) => ({ cab, x0: x - 40, x1: x + 40, y0, y1, z });
+  const boards = (cab: number) => opaqueBoards(rack.cabinets[cab]);
+
+  it('draws one in view, skips one under a board, one past the margin and one in a cabinet not drawn', () => {
+    const under = fig(0, b1.topMm, b2.topMm - b2.thicknessMm - 10, -300);
+    const onTop = fig(0, b2.topMm, b2.topMm + 150, -200);
+    const far = fig(0, b2.topMm, b2.topMm + 150, -200, slot.centerMm + 40_000);
+    const elsewhere = fig(2, b2.topMm, b2.topMm + 150, -200);
+    for (const board of boards(0)) expect(hiddenUnder(camera, [[onTop.x0, onTop.y0, onTop.z]], board)).toBe(false);
+    const got = figuresToDraw(view, rect, [under, onTop, far, elsewhere], new Set([0, 1]), boards);
+    expect(got).toEqual({ shown: [1], hidden: 1 });
+  });
+
+  it('a figure under a board but showing past its front edge is drawn', () => {
+    const peeking = fig(0, b1.topMm, b2.topMm - b2.thicknessMm - 10, 200);
+    expect(figuresToDraw(view, rect, [peeking], new Set([0]), boards)).toEqual({ shown: [0], hidden: 0 });
   });
 });

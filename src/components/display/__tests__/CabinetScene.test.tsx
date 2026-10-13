@@ -5,7 +5,7 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { CULL_MARGIN, MAX_DRAWN_CABINETS, RECULL_SHARE, hiddenUnder } from '../caseCull';
+import { CULL_MARGIN, MAX_DRAWN_CABINETS, RECULL_SHARE, hiddenUnder, opaqueBoards } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, wallReachMm } from '../caseFraming';
 import { CEILING_DEFAULT_MM } from '../cabinetProfile';
@@ -938,12 +938,12 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     expect(Array.from(door).some((d) => d.style.backgroundSize === '')).toBe(true);
   });
 
-  it('a figure wholly under a board, from where the camera looks down on the rack, is not drawn', () => {
-    const { host } = scene(getFixtureFigures(6), { view: 'cabinet', pattern: 'open-steel-rack' }, { frameFallback: { width: 200, height: 1200 } });
-    expect(Number(host.dataset.hiddenFigures)).toBeGreaterThan(0);
+  it('publishes how many figures a board hid; none it draws is one the boards hide from its camera', () => {
+    const { host } = scene(getFixtureFigures(6), { view: 'cabinet', pattern: 'open-steel-rack' }, { frameFallback: COVER });
+    expect(host.dataset.hiddenFigures).toMatch(/^\d+$/);
     const camera = cameraOf(host);
-    const boards = OPEN_STEEL_RACK.surfaces.map((s) => ({ y0: s.topMm - s.thicknessMm, y1: s.topMm }));
-    // no figure drawn is one the boards hide
+    const boards = opaqueBoards(wallLayout([OPEN_STEEL_RACK]).cabinets[0]);
+    expect(boards.length).toBeGreaterThan(0);
     for (const b of figureButtons(host)) {
       const w = JSON.parse(b.dataset.world!) as { x0: number; x1: number; y0: number; y1: number; z: number };
       const corners: [number, number, number][] = [
@@ -952,13 +952,20 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
         [w.x0, w.y1, w.z],
         [w.x1, w.y1, w.z],
       ];
-      const slot = wallLayout([OPEN_STEEL_RACK]).cabinets[0];
-      const post = OPEN_STEEL_RACK.rack!.postMm;
-      const D = OPEN_STEEL_RACK.outer.depthMm;
-      for (const board of boards) {
-        const hidden = hiddenUnder(camera, corners, { x0: slot.leftMm + post / 2, x1: slot.rightMm - post / 2, z0: -D + post / 2, z1: -post / 2, ...board });
-        expect(hidden, b.getAttribute('aria-label')!).toBe(false);
-      }
+      for (const board of boards) expect(hiddenUnder(camera, corners, board), b.getAttribute('aria-label')!).toBe(false);
     }
+  });
+
+  it('CC13 glass: each pane is its four edges, clear between them', () => {
+    const { host } = scene(FIXTURE_FIGURES, {}, { frameFallback: COVER });
+    const s = pxPerMm(host);
+    const door = Array.from(host.querySelectorAll<HTMLElement>('.q.cab-pane--door'));
+    expect(door).toHaveLength(4);
+    // two edges along the door's width, two up its height, each 1 mm across, at the scene's px per mm
+    const sizes = door.map((q) => [parseFloat(q.style.width), parseFloat(q.style.height)].sort((a, b) => a - b));
+    for (const [thin] of sizes) expect(thin).toBeCloseTo(1 * s, 6);
+    const slot = wallLayout([IKEA_KLINGSBO]).cabinets[0];
+    expect(sizes.filter(([, long]) => Math.abs(long - (slot.rightMm - slot.leftMm) * s) < 1e-6)).toHaveLength(2);
+    expect(host.querySelectorAll('.q.cab-pane')).toHaveLength(16);
   });
 });

@@ -118,11 +118,12 @@ const times = (u: V3, k: number): V3 => [u[0] * k, u[1] * k, u[2] * k];
  * background is laid on the whole face, its element a window onto it, so a gradient stays where it was.
  */
 function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid }) {
-  const draw = useContext(DrawContext);
-  const s = draw?.s ?? 1;
+  // every face is drawn inside the scene, which provides what it draws
+  const draw = useContext(DrawContext)!;
+  const { s } = draw;
   let face: [V3, V3, V3] = [a, u, v];
   let window: JSX.CSSProperties | undefined;
-  const cut = draw ? trimFace(draw.view, a, u, v, draw.rect) : { s0: 0, s1: 1, t0: 0, t1: 1 };
+  const cut = trimFace(draw.view, a, u, v, draw.rect);
   if (!cut) return null;
   const ds = cut.s1 - cut.s0;
   const dt = cut.t1 - cut.t0;
@@ -489,7 +490,7 @@ function SceneFigure({
 }) {
   const { placed, slot, cx } = draw;
   const { item } = placed;
-  const s = useContext(DrawContext)?.s ?? 1;
+  const { s } = useContext(DrawContext)!;
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
   const grounded = margins !== null;
   // until its picture is read, a figure draws its plate, within the footprint it is packed by, never the picture at a width

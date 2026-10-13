@@ -78,6 +78,14 @@ describe('trimFace: the part of a face that draws in the frame and its margin', 
     for (const s of [t.s0, t.s1]) for (const tt of [t.t0, t.t1]) expect(screen(view, at(a, u, v, s, tt)).depth).toBeGreaterThanOrEqual(NEAR_MM - 1e-6);
   });
 
+  it('a face that only touches the rect along its edge is not drawn', () => {
+    // a level camera whose frame centre sits on the rect's left side: that side's plane is x = 0 exactly
+    const camera: Camera = { x: 0, y: 0, z: 1000, pitch: 0, focalPx: 100, frame: { width: 200, height: 200 } };
+    const edge = { x0: 100, x1: 300, y0: -100, y1: 300 };
+    expect(trimFace(viewOf(camera), [-500, 0, 0], [500, 0, 0], [0, 100, 0], edge)).toBeNull();
+    expect(trimFace(viewOf(camera), [-500, 0, 0], [501, 0, 0], [0, 100, 0], edge)).not.toBeNull();
+  });
+
   it('a pan shifts what is seen: a face the slid picture brings in is drawn', () => {
     const slot = WALL.cabinets[20];
     const face: [Vec3, Vec3, Vec3] = [[slot.leftMm, 1000, 0], [slot.rightMm - slot.leftMm, 0, 0], [0, -500, 0]];
@@ -305,6 +313,10 @@ describe('hiddenUnder: a figure wholly behind an opaque board, from where the ca
 
   it('a camera under the board looking up at a figure above it: hidden', () => {
     expect(hiddenUnder({ ...above, y: 400, pitch: -0.6 }, figure(300, 500, 1100, 1200, -300), board)).toBe(true);
+  });
+
+  it('a camera inside the board itself (level with its thickness) is hidden by neither face', () => {
+    expect(hiddenUnder({ ...above, y: 990, pitch: 0 }, figure(300, 500, 700, 900, -300), board)).toBe(false);
   });
 
   it('a figure beside the board, its rays past the side: drawn', () => {

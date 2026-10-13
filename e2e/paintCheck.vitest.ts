@@ -78,6 +78,13 @@ describe('decodePng', () => {
     expect(Array.from(decodePng(encodePng(W, H, PIXELS, [4, 3, 1, 2])).data)).toEqual(PIXELS);
   });
 
+  it("breaks paeth's ties as the PNG spec does: left before up before up-left", () => {
+    // at (1, 1): left a = 0, up b = 30, up-left c = 10, so |p - b| = |p - c| = 10 and paeth predicts b
+    const px = [10, 30, 0, 99].flatMap((v) => [v, v, v, 255]);
+    const img = decodePng(encodePng(2, 2, px, [0, 4]));
+    expect(Array.from(img.data)).toEqual(px);
+  });
+
   it('reads an RGB picture (colour type 2) as opaque RGBA', () => {
     const img = decodePng(encodePng(W, H, PIXELS, [4, 0], 2));
     const opaque = PIXELS.map((v, i) => (i % 4 === 3 ? 255 : v));
@@ -102,7 +109,8 @@ describe('decodePng', () => {
     ihdr[8] = 8;
     ihdr[9] = 6;
     const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    const short = Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.alloc(5))), chunk('IEND', Buffer.alloc(0))]);
+    // the rows without their filter bytes: one byte per row short
+    const short = Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.alloc(2 * 2 * 4))), chunk('IEND', Buffer.alloc(0))]);
     expect(() => decodePng(short)).toThrow(/short/);
     const badFilter = Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(Buffer.from([5, ...new Array(8).fill(0), 0, ...new Array(8).fill(0)]))), chunk('IEND', Buffer.alloc(0))]);
     expect(() => decodePng(badFilter)).toThrow(/row 0 has filter 5/);
@@ -125,6 +133,15 @@ describe('inkShare', () => {
     expect(inkShare(img)).toBeCloseTo(2 / 100, 10);
     expect(inkShare(img, 23)).toBeCloseTo(4 / 100, 10);
     expect(inkShare(img, 200)).toBe(0);
+  });
+
+  it('a tie for the commonest colour goes to the colour seen first', () => {
+    const img = flat(5, 1, [0, 0, 0]);
+    img.data.set([200, 200, 200], 8);
+    img.data.set([200, 200, 200], 12);
+    img.data.set([190, 190, 190], 16);
+    // black and light grey two each: black is the background, so both greys and the near-grey are ink
+    expect(inkShare(img)).toBeCloseTo(3 / 5, 10);
   });
 
   it("takes the background from the picture's commonest colour, not its first pixel", () => {

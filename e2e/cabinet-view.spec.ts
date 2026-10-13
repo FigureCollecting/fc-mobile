@@ -974,7 +974,16 @@ test('a swipe opens nothing; the next tap does', async ({ page }) => {
   await swipe(page, -80);
   await page.waitForTimeout(200);
   await expect(page.locator('.pswp')).toHaveCount(0);
-  await page.locator('button.cab-figure').first().tap();
+  // a figure the frame shows: framed to five cabinets on the cover, the cabinet's top may stand past the frame
+  const frame = (await page.locator('.cabinet-scene').boundingBox())!;
+  const figures = page.locator('button.cab-figure');
+  let shown = -1;
+  for (let i = 0; i < (await figures.count()) && shown < 0; i++) {
+    const b = await figures.nth(i).boundingBox();
+    if (b && b.y >= frame.y && b.y + b.height <= frame.y + frame.height && b.x >= frame.x && b.x + b.width <= frame.x + frame.width) shown = i;
+  }
+  expect(shown).toBeGreaterThanOrEqual(0);
+  await figures.nth(shown).tap();
   await expect(page.locator('.pswp')).toBeVisible();
 });
 

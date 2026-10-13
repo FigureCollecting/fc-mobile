@@ -34,7 +34,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { cabinetsInReach, frameCase, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
+import { cabinetsInReach, frameCase, panFraming, panLimitsPx, swipeCamera, wallPages, wallReachMm } from './caseFraming';
 import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
@@ -615,8 +615,10 @@ export function CabinetScene({
   const framing = swiping ? swipeCamera(walked, wall, liveDx) : walked;
   const [panMin, panMax] = panLimitsPx(framing, wall);
   const clampPan = (v: number) => Math.min(panMax, Math.max(panMin, v));
-  const panPx = prefs.swipe === 'pan' ? clampPan(pan + liveDx) : 0;
-  const { camera } = framing;
+  // pan mode: the photo slides, and past its sane extent is retaken farther along (panFraming)
+  const shown = prefs.swipe === 'pan' ? panFraming(framing, clampPan(pan + liveDx)) : { framing, panPx: 0 };
+  const { panPx } = shown;
+  const { camera } = shown.framing;
 
   // draw only the cabinets that can draw into the frame where the panned picture now sits: never the whole wall
   // (a hundred cabinets of preserve-3d faces stall the browser); the room's far floor reaches widest

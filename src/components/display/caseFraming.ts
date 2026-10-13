@@ -196,6 +196,36 @@ export function panLimitsPx(framing: Framing, wall: WallLayout): [number, number
   return [Math.min(0, camera.frame.width - m.x - right), Math.max(0, m.x - left)];
 }
 
+/**
+ * CC4, pan mode: the photo slides at most until the frame's far edge looks
+ * this far off the camera's axis (tan; 2 = 63 deg). Past it a photo of a
+ * long wall is all shear: the frame looks through dozens of cabinets at a
+ * graze, and drawing them all ran the phone's compositor out of tile memory
+ * (MOB-NAV-1, Fold8).
+ */
+export const PAN_EDGE_TAN_MAX = 2;
+
+/** CC4, pan mode: how far (CSS px) the picture itself may slide either way (PAN_EDGE_TAN_MAX). */
+export function panSlideMaxPx(camera: Camera): number {
+  return Math.max(0, camera.focalPx * PAN_EDGE_TAN_MAX - camera.frame.width / 2);
+}
+
+/**
+ * CC4, pan mode: the picture for a pan of panPx (within panLimitsPx). Up to
+ * panSlideMaxPx the photo slides and the camera stays; past it the photo is
+ * retaken from farther along the wall, the camera and its aim moved by the
+ * rest, so the line the camera aims along (the look point's height, on the
+ * cabinets' front) still draws exactly where the slid photo would put it.
+ */
+export function panFraming(framing: Framing, panPx: number): { framing: Framing; panPx: number } {
+  const max = panSlideMaxPx(framing.camera);
+  const slid = Math.min(max, Math.max(-max, panPx));
+  if (slid === panPx) return { framing, panPx };
+  const { camera, look } = framing;
+  const dx = ((slid - panPx) * project(camera, look).depth) / camera.focalPx;
+  return { framing: { ...framing, camera: { ...camera, x: camera.x + dx }, look: [look[0] + dx, look[1], look[2]] }, panPx: slid };
+}
+
 /** The room the cabinets stand in, mm: floor to ceiling, the deepest back to the farthest front (splayed feet). */
 export interface RoomSpan {
   readonly y0: number;

@@ -4,7 +4,8 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
-import { IKEA_KLINGSBO } from '../cabinetPresets';
+import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
+import { CULL_MARGIN, MAX_DRAWN_CABINETS, RECULL_SHARE, hiddenUnder } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, wallReachMm } from '../caseFraming';
 import { CEILING_DEFAULT_MM } from '../cabinetProfile';
@@ -830,5 +831,134 @@ describe('CabinetScene: the numbers the e2e checks the drawing against', () => {
     const surfaces = new Set(figureButtons(host).map((b) => JSON.parse(b.dataset.world!).surface));
     // the seven fixtures, packed by their labelled widths, stand on the KLINGSBO's top and three of its glass shelves
     expect([...surfaces].sort((a, b) => a - b)).toEqual([969, 1243, 1519, 1800]);
+  });
+});
+
+describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
+  // Chrome rasters every face under the scene's perspective at no less than the device pixel ratio per element
+  // px, so each face costs its element's width x height (at 2.8125) whatever it shows; the case held some hundred
+  // frames of them and the Fold8 ghosted its whole chrome.
+  const COVER = { width: 443, height: 344 };
+  const OPEN = { width: 870, height: 261 };
+  const quads = (host: HTMLElement) => Array.from(host.querySelectorAll<HTMLElement>('.cabinet-scene__root .q'));
+  const area = (q: HTMLElement) => parseFloat(q.style.width) * parseFloat(q.style.height);
+  const pxPerMm = (host: HTMLElement) => Number(host.dataset.pxPerMm);
+
+  for (const [panel, frame] of [
+    ['cover', COVER],
+    ['open', OPEN],
+  ] as const) {
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      it(`some 1,190 figures, the ${view} view on the ${panel} panel: at most five cabinets, every element at most 3 frames of px`, () => {
+        const { host } = scene(getFixtureFigures(170), { view }, { frameFallback: frame });
+        const cabs = host.querySelectorAll('.cab').length;
+        expect(cabs).toBeGreaterThan(0);
+        expect(cabs).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+        expect(host.dataset.drawnCabinets).toBe(String(cabs));
+        expect(host.dataset.drawnFigures).toBe(String(figureButtons(host).length));
+        expect(figureButtons(host).length).toBeGreaterThan(0);
+        const total = quads(host).reduce((a, q) => a + area(q), 0);
+        expect(total / (frame.width * frame.height)).toBeLessThanOrEqual(3);
+      });
+    }
+  }
+
+  it('the faces are drawn at the px per mm the screen shows them, and the camera draws them there', () => {
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      const { host } = scene(getFixtureFigures(20), { view }, { frameFallback: COVER });
+      const camera = cameraOf(host);
+      const s = pxPerMm(host);
+      // at least what the cabinets' front shows straight ahead, at most 1 (the world's own mm), in half octaves
+      expect(s).toBeLessThanOrEqual(1);
+      expect(s).toBeGreaterThanOrEqual(Math.min(1, camera.focalPx / project(camera, [camera.x, camera.y, 0]).depth) - 1e-9);
+      expect(Math.log2(s) * 2).toBeCloseTo(Math.round(Math.log2(s) * 2), 9);
+      const root = host.querySelector<HTMLElement>('.cabinet-scene__root')!;
+      expect(root.style.transform).toBe(cssSceneTransform(camera, s));
+      expect(root.style.getPropertyValue('--s')).toBe(String(s));
+      // a figure's element is its world box at that scale
+      for (const b of figureButtons(host)) {
+        const w = JSON.parse(b.dataset.world!) as { x0: number; x1: number };
+        expect(parseFloat(b.style.width)).toBeCloseTo((w.x1 - w.x0) * s, 4);
+      }
+      cleanup();
+    }
+  });
+
+  for (const swipe of ['camera', 'pan'] as const) {
+    it(`every face is cut to the frame and half of it round it, and no figure lies wholly past it, after ${swipe} swipes`, () => {
+      const { host } = scene(getFixtureFigures(170), { view: 'wall', swipe }, { frameFallback: COVER });
+      for (const dx of [0, -300, -300, -900, 250]) {
+        if (dx !== 0) drag(host, dx);
+        const camera = cameraOf(host);
+        const pan = Number(host.dataset.pan);
+        const s = pxPerMm(host);
+        const toScreen = (q: HTMLElement, x: number, y: number) => {
+          const [wx, wy, wz] = landsAt(q.style.transform, x, y);
+          const p = project(camera, [wx / s, -wy / s, wz / s]);
+          return { x: p.x + pan, y: p.y, depth: p.depth };
+        };
+        // the cull follows the camera a quarter frame behind at most: the frame and a quarter round it, at least, is cut to
+        const [mx, my] = [COVER.width, COVER.height].map((d) => d * (CULL_MARGIN + RECULL_SHARE) + 1);
+        for (const q of quads(host)) {
+          const [w, h] = [parseFloat(q.style.width), parseFloat(q.style.height)];
+          const corners = [toScreen(q, 0, 0), toScreen(q, w, 0), toScreen(q, 0, h), toScreen(q, w, h)];
+          const label = `${q.className} after ${dx}`;
+          if (q.matches('.cab-figure, .cab-shadow, .cab-plate')) {
+            const xs = corners.map((c) => c.x);
+            expect(Math.max(...xs), label).toBeGreaterThan(-COVER.width * CULL_MARGIN - 1);
+            expect(Math.min(...xs), label).toBeLessThan(COVER.width * (1 + CULL_MARGIN) + 1);
+            continue;
+          }
+          for (const c of corners) {
+            expect(c.depth, label).toBeGreaterThan(0);
+            expect(c.x, label).toBeGreaterThanOrEqual(-mx);
+            expect(c.x, label).toBeLessThanOrEqual(COVER.width + mx);
+            expect(c.y, label).toBeGreaterThanOrEqual(-my);
+            expect(c.y, label).toBeLessThanOrEqual(COVER.height + my);
+          }
+        }
+      }
+    });
+  }
+
+  it("a face cut at the margin keeps its picture where it was: the room's gradient is laid on the whole face", () => {
+    const { host } = scene(getFixtureFigures(170), { view: 'wall' }, { frameFallback: COVER });
+    const floor = host.querySelector<HTMLElement>('.q.room-floor')!;
+    const [w, h] = [parseFloat(floor.style.width), parseFloat(floor.style.height)];
+    const [bw, bh] = floor.style.backgroundSize.split(' ').map(parseFloat);
+    const [bx, by] = floor.style.backgroundPosition.split(' ').map(parseFloat);
+    // the element is a window onto the whole face: the background spans the face, the window inside it
+    expect(bw).toBeGreaterThan(w);
+    expect(bx).toBeLessThanOrEqual(0);
+    expect(bx + bw).toBeGreaterThanOrEqual(w - 1e-6);
+    expect(by).toBeLessThanOrEqual(0);
+    expect(by + bh).toBeGreaterThanOrEqual(h - 1e-6);
+    // a face the frame holds whole is not cut and carries no window
+    const door = host.querySelectorAll<HTMLElement>('.q.cab-pane--door');
+    expect(Array.from(door).some((d) => d.style.backgroundSize === '')).toBe(true);
+  });
+
+  it('a figure wholly under a board, from where the camera looks down on the rack, is not drawn', () => {
+    const { host } = scene(getFixtureFigures(6), { view: 'cabinet', pattern: 'open-steel-rack' }, { frameFallback: { width: 200, height: 1200 } });
+    expect(Number(host.dataset.hiddenFigures)).toBeGreaterThan(0);
+    const camera = cameraOf(host);
+    const boards = OPEN_STEEL_RACK.surfaces.map((s) => ({ y0: s.topMm - s.thicknessMm, y1: s.topMm }));
+    // no figure drawn is one the boards hide
+    for (const b of figureButtons(host)) {
+      const w = JSON.parse(b.dataset.world!) as { x0: number; x1: number; y0: number; y1: number; z: number };
+      const corners: [number, number, number][] = [
+        [w.x0, w.y0, w.z],
+        [w.x1, w.y0, w.z],
+        [w.x0, w.y1, w.z],
+        [w.x1, w.y1, w.z],
+      ];
+      const slot = wallLayout([OPEN_STEEL_RACK]).cabinets[0];
+      const post = OPEN_STEEL_RACK.rack!.postMm;
+      const D = OPEN_STEEL_RACK.outer.depthMm;
+      for (const board of boards) {
+        const hidden = hiddenUnder(camera, corners, { x0: slot.leftMm + post / 2, x1: slot.rightMm - post / 2, z0: -D + post / 2, z1: -post / 2, ...board });
+        expect(hidden, b.getAttribute('aria-label')!).toBe(false);
+      }
+    }
   });
 });

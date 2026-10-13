@@ -7,7 +7,8 @@
 // cover and open panels, at its device pixel ratio.
 // The check reads the screen (e2e/paintCheck.ts), not the DOM: the bug left the DOM, the styles
 // and hit-testing whole (an "invisible" button still worked) while the compositor did not draw
-// the chrome at all.
+// the chrome at all. The View card opened inside the page, under the tab bar and the pull-up tabs:
+// each of its choices on screen must take its own tap.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures';
 import type { Locator, Page, TestInfo } from '@playwright/test';
@@ -240,6 +241,18 @@ test("the case screen's chrome and cards are drawn after every collection switch
       ['One cabinet', page.getByText('One cabinet')],
       ['One shelf', page.getByText('One shelf')],
     ]);
+    // every choice the open card shows takes its own tap: none lies under the pull-up tabs or the tab bar
+    const covered = await page.evaluate(() =>
+      Array.from(document.querySelectorAll<HTMLElement>('.case-card__choice, .case-card__ceiling, .case-card__swap')).flatMap((el) => {
+        const r = el.getBoundingClientRect();
+        const y = r.top + r.height / 2;
+        // below the half-open card's edge: the card is dragged up to reach it
+        if (y < 0 || y >= window.innerHeight) return [];
+        const hit = document.elementFromPoint(r.left + Math.min(24, r.width / 2), y);
+        return hit !== null && el.contains(hit) ? [] : [`${el.textContent!.trim()} (under ${hit?.closest('[class]')?.className ?? 'nothing'})`];
+      }),
+    );
+    if (covered.length > 0) failures.push(`the View card: ${covered.join('; ')} cannot be tapped`);
     await page.locator('.bottom-sheet__backdrop').tap({ position: top });
     await expect(card).toHaveCount(0);
     await check(page, testInfo, failures, 'after closing the View card', chrome(page));

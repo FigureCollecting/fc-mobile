@@ -678,15 +678,17 @@ export function CabinetScene({
   const { panPx } = shown;
   const { camera } = shown.framing;
 
-  // MOB-NAV-2: cull for the picture last culled for until the camera changes or the picture moves a quarter frame
-  // (the half-viewport margin still covers the frame); draw the five cabinets nearest its centre, a cabinet
-  // already drawn keeping its place against a small move; draw the faces at the px per mm the screen shows the
-  // cabinets' room (floor to headroom, back to the front of the feet) at its nearest
+  // MOB-NAV-2: while a finger swipes, cull for the picture last culled for until it has moved a quarter frame (the
+  // half-viewport margin still covers the frame), a cabinet already drawn keeping its place against a small move;
+  // once the swipe settles, cull for the settled picture itself: the five cabinets nearest its centre. Draw the
+  // faces at the px per mm the screen shows the cabinets' room (floor to headroom, back to the front of the feet)
+  // at its nearest
+  const moving = liveDx !== 0;
   const culled = useRef<CullView | null>(null);
-  const cull = stickyView(culled.current, { camera, panPx });
+  const cull = moving ? stickyView(culled.current, { camera, panPx }) : { camera, panPx };
   culled.current = cull;
   const chosen = useRef<number[]>([]);
-  const drawnCabs = nearestCabinets(cull, wall, chosen.current);
+  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : []);
   chosen.current = drawnCabs;
   const visible = drawnCabs.map((i) => ({ slot: wall.cabinets[i], i }));
   const span = useMemo(

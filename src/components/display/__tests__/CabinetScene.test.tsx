@@ -324,6 +324,34 @@ describe('CabinetScene: views and navigation', () => {
     expect(Math.max(...after)).toBeGreaterThan(Math.max(...before));
   });
 
+  it('pan mode: however far a long wall is panned, a bounded handful of cabinets is drawn, and its far end comes into view', () => {
+    // about 1,200 figures, the whole wall view; forty swipes of 400 px, then on to the wall's end (MOB-NAV-1)
+    const lots = getFixtureFigures(170);
+    const { host } = scene(lots, { swipe: 'pan', view: 'wall' });
+    const atRest = host.querySelectorAll('.cab').length;
+    const x0 = Number(host.dataset.cameraX);
+    const slid: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      drag(host, -400);
+      slid.push(Number(host.dataset.pan));
+      // the unbounded photo drew 39 cabinets here at -8000 px
+      expect(host.querySelectorAll('.cab').length, `after ${i + 1} swipes`).toBeLessThanOrEqual(atRest * 2);
+    }
+    // the picture slides no farther than a frame's worth; the rest of the swipes walk the photo's camera along
+    expect(Math.min(...slid)).toBeGreaterThan(-1000);
+    expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
+    for (let i = 0; i < 400; i++) drag(host, -400);
+    const shown = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+    expect(shown.length).toBeLessThanOrEqual(atRest * 2);
+    cleanup();
+    // the wall's last cabinet: where the walking camera stops
+    const walker = scene(lots, { swipe: 'camera', view: 'wall' }).host;
+    for (let i = 0; i < 400; i++) drag(walker, -400);
+    const last = Math.max(...Array.from(walker.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
+    expect(last).toBeGreaterThan(50);
+    expect(Math.max(...shown)).toBe(last);
+  });
+
   it('with nothing to show it still stands one empty cabinet', () => {
     const { host } = scene([]);
     expect(host.querySelectorAll('.cab')).toHaveLength(1);

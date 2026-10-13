@@ -8,7 +8,7 @@ import { IKEA_KLINGSBO } from '../cabinetPresets';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, wallReachMm } from '../caseFraming';
 import { CEILING_DEFAULT_MM } from '../cabinetProfile';
-import { boxCorners, project, type Camera } from '../caseCamera';
+import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
@@ -351,6 +351,21 @@ describe('CabinetScene: views and navigation', () => {
     const last = Math.max(...Array.from(walker.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
     expect(last).toBeGreaterThan(50);
     expect(Math.max(...shown)).toBe(last);
+  }, 20_000);
+
+  it('pan mode, panned past the slide: the scene is drawn from the walked camera it reports, never the one it walked from', () => {
+    const { host } = scene(getFixtureFigures(170), { swipe: 'pan', view: 'wall' });
+    const x0 = Number(host.dataset.cameraX);
+    for (let i = 0; i < 6; i++) drag(host, -800);
+    const camera = cameraOf(host);
+    // the photo was retaken farther along the wall
+    expect(camera.x).toBeGreaterThan(x0 + 1000);
+    // the root's transform is that camera at 1 px per mm (the scene's scale)
+    const numbers = (t: string) => t.replace(/translate3d|rotateX/g, '').match(/-?\d+(\.\d+)?(e-?\d+)?/g)!.map(Number);
+    const drawn = numbers(host.querySelector<HTMLElement>('.cabinet-scene__root')!.style.transform);
+    const want = numbers(cssSceneTransform(camera, 1));
+    expect(drawn).toHaveLength(want.length);
+    drawn.forEach((v, i) => expect(v, `term ${i}`).toBeCloseTo(want[i], 2));
   }, 20_000);
 
   it('with nothing to show it still stands one empty cabinet', () => {

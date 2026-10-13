@@ -84,8 +84,9 @@ async function compositedLayers(page: Page) {
 
 /**
  * What the scene draws: cabinets, figures, every element whose box lies wholly outside the frame and its margin,
- * and every face (a cabinet's or the room's: not a figure, its shadow or its label, which are drawn whole or not at
- * all) that reaches past them: a face is cut to the frame and its margin.
+ * and every cabinet face that reaches past them: a face is cut to the frame and its margin. A figure, its shadow
+ * and its label are drawn whole or not at all; the room's wall and floor are drawn on a small texel grid, so what
+ * they cost is that grid wherever their cut reaches (a cut is a rectangle on the face, round what the frame sees).
  */
 async function drawn(page: Page) {
   return page.locator('.cabinet-scene').evaluate((host, margin) => {
@@ -98,7 +99,7 @@ async function drawn(page: Page) {
     for (const el of Array.from(host.querySelectorAll<HTMLElement>('.cabinet-scene__root .q'))) {
       const r = el.getBoundingClientRect();
       if (r.right < f.left - mx || r.left > f.right + mx || r.bottom < f.top - my || r.top > f.bottom + my) outside.push(at(el, r));
-      const face = !el.matches('.cab-figure, .cab-shadow, .cab-plate');
+      const face = !el.matches('.cab-figure, .cab-shadow, .cab-plate, .room-wall, .room-floor');
       // 2 px for the rounding of a face cut at the margin
       if (face && (r.left < f.left - mx - 2 || r.right > f.right + mx + 2 || r.top < f.top - my - 2 || r.bottom > f.bottom + my + 2)) spill.push(at(el, r));
     }

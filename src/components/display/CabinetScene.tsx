@@ -58,26 +58,47 @@ const fmt = (v: number): string => {
 };
 const num = (v: number): number => Number(fmt(v));
 
+/** A face's own element size in px, when it is not its size in the world at S px per mm. */
+export interface TexelGrid {
+  u: number;
+  v: number;
+}
+
+/**
+ * The room's wall and floor are flat gradients, so they are drawn on this
+ * small grid and stretched onto the room by their matrix (MOB-NAV-1). At
+ * 1 px per mm they were the wall plus 12 m wide: a 1,190-figure wall made a
+ * 105 m x 6.5 m floor element, whose tiles at the Fold8's 2.8125 ran Chrome's
+ * compositor out of tile memory and left the screen's chrome undrawn.
+ */
+const ROOM_GRID: TexelGrid = { u: 64, v: 256 };
+
 /**
  * One flat face: corner `a` (world mm), its local x along `u` and local y
- * (down the element) along `v`. The element is |u| x |v| px; matrix3d maps
- * it onto the face. null when the face has no area.
+ * (down the element) along `v`. The element is |u| x |v| px, or `grid`'s
+ * size when given; matrix3d maps it onto the face. null when the face has no
+ * area.
  */
-export function quadStyle(a: V3, u: V3, v: V3): { width: string; height: string; transform: string } | null {
+export function quadStyle(a: V3, u: V3, v: V3, grid?: TexelGrid): { width: string; height: string; transform: string } | null {
   const lu = Math.hypot(u[0], u[1], u[2]);
   const lv = Math.hypot(v[0], v[1], v[2]);
   if (!(lu > 0) || !(lv > 0)) return null;
+  const pu = grid?.u ?? lu * S;
+  const pv = grid?.v ?? lv * S;
+  // world px per element px along each side: 1 at S px per mm
+  const su = (lu * S) / pu;
+  const sv = (lv * S) / pv;
   const U = [u[0] / lu, -u[1] / lu, u[2] / lu];
   const V = [v[0] / lv, -v[1] / lv, v[2] / lv];
   const n = [U[1] * V[2] - U[2] * V[1], U[2] * V[0] - U[0] * V[2], U[0] * V[1] - U[1] * V[0]];
   const ln = Math.hypot(n[0], n[1], n[2]) || 1;
   const N = n.map((c) => c / ln);
-  const cols = [...U, 0, ...V, 0, ...N, 0, a[0] * S, -a[1] * S, a[2] * S, 1];
-  return { width: `${fmt(lu * S)}px`, height: `${fmt(lv * S)}px`, transform: `matrix3d(${cols.map(fmt).join(',')})` };
+  const cols = [...U.map((c) => c * su), 0, ...V.map((c) => c * sv), 0, ...N, 0, a[0] * S, -a[1] * S, a[2] * S, 1];
+  return { width: `${fmt(pu)}px`, height: `${fmt(pv)}px`, transform: `matrix3d(${cols.map(fmt).join(',')})` };
 }
 
-function Quad({ a, u, v, cls, style }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties }) {
-  const q = quadStyle(a, u, v);
+function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid }) {
+  const q = quadStyle(a, u, v, grid);
   if (!q) return null;
   return <div class={`q ${cls}`} style={{ ...q, ...style }} />;
 }
@@ -727,8 +748,8 @@ export function CabinetScene({
         style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx ? `translateX(${panPx}px)` : undefined }}
       >
         <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, S) }}>
-          <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} />
-          <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} />
+          <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} grid={ROOM_GRID} />
+          <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} grid={ROOM_GRID} />
           {visible.map(({ slot, i }) => (
             <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
           ))}

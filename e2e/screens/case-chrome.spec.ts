@@ -40,8 +40,11 @@ const ORDERED = 10;
 const WISHED = 574;
 const SHAPE_PREFIX = 'occ/c4e50000-';
 const shapeOcc = (i: number): string => `c4e50000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`;
-/** A control is drawn when this share of its pixels is off its background: its label, icon or edge. */
-const MIN_INK = 0.01;
+/**
+ * A control is drawn when this share of its pixels is off its background: its label, icon or edge. An undrawn
+ * one is a flat colour (0); the faintest drawn here, a full-width row on the open panel, is about 0.8 %.
+ */
+const MIN_INK = 0.002;
 
 let state: StackState;
 let stack: StackClient;
@@ -237,9 +240,9 @@ test("the case screen's chrome and cards are drawn after every collection switch
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     await check(page, testInfo, failures, 'the View card', [
-      ['Whole cabinets', page.getByText('Whole cabinets')],
-      ['One cabinet', page.getByText('One cabinet')],
-      ['One shelf', page.getByText('One shelf')],
+      ['Whole cabinets', page.getByRole('radio', { name: 'Whole cabinets' })],
+      ['One cabinet', page.getByRole('radio', { name: 'One cabinet' })],
+      ['One shelf', page.getByRole('radio', { name: 'One shelf' })],
     ]);
     // every choice the open card shows takes its own tap: none lies under the pull-up tabs or the tab bar
     const covered = await page.evaluate(() =>

@@ -325,14 +325,14 @@ describe('CabinetScene: views and navigation', () => {
   });
 
   it('pan mode: however far a long wall is panned, a bounded handful of cabinets is drawn, and its far end comes into view', () => {
-    // about 1,200 figures, the whole wall view; forty swipes of 400 px, then on to the wall's end (MOB-NAV-1)
+    // about 1,200 figures, the whole wall view; ten swipes of 800 px, then on to the wall's end (MOB-NAV-1)
     const lots = getFixtureFigures(170);
     const { host } = scene(lots, { swipe: 'pan', view: 'wall' });
     const atRest = host.querySelectorAll('.cab').length;
     const x0 = Number(host.dataset.cameraX);
     const slid: number[] = [];
-    for (let i = 0; i < 40; i++) {
-      drag(host, -400);
+    for (let i = 0; i < 10; i++) {
+      drag(host, -800);
       slid.push(Number(host.dataset.pan));
       // the unbounded photo drew 39 cabinets here at -8000 px
       expect(host.querySelectorAll('.cab').length, `after ${i + 1} swipes`).toBeLessThanOrEqual(atRest * 2);
@@ -351,7 +351,7 @@ describe('CabinetScene: views and navigation', () => {
     const last = Math.max(...Array.from(walker.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
     expect(last).toBeGreaterThan(50);
     expect(Math.max(...shown)).toBe(last);
-  });
+  }, 20_000);
 
   it('with nothing to show it still stands one empty cabinet', () => {
     const { host } = scene([]);

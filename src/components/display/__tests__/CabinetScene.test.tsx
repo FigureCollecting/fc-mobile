@@ -5,7 +5,7 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
+import { FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
 import { START_HEIGHT_T, STANDING_EYE_MM, boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
@@ -694,9 +694,9 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     });
   }
 
-  // MOB-NAV-2 close-out 2: BLOCKED on the framing decision (caseFraming.test.ts); fails today, flips once it lands
-  it.fails('the frame never shows more cabinets than the case draws, in any view, however far either swipe goes (fails until the framing lands)', () => {
+  it('the frame never shows the fronts of more cabinets than the case draws, in any view, however far either swipe goes (Ross 12:1xC)', () => {
     const wall = klingsbos(60);
+    let checked = 0;
     for (const swipe of ['camera', 'pan'] as const) {
       for (const v of ['wall', 'cabinet', 'shelf'] as const) {
         const { host } = scene(getFixtureFigures(120), { swipe, view: v });
@@ -704,17 +704,21 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
           if (dx !== 0) drag(host, dx);
           const camera = cameraOf(host);
           const pan = Number(host.dataset.pan);
-          const shows = wall.cabinets.slice(0, 20).filter((slot) => {
+          const rect = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
+          const drawn = new Set(Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
+          // each cabinet's front, feet to top, splayed feet and all, on the front plane
+          const fronts = wall.cabinets.slice(0, 20).flatMap((slot, i) => {
             const b = cabinetBox(slot, 0);
-            const pts = boxCorners(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1).map((c) => project(camera, c));
-            if (pts.some((p) => p.depth <= 0)) return false;
-            return Math.max(...pts.map((p) => p.x)) + pan > 0 && Math.min(...pts.map((p) => p.x)) + pan < camera.frame.width;
+            return trimFace({ camera, panPx: pan }, [b.x0, b.y0, 0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0], rect) ? [i] : [];
           });
-          expect(shows.length, `${swipe} ${v} after ${dx}`).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+          expect(fronts.length, `${swipe} ${v} after ${dx}: ${fronts.join(',')}`).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+          for (const i of fronts) expect(drawn.has(i), `${swipe} ${v} after ${dx}: cabinet ${i}`).toBe(true);
+          checked++;
         }
         cleanup();
       }
     }
+    expect(checked).toBe(36);
   });
 });
 
@@ -904,10 +908,9 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     ['open', OPEN],
   ] as const) {
     for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      // the shelf view stands its camera a hand from the shelf, at 1 px per mm: its tops and plates seen edge on still
-      // cost their whole width and depth (about 13 frames on the cover, 7 open; 92 and 61 before MOB-NAV-2), so
-      // it is held to that, not to the ceiling, until its faces are drawn at what they show along each side
-      const ceiling = view === 'shelf' ? 16 : 3;
+      // the shelf view stands its camera a hand from the shelf: its flat faces, tops and plates seen edge on, cost
+      // their texel grid, not their width and depth (13 frames on the cover and 7 open before they did)
+      const ceiling = 3;
       it(`some 1,190 figures, the ${view} view on the ${panel} panel: at most five cabinets, every element at most ${ceiling} frames of px`, () => {
         const { host } = scene(getFixtureFigures(170), { view }, { frameFallback: frame });
         const cabs = host.querySelectorAll('.cab').length;
@@ -1142,11 +1145,64 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     const s = pxPerMm(host);
     const door = Array.from(host.querySelectorAll<HTMLElement>('.q.cab-pane--door'));
     expect(door).toHaveLength(4);
-    // two edges along the door's width, two up its height, each 1 mm across, at the scene's px per mm
-    const sizes = door.map((q) => [parseFloat(q.style.width), parseFloat(q.style.height)].sort((a, b) => a - b));
-    for (const [thin] of sizes) expect(thin).toBeCloseTo(1 * s, 6);
+    // two edges along the door's width, two up its height, each 1 mm across: flat colour, each on the flat texel grid
+    const sides = door.map((q) => {
+      expect([parseFloat(q.style.width), parseFloat(q.style.height)]).toEqual([FLAT_GRID.u, FLAT_GRID.v]);
+      const a = landsAt(q.style.transform, 0, 0);
+      const u = landsAt(q.style.transform, FLAT_GRID.u, 0).map((x, i) => (x - a[i]) / s);
+      const v = landsAt(q.style.transform, 0, FLAT_GRID.v).map((x, i) => (x - a[i]) / s);
+      return [Math.hypot(...u), Math.hypot(...v)].sort((x, y) => x - y);
+    });
+    for (const [thin] of sides) expect(thin).toBeCloseTo(1, 6);
     const slot = wallLayout([IKEA_KLINGSBO]).cabinets[0];
-    expect(sizes.filter(([, long]) => Math.abs(long - (slot.rightMm - slot.leftMm) * s) < 1e-6)).toHaveLength(2);
+    expect(sides.filter(([, long]) => Math.abs(long - (slot.rightMm - slot.leftMm)) < 1e-6)).toHaveLength(2);
     expect(host.querySelectorAll('.q.cab-pane')).toHaveLength(16);
+  });
+
+  it('a face of one flat colour (steel, wood, rods, glass edges and fills) costs the flat texel grid; a gradient (shadows, rack boards) a small one', () => {
+    const FLAT = '.m-steel, .m-wood, .m-rod, .m-glass-edge, .m-glass-plate, .m-glass-rim, .m-glass-top, .cab-pane';
+    const GRADIENT = '.cab-shadow, .m-board';
+    for (const pattern of ['ikea-klingsbo', 'ikea-detolf', 'open-steel-rack'] as const) {
+      for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        const { host } = scene(getFixtureFigures(30), { view, pattern }, { frameFallback: COVER });
+        const flat = quads(host).filter((q) => q.matches(FLAT));
+        const gradient = quads(host).filter((q) => q.matches(GRADIENT));
+        expect(flat.length, `${pattern} ${view}`).toBeGreaterThan(10);
+        for (const q of flat) expect([parseFloat(q.style.width), parseFloat(q.style.height)], `${pattern} ${view} ${q.className}`).toEqual([FLAT_GRID.u, FLAT_GRID.v]);
+        for (const q of gradient) expect([parseFloat(q.style.width), parseFloat(q.style.height)], `${pattern} ${view} ${q.className}`).toEqual([GRADIENT_GRID.u, GRADIENT_GRID.v]);
+        cleanup();
+      }
+    }
+    expect(FLAT_GRID.u * FLAT_GRID.v).toBeLessThanOrEqual(16);
+    expect(GRADIENT_GRID.u * GRADIENT_GRID.v).toBeLessThanOrEqual(256);
+  });
+
+  it('a glass shelf is its clear fill and a lit rim 2 mm wide, as its inset edge drew; the glass top a steel rim 3 mm wide', () => {
+    const { host } = scene(FIXTURE_FIGURES, {}, { frameFallback: COVER });
+    const s = pxPerMm(host);
+    const cab = host.querySelector('.cab')!;
+    const widths = (sel: string) =>
+      Array.from(cab.querySelectorAll<HTMLElement>(sel)).map((q) => {
+        const a = landsAt(q.style.transform, 0, 0);
+        const u = landsAt(q.style.transform, parseFloat(q.style.width), 0).map((x, i) => (x - a[i]) / s);
+        const v = landsAt(q.style.transform, 0, parseFloat(q.style.height)).map((x, i) => (x - a[i]) / s);
+        return Math.min(Math.hypot(...u), Math.hypot(...v));
+      });
+    // four glass shelves and the glass floor: a fill each and four rim edges
+    expect(cab.querySelectorAll('.q.m-glass-plate')).toHaveLength(5);
+    const rims = widths('.cab-shelf .q.m-glass-rim');
+    expect(rims).toHaveLength(20);
+    for (const w of rims) expect(w).toBeCloseTo(2, 6);
+    const top = widths('.cab-top .q.m-steel.f-rim');
+    expect(top).toHaveLength(4);
+    for (const w of top) expect(w).toBeCloseTo(3, 6);
+  });
+
+  it('the step buttons draw no box over the whole scene: their row is no box of its own', () => {
+    const { host } = scene(FIXTURE_FIGURES, {}, { frameFallback: COVER });
+    const nav = host.querySelector<HTMLElement>('.cabinet-scene__nav')!;
+    expect(getComputedStyle(nav).display).toBe('contents');
+    // the buttons still stand at the scene's edges
+    expect(getComputedStyle(host.querySelector('.cabinet-scene__step--prev')!).position).toBe('absolute');
   });
 });

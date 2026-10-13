@@ -5,7 +5,7 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { MAX_DRAWN_CABINETS, cullRect, hiddenUnder, opaqueBoards, trimFace } from '../caseCull';
+import { MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
@@ -663,7 +663,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
   });
 
   for (const swipe of ['camera', 'pan'] as const) {
-    it(`every cabinet that draws into the frame is drawn when five or fewer do, and never more than five, however far the ${swipe} swipe goes`, () => {
+    it(`every cabinet that draws into the frame is drawn, never more than five of them, however far the ${swipe} swipe goes`, () => {
       const wall = klingsbos(60);
       let checked = 0;
       for (const v of ['wall', 'cabinet', 'shelf'] as const) {
@@ -684,13 +684,14 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
             const x1 = Math.max(...pts.map((p) => p.x)) + pan;
             if (x1 > 0 && x0 < camera.frame.width) shows.push(i);
           }
-          if (shows.length > MAX_DRAWN_CABINETS) continue;
+          // the frame never shows more cabinets than the case draws (MOB-NAV-2, Ross 12:1xC)
+          expect(shows.length, `${v} after ${dx}: ${shows.join(',')}`).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
           checked++;
           for (const i of shows) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i}`).toBe(true);
         }
         cleanup();
       }
-      expect(checked).toBeGreaterThanOrEqual(8);
+      expect(checked).toBe(18);
     });
   }
 });
@@ -855,6 +856,16 @@ describe('CabinetScene: the numbers the e2e checks the drawing against', () => {
     // the seven fixtures, packed by their labelled widths, stand on the KLINGSBO's top and three of its glass shelves
     expect([...surfaces].sort((a, b) => a - b)).toEqual([969, 1243, 1519, 1800]);
   });
+
+  it('publishes the wall: each cabinet\'s box, feet and body (x0, x1, its height, back and front, mm)', () => {
+    const { host } = scene(getFixtureFigures(40));
+    const wall = JSON.parse(host.dataset.wall!) as number[][];
+    expect(wall.length).toBeGreaterThan(5);
+    klingsbos(wall.length).cabinets.forEach((slot, i) => {
+      const b = cabinetBox(slot, 0);
+      expect(wall[i]).toEqual([b.x0, b.x1, b.y1, b.z0, b.z1]);
+    });
+  });
 });
 
 describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
@@ -888,6 +899,55 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       });
     }
   }
+
+  /** A finger walking the picture in eight steps, each under the re-cull share of the frame, then lifted. */
+  function slowDrag(el: HTMLElement, dx: number) {
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 300, clientY: 200, button: 0 });
+    for (let k = 1; k <= 8; k++) fireEvent.pointerMove(el, { pointerId: 1, clientX: 300 + (dx * k) / 8, clientY: 200 });
+    fireEvent.pointerUp(el, { pointerId: 1, clientX: 300 + dx, clientY: 200 });
+  }
+
+  for (const swipe of ['camera', 'pan'] as const) {
+    it(`once a ${swipe} swipe settles the case culls for the settled picture: the five cabinets nearest its centre`, () => {
+      const { host } = scene(getFixtureFigures(170), { view: 'wall', swipe }, { frameFallback: COVER });
+      const wall = klingsbos(60);
+      for (let k = 1; k <= 3; k++) {
+        const before = `${host.dataset.cameraX} ${host.dataset.pan}`;
+        slowDrag(host, -400);
+        expect(`${host.dataset.cameraX} ${host.dataset.pan}`, `swipe ${k} moved the picture`).not.toBe(before);
+        const camera = cameraOf(host);
+        const panPx = Number(host.dataset.cullPan);
+        expect(Number(host.dataset.cullX), `swipe ${k}`).toBeCloseTo(camera.x, 3);
+        expect(Math.round(panPx), `swipe ${k}`).toBe(Number(host.dataset.pan));
+        const drawn = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+        expect(drawn.sort((a, b) => a - b), `swipe ${k}`).toEqual(nearestCabinets({ camera, panPx }, wall, []));
+      }
+    });
+  }
+
+  it('a dense wall (some 1,500 small figures) draws at most 250 of them, in every view, walked or panned (Ross 12:2xC)', () => {
+    const small = FIXTURE_FIGURES.filter((f) => f._id === 'fx-spike' || f._id === 'fx-miku-nendo');
+    expect(small).toHaveLength(2);
+    const dense = Array.from({ length: 1500 }, (_, i) => ({ ...small[i % 2], _id: `dense-${i}` }));
+    let most = 0;
+    for (const frame of [COVER, OPEN]) {
+      for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        for (const swipe of ['camera', 'pan'] as const) {
+          const { host } = scene(dense, { view, swipe }, { frameFallback: frame });
+          for (const dx of [0, -400, -400, 300]) {
+            if (dx !== 0) drag(host, dx);
+            const n = figureButtons(host).length;
+            expect(n, `${frame.width} ${view} ${swipe} ${dx}`).toBeLessThanOrEqual(250);
+            expect(host.dataset.drawnFigures).toBe(String(n));
+            most = Math.max(most, n);
+          }
+          cleanup();
+        }
+      }
+    }
+    // the wall is dense: the case draws far more of it than of an ordinary one
+    expect(most).toBeGreaterThan(100);
+  });
 
   it('the faces are drawn at the px per mm the screen shows them, and the camera draws them there', () => {
     for (const view of ['wall', 'cabinet', 'shelf'] as const) {

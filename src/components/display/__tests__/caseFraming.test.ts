@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { IN_MM, frameMargins, project, startCameraY } from '../caseCamera';
-import { wallLayout } from '../packCabinets';
+import { IN_MM, frameMargins, project, startCameraY, type Camera, type Vec3 } from '../caseCamera';
+import { MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
+import { wallLayout, type WallLayout } from '../packCabinets';
 import { sideOverhangMm } from '../cabinetProfile';
 import {
   STEP_BACK_MAX_MM,
@@ -16,6 +17,8 @@ import {
   cabinetsInReach,
   wallPages,
   wallReachMm,
+  type Box,
+  type Framing,
   type FramingInput,
 } from '../caseFraming';
 
@@ -371,3 +374,87 @@ describe('cabinetsInReach: the cabinets drawn for a stretch of wall', () => {
   });
 });
 
+
+describe(`frameCase: every view frames at most the ${MAX_DRAWN_CABINETS} cabinets the case draws (MOB-NAV-2, Ross 12:1xC)`, () => {
+  // the scene's frame at the Fold8's four panels (the page's chrome takes the rest), short and tall
+  const FRAMES = [
+    { width: 443, height: 344 },
+    { width: 443, height: 454 },
+    { width: 616, height: 200 },
+    { width: 616, height: 245 },
+    { width: 870, height: 261 },
+    { width: 870, height: 475 },
+    { width: 657, height: 480 },
+    { width: 657, height: 600 },
+  ];
+  const WALLS: [string, WallLayout][] = [
+    ['KLINGSBO', wallLayout(Array(30).fill(IKEA_KLINGSBO))],
+    ['Detolf', wallLayout(Array(30).fill(IKEA_DETOLF))],
+    ['rack', wallLayout(Array(12).fill(OPEN_STEEL_RACK))],
+    ['mixed', wallLayout(Array.from({ length: 30 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]))],
+  ];
+  const faces = (b: Box): [Vec3, Vec3, Vec3][] => [
+    [[b.x0, b.y0, b.z1], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0]],
+    [[b.x0, b.y0, b.z0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0]],
+    [[b.x0, b.y0, b.z0], [0, 0, b.z1 - b.z0], [0, b.y1 - b.y0, 0]],
+    [[b.x1, b.y0, b.z0], [0, 0, b.z1 - b.z0], [0, b.y1 - b.y0, 0]],
+    [[b.x0, b.y1, b.z0], [b.x1 - b.x0, 0, 0], [0, 0, b.z1 - b.z0]],
+    [[b.x0, b.y0, b.z0], [b.x1 - b.x0, 0, 0], [0, 0, b.z1 - b.z0]],
+  ];
+  /** The cabinets (feet and body, no headroom) any part of which draws inside the frame itself: exact, face by face. */
+  const framed = (camera: Camera, panPx: number, wall: WallLayout) => {
+    const rect = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
+    return wall.cabinets.flatMap((slot, i) => (faces(cabinetBox(slot, 0)).some(([a, u, v]) => trimFace({ camera, panPx }, a, u, v, rect)) ? [i] : []));
+  };
+  /** Every picture a view leaves: as framed, after walks of the camera, and slid as a photo to the wall's ends. */
+  const pictures = (f: Framing, wall: WallLayout) => {
+    const out: { camera: Camera; panPx: number; at: string }[] = [{ camera: f.camera, panPx: 0, at: 'framed' }];
+    let walked = f;
+    for (let k = 1; k <= 12; k++) {
+      walked = swipeCamera(walked, wall, -0.31 * f.camera.frame.width);
+      out.push({ camera: walked.camera, panPx: 0, at: `walk ${k}` });
+    }
+    const [panMin, panMax] = panLimitsPx(f, wall);
+    for (const end of [panMin, panMax]) {
+      for (let k = 1; k <= 12; k++) {
+        const r = panFraming(f, (end * k) / 12);
+        out.push({ camera: r.framing.camera, panPx: r.panPx, at: `pan ${Math.round((end * k) / 12)}` });
+      }
+    }
+    return out;
+  };
+
+  for (const [name, wall] of WALLS) {
+    it(`${name} wall: the wall, cabinet and shelf views, walked or panned, never frame more than ${MAX_DRAWN_CABINETS}`, () => {
+      const headroomMm = wall.cabinets.map(() => 300);
+      const mid = Math.floor(wall.cabinets.length / 2);
+      let checked = 0;
+      for (const frame of FRAMES) {
+        for (const [view, focus, shelf] of [
+          ['wall', 0, 0],
+          ['wall', mid, 0],
+          ['cabinet', mid, 0],
+          ['shelf', mid, 0],
+          ['shelf', mid, 2],
+        ] as const) {
+          const f = frameCase({ frame, wall, headroomMm, view, focus, shelf });
+          for (const p of pictures(f, wall)) {
+            const shows = framed(p.camera, p.panPx, wall);
+            expect(shows.length, `${frame.width}x${frame.height} ${view} ${focus}/${shelf} ${p.at}: ${shows.join(',')}`).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+            checked++;
+          }
+        }
+      }
+      expect(checked).toBe(FRAMES.length * 5 * 37);
+    });
+  }
+
+  it('a wide panel still shows the wall: four cabinets or more in its frame as the wall view opens', () => {
+    for (const [name, wall] of WALLS) {
+      for (const frame of FRAMES.filter((x) => x.width / x.height >= 1.2)) {
+        const f = frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+        expect(framed(f.camera, 0, wall).length, `${name} ${frame.width}x${frame.height}`).toBeGreaterThanOrEqual(4);
+      }
+    }
+  });
+});

@@ -91,6 +91,14 @@ describe('trimFace: the part of a face that draws in the frame and its margin', 
     expect(Math.min(depth(t.s0), depth(t.s1))).toBeCloseTo(NEAR_MM, 6);
   });
 
+  it('the near plane stands 10 mm in front of the camera: a face 9 mm away is not drawn, one 11 mm away is', () => {
+    // a level camera looking down -z; a face square to its axis, small enough to sit inside the frame either way
+    const camera: Camera = { x: 0, y: 1000, z: 1000, pitch: 0, focalPx: 300, frame: COVER };
+    const face = (depth: number) => trimFace(viewOf(camera), [-1, 999, 1000 - depth], [2, 0, 0], [0, 2, 0], rect);
+    expect(face(9)).toBeNull();
+    expect(face(11)).toEqual({ s0: 0, s1: 1, t0: 0, t1: 1 });
+  });
+
   it('a face that only touches the rect along its edge is not drawn', () => {
     // a level camera whose frame centre sits on the rect's left side: that side's plane is x = 0 exactly
     const camera: Camera = { x: 0, y: 0, z: 1000, pitch: 0, focalPx: 100, frame: { width: 200, height: 200 } };
@@ -315,6 +323,17 @@ describe('texelScale: faces drawn at the px per mm the screen shows them, never 
     expect(texelScale({ ...f.camera, z: 1e7 }, span)).toBe(1 / 64);
   });
 
+  it('the headroom over the cabinets counts: the nearest point a camera looking down sees is the top of the room', () => {
+    // a camera 2.4 m up looking down 45 deg, 1.2 m out: the room's top (2,100 mm, its front 50 mm out) is the nearest
+    const camera: Camera = { x: 0, y: 2400, z: 1200, pitch: Math.PI / 4, focalPx: 400, frame: COVER };
+    const nearest = (2400 - 2100) * Math.SQRT1_2 + (1200 - 50) * Math.SQRT1_2;
+    const room = texelScale(camera, span);
+    expect(room).toBe(2 ** (Math.ceil(4 * Math.log2(400 / nearest)) / 4));
+    expect(room).toBe(2 ** -1.25);
+    // the cabinets' bodies alone (1,800 mm) stand farther: a quarter octave coarser
+    expect(texelScale(camera, { ...span, y1: 1800 })).toBe(2 ** -1.5);
+  });
+
   it('the camera focal length is the lens on the frame', () => {
     expect(framing(COVER).camera.focalPx).toBeCloseTo(lensFocalPx(COVER), 9);
   });
@@ -352,6 +371,12 @@ describe('hiddenUnder: a figure wholly behind an opaque board, from where the ca
 
   it('a camera inside the board itself (level with its thickness) is hidden by neither face', () => {
     expect(hiddenUnder({ ...above, y: 990, pitch: 0 }, figure(300, 500, 700, 900, -300), board)).toBe(false);
+  });
+
+  it('a ray meeting the board exactly on its edge is through it: hidden (from straight over the edge)', () => {
+    // the camera over the board's left edge: the rays to the figure's left side meet the board at x0 itself
+    expect(hiddenUnder({ ...above, x: 0 }, figure(0, 200, 700, 900, -300), board)).toBe(true);
+    expect(hiddenUnder({ ...above, x: 800 }, figure(600, 800, 700, 900, -300), board)).toBe(true);
   });
 
   it('a figure beside the board, its rays past the side: drawn', () => {

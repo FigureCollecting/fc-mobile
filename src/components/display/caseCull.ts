@@ -29,6 +29,20 @@ export const NEAR_MM = 10;
 /** The coarsest px per mm a face is drawn at. */
 const TEXEL_SCALE_MIN = 1 / 64;
 
+/** A face's own element size in px, when it is not its size in the world at the scene's px per mm. */
+export interface TexelGrid {
+  readonly u: number;
+  readonly v: number;
+}
+
+/**
+ * A face of one flat colour (steel, wood, a rod, a glass edge or fill) looks the same at any resolution, so it is
+ * drawn on this grid and its matrix stretches it onto the face: it costs 16 px whatever its size or slant.
+ */
+export const FLAT_GRID: TexelGrid = { u: 4, v: 4 };
+/** A face of a smooth gradient (a contact shadow, a rack's board): this grid, stretched the same way. */
+export const GRADIENT_GRID: TexelGrid = { u: 16, v: 16 };
+
 /** A picture: the camera and how far (CSS px) the drawn photo is slid (CC4 pan). */
 export interface CullView {
   readonly camera: Camera;
@@ -97,7 +111,7 @@ function frustum(view: CullView, rect: Rect): ((p: Vec3) => number)[] {
 type St = readonly [number, number];
 
 /** Sutherland-Hodgman: the part of a convex polygon where the affine l(s, t) >= 0. */
-function clip(poly: readonly St[], l: (s: number, t: number) => number): St[] {
+export function clipConvex(poly: readonly St[], l: (s: number, t: number) => number): St[] {
   const out: St[] = [];
   for (let i = 0; i < poly.length; i++) {
     const p = poly[i];
@@ -131,7 +145,7 @@ export function trimFace(view: CullView, a: Vec3, u: Vec3, v: Vec3, rect: Rect):
     const l0 = plane(a);
     const ls = plane(at(a, u, v, 1, 0)) - l0;
     const lt = plane(at(a, u, v, 0, 1)) - l0;
-    poly = clip(poly, (s, t) => l0 + s * ls + t * lt);
+    poly = clipConvex(poly, (s, t) => l0 + s * ls + t * lt);
     if (poly.length === 0) return null;
   }
   const ss = poly.map((p) => p[0]);
@@ -146,8 +160,9 @@ export function trimFace(view: CullView, a: Vec3, u: Vec3, v: Vec3, rect: Rect):
 
 /**
  * The cabinets drawn (by wall index, ascending): at most `cap`, those whose box (floor to top, back to the
- * front of the feet) draws nearest the frame centre: first every one the frame shows, then the rest, each by
- * how far its span on screen lies from the centre, then by its middle. One drawn before counts `hysteresis` of
+ * front of the feet) draws nearest the frame centre: first every one whose front (feet to top, on the front
+ * plane) the frame shows, then every other one it shows (seen through the glass at its edge), then the rest, each
+ * by how far its span on screen lies from the centre, then by its middle. One drawn before counts `hysteresis` of
  * the frame width nearer, so a small move never swaps two cabinets back and forth. One behind the camera comes
  * last.
  */
@@ -162,6 +177,7 @@ export function nearestCabinets(
   const kept = new Set(previous);
   const bonus = hysteresis * camera.frame.width;
   const centre = camera.frame.width / 2;
+  const frame = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
   const ranked = wall.cabinets.map((slot, i) => {
     const p = slot.profile;
     const feet = sideOverhangMm(p);
@@ -174,13 +190,14 @@ export function nearestCabinets(
         }
       }
     }
-    if (xs.length === 0) return { i, shown: false, d: Infinity, mid: Infinity };
+    if (xs.length === 0) return { i, front: false, shown: false, d: Infinity, mid: Infinity };
     const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
     const shown = x1 >= 0 && x0 <= camera.frame.width;
+    const front = shown && trimFace(view, [slot.leftMm - feet, 0, 0], [slot.rightMm - slot.leftMm + 2 * feet, 0, 0], [0, p.outer.heightMm, 0], frame) !== null;
     const off = x1 < centre ? centre - x1 : x0 > centre ? x0 - centre : 0;
-    return { i, shown, d: kept.has(i) ? off - bonus : off, mid: Math.abs((x0 + x1) / 2 - centre) };
+    return { i, front, shown, d: kept.has(i) ? off - bonus : off, mid: Math.abs((x0 + x1) / 2 - centre) };
   });
-  ranked.sort((x, y) => Number(y.shown) - Number(x.shown) || x.d - y.d || x.mid - y.mid || x.i - y.i);
+  ranked.sort((x, y) => Number(y.front) - Number(x.front) || Number(y.shown) - Number(x.shown) || x.d - y.d || x.mid - y.mid || x.i - y.i);
   return ranked
     .slice(0, cap)
     .map((r) => r.i)

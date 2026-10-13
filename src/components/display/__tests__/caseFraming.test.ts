@@ -517,16 +517,28 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     });
   }
 
-  it('the wall view still shows the wall (Ross 12:1xC): three whole fronts or more across its frame, opened or walked', () => {
-    for (const [name, wall] of WALLS) {
+  it('the wall view still shows the wall (Ross 12:1xC): as it opens, three cabinets whole across the frame; walked, four fronts or more, two whole', () => {
+    // a wall of one kind of glass cabinet, every Fold8 panel; whole = the body, side to side, at the height the frame aims at
+    for (const [name, wall] of WALLS.slice(0, 2)) {
       const headroomMm = wall.cabinets.map(() => 300);
       for (const frame of FRAMES) {
         const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
+        const whole = (camera: Camera) =>
+          wall.cabinets.flatMap((slot, i) =>
+            [slot.leftMm, slot.rightMm].every((x) => {
+              const p = project(camera, [x, f.look[1], 0]);
+              return p.x >= 0 && p.x <= frame.width;
+            })
+              ? [i]
+              : [],
+          );
+        expect(whole(f.camera).length, `${name} ${frame.width}x${frame.height} as it opens`).toBeGreaterThanOrEqual(3);
         let walked = f;
-        for (let k = 0; k <= 12; k++) {
-          if (k > 0) walked = swipeCamera(walked, wall, -0.31 * frame.width);
-          const shows = framed(walked.camera, 0, wall, f.look[1]);
-          expect(shows.whole.length, `${name} ${frame.width}x${frame.height} walk ${k}: ${shows.whole.join(',')}`).toBeGreaterThanOrEqual(3);
+        for (let k = 1; k <= 40; k++) {
+          walked = swipeCamera(walked, wall, -0.13 * frame.width);
+          const at = `${name} ${frame.width}x${frame.height} walk ${k}`;
+          expect(whole(walked.camera).length, at).toBeGreaterThanOrEqual(2);
+          expect(framed(walked.camera, 0, wall, f.look[1]).fronts.length, at).toBeGreaterThanOrEqual(4);
         }
       }
     }

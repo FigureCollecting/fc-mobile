@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { boxCorners, lensFocalPx, project, type Camera, type Vec3 } from '../caseCamera';
-import { cabinetBox, frameCase, wallPages, type FramingInput } from '../caseFraming';
+import { cabinetBox, frameCase, panFraming, wallPages, type FramingInput } from '../caseFraming';
 import { wallLayout } from '../packCabinets';
 import {
   CABINET_HYSTERESIS,
@@ -167,7 +167,9 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
 
   it('a cabinet already drawn keeps its place until another is nearer the centre by a tenth of the frame', () => {
     expect(CABINET_HYSTERESIS).toBe(0.1);
-    const camera = framing(OPEN, 10).camera;
+    // a camera far enough back that the open panel shows some fourteen fronts: the five are chosen among them
+    const capped = framing(OPEN, 10).camera;
+    const camera = { ...capped, z: capped.z * 3.5 };
     const fresh = nearestCabinets(viewOf(camera), WALL, []);
     // walk the camera along the wall so the rightmost not drawn comes nearer than the leftmost drawn, by a little
     const step = (WALL.cabinets[1].centerMm - WALL.cabinets[0].centerMm) * 0.6;
@@ -209,6 +211,31 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
       expect(checked).toBeGreaterThan(50);
     });
   }
+
+  it('every cabinet whose front the frame shows comes before one it sees only through the glass at its edge, walked or slid', () => {
+    let checked = 0;
+    for (const [frame, wall] of [
+      [COVER, WALL],
+      [OPEN, WALL],
+      [{ width: 657, height: 480 }, MIXED],
+    ] as const) {
+      const f = frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 12, shelf: 0 });
+      for (let k = -12; k <= 12; k++) {
+        const r = panFraming(f, (k / 12) * (f.slideMaxPx ?? 0) * 1.5);
+        const view = viewOf(r.framing.camera, r.panPx);
+        // each cabinet's front, feet to top, on the front plane, where it draws inside the frame itself
+        const rect = { x0: 0, x1: frame.width, y0: 0, y1: frame.height };
+        const fronts = wall.cabinets.flatMap((slot, i) => {
+          const b = cabinetBox(slot, 0);
+          return trimFace(view, [b.x0, b.y0, 0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0], rect) ? [i] : [];
+        });
+        expect(fronts.length).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+        expect(nearestCabinets(view, wall, []), `${frame.width} slid ${r.panPx}`).toEqual(expect.arrayContaining(fronts));
+        checked++;
+      }
+    }
+    expect(checked).toBe(75);
+  });
 
   it('a corner behind the camera never stretches a cabinet across the frame', () => {
     // the camera stands inside the cabinets' depth, looking at their backs: their fronts are behind it
@@ -385,9 +412,10 @@ describe('hiddenUnder: a figure wholly behind an opaque board, from where the ca
 });
 
 describe(`wallPages: a page holds at most ${MAX_DRAWN_CABINETS} cabinets, the most drawn at a time`, () => {
-  it('the open panel pages a long wall five at a time', () => {
+  it('the open panel pages a long wall three at a time: as many as stand whole across the frame stepped in to five fronts', () => {
     const pages = wallPages({ frame: OPEN, wall: WALL, headroomMm: WALL.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
-    expect(Math.max(...pages.map((p) => p.length))).toBe(MAX_DRAWN_CABINETS);
+    expect(Math.max(...pages.map((p) => p.length))).toBe(3);
+    expect(Math.max(...pages.map((p) => p.length))).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
     expect(pages.flat()).toEqual(WALL.cabinets.map((_, i) => i));
   });
 });

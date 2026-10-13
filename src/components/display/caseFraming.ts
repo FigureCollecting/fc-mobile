@@ -14,6 +14,15 @@
  *
  * The screen only picks the distance and how many cabinets share a page;
  * the cabinets, their shelves and the figures never change (Ross 09-26).
+ *
+ * MOB-NAV-2 (Ross 12:1xC: at least 3 full and 2 partial, up to 5 full, on
+ * every panel): no view frames the fronts of more cabinets than the case
+ * draws (MAX_DRAWN_CABINETS), wherever the camera walks or the photo slides.
+ * On a wide or short panel, where the fit would show more, the camera steps
+ * in along its line of sight until the frame spans no more of the fronts
+ * than the narrowest run from a cabinet to the fifth after it (capSpanMm),
+ * and the photo slides no farther than keeps it so; the cabinets' tops and
+ * feet may then run past the frame.
  */
 import { HEADROOM_MIN_MM, sideOverhangMm, CEILING_DEFAULT_MM } from './cabinetProfile';
 import {
@@ -30,12 +39,14 @@ import {
 } from './caseCamera';
 import { surfaceSlots, type WallLayout, type WallSlot } from './packCabinets';
 import type { CaseView } from './casePrefs';
-import { MAX_DRAWN_CABINETS } from './caseCull';
+import { MAX_DRAWN_CABINETS, NEAR_MM, clipConvex } from './caseCull';
 
 /** CC4b: how far past the width fit the camera may step back at a cabinet's top. */
 export const STEP_BACK_MAX_MM = 3 * IN_MM;
 /** Two pages fit "at the same distance" within this much. */
 const SAME_DISTANCE_MM = 1;
+/** A corner within this much of a side margin is inside it. */
+const SAME_PX = 1e-6;
 
 export interface FramingInput {
   readonly frame: Frame;
@@ -57,6 +68,8 @@ export interface Framing {
   readonly look: Vec3;
   /** The cabinets this view frames, by wall index. */
   readonly page: readonly number[];
+  /** CC4 pan mode: how far (CSS px) the photo may slide either way before it is retaken (panFraming); panSlideMaxPx when not given. */
+  readonly slideMaxPx?: number;
 }
 
 export interface Box {
@@ -83,8 +96,127 @@ export function cabinetBox(slot: WallSlot, headroomMm: number): Box {
 
 const headroomOf = (input: FramingInput, i: number) => input.headroomMm[i] ?? HEADROOM_MIN_MM;
 
-/** The tilted CC15 framing of these cabinets: aimed at the middle of the tallest, centred on their bodies. */
-function fitCabinets(input: FramingInput, members: readonly number[]): Framing {
+/** The room the cabinets stand in: floor to the highest headroom, the deepest back to the farthest front (splayed feet). */
+export function roomSpan(wall: WallLayout, headroomMm: readonly number[]): RoomSpan {
+  return {
+    y0: 0,
+    y1: Math.max(...wall.cabinets.map((c, i) => c.profile.outer.heightMm + (headroomMm[i] ?? HEADROOM_MIN_MM))),
+    z0: -Math.max(...wall.cabinets.map((c) => c.profile.outer.depthMm)),
+    z1: Math.max(...wall.cabinets.map((c) => c.profile.footprint?.frontOverhangMm ?? 0)),
+  };
+}
+
+/**
+ * The nearest and farthest depth (mm along the camera's axis) at which the frame shows any of the room: its side
+ * (floor to top, back to front) cut by the near plane and the frame's top and bottom edges, which cut it the same
+ * all along the wall. null when the frame shows none of it.
+ */
+export function seenDepthsMm(camera: Camera, room: RoomSpan): [number, number] | null {
+  const sin = Math.sin(camera.pitch);
+  const cos = Math.cos(camera.pitch);
+  const f = camera.focalPx;
+  const half = camera.frame.height / 2;
+  const up = (y: number, z: number) => (y - camera.y) * cos - (z - camera.z) * sin;
+  const depth = (y: number, z: number) => -(y - camera.y) * sin - (z - camera.z) * cos;
+  let side: (readonly [number, number])[] = [
+    [room.y0, room.z0],
+    [room.y1, room.z0],
+    [room.y1, room.z1],
+    [room.y0, room.z1],
+  ];
+  for (const inside of [
+    (y: number, z: number) => depth(y, z) - NEAR_MM,
+    (y: number, z: number) => half * depth(y, z) - f * up(y, z),
+    (y: number, z: number) => f * up(y, z) + half * depth(y, z),
+  ]) {
+    side = clipConvex(side, inside);
+    if (side.length === 0) return null;
+  }
+  const depths = side.map(([y, z]) => depth(y, z));
+  return [Math.min(...depths), Math.max(...depths)];
+}
+
+/**
+ * How long a stretch of the wall (mm) the frame, its picture slid panPx, shows any of the room along: at depth d
+ * it spans x from (-w/2 - pan) d / f to (w/2 - pan) d / f off the camera, over the depths it sees. 0 when it sees
+ * none of the room.
+ */
+export function frameSpanMm(camera: Camera, panPx: number, room: RoomSpan): number {
+  const seen = seenDepthsMm(camera, room);
+  if (seen === null) return 0;
+  const a = (-camera.frame.width / 2 - panPx) / camera.focalPx;
+  const b = (camera.frame.width / 2 - panPx) / camera.focalPx;
+  return Math.max(b * seen[0], b * seen[1]) - Math.min(a * seen[0], a * seen[1]);
+}
+
+/** How far short of the run to the fifth cabinet on the frame's stretch stays (a front only touched is not shown). */
+const CAP_SLACK_MM = 1;
+
+/**
+ * The longest stretch of the wall a frame may show and still show the fronts of no more than MAX_DRAWN_CABINETS
+ * cabinets wherever along it it stands: short of the narrowest run between a cabinet and the one
+ * MAX_DRAWN_CABINETS after it (splayed feet included), which a stretch must span to touch both. Infinity on a wall
+ * of no more.
+ */
+export function capSpanMm(wall: WallLayout): number {
+  const boxes = wall.cabinets.map((slot) => cabinetBox(slot, 0));
+  let span = Infinity;
+  for (let i = 0; i + MAX_DRAWN_CABINETS < boxes.length; i++) span = Math.min(span, boxes[i + MAX_DRAWN_CABINETS].x0 - boxes[i].x1);
+  return span - CAP_SLACK_MM;
+}
+
+/** What every framing of one wall shares: the cabinets' fronts (floor to the highest headroom) and the longest stretch of them a frame may show. */
+interface WallCap {
+  readonly fronts: RoomSpan;
+  readonly span: number;
+}
+
+function wallCap(input: FramingInput): WallCap {
+  const room = roomSpan(input.wall, input.headroomMm);
+  return { fronts: { y0: room.y0, y1: room.y1, z0: 0, z1: 0 }, span: capSpanMm(input.wall) };
+}
+
+/** The nearest a capped camera stands to its look-at, and how close the step in is found. */
+const CAP_NEAREST_MM = 50;
+const CAP_TOLERANCE_MM = 0.5;
+
+/**
+ * The distance the camera `at(distance)` stands at: `fit` when the frame there shows no longer a stretch of the
+ * fronts than the cap allows (unslid), else the farthest that does, within CAP_TOLERANCE_MM (stepping in along the
+ * line of sight, the stretch shrinks with the distance).
+ */
+function capDistance(at: (distance: number) => Camera, fit: number, cap: WallCap): number {
+  if (frameSpanMm(at(fit), 0, cap.fronts) <= cap.span) return fit;
+  let lo = CAP_NEAREST_MM;
+  let hi = fit;
+  while (hi - lo > CAP_TOLERANCE_MM) {
+    const mid = (lo + hi) / 2;
+    if (frameSpanMm(at(mid), 0, cap.fronts) <= cap.span) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * CC4 pan mode under the cap: how far (CSS px) the photo may slide either way and still show no longer a stretch
+ * of the fronts than `span`. Up to half the frame the stretch stays what it is unslid; past it the frame's far edge
+ * looks along the fronts at a graze, and the stretch grows by the depth the fronts span in view (a level camera
+ * sees them all at one depth: no limit).
+ */
+export function capSlidePx(camera: Camera, fronts: RoomSpan, span: number): number {
+  const seen = seenDepthsMm(camera, fronts);
+  if (seen === null || !(seen[1] > seen[0])) return Infinity;
+  const half = camera.frame.width / 2;
+  return Math.max(0, (camera.focalPx * span - half * (seen[0] + seen[1])) / (seen[1] - seen[0]));
+}
+
+/** The framing with the slide its cap allows the photo in pan mode (capSlidePx, at most panSlideMaxPx). */
+function withSlide(framing: Framing, cap: WallCap): Framing {
+  return { ...framing, slideMaxPx: Math.min(panSlideMaxPx(framing.camera), capSlidePx(framing.camera, cap.fronts, cap.span)) };
+}
+
+/** The tilted CC15 framing of these cabinets: aimed at the middle of the tallest, centred on their bodies, stepped in to the cap. */
+function fitCabinets(input: FramingInput, members: readonly number[], cap: WallCap): Framing {
   const boxes = members.map((i) => cabinetBox(input.wall.cabinets[i], headroomOf(input, i)));
   const union: Box = {
     x0: Math.min(...boxes.map((b) => b.x0)),
@@ -97,15 +229,37 @@ function fitCabinets(input: FramingInput, members: readonly number[]): Framing {
   const first = input.wall.cabinets[members[0]];
   const last = input.wall.cabinets[members[members.length - 1]];
   const look: Vec3 = [(first.leftMm + last.rightMm) / 2, union.y1 / 2, 0];
-  const { camera } = fitDistance({
+  const camY = startCameraY(look[1]);
+  const { distance, camera } = fitDistance({
     frame: input.frame,
-    camY: startCameraY(look[1]),
+    camY,
     look,
     tilt: true,
     corners: boxCorners(union.x0, union.x1, union.y0, union.y1, union.z0, union.z1),
     lensMm: input.lensMm,
   });
-  return { camera, look, page: members };
+  // stepping in along the line of sight: the camera keeps its tilt and nears the look-at
+  const at = (d: number): Camera => ({ ...camera, y: look[1] + ((camY - look[1]) * d) / distance, z: look[2] + d });
+  const d = capDistance(at, distance, cap);
+  return { camera: d === distance ? camera : at(d), look, page: members };
+}
+
+/**
+ * Whether these cabinets' bodies stand whole across the frame at the height it aims at, back to front, inside its
+ * side margins (a capped frame may cut their tops and feet).
+ */
+function standAcross(framing: Framing, input: FramingInput, members: readonly number[]): boolean {
+  const { camera, look } = framing;
+  const m = frameMargins(camera.frame);
+  return members.every((i) => {
+    const slot = input.wall.cabinets[i];
+    return [slot.leftMm, slot.rightMm].every((x) =>
+      [-slot.profile.outer.depthMm, 0].every((z) => {
+        const p = project(camera, [x, look[1], z]);
+        return p.depth > NEAR_MM && p.x >= m.x - SAME_PX && p.x <= camera.frame.width - m.x + SAME_PX;
+      }),
+    );
+  });
 }
 
 const distanceOf = (f: Framing) => f.camera.z - f.look[2];
@@ -113,12 +267,14 @@ const distanceOf = (f: Framing) => f.camera.z - f.look[2];
 /**
  * The wall cut into pages left to right: each page takes the next cabinet
  * while the page still fits no farther back than its farthest single
- * cabinet needs (so a narrow screen pages one cabinet at a time), and holds
- * no more than the case draws at a time (MAX_DRAWN_CABINETS).
+ * cabinet needs (so a narrow screen pages one cabinet at a time) and, where
+ * the cap steps the camera in, still stands whole across the frame; and
+ * holds no more than the case draws at a time (MAX_DRAWN_CABINETS).
  */
 export function wallPages(input: FramingInput): number[][] {
   const n = input.wall.cabinets.length;
-  const single = Array.from({ length: n }, (_, i) => distanceOf(fitCabinets(input, [i])));
+  const cap = wallCap(input);
+  const single = Array.from({ length: n }, (_, i) => distanceOf(fitCabinets(input, [i], cap)));
   const pages: number[][] = [];
   let i = 0;
   while (i < n) {
@@ -127,7 +283,8 @@ export function wallPages(input: FramingInput): number[][] {
     let j = i + 1;
     while (j < n && page.length < MAX_DRAWN_CABINETS) {
       const nextLimit = Math.max(limit, single[j]);
-      if (distanceOf(fitCabinets(input, [...page, j])) > nextLimit + SAME_DISTANCE_MM) break;
+      const grown = fitCabinets(input, [...page, j], cap);
+      if (distanceOf(grown) > nextLimit + SAME_DISTANCE_MM || !standAcross(grown, input, [...page, j])) break;
       page.push(j);
       limit = nextLimit;
       j++;
@@ -138,7 +295,7 @@ export function wallPages(input: FramingInput): number[][] {
   return pages;
 }
 
-function frameShelf(input: FramingInput, focus: number): Framing {
+function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
   const slot = input.wall.cabinets[focus];
   const { profile } = slot;
   const slots = surfaceSlots(profile, input.ceilingMm ?? CEILING_DEFAULT_MM);
@@ -151,12 +308,9 @@ function frameShelf(input: FramingInput, focus: number): Framing {
   const m = frameMargins(input.frame);
   const widthFit = (focalPx * profile.outer.widthMm) / 2 / (input.frame.width / 2 - m.x);
   const heightFit = (focalPx * (hi - lo)) / 2 / (input.frame.height / 2 - m.y);
-  const d = s.isTop ? Math.max(widthFit, Math.min(heightFit, widthFit + STEP_BACK_MAX_MM)) : Math.max(widthFit, heightFit);
-  return {
-    camera: { x: look[0], y: look[1], z: look[2] + d, pitch: 0, focalPx, frame: input.frame },
-    look,
-    page: [focus],
-  };
+  const fit = s.isTop ? Math.max(widthFit, Math.min(heightFit, widthFit + STEP_BACK_MAX_MM)) : Math.max(widthFit, heightFit);
+  const at = (d: number): Camera => ({ x: look[0], y: look[1], z: look[2] + d, pitch: 0, focalPx, frame: input.frame });
+  return { camera: at(capDistance(at, fit, cap)), look, page: [focus] };
 }
 
 /** The camera for the view, the focus cabinet and (in the shelf view) its surface. */
@@ -164,10 +318,11 @@ export function frameCase(input: FramingInput): Framing {
   const n = input.wall.cabinets.length;
   if (n === 0) throw new RangeError('frameCase needs at least one cabinet on the wall');
   const focus = Math.min(Math.max(0, Math.trunc(input.focus)), n - 1);
-  if (input.view === 'shelf') return frameShelf(input, focus);
-  if (input.view === 'cabinet') return fitCabinets(input, [focus]);
+  const cap = wallCap(input);
+  if (input.view === 'shelf') return withSlide(frameShelf(input, focus, cap), cap);
+  if (input.view === 'cabinet') return withSlide(fitCabinets(input, [focus], cap), cap);
   const page = wallPages(input).find((p) => p.includes(focus)) as number[];
-  return fitCabinets(input, page);
+  return withSlide(fitCabinets(input, page, cap), cap);
 }
 
 /**
@@ -220,7 +375,7 @@ export function panSlideMaxPx(camera: Camera): number {
  * cabinets' front) still draws exactly where the slid photo would put it.
  */
 export function panFraming(framing: Framing, panPx: number): { framing: Framing; panPx: number } {
-  const max = panSlideMaxPx(framing.camera);
+  const max = framing.slideMaxPx ?? panSlideMaxPx(framing.camera);
   const slid = Math.min(max, Math.max(-max, panPx));
   if (slid === panPx) return { framing, panPx };
   const { camera, look } = framing;

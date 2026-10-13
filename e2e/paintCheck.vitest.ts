@@ -123,6 +123,11 @@ describe('inkShare', () => {
     expect(inkShare({ width: 0, height: 0, data: new Uint8Array(0) })).toBe(0);
   });
 
+  it('reads a flat colour whose blue alone stands apart as flat: the tab bar and card surface (#1a1a2e) never draws as ink', () => {
+    expect(inkShare(flat(8, 8, [0x1a, 0x1a, 0x2e]))).toBe(0);
+    expect(inkShare(flat(8, 8, [10, 10, 200]))).toBe(0);
+  });
+
   it('counts the pixels off the commonest colour by more than delta on any channel', () => {
     const img = flat(10, 10, [20, 20, 20]);
     const set = (i: number, rgb: [number, number, number]) => img.data.set(rgb, i * 4);

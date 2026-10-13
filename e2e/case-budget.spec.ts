@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import type { Camera, Vec3 } from '../src/components/display/caseCamera';
+import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox, type Box } from '../src/components/display/caseFraming';
@@ -166,8 +166,8 @@ const faces = (b: Box): [Vec3, Vec3, Vec3][] => [
  * The frame against the wall it shows, from the numbers the scene publishes (its camera, its pan, the wall's
  * cabinets): the cabinets whose front (feet to top, splayed feet included, on the front plane) draws inside the
  * frame, those any part of which does (exact, face by face: a neighbour's back seen through the glass at the
- * frame's edge too), the five nearest its centre, and the widest stretch inside the frame where the wall stands
- * but no drawn cabinet is drawn.
+ * frame's edge too), the five nearest its centre, the widest stretch inside the frame where the wall stands
+ * but no drawn cabinet is drawn, and how wide (px) the widest neighbour not drawn shows, through the glass.
  */
 function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
   const c = scene.camera;
@@ -197,7 +197,18 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
     }
     blank = Math.max(blank, hi - reach);
   } else blank = camera.frame.width;
-  return { published, boxes, framed, seen, nearest, blank, narrowest };
+  // a neighbour the frame sees only through the glass of the cabinets drawn, at its edge: how wide it shows
+  const drawnIdx = new Set(scene.spans.map((s) => s.i));
+  let throughGlass = 0;
+  for (const i of seen.filter((k) => !drawnIdx.has(k))) {
+    for (const [a, u, v] of faces(boxes[i])) {
+      const t = trimFace({ camera, panPx }, a, u, v, rect);
+      if (!t) continue;
+      const xs = [t.s0, t.s1].flatMap((s) => [t.t0, t.t1].map((q) => project(camera, [a[0] + s * u[0] + q * v[0], a[1] + s * u[1] + q * v[1], a[2] + s * u[2] + q * v[2]]).x + panPx));
+      throughGlass = Math.max(throughGlass, Math.min(camera.frame.width, Math.max(...xs)) - Math.max(0, Math.min(...xs)));
+    }
+  }
+  return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass };
 }
 
 /** Open the case at `size` in fixture mode, swipe it into `state`, and let it settle: what it draws, against its frame. */
@@ -252,6 +263,7 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
         seen: frame.seen,
         nearest: frame.nearest,
         blankPx: Math.round(frame.blank),
+        throughGlassPx: Math.round(frame.throughGlass),
         cullX: scene.cullX,
         cullPan: scene.cullPan,
       };

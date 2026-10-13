@@ -4,7 +4,7 @@
 // filters and the View card, leaving for another tab and coming back. User A holds Ross's shape:
 // a large Owned (the 1,200 copies of e2e/sync and e2e/screens), a small Ordered and a large Wished
 // (10 and 574 copies, made here), so each tab stands a different wall. Chromium at the Fold8's
-// cover and open panels, at its device pixel ratio.
+// cover and open panels, at its device pixel ratio. A second pass pans the wall far (CC4 pan).
 // The check reads the screen (e2e/paintCheck.ts), not the DOM: the bug left the DOM, the styles
 // and hit-testing whole (an "invisible" button still worked) while the compositor did not draw
 // the chrome at all.
@@ -14,6 +14,7 @@ import type { Locator, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng, inkShare } from '../paintCheck';
+import { atRest, takesTap } from '../sheetRest';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
 import type { StackUser } from '../stack/src/issuer.js';
@@ -41,9 +42,12 @@ const SHAPE_PREFIX = 'occ/c4e50000-';
 const shapeOcc = (i: number): string => `c4e50000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`;
 /**
  * A control is drawn when this share of its pixels is off its background: its label, icon or edge. An undrawn
- * one is a flat colour (0); the faintest drawn here, a full-width row on the open panel, is about 0.8 %.
+ * one is a flat colour (0). Each control is read by its own box (a card's choice by its radio), never a
+ * full-width row, so the faintest drawn one carries several per cent (each run attaches what it read).
  */
-const MIN_INK = 0.002;
+const MIN_INK = 0.01;
+/** Every ink share read, by step and control: the threshold's evidence. */
+const inks: { step: string; name: string; ink: number }[] = [];
 
 let state: StackState;
 let stack: StackClient;
@@ -133,20 +137,6 @@ async function openApp(page: Page): Promise<void> {
     .toBe(true);
 }
 
-/** Wait until `sheet` stops moving: its spring has settled. */
-async function atRest(sheet: Locator): Promise<void> {
-  let last = '';
-  await expect
-    .poll(async () => {
-      const box = await sheet.boundingBox();
-      const now = JSON.stringify(box && [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]);
-      const still = box !== null && now === last;
-      last = now;
-      return still;
-    }, { intervals: [150], timeout: 10_000 })
-    .toBe(true);
-}
-
 /** The case screen's chrome, each control by the name Ross would give it. */
 function chrome(page: Page): [string, Locator][] {
   const tabs = page.getByRole('tablist', { name: 'Collections' });
@@ -170,20 +160,33 @@ function chrome(page: Page): [string, Locator][] {
   return controls;
 }
 
-/** The controls in `controls` the screen does not show: present in the DOM, yet no ink where they stand. */
-async function undrawn(page: Page, controls: [string, Locator][]): Promise<string[]> {
+/**
+ * The controls in `controls` the screen does not show: each must be in the DOM with a box of at least 8 px
+ * inside the viewport (else it is named missing or off screen), and carry ink where it stands.
+ */
+async function undrawn(page: Page, step: string, controls: [string, Locator][]): Promise<string[]> {
   const viewport = page.viewportSize()!;
   const out: string[] = [];
   for (const [name, locator] of controls) {
-    if ((await locator.count()) === 0) continue;
+    if ((await locator.count()) === 0) {
+      out.push(`${name} (missing)`);
+      continue;
+    }
     const box = await locator.first().boundingBox();
-    if (box === null) continue;
+    if (box === null) {
+      out.push(`${name} (no box)`);
+      continue;
+    }
     const x = Math.max(0, box.x);
     const y = Math.max(0, box.y);
     const width = Math.min(viewport.width, box.x + box.width) - x;
     const height = Math.min(viewport.height, box.y + box.height) - y;
-    if (width < 8 || height < 8) continue;
+    if (width < 8 || height < 8) {
+      out.push(`${name} (off screen)`);
+      continue;
+    }
     const ink = inkShare(decodePng(await page.screenshot({ clip: { x, y, width, height } })));
+    inks.push({ step, name, ink });
     if (ink < MIN_INK) out.push(name);
   }
   return out;
@@ -192,10 +195,33 @@ async function undrawn(page: Page, controls: [string, Locator][]): Promise<strin
 async function check(page: Page, testInfo: TestInfo, failures: string[], step: string, controls: [string, Locator][]): Promise<void> {
   // two frames' grace for the compositor after the tap's own work
   await page.waitForTimeout(400);
-  const missing = await undrawn(page, controls);
+  const missing = await undrawn(page, step, controls);
   if (missing.length === 0) return;
   failures.push(`${step}: ${missing.join(', ')} not drawn`);
   await testInfo.attach(`undrawn ${step}`, { body: await page.screenshot(), contentType: 'image/png' });
+}
+
+/** The View card's choices, each scrolled into the card's view on its own: a tap reaches it and its radio is drawn. */
+async function checkViewCard(page: Page, testInfo: TestInfo, failures: string[], step: string): Promise<void> {
+  const choices = await page.locator('.bottom-sheet label.case-card__choice').all();
+  if (choices.length < 7) failures.push(`${step}: ${choices.length} choices, not the 3 views, 4 walls and 2 swipes`);
+  for (const choice of choices) {
+    const name = (await choice.innerText()).trim().split('\n')[0]!;
+    const { hit, at } = await takesTap(choice, '.bottom-sheet__content');
+    if (!hit) failures.push(`${step}: a tap on ${name} misses it (${at})`);
+    await check(page, testInfo, failures, step, [[name, choice.locator('input')]]);
+  }
+}
+
+/** A finger's sideways swipe of dx px across the middle of the case. */
+async function swipe(page: Page, dx: number): Promise<void> {
+  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  const x = scene.x + scene.width * (dx < 0 ? 0.75 : 0.25);
+  const y = scene.y + scene.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(x + (dx * i) / 8, y);
+  await page.mouse.up();
 }
 
 async function showTab(page: Page, name: 'Owned' | 'Ordered' | 'Wished'): Promise<void> {
@@ -234,26 +260,20 @@ test("the case screen's chrome and cards are drawn after every collection switch
   await expect(filterSheet).toHaveCount(0);
   await check(page, testInfo, failures, 'after closing the filters', chrome(page));
 
-  if ((await page.locator('.case-tabs__tab[data-tab="view"]').count()) > 0) {
-    await page.locator('.case-tabs__tab[data-tab="view"]').tap();
-    const card = page.locator('.bottom-sheet');
-    await atRest(card);
-    await check(page, testInfo, failures, 'the View card', [
-      ['Whole cabinets', page.getByRole('radio', { name: 'Whole cabinets' })],
-      ['One cabinet', page.getByRole('radio', { name: 'One cabinet' })],
-      ['One shelf', page.getByRole('radio', { name: 'One shelf' })],
-    ]);
-    await page.locator('.bottom-sheet__backdrop').tap({ position: top });
-    await expect(card).toHaveCount(0);
-    await check(page, testInfo, failures, 'after closing the View card', chrome(page));
+  await page.locator('.case-tabs__tab[data-tab="view"]').tap();
+  const card = page.locator('.bottom-sheet');
+  await atRest(card);
+  await checkViewCard(page, testInfo, failures, 'the View card');
+  await page.locator('.bottom-sheet__backdrop').tap({ position: top });
+  await expect(card).toHaveCount(0);
+  await check(page, testInfo, failures, 'after closing the View card', chrome(page));
 
-    await page.locator('.case-tabs__tab[data-tab="refine"]').tap();
-    await atRest(filterSheet);
-    await check(page, testInfo, failures, 'the filters (Refine)', filterControls);
-    await page.locator('.detent-sheet__backdrop').tap({ position: top });
-    await expect(filterSheet).toHaveCount(0);
-    await check(page, testInfo, failures, 'after closing Refine', chrome(page));
-  }
+  await page.locator('.case-tabs__tab[data-tab="refine"]').tap();
+  await atRest(filterSheet);
+  await check(page, testInfo, failures, 'the filters (Refine)', filterControls);
+  await page.locator('.detent-sheet__backdrop').tap({ position: top });
+  await expect(filterSheet).toHaveCount(0);
+  await check(page, testInfo, failures, 'after closing Refine', chrome(page));
 
   // away on the tab bar and back
   for (const away of ['Search', 'Stats', 'Profile'] as const) {
@@ -269,6 +289,43 @@ test("the case screen's chrome and cards are drawn after every collection switch
     await check(page, testInfo, failures, `back from ${away}`, chrome(page));
   }
 
+  await testInfo.attach('ink shares read', { body: JSON.stringify(inks, null, 1), contentType: 'application/json' });
+  expect(failures).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('after the wall is panned far (CC4 pan, 20 swipes of 400 px), the chrome, the tabs and the View card are still drawn', async ({ page, context }, testInfo) => {
+  test.setTimeout(420_000);
+  inks.length = 0;
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await context.addInitScript(() => localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', swipe: 'pan' })));
+  await openApp(page);
+  await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 60_000 });
+  const scene = page.locator('.cabinet-scene');
+  await expect(scene).toHaveAttribute('data-swipe', 'pan');
+  const failures: string[] = [];
+  const top = { x: page.viewportSize()!.width / 2, y: 12 };
+
+  const x0 = await scene.getAttribute('data-camera-x');
+  for (let i = 0; i < 20; i++) await swipe(page, -400);
+  // 8,000 px along a wall of some hundred cabinets: far past the photo's own slide
+  await expect(scene).not.toHaveAttribute('data-camera-x', x0!);
+  await check(page, testInfo, failures, 'after 20 swipes', chrome(page));
+  for (const name of ['Wished', 'Owned'] as const) {
+    await showTab(page, name);
+    for (let i = 0; i < 20; i++) await swipe(page, -400);
+    await check(page, testInfo, failures, `after ${name} and 20 swipes`, chrome(page));
+  }
+  await page.locator('.case-tabs__tab[data-tab="view"]').tap();
+  const card = page.locator('.bottom-sheet');
+  await atRest(card);
+  await checkViewCard(page, testInfo, failures, 'the View card, panned');
+  await page.locator('.bottom-sheet__backdrop').tap({ position: top });
+  await expect(card).toHaveCount(0);
+  await check(page, testInfo, failures, 'after closing the View card, panned', chrome(page));
+
+  await testInfo.attach('ink shares read', { body: JSON.stringify(inks, null, 1), contentType: 'application/json' });
   expect(failures).toEqual([]);
   expect(errors).toEqual([]);
 });

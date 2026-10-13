@@ -55,7 +55,8 @@ let stack: StackClient;
 let USER_A: StackUser;
 let HEADS: CatalogHead[];
 
-test.describe.configure({ mode: 'serial' });
+// each test stands alone (the seed is idempotent): a red first pass never hides the far-pan pass
+test.describe.configure({ mode: 'default' });
 
 async function seed(): Promise<void> {
   const owned = await stack.sync.counts({ user: USER_A.sub, prefix: OWNED_PREFIX });

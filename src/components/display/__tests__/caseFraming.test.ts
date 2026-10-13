@@ -437,6 +437,8 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     { width: 870, height: 475 },
     { width: 657, height: 480 },
     { width: 657, height: 600 },
+    // a desktop window's short frame: wide enough that even a shelf, fitted by its height, would show six
+    { width: 1536, height: 200 },
   ];
   const WALLS: [string, WallLayout][] = [
     ['KLINGSBO', wallLayout(Array(30).fill(IKEA_KLINGSBO))],

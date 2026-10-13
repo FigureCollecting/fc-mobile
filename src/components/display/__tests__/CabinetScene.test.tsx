@@ -304,8 +304,11 @@ describe('CabinetScene: views and navigation', () => {
     const { host } = scene(FIXTURE_FIGURES, { view: 'shelf' });
     expect(host.dataset.shelf).toBe('0');
     expect(screen.getByRole('button', { name: 'Shelf above' })).toBeDisabled();
+    const top = cameraOf(host).y;
     fireEvent.click(screen.getByRole('button', { name: 'Shelf below' }));
     expect(host.dataset.shelf).toBe('1');
+    // and the camera goes down with it
+    expect(cameraOf(host).y).toBeLessThan(top);
     for (let i = 0; i < 10; i++) fireEvent.click(screen.getByRole('button', { name: 'Shelf below' }));
     expect(host.dataset.shelf).toBe('6');
     expect(screen.getByRole('button', { name: 'Shelf below' })).toBeDisabled();
@@ -941,18 +944,23 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
 
   for (const swipe of ['camera', 'pan'] as const) {
     it(`once a ${swipe} swipe settles the case culls for the settled picture: the five cabinets nearest its centre`, () => {
-      const { host } = scene(getFixtureFigures(170), { view: 'wall', swipe }, { frameFallback: COVER });
       const wall = klingsbos(60);
-      for (let k = 1; k <= 3; k++) {
-        const before = `${host.dataset.cameraX} ${host.dataset.pan}`;
-        slowDrag(host, -400);
-        expect(`${host.dataset.cameraX} ${host.dataset.pan}`, `swipe ${k} moved the picture`).not.toBe(before);
-        const camera = cameraOf(host);
-        const panPx = Number(host.dataset.cullPan);
-        expect(Number(host.dataset.cullX), `swipe ${k}`).toBeCloseTo(camera.x, 3);
-        expect(Math.round(panPx), `swipe ${k}`).toBe(Number(host.dataset.pan));
-        const drawn = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
-        expect(drawn.sort((a, b) => a - b), `swipe ${k}`).toEqual(nearestCabinets({ camera, panPx }, wall, []));
+      // the wall view, and the shelf view, whose five are a cabinet or two framed and the nearest beside them
+      for (const view of ['wall', 'shelf'] as const) {
+        const { host } = scene(getFixtureFigures(170), { view, swipe }, { frameFallback: COVER });
+        for (const [k, dx] of [-400, -130, -257, -61, -400, -333].entries()) {
+          const before = `${host.dataset.cameraX} ${host.dataset.pan}`;
+          slowDrag(host, dx);
+          const at = `${view} swipe ${k}`;
+          expect(`${host.dataset.cameraX} ${host.dataset.pan}`, `${at} moved the picture`).not.toBe(before);
+          const camera = cameraOf(host);
+          const panPx = Number(host.dataset.cullPan);
+          expect(Number(host.dataset.cullX), at).toBeCloseTo(camera.x, 3);
+          expect(Math.round(panPx), at).toBe(Number(host.dataset.pan));
+          const drawn = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+          expect(drawn.sort((a, b) => a - b), at).toEqual(nearestCabinets({ camera, panPx }, wall, []));
+        }
+        cleanup();
       }
     });
   }
@@ -1210,6 +1218,20 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     const top = widths('.cab-top .q.m-steel.f-rim');
     expect(top).toHaveLength(4);
     for (const w of top) expect(w).toBeCloseTo(3, 4);
+    // the rim lies 0.3 mm over the glass, off its plane; its four edges meet at the corners without overlapping
+    const shelf = cab.querySelector('.cab-shelf--glass')!;
+    const y = (q: Element) => -landsAt((q as HTMLElement).style.transform, 0, 0)[1] / s;
+    const fill = shelf.querySelector('.q.m-glass-plate')!;
+    const rim = Array.from(shelf.querySelectorAll<HTMLElement>('.q.m-glass-rim'));
+    for (const q of rim) expect(y(q) - y(fill)).toBeCloseTo(0.3, 4);
+    const area = rim.reduce((sum, q) => {
+      const a = landsAt(q.style.transform, 0, 0);
+      const u = landsAt(q.style.transform, parseFloat(q.style.width), 0).map((x, i) => (x - a[i]) / s);
+      const v = landsAt(q.style.transform, 0, parseFloat(q.style.height)).map((x, i) => (x - a[i]) / s);
+      return sum + Math.hypot(...u) * Math.hypot(...v);
+    }, 0);
+    const plate = IKEA_KLINGSBO.plate!;
+    expect(area).toBeCloseTo(plate.widthMm * plate.depthMm - (plate.widthMm - 4) * (plate.depthMm - 4), 1);
   });
 
   it('the step buttons draw no box over the whole scene: their row is no box of its own', () => {

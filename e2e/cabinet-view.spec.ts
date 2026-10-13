@@ -1024,6 +1024,30 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
   });
 }
 
+for (const routePx of [325, 301]) {
+  test(`CC5 a ${routePx} px route box (a short panel): the View card never rises past the top edge, and a tap reaches every choice`, async ({ page }) => {
+    const sideways = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover-sideways')!;
+    await openCase(page, sideways);
+    // the route box runs from the top of the screen down to the tab bar: size the window so it is routePx tall
+    const barAt = (await page.locator('.tab-bar').boundingBox())!.y;
+    await page.setViewportSize({ width: sideways.width, height: Math.round(sideways.height + routePx - barAt) });
+    await expect.poll(async () => Math.round((await page.locator('.tab-bar').boundingBox())!.y)).toBe(routePx);
+    await page.getByRole('button', { name: 'View' }).click();
+    const card = page.locator('.bottom-sheet');
+    await atRest(card);
+    const shown = (await card.boundingBox())!;
+    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    expect.soft(shown.y, 'the card keeps a gap below the top edge').toBeGreaterThanOrEqual(4);
+    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    const missed: string[] = [];
+    for (const choice of await card.locator('label.case-card__choice').all()) {
+      const { hit, at } = await takesTap(choice, '.bottom-sheet__content');
+      if (!hit) missed.push(`${(await choice.innerText()).trim()} @${at}`);
+    }
+    expect(missed).toEqual([]);
+  });
+}
+
 test('masked art: the clean copy composited with its mask at display time (CSS mask-image)', async ({ page }) => {
   await openCase(page, FOLD8[0], '&fxbranch=masked', { view: 'shelf' });
   const art = page.locator('.cab-figure__art--masked').first();

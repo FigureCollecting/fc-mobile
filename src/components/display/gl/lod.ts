@@ -87,8 +87,8 @@ export function planAtlas(requests: readonly LodRequest[], budgetBytes: number, 
   // them first: a pass steps each art at the largest tier anyone holds down one, until the estimate fits
   const stepDown = (capacity: number): void => {
     while (total > capacity) {
+      // over the capacity, some art still holds a cell: the largest tier held is a tier
       const top = Math.max(0, ...byFar.map((a) => tiers.get(a.key) ?? 0));
-      if (top === 0) return;
       for (const a of byFar) {
         if (total <= capacity) return;
         const t = tiers.get(a.key);

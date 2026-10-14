@@ -95,6 +95,31 @@ describe('cullCards', () => {
     expect(level.stages.boards).toBe(0);
   });
 
+  it('boards: on a shelf partly hidden, only the figures under the board go', () => {
+    const high: Camera = { ...camera, y: 2600, z: 900, pitch: Math.atan2(1500, 1200) };
+    // a board over the left half of the shelf only
+    const board: Board = { x0: -1500, x1: 0, y0: 1180, y1: 1200, z0: -400, z1: 0 };
+    const left = card(0, -300, -200, 900, 1100, -300, false, 1);
+    const right = card(0, 200, 300, 900, 1100, -300, false, 1);
+    const r = cullCards({ camera: high, panPx: 0, cabinets: [cab(-1500, 1500)], boards: () => [board], cards: [left, right] });
+    expect(r.visible).toEqual([right.id]);
+    expect(r.stages.boards).toBe(1);
+  });
+
+  it('frustum: a card reaching behind the camera is drawn when its part in front crosses the frame, though its corners in front draw below it', () => {
+    // pitched 0.3 down, the card's plane 50 mm in front of the camera: its foot (3 m under the camera) draws below the
+    // frame, and up it toward the camera's plane it sweeps up across the whole frame
+    const pitched: Camera = { ...camera, pitch: 0.3 };
+    const across = card(0, -50, 50, -2000, 2000, 1950);
+    expect(project(pitched, [0, -2000, 1950]).y).toBeGreaterThan(300);
+    expect(project(pitched, [0, 2000, 1950]).depth).toBeLessThan(0);
+    const r = cullCards({ camera: pitched, panPx: 0, cabinets: [{ ...cab(-1500, 1500), y0: -2500, y1: 2500, z1: 2100 }], boards: noBoards, cards: [across] });
+    expect(r.visible).toEqual([across.id]);
+    // wholly behind the camera: not drawn
+    const behind = card(0, -50, 50, 900, 1100, 2100);
+    expect(cullCards({ camera, panPx: 0, cabinets: [{ ...cab(-1500, 1500), z1: 2200 }], boards: noBoards, cards: [behind] }).visible).toEqual([]);
+  });
+
   it('figures: one wholly behind a nearer opaque card is not drawn; behind a see-through cut-out it is', () => {
     const front = card(0, -200, 200, 800, 1200, -100, true);
     const behind = card(0, -100, 100, 900, 1100, -300, false);
@@ -133,5 +158,10 @@ describe('cullCards', () => {
     expect(project(camera, [207, 1000, -300]).x).toBeCloseTo(236, 1);
     const r = cullCards({ camera, panPx: 0, cabinets: [cab(-1500, 1500)], boards: noBoards, cards: [behind, occ] });
     expect(r.visible).toContain(behind.id);
+    // and at the left edge: the card's left edge 2 px inside the occluder's
+    const leftBehind = card(0, -207, 100, 900, 1100, -300, false);
+    expect(project(camera, [-207, 1000, -300]).x).toBeCloseTo(164, 1);
+    expect(project(camera, [-200, 1000, -100]).x).toBeCloseTo(161.9, 1);
+    expect(cullCards({ camera, panPx: 0, cabinets: [cab(-1500, 1500)], boards: noBoards, cards: [leftBehind, occ] }).visible).toContain(leftBehind.id);
   });
 });

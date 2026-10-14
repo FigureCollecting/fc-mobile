@@ -8,6 +8,13 @@ import { wallLayout } from '../../packCabinets';
 import { cabinetBox } from '../../caseFraming';
 import { cabinetQuads, roomQuads, type ColoredQuad } from '../cabinetQuads';
 
+/** A cabinet of its own for one test: a Detolf whose glass shelves sit in the frame, no plate on rods. */
+const custom = vi.hoisted(() => ({ profile: null as unknown }));
+vi.mock('../../casePrefs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../casePrefs')>();
+  return { ...real, wallPatternProfiles: (id: string) => (id === 'custom' ? [custom.profile as ReturnType<typeof real.wallPatternProfiles>[number]] : real.wallPatternProfiles(id)) };
+});
+
 afterEach(cleanup);
 
 type Q = { cls: string; a: number[]; u: number[]; v: number[] };
@@ -55,6 +62,17 @@ describe('cabinetQuads: the canvas draws the cabinet the classic view draws, fac
       expect(unmatched(dom, gl)).toEqual([]);
     });
   }
+
+  it('glass shelves in the frame (no plate): their rimmed glass, face for face', () => {
+    const profile = { ...IKEA_DETOLF, id: 'custom', plate: undefined };
+    custom.profile = profile;
+    const slot = wallLayout([profile]).cabinets[0];
+    const dom = domQuads('custom');
+    const gl = cabinetQuads(slot);
+    expect(gl.filter((q) => q.cls === 'm-glass-plate').length).toBeGreaterThan(1);
+    expect(gl).toHaveLength(dom.length);
+    expect(unmatched(dom, gl)).toEqual([]);
+  });
 
   it('every preset gets faces, each a colour, and none reaches past the cabinet and its feet', () => {
     for (const profile of CABINET_PRESETS) {

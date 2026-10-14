@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import fc from 'fast-check';
 import { BufferGeometry, Material, Texture, Vector3 } from 'three';
 import type { Figure } from '@figurecollecting/fc-shared';
@@ -26,9 +26,11 @@ function fakeCtx() {
     clearRect() {
       this.calls.push('clearRect');
     },
-    fillText() {
+    fillText(text: string) {
       this.calls.push('fillText');
+      this.texts.push(text);
     },
+    texts: [] as string[],
     measureText: (t: string) => ({ width: t.length * 6 }),
     save() {},
     restore() {},
@@ -40,14 +42,18 @@ function fakeCtx() {
     rect() {},
     clip() {},
     fill() {},
-    strokeRect() {},
+    strokeRect() {
+      this.calls.push('strokeRect');
+    },
     set fillStyle(_: unknown) {},
     set strokeStyle(_: unknown) {},
     set lineWidth(_: unknown) {},
     set font(_: unknown) {},
     set textAlign(_: unknown) {},
     set textBaseline(_: unknown) {},
-    set globalCompositeOperation(_: unknown) {},
+    set globalCompositeOperation(v: string) {
+      this.calls.push(`composite:${v}`);
+    },
   };
 }
 
@@ -157,6 +163,145 @@ describe('toThreeCamera: the canvas camera is the case camera (caseCamera, CC2)'
   });
 });
 
+function sceneOf(arts: FigureArt[], names: string[] = arts.map((_, i) => `Figure ${i}`)) {
+  const draws = arts.map((_, i): { draw: FigureDraw; cab: number } => ({
+    cab: 0,
+    draw: {
+      cx: 60 + (i % 4) * 90,
+      slot: surfaces[i % 3],
+      placed: {
+        item: { figure: figure(`f${i}`, names[i]), index: i, heightMm: 180, widthMm: 80, billboardWidthMm: 90, depthMm: 60, heightEstimated: false },
+        xMm: 0,
+        zMm: -160,
+        heightMm: 180,
+        tooDeep: false,
+      },
+    },
+  }));
+  const built = buildCards(draws, (i) => ({ art: arts[i], aspect: 0.5, margins: { top: 0.05, bottom: 0.05 } }), true);
+  return { ...scene(0), ...built };
+}
+
+describe('CaseGL atlas painting', () => {
+  it('a masked picture through its mask, framed art in a mat, a picture that failed to load as a plate, a long name wrapped', async () => {
+    const loadImage = vi.fn(async (url: string) => {
+      if (url.includes('broken')) throw new Error('404');
+      return { width: 200, height: 400 } as unknown as CanvasImageSource;
+    });
+    const { gl } = make({ loadImage });
+    const arts: FigureArt[] = [
+      { kind: 'masked', url: 'https://img.test/m.jpg', maskUrl: 'https://img.test/m.mask.png', alphaUrl: 'https://img.test/m.mask.png' },
+      { kind: 'framed', url: 'https://img.test/f.jpg' },
+      { kind: 'cutout', url: 'https://img.test/broken.png', alphaUrl: 'https://img.test/broken.png' },
+      { kind: 'plate' },
+    ];
+    gl.setScene(sceneOf(arts, ['Masked', 'Framed', 'Broken', 'A plate whose figure has a very long name indeed that wraps']));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    const calls = atlasPages()[0].ctx.calls;
+    // the mask cuts the picture: drawn, then the mask in destination-in, then back to source-over
+    const masked = calls.indexOf('composite:destination-in');
+    expect(masked).toBeGreaterThan(0);
+    expect(calls[masked - 1]).toBe('drawImage:9');
+    expect(calls[masked + 1]).toBe('drawImage:9');
+    expect(calls[masked + 2]).toBe('composite:source-over');
+    // the framed picture: its mat and rim, then the picture contained in it
+    expect(calls).toContain('strokeRect');
+    // the broken picture: fetched once, a plate in its cell; every picture fetched once
+    expect(loadImage.mock.calls.map(([u]) => u).sort()).toEqual(['https://img.test/broken.png', 'https://img.test/f.jpg', 'https://img.test/m.jpg', 'https://img.test/m.mask.png']);
+    // the plate's long name runs over several lines
+    const texts = atlasPages()[0].ctx.texts;
+    expect(texts.filter((t) => /very|long|wraps|plate/.test(t)).length).toBeGreaterThan(1);
+  });
+
+  it('a new wall whose arts the atlas does not hold plans afresh, and lets the pages it no longer needs go', async () => {
+    const many = Array.from({ length: 40 }, (_, i): FigureArt => ({ kind: 'cutout', url: `https://img.test/${i}.png`, alphaUrl: `https://img.test/${i}.png` }));
+    const near: Camera = { ...camera, z: 900, y: 1100, pitch: 0.05 };
+    const { gl } = make();
+    gl.setScene(sceneOf(many));
+    gl.setView({ camera: near, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    const before = gl.stats.pages;
+    expect(before).toBeGreaterThan(1);
+    const texture = gl.pageTextures()[before - 1];
+    const dispose = vi.spyOn(texture, 'dispose');
+    gl.setScene(sceneOf([{ kind: 'cutout', url: 'https://img.test/other.png', alphaUrl: 'https://img.test/other.png' }]));
+    gl.setView({ camera: near, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    expect(gl.stats.pages).toBe(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('decodes a picture for the atlas as a CORS image (ADDR-1), once however many cells need it', async () => {
+    // jsdom has no decode(): the browser's, resolved
+    const decode = vi.fn(async function (this: HTMLImageElement) {});
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', { value: decode, configurable: true });
+    onTestFinished(() => {
+      delete (HTMLImageElement.prototype as unknown as { decode?: unknown }).decode;
+    });
+    const { gl } = make({ loadImage: undefined });
+    gl.setScene(scene(6));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    expect(decode).toHaveBeenCalledTimes(1);
+    const img = decode.mock.contexts[0] as HTMLImageElement;
+    expect(img.crossOrigin).toBe('anonymous');
+    expect(img.src).toBe('https://img.test/a.png');
+  });
+});
+
+describe('CaseGL atlas planning', () => {
+  it('a settled picture the atlas already holds repaints nothing', async () => {
+    const { gl } = make();
+    gl.setScene(scene(12));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    const page = atlasPages()[0];
+    const painted = page.ctx.calls.length;
+    const version = gl.pageTextures()[0].version;
+    gl.setView({ camera, panPx: 4, dpr: 2, settled: true });
+    await gl.ready();
+    expect(page.ctx.calls.length).toBe(painted);
+    expect(gl.pageTextures()[0].version).toBe(version);
+  });
+
+  it('a settled picture showing arts the atlas lacks packs them; a swipe meanwhile does not', async () => {
+    const many = Array.from({ length: 24 }, (_, i): FigureArt => ({ kind: 'cutout', url: `https://img.test/${i}.png`, alphaUrl: `https://img.test/${i}.png` }));
+    const sc = sceneOf(many);
+    const near: Camera = { ...camera, z: 700, y: 1100, pitch: 0 };
+    const { gl } = make();
+    gl.setScene(sc);
+    gl.setView({ camera: { ...near, x: -2000 }, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    gl.setView({ camera: near, panPx: 0, dpr: 2, settled: false });
+    await gl.ready();
+    expect(gl.stats.placeholders).toBeGreaterThan(0);
+    gl.setView({ camera: near, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    expect(gl.stats.placeholders).toBe(0);
+  });
+
+  it('a build overtaken by a newer one is dropped: only the newest plan is painted', async () => {
+    const waits: { url: string; go: () => void }[] = [];
+    const loadImage = (url: string) => new Promise<CanvasImageSource>((r) => waits.push({ url, go: () => r({ width: 100, height: 200 } as unknown as CanvasImageSource) }));
+    const log = vi.fn();
+    const { gl } = make({ loadImage, log });
+    gl.setScene(sceneOf([{ kind: 'cutout', url: 'https://img.test/old.png', alphaUrl: 'https://img.test/old.png' }]));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    const first = gl.ready();
+    gl.setScene(sceneOf([{ kind: 'cutout', url: 'https://img.test/new.png', alphaUrl: 'https://img.test/new.png' }]));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    const second = gl.ready();
+    waits.find((w) => w.url.includes('old'))!.go();
+    await first;
+    expect(log).not.toHaveBeenCalled();
+    waits.find((w) => w.url.includes('new'))!.go();
+    await second;
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][1]).toMatchObject({ cells: 2 });
+  });
+});
+
 describe('CaseGL', () => {
   it('caps the device pixel ratio at 2 and sizes the drawing buffer to the frame', () => {
     expect(DPR_CAP).toBe(2);
@@ -240,6 +385,33 @@ describe('CaseGL', () => {
       expect(p.x).toBeLessThanOrEqual(camera.frame.width);
     }
     expect(gl.tapPoints(0)).toEqual([]);
+  });
+
+  it('no tap point off the frame, nor on a figure a nearer one covers', () => {
+    const { gl } = make();
+    const arts: FigureArt[] = Array.from({ length: 3 }, (_, i) => ({ kind: 'framed', url: `https://img.test/${i}.jpg` }));
+    const sc = sceneOf(arts);
+    // the second figure stands right in front of the first; the third half off the frame's right edge
+    const cards = sc.cards.map((c) => {
+      const first = sc.cards[0];
+      if (c.figure === 1 && c.role === 'figure') return { ...c, x0: first.x0, x1: first.x1, y0: first.y0, y1: first.y1, z: first.z + 50, tap: { ...first.tap!, id: c.id, z: first.z + 50 } };
+      return c;
+    });
+    gl.setScene({ ...sc, cards });
+    const tap0 = cards[0].tap!;
+    const mid = project(camera, [(tap0.x0 + tap0.x1) / 2, (tap0.y0 + tap0.y1) / 2, tap0.z]);
+    const third = cards.find((c) => c.figure === 2 && c.role === 'figure')!.tap!;
+    const thirdMid = project(camera, [(third.x0 + third.x1) / 2, (third.y0 + third.y1) / 2, third.z]);
+    // pan so the third figure's middle lies just past the right edge, while part of it still shows
+    const pan = camera.frame.width - thirdMid.x + 4;
+    gl.setView({ camera, panPx: pan, dpr: 2, settled: true });
+    expect(gl.visibleIds()).toContain(cards.find((c) => c.figure === 2 && c.role === 'figure')!.id);
+    const points = gl.tapPoints(100);
+    expect(points.map((p) => p.figure)).not.toContain(0);
+    expect(points.map((p) => p.figure)).not.toContain(2);
+    expect(points.map((p) => p.figure)).toContain(1);
+    for (const p of points) expect(p.x).toBeLessThanOrEqual(camera.frame.width);
+    expect(mid.x + pan).toBeLessThan(camera.frame.width);
   });
 
   it('captures a still frame of each settled picture, not of every frame of a swipe', () => {

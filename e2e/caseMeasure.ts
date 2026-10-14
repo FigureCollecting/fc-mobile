@@ -4,13 +4,23 @@ import type { Page } from '@playwright/test';
 
 interface LayerTreeLayer {
   layerId: string;
+  backendNodeId?: number;
   width: number;
   height: number;
   drawsContent: boolean;
 }
 
-/** Every layer of the page that draws, and their area (CSS px of layer space). */
-export async function pageLayers(page: Page): Promise<{ layers: number; area: number }> {
+export interface PageLayers {
+  /** Every layer of the page that draws, and their area (CSS px of layer space). */
+  layers: number;
+  area: number;
+  /** Those of the case scene (.cabinet-scene and inside it: the canvas, or the classic view's faces and figures, and the nav). */
+  sceneLayers: number;
+  sceneArea: number;
+}
+
+/** The layers the page composites now, all of them and the case scene's. */
+export async function pageLayers(page: Page): Promise<PageLayers> {
   const cdp = await page.context().newCDPSession(page);
   try {
     const tree = new Promise<LayerTreeLayer[]>((resolve) => {
@@ -26,7 +36,14 @@ export async function pageLayers(page: Page): Promise<{ layers: number; area: nu
     ]);
     await cdp.send('LayerTree.disable');
     const drawing = layers.filter((l) => l.drawsContent);
-    return { layers: drawing.length, area: drawing.reduce((a, l) => a + l.width * l.height, 0) };
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    const { nodeIds: inScene } = await cdp.send('DOM.querySelectorAll', { nodeId: root.nodeId, selector: '.cabinet-scene, .cabinet-scene *' });
+    const backed = drawing.filter((l) => l.backendNodeId !== undefined);
+    const { nodeIds } = await cdp.send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: backed.map((l) => l.backendNodeId!) });
+    const scene = new Set(inScene);
+    const sceneLayers = backed.filter((_, i) => scene.has(nodeIds[i]));
+    const area = (ls: LayerTreeLayer[]) => ls.reduce((a, l) => a + l.width * l.height, 0);
+    return { layers: drawing.length, area: area(drawing), sceneLayers: sceneLayers.length, sceneArea: area(sceneLayers) };
   } finally {
     await cdp.detach();
   }

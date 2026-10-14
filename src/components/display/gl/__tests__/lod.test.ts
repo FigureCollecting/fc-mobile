@@ -75,6 +75,15 @@ describe('planAtlas (the texture budget)', () => {
     expect(tiers[0]).toBeGreaterThan(tiers[tiers.length - 1]);
   });
 
+  it('over budget, the largest cells step down first (the top mip level goes first), the far ones keeping theirs while they can', () => {
+    // one art near (256 px cell) and eight far (128 px): one page of 512 holds the far ones and the near one at 128
+    const reqs = [req('near', 300, 1), ...Array.from({ length: 8 }, (_, i) => req(`far${i}`, 100 - i, 1))];
+    const plan = planAtlas(reqs, atlasBytes(1, 512), 512);
+    expect(plan.pack.overflow).toEqual([]);
+    expect(plan.tiers.get('near')).toBe(128);
+    for (let i = 0; i < 8; i++) expect(plan.tiers.get(`far${i}`)).toBe(128);
+  });
+
   it('a budget too small for even the smallest tier: the farthest draw as placeholders, nothing overflows', () => {
     const reqs = Array.from({ length: 400 }, (_, i) => req(`k${i}`, 500 - i, 1));
     const plan = planAtlas(reqs, atlasBytes(1, 256), 256);

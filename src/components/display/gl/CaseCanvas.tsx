@@ -25,8 +25,7 @@ interface CaseCanvasProps {
   createGL?: CreateGL;
 }
 
-function publish(canvas: HTMLCanvasElement | null, s: GLStats): void {
-  if (!canvas) return;
+function publish(canvas: HTMLCanvasElement, s: GLStats): void {
   const d = canvas.dataset;
   d.glStages = JSON.stringify(s.stages);
   d.glDrawn = String(s.cardsDrawn);
@@ -37,7 +36,7 @@ function publish(canvas: HTMLCanvasElement | null, s: GLStats): void {
   d.glBudgetBytes = String(s.budgetBytes);
   d.glDpr = String(s.dpr);
   d.glCullMs = s.cullMs.toFixed(3);
-  d.glFrames = String(Number(d.glFrames ?? 0) + 1);
+  d.glFrames = String(Number(d.glFrames) + 1);
 }
 
 export function CaseCanvas({ scene, view, lost, onPick, onLost, onFail, createGL = lazyGL }: CaseCanvasProps) {
@@ -49,6 +48,7 @@ export function CaseCanvas({ scene, view, lost, onPick, onLost, onFail, createGL
   latest.current = { scene, view, onLost, onFail };
 
   useLayoutEffect(() => {
+    const canvas = canvasRef.current!;
     let gone = false;
     let made: CaseGLLike | null = null;
     const start = (g: CaseGLLike) => {
@@ -57,21 +57,22 @@ export function CaseCanvas({ scene, view, lost, onPick, onLost, onFail, createGL
       gl.current = g;
       applied.current = latest.current.scene;
       g.setScene(latest.current.scene);
-      g.setView({ ...latest.current.view, dpr: window.devicePixelRatio || 1 });
-      canvasRef.current?.setAttribute('data-gl-ready', '1');
+      g.setView({ ...latest.current.view, dpr: window.devicePixelRatio });
+      canvas.setAttribute('data-gl-ready', '1');
     };
     try {
       const out = createGL({
-        canvas: canvasRef.current!,
+        canvas,
         still: stillRef.current,
         onLost: (l) => latest.current.onLost(l),
+        // a frame is drawn only once the renderer has started: `made` is it
         onDrawn: (s) => {
-          publish(canvasRef.current, s);
+          publish(canvas, s);
           // where the e2e taps: a few drawn figures, in screen px
-          if (gl.current) canvasRef.current?.setAttribute('data-gl-taps', JSON.stringify(gl.current.tapPoints(6)));
+          canvas.setAttribute('data-gl-taps', JSON.stringify(made!.tapPoints(6)));
         },
       });
-      if (out instanceof Promise) out.then(start, (e: unknown) => !gone && latest.current.onFail(e));
+      if (out instanceof Promise) out.then(start, (e: unknown) => latest.current.onFail(e));
       else start(out);
     } catch (e) {
       latest.current.onFail(e);
@@ -91,20 +92,20 @@ export function CaseCanvas({ scene, view, lost, onPick, onLost, onFail, createGL
 
   // every render of the scene is a new camera or pan: before the browser paints, so the frame it schedules is this one's
   useLayoutEffect(() => {
-    gl.current?.setView({ ...view, dpr: window.devicePixelRatio || 1 });
+    gl.current?.setView({ ...view, dpr: window.devicePixelRatio });
   });
 
   const onClick = (e: MouseEvent) => {
-    const canvas = canvasRef.current;
-    if (!canvas || !gl.current) return;
-    const r = canvas.getBoundingClientRect();
+    // a tap before the renderer has arrived opens nothing
+    if (!gl.current) return;
+    const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     const hit = gl.current.pick(e.clientX - r.left, e.clientY - r.top);
     if (hit !== null) onPick(hit);
   };
 
   return (
     <>
-      <canvas ref={canvasRef} class="case-gl" hidden={lost} onClick={onClick} />
+      <canvas ref={canvasRef} class="case-gl" hidden={lost} onClick={onClick} data-gl-frames="0" />
       <canvas ref={stillRef} class="case-gl__still" hidden={!lost} aria-hidden="true" />
     </>
   );

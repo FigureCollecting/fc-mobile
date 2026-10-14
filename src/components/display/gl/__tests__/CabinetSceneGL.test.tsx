@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, onTestFinished } from 'vitest';
 import { render, cleanup, fireEvent, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../../CabinetScene';
@@ -189,6 +189,73 @@ describe('CabinetScene, Renderer: Canvas (CASE-GL)', () => {
     expect(host().dataset.glFallback).toBeUndefined();
     r.rerender(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={createGL} />);
     expect(host().dataset.renderer).toBe('canvas');
+  });
+
+  it('the renderer loads on demand: drawn once it arrives; one that fails to load falls back; one that arrives after the case closed is let go', async () => {
+    const factory = glFactory();
+    let resolve!: (g: CaseGL) => void;
+    const later = (o: Parameters<typeof factory.createGL>[0]) => new Promise<CaseGL>((r) => (resolve = () => r(factory.createGL(o))));
+    const r = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={later} />);
+    const host = r.container.querySelector<HTMLElement>('.cabinet-scene')!;
+    expect(host.dataset.renderer).toBe('canvas');
+    expect(host.querySelector('canvas.case-gl')!.getAttribute('data-gl-ready')).toBeNull();
+    // a tap before it arrives opens nothing
+    const onSelect = vi.fn();
+    r.rerender(<CabinetScene figures={FIXTURE_FIGURES} onSelect={onSelect} prefs={canvasPrefs} createGL={later} />);
+    fireEvent.click(host.querySelector('canvas.case-gl')!, { clientX: 200, clientY: 200 });
+    expect(onSelect).not.toHaveBeenCalled();
+    await act(async () => resolve(undefined as never));
+    expect(host.querySelector('canvas.case-gl')!.getAttribute('data-gl-ready')).toBe('1');
+    expect(factory.made[0].renderer.render).toHaveBeenCalled();
+    r.unmount();
+
+    const failing = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={() => Promise.reject(new Error('chunk failed'))} />);
+    await act(async () => {});
+    expect(failing.container.querySelector<HTMLElement>('.cabinet-scene')!.dataset.glFallback).toBe('failed');
+    failing.unmount();
+
+    const late = glFactory();
+    let arrive!: () => void;
+    const slow = (o: Parameters<typeof late.createGL>[0]) => new Promise<CaseGL>((res) => (arrive = () => res(late.createGL(o))));
+    const closed = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={slow} />);
+    closed.unmount();
+    await act(async () => arrive());
+    expect(late.made[0].renderer.dispose).toHaveBeenCalledTimes(1);
+
+    // a load that fails after the case closed changes nothing
+    let fail!: () => void;
+    const onFailLate = render(
+      <CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={() => new Promise<CaseGL>((_, rej) => (fail = () => rej(new Error('late'))))} />,
+    );
+    onFailLate.unmount();
+    await act(async () => fail());
+    expect(onFailLate.container.querySelector('.cabinet-scene')).toBeNull();
+  });
+
+  it('labels on: the canvas is given the new scene, name plates as drawn cards', () => {
+    const factory = glFactory();
+    const r = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={factory.createGL} />);
+    const gl = factory.made[0].gl;
+    const setScene = vi.spyOn(gl, 'setScene');
+    r.rerender(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={factory.createGL} labels />);
+    expect(setScene).toHaveBeenCalledTimes(1);
+    expect(setScene.mock.calls[0][0].cards.filter((c) => c.role === 'label')).toHaveLength(FIXTURE_FIGURES.length);
+  });
+
+  it('the canvas is given its scene once as it starts, not again until the scene changes', () => {
+    const setScene = vi.spyOn(CaseGL.prototype, 'setScene');
+    onTestFinished(() => setScene.mockRestore());
+    const factory = glFactory();
+    const r = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={factory.createGL} />);
+    expect(setScene).toHaveBeenCalledTimes(1);
+    r.rerender(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={factory.createGL} />);
+    expect(setScene).toHaveBeenCalledTimes(1);
+  });
+
+  it('a tap where no figure is drawn opens nothing', () => {
+    const { host, onSelect } = open(canvasPrefs);
+    fireEvent.click(host.querySelector('canvas.case-gl')!, { clientX: 2, clientY: 2 });
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('switching back to Classic lets the canvas go and draws the CSS 3D scene', () => {

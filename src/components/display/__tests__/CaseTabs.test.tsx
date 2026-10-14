@@ -77,6 +77,16 @@ describe('CaseViewCard (the View tab: view, cabinets, swipe, ceiling, tab sides)
     expect(onChange).toHaveBeenCalledWith({ swipe: 'pan' });
   });
 
+  it('CASE-GL: beside the swipe, the renderer: Classic by default, Canvas on a tap', () => {
+    const onChange = card();
+    const group = screen.getByRole('group', { name: 'Renderer' });
+    expect(group.previousElementSibling?.querySelector('legend')?.textContent).toBe('Swipe');
+    expect(screen.getByRole('radio', { name: 'Classic' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Canvas' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: 'Canvas' }));
+    expect(onChange).toHaveBeenCalledWith({ renderer: 'canvas' });
+  });
+
   it('CC5: the card fits its content above the raised + of the tab bar and scrolls its body, never running under the bar', () => {
     card();
     const sheet = document.querySelector('.bottom-sheet') as HTMLElement;

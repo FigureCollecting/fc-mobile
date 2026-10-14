@@ -228,6 +228,20 @@ describe('CaseGL', () => {
     expect(gl.pick(p.x, p.y)).toBeNull();
   });
 
+  it('names where a tap lands on each of the first drawn figures (what the e2e taps), each picking back its figure', () => {
+    const { gl } = make();
+    gl.setScene(scene(12));
+    gl.setView({ camera, panPx: 30, dpr: 2, settled: true });
+    const points = gl.tapPoints(3);
+    expect(points).toHaveLength(3);
+    for (const p of points) {
+      expect(gl.pick(p.x, p.y)).toBe(p.figure);
+      expect(p.x).toBeGreaterThanOrEqual(0);
+      expect(p.x).toBeLessThanOrEqual(camera.frame.width);
+    }
+    expect(gl.tapPoints(0)).toEqual([]);
+  });
+
   it('captures a still frame of each settled picture, not of every frame of a swipe', () => {
     const { gl, still } = make();
     gl.setScene(scene(6));

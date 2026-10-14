@@ -560,6 +560,24 @@ export class CaseGL {
     return id === null ? null : cards[id].figure;
   }
 
+  /** Where a tap lands on each of the first `n` drawn figures (the middle of its tap box, where no nearer one takes it). */
+  tapPoints(n: number): { figure: number; x: number; y: number }[] {
+    const out: { figure: number; x: number; y: number }[] = [];
+    if (!this.input || !this.view) return out;
+    const { camera, panPx } = this.view;
+    for (const id of this.visible) {
+      if (out.length >= n) break;
+      const tap = this.input.cards[id].tap;
+      if (!tap) continue;
+      const p = project(camera, [(tap.x0 + tap.x1) / 2, (tap.y0 + tap.y1) / 2, tap.z]);
+      const x = p.x + panPx;
+      if (x < 0 || x > camera.frame.width || p.y < 0 || p.y > camera.frame.height) continue;
+      const figure = this.input.cards[id].figure;
+      if (this.pick(x, p.y) === figure) out.push({ figure, x, y: p.y });
+    }
+    return out;
+  }
+
   /** The atlas build in flight, if any, done. */
   ready(): Promise<void> {
     return this.building;

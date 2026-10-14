@@ -10,7 +10,7 @@ import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { CaseGL, CaseGLOptions, GLSceneInput, GLStats, GLView } from './glScene';
 
 /** What CabinetScene needs of the renderer. */
-export type CaseGLLike = Pick<CaseGL, 'setScene' | 'setView' | 'pick' | 'dispose' | 'stats'>;
+export type CaseGLLike = Pick<CaseGL, 'setScene' | 'setView' | 'pick' | 'tapPoints' | 'dispose' | 'stats'>;
 export type CreateGL = (o: Pick<CaseGLOptions, 'canvas' | 'still' | 'onLost' | 'onDrawn'>) => CaseGLLike | Promise<CaseGLLike>;
 
 const lazyGL: CreateGL = (o) => import('./glScene').then((m) => new m.CaseGL(o));
@@ -65,7 +65,11 @@ export function CaseCanvas({ scene, view, lost, onPick, onLost, onFail, createGL
         canvas: canvasRef.current!,
         still: stillRef.current,
         onLost: (l) => latest.current.onLost(l),
-        onDrawn: (s) => publish(canvasRef.current, s),
+        onDrawn: (s) => {
+          publish(canvasRef.current, s);
+          // where the e2e taps: a few drawn figures, in screen px
+          if (gl.current) canvasRef.current?.setAttribute('data-gl-taps', JSON.stringify(gl.current.tapPoints(6)));
+        },
       });
       if (out instanceof Promise) out.then(start, (e: unknown) => !gone && latest.current.onFail(e));
       else start(out);

@@ -800,6 +800,22 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     }
   }, 120_000);
 
+  it('the pager answers to the settled picture (close-out 4, ruling 32): mid-swipe, out past the far end, Next and Prev hold until the finger lifts', () => {
+    for (const swipe of ['camera', 'pan'] as const) {
+      const { host } = scene(getFixtureFigures(120), { swipe, view: 'wall' }, { frameFallback: { width: 657, height: 473 } });
+      const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
+      const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
+      fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
+      fireEvent.pointerMove(host, { pointerId: 1, clientX: -20_000, clientY: 200 });
+      // the picture is out past the far end of the first page
+      expect(centreX(host), swipe).toBeGreaterThan(5_000);
+      expect([next.disabled, prev.disabled], `${swipe} mid-swipe`).toEqual([false, true]);
+      fireEvent.pointerUp(host, { pointerId: 1, clientX: -20_000, clientY: 200 });
+      expect(prev.disabled, `${swipe} settled`).toBe(false);
+      cleanup();
+    }
+  });
+
   it('pan mode, wall view (close-out 4, ruling 32): the pager pages from where the pan settled, never back past it', () => {
     for (const frame of [{ width: 657, height: 473 }, { width: 443, height: 344 }]) {
       const { host } = scene(getFixtureFigures(120), { swipe: 'pan', view: 'wall' }, { frameFallback: frame });

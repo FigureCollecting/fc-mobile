@@ -8,7 +8,7 @@ import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
-import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
+import { boxCorners, cssSceneTransform, project, unprojectToPlaneZ, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
@@ -242,6 +242,39 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
     // the next tap, without a drag, opens
     fireEvent.click(figureButtons(host)[0]);
     expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('camera mode, wall view: a walk settles on a stop where three cabinets or more stand whole (Ross 12:1xC, desk MN2 a); the cabinet view walks as the finger says', () => {
+    const many = getFixtureFigures(60);
+    const wallOf = (host: HTMLElement) => (JSON.parse(host.dataset.wall!) as number[][]).map(([x0, x1]) => (x0 + x1) / 2);
+    for (const frame of [{ width: 443, height: 454 }, { width: 870, height: 400 }]) {
+      const { host } = scene(many, { swipe: 'camera', view: 'wall' }, { frameFallback: frame });
+      const centres = wallOf(host);
+      const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
+      let x0 = Number(host.dataset.cameraX);
+      for (let k = 0; k < 4; k++) {
+        drag(host, -40);
+        const camera = cameraOf(host);
+        expect(camera.x, `${frame.width} ${k}`).toBeGreaterThan(x0);
+        expect(stops.some((x) => Math.abs(x - camera.x) < 1e-6), `${camera.x}`).toBe(true);
+        const lookY = unprojectToPlaneZ(camera, frame.width / 2, frame.height / 2, 0)![1];
+        // whole: the body (the box less its splayed feet), side to side at the height the frame aims at
+        const whole = (JSON.parse(host.dataset.wall!) as number[][]).filter(([b0, b1]) => {
+          const feet = (b1 - b0 - IKEA_KLINGSBO.outer.widthMm) / 2;
+          return [b0 + feet, b1 - feet].every((x) => {
+            const p = project(camera, [x, lookY, 0]).x;
+            return p >= 0 && p <= frame.width;
+          });
+        });
+        expect(whole.length, `${frame.width} ${k}`).toBeGreaterThanOrEqual(3);
+        x0 = camera.x;
+      }
+      cleanup();
+    }
+    const { host } = scene(many, { swipe: 'camera', view: 'cabinet' }, { frameFallback: { width: 443, height: 454 } });
+    const before = cameraOf(host);
+    drag(host, -40);
+    expect(Number(host.dataset.cameraX)).toBeCloseTo(before.x + (40 * before.z) / before.focalPx, 6);
   });
 
   it('pan mode: a sideways drag slides the drawn wall like a photo; the camera stays', () => {
@@ -1132,10 +1165,14 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       const want = numbers(cssSceneTransform(camera, s));
       numbers(root.style.transform).forEach((v, i) => expect(v, `term ${i}`).toBeCloseTo(want[i], 2));
       expect(root.style.getPropertyValue('--s')).toBe(String(s));
-      // a figure's element is its world box at that scale
+      // a figure's element is its world box at its own px per mm (that scale, or whole octaves under it past the figures'
+      // budget), its matrix stretching it to that scale
       for (const b of figureButtons(host)) {
         const w = JSON.parse(b.dataset.world!) as { x0: number; x1: number };
-        expect(parseFloat(b.style.width)).toBeCloseTo((w.x1 - w.x0) * s, 4);
+        const k = Number(b.style.getPropertyValue('--s'));
+        expect(Number.isInteger(Math.log2(s / k))).toBe(true);
+        expect(parseFloat(b.style.width)).toBeCloseTo((w.x1 - w.x0) * k, 4);
+        expect(sideMm(b, 'u')).toBeCloseTo((w.x1 - w.x0) * s, 4);
       }
       cleanup();
     }

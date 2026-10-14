@@ -28,6 +28,14 @@ export const RECULL_SHARE = 0.25;
 export const NEAR_MM = 10;
 /** The coarsest px per mm a face is drawn at. */
 const TEXEL_SCALE_MIN = 1 / 64;
+/** Ross 2026-10-12 (12:2xC): the most figures drawn at a time. */
+export const MAX_DRAWN_FIGURES = 250;
+/**
+ * What the figures' layers may cost together, element px, as a share of the frame's area: their pictures, at the
+ * scene's px per mm, are what fills the tile budget (a 35 mm figure's picture is some 150 mm wide), and stepping the
+ * camera in raises that px per mm; the faces, on their texel grids, cost a fraction of a viewport.
+ */
+export const FIGURE_BUDGET_VIEWPORTS = 1.5;
 
 /** A face's own element size in px, when it is not its size in the world at the scene's px per mm. */
 export interface TexelGrid {
@@ -292,9 +300,20 @@ export interface FigureBox {
   readonly z: number;
 }
 
+/** The figures (their indices) nearest the frame centre on screen first, by their box's middle; one behind the camera last. */
+export function byFrameCentre(view: CullView, figures: readonly FigureBox[]): number[] {
+  const { camera, panPx } = view;
+  const d = figures.map((f) => {
+    const q = project(camera, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z]);
+    return q.depth > NEAR_MM ? Math.hypot(q.x + panPx - camera.frame.width / 2, q.y - camera.frame.height / 2) : Infinity;
+  });
+  return figures.map((_, i) => i).sort((a, b) => d[a] - d[b] || a - b);
+}
+
 /**
- * The figures drawn (their indices in `figures`): those of a drawn cabinet whose box draws into `rect` and that
- * no board of their cabinet hides from the camera; and how many a board hid.
+ * The figures drawn (their indices in `figures`, ascending): those of a drawn cabinet whose box draws into `rect`
+ * and that no board of their cabinet hides from the camera, at most `cap` of them, the nearest the frame centre;
+ * and how many a board hid.
  */
 export function figuresToDraw(
   view: CullView,
@@ -302,6 +321,7 @@ export function figuresToDraw(
   figures: readonly FigureBox[],
   drawn: ReadonlySet<number>,
   boards: (cab: number) => readonly Board[],
+  cap: number = MAX_DRAWN_FIGURES,
 ): { shown: number[]; hidden: number } {
   const shown: number[] = [];
   let hidden = 0;
@@ -320,5 +340,27 @@ export function figuresToDraw(
     }
     shown.push(i);
   });
-  return { shown, hidden };
+  if (shown.length <= cap) return { shown, hidden };
+  const nearest = byFrameCentre(view, shown.map((i) => figures[i])).slice(0, cap);
+  return { shown: nearest.map((k) => shown[k]).sort((a, b) => a - b), hidden };
+}
+
+/**
+ * The px per mm each figure is drawn at, so that together they cost at most `budgetPx` element px (each its box's
+ * area at its px per mm), wherever the camera stands: the nearest the frame centre first (byFrameCentre), each at the
+ * scene's `s` while the budget holds, then a whole octave coarser at a time, never finer than a nearer one, down to
+ * the coarsest a face is drawn at; one the budget cannot hold even there is drawn there all the same.
+ */
+export function figureScales(view: CullView, figures: readonly FigureBox[], s: number, budgetPx: number): number[] {
+  const scales: number[] = new Array<number>(figures.length);
+  let octave = 0;
+  let spent = 0;
+  for (const i of byFrameCentre(view, figures)) {
+    const f = figures[i];
+    const area = (f.x1 - f.x0) * (f.y1 - f.y0);
+    while (s / 2 ** (octave + 1) >= TEXEL_SCALE_MIN && spent + area * (s / 2 ** octave) ** 2 > budgetPx) octave++;
+    scales[i] = s / 2 ** octave;
+    spent += area * scales[i] ** 2;
+  }
+  return scales;
 }

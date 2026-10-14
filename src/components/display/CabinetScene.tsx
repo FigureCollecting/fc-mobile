@@ -41,11 +41,13 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { cabinetBox, frameCase, panFraming, panLimitsPx, swipeCamera, wallPages } from './caseFraming';
+import { cabinetBox, frameCase, panFraming, panLimitsPx, settleWalk, swipeCamera, wallPages } from './caseFraming';
 import {
+  FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
   GRADIENT_GRID,
   cullRect,
+  figureScales,
   figuresToDraw,
   nearestCabinets,
   opaqueBoards,
@@ -53,6 +55,7 @@ import {
   texelScale,
   trimFace,
   type CullView,
+  type FigureBox,
   type Rect,
   type TexelGrid,
 } from './caseCull';
@@ -514,28 +517,10 @@ function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins>
   return { top: read.top, bottom: art.bottomMarginFrac ?? read.bottom, left: read.left, right: read.right };
 }
 
-function SceneFigure({
-  draw,
-  art,
-  aspect,
-  margins,
-  labels,
-  onSelect,
-  onBroken,
-}: {
-  draw: FigureDraw;
-  art: FigureArt;
-  aspect: number;
-  /** null while its picture's alpha is still being read: drawn meanwhile as its plate, not grounded. */
-  margins: PictureMargins | null;
-  labels: boolean;
-  onSelect: () => void;
-  onBroken: (url: string) => void;
-}) {
+/** Where a figure draws (world mm): its picture's box and the tap box it hangs from (SceneFigure). */
+function figureGeometry(draw: FigureDraw, art: FigureArt, aspect: number, margins: PictureMargins | null) {
   const { placed, slot, cx } = draw;
   const { item } = placed;
-  const { s } = useContext(DrawContext)!;
-  const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
   const grounded = margins !== null;
   // until its picture is read, a figure draws its plate, within the footprint it is packed by, never the picture at a width
   // its packing may not hold; the picture loads meanwhile, hidden, and shows the moment it is read
@@ -547,12 +532,55 @@ function SceneFigure({
   // the picture's centre: moved so the figure in it, not the picture, stands centred on its slot
   const artCx = cx + pictureOffsetMm(boxW, known);
   const yBottom = slot.topMm - picture.belowMm;
-  const z = placed.zMm;
   // the tap box: the figure standing on its surface, never wider than its footprint and half the gap each side,
   // so neighbours' boxes meet at most; the picture hangs from it by its transparent margins and takes no taps
   const tapW = Math.min(boxW, item.widthMm + FIGURE_GAP_MM);
   const tapX0 = cx - tapW / 2;
-  const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0], undefined, s);
+  return { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0 };
+}
+
+/** What a figure's layer covers (world mm): its tap box and the picture hanging from it, at its depth. */
+function figureLayerBox(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, cab: number): FigureBox {
+  const top = draw.slot.topMm + draw.placed.heightMm;
+  return {
+    cab,
+    x0: Math.min(g.tapX0, g.artCx - g.boxW / 2),
+    x1: Math.max(g.tapX0 + g.tapW, g.artCx + g.boxW / 2),
+    y0: Math.min(draw.slot.topMm, g.yBottom),
+    y1: Math.max(top, g.yBottom + g.boxH),
+    z: draw.placed.zMm,
+  };
+}
+
+function SceneFigure({
+  draw,
+  art,
+  aspect,
+  margins,
+  scale,
+  labels,
+  onSelect,
+  onBroken,
+}: {
+  draw: FigureDraw;
+  art: FigureArt;
+  aspect: number;
+  /** null while its picture's alpha is still being read: drawn meanwhile as its plate, not grounded. */
+  margins: PictureMargins | null;
+  /** The px per mm its layer is drawn at (figureScales): the scene's, or whole octaves under it; its matrix stretches it to the scene's. */
+  scale: number;
+  labels: boolean;
+  onSelect: () => void;
+  onBroken: (url: string) => void;
+}) {
+  const { placed, slot, cx } = draw;
+  const { item } = placed;
+  const { s } = useContext(DrawContext)!;
+  const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
+  const { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0 } = figureGeometry(draw, art, aspect, margins);
+  const z = placed.zMm;
+  const k = scale;
+  const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0], { u: tapW * k, v: placed.heightMm * k }, s);
   // no contact band known: the shadow lies under the figure, the middle of its picture's opaque columns
   const contact = (grounded ? (art.contactBand ?? band) : null) ?? {
     centerXFrac: 0.5 + (cx - artCx) / boxW,
@@ -570,7 +598,7 @@ function SceneFigure({
       <button
         type="button"
         class={`q cab-figure ${placed.tooDeep ? 'cab-figure--overhang' : ''}`}
-        style={q ?? undefined}
+        style={q ? { ...q, '--s': String(k) } : undefined}
         aria-label={item.figure.name}
         data-art={art.kind}
         data-figure-id={item.figure._id}
@@ -582,11 +610,11 @@ function SceneFigure({
         <span
           class="cab-figure__box"
           style={{
-            left: `${fmt((artCx - boxW / 2 - tapX0) * s)}px`,
+            left: `${fmt((artCx - boxW / 2 - tapX0) * k)}px`,
             // the button's top is the figure's head; the picture rises above it by its clear top margin
-            top: `${fmt((slot.topMm + placed.heightMm - (yBottom + boxH)) * s)}px`,
-            width: `${fmt(boxW * s)}px`,
-            height: `${fmt(boxH * s)}px`,
+            top: `${fmt((slot.topMm + placed.heightMm - (yBottom + boxH)) * k)}px`,
+            width: `${fmt(boxW * k)}px`,
+            height: `${fmt(boxH * k)}px`,
             pointerEvents: 'none',
           }}
         >
@@ -595,7 +623,10 @@ function SceneFigure({
         </span>
       </button>
       {labels && (
-        <div class="q cab-plate" style={quadStyle([cx - plateW / 2, slot.topMm + 1, slot.frontZMm + 1], [plateW, 0, 0], [0, -30, 0], undefined, s) ?? undefined}>
+        <div
+          class="q cab-plate"
+          style={{ ...quadStyle([cx - plateW / 2, slot.topMm + 1, slot.frontZMm + 1], [plateW, 0, 0], [0, -30, 0], { u: plateW * k, v: 30 * k }, s), '--s': String(k) }}
+        >
           {item.figure.name}
         </div>
       )}
@@ -797,7 +828,9 @@ export function CabinetScene({
       setPan(clampPan(pan + dx));
       return;
     }
-    const moved = swipeCamera(walked, wall, dx);
+    // a walk of the wall view settles where at least three cabinets stand whole (Ross 12:1xC, desk MN2 a)
+    const swiped = swipeCamera(walked, wall, dx);
+    const moved = prefs.view === 'wall' ? settleWalk(swiped, wall, walked.camera.x) : swiped;
     setWalkX(moved.camera.x);
     let nearest = 0;
     wall.cabinets.forEach((c, i) => {
@@ -836,19 +869,22 @@ export function CabinetScene({
       }
     }
   });
-  // a figure is drawn when it draws into the frame and its margin and no board of its cabinet hides it from the camera
+  // a figure is drawn when its layer (its tap box and the picture hanging from it) draws into the frame and its margin
+  // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
-  const { shown: showIdx, hidden } = figuresToDraw(
-    cull,
-    draw.rect,
-    inDrawn.map(({ cab, draw: { placed, slot, cx } }) => {
-      const half = Math.max(placed.item.widthMm, placed.item.billboardWidthMm) / 2;
-      return { cab, x0: cx - half, x1: cx + half, y0: slot.topMm, y1: slot.topMm + placed.heightMm, z: placed.zMm };
-    }),
-    new Set(drawnCabs),
-    (cab) => opaqueBoards(wall.cabinets[cab]),
-  );
+  const inDrawnBoxes = inDrawn.map(({ cab, draw: fig }) => {
+    const { art, aspect } = arts[fig.placed.item.index];
+    return figureLayerBox(fig, figureGeometry(fig, art, aspect, pictureMargins(art, alpha)), cab);
+  });
+  const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]));
   const onShow = showIdx.map((i) => inDrawn[i]);
+  // the figures' layers cost at most their budget wherever the camera stands: the farthest from the frame centre drawn coarser
+  const scales = figureScales(
+    cull,
+    showIdx.map((i) => inDrawnBoxes[i]),
+    s,
+    FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,
+  );
   const overhangs = draws.filter((d) => d.draw.placed.tooDeep);
   const flagged = packed.violators.length + overhangs.length;
   const activeName = pattern[0].name;
@@ -904,7 +940,7 @@ export function CabinetScene({
             {visible.map(({ slot, i }) => (
               <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
             ))}
-            {onShow.map(({ draw: fig }) => {
+            {onShow.map(({ draw: fig }, n) => {
               const { figure, index } = fig.placed.item;
               const { art, aspect } = arts[index];
               return (
@@ -914,6 +950,7 @@ export function CabinetScene({
                   art={art}
                   aspect={aspect}
                   margins={pictureMargins(art, alpha)}
+                  scale={scales[n]}
                   labels={labels}
                   onSelect={() => onSelect(figure, index)}
                   onBroken={images.failed}

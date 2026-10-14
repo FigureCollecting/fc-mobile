@@ -322,7 +322,7 @@ export function frameCase(input: FramingInput): Framing {
   if (input.view === 'shelf') return withSlide(frameShelf(input, focus, cap), cap);
   if (input.view === 'cabinet') return withSlide(fitCabinets(input, [focus], cap), cap);
   const page = wallPages(input).find((p) => p.includes(focus)) as number[];
-  return withSlide(fitCabinets(input, page, cap), cap);
+  return withSlide(standWhole(fitCabinets(input, page, cap), input.wall), cap);
 }
 
 /**
@@ -337,6 +337,65 @@ export function swipeCamera(framing: Framing, wall: WallLayout, dxPx: number): F
   const last = wall.cabinets[wall.cabinets.length - 1].centerMm;
   const x = Math.min(last, Math.max(first, camera.x - dxPx * perPx));
   return { ...framing, camera: { ...camera, x }, look: [x, look[1], look[2]] };
+}
+
+/** Ross 12:1xC (desk MN2 a): a settled walk stands at least this many cabinets whole across the frame. */
+export const WHOLE_MIN = 3;
+
+/**
+ * The cabinets (by wall index) whose body stands whole across the frame, its picture slid panPx: side to side, on
+ * the front plane at the height `lookY` the frame aims at, inside the frame.
+ */
+export function wholeCabinets(camera: Camera, wall: WallLayout, lookY: number, panPx: number): number[] {
+  return wall.cabinets.flatMap((slot, i) =>
+    [slot.leftMm, slot.rightMm].every((x) => {
+      const p = project(camera, [x, lookY, 0]).x + panPx;
+      return p >= 0 && p <= camera.frame.width;
+    })
+      ? [i]
+      : [],
+  );
+}
+
+/**
+ * CC4, camera mode, once a walk settles (Ross 12:1xC, desk MN2 a): the camera snaps to a stop, a cabinet's centre
+ * or halfway between two, where at least WHOLE_MIN cabinets stand whole (on a wall where none does, the most any
+ * does): the one nearest where it walked to among those past where it started, so a short swipe still moves on a
+ * stop; none past it (the wall's end), the nearest. The picture as it is when the walk went nowhere.
+ */
+export function settleWalk(framing: Framing, wall: WallLayout, fromX: number): Framing {
+  const { camera } = framing;
+  if (camera.x === fromX) return framing;
+  const ok = wholeStops(framing, wall);
+  const dir = Math.sign(camera.x - fromX);
+  const ahead = ok.filter((x) => (x - fromX) * dir > 0);
+  return atStop(framing, nearestTo(ahead.length > 0 ? ahead : ok, camera.x));
+}
+
+/** The stops (a cabinet's centre or halfway between two) where the most cabinets, up to WHOLE_MIN, stand whole at this framing's distance. */
+function wholeStops(framing: Framing, wall: WallLayout): number[] {
+  const { camera, look } = framing;
+  const centres = wall.cabinets.map((c) => c.centerMm);
+  const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
+  const counts = stops.map((x) => wholeCabinets({ ...camera, x }, wall, look[1], 0).length);
+  const need = Math.min(WHOLE_MIN, Math.max(...counts));
+  return stops.filter((_, i) => counts[i] >= need);
+}
+
+const nearestTo = (xs: readonly number[], x: number) => xs.reduce((a, b) => (Math.abs(b - x) < Math.abs(a - x) ? b : a));
+
+const atStop = (framing: Framing, x: number): Framing => ({ ...framing, camera: { ...framing.camera, x }, look: [x, framing.look[1], framing.look[2]] });
+
+/**
+ * The wall view as it opens (Ross 12:1xC, desk MN2 a): its page, centred, where at least WHOLE_MIN cabinets stand
+ * whole; else the stop nearest it where more do (wholeStops).
+ */
+function standWhole(framing: Framing, wall: WallLayout): Framing {
+  const { camera, look } = framing;
+  const here = wholeCabinets(camera, wall, look[1], 0).length;
+  if (here >= WHOLE_MIN) return framing;
+  const moved = atStop(framing, nearestTo(wholeStops(framing, wall), camera.x));
+  return wholeCabinets(moved.camera, wall, look[1], 0).length > here ? moved : framing;
 }
 
 /**

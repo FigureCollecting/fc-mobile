@@ -521,12 +521,20 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     });
   }
 
-  it('the wall view still shows the wall (Ross 12:1xC, desk MN2 a): as it opens and wherever a walk settles, three cabinets or more whole across the frame, four fronts or more', () => {
-    // every Fold8 panel; whole = the body, side to side, at the height the frame aims at
+  it('the wall view still shows the wall (Ross 12:1xC, desk MN2 a): as it opens and wherever a walk settles, three cabinets or more whole across the frame, four fronts or more short of the wall\'s ends', () => {
+    // every Fold8 panel; whole = the body, side to side, at the height the frame aims at. Where no stop along the wall
+    // stands three whole at the wall view's distance (a wall of racks, 1.2 m wide, on the cover's tall frames), the most
+    // any stop does
+    const short: string[] = [];
     for (const [name, wall] of WALLS) {
       const headroomMm = wall.cabinets.map(() => 300);
       for (const frame of FRAMES) {
         const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
+        const centres = wall.cabinets.map((c) => c.centerMm);
+        const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
+        const most = Math.max(...stops.map((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1], 0).length));
+        const need = Math.min(3, most);
+        if (most < 3) short.push(`${name} ${frame.width}x${frame.height} ${most}`);
         const whole = (camera: Camera) =>
           wall.cabinets.flatMap((slot, i) =>
             [slot.leftMm, slot.rightMm].every((x) => {
@@ -536,19 +544,23 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
               ? [i]
               : [],
           );
-        expect(whole(f.camera).length, `${name} ${frame.width}x${frame.height} as it opens`).toBeGreaterThanOrEqual(3);
+        expect(whole(f.camera).length, `${name} ${frame.width}x${frame.height} as it opens`).toBeGreaterThanOrEqual(need);
         expect(wholeCabinets(f.camera, wall, f.look[1], 0), `${name} ${frame.width}x${frame.height}`).toEqual(whole(f.camera));
         let walked = f;
         // short swipes and long ones, forward to the wall's far end and back to its start
         for (const [k, dx] of [...Array.from({ length: 30 }, () => -0.13), ...Array.from({ length: 12 }, () => -0.7), ...Array.from({ length: 30 }, () => 0.4)].entries()) {
           walked = settleWalk(swipeCamera(walked, wall, dx * frame.width), wall, walked.camera.x);
           const at = `${name} ${frame.width}x${frame.height} walk ${k}`;
-          expect(whole(walked.camera).length, `${at}: ${whole(walked.camera).join(',')}`).toBeGreaterThanOrEqual(3);
-          expect(framed(walked.camera, 0, wall, f.look[1]).fronts.length, at).toBeGreaterThanOrEqual(4);
-          expect(framed(walked.camera, 0, wall, f.look[1]).fronts.length, at).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+          expect(whole(walked.camera).length, `${at}: ${whole(walked.camera).join(',')}`).toBeGreaterThanOrEqual(need);
+          const fronts = framed(walked.camera, 0, wall, f.look[1]).fronts;
+          // a partial one past the whole ones, unless the wall ends there
+          const end = fronts.includes(0) || fronts.includes(wall.cabinets.length - 1);
+          expect(fronts.length, at).toBeGreaterThanOrEqual(end ? 3 : 4);
+          expect(fronts.length, at).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
         }
       }
     }
+    expect(short).toEqual(['rack 443x454 2', 'rack 657x600 2']);
   });
 
   it('a settled walk snaps to the nearest stop ahead of where it started, where three or more cabinets stand whole: a short swipe still moves on, never back', () => {

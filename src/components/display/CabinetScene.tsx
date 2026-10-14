@@ -29,17 +29,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { Style } from '../../styles/Style';
 import { getDisplayMeta } from './displayMeta';
 import { framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
-import {
-  FIGURE_GAP_MM,
-  measureCaseFigure,
-  packCabinets,
-  wallLayout,
-  type PackedCabinet,
-  type PlacedFigure,
-  type SurfaceSlot,
-  type Violator,
-  type WallSlot,
-} from './packCabinets';
+import { measureCaseFigure, packCabinets, wallLayout, type PackedCabinet, type Violator, type WallSlot } from './packCabinets';
 import { cssSceneTransform, type Vec3 } from './caseCamera';
 import { atX, cabinetBox, frameCase, nearestCabinet, pageInView, panFraming, panLimitsPx, panStops, settlePan, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
 import {
@@ -55,22 +45,18 @@ import {
   texelScale,
   trimFace,
   type CullView,
-  type FigureBox,
   type Rect,
   type TexelGrid,
 } from './caseCull';
-import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
+import { figureArt, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
-import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { PLATE_H_MM, artAspect, figureDraws, figureGeometry, figureLayerBox, pictureMargins, plateOf, type FigureDraw } from './caseFigures';
+import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand } from './alphaMargin';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
 const DEFAULT_FRAME = { width: 360, height: 480 };
-/** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
-const PLATE_MAX_MM = 110;
-/** A nameplate's height, hanging from the front edge of its figure's surface. */
-const PLATE_H_MM = 30;
 
 type V3 = readonly [number, number, number];
 
@@ -440,13 +426,6 @@ function Cabinet({ slot, index }: { slot: WallSlot; index: number }) {
 
 // ------------------------------------------------------------------- figures
 
-interface FigureDraw {
-  readonly placed: PlacedFigure;
-  readonly slot: SurfaceSlot;
-  /** World x of the footprint's centre. */
-  readonly cx: number;
-}
-
 /**
  * `hidden`: loaded but not drawn (a picture whose alpha is still being read).
  * Pictures load as CORS images (ADDR-1: the service worker keeps only a CORS
@@ -492,77 +471,6 @@ function ArtBody({ art, name, hidden = false, onBroken }: { art: FigureArt; name
     );
   }
   return <div class="cab-figure__plate">{name}</div>;
-}
-
-/** A plate's aspect: a figure without a picture, or one whose picture is still being read. */
-const PLATE_ASPECT = 0.75;
-
-/** Aspect of what the figure draws: the image's own when the list gives it, else the display meta's. */
-function artAspect(art: FigureArt, image: FigureImageRef | undefined, metaAspect: number): number {
-  if (art.kind === 'plate') return PLATE_ASPECT;
-  if (image?.width && image.height) return image.width / image.height;
-  return metaAspect;
-}
-
-/** No picture alpha to read (framed, plate): nothing clear around the figure, known at once. */
-const OPAQUE: PictureMargins = { top: 0, bottom: 0 };
-
-/**
- * The clear margins of what the case draws for a figure: the image list's
- * bottom when it gives one, the rest from the picture's alpha; null while
- * the alpha is still being read.
- */
-function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins>): PictureMargins | null {
-  if (!art.alphaUrl) return OPAQUE;
-  const read = alpha.get(art.alphaUrl);
-  if (!read) return null;
-  return { top: read.top, bottom: art.bottomMarginFrac ?? read.bottom, left: read.left, right: read.right };
-}
-
-/** Where a figure draws (world mm): its picture's box and the tap box it hangs from (SceneFigure). */
-function figureGeometry(draw: FigureDraw, art: FigureArt, aspect: number, margins: PictureMargins | null) {
-  const { placed, slot, cx } = draw;
-  const { item } = placed;
-  const grounded = margins !== null;
-  // until its picture is read, a figure draws its plate, within the footprint it is packed by, never the picture at a width
-  // its packing may not hold; the picture loads meanwhile, hidden, and shows the moment it is read
-  const drawnKind = grounded ? art.kind : 'plate';
-  const known = margins ?? OPAQUE;
-  const picture = pictureBox(drawnKind, placed.heightMm, grounded ? aspect : PLATE_ASPECT, known, item.widthMm);
-  const boxH = picture.heightMm;
-  const boxW = picture.widthMm;
-  // the picture's centre: moved so the figure in it, not the picture, stands centred on its slot
-  const artCx = cx + pictureOffsetMm(boxW, known);
-  const yBottom = slot.topMm - picture.belowMm;
-  // the tap box: the figure standing on its surface, never wider than its footprint and half the gap each side,
-  // so neighbours' boxes meet at most; the picture hangs from it by its transparent margins and takes no taps
-  const tapW = Math.min(boxW, item.widthMm + FIGURE_GAP_MM);
-  const tapX0 = cx - tapW / 2;
-  // the figure's opaque rows and columns: the picture is clipped to them, its clear margins cost no px
-  const clear = clearInset(drawnKind, known);
-  return { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0, clear };
-}
-
-/**
- * What a figure's layer covers (world mm), at its depth: its tap box and the picture hanging from it, clipped to the
- * figure in it, whose opaque rows run from the surface to the figure's height (pictureBox).
- */
-function figureLayerBox(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, cab: number): FigureBox {
-  return {
-    cab,
-    x0: Math.min(g.tapX0, g.artCx - g.boxW / 2 + g.clear.left * g.boxW),
-    x1: Math.max(g.tapX0 + g.tapW, g.artCx + g.boxW / 2 - g.clear.right * g.boxW),
-    y0: draw.slot.topMm,
-    y1: draw.slot.topMm + draw.placed.heightMm,
-    z: draw.placed.zMm,
-  };
-}
-
-/** A figure's name plate (world mm): its corner and sides, hanging just in front of the front edge of its surface. */
-function plateOf(draw: FigureDraw): { a: Vec3; u: Vec3; v: Vec3 } {
-  const { placed, slot, cx } = draw;
-  const w = Math.min(PLATE_MAX_MM, placed.item.widthMm);
-  return { a: [cx - w / 2, slot.topMm + 1, slot.frontZMm + 1], u: [w, 0, 0], v: [0, -PLATE_H_MM, 0] };
 }
 
 function SceneFigure({
@@ -878,17 +786,7 @@ export function CabinetScene({
   const shelfIdx = Math.min(shelf, shelfCount - 1);
 
   // --- figures
-  const draws: { draw: FigureDraw; cab: number }[] = [];
-  cabinets.forEach((cab, ci) => {
-    if (!cab) return;
-    const ws = wall.cabinets[ci];
-    for (const surf of cab.surfaces) {
-      const left = ws.centerMm - surf.slot.widthMm / 2;
-      for (const placed of surf.items) {
-        draws.push({ cab: ci, draw: { placed, slot: surf.slot, cx: left + placed.xMm + placed.item.widthMm / 2 } });
-      }
-    }
-  });
+  const draws = figureDraws(cabinets, wall);
   // a figure is drawn when its layer (its tap box and the picture hanging from it) draws into the frame and its margin
   // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));

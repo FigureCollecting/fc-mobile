@@ -363,6 +363,25 @@ export function nearestCabinet(wall: WallLayout, x: number): number {
   return nearest;
 }
 
+/**
+ * The wall x the frame centre shows, on the cabinets' front at the height it aims at, the picture slid panPx: the
+ * camera's, less the slide over the px per mm there (a picture retaken farther along shows the same).
+ */
+export function frameCentreX(framing: Framing, panPx = 0): number {
+  const { camera, look } = framing;
+  return camera.x - (panPx * project(camera, look).depth) / camera.focalPx;
+}
+
+/**
+ * The page the pager pages from (close-out 4, ruling 32): the one holding the cabinet whose centre is nearest what the
+ * frame centres on, wherever a press opened, a walk settled or a pan slid the picture; so Next opens a page farther
+ * along than the picture stands and Prev one nearer, never where it already is or back past it.
+ */
+export function pageInView(pages: readonly (readonly number[])[], wall: WallLayout, framing: Framing, panPx = 0): number {
+  const at = nearestCabinet(wall, frameCentreX(framing, panPx));
+  return pages.findIndex((p) => p.includes(at));
+}
+
 /** The framing with the camera, and its aim, moved along the wall to x. */
 export const atX = (framing: Framing, x: number): Framing => ({ ...framing, camera: { ...framing.camera, x }, look: [x, framing.look[1], framing.look[2]] });
 
@@ -494,7 +513,8 @@ export function settlePan(framing: Framing, wall: WallLayout, stops: readonly Pa
  * The wall view as it opens on a page (Ross 12:1xC, desk MN2 a; close-out 3, ruling 27): centred on the page; where
  * fewer than WHOLE_MIN cabinets stand whole there, moved to the stop within the page (so no two pages open on one
  * camera) that keeps the whole page whole and stands the most whole, up to WHOLE_MIN (the nearest the centre of
- * those), if that is more.
+ * those), if that is more. A stop nearest a cabinet of another page is not the page's (close-out 4, ruling 32): a
+ * walk settling there pages from that cabinet's page, and Next would open the camera where it already stands.
  */
 function standWhole(framing: Framing, wall: WallLayout, page: readonly number[]): Framing {
   const { camera, look } = framing;
@@ -503,7 +523,7 @@ function standWhole(framing: Framing, wall: WallLayout, page: readonly number[])
   const lo = wall.cabinets[page[0]].leftMm;
   const hi = wall.cabinets[page[page.length - 1]].rightMm;
   const ok = stopXs(wall)
-    .filter((x) => x > lo && x < hi)
+    .filter((x) => x > lo && x < hi && page.includes(nearestCabinet(wall, x)))
     .map((x) => ({ x, whole: wholeCabinets({ ...camera, x }, wall, look[1]) }))
     .filter((s) => page.every((i) => s.whole.includes(i)));
   const most = Math.max(here, ...ok.map((s) => s.whole.length));

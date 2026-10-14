@@ -697,7 +697,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     expect(moved).toBeGreaterThan(0);
   });
 
-  it('the opening move, page by page: centred where the page stands three whole or no stop within it stands more with the page whole; else the stop within the page nearest its centre that keeps the page whole and stands the most, up to three', () => {
+  it('the opening move, page by page: centred where the page stands three whole or no stop within it stands more with the page whole; else the stop of the page (within it, nearest one of its cabinets) nearest its centre that keeps the page whole and stands the most, up to three', () => {
     const mixed = (n: number) => wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
     const cases: [string, WallLayout, { width: number; height: number }][] = [
       ...WALLS.flatMap(([name, wall]) => FRAMES.map((frame): [string, WallLayout, { width: number; height: number }] => [name, wall, frame])),
@@ -719,8 +719,9 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
         const hi = wall.cabinets[page[page.length - 1]].rightMm;
         const mid = (lo + hi) / 2;
         const there = wholeCabinets({ ...f.camera, x: mid }, wall, f.look[1]).length;
+        // a stop of the page: within its span and nearest one of its cabinets (close-out 4, ruling 32)
         const inPage = xs
-          .filter((x) => x > lo && x < hi)
+          .filter((x) => x > lo && x < hi && page.includes(nearestCabinet(wall, x)))
           .map((x) => ({ x, whole: wholeCabinets({ ...f.camera, x }, wall, f.look[1]) }))
           .filter((c) => page.every((i) => c.whole.includes(i)));
         const most = Math.max(there, ...inPage.map((c) => c.whole.length));

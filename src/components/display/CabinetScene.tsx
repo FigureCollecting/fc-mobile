@@ -41,7 +41,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform, type Vec3 } from './caseCamera';
-import { atX, cabinetBox, frameCase, nearestCabinet, panFraming, panLimitsPx, panStops, settlePan, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
+import { atX, cabinetBox, frameCase, nearestCabinet, pageInView, panFraming, panLimitsPx, panStops, settlePan, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
 import {
   FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
@@ -762,7 +762,6 @@ export function CabinetScene({
   );
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
   const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
-  const pageIdx = pages.findIndex((p) => p.includes(focusIdx));
   const walked = walkX === null ? base : atX(base, walkX);
   const swiping = prefs.swipe === 'camera' && liveDx !== 0;
   const framing = swiping ? swipeCamera(walked, wall, liveDx) : walked;
@@ -770,6 +769,9 @@ export function CabinetScene({
   const clampPan = (v: number) => Math.min(panMax, Math.max(panMin, v));
   // pan mode: the photo slides, and past its sane extent is retaken farther along (panFraming)
   const shown = prefs.swipe === 'pan' ? panFraming(framing, clampPan(pan + liveDx)) : { framing, panPx: 0 };
+  // the wall view pages from what the settled picture centres on, after a press, a walk or a pan (close-out 4, ruling 32)
+  const still = prefs.swipe === 'pan' ? panFraming(walked, clampPan(pan)) : { framing: walked, panPx: 0 };
+  const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx) : focusIdx;
   const { panPx } = shown;
   const { camera } = shown.framing;
 
@@ -952,6 +954,11 @@ export function CabinetScene({
       onPointerUp={(e) => endPress(e, true)}
       onPointerCancel={(e) => endPress(e, false)}
       onClickCapture={onClickCapture}
+      onScroll={(e) => {
+        // ruling 33: where a browser cannot clip without a scroll box, a scroll (a button taking focus) is put back
+        e.currentTarget.scrollLeft = 0;
+        e.currentTarget.scrollTop = 0;
+      }}
     >
       <div
         class="cabinet-scene__viewport"
@@ -1048,7 +1055,9 @@ export function CabinetScene({
 const styles = `
   .cabinet-scene {
     position: relative;
+    /* ruling 33: clipped with no scroll box, so a button taking focus never scrolls the picture off the frame */
     overflow: hidden;
+    overflow: clip;
     height: 60vh;
     background: #0b0c0f;
     touch-action: pan-y;

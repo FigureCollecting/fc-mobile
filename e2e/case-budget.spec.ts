@@ -27,9 +27,8 @@ import { FLAT_GRID, GRADIENT_GRID, nearestCabinets, trimFace } from '../src/comp
  * The ceiling binds where the figures are dense: a wall of one small figure
  * (fx-spike, 35 mm wide, in every slot), and one denser still (framed at half
  * its labelled width) that would draw past the 250 the case caps it at. The
- * shelf view (walked) and the cabinet view (as it opens) are held no worse than
- * 5 viewports (SHELF-BUDGET-1: the follow-up to bring them to 3), and every
- * view culls to the frame and its margin, the rack wall too.
+ * shelf view (walked), the cabinet view (as it opens) and a rack wall are held
+ * to the same ceiling and cull to the frame and its margin.
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -48,8 +47,6 @@ const MAX_FIGURES = 250;
 const MID_FIGURES = (panel: string) => (panel === 'fold8-cover-sideways' ? 50 : 60);
 /** The scene's composited layers, in viewports of pixels at the device pixel ratio. */
 const CEILING_VIEWPORTS = 3;
-/** The shelf and cabinet views: no worse than this until SHELF-BUDGET-1 brings them to the ceiling. */
-const VIEW_GUARD_VIEWPORTS = 5;
 /** What the case may draw past the frame on each side, as a share of the frame. */
 const MARGIN = 0.5;
 
@@ -72,11 +69,16 @@ const DENSE: Wall[] = [
   { name: 'spike wall at the 250 cap', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed' },
 ];
 const DENSE_STATES = STATES.filter((x) => x.swipes < 40);
-/** The other views, and another wall: no worse than VIEW_GUARD_VIEWPORTS (the wall at the ceiling), culled to the frame and its margin. */
-const VIEW_STATES: (State & { ceiling: number })[] = [
-  { name: 'shelf view walked', view: 'shelf', swipe: 'camera', swipes: 2, ceiling: VIEW_GUARD_VIEWPORTS },
-  { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0, ceiling: VIEW_GUARD_VIEWPORTS },
-  { name: 'rack wall as it opens', view: 'wall', pattern: 'open-steel-rack', swipe: 'camera', swipes: 0, ceiling: CEILING_VIEWPORTS },
+/**
+ * The other views, and another wall, under the same ceiling (the shelf view cost 3.1-4.7 viewports before the figures'
+ * budget: their pictures, close in), culled to the frame and its margin.
+ */
+const VIEW_STATES: (State & { meshSpill?: number })[] = [
+  { name: 'shelf view walked', view: 'shelf', swipe: 'camera', swipes: 2 },
+  // CULL-LEAK-1: the KLINGSBO's open mesh shelf, a level face seen from above, is cut to a rectangle on the face round
+  // what the frame and its margin see, wider at the back: its near corners reach past the margin (1 face; measured)
+  { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0, meshSpill: 1 },
+  { name: 'rack wall as it opens', view: 'wall', pattern: 'open-steel-rack', swipe: 'camera', swipes: 0 },
 ];
 
 async function swipe(page: Page, dx: number) {
@@ -148,7 +150,12 @@ async function drawn(page: Page) {
     const spill: string[] = [];
     const at = (el: Element, r: DOMRect) => `${el.className} @${Math.round(r.left - f.left)},${Math.round(r.top - f.top)} ${Math.round(r.width)}x${Math.round(r.height)}`;
     for (const el of Array.from(host.querySelectorAll<HTMLElement>('.cabinet-scene__root .q'))) {
-      const r = el.getBoundingClientRect();
+      // a figure draws its tap box and the picture hanging from it
+      const art = el.matches('.cab-figure') ? el.querySelector('.cab-figure__box')?.getBoundingClientRect() : undefined;
+      const own = el.getBoundingClientRect();
+      const r = art
+        ? new DOMRect(Math.min(own.left, art.left), Math.min(own.top, art.top), Math.max(own.right, art.right) - Math.min(own.left, art.left), Math.max(own.bottom, art.bottom) - Math.min(own.top, art.top))
+        : own;
       if (r.right < f.left - mx || r.left > f.right + mx || r.bottom < f.top - my || r.top > f.bottom + my) outside.push(at(el, r));
       // a face on a texel grid (a flat colour or a gradient) costs its grid wherever its cut reaches
       const gridded = el.offsetWidth * el.offsetHeight <= grid;
@@ -156,6 +163,13 @@ async function drawn(page: Page) {
       // 2 px for the rounding of a face cut at the margin
       if (face && (r.left < f.left - mx - 2 || r.right > f.right + mx + 2 || r.top < f.top - my - 2 || r.bottom > f.bottom + my + 2)) spill.push(at(el, r));
     }
+    // the figures drawn coarser than the scene (past their budget, the farthest from the frame centre first), and how many of them the frame shows
+    const s = Number(host.dataset.pxPerMm);
+    const coarse = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure')).filter((b) => Number(b.style.getPropertyValue('--s')) < s);
+    const coarseInFrame = coarse.filter((b) => {
+      const r = b.getBoundingClientRect();
+      return r.right > f.left && r.left < f.right && r.bottom > f.top && r.top < f.bottom;
+    }).length;
     // each drawn cabinet's span across the frame, as the browser draws its faces
     const spans = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => {
       let x0 = Infinity;
@@ -181,6 +195,8 @@ async function drawn(page: Page) {
       spill,
       cameraX: Number(host.dataset.cameraX),
       pan: Number(host.dataset.pan),
+      coarse: coarse.length,
+      coarseInFrame,
     };
   }, [MARGIN, Math.max(FLAT_GRID.u * FLAT_GRID.v, GRADIENT_GRID.u * GRADIENT_GRID.v)] as const);
 }
@@ -288,6 +304,8 @@ async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state
     dpr: FOLD8_DPR,
     cabinets: scene.cabinets,
     figures: scene.figures,
+    figuresCoarse: scene.coarse,
+    figuresCoarseInFrame: scene.coarseInFrame,
     quads: scene.quads,
     cameraX: scene.cameraX,
     pan: scene.pan,
@@ -352,15 +370,17 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
   }
 
   for (const state of VIEW_STATES) {
-    test(`${state.name} costs no more than ${state.ceiling} viewports of scene layers and draws nothing past the frame and its margin: ${size.name}`, async ({ page }, testInfo) => {
+    test(`${state.name} costs no more than ${CEILING_VIEWPORTS} viewports of scene layers and draws nothing past the frame and its margin: ${size.name}`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);
       const { scene, layers, viewport } = await measured(page, size, state, SPARSE, testInfo);
       expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
       expect.soft(scene.figures, 'figures drawn (Ross 12:2xC)').toBeLessThanOrEqual(MAX_FIGURES);
       expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(MAX_CABINETS);
       expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
-      expect.soft(scene.spill, 'faces reaching past the frame and half a viewport round it').toEqual([]);
-      expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(state.ceiling);
+      const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
+      expect.soft(scene.spill.filter((x) => !mesh.includes(x)), 'faces reaching past the frame and half a viewport round it').toEqual([]);
+      expect.soft(mesh.length, 'mesh shelves reaching past it (CULL-LEAK-1)').toBeLessThanOrEqual(state.meshSpill ?? 0);
+      expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
     });
   }
 

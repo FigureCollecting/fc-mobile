@@ -74,8 +74,8 @@ const DENSE_STATES = STATES.filter((x) => x.swipes < 40);
  * and spends the figures' budget, so with labels on nothing is drawn past the frame and its margin either.
  */
 const LABELLED: Wall[] = [
-  { name: 'fixtures, labels on', query: 'fx=170&labels=1' },
-  { name: 'spike wall, labels on', query: 'fx=170&fxonly=spike&labels=1' },
+  { name: 'fixtures', query: 'fx=170&labels=1' },
+  { name: 'spike wall', query: 'fx=170&fxonly=spike&labels=1' },
 ];
 /**
  * The other views, and another wall, under the same ceiling (the shelf view cost 3.1-4.7 viewports before the figures'

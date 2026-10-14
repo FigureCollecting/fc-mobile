@@ -298,6 +298,8 @@ export interface FigureBox {
   readonly y0: number;
   readonly y1: number;
   readonly z: number;
+  /** What else the figure draws at its px per mm (its name plate, SHOULD 29), mm2: it spends the same budget. */
+  readonly plateMm2?: number;
 }
 
 /** The figures (their indices) nearest the frame centre on screen first, by their box's middle; one behind the camera last. */
@@ -347,9 +349,10 @@ export function figuresToDraw(
 
 /**
  * The px per mm each figure is drawn at, so that together they cost at most `budgetPx` element px (each its box's
- * area at its px per mm), wherever the camera stands: the nearest the frame centre first (byFrameCentre), each at the
- * scene's `s` while the budget holds, then a whole octave coarser at a time, never finer than a nearer one, down to
- * the coarsest a face is drawn at; one the budget cannot hold even there is drawn there all the same.
+ * area and its name plate's at its px per mm), wherever the camera stands: the nearest the frame centre first
+ * (byFrameCentre), each at the scene's `s` while the budget holds, then a whole octave coarser at a time, never finer
+ * than a nearer one, down to the coarsest a face is drawn at; one the budget cannot hold even there is drawn there
+ * all the same.
  */
 export function figureScales(view: CullView, figures: readonly FigureBox[], s: number, budgetPx: number): number[] {
   const scales: number[] = new Array<number>(figures.length);
@@ -357,7 +360,7 @@ export function figureScales(view: CullView, figures: readonly FigureBox[], s: n
   let spent = 0;
   for (const i of byFrameCentre(view, figures)) {
     const f = figures[i];
-    const area = (f.x1 - f.x0) * (f.y1 - f.y0);
+    const area = (f.x1 - f.x0) * (f.y1 - f.y0) + (f.plateMm2 ?? 0);
     while (s / 2 ** (octave + 1) >= TEXEL_SCALE_MIN && spent + area * (s / 2 ** octave) ** 2 > budgetPx) octave++;
     scales[i] = s / 2 ** octave;
     spent += area * scales[i] ** 2;

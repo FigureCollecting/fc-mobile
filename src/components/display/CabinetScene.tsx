@@ -40,8 +40,8 @@ import {
   type Violator,
   type WallSlot,
 } from './packCabinets';
-import { cssSceneTransform } from './caseCamera';
-import { atX, cabinetBox, frameCase, nearestCabinet, panFraming, panLimitsPx, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
+import { cssSceneTransform, type Vec3 } from './caseCamera';
+import { atX, cabinetBox, frameCase, nearestCabinet, panFraming, panLimitsPx, panStops, settlePan, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
 import {
   FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
@@ -69,6 +69,8 @@ export const SWIPE_START_PX = 8;
 const DEFAULT_FRAME = { width: 360, height: 480 };
 /** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
 const PLATE_MAX_MM = 110;
+/** A nameplate's height, hanging from the front edge of its figure's surface. */
+const PLATE_H_MM = 30;
 
 type V3 = readonly [number, number, number];
 
@@ -556,13 +558,20 @@ function figureLayerBox(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, 
   };
 }
 
+/** A figure's name plate (world mm): its corner and sides, hanging just in front of the front edge of its surface. */
+function plateOf(draw: FigureDraw): { a: Vec3; u: Vec3; v: Vec3 } {
+  const { placed, slot, cx } = draw;
+  const w = Math.min(PLATE_MAX_MM, placed.item.widthMm);
+  return { a: [cx - w / 2, slot.topMm + 1, slot.frontZMm + 1], u: [w, 0, 0], v: [0, -PLATE_H_MM, 0] };
+}
+
 function SceneFigure({
   draw,
   art,
   aspect,
   margins,
   scale,
-  labels,
+  plate,
   onSelect,
   onBroken,
 }: {
@@ -573,7 +582,8 @@ function SceneFigure({
   margins: PictureMargins | null;
   /** The px per mm its layer is drawn at (figureScales): the scene's, or whole octaves under it; its matrix stretches it to the scene's. */
   scale: number;
-  labels: boolean;
+  /** Its name plate, when labels are on and the plate draws into the frame and its margin (SHOULD 29); else none. */
+  plate: { a: Vec3; u: Vec3; v: Vec3 } | null;
   onSelect: () => void;
   onBroken: (url: string) => void;
 }) {
@@ -593,7 +603,6 @@ function SceneFigure({
   const shadowW = Math.max(20, contact.widthFrac * boxW * 1.15);
   const shadowD = Math.min(slot.depthMm, Math.max(40, item.depthMm));
   const shadowX = artCx - boxW / 2 + contact.centerXFrac * boxW;
-  const plateW = Math.min(PLATE_MAX_MM, item.widthMm);
   const box = (x0: number, x1: number, y0: number, y1: number) =>
     JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
   return (
@@ -627,10 +636,12 @@ function SceneFigure({
           {!grounded && <div class="cab-figure__plate cab-figure__plate--reading">{item.figure.name}</div>}
         </span>
       </button>
-      {labels && (
+      {plate && (
         <div
           class="q cab-plate"
-          style={{ ...quadStyle([cx - plateW / 2, slot.topMm + 1, slot.frontZMm + 1], [plateW, 0, 0], [0, -30, 0], { u: plateW * k, v: 30 * k }, s), '--s': String(k) }}
+          style={{ ...quadStyle(plate.a, plate.u, plate.v, { u: plate.u[0] * k, v: PLATE_H_MM * k }, s), '--s': String(k) }}
+          data-figure-id={item.figure._id}
+          data-world={box(plate.a[0], plate.a[0] + plate.u[0], plate.a[1] + plate.v[1], plate.a[1])}
         >
           {item.figure.name}
         </div>
@@ -830,7 +841,12 @@ export function CabinetScene({
     setLiveDx(0);
     if (!commit) return;
     if (prefs.swipe === 'pan') {
-      setPan(clampPan(pan + dx));
+      // a pan of the wall view settles on the same kind of stop as a walk, where the photo can slide to one (NOTE 31)
+      if (prefs.view !== 'wall') setPan(clampPan(pan + dx));
+      else {
+        const stop = settlePan(walked, wall, panStops(walked, wall), pan, dx);
+        if (stop !== null) setPan(stop.panPx);
+      }
       return;
     }
     // a walk of the wall view settles on a stop: three cabinets or more whole, the wall's ends, or the one that stands
@@ -881,9 +897,15 @@ export function CabinetScene({
   const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]));
   const onShow = showIdx.map((i) => inDrawn[i]);
   // the figures' layers cost at most their budget wherever the camera stands: the farthest from the frame centre drawn coarser
+  // SHOULD 29: a name plate is drawn with its figure where its own box draws into the frame and its margin, and is
+  // drawn at its figure's px per mm, out of the same budget
+  const plates = onShow.map(({ draw: fig }) => {
+    const p = labels ? plateOf(fig) : null;
+    return p && trimFace(cull, p.a, p.u, p.v, draw.rect) ? p : null;
+  });
   const scales = figureScales(
     cull,
-    showIdx.map((i) => inDrawnBoxes[i]),
+    showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * PLATE_H_MM : 0 })),
     s,
     FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,
   );
@@ -953,7 +975,7 @@ export function CabinetScene({
                   aspect={aspect}
                   margins={pictureMargins(art, alpha)}
                   scale={scales[n]}
-                  labels={labels}
+                  plate={plates[n]}
                   onSelect={() => onSelect(figure, index)}
                   onBroken={images.failed}
                 />

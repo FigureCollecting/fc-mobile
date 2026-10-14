@@ -340,13 +340,13 @@ export function swipeCamera(framing: Framing, wall: WallLayout, dxPx: number): F
 export const WHOLE_MIN = 3;
 
 /**
- * The cabinets (by wall index) whose body stands whole across the frame (unslid: a walk moves the camera): side to
- * side, on the front plane at the height `lookY` the frame aims at, inside the frame.
+ * The cabinets (by wall index) whose body stands whole across the frame, the picture slid panPx: side to side, on the
+ * front plane at the height `lookY` the frame aims at, inside the frame.
  */
-export function wholeCabinets(camera: Camera, wall: WallLayout, lookY: number): number[] {
+export function wholeCabinets(camera: Camera, wall: WallLayout, lookY: number, panPx = 0): number[] {
   return wall.cabinets.flatMap((slot, i) =>
     [slot.leftMm, slot.rightMm].every((x) => {
-      const p = project(camera, [x, lookY, 0]).x;
+      const p = project(camera, [x, lookY, 0]).x + panPx;
       return p >= 0 && p <= camera.frame.width;
     })
       ? [i]
@@ -396,15 +396,33 @@ export function walkStops(input: FramingInput): WalkStop[] {
     const fit = fits[pages.findIndex((p) => p.includes(focus))];
     return { x, focus, whole: wholeCabinets({ ...fit.camera, x }, wall, fit.look[1]) };
   });
+  // a cabinet always stands whole at its own centre: its page fits it whole there
+  return pickStops(all, wall.cabinets.length);
+}
+
+/**
+ * Of the places a swipe may settle, left to right: those where at least WHOLE_MIN of the n cabinets stand whole (or
+ * the most any does), the first and the last (the wall's ends), and, for a cabinet whole at none of those, the place
+ * that stands it whole beside the most others (the first of those), if any does.
+ */
+function pickStops<T extends { readonly whole: readonly number[] }>(all: readonly T[], n: number): T[] {
   const need = Math.min(WHOLE_MIN, Math.max(...all.map((s) => s.whole.length)));
-  const keep = new Set(all.filter((s, k) => s.whole.length >= need || k === 0 || k === all.length - 1));
-  wall.cabinets.forEach((_, i) => {
-    if ([...keep].some((s) => s.whole.includes(i))) return;
-    // its own centre stands it whole (its page fits it whole there); a stop beside more whole first
-    const own = all[2 * i];
-    keep.add(all.reduce((best, s) => (s.whole.includes(i) && s.whole.length > best.whole.length ? s : best), own));
-  });
+  const keep = new Set<T | undefined>(all.filter((s, k) => s.whole.length >= need || k === 0 || k === all.length - 1));
+  for (let i = 0; i < n; i++) {
+    if ([...keep].some((s) => s?.whole.includes(i))) continue;
+    // none stands it whole: nothing to add
+    keep.add(all.reduce<T | undefined>((best, s) => (s.whole.includes(i) && s.whole.length > (best?.whole.length ?? 0) ? s : best), undefined));
+  }
   return all.filter((s) => keep.has(s));
+}
+
+/** The stop at `ats` index nearest `to` among those past `from` toward it; none (-1) when none lies that way. */
+function nextStop(ats: readonly number[], from: number, to: number): number {
+  let best = -1;
+  ats.forEach((x, k) => {
+    if ((x - from) * (to - from) > 0 && (best < 0 || Math.abs(x - to) < Math.abs(ats[best] - to))) best = k;
+  });
+  return best;
 }
 
 /** NOTE 30: a walk steps on to a stop only once the finger has moved this many px net, at the least. */
@@ -424,11 +442,53 @@ export function walkDeadPx(framing: Framing, wall: WallLayout): number {
  */
 export function settleWalk(walked: Framing, wall: WallLayout, stops: readonly WalkStop[], dxPx: number): WalkStop | null {
   if (Math.abs(dxPx) < walkDeadPx(walked, wall)) return null;
-  const from = walked.camera.x;
-  const to = swipeCamera(walked, wall, dxPx).camera.x;
-  const ahead = stops.filter((s) => (s.x - from) * (to - from) > 0);
-  if (ahead.length === 0) return null;
-  return ahead.reduce((a, b) => (Math.abs(b.x - to) < Math.abs(a.x - to) ? b : a));
+  const k = nextStop(
+    stops.map((s) => s.x),
+    walked.camera.x,
+    swipeCamera(walked, wall, dxPx).camera.x,
+  );
+  return k < 0 ? null : stops[k];
+}
+
+/** A place a pan of the wall view settles (NOTE 31): the photo slid panPx, the cabinets it stands whole. */
+export interface PanStop {
+  readonly panPx: number;
+  readonly whole: readonly number[];
+}
+
+/**
+ * The stops of a wall view's pan (NOTE 31), left to right, as for a walk where the photo can slide to them: the
+ * slides to the wall's two ends (panLimitsPx), and between them each slide that draws a walk stop's place (a
+ * cabinet's centre or halfway between two) at the frame centre, picked as a walk's are (pickStops). Past the slide
+ * the photo is retaken farther along (panFraming), which keeps the line it aims along where the slid photo draws it.
+ */
+export function panStops(framing: Framing, wall: WallLayout): PanStop[] {
+  const { camera, look } = framing;
+  const [lo, hi] = panLimitsPx(framing, wall);
+  const between = stopXs(wall)
+    .map((x) => camera.frame.width / 2 - project(camera, [x, look[1], 0]).x)
+    .filter((p) => p > lo && p < hi);
+  const all = [...new Set([lo, ...between, hi])].sort((a, b) => a - b).map((panPx): PanStop => {
+    const r = panFraming(framing, panPx);
+    return { panPx, whole: wholeCabinets(r.framing.camera, wall, look[1], r.panPx) };
+  });
+  return pickStops(all, wall.cabinets.length);
+}
+
+/**
+ * CC4, pan mode, once a pan of dxPx from fromPan settles (NOTE 31): the stop nearest where the photo was slid to
+ * (within its limits), among those past where it started; none (the photo stays) when the finger moved less than
+ * walkDeadPx net or no stop lies that way.
+ */
+export function settlePan(framing: Framing, wall: WallLayout, stops: readonly PanStop[], fromPan: number, dxPx: number): PanStop | null {
+  if (Math.abs(dxPx) < walkDeadPx(panFraming(framing, fromPan).framing, wall)) return null;
+  const to = Math.min(stops[stops.length - 1].panPx, Math.max(stops[0].panPx, fromPan + dxPx));
+  const k = nextStop(
+    stops.map((s) => s.panPx),
+    fromPan,
+    to,
+  );
+  return k < 0 ? null : stops[k];
 }
 
 /**

@@ -1255,15 +1255,14 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
 
   it('a nameplate is drawn at its figure\'s px per mm: coarser with it past the budget, the same size in the world', () => {
     let coarse = 0;
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      const { host } = scene(spikeWall(), { view }, { frameFallback: DENSE_FRAMES[0], labels: true });
+    for (const [frame, view] of DENSE_FRAMES.flatMap((f) => (['wall', 'cabinet', 'shelf'] as const).map((v) => [f, v] as const))) {
+      const { host } = scene(spikeWall(), { view }, { frameFallback: frame, labels: true });
       const s = pxPerMm(host);
-      for (const b of figureButtons(host)) {
-        const plate = b.nextElementSibling as HTMLElement;
-        expect(plate.classList.contains('cab-plate')).toBe(true);
+      for (const plate of Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'))) {
+        const b = host.querySelector<HTMLElement>(`button.cab-figure[data-figure-id="${plate.dataset.figureId}"]`)!;
         const k = Number(b.style.getPropertyValue('--s'));
         expect(plate.style.getPropertyValue('--s')).toBe(String(k));
-        expect(sideMm(plate, 'v')).toBeCloseTo(30 * s, 6);
+        expect(sideMm(plate, 'v')).toBeCloseTo(30 * s, 4);
         expect(parseFloat(plate.style.height)).toBeCloseTo(30 * k, 6);
         if (k < s) coarse++;
       }

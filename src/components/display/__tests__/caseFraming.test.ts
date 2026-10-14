@@ -5,6 +5,7 @@ import { IN_MM, frameMargins, project, startCameraY, unprojectToPlaneZ, type Cam
 import { MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
 import { wallLayout, type WallLayout } from '../packCabinets';
 import { sideOverhangMm } from '../cabinetProfile';
+import { WALL_PATTERNS } from '../casePrefs';
 import {
   STEP_BACK_MAX_MM,
   cabinetBox,
@@ -21,6 +22,11 @@ import {
   capSpanMm,
   wallPages,
   wallReachMm,
+  walkStops,
+  walkDeadPx,
+  atX,
+  nearestCabinet,
+  WALK_MIN_PX,
   type Box,
   type Framing,
   type FramingInput,
@@ -650,5 +656,153 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     }
     expect(centred).toBeGreaterThan(50);
     expect(moved).toBeGreaterThan(0);
+  });
+});
+
+describe('the wall view reaches every cabinet (close-out 3, ruling 27): the pager and a walk each stand every cabinet of every pattern whole', () => {
+  // the scene's frame at the Fold8's four panels, in the browser and as the installed app (full screen), both ways round
+  const PANELS = [
+    { width: 443, height: 344 },
+    { width: 616, height: 143 },
+    { width: 870, height: 261 },
+    { width: 657, height: 473 },
+    { width: 444, height: 487 },
+    { width: 870, height: 443 },
+    { width: 657, height: 656 },
+  ];
+  // every width a Fold8 panel or the narrowest phone gives the scene, at every height from a short sideways frame to a tall one
+  const SWEEP = [412, 443, 444, 616, 657, 870].flatMap((width) => Array.from({ length: 30 }, (_, k) => ({ width, height: 140 + 20 * k })));
+  const LENGTHS = [1, 2, 3, 4, 5, 8, 18];
+  const WALLS: [string, WallLayout][] = WALL_PATTERNS.flatMap((p) =>
+    LENGTHS.map((n): [string, WallLayout] => [`${p.id} x${n}`, wallLayout(Array.from({ length: n }, (_, i) => p.profiles[i % p.profiles.length]))]),
+  );
+  const wallInput = (wall: WallLayout, frame: { width: number; height: number }, focus = 0): FramingInput => ({
+    frame,
+    wall,
+    headroomMm: wall.cabinets.map(() => 300),
+    view: 'wall',
+    focus,
+    shelf: 0,
+  });
+  const wholeIn = (f: Framing, wall: WallLayout) => wholeCabinets(f.camera, wall, f.look[1]);
+
+  it('the pager: every page opens with all its cabinets whole, and each press moves the camera on along the wall', () => {
+    let pages = 0;
+    for (const [name, wall] of WALLS) {
+      for (const frame of [...PANELS, ...SWEEP]) {
+        const input = wallInput(wall, frame);
+        const all = wallPages(input);
+        expect(all.flat(), `${name} ${frame.width}x${frame.height}`).toEqual(wall.cabinets.map((_, i) => i));
+        let lastX = -Infinity;
+        for (const page of all) {
+          const f = frameCase({ ...input, focus: page[0] });
+          const at = `${name} ${frame.width}x${frame.height} page [${page}]`;
+          expect(wholeIn(f, wall), at).toEqual(expect.arrayContaining(page));
+          expect(f.camera.x, at).toBeGreaterThan(lastX);
+          lastX = f.camera.x;
+          pages++;
+        }
+      }
+    }
+    expect(pages).toBeGreaterThan(20_000);
+  }, 120_000);
+
+  it('the wall view opens on any cabinet with that cabinet and its page whole', () => {
+    for (const [name, wall] of WALLS) {
+      for (const frame of PANELS) {
+        const input = wallInput(wall, frame);
+        const pages = wallPages(input);
+        for (let focus = 0; focus < wall.cabinets.length; focus++) {
+          const f = frameCase({ ...input, focus });
+          const page = pages.find((p) => p.includes(focus))!;
+          expect(f.page).toEqual(page);
+          expect(wholeIn(f, wall), `${name} ${frame.width}x${frame.height} focus ${focus}`).toEqual(expect.arrayContaining(page));
+        }
+      }
+    }
+  }, 60_000);
+
+  /** The wall view as the scene shows it: the focus cabinet's page framing, the camera where a walk settled (none: as framed). */
+  const shown = (input: FramingInput, focus: number, x: number | null) => {
+    const f = frameCase({ ...input, focus });
+    return x === null ? f : atX(f, x);
+  };
+
+  it('a walk: swipes just past the dead zone step stop by stop to the far end and back, and every cabinet stands whole at a stop on the way', () => {
+    for (const [name, wall] of WALLS) {
+      for (const frame of PANELS) {
+        const input = wallInput(wall, frame);
+        const stops = walkStops(input);
+        const at = `${name} ${frame.width}x${frame.height}`;
+        // the wall's ends are always stops: the first and the last cabinet's centre, where the swipe stops
+        expect(stops[0].x, at).toBe(wall.cabinets[0].centerMm);
+        expect(stops[stops.length - 1].x, at).toBe(wall.cabinets[wall.cabinets.length - 1].centerMm);
+        let focus = 0;
+        let x: number | null = null;
+        const seen = new Set<number>();
+        const visited: number[] = [];
+        for (const finger of [-1, 1]) {
+          for (let k = 0; k <= stops.length; k++) {
+            const f = shown(input, focus, x);
+            const stop = settleWalk(f, wall, stops, finger * walkDeadPx(f, wall));
+            if (stop === null) break;
+            // the scene shows the stop's picture: its whole cabinets are what the stop says
+            const there = shown(input, stop.focus, stop.x);
+            expect(wholeIn(there, wall), `${at} at ${stop.x}`).toEqual(stop.whole);
+            expect(stop.focus).toBe(nearestCabinet(wall, stop.x));
+            // a finger moving left walks the camera right
+            if (x !== null) expect(Math.sign(stop.x - x), `${at} at ${stop.x}`).toBe(-finger);
+            stop.whole.forEach((i) => seen.add(i));
+            visited.push(stop.x);
+            focus = stop.focus;
+            x = stop.x;
+          }
+          // a swipe on past the end goes nowhere
+          expect(x, `${at} end ${finger}`).toBe(finger < 0 ? stops[stops.length - 1].x : stops[0].x);
+        }
+        expect([...seen].sort((a, b) => a - b), at).toEqual(wall.cabinets.map((_, i) => i));
+        // stop by stop: every stop is reached, in order, out and back
+        for (const s of stops) expect(visited, `${at} stop ${s.x}`).toContain(s.x);
+      }
+    }
+  }, 60_000);
+
+  it('the stops: three or more whole (or the most any stop stands), the two ends, and for a cabinet whole at none of those the stop that stands it whole beside the most', () => {
+    let reach = 0;
+    for (const [name, wall] of WALLS) {
+      for (const frame of PANELS) {
+        const stops = walkStops(wallInput(wall, frame));
+        const at = `${name} ${frame.width}x${frame.height}`;
+        const most = Math.max(...stops.map((s) => s.whole.length));
+        const need = Math.min(3, most);
+        const full = stops.filter((s) => s.whole.length >= need);
+        const ends = [stops[0], stops[stops.length - 1]];
+        for (const s of stops) {
+          if (full.includes(s) || ends.includes(s)) continue;
+          // a stop short of the count stands a cabinet whole that no stop of the count nor an end does
+          const alone = s.whole.filter((i) => ![...full, ...ends].some((t) => t.whole.includes(i)));
+          expect(alone.length, `${at} stop ${s.x} whole [${s.whole}]`).toBeGreaterThan(0);
+          reach++;
+        }
+        for (let k = 1; k < stops.length; k++) expect(stops[k].x, at).toBeGreaterThan(stops[k - 1].x);
+      }
+    }
+    // the mixed wall on the full-screen cover and the open-rotated panel needs them
+    expect(reach).toBeGreaterThan(0);
+  });
+
+  it(`NOTE 30: a drag must move ${WALK_MIN_PX} px or a quarter of the cabinet's width net before the walk steps; one that comes back near where it started settles back`, () => {
+    const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));
+    for (const frame of PANELS) {
+      const input = wallInput(wall, frame, 6);
+      const stops = walkStops(input);
+      const f = frameCase(input);
+      const dead = walkDeadPx(f, wall);
+      const perPx = (f.camera.z - f.look[2]) / f.camera.focalPx;
+      expect(dead).toBeCloseTo(Math.max(WALK_MIN_PX, IKEA_KLINGSBO.outer.widthMm / 4 / perPx), 9);
+      for (const dx of [-2, 2, -(dead - 0.5), dead - 0.5]) expect(settleWalk(f, wall, stops, dx), `${frame.width} ${dx}`).toBeNull();
+      expect(settleWalk(f, wall, stops, -dead)!.x).toBeGreaterThan(f.camera.x);
+      expect(settleWalk(f, wall, stops, dead)!.x).toBeLessThan(f.camera.x);
+    }
   });
 });

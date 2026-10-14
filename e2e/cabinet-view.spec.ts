@@ -1,9 +1,9 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { CASE_VIEWPORTS } from './caseViewports';
+import { CASE_VIEWPORTS, SHOT_VIEWPORTS } from './caseViewports';
 import { atRest, takesTap } from './sheetRest';
-import { project, type Camera } from '../src/components/display/caseCamera';
-import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
+import { project, unprojectToPlaneZ, type Camera } from '../src/components/display/caseCamera';
+import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox } from '../src/components/display/caseFraming';
 import { boxCorners } from '../src/components/display/caseCamera';
@@ -276,6 +276,44 @@ for (const size of FOLD8) {
 }
 
 // the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
+// close-out 3, ruling 27: the mixed wall paged to its end on the Fold8 as the installed app (full screen), where a
+// snap to three whole once left the last cabinet out of every page and made every other press go nowhere
+for (const size of SHOT_VIEWPORTS.filter((v) => /^fold8-.*-full$/.test(v.name))) {
+  test(`the mixed wall pages to its last cabinet, each press moving on and every cabinet whole on its page: ${size.name}`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await openCase(page, size, '&fx=30', { view: 'wall', swipe: 'camera', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    const host = page.locator('.cabinet-scene');
+    const n = (JSON.parse((await host.getAttribute('data-wall'))!) as number[][]).length;
+    expect(n).toBeGreaterThan(8);
+    const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+    // whole: the body, side to side at the height the frame aims at
+    const whole = async () => {
+      const camera = await cameraOf(page);
+      const lookY = unprojectToPlaneZ(camera, camera.frame.width / 2, camera.frame.height / 2, 0)![1];
+      return wall.cabinets.flatMap((slot, i) =>
+        [slot.leftMm, slot.rightMm].every((x) => {
+          const p = project(camera, [x, lookY, 0]).x;
+          return p >= -1e-6 && p <= camera.frame.width + 1e-6;
+        })
+          ? [i]
+          : [],
+      );
+    };
+    const next = page.getByRole('button', { name: 'Next cabinet' });
+    const paged = new Set(await whole());
+    let x = (await cameraOf(page)).x;
+    for (let k = 0; k < n && (await next.isEnabled()); k++) {
+      await next.click();
+      await expect.poll(async () => (await cameraOf(page)).x, { message: `press ${k}` }).toBeGreaterThan(x);
+      x = (await cameraOf(page)).x;
+      (await whole()).forEach((i) => paged.add(i));
+    }
+    await expect(next).toBeDisabled();
+    expect(await whole(), 'the last page').toContain(n - 1);
+    expect([...paged].sort((a, b) => a - b)).toEqual(wall.cabinets.map((_, i) => i));
+  });
+}
+
 for (const size of FOLD8.filter((v) => v.name === 'fold8-open' || v.name === 'fold8-open-rotated')) {
   test(`still above the tabs with the detail pane open, then offline: ${size.name}`, async ({ page, context }) => {
     await openFramed(page, size, 'cabinet');

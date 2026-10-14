@@ -4,7 +4,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
-import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
+import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
@@ -649,6 +649,65 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     tap(screen.getByRole('button', { name: 'Next cabinet' }));
     expect(host.dataset.focus).toBe(String(focus + 1));
     expect(Number(host.dataset.cameraX)).toBeCloseTo(wall.cabinets[focus + 1].centerMm, 6);
+  });
+
+  /** The mixed wall at a frame: its host, and the cabinets whose body stands whole side to side at the height the frame aims at. */
+  const mixedWall = (frame: { width: number; height: number }) => {
+    const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'wall', swipe: 'camera' }, { frameFallback: frame });
+    const n = (JSON.parse(host.dataset.wall!) as number[][]).length;
+    expect(n).toBeGreaterThan(8);
+    const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+    const whole = () => {
+      const camera = cameraOf(host);
+      const lookY = unprojectToPlaneZ(camera, frame.width / 2, frame.height / 2, 0)![1];
+      return wall.cabinets.flatMap((slot, i) =>
+        [slot.leftMm, slot.rightMm].every((x) => {
+          const p = project(camera, [x, lookY, 0]).x;
+          return p >= -1e-6 && p <= frame.width + 1e-6;
+        })
+          ? [i]
+          : [],
+      );
+    };
+    return { host, n, all: wall.cabinets.map((_, i) => i), whole };
+  };
+  const FULL_FRAMES = [{ width: 444, height: 487 }, { width: 657, height: 656 }, { width: 443, height: 344 }];
+
+  it('the mixed wall on the full-screen Fold8 frames (close-out 3, ruling 27): Next pages on to the last cabinet, every press moving the camera on, every cabinet whole on its page', () => {
+    for (const frame of FULL_FRAMES) {
+      const { host, n, all, whole } = mixedWall(frame);
+      const at = `${frame.width}x${frame.height}`;
+      const paged = new Set(whole());
+      const next = screen.getByRole('button', { name: 'Next cabinet' });
+      let x = Number(host.dataset.cameraX);
+      for (let k = 0; k < n && !(next as HTMLButtonElement).disabled; k++) {
+        fireEvent.click(next);
+        expect(Number(host.dataset.cameraX), `${at} press ${k}`).toBeGreaterThan(x);
+        x = Number(host.dataset.cameraX);
+        whole().forEach((i) => paged.add(i));
+      }
+      expect(next).toBeDisabled();
+      expect(whole(), `${at} last page`).toContain(n - 1);
+      expect([...paged].sort((a, b) => a - b), `${at} paged`).toEqual(all);
+      cleanup();
+    }
+  });
+
+  it('the mixed wall on the full-screen Fold8 frames (close-out 3, ruling 27): a walk out to the far end and back stands every cabinet whole somewhere', () => {
+    for (const frame of FULL_FRAMES) {
+      const { host, n, all, whole } = mixedWall(frame);
+      const walked = new Set(whole());
+      for (const dx of [-100, 100]) {
+        for (let k = 0; k < 4 * n; k++) {
+          const before = host.dataset.cameraX;
+          drag(host, dx);
+          if (host.dataset.cameraX === before) break;
+          whole().forEach((i) => walked.add(i));
+        }
+      }
+      expect([...walked].sort((a, b) => a - b), `${frame.width}x${frame.height} walked`).toEqual(all);
+      cleanup();
+    }
   });
 
   for (const view of ['cabinet', 'shelf'] as const) {

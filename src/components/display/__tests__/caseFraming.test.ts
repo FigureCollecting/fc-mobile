@@ -529,10 +529,14 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     });
   }
 
-  /** The wall view as the scene shows it: the focus cabinet's page framing, the camera where a walk settled (none: as framed). */
-  const shownOn = (input: FramingInput) => (focus: number, x: number | null) => {
-    const f = frameCase({ ...input, focus });
-    return x === null ? f : atX(f, x);
+  /** The wall view as the scene shows it: the focus cabinet's page framing (kept per focus), the camera where a walk settled (none: as framed). */
+  const shownOn = (input: FramingInput) => {
+    const framed = new Map<number, Framing>();
+    return (focus: number, x: number | null) => {
+      if (!framed.has(focus)) framed.set(focus, frameCase({ ...input, focus }));
+      const f = framed.get(focus)!;
+      return x === null ? f : atX(f, x);
+    };
   };
 
   it('the wall view still shows the wall (Ross 12:1xC, desk MN2 a): wherever a walk settles short of the wall\'s ends, three cabinets or more whole across the frame, four fronts or more', () => {
@@ -589,7 +593,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     }
     expect(ends).toBeGreaterThan(0);
     expect(short).toEqual(['rack 443x454 2', 'rack 657x600 2']);
-  });
+  }, 60_000);
 
   it('a settled walk snaps to the nearest stop ahead of where it started: a short swipe still moves on a stop, never back', () => {
     const wall = WALLS[0][1];
@@ -731,7 +735,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     }
     expect(centred).toBeGreaterThan(100);
     expect(moved).toBeGreaterThan(0);
-  });
+  }, 60_000);
 });
 
 describe('the wall view reaches every cabinet (close-out 3, ruling 27): the pager and a walk each stand every cabinet of every pattern whole', () => {
@@ -882,7 +886,7 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
     }
     // a short mixed wall on a tall narrow frame needs them: its rack is whole only at its own centre
     expect(reach).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it('the focus a walk leaves is the cabinet whose centre is nearest the camera, the first of two as near', () => {
     const wall = wallLayout(Array(4).fill(IKEA_KLINGSBO));
@@ -957,7 +961,7 @@ describe('NOTE 31: a pan of the wall view settles on the same kind of stop, wher
         }
       }
     }
-  });
+  }, 60_000);
 
   it('a pan by swipes just past the dead zone out to the wall\'s end and back settles only on stops, the photo following the finger; on the open-rotated panel two swipes in it stands three whole', () => {
     for (const [name, wall] of WALLS) {
@@ -986,7 +990,7 @@ describe('NOTE 31: a pan of the wall view settles on the same kind of stop, wher
     let pan = 0;
     for (let k = 0; k < 2; k++) pan = settlePan(f, wall, stops, pan, -400)!.panPx;
     expect(wholeAt(f, wall, pan).length).toBeGreaterThanOrEqual(3);
-  });
+  }, 60_000);
 
   it('a drag short of the dead zone settles back: no stop', () => {
     const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));

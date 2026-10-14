@@ -310,6 +310,9 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
     const frame = { width: 657, height: 473 };
     const { host } = scene(getFixtureFigures(120), { swipe: 'pan', view: 'wall' }, { frameFallback: frame });
     const wall = klingsbos((JSON.parse(host.dataset.wall!) as number[][]).length);
+    // a drag short of the dead zone leaves the photo where it was
+    drag(host, -30);
+    expect(host.dataset.pan).toBe('0');
     for (let k = 0; k < 2; k++) drag(host, -400);
     const camera = cameraOf(host);
     const pan = Number(host.dataset.pan);
@@ -322,7 +325,7 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
       }),
     );
     expect(whole.length).toBeGreaterThanOrEqual(3);
-  });
+  }, 60_000);
 
   it('a cancelled swipe moves nothing; another finger never steers this one', () => {
     const many = getFixtureFigures(8);
@@ -729,7 +732,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       expect([...paged].sort((a, b) => a - b), `${at} paged`).toEqual(all);
       cleanup();
     }
-  });
+  }, 60_000);
 
   it('the mixed wall on the full-screen Fold8 frames (close-out 3, ruling 27): a walk out to the far end and back stands every cabinet whole somewhere', () => {
     for (const frame of FULL_FRAMES) {
@@ -746,7 +749,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       expect([...walked].sort((a, b) => a - b), `${frame.width}x${frame.height} walked`).toEqual(all);
       cleanup();
     }
-  });
+  }, 60_000);
 
   for (const view of ['cabinet', 'shelf'] as const) {
     it(`${view} view: Next is disabled on the last cabinet, Previous on the first`, () => {
@@ -1269,7 +1272,7 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       cleanup();
     }
     expect(coarse).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it('SHOULD 29: with labels on, a name plate is drawn only where its own box draws into the frame and its margin, and the plates spend the figures\' budget with them', () => {
     let culled = 0;

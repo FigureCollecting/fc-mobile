@@ -5,6 +5,7 @@ import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import type { PictureMargins } from '../figureArt';
+import { FIGURE_BUDGET_VIEWPORTS } from '../caseCull';
 
 /** What the canvas read of each picture's alpha says, by URL; null while it is still measuring. */
 const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null, loaded: [] as string[] }));
@@ -44,6 +45,17 @@ function figures(figs: Figure[], extra: Partial<Parameters<typeof CabinetScene>[
   return drawn(container);
 }
 
+/** A length the scene draws, in mm: its px over the scene's px per mm (MOB-NAV-2 texelScale). */
+function mmOf(el: Element, px: string): number {
+  return parseFloat(px) / Number(el.closest<HTMLElement>('.cabinet-scene')!.dataset.pxPerMm);
+}
+
+/** A face's width in the world (mm), whether its element is that width at the scene's px per mm or a texel grid its matrix stretches. */
+function widthMm(el: HTMLElement): number {
+  const m = el.style.transform.replace(/^matrix3d\(|\)$/g, '').split(',').map(Number);
+  return mmOf(el, el.style.width) * Math.hypot(m[0], m[1], m[2]);
+}
+
 function drawn(container: ParentNode) {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('button.cab-figure')).map((b) => ({
     name: b.getAttribute('aria-label')!,
@@ -68,10 +80,63 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
       // the head: the highest opaque row is the labelled height above the surface
       expect(r.art.y1 - 0.25 * pictureH, r.name).toBeCloseTo(r.tap.surface + labelled, 3);
       expect(r.grounded).toBe('1');
-      // drawn there: the picture rises above the tap box (the figure) by its clear top margin, 1 px per mm
-      expect(parseFloat(r.picture.style.top), r.name).toBeCloseTo(-(r.art.y1 - r.tap.y1), 3);
-      expect(parseFloat(r.picture.style.height), r.name).toBeCloseTo(pictureH, 3);
+      // drawn there: the picture rises above the tap box (the figure) by its clear top margin, at the scene's px per mm
+      expect(mmOf(r.picture, r.picture.style.top), r.name).toBeCloseTo(-(r.art.y1 - r.tap.y1), 3);
+      expect(mmOf(r.picture, r.picture.style.height), r.name).toBeCloseTo(pictureH, 3);
     }
+  });
+
+  it("each picture is clipped to the figure in it, its opaque rows and columns: its clear margins cost the figure's layer no px", () => {
+    measured.fallback = { top: 0.25, bottom: 0.05, left: 0.15, right: 0.2 };
+    const rows = figures(FIXTURE_FIGURES);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.grounded, r.name).toBe('1');
+      // top right bottom left, of the picture box
+      expect(r.picture.style.clipPath, r.name).toBe('inset(25% 20% 5% 15%)');
+    }
+    // a framed copy is an opaque box: nothing clipped
+    cleanup();
+    const framed = figures(FIXTURE_FIGURES.map((f) => ({ ...f, _id: `framed-${f._id}` })));
+    expect(framed.length).toBeGreaterThan(0);
+    for (const r of framed) {
+      expect(r.picture.closest('button')!.dataset.art, r.name).toBe('framed');
+      expect(r.picture.style.clipPath, r.name).toBe('');
+    }
+  });
+
+  it('the figures\' budget counts the clipped pictures: where their whole pictures would overrun it and the clipped ones do not, every figure is drawn at the scene\'s px per mm', () => {
+    measured.fallback = { top: 0.25, bottom: 0.05, left: 0.4, right: 0.4 };
+    const spike = FIXTURE_FIGURES.find((f) => f._id === 'fx-spike')!;
+    // copies of the fixture (fx-spike-xN): matted cut-outs, as getDisplayMeta resolves them
+    const wall = Array.from({ length: 600 }, (_, i) => ({ ...spike, _id: `fx-spike-x${i + 2}` }));
+    let binding = 0;
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      for (const frame of [{ width: 870, height: 400 }, { width: 443, height: 454 }, { width: 616, height: 245 }]) {
+        const { container } = render(<CabinetScene figures={wall} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, view }} frameFallback={frame} />);
+        const host = container.querySelector<HTMLElement>('.cabinet-scene')!;
+        const s = Number(host.dataset.pxPerMm);
+        const buttons = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure'));
+        let whole = 0;
+        let clipped = 0;
+        for (const b of buttons) {
+          const box = b.querySelector<HTMLElement>('.cab-figure__box')!;
+          const k = Number(b.style.getPropertyValue('--s'));
+          // each at the scene's px per mm
+          const [l, t, w, h] = ['left', 'top', 'width', 'height'].map((x) => (parseFloat(box.style.getPropertyValue(x)) * s) / k);
+          const [bw, bh] = [(parseFloat(b.style.width) * s) / k, (parseFloat(b.style.height) * s) / k];
+          whole += (Math.max(bw, l + w) - Math.min(0, l)) * (Math.max(bh, t + h) - Math.min(0, t));
+          clipped += (Math.max(bw, l + 0.6 * w) - Math.min(0, l + 0.4 * w)) * (Math.max(bh, t + 0.95 * h) - Math.min(0, t + 0.25 * h));
+        }
+        const budget = FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height;
+        if (whole > budget && clipped <= budget) {
+          binding++;
+          for (const b of buttons) expect(b.style.getPropertyValue('--s'), `${view} ${frame.width}`).toBe(String(s));
+        }
+        cleanup();
+      }
+    }
+    expect(binding).toBeGreaterThan(0);
   });
 
   it("the image list's measured bottom wins; the top is measured on the mask", () => {
@@ -202,7 +267,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
       expect(art.style.visibility).toBe('hidden');
       // an opaque box standing on the surface, the figure's height, within the label it is packed by
       expect(spike.art.x1 - spike.art.x0).toBeLessThanOrEqual(LABEL_MM + 1e-6);
-      expect(parseFloat(spike.picture.style.width)).toBeLessThanOrEqual(LABEL_MM + 1e-6);
+      expect(mmOf(spike.picture, spike.picture.style.width)).toBeLessThanOrEqual(LABEL_MM + 1e-6);
       expect(spike.art.y0).toBeCloseTo(spike.tap.surface, 6);
       expect(spike.art.y1 - spike.art.y0).toBeCloseTo(spike.tap.y1 - spike.tap.y0, 6);
       expect((spike.art.x0 + spike.art.x1) / 2).toBeCloseTo((spike.tap.x0 + spike.tap.x1) / 2, 6);
@@ -256,17 +321,17 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
     expect(box(a).w).toBeCloseTo(0.75 * box(a).h, 6);
     const shadowOf = (r: typeof a) => {
       const el = r.picture.closest('button')!.previousElementSibling as HTMLElement;
-      const w = parseFloat(el.style.width);
-      return { w, centre: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]) + w / 2 - (r.art.x0 + r.art.x1) / 2 };
+      const w = widthMm(el);
+      return { w, centre: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]) + w / 2 - (r.art.x0 + r.art.x1) / 2 };
     };
-    expect(shadowOf(a).w).toBeCloseTo(shadowOf(b).w, 6);
-    expect(shadowOf(a).centre).toBeCloseTo(0, 6);
+    expect(shadowOf(a).w).toBeCloseTo(shadowOf(b).w, 4);
+    expect(shadowOf(a).centre).toBeCloseTo(0, 4);
   });
 });
 
 describe('CabinetScene: a figure off-centre in its picture stands centred on its slot (its opaque columns, not its picture)', () => {
-  /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, 1 px per mm. */
-  const span = (el: HTMLElement) => ({ x: Number(el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: parseFloat(el.style.width) });
+  /** A face's world x where it starts and how wide it is: quadStyle puts its corner in matrix3d's translation, at the scene's px per mm. */
+  const span = (el: HTMLElement) => ({ x: mmOf(el, el.style.transform.replace(/^matrix3d\(/, '').split(',')[12]), w: widthMm(el) });
 
   for (const sides of [
     { left: 0.38, right: 0.02 },
@@ -284,10 +349,10 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
         const slotCx = (r.tap.x0 + r.tap.x1) / 2;
         expect((figure.x0 + figure.x1) / 2, r.name).toBeCloseTo(slotCx, 5);
         // the picture is drawn there: its box starts where its art box does, relative to the tap box
-        expect(parseFloat(r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 5);
+        expect(mmOf(r.picture, r.picture.style.left), r.name).toBeCloseTo(r.art.x0 - r.tap.x0, 5);
         // the shadow, with no contact band known, lies under the figure
         const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
-        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 5);
+        expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo(slotCx, 4);
       }
       expectOpaqueApart(rows, sides);
     });
@@ -300,7 +365,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
     const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.slice(0, 3).map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
     for (const r of drawn(container)) {
       const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
-      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 5);
+      expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 4);
     }
   });
 });

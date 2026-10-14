@@ -1,9 +1,9 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { CASE_VIEWPORTS } from './caseViewports';
+import { CASE_VIEWPORTS, SHOT_VIEWPORTS } from './caseViewports';
 import { atRest, takesTap } from './sheetRest';
-import { project, type Camera } from '../src/components/display/caseCamera';
-import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
+import { project, unprojectToPlaneZ, type Camera } from '../src/components/display/caseCamera';
+import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox } from '../src/components/display/caseFraming';
 import { boxCorners } from '../src/components/display/caseCamera';
@@ -273,6 +273,83 @@ for (const size of FOLD8) {
       await expectReframedAboveTabs(page, view, 'a chip added');
     });
   }
+}
+
+// close-out 3, ruling 27: the mixed wall paged to its end on the Fold8 as the installed app (full screen), where a
+// snap to three whole once left the last cabinet out of every page and made every other press go nowhere
+for (const size of SHOT_VIEWPORTS.filter((v) => /^fold8-.*-full$/.test(v.name))) {
+  test(`the mixed wall pages to its last cabinet, each press moving on and every cabinet whole on its page: ${size.name}`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await openCase(page, size, '&fx=30', { view: 'wall', swipe: 'camera', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    const host = page.locator('.cabinet-scene');
+    const n = (JSON.parse((await host.getAttribute('data-wall'))!) as number[][]).length;
+    expect(n).toBeGreaterThan(8);
+    const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+    // whole: the body, side to side at the height the frame aims at
+    const whole = async () => {
+      const camera = await cameraOf(page);
+      const lookY = unprojectToPlaneZ(camera, camera.frame.width / 2, camera.frame.height / 2, 0)![1];
+      return wall.cabinets.flatMap((slot, i) =>
+        [slot.leftMm, slot.rightMm].every((x) => {
+          const p = project(camera, [x, lookY, 0]).x;
+          return p >= -1e-6 && p <= camera.frame.width + 1e-6;
+        })
+          ? [i]
+          : [],
+      );
+    };
+    const next = page.getByRole('button', { name: 'Next cabinet' });
+    const paged = new Set(await whole());
+    let x = (await cameraOf(page)).x;
+    for (let k = 0; k < n && (await next.isEnabled()); k++) {
+      await next.click();
+      await expect.poll(async () => (await cameraOf(page)).x, { message: `press ${k}` }).toBeGreaterThan(x);
+      x = (await cameraOf(page)).x;
+      (await whole()).forEach((i) => paged.add(i));
+    }
+    await expect(next).toBeDisabled();
+    expect(await whole(), 'the last page').toContain(n - 1);
+    expect([...paged].sort((a, b) => a - b)).toEqual(wall.cabinets.map((_, i) => i));
+  });
+}
+
+// close-out 4, ruling 32: on the mixed wall a walk could settle on the stop halfway between two cabinets where the next
+// page opened, so the next press of Next went nowhere (the button only went off); from wherever a walk settles, on
+// any page, Next moves the camera on and Prev back
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open-rotated')) {
+  test(`the mixed wall: after a walk on any page, Next moves the camera on and Prev back: ${size.name}`, async ({ page }) => {
+    test.setTimeout(600_000);
+    await openCase(page, size, '&fx=30', { view: 'wall', swipe: 'camera', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    const next = page.getByRole('button', { name: 'Next cabinet' });
+    const prev = page.getByRole('button', { name: 'Previous cabinet' });
+    const x = async () => (await cameraOf(page)).x;
+    let moves = 0;
+    let last = false;
+    for (let p = 0; p < 40 && !last; p++) {
+      const opened = await x();
+      last = await next.isDisabled();
+      for (const dx of [-45, -70, -100, -130, -170, -220, -290, 70, 130]) {
+        // a finger moving left walks on, so Next is the press that could find itself where it stands
+        const button = dx < 0 ? next : prev;
+        await swipe(page, dx);
+        await page.waitForTimeout(100);
+        const walked = await x();
+        const at = `page ${p} walk ${dx} to ${walked} focus ${await page.locator('.cabinet-scene').getAttribute('data-focus')}`;
+        if (await button.isEnabled()) {
+          await button.click();
+          await expect.poll(async () => Math.sign((await x()) - walked), { message: `${at}: ${dx < 0 ? 'Next' : 'Prev'}` }).toBe(dx < 0 ? 1 : -1);
+          moves++;
+        }
+        // back to this page as it opened: the pages open left to right (a walk within the first page leaves Prev off)
+        if ((await prev.isDisabled()) && (await x()) !== opened) await next.click();
+        while ((await x()) > opened && (await prev.isEnabled())) await prev.click();
+        while ((await x()) < opened && (await next.isEnabled())) await next.click();
+        expect(await x(), at).toBe(opened);
+      }
+      if (!last) await next.click();
+    }
+    expect(moves).toBeGreaterThan(40);
+  });
 }
 
 // the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
@@ -974,7 +1051,16 @@ test('a swipe opens nothing; the next tap does', async ({ page }) => {
   await swipe(page, -80);
   await page.waitForTimeout(200);
   await expect(page.locator('.pswp')).toHaveCount(0);
-  await page.locator('button.cab-figure').first().tap();
+  // a figure the frame shows: framed to five cabinets on the cover, the cabinet's top may stand past the frame
+  const frame = (await page.locator('.cabinet-scene').boundingBox())!;
+  const figures = page.locator('button.cab-figure');
+  let shown = -1;
+  for (let i = 0; i < (await figures.count()) && shown < 0; i++) {
+    const b = await figures.nth(i).boundingBox();
+    if (b && b.y >= frame.y && b.y + b.height <= frame.y + frame.height && b.x >= frame.x && b.x + b.width <= frame.x + frame.width) shown = i;
+  }
+  expect(shown).toBeGreaterThanOrEqual(0);
+  await figures.nth(shown).tap();
   await expect(page.locator('.pswp')).toBeVisible();
 });
 

@@ -14,6 +14,7 @@ import {
   getFixtureAsym,
   getFixtureUnique,
   getFixtureSync,
+  getFixtureOnly,
   getFixtureImageRef,
   resolveFixtureArt,
 } from '../fixtures';
@@ -553,5 +554,51 @@ describe('fixture sync states (?fxsync=1): the tiles\' sync badge and xN count, 
     const figures = getFixtureFigures();
     expect(figures.map((f) => f._id)).toEqual(FIXTURE_FIGURES.map((f) => f._id));
     expect(figures.every((f) => f.imageUrl === undefined && localOf(f) !== undefined)).toBe(true);
+  });
+});
+
+describe('a wall of one fixture (?fxonly=<name>): a homogeneous dense wall for the case budget (MOB-NAV-2)', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('off for anything absent or not a fixture: the fixture set itself', () => {
+    for (const query of ['/', '/?fxonly=', '/?fxonly=bogus', '/?fxonly=fx-spike']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureOnly(), query).toBeUndefined();
+      expect(getFixtureFigures()).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('every slot of every copy is that one fixture, ids unique, each still drawn as its matted cut-out', () => {
+    window.history.pushState({}, '', '/?fxonly=spike&fx=3');
+    const spike = FIXTURE_FIGURES.find((f) => f._id === 'fx-spike')!;
+    expect(getFixtureOnly()).toBe(spike);
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length * 3);
+    expect(new Set(figures.map((f) => f._id)).size).toBe(figures.length);
+    expect(figures[0]._id).toBe('fx-spike');
+    expect(figures[1]._id).toBe('fx-spike-x2');
+    expect(figures[figures.length - 1]._id).toBe(`fx-spike-x${figures.length}`);
+    for (const f of figures) {
+      expect(f.name).toBe(spike.name);
+      expect(f.dimensions).toEqual(spike.dimensions);
+      expect(f.imageUrl).toBe(spike.imageUrl);
+      expect(getDisplayMeta(f)).toEqual(getDisplayMeta(spike));
+    }
+  });
+
+  it('on its own: one copy of the manifest, every slot that fixture', () => {
+    window.history.pushState({}, '', '/?fxonly=rem');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    expect(figures.map((f) => f.name)).toEqual(FIXTURE_FIGURES.map(() => 'Rem'));
+  });
+
+  it('one copy of the manifest is as many of the one fixture; combines with ?fxwidth', () => {
+    window.history.pushState({}, '', '/?fxonly=miku-nendo&fxwidth=narrow');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    for (const f of figures) expect(f.dimensions).toEqual({ heightMm: 100, widthMm: 43 });
   });
 });

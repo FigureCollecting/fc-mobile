@@ -346,6 +346,20 @@ export function getFixtureAsym(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_ASYM_PARAM) === '1';
 }
 
+const FIXTURE_ONLY_PARAM = 'fxonly';
+
+/**
+ * Dev-only switch for a homogeneous wall: `?fxonly=spike` stands that one
+ * fixture (fx-spike) in every slot of the manifest, every copy (`?fx=N`), so
+ * the case can be measured on a dense wall of one small figure (MOB-NAV-2's
+ * tile budget). Undefined (the manifest as it is) for anything absent or not
+ * a fixture's name.
+ */
+export function getFixtureOnly(): Figure | undefined {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_ONLY_PARAM);
+  return raw ? FIXTURE_FIGURES.find((f) => f._id === `fx-${raw}`) : undefined;
+}
+
 const FIXTURE_UNIQUE_PARAM = 'fxuniq';
 
 /**
@@ -460,7 +474,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * widths (getFixtureWidths), `?fxasym=1` draws two of them off-centre in
  * their pictures (getFixtureAsym), `?fxuniq=1` draws each copy at its own
  * picture URL (getFixtureUnique), `?fxsync=1` gives each a sync badge and a
- * count (getFixtureSync).
+ * count (getFixtureSync), `?fxonly=<name>` stands one fixture in every slot
+ * (getFixtureOnly).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -469,12 +484,16 @@ export function getFixtureFigures(
   asym = getFixtureAsym(),
   unique = getFixtureUnique(),
   sync = getFixtureSync(),
+  only = getFixtureOnly(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
-    for (const base of FIXTURE_FIGURES) {
-      const figure = withWidths(toBranch(copy === 1 ? base : { ...base, _id: `${base._id}-x${copy}` }, branch, asym), widths);
+    for (const [slot, each] of FIXTURE_FIGURES.entries()) {
+      // one fixture in every slot: its copies numbered through the whole wall
+      const base = only ?? each;
+      const n = only ? (copy - 1) * FIXTURE_FIGURES.length + slot + 1 : copy;
+      const figure = withWidths(toBranch(n === 1 ? base : { ...base, _id: `${base._id}-x${n}` }, branch, asym), widths);
       out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }

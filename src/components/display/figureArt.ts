@@ -120,6 +120,28 @@ export function drawnWidthMm(heightMm: number, aspect: number, margins: PictureM
   return picture.widthMm * Math.max(0, 1 - clearFrac(margins.left ?? 0) - clearFrac(margins.right ?? 0));
 }
 
+/** A picture box's clear part round the figure in it, as fractions of the box, as pictureBox and drawnWidthMm draw it. */
+export interface ClearInset {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * The clear rows and columns of a picture drawn by pictureBox, each a fraction of its box: the margins it was drawn
+ * over (the bottom first, the top what is left of MAX_MARGINS_FRAC), and its clear sides (together under the whole
+ * width); none for framed and plate art, an opaque box.
+ */
+export function clearInset(kind: FigureArtKind, margins: PictureMargins): ClearInset {
+  if (kind !== 'cutout' && kind !== 'masked') return { top: 0, bottom: 0, left: 0, right: 0 };
+  const bottom = Math.min(MAX_MARGINS_FRAC, clearFrac(margins.bottom));
+  const top = Math.min(MAX_MARGINS_FRAC - bottom, clearFrac(margins.top));
+  const left = Math.min(1, clearFrac(margins.left ?? 0));
+  const right = Math.min(1 - left, clearFrac(margins.right ?? 0));
+  return { top, bottom, left, right };
+}
+
 /**
  * How far along the wall a picture widthMm wide is moved so the figure in
  * it, its opaque columns, stands centred on its slot rather than the

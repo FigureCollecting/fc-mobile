@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { MAX_MARGINS_FRAC, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox, pictureOffsetMm } from '../figureArt';
+import { MAX_MARGINS_FRAC, clearInset, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox, pictureOffsetMm } from '../figureArt';
 import { UNMATTED_META } from '../displayMeta';
 import type { FigureDisplayMeta } from '../displayMeta';
 
@@ -132,6 +132,33 @@ describe('drawnWidthMm: how wide the figure in a cut-out or masked picture draws
   it(`keeps the ${MAX_MARGINS_FRAC * 100} % cap on the rows, and never goes below 0 however clear the sides say they are`, () => {
     expect(drawnWidthMm(100, 1, { top: 0.95, bottom: 0.05, left: 0, right: 0 })).toBeCloseTo(1000, 6);
     expect(drawnWidthMm(100, 1, { top: 0, bottom: 0, left: 0.7, right: 0.6 })).toBe(0);
+  });
+});
+
+describe('clearInset: the clear rows and columns round the figure in its picture, which cost px and draw nothing', () => {
+  it('a cut-out or masked picture: its margins, as pictureBox draws it over them', () => {
+    for (const kind of ['cutout', 'masked'] as const) {
+      expect(clearInset(kind, { top: 0.25, bottom: 0.05, left: 0.1, right: 0.2 })).toEqual({ top: 0.25, bottom: 0.05, left: 0.1, right: 0.2 });
+    }
+  });
+
+  it('framed and plate art are opaque boxes: nothing clear', () => {
+    for (const kind of ['framed', 'plate'] as const) {
+      expect(clearInset(kind, { top: 0.25, bottom: 0.05, left: 0.1, right: 0.2 })).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
+    }
+  });
+
+  it(`the rows as pictureBox caps them (${MAX_MARGINS_FRAC * 100} % together, the bottom first); the sides never past the whole width; none known or negative, 0`, () => {
+    // pictureBox's own rows: the figure stands its height between them
+    const capped = clearInset('cutout', { top: 0.95, bottom: 0.05, left: 0, right: 0 });
+    expect(capped.bottom).toBe(0.05);
+    expect(capped.top).toBeCloseTo(0.85, 12);
+    const box = pictureBox('cutout', 100, 1, { top: 0.95, bottom: 0.05 }, 1);
+    expect(box.heightMm * (1 - capped.top - capped.bottom)).toBeCloseTo(100, 9);
+    expect(clearInset('cutout', { top: 0, bottom: 0.97 })).toEqual({ top: 0, bottom: MAX_MARGINS_FRAC, left: 0, right: 0 });
+    expect(clearInset('masked', { top: 0, bottom: 0, left: 0.7, right: 0.6 })).toEqual({ top: 0, bottom: 0, left: 0.7, right: expect.closeTo(0.3, 12) });
+    expect(clearInset('cutout', { top: 0, bottom: 0, left: 1.4, right: 0.2 })).toEqual({ top: 0, bottom: 0, left: 1, right: 0 });
+    expect(clearInset('cutout', { top: -0.1, bottom: Number.NaN, left: -0.2 })).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
   });
 });
 

@@ -275,7 +275,6 @@ for (const size of FOLD8) {
   }
 }
 
-// the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
 // close-out 3, ruling 27: the mixed wall paged to its end on the Fold8 as the installed app (full screen), where a
 // snap to three whole once left the last cabinet out of every page and made every other press go nowhere
 for (const size of SHOT_VIEWPORTS.filter((v) => /^fold8-.*-full$/.test(v.name))) {
@@ -314,6 +313,46 @@ for (const size of SHOT_VIEWPORTS.filter((v) => /^fold8-.*-full$/.test(v.name)))
   });
 }
 
+// close-out 4, ruling 32: on the mixed wall a walk could settle on the stop halfway between two cabinets where the next
+// page opened, so the next press of Next went nowhere (the button only went off); from wherever a walk settles, on
+// any page, Next moves the camera on and Prev back
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open-rotated')) {
+  test(`the mixed wall: after a walk on any page, Next moves the camera on and Prev back: ${size.name}`, async ({ page }) => {
+    test.setTimeout(600_000);
+    await openCase(page, size, '&fx=30', { view: 'wall', swipe: 'camera', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    const next = page.getByRole('button', { name: 'Next cabinet' });
+    const prev = page.getByRole('button', { name: 'Previous cabinet' });
+    const x = async () => (await cameraOf(page)).x;
+    let moves = 0;
+    let last = false;
+    for (let p = 0; p < 40 && !last; p++) {
+      const opened = await x();
+      last = await next.isDisabled();
+      for (const dx of [-45, -70, -100, -130, -170, -220, -290, 70, 130]) {
+        // a finger moving left walks on, so Next is the press that could find itself where it stands
+        const button = dx < 0 ? next : prev;
+        await swipe(page, dx);
+        await page.waitForTimeout(100);
+        const walked = await x();
+        const at = `page ${p} walk ${dx} to ${walked} focus ${await page.locator('.cabinet-scene').getAttribute('data-focus')}`;
+        if (await button.isEnabled()) {
+          await button.click();
+          await expect.poll(async () => Math.sign((await x()) - walked), { message: `${at}: ${dx < 0 ? 'Next' : 'Prev'}` }).toBe(dx < 0 ? 1 : -1);
+          moves++;
+        }
+        // back to this page as it opened: the pages open left to right (a walk within the first page leaves Prev off)
+        if ((await prev.isDisabled()) && (await x()) !== opened) await next.click();
+        while ((await x()) > opened && (await prev.isEnabled())) await prev.click();
+        while ((await x()) < opened && (await next.isEnabled())) await next.click();
+        expect(await x(), at).toBe(opened);
+      }
+      if (!last) await next.click();
+    }
+    expect(moves).toBeGreaterThan(40);
+  });
+}
+
+// the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
 for (const size of FOLD8.filter((v) => v.name === 'fold8-open' || v.name === 'fold8-open-rotated')) {
   test(`still above the tabs with the detail pane open, then offline: ${size.name}`, async ({ page, context }) => {
     await openFramed(page, size, 'cabinet');

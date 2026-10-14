@@ -29,6 +29,8 @@ import {
   WALK_MIN_PX,
   panStops,
   settlePan,
+  frameCentreX,
+  pageInView,
   type Box,
   type Framing,
   type FramingInput,
@@ -910,6 +912,97 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
       expect(settleWalk(f, wall, stops, -dead)!.x).toBeGreaterThan(f.camera.x);
       expect(settleWalk(f, wall, stops, dead)!.x).toBeLessThan(f.camera.x);
     }
+  });
+});
+
+describe('close-out 4, ruling 32: Next and Prev always move the picture, from wherever a page opens, a walk settles or a pan settles', () => {
+  // the scene's frame at the Fold8's four panels, in the browser and as the installed app (full screen), both ways round, and the 412 px phone
+  const PANELS = [
+    { width: 443, height: 344 },
+    { width: 616, height: 143 },
+    { width: 870, height: 261 },
+    { width: 657, height: 473 },
+    { width: 444, height: 487 },
+    { width: 870, height: 443 },
+    { width: 657, height: 656 },
+    { width: 412, height: 701 },
+  ];
+  const SWEEP = [300, 412, 443, 444, 520, 616, 657, 870].flatMap((width) => Array.from({ length: 24 }, (_, k) => ({ width, height: 140 + 40 * k })));
+  const WALLS: [string, WallLayout][] = WALL_PATTERNS.flatMap((p) =>
+    [1, 2, 3, 4, 5, 6, 8, 13, 18].map((n): [string, WallLayout] => [`${p.id} x${n}`, wallLayout(Array.from({ length: n }, (_, i) => p.profiles[i % p.profiles.length]))]),
+  );
+  // the headroom over each cabinet follows its tallest top figure: even, alternating, and uneven
+  const HEADROOMS: [string, (i: number) => number][] = [
+    ['300', () => 300],
+    ['300/610', (i) => (i % 2 ? 610 : 300)],
+    ['uneven', (i) => 300 + ((i * 137) % 351)],
+  ];
+  const cases = function* () {
+    for (const [name, wall] of WALLS) {
+      for (const [hr, headroom] of HEADROOMS) {
+        for (const frame of hr === '300' ? [...PANELS, ...SWEEP] : PANELS) {
+          const input: FramingInput = { frame, wall, headroomMm: wall.cabinets.map((_, i) => headroom(i)), view: 'wall', focus: 0, shelf: 0 };
+          yield { input, wall, at: `${name} hr=${hr} ${frame.width}x${frame.height}` };
+        }
+      }
+    }
+  };
+
+  it('walks: from every page as it opens and every stop a walk settles on, Next moves the camera strictly on and Prev strictly back; every page opens nearest one of its own cabinets', () => {
+    let presses = 0;
+    for (const { input, wall, at } of cases()) {
+      const pages = wallPages(input);
+      const openings = pages.map((page) => frameCase({ ...input, focus: page[0] }).camera.x);
+      // the scene's state after a press (its page's first cabinet, as framed) or a walk (the stop's focus, at the stop)
+      const states = [...pages.map((page, p) => ({ focus: page[0], x: openings[p] })), ...walkStops(input).map((s) => ({ focus: s.focus, x: s.x }))];
+      for (const { focus, x } of states) {
+        const p = pages.findIndex((page) => page.includes(focus));
+        if (p + 1 < pages.length) expect(openings[p + 1], `${at} Next from focus ${focus} at ${x}`).toBeGreaterThan(x);
+        if (p > 0) expect(openings[p - 1], `${at} Prev from focus ${focus} at ${x}`).toBeLessThan(x);
+        presses++;
+      }
+      // so a walk that settles where a page opens has its focus in that page
+      pages.forEach((page, p) => expect(page, `${at} page [${page}] opens at ${openings[p]}`).toContain(nearestCabinet(wall, openings[p])));
+    }
+    expect(presses).toBeGreaterThan(50_000);
+  }, 180_000);
+
+  it('pans: from every stop a pan of any page settles on, the pager pages from the cabinet the frame centres on: Next moves the picture strictly on, Prev strictly back', () => {
+    let presses = 0;
+    for (const { input, wall, at } of cases()) {
+      const pages = wallPages(input);
+      const opened = pages.map((page) => frameCase({ ...input, focus: page[0] }));
+      for (const f of opened) {
+        for (const s of panStops(f, wall)) {
+          const shown = panFraming(f, s.panPx);
+          const x = frameCentreX(shown.framing, shown.panPx);
+          const p = pageInView(pages, wall, shown.framing, shown.panPx);
+          expect(pages[p], `${at} pan ${s.panPx}`).toContain(nearestCabinet(wall, x));
+          // a press opens the page unpanned: its picture centres on its camera
+          if (p + 1 < pages.length) expect(opened[p + 1].camera.x, `${at} Next from pan ${s.panPx} at ${x}`).toBeGreaterThan(x);
+          if (p > 0) expect(opened[p - 1].camera.x, `${at} Prev from pan ${s.panPx} at ${x}`).toBeLessThan(x);
+          presses++;
+        }
+      }
+    }
+    expect(presses).toBeGreaterThan(50_000);
+  }, 180_000);
+
+  it('the frame centre: an unpanned picture centres on its camera; a slid one where the slide brings, the same once retaken farther along', () => {
+    const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));
+    const f = frameCase({ frame: { width: 657, height: 473 }, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(frameCentreX(f, 0)).toBe(f.camera.x);
+    const depth = project(f.camera, f.look).depth;
+    const slide = -100;
+    expect(frameCentreX(f, slide)).toBeCloseTo(f.camera.x - (slide * depth) / f.camera.focalPx, 6);
+    const far = panFraming(f, -20_000);
+    expect(far.framing.camera.x).toBeGreaterThan(f.camera.x);
+    expect(frameCentreX(far.framing, far.panPx)).toBeCloseTo(frameCentreX(f, -20_000), 6);
+    // the page in view is the one holding the cabinet whose centre is nearest the frame centre
+    const pages = wallPages({ frame: { width: 657, height: 473 }, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    const x = frameCentreX(far.framing, far.panPx);
+    expect(pages[pageInView(pages, wall, far.framing, far.panPx)]).toContain(nearestCabinet(wall, x));
+    expect(pageInView(pages, wall, far.framing, far.panPx)).toBeGreaterThan(0);
   });
 });
 

@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
+import { boxCorners, project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox, type Box } from '../src/components/display/caseFraming';
@@ -297,6 +297,28 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
   return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass, whole, coarseNearer };
 }
 
+/**
+ * Ruling 33: the widest stretch (px) of the frame where the wall stands, from where its camera and pan put the wall's
+ * two ends (the published boxes, any wall), that no drawn cabinet covers as the browser draws it; and the narrowest
+ * drawn cabinet.
+ */
+function wallCover(scene: Awaited<ReturnType<typeof drawn>>) {
+  const c = scene.camera;
+  const camera: Camera = { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
+  const xs = (b: number[]) => boxCorners(b[0], b[1], 0, b[2], b[3], b[4]).map((p) => project(camera, p).x + scene.pan);
+  const lo = Math.max(0, Math.min(...xs(scene.wall[0])));
+  const hi = Math.min(camera.frame.width, Math.max(...xs(scene.wall[scene.wall.length - 1])));
+  const spans = scene.spans.map((s) => [Math.max(lo, s.x0), Math.min(hi, s.x1)] as const).filter(([a, b]) => b > a);
+  spans.sort((a, b) => a[0] - b[0]);
+  let reach = lo;
+  let blank = 0;
+  for (const [a, b] of spans) {
+    blank = Math.max(blank, a - reach);
+    reach = Math.max(reach, b);
+  }
+  return { blank: Math.max(blank, hi - reach), narrowest: Math.min(...scene.spans.map((s) => s.x1 - s.x0)) };
+}
+
 /** Open the case at `size` in fixture mode, swipe it into `state`, and let it settle: what it draws, against its frame. */
 async function settled(page: Page, size: { width: number; height: number }, state: State, wall: Wall = SPARSE) {
   await page.addInitScript((prefs) => {
@@ -457,6 +479,55 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
       expect.soft(frame.framed.length, `cabinet fronts the frame shows: ${frame.framed.join(',')}`).toBeLessThanOrEqual(MAX_CABINETS);
       expect.soft(frame.framed.filter((i) => !drawnSet.includes(i)), 'cabinets the frame shows but the case does not draw').toEqual([]);
       expect(frame.blank, `blank wall inside the frame where a cabinet stands (px; a cabinet is ${Math.round(frame.narrowest)} px)`).toBeLessThan(frame.narrowest / 2);
+    });
+  }
+
+  // close-out 4, ruling 33: a press of Next or Prev (the button taking focus) once scrolled the scene's clipped overflow
+  // sideways, so the picture and the pager slid ~200 px off the frame and half of it showed bare wall while the camera
+  // it reported stayed right; the scene never scrolls, its picture is drawn where its camera and pan put it, and its
+  // cabinets cover the frame wherever the wall stands in it. The mixed wall, pressed as soon as the case shows (the
+  // challenger's repro: 2 runs in 5)
+  for (const mode of ['camera', 'pan'] as const) {
+    test(`swipes and presses never scroll the scene: its cabinets fill the frame where its camera puts them, ${mode} mode: ${size.name}`, async ({ page }) => {
+      test.setTimeout(180_000);
+      await page.addInitScript((prefs) => {
+        localStorage.setItem('onboarding_complete', '1');
+        localStorage.setItem('fc-fixture-mode', 'on');
+        localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+      }, { view: 'wall', swipe: mode, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+      await page.setViewportSize(size);
+      await page.goto('/?layout=case&fx=30');
+      await page.waitForSelector('button.cab-figure');
+      const host = page.locator('.cabinet-scene');
+      const next = page.getByRole('button', { name: 'Next cabinet' });
+      const prev = page.getByRole('button', { name: 'Previous cabinet' });
+      const steps: [string, () => Promise<void>][] = [
+        ['Next', () => next.click()],
+        ['Next', () => next.click()],
+        ['swipe -150', () => swipe(page, -150)],
+        ['Next', () => next.click()],
+        ['Prev', () => prev.click()],
+        ['swipe 200', () => swipe(page, 200)],
+        ['Prev', () => prev.click()],
+        ['swipe -400', () => swipe(page, -400)],
+        ['Next', () => next.click()],
+      ];
+      for (const [k, [name, step]] of steps.entries()) {
+        await step();
+        await page.waitForTimeout(200);
+        const at = `step ${k} ${name}`;
+        const placed = await host.evaluate((h) => {
+          const f = h.getBoundingClientRect();
+          const left = (sel: string) => h.querySelector(sel)!.getBoundingClientRect().left - f.left;
+          return { scroll: [h.scrollLeft, h.scrollTop], picture: left('.cabinet-scene__viewport'), prev: left('.cabinet-scene__step--prev') };
+        });
+        const scene = await drawn(page);
+        expect.soft(placed.scroll, `${at}: the scene scrolled`).toEqual([0, 0]);
+        expect.soft(placed.picture, `${at}: the picture's left edge against its pan ${scene.pan}`).toBeCloseTo(scene.pan, 0);
+        expect.soft(placed.prev, `${at}: the Previous button's left edge`).toBeCloseTo(4, 0);
+        const { blank, narrowest } = wallCover(scene);
+        expect.soft(blank, `${at}: bare wall inside the frame where the wall stands (px; a cabinet is ${Math.round(narrowest)} px)`).toBeLessThan(narrowest / 2);
+      }
     });
   }
 }

@@ -474,6 +474,15 @@ describe('CabinetScene: the scene is the space its page gives it, and the camera
     expect(host.style.height).toBe('');
   });
 
+  it('close-out 4, ruling 33: never scrolls sideways or down under its picture: it clips what overflows (no scroll box), and a scroll that gets in anyway is put back at once', () => {
+    const { host } = scene(getFixtureFigures(30), { view: 'wall' });
+    expect(getComputedStyle(host).overflow).toBe('clip');
+    host.scrollLeft = 202;
+    host.scrollTop = 40;
+    fireEvent.scroll(host);
+    expect([host.scrollLeft, host.scrollTop]).toEqual([0, 0]);
+  });
+
   it('re-frames the camera when the scene itself is resized (a banner or chips row above it), not only the window', () => {
     const observed: { callback: () => void; targets: Element[] }[] = [];
     vi.stubGlobal(
@@ -750,6 +759,73 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       cleanup();
     }
   }, 60_000);
+
+  /** The wall x the scene's frame centres on, on the cabinets' front: its camera's, less what the photo is slid. */
+  const centreX = (host: HTMLElement) => {
+    const camera = cameraOf(host);
+    return unprojectToPlaneZ(camera, camera.frame.width / 2 - Number(host.dataset.pan), camera.frame.height / 2, 0)![0];
+  };
+
+  it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', () => {
+    for (const frame of [{ width: 443, height: 344 }, { width: 657, height: 473 }, ...FULL_FRAMES]) {
+      const { host } = mixedWall(frame);
+      const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
+      const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
+      let moves = 0;
+      let last = false;
+      for (let page = 0; page < 40 && !last; page++) {
+        const opened = host.dataset.cameraX;
+        last = next.disabled;
+        for (const dx of [-45, -70, -100, -130, -170, -220, -290, 70, 130]) {
+          for (const [button, sign] of [[next, 1], [prev, -1]] as const) {
+            drag(host, dx);
+            const x = Number(host.dataset.cameraX);
+            const at = `${frame.width}x${frame.height} page ${page} walk ${dx} to ${x} focus ${host.dataset.focus}`;
+            if (!button.disabled) {
+              tap(button);
+              expect(Math.sign(Number(host.dataset.cameraX) - x), `${at}: ${button.getAttribute('aria-label')} to ${host.dataset.cameraX}`).toBe(sign);
+              moves++;
+            }
+            // back to this page as it opened: the pages open left to right (a walk within the first page leaves Prev off)
+            if (prev.disabled && host.dataset.cameraX !== opened) tap(next);
+            while (Number(host.dataset.cameraX) > Number(opened) && !prev.disabled) tap(prev);
+            while (Number(host.dataset.cameraX) < Number(opened) && !next.disabled) tap(next);
+            expect(host.dataset.cameraX, at).toBe(opened);
+          }
+        }
+        if (!last) tap(next);
+      }
+      expect(moves).toBeGreaterThan(20);
+      cleanup();
+    }
+  }, 120_000);
+
+  it('pan mode, wall view (close-out 4, ruling 32): the pager pages from where the pan settled, never back past it', () => {
+    for (const frame of [{ width: 657, height: 473 }, { width: 443, height: 344 }]) {
+      const { host } = scene(getFixtureFigures(120), { swipe: 'pan', view: 'wall' }, { frameFallback: frame });
+      const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
+      const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
+      const at = `${frame.width}x${frame.height}`;
+      // a few swipes into the wall, then Next opens a page farther on than the picture stands, and Prev one nearer
+      for (let k = 0; k < 3; k++) drag(host, -400);
+      const panned = centreX(host);
+      expect(Number(host.dataset.pan), at).toBeLessThan(0);
+      tap(next);
+      expect(host.dataset.pan, at).toBe('0');
+      expect(centreX(host), `${at} Next after the pan`).toBeGreaterThan(panned);
+      for (let k = 0; k < 3; k++) drag(host, -400);
+      const again = centreX(host);
+      tap(prev);
+      expect(centreX(host), `${at} Prev after the pan`).toBeLessThan(again);
+      // panned out to the wall's end, the picture is on the last page: Next has nowhere to go
+      for (let k = 0; k < 60; k++) drag(host, -400);
+      const end = centreX(host);
+      expect(next.disabled, `${at} Next at the end at ${end}`).toBe(true);
+      tap(prev);
+      expect(centreX(host), `${at} Prev from the end`).toBeLessThan(end);
+      cleanup();
+    }
+  }, 120_000);
 
   for (const view of ['cabinet', 'shelf'] as const) {
     it(`${view} view: Next is disabled on the last cabinet, Previous on the first`, () => {

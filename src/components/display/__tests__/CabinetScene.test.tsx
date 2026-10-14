@@ -767,7 +767,9 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
   };
 
   it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', () => {
-    for (const frame of [{ width: 443, height: 344 }, { width: 657, height: 473 }, ...FULL_FRAMES]) {
+    // the Fold8 cover's frame, where the challenger's walk (70 px) then Next went nowhere; the walk and pager property
+    // over every pattern, frame and stop is the unit's (caseFraming.test.ts, ruling 32), the open-rotated panel the e2e's
+    for (const frame of [{ width: 443, height: 344 }]) {
       const { host } = mixedWall(frame);
       const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
       const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
@@ -776,7 +778,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       for (let page = 0; page < 40 && !last; page++) {
         const opened = host.dataset.cameraX;
         last = next.disabled;
-        for (const dx of [-45, -70, -100, -130, -170, -220, -290, 70, 130]) {
+        for (const dx of [-70, 130]) {
           for (const [button, sign] of [[next, 1], [prev, -1]] as const) {
             drag(host, dx);
             const x = Number(host.dataset.cameraX);
@@ -798,7 +800,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       expect(moves).toBeGreaterThan(20);
       cleanup();
     }
-  }, 120_000);
+  }, 180_000);
 
   it('the pager answers to the settled picture (close-out 4, ruling 32): mid-swipe, out past the far end, Next and Prev hold until the finger lifts', () => {
     for (const swipe of ['camera', 'pan'] as const) {

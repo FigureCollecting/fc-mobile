@@ -281,6 +281,35 @@ describe('CaseGL atlas planning', () => {
     expect(gl.stats.placeholders).toBe(0);
   });
 
+  it('keeps at most imageCacheMax decoded pictures: past it, those the atlas no longer paints are let go (fetched again if needed)', async () => {
+    const arts = (tag: string) => Array.from({ length: 8 }, (_, i): FigureArt => ({ kind: 'cutout', url: `https://img.test/${tag}${i}.png`, alphaUrl: `https://img.test/${tag}${i}.png` }));
+    const loadImage = vi.fn(async () => ({ width: 100, height: 200 }) as unknown as CanvasImageSource);
+    const { gl } = make({ loadImage, imageCacheMax: 10 });
+    gl.setScene(sceneOf(arts('a')));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    expect(gl.cachedImages()).toBe(8);
+    gl.setScene(sceneOf(arts('b')));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    // 16 decoded, past 10: only the 8 the atlas paints now are kept
+    expect(gl.cachedImages()).toBe(8);
+    expect(loadImage).toHaveBeenCalledTimes(16);
+    gl.setScene(sceneOf(arts('a')));
+    gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await gl.ready();
+    expect(loadImage).toHaveBeenCalledTimes(24);
+    // under the cap nothing is let go
+    const roomy = make({ loadImage: vi.fn(async () => ({ width: 100, height: 200 }) as unknown as CanvasImageSource), imageCacheMax: 100 });
+    roomy.gl.setScene(sceneOf(arts('a')));
+    roomy.gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await roomy.gl.ready();
+    roomy.gl.setScene(sceneOf(arts('b')));
+    roomy.gl.setView({ camera, panPx: 0, dpr: 2, settled: true });
+    await roomy.gl.ready();
+    expect(roomy.gl.cachedImages()).toBe(16);
+  });
+
   it('a build overtaken by a newer one is dropped: only the newest plan is painted', async () => {
     const waits: { url: string; go: () => void }[] = [];
     const loadImage = (url: string) => new Promise<CanvasImageSource>((r) => waits.push({ url, go: () => r({ width: 100, height: 200 } as unknown as CanvasImageSource) }));

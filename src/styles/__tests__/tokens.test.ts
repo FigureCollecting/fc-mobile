@@ -288,10 +288,15 @@ describe('design tokens: one notch up at desktop widths, the phone and Fold8 siz
  * rule: the case's in-scene plates, drawn in scene px and scaled by the case
  * camera. Every other rule of those files is guarded like any file.
  */
-const LITERAL_SIZE_EXEMPT: Record<string, { rule: RegExp; why: string }> = {
+const LITERAL_SIZE_EXEMPT: Record<string, { rule: RegExp; why: string; canvasFont?: boolean }> = {
   'components/display/CabinetScene.tsx': {
     rule: /^\.cabinet-scene \.(?:cab-plate|cab-figure__plate)$/,
     why: 'the in-scene plates, sized in scene px and scaled by the case camera',
+  },
+  'components/display/gl/glScene.ts': {
+    rule: /^$/,
+    canvasFont: true,
+    why: "CASE-GL: the same plates painted into the canvas's texture atlas, sized in atlas texels and scaled by the case camera",
   },
 };
 
@@ -408,6 +413,7 @@ function literalSizeOffenders(source: string, rel: string): string[] {
         offence = cssSizeOffence(value, shorthand);
       }
       if (offence === null) continue;
+      if (exempt?.canvasFont && re.source.startsWith('\\.font')) continue;
       const selector = ruleAt(source, m.index!);
       if (exempt && selector && selector.split(',').every((part) => exempt.rule.test(part.trim()))) continue;
       const line = source.slice(0, m.index).split('\n').length;
@@ -482,6 +488,14 @@ describe('the literal-size guard reads every way a font size is written', () => 
     ]) {
       expect(offences(source), source).toEqual([]);
     }
+  });
+
+  it("exempts the canvas renderer's atlas plates (a canvas font in gl/glScene.ts) only, not its CSS nor another file's canvas font", () => {
+    const gl = 'components/display/gl/glScene.ts';
+    expect(offences('ctx.font = `600 ${size}px system-ui`;', gl)).toEqual([]);
+    expect(offences("ctx.font = '600 9px system-ui';", gl)).toEqual([]);
+    expect(offences('  .case-gl { font-size: 9px; }', gl)).toHaveLength(1);
+    expect(offences("ctx.font = '600 9px system-ui';")).toHaveLength(1);
   });
 
   it("exempts the case's in-scene plates in CabinetScene.tsx only, not the rest of that file", () => {

@@ -55,6 +55,8 @@ export interface CullInput {
   readonly cabinets: readonly CabinetBounds[];
   readonly boards: (cab: number) => readonly Board[];
   readonly cards: readonly CardBox[];
+  /** The frustum's reach past the frame on each side, as a share of it (0: the frame; the atlas prefetches at 0.5). */
+  readonly margin?: number;
 }
 
 /** Cards in, and how many each stage removed. */
@@ -104,7 +106,8 @@ function screenRect(camera: Camera, panPx: number, points: readonly Vec3[]): Scr
   return { x0, y0, x1, y1 };
 }
 
-const inFrame = (r: ScreenRect | null, w: number, h: number): r is ScreenRect => r !== null && r.x1 > 0 && r.x0 < w && r.y1 > 0 && r.y0 < h;
+const inFrame = (r: ScreenRect | null, w: number, h: number, m = 0): r is ScreenRect =>
+  r !== null && r.x1 > -m * w && r.x0 < w + m * w && r.y1 > -m * h && r.y0 < h + m * h;
 
 const boxPoints = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): Vec3[] => {
   const out: Vec3[] = [];
@@ -154,12 +157,12 @@ class Coverage {
 }
 
 export function cullCards(input: CullInput): CullResult {
-  const { camera, panPx, cabinets, boards, cards } = input;
+  const { camera, panPx, cabinets, boards, cards, margin = 0 } = input;
   const { width: w, height: h } = camera.frame;
   const rectOf = (pts: readonly Vec3[]) => screenRect(camera, panPx, pts);
 
   // 1. frustum: cabinets, then cards
-  const cabSeen = cabinets.map((c) => inFrame(rectOf(boxPoints(c.x0, c.x1, c.y0, c.y1, c.z0, c.z1)), w, h));
+  const cabSeen = cabinets.map((c) => inFrame(rectOf(boxPoints(c.x0, c.x1, c.y0, c.y1, c.z0, c.z1)), w, h, margin));
   // 2. cabinets behind a nearer opaque front, nearest fronts first
   const cabHidden = cabinets.map(() => false);
   const fronts = cabinets.map((c, i) => ({ c, i })).sort((a, b) => b.c.z1 - a.c.z1);
@@ -190,7 +193,7 @@ export function cullCards(input: CullInput): CullResult {
       continue;
     }
     const r = rectOf(boxPoints(card.x0, card.x1, card.y0, card.y1, card.z, card.z));
-    if (!inFrame(r, w, h)) {
+    if (!inFrame(r, w, h, margin)) {
       frustum++;
       continue;
     }

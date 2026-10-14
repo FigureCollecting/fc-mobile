@@ -45,6 +45,16 @@ describe('cullCards', () => {
     expect(cullCards({ camera, panPx: 20, cabinets: [cab(-1500, 1500)], boards: noBoards, cards: [left] }).visible).toEqual([left.id]);
   });
 
+  it('frustum with a margin (the atlas prefetch): a card half a frame off the edge is kept, one past it is not', () => {
+    // x = 1250 mm at z -100 draws at 200 + 400 * 1250 / 2100 = 438 px: past 400, inside 400 + 0.5 x 400
+    const near = card(0, 1250, 1300, 900, 1100, -100);
+    const far = card(0, 3000, 3100, 900, 1100, -100);
+    const input = { camera, panPx: 0, cabinets: [cab(-4000, 4000)], boards: noBoards, cards: [near, far] };
+    expect(cullCards(input).visible).toEqual([]);
+    expect(cullCards({ ...input, margin: 0.5 }).visible).toEqual([near.id]);
+    expect(cullCards({ ...input, margin: 0.5 }).stages.frustum).toBe(1);
+  });
+
   it('frustum: above and below the frame, and behind the camera', () => {
     const above = card(0, -50, 50, 1900, 2000, -100);
     const below = card(0, -50, 50, -10, 0, -100);

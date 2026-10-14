@@ -31,16 +31,28 @@ function domQuads(profileId: string): Q[] {
   });
 }
 
-const key = (q: Q | ColoredQuad) => [q.cls, ...[...q.a, ...q.u, ...q.v].map((n) => (Math.round(n * 10) / 10).toFixed(1))].join('|').replace(/-0\.0/g, '0.0');
+const nums = (q: Q | ColoredQuad) => [...q.a, ...q.u, ...q.v];
+/** Each classic face matched to one canvas face of its class, every number within 0.01 mm (the classic view rounds its px). */
+function unmatched(dom: Q[], gl: readonly ColoredQuad[]): string[] {
+  const left = [...gl];
+  const misses: string[] = [];
+  for (const d of dom) {
+    const i = left.findIndex((g) => g.cls === d.cls && nums(g).every((n, k) => Math.abs(n - nums(d)[k]) <= 0.01));
+    if (i < 0) misses.push(`${d.cls} ${nums(d).map((n) => n.toFixed(2)).join(',')}`);
+    else left.splice(i, 1);
+  }
+  return [...misses, ...left.map((g) => `extra ${g.cls} ${nums(g).map((n) => n.toFixed(2)).join(',')}`)];
+}
 
 describe('cabinetQuads: the canvas draws the cabinet the classic view draws, face for face', () => {
   for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]) {
     it(`${profile.name}: every face, its material and its corner and sides in the world`, () => {
       const slot = wallLayout([profile]).cabinets[0];
-      const dom = domQuads(profile.id).map(key).sort();
-      const gl = cabinetQuads(slot).map(key).sort();
+      const dom = domQuads(profile.id);
+      const gl = cabinetQuads(slot);
       expect(dom.length).toBeGreaterThan(10);
-      expect(gl).toEqual(dom);
+      expect(gl).toHaveLength(dom.length);
+      expect(unmatched(dom, gl)).toEqual([]);
     });
   }
 

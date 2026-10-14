@@ -3,7 +3,7 @@ import { render, cleanup, fireEvent, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../../casePrefs';
-import { FIXTURE_FIGURES } from '../../../../dev-fixtures/fixtures';
+import { FIXTURE_FIGURES, getFixtureFigures } from '../../../../dev-fixtures/fixtures';
 import { project, type Camera } from '../../caseCamera';
 import { CaseGL, type CaseGLOptions } from '../glScene';
 
@@ -49,9 +49,9 @@ function glFactory() {
 
 const canvasPrefs: CasePrefs = { ...DEFAULT_CASE_PREFS, renderer: 'canvas', view: 'cabinet' };
 
-function open(prefs: CasePrefs, onSelect = vi.fn<(f: Figure, i: number) => void>()) {
+function open(prefs: CasePrefs, onSelect = vi.fn<(f: Figure, i: number) => void>(), figures: readonly Figure[] = FIXTURE_FIGURES) {
   const factory = glFactory();
-  const r = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={onSelect} prefs={prefs} createGL={factory.createGL} />);
+  const r = render(<CabinetScene figures={figures} onSelect={onSelect} prefs={prefs} createGL={factory.createGL} />);
   const host = r.container.querySelector<HTMLElement>('.cabinet-scene')!;
   return { ...r, host, onSelect, ...factory };
 }
@@ -125,16 +125,27 @@ describe('CabinetScene, Renderer: Canvas (CASE-GL)', () => {
   });
 
   it('a swipe walks the same camera the classic view walks, and the canvas redraws it; the swipe opens nothing', () => {
-    const { host, made, onSelect } = open({ ...canvasPrefs, view: 'wall' });
+    const { host, made, onSelect } = open({ ...canvasPrefs, view: 'cabinet', swipe: 'camera' }, undefined, getFixtureFigures(8));
     const x0 = Number(host.dataset.cameraX);
     made[0].renderer.render.mockClear();
-    fireEvent.pointerDown(host, { pointerId: 1, clientX: 300, clientY: 200 });
+    fireEvent.pointerDown(host, { pointerId: 1, clientX: 300, clientY: 200, button: 0 });
+    fireEvent.pointerMove(host, { pointerId: 1, clientX: 225, clientY: 200 });
     fireEvent.pointerMove(host, { pointerId: 1, clientX: 150, clientY: 200 });
     expect(made[0].renderer.render).toHaveBeenCalled();
+    // the camera walks with the finger, as in the classic view
+    expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
     fireEvent.pointerUp(host, { pointerId: 1, clientX: 150, clientY: 200 });
-    fireEvent.click(host.querySelector('canvas.case-gl')!, { clientX: 150, clientY: 200 });
+    // the cabinet view walks as the finger says, and the canvas was given that camera
+    expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
+    const gl = made[0].gl;
+    const card = gl.figureCards().find((c) => gl.visibleIds().includes(c.id))!;
+    const p = project(cameraOf(host), [(card.tap!.x0 + card.tap!.x1) / 2, (card.tap!.y0 + card.tap!.y1) / 2, card.z]);
+    const canvas = host.querySelector('canvas.case-gl')!;
+    // the click the browser makes of the swipe opens nothing; the next tap opens
+    fireEvent.click(canvas, { clientX: p.x, clientY: p.y });
     expect(onSelect).not.toHaveBeenCalled();
-    expect(Number(host.dataset.cameraX)).not.toBe(x0);
+    fireEvent.click(canvas, { clientX: p.x, clientY: p.y });
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it('context lost: a still frame stands in; restored: the canvas again', () => {
@@ -161,6 +172,23 @@ describe('CabinetScene, Renderer: Canvas (CASE-GL)', () => {
     unmount();
     expect(made[0].renderer.dispose).toHaveBeenCalledTimes(1);
     expect(made[0].gl.resources()).toEqual({ geometries: 0, materials: 0, textures: 0 });
+  });
+
+  it('a renderer that failed starts afresh when Canvas is chosen again', () => {
+    let fail = true;
+    const factory = glFactory();
+    const createGL: typeof factory.createGL = (o) => {
+      if (fail) throw new Error('no context');
+      return factory.createGL(o);
+    };
+    const r = render(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={createGL} />);
+    const host = () => r.container.querySelector<HTMLElement>('.cabinet-scene')!;
+    expect(host().dataset.glFallback).toBe('failed');
+    fail = false;
+    r.rerender(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={{ ...canvasPrefs, renderer: 'classic' }} createGL={createGL} />);
+    expect(host().dataset.glFallback).toBeUndefined();
+    r.rerender(<CabinetScene figures={FIXTURE_FIGURES} onSelect={vi.fn()} prefs={canvasPrefs} createGL={createGL} />);
+    expect(host().dataset.renderer).toBe('canvas');
   });
 
   it('switching back to Classic lets the canvas go and draws the CSS 3D scene', () => {

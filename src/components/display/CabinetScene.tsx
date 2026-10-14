@@ -51,6 +51,11 @@ import {
 import { figureArt, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { PLATE_H_MM, artAspect, figureDraws, figureGeometry, figureLayerBox, pictureMargins, plateOf, type FigureDraw } from './caseFigures';
+import { CaseCanvas, type CreateGL } from './gl/CaseCanvas';
+import { hasWebGL2 } from './gl/webgl';
+import { buildCards } from './gl/cards';
+import { cabinetQuads, roomQuads } from './gl/cabinetQuads';
+import type { GLSceneInput } from './gl/glScene';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand } from './alphaMargin';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -569,6 +574,8 @@ export interface CabinetSceneProps {
   imageFor?: (figure: Figure) => FigureImageRef | undefined;
   /** The frame where nothing can be measured (tests). */
   frameFallback?: { width: number; height: number };
+  /** CASE-GL: how the canvas renderer is made (tests; the app loads three.js on demand). */
+  createGL?: CreateGL;
 }
 
 const REASON: Record<Violator['reason'], string> = { 'too-tall': 'too tall', 'too-wide': 'too wide', 'too-deep': 'too deep' };
@@ -602,6 +609,7 @@ export function CabinetScene({
   labels = false,
   imageFor,
   frameFallback = DEFAULT_FRAME,
+  createGL,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
@@ -660,6 +668,22 @@ export function CabinetScene({
     setWalkX(null);
     setPan(0);
   }, [prefs.view, prefs.pattern, prefs.swipe]);
+
+  // CASE-GL: Renderer: Canvas draws on one WebGL canvas where WebGL2 is, else (or when it cannot start) the classic view
+  const [glFailed, setGlFailed] = useState(false);
+  const [glLost, setGlLost] = useState(false);
+  // a renderer chosen again starts afresh
+  const rendererWas = useRef(prefs.renderer);
+  useEffect(() => {
+    if (rendererWas.current === prefs.renderer) return;
+    rendererWas.current = prefs.renderer;
+    setGlFailed(false);
+    setGlLost(false);
+  }, [prefs.renderer]);
+  const wantCanvas = prefs.renderer === 'canvas';
+  const webgl2 = wantCanvas && hasWebGL2();
+  const canvasMode = webgl2 && !glFailed;
+  const glFallback = !wantCanvas ? undefined : !webgl2 ? 'no-webgl2' : glFailed ? 'failed' : undefined;
 
   const lastIndex = wall.cabinets.length - 1;
   const focusIdx = Math.min(focus, lastIndex);
@@ -789,7 +813,7 @@ export function CabinetScene({
   const draws = figureDraws(cabinets, wall);
   // a figure is drawn when its layer (its tap box and the picture hanging from it) draws into the frame and its margin
   // and no board of its cabinet hides it from the camera
-  const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
+  const inDrawn = canvasMode ? [] : draws.filter((d) => drawnCabs.includes(d.cab));
   const inDrawnBoxes = inDrawn.map(({ cab, draw: fig }) => {
     const { art, aspect } = arts[fig.placed.item.index];
     return figureLayerBox(fig, figureGeometry(fig, art, aspect, pictureMargins(art, alpha)), cab);
@@ -812,6 +836,18 @@ export function CabinetScene({
   const overhangs = draws.filter((d) => d.draw.placed.tooDeep);
   const flagged = packed.violators.length + overhangs.length;
   const activeName = pattern[0].name;
+
+  // CASE-GL: the same wall, cabinets and figures for the canvas, every one of them (it culls for itself)
+  const glScene = useMemo<GLSceneInput | null>(() => {
+    if (!canvasMode) return null;
+    const built = buildCards(figureDraws(cabinets, wall), (i) => ({ ...arts[i], margins: pictureMargins(arts[i].art, alpha) }), labels);
+    return {
+      quads: [...roomQuads(wall), ...wall.cabinets.flatMap((slot) => cabinetQuads(slot))],
+      ...built,
+      cabinets: wall.cabinets.map((slot, i) => ({ ...cabinetBox(slot, headroomMm[i]), opaqueFront: false })),
+      boards: (cab: number) => opaqueBoards(wall.cabinets[cab]),
+    };
+  }, [canvasMode, cabinets, wall, arts, alpha, labels, headroomMm]);
 
   const maxDepth = Math.max(...wall.cabinets.map((c) => c.profile.outer.depthMm));
   const zBack = -maxDepth - 450;
@@ -847,6 +883,9 @@ export function CabinetScene({
       data-drawn-cabinets={String(drawnCabs.length)}
       data-drawn-figures={String(onShow.length)}
       data-hidden-figures={String(hidden)}
+      data-renderer={canvasMode ? 'canvas' : 'classic'}
+      data-gl-fallback={glFallback}
+      data-gl-lost={canvasMode ? (glLost ? '1' : '0') : undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endPress(e, true)}
@@ -858,37 +897,49 @@ export function CabinetScene({
         e.currentTarget.scrollTop = 0;
       }}
     >
-      <div
-        class="cabinet-scene__viewport"
-        style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx ? `translateX(${panPx}px)` : undefined }}
-      >
-        <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
-          <DrawContext.Provider value={draw}>
-            <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} grid={ROOM_GRID} />
-            <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} grid={ROOM_GRID} />
-            {visible.map(({ slot, i }) => (
-              <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
-            ))}
-            {onShow.map(({ draw: fig }, n) => {
-              const { figure, index } = fig.placed.item;
-              const { art, aspect } = arts[index];
-              return (
-                <SceneFigure
-                  key={figure._id}
-                  draw={fig}
-                  art={art}
-                  aspect={aspect}
-                  margins={pictureMargins(art, alpha)}
-                  scale={scales[n]}
-                  plate={plates[n]}
-                  onSelect={() => onSelect(figure, index)}
-                  onBroken={images.failed}
-                />
-              );
-            })}
-          </DrawContext.Provider>
+      {canvasMode && glScene ? (
+        <CaseCanvas
+          scene={glScene}
+          view={{ camera, panPx, settled: !moving }}
+          lost={glLost}
+          onPick={(index) => onSelect(figures[index], index)}
+          onLost={setGlLost}
+          onFail={() => setGlFailed(true)}
+          createGL={createGL}
+        />
+      ) : (
+        <div
+          class="cabinet-scene__viewport"
+          style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx ? `translateX(${panPx}px)` : undefined }}
+        >
+          <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
+            <DrawContext.Provider value={draw}>
+              <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} grid={ROOM_GRID} />
+              <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} grid={ROOM_GRID} />
+              {visible.map(({ slot, i }) => (
+                <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
+              ))}
+              {onShow.map(({ draw: fig }, n) => {
+                const { figure, index } = fig.placed.item;
+                const { art, aspect } = arts[index];
+                return (
+                  <SceneFigure
+                    key={figure._id}
+                    draw={fig}
+                    art={art}
+                    aspect={aspect}
+                    margins={pictureMargins(art, alpha)}
+                    scale={scales[n]}
+                    plate={plates[n]}
+                    onSelect={() => onSelect(figure, index)}
+                    onBroken={images.failed}
+                  />
+                );
+              })}
+            </DrawContext.Provider>
+          </div>
         </div>
-      </div>
+      )}
 
       <div class="cabinet-scene__nav">
         <button
@@ -963,6 +1014,8 @@ const styles = `
     -webkit-user-select: none;
   }
   .cabinet-scene__viewport { position: absolute; inset: 0; perspective-origin: 50% 50%; }
+  .cabinet-scene .case-gl, .cabinet-scene .case-gl__still { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .cabinet-scene .case-gl[hidden], .cabinet-scene .case-gl__still[hidden] { display: none; }
   .cabinet-scene__root { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0 0; transform-style: preserve-3d; }
   .cabinet-scene .cab, .cabinet-scene .part { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-style: preserve-3d; pointer-events: none; }
   .cabinet-scene .q { position: absolute; left: 0; top: 0; transform-origin: 0 0 0; pointer-events: none; box-sizing: border-box; }

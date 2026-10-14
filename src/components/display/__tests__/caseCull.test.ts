@@ -610,6 +610,23 @@ describe('figureScales: the figures cost at most a budget of px wherever the cam
     for (let k = 1; k < order.length; k++) expect(scales[order[k]], `${k}`).toBeLessThanOrEqual(scales[order[k - 1]]);
   });
 
+  it('SHOULD 29: a figure\'s name plate, drawn at its px per mm, spends the same budget: with plates the octave coarsens sooner and all of it stays within', () => {
+    const camera: Camera = { x: 0, y: 500, z: 1500, pitch: 0, focalPx: 600, frame: COVER };
+    const view = viewOf(camera, 30);
+    const bare = Array.from({ length: 250 }, (_, i) => box((i - 125) * 37));
+    const plated = bare.map((f) => ({ ...f, plateMm2: 110 * 30 }));
+    const without = figureScales(view, bare, 0.5, budget);
+    const withPlates = figureScales(view, plated, 0.5, budget);
+    const order = byFrameCentre(view, bare);
+    const firstCoarse = (scales: readonly number[]) => order.findIndex((i) => scales[i] < 0.5);
+    expect(firstCoarse(withPlates)).toBeGreaterThan(0);
+    expect(firstCoarse(withPlates)).toBeLessThan(firstCoarse(without));
+    const spent = plated.reduce((a, f, i) => a + ((f.x1 - f.x0) * (f.y1 - f.y0) + f.plateMm2) * withPlates[i] ** 2, 0);
+    const floor = plated.reduce((a, f) => a + ((f.x1 - f.x0) * (f.y1 - f.y0) + f.plateMm2) * (1 / 64) ** 2, 0);
+    expect(spent).toBeLessThanOrEqual(budget + floor);
+    expect(cost(bare, without)).toBeLessThanOrEqual(budget + floor);
+  });
+
   it('a figure too big for the budget alone is drawn at the coarsest, never skipped', () => {
     const camera: Camera = { x: 0, y: 500, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
     const huge = box(0, 40_000, 40_000);

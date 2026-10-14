@@ -70,6 +70,14 @@ const DENSE: Wall[] = [
 ];
 const DENSE_STATES = STATES.filter((x) => x.swipes < 40);
 /**
+ * SHOULD 29: real users see the name plates (labels on unless in fixture mode): each plate is culled by its own box
+ * and spends the figures' budget, so with labels on nothing is drawn past the frame and its margin either.
+ */
+const LABELLED: Wall[] = [
+  { name: 'fixtures, labels on', query: 'fx=170&labels=1' },
+  { name: 'spike wall, labels on', query: 'fx=170&fxonly=spike&labels=1' },
+];
+/**
  * The other views, and another wall, under the same ceiling (the shelf view cost 3.1-4.7 viewports before the figures'
  * budget: their pictures, close in), culled to the frame and its margin.
  */
@@ -170,6 +178,12 @@ async function drawn(page: Page) {
       const r = b.getBoundingClientRect();
       return r.right > f.left && r.left < f.right && r.bottom > f.top && r.top < f.bottom;
     }).length;
+    // each figure's layer in the world (its tap box and its clipped picture) and its px per mm, for SHOULD 28
+    const layers = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => {
+      const art = b.querySelector<HTMLElement>('.cab-figure__box')!;
+      const inset = (/^inset\((.*)\)$/.exec(art.style.clipPath)?.[1].split(' ') ?? ['0%', '0%', '0%', '0%']).map((x) => parseFloat(x) / 100);
+      return { tap: JSON.parse(b.dataset.world!), art: JSON.parse(b.dataset.artBox!), right: inset[1], left: inset[3], k: Number(b.style.getPropertyValue('--s')) };
+    });
     // each drawn cabinet's span across the frame, as the browser draws its faces
     const spans = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => {
       let x0 = Infinity;
@@ -190,6 +204,7 @@ async function drawn(page: Page) {
       cullPan: Number(host.dataset.cullPan),
       cabinets: host.querySelectorAll('.cab').length,
       figures: host.querySelectorAll('button.cab-figure').length,
+      plates: host.querySelectorAll('.cab-plate').length,
       quads: host.querySelectorAll('.cabinet-scene__root .q').length,
       outside,
       spill,
@@ -197,6 +212,7 @@ async function drawn(page: Page) {
       pan: Number(host.dataset.pan),
       coarse: coarse.length,
       coarseInFrame,
+      layers,
     };
   }, [MARGIN, Math.max(FLAT_GRID.u * FLAT_GRID.v, GRADIENT_GRID.u * GRADIENT_GRID.v)] as const);
 }
@@ -266,7 +282,16 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
       ? [i]
       : [],
   );
-  return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass, whole };
+  // SHOULD 28: the figures drawn coarser lie farther from the frame centre than every one drawn finer (byFrameCentre:
+  // the middle of each figure's layer, in the culled picture); how many finer ones lie farther out than a coarser one
+  const cull: Camera = { ...camera, x: scene.cullX };
+  const order = scene.layers.map(({ tap, art, left, right, k }) => {
+    const artW = art.x1 - art.x0;
+    const mid = project(cull, [(Math.min(tap.x0, art.x0 + left * artW) + Math.max(tap.x1, art.x1 - right * artW)) / 2, (tap.y0 + tap.y1) / 2, tap.z]);
+    return { d: Math.hypot(mid.x + scene.cullPan - camera.frame.width / 2, mid.y - camera.frame.height / 2), k };
+  });
+  const coarseNearer = order.filter((a) => order.some((b) => b.k > a.k && b.d > a.d + 1e-3)).length;
+  return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass, whole, coarseNearer };
 }
 
 /** Open the case at `size` in fixture mode, swipe it into `state`, and let it settle: what it draws, against its frame. */
@@ -306,6 +331,7 @@ async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state
     figures: scene.figures,
     figuresCoarse: scene.coarse,
     figuresCoarseInFrame: scene.coarseInFrame,
+    figuresCoarseNearer: frame.coarseNearer,
     quads: scene.quads,
     cameraX: scene.cameraX,
     pan: scene.pan,
@@ -350,8 +376,15 @@ function budgetChecks(m: Awaited<ReturnType<typeof measured>>, state: State) {
   expect.soft(drawnSet, 'the drawn cabinets are the five nearest the settled frame centre').toEqual(frame.nearest);
   expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
   expect.soft(scene.spill, 'faces reaching past the frame and half a viewport round it').toEqual([]);
-  // a settled walk stands at least three cabinets whole (Ross 12:1xC, desk MN2 a)
-  if (state.swipe === 'camera' && (state.view ?? 'wall') === 'wall') expect.soft(frame.whole.length, `cabinets whole across the frame: ${frame.whole.join(',')}`).toBeGreaterThanOrEqual(3);
+  // a settled walk or pan stands at least three cabinets whole (Ross 12:1xC, desk MN2 a; NOTE 31); at the wall's end
+  // (close-out 3, ruling 27) it stands its end cabinet whole
+  if (state.swipes > 0 && (state.view ?? 'wall') === 'wall') {
+    const last = frame.boxes.length - 1;
+    if (frame.framed.includes(last) && state.swipes >= 40) expect.soft(frame.whole, 'the wall\'s end cabinet whole').toContain(last);
+    else expect.soft(frame.whole.length, `cabinets whole across the frame: ${frame.whole.join(',')}`).toBeGreaterThanOrEqual(3);
+  }
+  // SHOULD 28: the coarser figures are the outermost
+  expect.soft(frame.coarseNearer, 'figures drawn finer than one nearer the frame centre').toBe(0);
   expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
 }
 
@@ -369,6 +402,23 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
     }
   }
 
+  for (const wall of LABELLED) {
+    for (const state of [...DENSE_STATES, ...VIEW_STATES]) {
+      test(`labels on, ${wall.name}: ${state.name} draws no plate past the frame and its margin, its layers <= ${CEILING_VIEWPORTS} viewports: ${size.name}`, async ({ page }, testInfo) => {
+        test.setTimeout(180_000);
+        const { scene, layers, viewport } = await measured(page, size, state, wall, testInfo);
+        expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
+        expect(scene.plates, 'name plates are drawn').toBeGreaterThan(0);
+        expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
+        const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
+        expect.soft(scene.spill.filter((x) => !mesh.includes(x)), 'faces reaching past the frame and half a viewport round it').toEqual([]);
+        expect.soft(mesh.length, 'mesh shelves reaching past it (CULL-LEAK-1)').toBeLessThanOrEqual(state.meshSpill ?? 0);
+        expect.soft(frameCheck(scene).coarseNearer, 'figures drawn finer than one nearer the frame centre').toBe(0);
+        expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
+      });
+    }
+  }
+
   for (const state of VIEW_STATES) {
     test(`${state.name} costs no more than ${CEILING_VIEWPORTS} viewports of scene layers and draws nothing past the frame and its margin: ${size.name}`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);
@@ -380,6 +430,7 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
       const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
       expect.soft(scene.spill.filter((x) => !mesh.includes(x)), 'faces reaching past the frame and half a viewport round it').toEqual([]);
       expect.soft(mesh.length, 'mesh shelves reaching past it (CULL-LEAK-1)').toBeLessThanOrEqual(state.meshSpill ?? 0);
+      expect.soft(frameCheck(scene).coarseNearer, 'figures drawn finer than one nearer the frame centre').toBe(0);
       expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
     });
   }

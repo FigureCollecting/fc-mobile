@@ -27,6 +27,8 @@ import {
   atX,
   nearestCabinet,
   WALK_MIN_PX,
+  panStops,
+  settlePan,
   type Box,
   type Framing,
   type FramingInput,
@@ -845,5 +847,96 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
       expect(settleWalk(f, wall, stops, -dead)!.x).toBeGreaterThan(f.camera.x);
       expect(settleWalk(f, wall, stops, dead)!.x).toBeLessThan(f.camera.x);
     }
+  });
+});
+
+describe('NOTE 31: a pan of the wall view settles on the same kind of stop, where the photo can slide to one', () => {
+  const PANELS = [
+    { width: 443, height: 344 },
+    { width: 616, height: 143 },
+    { width: 870, height: 261 },
+    { width: 657, height: 473 },
+    { width: 444, height: 487 },
+    { width: 870, height: 443 },
+    { width: 657, height: 656 },
+  ];
+  const WALLS: [string, WallLayout][] = WALL_PATTERNS.flatMap((p) =>
+    [1, 2, 4, 8, 18].map((n): [string, WallLayout] => [`${p.id} x${n}`, wallLayout(Array.from({ length: n }, (_, i) => p.profiles[i % p.profiles.length]))]),
+  );
+  const opening = (wall: WallLayout, frame: { width: number; height: number }) =>
+    frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+  /** The cabinets whole across the picture slid panPx (retaken farther along past the slide), at the height it aims at. */
+  const wholeAt = (f: Framing, wall: WallLayout, panPx: number) => {
+    const r = panFraming(f, panPx);
+    return wall.cabinets.flatMap((slot, i) =>
+      [slot.leftMm, slot.rightMm].every((x) => {
+        const p = project(r.framing.camera, [x, f.look[1], 0]).x + r.panPx;
+        return p >= 0 && p <= f.camera.frame.width;
+      })
+        ? [i]
+        : [],
+    );
+  };
+
+  it('the stops: the slides to the wall\'s two ends, and in between each slide that centres a stop of the walk, three or more whole or the most any does, or one that alone stands a cabinet whole', () => {
+    for (const [name, wall] of WALLS) {
+      for (const frame of PANELS) {
+        const f = opening(wall, frame);
+        const [lo, hi] = panLimitsPx(f, wall);
+        const stops = panStops(f, wall);
+        const at = `${name} ${frame.width}x${frame.height}`;
+        expect(stops[0].panPx, at).toBe(lo);
+        expect(stops[stops.length - 1].panPx, at).toBe(hi);
+        for (let k = 1; k < stops.length; k++) expect(stops[k].panPx, at).toBeGreaterThan(stops[k - 1].panPx);
+        for (const s of stops) expect(s.whole, `${at} pan ${s.panPx}`).toEqual(wholeAt(f, wall, s.panPx));
+        const need = Math.min(3, Math.max(...stops.map((s) => s.whole.length)));
+        const full = stops.filter((s) => s.whole.length >= need);
+        const ends = [stops[0], stops[stops.length - 1]];
+        for (const s of stops) {
+          if (full.includes(s) || ends.includes(s)) continue;
+          expect(s.whole.filter((i) => ![...full, ...ends].some((t) => t.whole.includes(i))).length, `${at} pan ${s.panPx}`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it('a pan by swipes just past the dead zone out to the wall\'s end and back settles only on stops, the photo following the finger; on the open-rotated panel two swipes in it stands three whole', () => {
+    for (const [name, wall] of WALLS) {
+      for (const frame of PANELS) {
+        const f = opening(wall, frame);
+        const stops = panStops(f, wall);
+        const at = `${name} ${frame.width}x${frame.height}`;
+        for (const finger of [-1, 1]) {
+          let pan = finger < 0 ? 0 : stops[stops.length - 1].panPx;
+          for (let k = 0; k <= stops.length; k++) {
+            const dx = finger * walkDeadPx(panFraming(f, pan).framing, wall);
+            const stop = settlePan(f, wall, stops, pan, dx);
+            if (stop === null) break;
+            expect(stops, at).toContain(stop);
+            expect(Math.sign(stop.panPx - pan), at).toBe(finger);
+            pan = stop.panPx;
+          }
+          expect(pan, at).toBe(finger < 0 ? stops[0].panPx : stops[stops.length - 1].panPx);
+        }
+      }
+    }
+    // the e2e's pan-2: two swipes of 400 px into the fixture wall (KLINGSBOs) on the open-rotated panel
+    const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));
+    const f = opening(wall, { width: 657, height: 473 });
+    const stops = panStops(f, wall);
+    let pan = 0;
+    for (let k = 0; k < 2; k++) pan = settlePan(f, wall, stops, pan, -400)!.panPx;
+    expect(wholeAt(f, wall, pan).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a drag short of the dead zone settles back: no stop', () => {
+    const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));
+    const f = opening(wall, { width: 657, height: 473 });
+    const stops = panStops(f, wall);
+    const dead = walkDeadPx(f, wall);
+    expect(settlePan(f, wall, stops, 0, -(dead - 0.5))).toBeNull();
+    expect(settlePan(f, wall, stops, 0, -dead)!.panPx).toBeLessThan(0);
+    // and past the wall's end a pan goes nowhere
+    expect(settlePan(f, wall, stops, 0, 1000)).toBeNull();
   });
 });

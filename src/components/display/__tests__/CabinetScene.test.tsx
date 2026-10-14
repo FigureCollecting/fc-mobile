@@ -306,6 +306,24 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
     expect(Number(host.dataset.pan)).toBeLessThan(0);
   });
 
+  it('pan mode, wall view (NOTE 31): two swipes in on the open-rotated panel settle the photo where three cabinets stand whole', () => {
+    const frame = { width: 657, height: 473 };
+    const { host } = scene(getFixtureFigures(120), { swipe: 'pan', view: 'wall' }, { frameFallback: frame });
+    const wall = klingsbos((JSON.parse(host.dataset.wall!) as number[][]).length);
+    for (let k = 0; k < 2; k++) drag(host, -400);
+    const camera = cameraOf(host);
+    const pan = Number(host.dataset.pan);
+    expect(pan).toBeLessThan(0);
+    const lookY = unprojectToPlaneZ(camera, frame.width / 2, frame.height / 2, 0)![1];
+    const whole = wall.cabinets.filter((slot) =>
+      [slot.leftMm, slot.rightMm].every((x) => {
+        const p = project(camera, [x, lookY, 0]).x + pan;
+        return p >= -0.5 && p <= frame.width + 0.5;
+      }),
+    );
+    expect(whole.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('a cancelled swipe moves nothing; another finger never steers this one', () => {
     const many = getFixtureFigures(8);
     const { host } = scene(many, { swipe: 'camera', view: 'cabinet' });
@@ -1174,8 +1192,9 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     expect(most).toBe(MAX_DRAWN_FIGURES);
   }, 120_000);
 
-  it('the figures cost at most their budget of element px wherever the camera stands; the one nearest the frame centre drawn at the scene\'s px per mm', () => {
+  it('the figures cost at most their budget of element px wherever the camera stands; the one nearest the frame centre drawn at the scene\'s px per mm, the coarser ones farther out', () => {
     const dense = spikeWall();
+    let coarsened = 0;
     for (const frame of DENSE_FRAMES) {
       for (const view of ['wall', 'cabinet', 'shelf'] as const) {
         const { host } = scene(dense, { view }, { frameFallback: frame });
@@ -1186,6 +1205,10 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
           let area = 0;
           let floor = 0;
           let atScene = 0;
+          // SHOULD 28: each figure's px per mm against how far its layer's middle draws from the frame centre (byFrameCentre)
+          const camera = cameraOf(host);
+          const cull = { ...camera, x: Number(host.dataset.cullX) };
+          const order: { d: number; k: number }[] = [];
           for (const b of figureButtons(host)) {
             // the figure's layer: its button and the picture hanging from it, in element px
             const art = b.querySelector<HTMLElement>('.cab-figure__box')!;
@@ -1194,6 +1217,12 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
             // the picture clipped to the figure in it (inset top right bottom left, % of the box)
             const [it, ir, ib, il] = (/^inset\((.*)\)$/.exec(art.style.clipPath)?.[1].split(' ') ?? ['0%', '0%', '0%', '0%']).map((x) => parseFloat(x) / 100);
             const [l, t, aw, ah] = [l0 + il * aw0, t0 + it * ah0, aw0 * (1 - il - ir), ah0 * (1 - it - ib)];
+            // the layer in the world: the tap box and the clipped picture, side to side; the surface to the figure's height
+            const tapBox = JSON.parse(b.dataset.world!) as { x0: number; x1: number; y0: number; y1: number; z: number };
+            const artBox = JSON.parse(b.dataset.artBox!) as { x0: number; x1: number };
+            const artW = artBox.x1 - artBox.x0;
+            const mid = project(cull, [(Math.min(tapBox.x0, artBox.x0 + il * artW) + Math.max(tapBox.x1, artBox.x1 - ir * artW)) / 2, (tapBox.y0 + tapBox.y1) / 2, tapBox.z]);
+            order.push({ d: Math.hypot(mid.x + Number(host.dataset.cullPan) - frame.width / 2, mid.y - frame.height / 2), k: Number(b.style.getPropertyValue('--s')) });
             const lw = Math.max(w, l + aw) - Math.min(0, l);
             const lh = Math.max(h, t + ah) - Math.min(0, t);
             area += lw * lh;
@@ -1208,10 +1237,20 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
           }
           expect(area, at).toBeLessThanOrEqual(FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height + floor + 1);
           expect(atScene, at).toBeGreaterThan(0);
+          // coarser only farther out: every figure drawn coarser than another lies no nearer the frame centre
+          const scales = [...new Set(order.map((o) => o.k))].sort((x, y) => y - x);
+          for (let j = 1; j < scales.length; j++) {
+            const finer = Math.max(...order.filter((o) => o.k === scales[j - 1]).map((o) => o.d));
+            const coarser = Math.min(...order.filter((o) => o.k === scales[j]).map((o) => o.d));
+            expect(coarser, `${at}: ${scales[j]} px/mm against ${scales[j - 1]}`).toBeGreaterThanOrEqual(finer - 1e-3);
+          }
+          if (scales.length > 1) coarsened++;
         }
         cleanup();
       }
     }
+    // the budget binds: some pictures mix scales
+    expect(coarsened).toBeGreaterThan(0);
   }, 120_000);
 
   it('a nameplate is drawn at its figure\'s px per mm: coarser with it past the budget, the same size in the world', () => {
@@ -1232,6 +1271,56 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     }
     expect(coarse).toBeGreaterThan(0);
   });
+
+  it('SHOULD 29: with labels on, a name plate is drawn only where its own box draws into the frame and its margin, and the plates spend the figures\' budget with them', () => {
+    let culled = 0;
+    let plates = 0;
+    for (const frame of DENSE_FRAMES) {
+      for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        const { host } = scene(spikeWall(), { view }, { frameFallback: frame, labels: true });
+        for (const dx of [0, -400]) {
+          if (dx !== 0) drag(host, dx);
+          const at = `${frame.width}x${frame.height} ${view} ${dx}`;
+          const camera = cameraOf(host);
+          const cull = { camera: { ...camera, x: Number(host.dataset.cullX) }, panPx: Number(host.dataset.cullPan) };
+          const s = pxPerMm(host);
+          let area = 0;
+          let floor = 0;
+          const layer = (w: number, h: number, k: number) => {
+            area += w * h;
+            floor += (w / k) * (h / k) * (1 / 64) ** 2;
+          };
+          for (const b of figureButtons(host)) {
+            const art = b.querySelector<HTMLElement>('.cab-figure__box')!;
+            const [w, h] = [parseFloat(b.style.width), parseFloat(b.style.height)];
+            const [l0, t0, aw0, ah0] = ['left', 'top', 'width', 'height'].map((k) => parseFloat(art.style.getPropertyValue(k)));
+            const [it, ir, ib, il] = (/^inset\((.*)\)$/.exec(art.style.clipPath)?.[1].split(' ') ?? ['0%', '0%', '0%', '0%']).map((x) => parseFloat(x) / 100);
+            const [l, t, aw, ah] = [l0 + il * aw0, t0 + it * ah0, aw0 * (1 - il - ir), ah0 * (1 - it - ib)];
+            layer(Math.max(w, l + aw) - Math.min(0, l), Math.max(h, t + ah) - Math.min(0, t), Number(b.style.getPropertyValue('--s')));
+          }
+          const drawnPlates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'));
+          for (const plate of drawnPlates) {
+            // its own box: drawn only where it draws into the frame and its margin, and only with its figure
+            const w = JSON.parse(plate.dataset.world!) as { x0: number; x1: number; y0: number; y1: number; z: number };
+            expect(trimFace(cull, [w.x0, w.y0, w.z], [w.x1 - w.x0, 0, 0], [0, w.y1 - w.y0, 0], cullRect(camera.frame)), at).not.toBeNull();
+            const figure = host.querySelector<HTMLElement>(`button.cab-figure[data-figure-id="${plate.dataset.figureId}"]`)!;
+            expect(figure, at).not.toBeNull();
+            const k = Number(plate.style.getPropertyValue('--s'));
+            expect(k, at).toBe(Number(figure.style.getPropertyValue('--s')));
+            layer(parseFloat(plate.style.width), parseFloat(plate.style.height), k);
+          }
+          plates += drawnPlates.length;
+          culled += figureButtons(host).length - drawnPlates.length;
+          expect(area, at).toBeLessThanOrEqual(FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height + floor + 1);
+          expect(s, at).toBeGreaterThan(0);
+        }
+        cleanup();
+      }
+    }
+    // plates are drawn, and somewhere a figure is drawn whose plate lies past the frame and its margin
+    expect(plates).toBeGreaterThan(0);
+    expect(culled).toBeGreaterThan(0);
+  }, 120_000);
 
   it('the px per mm is taken over the room up to the headroom over the tops, where their figures stand', () => {
     // a short frame on a few cabinets: the camera looks down on the tops; the framing aims at the middle of the room

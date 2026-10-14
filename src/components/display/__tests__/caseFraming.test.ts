@@ -690,6 +690,48 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     expect(centred).toBeGreaterThan(50);
     expect(moved).toBeGreaterThan(0);
   });
+
+  it('the opening move, page by page: centred where the page stands three whole or no stop within it stands more with the page whole; else the stop within the page nearest its centre that keeps the page whole and stands the most, up to three', () => {
+    const mixed = (n: number) => wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+    const cases: [string, WallLayout, { width: number; height: number }][] = [
+      ...WALLS.flatMap(([name, wall]) => FRAMES.map((frame): [string, WallLayout, { width: number; height: number }] => [name, wall, frame])),
+      // a short mixed wall where the centred page already stands three, and a stop within it would stand four
+      ['mixed x4', mixed(4), { width: 300, height: 210 }],
+      // and one with two stops within the page that stand three
+      ['mixed x3', mixed(3), { width: 417, height: 375 }],
+    ];
+    let centred = 0;
+    let moved = 0;
+    for (const [name, wall, frame] of cases) {
+      const input: FramingInput = { frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 };
+      const centres = wall.cabinets.map((c) => c.centerMm);
+      const xs = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
+      for (const page of wallPages(input)) {
+        const f = frameCase({ ...input, focus: page[0] });
+        const at = `${name} ${frame.width}x${frame.height} page [${page}]`;
+        const lo = wall.cabinets[page[0]].leftMm;
+        const hi = wall.cabinets[page[page.length - 1]].rightMm;
+        const mid = (lo + hi) / 2;
+        const there = wholeCabinets({ ...f.camera, x: mid }, wall, f.look[1]).length;
+        const inPage = xs
+          .filter((x) => x > lo && x < hi)
+          .map((x) => ({ x, whole: wholeCabinets({ ...f.camera, x }, wall, f.look[1]) }))
+          .filter((c) => page.every((i) => c.whole.includes(i)));
+        const most = Math.max(there, ...inPage.map((c) => c.whole.length));
+        if (there >= 3 || most === there) {
+          expect(f.camera.x, at).toBe(mid);
+          centred++;
+          continue;
+        }
+        const best = inPage.filter((c) => c.whole.length >= Math.min(3, most));
+        const nearest = best.reduce((a, b) => (Math.abs(b.x - mid) < Math.abs(a.x - mid) ? b : a));
+        expect(f.camera.x, at).toBe(nearest.x);
+        moved++;
+      }
+    }
+    expect(centred).toBeGreaterThan(100);
+    expect(moved).toBeGreaterThan(0);
+  });
 });
 
 describe('the wall view reaches every cabinet (close-out 3, ruling 27): the pager and a walk each stand every cabinet of every pattern whole', () => {
@@ -825,6 +867,14 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
           // a stop short of the count stands a cabinet whole that no stop of the count nor an end does
           const alone = s.whole.filter((i) => ![...full, ...ends].some((t) => t.whole.includes(i)));
           expect(alone.length, `${at} stop ${s.x} whole [${s.whole}]`).toBeGreaterThan(0);
+          // of the places a walk may settle (each seen from its focus cabinet's page), none stands that cabinet whole beside more
+          const input = wallInput(wall, frame);
+          const shown = showing(input);
+          const centres = wall.cabinets.map((c) => c.centerMm);
+          for (const x of centres.flatMap((c, i) => (i + 1 < centres.length ? [c, (c + centres[i + 1]) / 2] : [c]))) {
+            const w = wholeIn(shown(nearestCabinet(wall, x), x), wall);
+            if (alone.some((i) => w.includes(i))) expect(w.length, `${at} stop ${s.x} against ${x}`).toBeLessThanOrEqual(s.whole.length);
+          }
           reach++;
         }
         for (let k = 1; k < stops.length; k++) expect(stops[k].x, at).toBeGreaterThan(stops[k - 1].x);
@@ -832,6 +882,15 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
     }
     // a short mixed wall on a tall narrow frame needs them: its rack is whole only at its own centre
     expect(reach).toBeGreaterThan(0);
+  });
+
+  it('the focus a walk leaves is the cabinet whose centre is nearest the camera, the first of two as near', () => {
+    const wall = wallLayout(Array(4).fill(IKEA_KLINGSBO));
+    const [c0, c1] = [wall.cabinets[0].centerMm, wall.cabinets[1].centerMm];
+    expect(nearestCabinet(wall, (c0 + c1) / 2)).toBe(0);
+    expect(nearestCabinet(wall, (c0 + c1) / 2 + 1)).toBe(1);
+    expect(nearestCabinet(wall, -1e6)).toBe(0);
+    expect(nearestCabinet(wall, 1e6)).toBe(3);
   });
 
   it(`NOTE 30: a drag must move ${WALK_MIN_PX} px or a quarter of the cabinet's width net before the walk steps; one that comes back near where it started settles back`, () => {
@@ -938,5 +997,15 @@ describe('NOTE 31: a pan of the wall view settles on the same kind of stop, wher
     expect(settlePan(f, wall, stops, 0, -dead)!.panPx).toBeLessThan(0);
     // and past the wall's end a pan goes nowhere
     expect(settlePan(f, wall, stops, 0, 1000)).toBeNull();
+    // past the slide the photo is retaken farther along: the dead zone is the cabinet that picture centres on (a mixed
+    // wall, where it is not the one the unslid picture centres on)
+    const mixed = wallLayout(Array.from({ length: 18 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+    const g = opening(mixed, { width: 657, height: 473 });
+    const ms = panStops(g, mixed);
+    const d0 = walkDeadPx(g, mixed);
+    const far = ms.find((x) => walkDeadPx(panFraming(g, x.panPx).framing, mixed) > d0)!;
+    const d1 = walkDeadPx(panFraming(g, far.panPx).framing, mixed);
+    expect(settlePan(g, mixed, ms, far.panPx, (d0 + d1) / 2)).toBeNull();
+    expect(settlePan(g, mixed, ms, far.panPx, d1)!.panPx).toBeGreaterThan(far.panPx);
   });
 });

@@ -460,7 +460,8 @@ export interface PanStop {
  * The stops of a wall view's pan (NOTE 31), left to right, as for a walk where the photo can slide to them: the
  * slides to the wall's two ends (panLimitsPx), and between them each slide that draws a walk stop's place (a
  * cabinet's centre or halfway between two) at the frame centre, picked as a walk's are (pickStops). Past the slide
- * the photo is retaken farther along (panFraming), which keeps the line it aims along where the slid photo draws it.
+ * the photo is retaken farther along (panFraming), which draws the line it aims along (the front plane at the look-at's
+ * height, all at one depth) exactly where the slid photo would: so the cabinets whole there are those of the slid photo.
  */
 export function panStops(framing: Framing, wall: WallLayout): PanStop[] {
   const { camera, look } = framing;
@@ -468,25 +469,23 @@ export function panStops(framing: Framing, wall: WallLayout): PanStop[] {
   const between = stopXs(wall)
     .map((x) => camera.frame.width / 2 - project(camera, [x, look[1], 0]).x)
     .filter((p) => p > lo && p < hi);
-  const all = [...new Set([lo, ...between, hi])].sort((a, b) => a - b).map((panPx): PanStop => {
-    const r = panFraming(framing, panPx);
-    return { panPx, whole: wholeCabinets(r.framing.camera, wall, look[1], r.panPx) };
-  });
+  const all = [...new Set([lo, ...between, hi])]
+    .sort((a, b) => a - b)
+    .map((panPx): PanStop => ({ panPx, whole: wholeCabinets(camera, wall, look[1], panPx) }));
   return pickStops(all, wall.cabinets.length);
 }
 
 /**
- * CC4, pan mode, once a pan of dxPx from fromPan settles (NOTE 31): the stop nearest where the photo was slid to
- * (within its limits), among those past where it started; none (the photo stays) when the finger moved less than
- * walkDeadPx net or no stop lies that way.
+ * CC4, pan mode, once a pan of dxPx from fromPan settles (NOTE 31): the stop nearest where the photo was slid to,
+ * among those past where it started (past the wall's end, the end); none (the photo stays) when the finger moved less
+ * than walkDeadPx net or no stop lies that way.
  */
 export function settlePan(framing: Framing, wall: WallLayout, stops: readonly PanStop[], fromPan: number, dxPx: number): PanStop | null {
   if (Math.abs(dxPx) < walkDeadPx(panFraming(framing, fromPan).framing, wall)) return null;
-  const to = Math.min(stops[stops.length - 1].panPx, Math.max(stops[0].panPx, fromPan + dxPx));
   const k = nextStop(
     stops.map((s) => s.panPx),
     fromPan,
-    to,
+    fromPan + dxPx,
   );
   return k < 0 ? null : stops[k];
 }

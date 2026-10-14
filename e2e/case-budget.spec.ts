@@ -74,8 +74,8 @@ const DENSE_STATES = STATES.filter((x) => x.swipes < 40);
  * and spends the figures' budget, so with labels on nothing is drawn past the frame and its margin either.
  */
 const LABELLED: Wall[] = [
-  { name: 'fixtures', query: 'fx=170&labels=1' },
-  { name: 'spike wall', query: 'fx=170&fxonly=spike&labels=1' },
+  { name: 'fixtures, labels on', query: 'fx=170&labels=1' },
+  { name: 'spike wall, labels on', query: 'fx=170&fxonly=spike&labels=1' },
 ];
 /**
  * The other views, and another wall, under the same ceiling (the shelf view cost 3.1-4.7 viewports before the figures'
@@ -329,6 +329,7 @@ async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state
     dpr: FOLD8_DPR,
     cabinets: scene.cabinets,
     figures: scene.figures,
+    plates: scene.plates,
     figuresCoarse: scene.coarse,
     figuresCoarseInFrame: scene.coarseInFrame,
     figuresCoarseNearer: frame.coarseNearer,
@@ -403,8 +404,8 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
   }
 
   for (const wall of LABELLED) {
-    for (const state of [...DENSE_STATES, ...VIEW_STATES]) {
-      test(`labels on, ${wall.name}: ${state.name} draws no plate past the frame and its margin, its layers <= ${CEILING_VIEWPORTS} viewports: ${size.name}`, async ({ page }, testInfo) => {
+    for (const state of [...DENSE_STATES, ...VIEW_STATES] as (State & { meshSpill?: number })[]) {
+      test(`${wall.name}: ${state.name} draws no plate past the frame and its margin, its layers <= ${CEILING_VIEWPORTS} viewports: ${size.name}`, async ({ page }, testInfo) => {
         test.setTimeout(180_000);
         const { scene, layers, viewport } = await measured(page, size, state, wall, testInfo);
         expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);

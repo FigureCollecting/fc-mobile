@@ -53,6 +53,11 @@ export const DPR_CAP = 2;
 /** The camera's near and far planes, mm. */
 const NEAR_MM = 20;
 const FAR_MM = 200_000;
+/**
+ * Decoded pictures kept for repainting the atlas (a lost context, a new plan): past this many, those the atlas no
+ * longer paints are let go, so walking a 1,144-picture wall never holds every picture decoded at once.
+ */
+export const IMAGE_CACHE_MAX = 256;
 /** What the atlas packs: the cards on screen and this share of the frame round it. */
 const PREFETCH_MARGIN = 0.5;
 const BACKGROUND: RGBA = [0x0b / 255, 0x0c / 255, 0x0f / 255, 1];
@@ -79,6 +84,7 @@ export interface CaseGLOptions {
   readonly loadImage?: (url: string) => Promise<CanvasImageSource>;
   readonly budgetBytes?: number;
   readonly dprCap?: number;
+  readonly imageCacheMax?: number;
   readonly log?: (message: string, data: Record<string, unknown>) => void;
   readonly onLost?: (lost: boolean) => void;
   /** When to draw (requestAnimationFrame; tests: at once). */
@@ -341,6 +347,7 @@ export class CaseGL {
   private readonly loadImage: (url: string) => Promise<CanvasImageSource>;
   private readonly budget: number;
   private readonly dprCap: number;
+  private readonly imageCacheMax: number;
   private readonly log: (message: string, data: Record<string, unknown>) => void;
   private readonly onLost: (lost: boolean) => void;
   private readonly schedule: (draw: () => void) => void;
@@ -398,6 +405,7 @@ export class CaseGL {
     this.loadImage = o.loadImage ?? defaultLoadImage;
     this.budget = o.budgetBytes ?? TEXTURE_BUDGET_BYTES;
     this.dprCap = o.dprCap ?? DPR_CAP;
+    this.imageCacheMax = o.imageCacheMax ?? IMAGE_CACHE_MAX;
     this.log = o.log ?? ((message, data) => console.info(`[case-gl] ${message}`, data));
     this.onLost = o.onLost ?? (() => undefined);
     this.schedule = o.schedule ?? ((draw) => requestAnimationFrame(draw));
@@ -578,6 +586,11 @@ export class CaseGL {
     return out;
   }
 
+  /** Decoded pictures held for the atlas. */
+  cachedImages(): number {
+    return this.images.size;
+  }
+
   /** The atlas build in flight, if any, done. */
   ready(): Promise<void> {
     return this.building;
@@ -677,6 +690,13 @@ export class CaseGL {
       if (token !== this.buildToken || this.disposed) return;
       this.applyPlan(plan);
       this.requestRender();
+      if (this.images.size > this.imageCacheMax) {
+        for (const url of [...this.images.keys()]) {
+          if (urls.has(url)) continue;
+          this.images.delete(url);
+          this.decoded.delete(url);
+        }
+      }
     });
   }
 

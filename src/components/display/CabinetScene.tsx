@@ -541,15 +541,17 @@ function figureGeometry(draw: FigureDraw, art: FigureArt, aspect: number, margin
   return { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0, clear };
 }
 
-/** What a figure's layer covers (world mm): its tap box and the picture hanging from it, at its depth. */
+/**
+ * What a figure's layer covers (world mm), at its depth: its tap box and the picture hanging from it, clipped to the
+ * figure in it, whose opaque rows run from the surface to the figure's height (pictureBox).
+ */
 function figureLayerBox(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, cab: number): FigureBox {
-  const top = draw.slot.topMm + draw.placed.heightMm;
   return {
     cab,
     x0: Math.min(g.tapX0, g.artCx - g.boxW / 2 + g.clear.left * g.boxW),
     x1: Math.max(g.tapX0 + g.tapW, g.artCx + g.boxW / 2 - g.clear.right * g.boxW),
-    y0: Math.min(draw.slot.topMm, g.yBottom + g.clear.bottom * g.boxH),
-    y1: Math.max(top, g.yBottom + g.boxH - g.clear.top * g.boxH),
+    y0: draw.slot.topMm,
+    y1: draw.slot.topMm + draw.placed.heightMm,
     z: draw.placed.zMm,
   };
 }

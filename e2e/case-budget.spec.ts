@@ -1,7 +1,7 @@
-import type { Page } from '@playwright/test';
+import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
+import { project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox, type Box } from '../src/components/display/caseFraming';
@@ -23,6 +23,13 @@ import { FLAT_GRID, GRADIENT_GRID, nearestCabinets, trimFace } from '../src/comp
  * centre. And the frame is framed to them (Ross 12:1xC): it shows the fronts
  * of at most the 5 cabinets the case draws, every one drawn, and no blank
  * wall where a cabinet stands. Fixture mode, about 1,200 figures.
+ *
+ * The ceiling binds where the figures are dense: a wall of one small figure
+ * (fx-spike, 35 mm wide, in every slot), and one denser still (framed at half
+ * its labelled width) that would draw past the 250 the case caps it at. The
+ * shelf view (walked) and the cabinet view (as it opens) are held no worse than
+ * 5 viewports (SHELF-BUDGET-1: the follow-up to bring them to 3), and every
+ * view culls to the frame and its margin, the rack wall too.
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -41,16 +48,35 @@ const MAX_FIGURES = 250;
 const MID_FIGURES = (panel: string) => (panel === 'fold8-cover-sideways' ? 50 : 60);
 /** The scene's composited layers, in viewports of pixels at the device pixel ratio. */
 const CEILING_VIEWPORTS = 3;
+/** The shelf and cabinet views: no worse than this until SHELF-BUDGET-1 brings them to the ceiling. */
+const VIEW_GUARD_VIEWPORTS = 5;
 /** What the case may draw past the frame on each side, as a share of the frame. */
 const MARGIN = 0.5;
 
-type State = { name: string; swipe: 'camera' | 'pan'; swipes: number };
+type State = { name: string; swipe: 'camera' | 'pan'; swipes: number; view?: 'wall' | 'cabinet' | 'shelf'; pattern?: string };
 const STATES: State[] = [
   { name: 'default', swipe: 'camera', swipes: 0 },
   { name: 'camera-2', swipe: 'camera', swipes: 2 },
   { name: 'pan-2', swipe: 'pan', swipes: 2 },
   { name: 'camera-40', swipe: 'camera', swipes: 40 },
   { name: 'pan-40', swipe: 'pan', swipes: 40 },
+];
+
+/** The fixture wall: about 1,200 figures of the seven fixtures, or of one in every slot (?fxonly). */
+type Wall = { name: string; query: string };
+const SPARSE: Wall = { name: 'fixtures', query: 'fx=170' };
+const DENSE: Wall[] = [
+  // a wall of one small figure: 35 mm wide, its cut-out drawn
+  { name: 'spike wall', query: 'fx=170&fxonly=spike' },
+  // denser: the same figure framed at half its width (17 mm), past the 250 the case draws
+  { name: 'spike wall at the 250 cap', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed' },
+];
+const DENSE_STATES = STATES.filter((x) => x.swipes < 40);
+/** The other views, and another wall: no worse than VIEW_GUARD_VIEWPORTS (the wall at the ceiling), culled to the frame and its margin. */
+const VIEW_STATES: (State & { ceiling: number })[] = [
+  { name: 'shelf view walked', view: 'shelf', swipe: 'camera', swipes: 2, ceiling: VIEW_GUARD_VIEWPORTS },
+  { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0, ceiling: VIEW_GUARD_VIEWPORTS },
+  { name: 'rack wall as it opens', view: 'wall', pattern: 'open-steel-rack', swipe: 'camera', swipes: 0, ceiling: CEILING_VIEWPORTS },
 ];
 
 async function swipe(page: Page, dx: number) {
@@ -91,11 +117,17 @@ async function compositedLayers(page: Page) {
     const { nodeIds: inScene } = await cdp.send('DOM.querySelectorAll', { nodeId: root.nodeId, selector: '.cabinet-scene, .cabinet-scene *' });
     const backed = drawing.filter((l) => l.backendNodeId !== undefined);
     const { nodeIds } = await cdp.send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: backed.map((l) => l.backendNodeId!) });
+    const { nodeIds: inFigures } = await cdp.send('DOM.querySelectorAll', {
+      nodeId: root.nodeId,
+      selector: '.cab-figure, .cab-figure *, .cab-shadow, .cab-plate',
+    });
     const scene = new Set(inScene);
+    const figures = new Set(inFigures);
     const sceneLayers = backed.filter((_, i) => scene.has(nodeIds[i]));
+    const figureLayers = backed.filter((_, i) => figures.has(nodeIds[i]));
     const area = (ls: LayerTreeLayer[]) => ls.reduce((a, l) => a + l.width * l.height, 0);
     await cdp.send('LayerTree.disable');
-    return { layers: drawing.length, area: area(drawing), sceneLayers: sceneLayers.length, sceneArea: area(sceneLayers) };
+    return { layers: drawing.length, area: area(drawing), sceneLayers: sceneLayers.length, sceneArea: area(sceneLayers), figureArea: area(figureLayers) };
   } finally {
     await cdp.detach();
   }
@@ -208,18 +240,28 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
       throughGlass = Math.max(throughGlass, Math.min(camera.frame.width, Math.max(...xs)) - Math.max(0, Math.min(...xs)));
     }
   }
-  return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass };
+  // the cabinets whose body stands whole across the frame, side to side on the front plane at the height it aims at
+  const lookY = unprojectToPlaneZ(camera, camera.frame.width / 2, camera.frame.height / 2, 0)?.[1] ?? 0;
+  const whole = layout.cabinets.flatMap((slot, i) =>
+    [slot.leftMm, slot.rightMm].every((x) => {
+      const p = project(camera, [x, lookY, 0]).x + panPx;
+      return p >= 0 && p <= camera.frame.width;
+    })
+      ? [i]
+      : [],
+  );
+  return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass, whole };
 }
 
 /** Open the case at `size` in fixture mode, swipe it into `state`, and let it settle: what it draws, against its frame. */
-async function settled(page: Page, size: { width: number; height: number }, state: State) {
-  await page.addInitScript((swipeMode) => {
+async function settled(page: Page, size: { width: number; height: number }, state: State, wall: Wall = SPARSE) {
+  await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', swipe: swipeMode }));
-  }, state.swipe);
+    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+  }, { view: state.view ?? 'wall', swipe: state.swipe, ...(state.pattern ? { pattern: state.pattern } : {}) });
   await page.setViewportSize(size);
-  await page.goto('/?layout=case&fx=170');
+  await page.goto(`/?layout=case&${wall.query}`);
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0);
   const x0 = Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x'));
@@ -234,60 +276,104 @@ async function settled(page: Page, size: { width: number; height: number }, stat
   return { scene, frame: frameCheck(scene), drawnSet: scene.spans.map((x) => x.i).sort((a, b) => a - b) };
 }
 
+/** What the scene draws and the layers it costs, logged and attached to the test. */
+async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state: State, wall: Wall, testInfo: TestInfo) {
+  const { scene, frame, drawnSet } = await settled(page, size, state, wall);
+  const layers = await compositedLayers(page);
+  const viewport = size.width * size.height;
+  const report = {
+    wall: wall.name,
+    state: state.name,
+    viewport: size.name,
+    dpr: FOLD8_DPR,
+    cabinets: scene.cabinets,
+    figures: scene.figures,
+    quads: scene.quads,
+    cameraX: scene.cameraX,
+    pan: scene.pan,
+    layers: layers.layers,
+    sceneLayers: layers.sceneLayers,
+    sceneLayerAreaPx: Math.round(layers.sceneArea),
+    sceneLayerAreaViewports: Number((layers.sceneArea / viewport).toFixed(3)),
+    figureLayerAreaViewports: Number((layers.figureArea / viewport).toFixed(3)),
+    allLayerAreaViewports: Number((layers.area / viewport).toFixed(3)),
+    sceneLayerDevicePx: Math.round(layers.sceneArea * FOLD8_DPR * FOLD8_DPR),
+    outside: scene.outside.length,
+    spill: scene.spill.length,
+    drawnCabinets: drawnSet,
+    framed: frame.framed,
+    seen: frame.seen,
+    nearest: frame.nearest,
+    whole: frame.whole,
+    blankPx: Math.round(frame.blank),
+    throughGlassPx: Math.round(frame.throughGlass),
+    cullX: scene.cullX,
+    cullPan: scene.cullPan,
+  };
+  console.log(`case-budget ${JSON.stringify(report)}`);
+  await testInfo.attach('case budget', { body: JSON.stringify({ ...report, outsideFirst: scene.outside.slice(0, 20), spillFirst: scene.spill.slice(0, 20) }, null, 1), contentType: 'application/json' });
+  return { scene, frame, drawnSet, layers, viewport };
+}
+
+/** The tile budget of a wall view: cabinets and figures capped, the settled cull, nothing outside, the scene layers under the ceiling. */
+function budgetChecks(m: Awaited<ReturnType<typeof measured>>, state: State) {
+  const { scene, frame, drawnSet, layers, viewport } = m;
+  expect.soft(scene.figures, 'figures drawn (Ross 12:2xC)').toBeLessThanOrEqual(MAX_FIGURES);
+  expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(MAX_CABINETS);
+  // settled: the case culls for the picture it shows, not one from partway through the swipe
+  expect.soft(scene.cullX, 'the cull is the settled camera').toBeCloseTo(scene.cameraX, 3);
+  expect.soft(Math.round(scene.cullPan), 'the cull is the settled pan').toBe(scene.pan);
+  // the scene publishes the wall the e2e checks against
+  expect(frame.published.length).toBe(frame.boxes.length);
+  frame.published.forEach((b, i) => {
+    for (const k of ['x0', 'x1', 'y1', 'z0', 'z1'] as const) expect.soft(b[k], `cabinet ${i} ${k}`).toBeCloseTo(frame.boxes[i][k], 0);
+  });
+  // the drawn cabinets are the five nearest the settled frame centre
+  expect.soft(drawnSet, 'the drawn cabinets are the five nearest the settled frame centre').toEqual(frame.nearest);
+  expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
+  expect.soft(scene.spill, 'faces reaching past the frame and half a viewport round it').toEqual([]);
+  // a settled walk stands at least three cabinets whole (Ross 12:1xC, desk MN2 a)
+  if (state.swipe === 'camera' && (state.view ?? 'wall') === 'wall') expect.soft(frame.whole.length, `cabinets whole across the frame: ${frame.whole.join(',')}`).toBeGreaterThanOrEqual(3);
+  expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
+}
+
 for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
+  for (const wall of DENSE) {
+    for (const state of DENSE_STATES) {
+      test(`a dense wall fits the tile budget too, its figures' cost bounded wherever the camera stands: ${wall.name}, ${state.name}, ${size.name}`, async ({ page }, testInfo) => {
+        test.setTimeout(180_000);
+        const m = await measured(page, size, state, wall, testInfo);
+        expect(m.scene.figures, 'figures are drawn').toBeGreaterThan(0);
+        // the denser wall would draw past the cap: the case draws exactly the 250 nearest the frame centre
+        if (wall.query.includes('fxwidth=narrow')) expect.soft(m.scene.figures, 'the 250 cap binds').toBe(MAX_FIGURES);
+        budgetChecks(m, state);
+      });
+    }
+  }
+
+  for (const state of VIEW_STATES) {
+    test(`${state.name} costs no more than ${state.ceiling} viewports of scene layers and draws nothing past the frame and its margin: ${size.name}`, async ({ page }, testInfo) => {
+      test.setTimeout(180_000);
+      const { scene, layers, viewport } = await measured(page, size, state, SPARSE, testInfo);
+      expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
+      expect.soft(scene.figures, 'figures drawn (Ross 12:2xC)').toBeLessThanOrEqual(MAX_FIGURES);
+      expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(MAX_CABINETS);
+      expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
+      expect.soft(scene.spill, 'faces reaching past the frame and half a viewport round it').toEqual([]);
+      expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(state.ceiling);
+    });
+  }
+
   for (const state of STATES) {
     test(`the case fits the tile budget: at most ${MAX_CABINETS} cabinets and ${MAX_FIGURES} figures, the five nearest the settled frame centre, layers <= ${CEILING_VIEWPORTS} viewports: ${state.name}, ${size.name}`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);
-      const { scene, frame, drawnSet } = await settled(page, size, state);
-      const layers = await compositedLayers(page);
-      const viewport = size.width * size.height;
-      const report = {
-        state: state.name,
-        viewport: size.name,
-        dpr: FOLD8_DPR,
-        cabinets: scene.cabinets,
-        figures: scene.figures,
-        quads: scene.quads,
-        cameraX: scene.cameraX,
-        pan: scene.pan,
-        layers: layers.layers,
-        sceneLayers: layers.sceneLayers,
-        sceneLayerAreaPx: Math.round(layers.sceneArea),
-        sceneLayerAreaViewports: Number((layers.sceneArea / viewport).toFixed(3)),
-        allLayerAreaViewports: Number((layers.area / viewport).toFixed(3)),
-        sceneLayerDevicePx: Math.round(layers.sceneArea * FOLD8_DPR * FOLD8_DPR),
-        outside: scene.outside.length,
-        spill: scene.spill.length,
-        drawnCabinets: drawnSet,
-        framed: frame.framed,
-        seen: frame.seen,
-        nearest: frame.nearest,
-        blankPx: Math.round(frame.blank),
-        throughGlassPx: Math.round(frame.throughGlass),
-        cullX: scene.cullX,
-        cullPan: scene.cullPan,
-      };
-      console.log(`case-budget ${JSON.stringify(report)}`);
-      await testInfo.attach('case budget', { body: JSON.stringify({ ...report, outsideFirst: scene.outside.slice(0, 20), spillFirst: scene.spill.slice(0, 20) }, null, 1), contentType: 'application/json' });
+      const m = await measured(page, size, state, SPARSE, testInfo);
+      const { scene } = m;
       // the far end of the wall may stand empty; as it opens and in its middle figures are drawn
       if (state.swipes < 40) expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
       else expect(scene.cabinets, 'cabinets are drawn').toBeGreaterThan(0);
-      expect.soft(scene.figures, 'figures drawn (Ross 12:2xC)').toBeLessThanOrEqual(MAX_FIGURES);
       if (state.swipes === 2) expect.soft(scene.figures, 'the loaded middle of the wall').toBeGreaterThanOrEqual(MID_FIGURES(size.name));
-      expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(MAX_CABINETS);
-      // settled: the case culls for the picture it shows, not one from partway through the swipe
-      expect.soft(scene.cullX, 'the cull is the settled camera').toBeCloseTo(scene.cameraX, 3);
-      expect.soft(Math.round(scene.cullPan), 'the cull is the settled pan').toBe(scene.pan);
-      // the scene publishes the wall the e2e checks against
-      expect(frame.published.length).toBe(frame.boxes.length);
-      frame.published.forEach((b, i) => {
-        for (const k of ['x0', 'x1', 'y1', 'z0', 'z1'] as const) expect.soft(b[k], `cabinet ${i} ${k}`).toBeCloseTo(frame.boxes[i][k], 0);
-      });
-      // the drawn cabinets are the five nearest the settled frame centre
-      expect.soft(drawnSet, 'the drawn cabinets are the five nearest the settled frame centre').toEqual(frame.nearest);
-      expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
-      expect.soft(scene.spill, 'faces reaching past the frame and half a viewport round it').toEqual([]);
-      expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
+      budgetChecks(m, state);
     });
 
     test(`the frame shows the fronts of at most ${MAX_CABINETS} cabinets, every one drawn, no blank wall where one stands: ${state.name}, ${size.name}`, async ({ page }) => {

@@ -7,10 +7,14 @@ import { wallLayout } from '../packCabinets';
 import {
   CABINET_HYSTERESIS,
   CULL_MARGIN,
+  FIGURE_BUDGET_VIEWPORTS,
   MAX_DRAWN_CABINETS,
+  MAX_DRAWN_FIGURES,
   NEAR_MM,
   RECULL_SHARE,
+  byFrameCentre,
   cullRect,
+  figureScales,
   figuresToDraw,
   hiddenUnder,
   opaqueBoards,
@@ -19,6 +23,7 @@ import {
   texelScale,
   trimFace,
   type CullView,
+  type FigureBox,
 } from '../caseCull';
 
 const COVER = { width: 443, height: 344 };
@@ -469,5 +474,107 @@ describe('figuresToDraw: in a drawn cabinet, in the frame and its margin, under 
   it('a figure under a board but showing past its front edge is drawn', () => {
     const peeking = fig(0, b1.topMm, b2.topMm - b2.thicknessMm - 10, 200);
     expect(figuresToDraw(view, rect, [peeking], new Set([0]), boards)).toEqual({ shown: [0], hidden: 0 });
+  });
+});
+
+describe(`figuresToDraw: at most ${MAX_DRAWN_FIGURES} figures, the nearest the frame centre (Ross 12:2xC)`, () => {
+  // a dense front: a grid of small figures on the front plane of one cabinet, all inside the frame and its margin
+  const camera: Camera = { x: 0, y: 900, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
+  const grid = (n: number, cols: number): FigureBox[] =>
+    Array.from({ length: n }, (_, i) => {
+      const x = ((i % cols) - cols / 2) * 40;
+      const y = 400 + Math.floor(i / cols) * 60;
+      return { cab: 0, x0: x, x1: x + 30, y0: y, y1: y + 50, z: 0 };
+    });
+  const dist = (view: CullView, f: FigureBox) => {
+    const q = screen(view, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z]);
+    return Math.hypot(q.x - view.camera.frame.width / 2, q.y - view.camera.frame.height / 2);
+  };
+
+  it('is 250', () => {
+    expect(MAX_DRAWN_FIGURES).toBe(250);
+  });
+
+  for (const panPx of [0, 150]) {
+    it(`draws the ${MAX_DRAWN_FIGURES} nearest the frame centre of more, in wall order (pan ${panPx})`, () => {
+      const view = viewOf(camera, panPx);
+      const figs = grid(600, 30);
+      const all = figuresToDraw(view, cullRect(COVER), figs, new Set([0]), () => [], Infinity);
+      expect(all.shown).toHaveLength(600);
+      const { shown, hidden } = figuresToDraw(view, cullRect(COVER), figs, new Set([0]), () => []);
+      expect(hidden).toBe(0);
+      expect(shown).toHaveLength(MAX_DRAWN_FIGURES);
+      expect(shown).toEqual([...shown].sort((a, b) => a - b));
+      const kept = new Set(shown);
+      const farthestKept = Math.max(...shown.map((i) => dist(view, figs[i])));
+      const nearestDropped = Math.min(...figs.flatMap((f, i) => (kept.has(i) ? [] : [dist(view, f)])));
+      expect(farthestKept).toBeLessThanOrEqual(nearestDropped);
+    });
+  }
+
+  it('draws all of no more than the cap', () => {
+    const figs = grid(MAX_DRAWN_FIGURES, 25);
+    expect(figuresToDraw(viewOf(camera), cullRect(COVER), figs, new Set([0]), () => []).shown).toHaveLength(MAX_DRAWN_FIGURES);
+    expect(figuresToDraw(viewOf(camera), cullRect(COVER), figs, new Set([0]), () => [], 10).shown).toHaveLength(10);
+  });
+
+  it('byFrameCentre: nearest the frame centre on screen first, one behind the camera last', () => {
+    const view = viewOf(camera, 40);
+    const figs = [...grid(40, 8), { cab: 0, x0: -20, x1: 20, y0: 800, y1: 900, z: 5000 }];
+    const order = byFrameCentre(view, figs);
+    expect([...order].sort((a, b) => a - b)).toEqual(figs.map((_, i) => i));
+    expect(order[order.length - 1]).toBe(40);
+    for (let k = 1; k < order.length - 1; k++) expect(dist(view, figs[order[k]])).toBeGreaterThanOrEqual(dist(view, figs[order[k - 1]]));
+  });
+});
+
+describe('figureScales: the figures cost at most a budget of px wherever the camera stands, the farthest from the frame centre drawn coarser first', () => {
+  const box = (x: number, w = 150, h = 220): FigureBox => ({ cab: 0, x0: x - w / 2, x1: x + w / 2, y0: 400, y1: 400 + h, z: 0 });
+  const cost = (figs: readonly FigureBox[], scales: readonly number[]) => figs.reduce((a, f, i) => a + (f.x1 - f.x0) * (f.y1 - f.y0) * scales[i] ** 2, 0);
+  const budget = FIGURE_BUDGET_VIEWPORTS * COVER.width * COVER.height;
+
+  it('is a share of the frame the faces leave under the 3-viewport ceiling', () => {
+    expect(FIGURE_BUDGET_VIEWPORTS).toBeGreaterThan(0.5);
+    expect(FIGURE_BUDGET_VIEWPORTS).toBeLessThanOrEqual(1.5);
+  });
+
+  it('every figure at the scene\'s px per mm while they fit the budget', () => {
+    const figs = [box(0), box(200), box(-200)];
+    const camera: Camera = { x: 0, y: 500, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
+    expect(figureScales(viewOf(camera), figs, 0.25, budget)).toEqual([0.25, 0.25, 0.25]);
+  });
+
+  it('past it, the farthest from the frame centre first: whole octaves down, never finer than a nearer one, the nearest at the scene\'s', () => {
+    // a camera stepping in: the scene's px per mm rises, the figures' cost does not
+    for (const [z, s] of [
+      [3000, 0.25],
+      [1500, 0.5],
+      [600, 1],
+    ] as const) {
+      const camera: Camera = { x: 0, y: 500, z, pitch: 0, focalPx: 600, frame: COVER };
+      const view = viewOf(camera, 30);
+      const figs = Array.from({ length: 250 }, (_, i) => box((i - 125) * 37));
+      const scales = figureScales(view, figs, s, budget);
+      const order = byFrameCentre(view, figs);
+      expect(scales[order[0]], `${z}`).toBe(s);
+      for (let k = 1; k < order.length; k++) expect(scales[order[k]], `${z} ${k}`).toBeLessThanOrEqual(scales[order[k - 1]]);
+      for (const x of scales) expect(Number.isInteger(Math.log2(s / x)), `${x}`).toBe(true);
+      const floor = figs.reduce((a, f) => a + (f.x1 - f.x0) * (f.y1 - f.y0) * (1 / 64) ** 2, 0);
+      expect(cost(figs, scales), `${z}`).toBeLessThanOrEqual(budget + floor);
+      expect(Math.min(...scales)).toBeGreaterThanOrEqual(1 / 64);
+      // and the budget is spent: one octave finer for the first figure drawn coarser would not fit
+      const first = order.findIndex((i) => scales[i] < s);
+      expect(first, `${z}`).toBeGreaterThan(0);
+      const before = order.slice(0, first).map((i) => figs[i]);
+      const f = figs[order[first]];
+      expect(cost(before, before.map(() => s)) + (f.x1 - f.x0) * (f.y1 - f.y0) * (2 * scales[order[first]]) ** 2, `${z}`).toBeGreaterThan(budget);
+    }
+  });
+
+  it('a figure too big for the budget alone is drawn at the coarsest, never skipped', () => {
+    const camera: Camera = { x: 0, y: 500, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
+    const huge = box(0, 40_000, 40_000);
+    expect(figureScales(viewOf(camera), [huge], 1, budget)).toEqual([1 / 64]);
+    expect(figureScales(viewOf(camera), [], 1, budget)).toEqual([]);
   });
 });

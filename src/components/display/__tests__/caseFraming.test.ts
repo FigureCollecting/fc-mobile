@@ -13,7 +13,9 @@ import {
   panFraming,
   panLimitsPx,
   panSlideMaxPx,
+  settleWalk,
   swipeCamera,
+  wholeCabinets,
   cabinetsInReach,
   capSlidePx,
   capSpanMm,
@@ -519,9 +521,9 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     });
   }
 
-  it('the wall view still shows the wall (Ross 12:1xC): as it opens, three cabinets whole across the frame; walked, four fronts or more, two whole', () => {
-    // a wall of one kind of glass cabinet, every Fold8 panel; whole = the body, side to side, at the height the frame aims at
-    for (const [name, wall] of WALLS.slice(0, 2)) {
+  it('the wall view still shows the wall (Ross 12:1xC, desk MN2 a): as it opens and wherever a walk settles, three cabinets or more whole across the frame, four fronts or more', () => {
+    // every Fold8 panel; whole = the body, side to side, at the height the frame aims at
+    for (const [name, wall] of WALLS) {
       const headroomMm = wall.cabinets.map(() => 300);
       for (const frame of FRAMES) {
         const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
@@ -535,14 +537,71 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
               : [],
           );
         expect(whole(f.camera).length, `${name} ${frame.width}x${frame.height} as it opens`).toBeGreaterThanOrEqual(3);
+        expect(wholeCabinets(f.camera, wall, f.look[1], 0), `${name} ${frame.width}x${frame.height}`).toEqual(whole(f.camera));
         let walked = f;
-        for (let k = 1; k <= 40; k++) {
-          walked = swipeCamera(walked, wall, -0.13 * frame.width);
+        // short swipes and long ones, forward to the wall's far end and back to its start
+        for (const [k, dx] of [...Array.from({ length: 30 }, () => -0.13), ...Array.from({ length: 12 }, () => -0.7), ...Array.from({ length: 30 }, () => 0.4)].entries()) {
+          walked = settleWalk(swipeCamera(walked, wall, dx * frame.width), wall, walked.camera.x);
           const at = `${name} ${frame.width}x${frame.height} walk ${k}`;
-          expect(whole(walked.camera).length, at).toBeGreaterThanOrEqual(2);
+          expect(whole(walked.camera).length, `${at}: ${whole(walked.camera).join(',')}`).toBeGreaterThanOrEqual(3);
           expect(framed(walked.camera, 0, wall, f.look[1]).fronts.length, at).toBeGreaterThanOrEqual(4);
+          expect(framed(walked.camera, 0, wall, f.look[1]).fronts.length, at).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
         }
       }
     }
+  });
+
+  it('a settled walk snaps to the nearest stop ahead of where it started, where three or more cabinets stand whole: a short swipe still moves on, never back', () => {
+    const wall = WALLS[0][1];
+    const headroomMm = wall.cabinets.map(() => 300);
+    for (const frame of [COVER, OPEN]) {
+      const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
+      const xs = [f.camera.x];
+      let walked = f;
+      for (let k = 0; k < 8; k++) {
+        // a swipe a twentieth of the frame: on its own it would walk the camera some 5 % of the frame
+        walked = settleWalk(swipeCamera(walked, wall, -0.05 * frame.width), wall, walked.camera.x);
+        xs.push(walked.camera.x);
+      }
+      for (let k = 1; k < xs.length; k++) expect(xs[k], `${frame.width} walk ${k}`).toBeGreaterThan(xs[k - 1]);
+      // every stop stands at a cabinet's centre or halfway between two
+      const stops = wall.cabinets.flatMap((c, i) => (i + 1 < wall.cabinets.length ? [c.centerMm, (c.centerMm + wall.cabinets[i + 1].centerMm) / 2] : [c.centerMm]));
+      for (const x of xs.slice(1)) expect(stops.some((s) => Math.abs(s - x) < 1e-9), `${x}`).toBe(true);
+      // and back: a short swipe the other way steps back one stop
+      const back = settleWalk(swipeCamera(walked, wall, 0.05 * frame.width), wall, walked.camera.x);
+      expect(back.camera.x).toBe(xs[xs.length - 2]);
+      // a long swipe lands at the stop nearest where the camera walked to
+      const far = swipeCamera(f, wall, -3 * frame.width);
+      const landed = settleWalk(far, wall, f.camera.x);
+      const ok = stops.filter((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1], 0).length >= 3);
+      const nearest = ok.reduce((a, b) => (Math.abs(b - far.camera.x) < Math.abs(a - far.camera.x) ? b : a));
+      expect(landed.camera.x).toBe(nearest);
+      expect(landed.look).toEqual([nearest, f.look[1], f.look[2]]);
+      // no move, no snap: the picture stays
+      expect(settleWalk(walked, wall, walked.camera.x)).toBe(walked);
+    }
+  });
+
+  it('at the wall\'s ends the walk stops at the last stop where three stand whole; a wall of fewer stands at the most it can', () => {
+    const wall = WALLS[0][1];
+    const headroomMm = wall.cabinets.map(() => 300);
+    const f = frameCase({ frame: COVER, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
+    // swiped back past the start: the camera would stand on the first cabinet, half the frame on bare wall
+    const start = swipeCamera(f, wall, 10 * COVER.width);
+    expect(start.camera.x).toBe(wall.cabinets[0].centerMm);
+    expect(wholeCabinets(start.camera, wall, f.look[1], 0).length).toBeLessThan(3);
+    const snapped = settleWalk(start, wall, f.camera.x);
+    expect(wholeCabinets(snapped.camera, wall, f.look[1], 0).length).toBeGreaterThanOrEqual(3);
+    expect(snapped.camera.x).toBeLessThanOrEqual(f.camera.x);
+    // at the far end, a swipe on stays put
+    const end = settleWalk(swipeCamera(f, wall, -100 * COVER.width), wall, f.camera.x);
+    expect(settleWalk(swipeCamera(end, wall, -0.05 * COVER.width), wall, end.camera.x).camera.x).toBe(end.camera.x);
+    // two cabinets: never three whole; the walk stands where the most do
+    const two = wallLayout([IKEA_KLINGSBO, IKEA_KLINGSBO]);
+    const g = frameCase({ frame: COVER, wall: two, headroomMm: [300, 300], view: 'wall', focus: 0, shelf: 0 });
+    const s2 = settleWalk(swipeCamera(g, two, -0.05 * COVER.width), two, g.camera.x);
+    expect(wholeCabinets(s2.camera, two, g.look[1], 0)).toEqual([0, 1]);
+    // the pan's slide counts: a cabinet slid out of the frame is not whole
+    expect(wholeCabinets(f.camera, wall, f.look[1], -COVER.width).length).toBeLessThan(wholeCabinets(f.camera, wall, f.look[1], 0).length);
   });
 });

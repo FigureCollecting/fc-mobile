@@ -5,7 +5,7 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
+import { FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, type Camera } from '../caseCamera';
@@ -1028,6 +1028,76 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     // the wall is dense: the case draws far more of it than of an ordinary one
     expect(most).toBeGreaterThan(100);
   }, 60_000);
+
+  // the challenger's frames: the cover's, the open panel's and the sideways cover's scene frames
+  const DENSE_FRAMES = [
+    { width: 443, height: 454 },
+    { width: 870, height: 400 },
+    { width: 616, height: 245 },
+  ];
+  /** One small figure in every slot: 1,500 x fx-spike. */
+  const spikeWall = () => {
+    const spike = FIXTURE_FIGURES.find((f) => f._id === 'fx-spike')!;
+    return Array.from({ length: 1500 }, (_, i) => ({ ...spike, _id: `spike-${i}` }));
+  };
+
+  it(`a homogeneous dense wall (1,500 x fx-spike) draws at most ${MAX_DRAWN_FIGURES} figures in every view, walked or panned: the cap binds`, () => {
+    const dense = spikeWall();
+    let most = 0;
+    for (const frame of DENSE_FRAMES) {
+      for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        for (const swipe of ['camera', 'pan'] as const) {
+          const { host } = scene(dense, { view, swipe }, { frameFallback: frame });
+          for (const dx of [0, -400, -400, 300]) {
+            if (dx !== 0) drag(host, dx);
+            const n = figureButtons(host).length;
+            expect(n, `${frame.width}x${frame.height} ${view} ${swipe} ${dx}`).toBeLessThanOrEqual(MAX_DRAWN_FIGURES);
+            expect(host.dataset.drawnFigures).toBe(String(n));
+            most = Math.max(most, n);
+          }
+          cleanup();
+        }
+      }
+    }
+    expect(most).toBe(MAX_DRAWN_FIGURES);
+  }, 120_000);
+
+  it('the figures cost at most their budget of element px wherever the camera stands; the one nearest the frame centre drawn at the scene\'s px per mm', () => {
+    const dense = spikeWall();
+    for (const frame of DENSE_FRAMES) {
+      for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        const { host } = scene(dense, { view }, { frameFallback: frame });
+        for (const dx of [0, -400]) {
+          if (dx !== 0) drag(host, dx);
+          const at = `${frame.width}x${frame.height} ${view} ${dx}`;
+          const s = pxPerMm(host);
+          let area = 0;
+          let floor = 0;
+          let atScene = 0;
+          for (const b of figureButtons(host)) {
+            // the figure's layer: its button and the picture hanging from it, in element px
+            const art = b.querySelector<HTMLElement>('.cab-figure__box')!;
+            const [w, h] = [parseFloat(b.style.width), parseFloat(b.style.height)];
+            const [l, t, aw, ah] = ['left', 'top', 'width', 'height'].map((k) => parseFloat(art.style.getPropertyValue(k)));
+            const lw = Math.max(w, l + aw) - Math.min(0, l);
+            const lh = Math.max(h, t + ah) - Math.min(0, t);
+            area += lw * lh;
+            // drawn at k px per mm (its own --s): its world size is what the scene's s draws
+            const k = Number(b.style.getPropertyValue('--s'));
+            expect(k, at).toBeGreaterThan(0);
+            expect(k, at).toBeLessThanOrEqual(s);
+            expect(Number.isInteger(Math.log2(s / k)), `${at} ${k}`).toBe(true);
+            expect(sideMm(b, 'u'), at).toBeCloseTo((w / k) * s, 3);
+            floor += (lw / k) * (lh / k) * (1 / 64) ** 2;
+            if (k === s) atScene++;
+          }
+          expect(area, at).toBeLessThanOrEqual(FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height + floor + 1);
+          expect(atScene, at).toBeGreaterThan(0);
+        }
+        cleanup();
+      }
+    }
+  }, 120_000);
 
   it('the px per mm is taken over the room up to the headroom over the tops, where their figures stand', () => {
     // a short frame on a few cabinets: the camera looks down on the tops; the framing aims at the middle of the room

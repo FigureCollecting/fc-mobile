@@ -3,7 +3,8 @@
  * until a contract round syncs them): which cabinets line the wall, the view,
  * what a sideways swipe does (CC4: pan the wall or move the camera, a
  * playable toggle so Ross decides hands-on), the room's ceiling (CC9) and
- * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine).
+ * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine)
+ * and the renderer (CASE-GL: Classic or Canvas).
  * One localStorage entry; unreadable or unknown values fall back per field.
  */
 import { useCallback, useState } from 'preact/hooks';
@@ -37,6 +38,12 @@ export const WALL_PATTERNS: readonly WallPattern[] = [
   },
 ];
 
+/**
+ * CASE-GL: how the case is drawn. Classic: CSS 3D, a layer per face and figure (MOB-NAV-2's caps). Canvas: one
+ * WebGL canvas, the way games draw (gl/). Classic until Ross picks after his Fold8 check.
+ */
+export type CaseRenderer = 'classic' | 'canvas';
+
 /** The pull-up tabs (IC1-R1): Reserved holds an empty slot until it has a job (IC1-R3). */
 export type CaseTab = 'view' | 'reserved' | 'info' | 'refine';
 export const CASE_TABS: readonly CaseTab[] = ['view', 'reserved', 'info', 'refine'];
@@ -52,6 +59,7 @@ export interface CasePrefs {
   readonly ceilingMm: number;
   /** Left to right; the first two sit left of the raised +, the last two right of it. */
   readonly tabOrder: readonly CaseTab[];
+  readonly renderer: CaseRenderer;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -60,6 +68,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   swipe: 'camera',
   ceilingMm: CEILING_DEFAULT_MM,
   tabOrder: CASE_TABS,
+  renderer: 'classic',
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -94,6 +103,7 @@ export function readCasePrefs(): CasePrefs {
     swipe: stored.swipe === 'pan' || stored.swipe === 'camera' ? stored.swipe : d.swipe,
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
     tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
+    renderer: stored.renderer === 'canvas' || stored.renderer === 'classic' ? stored.renderer : d.renderer,
   };
 }
 

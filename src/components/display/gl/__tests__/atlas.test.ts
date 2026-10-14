@@ -34,21 +34,24 @@ describe('packAtlas', () => {
   });
 
   it('opens a second page only when the first is full', () => {
-    const cells = Array.from({ length: 4 }, (_, i) => ({ key: `k${i}`, w: 120, h: 120 }));
+    // two to a page: each takes a shelf of its own
+    const cells = Array.from({ length: 4 }, (_, i) => ({ key: `k${i}`, w: 200, h: 120 }));
     expect(packAtlas(cells, 256, 4).pages).toBe(2);
+    expect(packAtlas(cells.slice(0, 2), 256, 4).pages).toBe(1);
     expect(packAtlas(cells.slice(0, 1), 256, 4).pages).toBe(1);
     expect(packAtlas([], 256, 4).pages).toBe(0);
   });
 
   it('lists what does not fit in the pages it may use, and a cell larger than a page', () => {
-    const cells = Array.from({ length: 5 }, (_, i) => ({ key: `k${i}`, w: 120, h: 120 }));
+    const cells = Array.from({ length: 5 }, (_, i) => ({ key: `k${i}`, w: 200, h: 120 }));
     const pack = packAtlas(cells, 256, 1);
     expect(pack.pages).toBe(1);
-    expect(pack.places.size).toBe(1);
-    expect(pack.overflow).toEqual(['k1', 'k2', 'k3', 'k4']);
-    expect(packAtlas([{ key: 'big', w: 254, h: 10 }], 256, 1).overflow).toEqual(['big']);
-    expect(packAtlas([{ key: 'tall', w: 10, h: 253 }], 256, 1).overflow).toEqual(['tall']);
-    expect(packAtlas([{ key: 'fits', w: 252, h: 252 }], 256, 1).overflow).toEqual([]);
+    expect(pack.places.size).toBe(2);
+    expect(pack.overflow).toEqual(['k2', 'k3', 'k4']);
+    const most = 256 - 2 * ATLAS_PAD_PX;
+    expect(packAtlas([{ key: 'big', w: most + 1, h: 10 }], 256, 1).overflow).toEqual(['big']);
+    expect(packAtlas([{ key: 'tall', w: 10, h: most + 1 }], 256, 1).overflow).toEqual(['tall']);
+    expect(packAtlas([{ key: 'fits', w: most, h: most }], 256, 1).overflow).toEqual([]);
   });
 
   it('a property: any cells, never an overlap, never past a page, everything placed or listed', () => {

@@ -2,7 +2,8 @@
  * The View tab's card: how the case looks, kept on this device (CC14): the
  * view (whole cabinets, one cabinet, one shelf), which cabinets line the
  * wall, what a sideways swipe does (CC4: walk the camera or pan the wall, a
- * playable toggle so Ross decides hands-on), the room's ceiling (CC9, which
+ * playable toggle so Ross decides hands-on), the renderer beside it
+ * (CASE-GL: Classic or Canvas), the room's ceiling (CC9, which
  * limits what may stand on a top) and which side the tabs sit on.
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
  * The card fits above the tab bar and scrolls its body, so a tap reaches
@@ -12,7 +13,7 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { Style } from '../../styles/Style';
 import { inchesToMm } from './cabinetProfile';
 import { IN_MM } from './caseCamera';
-import { WALL_PATTERNS, type CasePrefs, type CaseView, type SwipeMode } from './casePrefs';
+import { WALL_PATTERNS, type CasePrefs, type CaseRenderer, type CaseView, type SwipeMode } from './casePrefs';
 
 const VIEWS: readonly [CaseView, string][] = [
   ['wall', 'Whole cabinets'],
@@ -23,6 +24,12 @@ const VIEWS: readonly [CaseView, string][] = [
 const SWIPES: readonly [SwipeMode, string][] = [
   ['camera', 'Move the camera'],
   ['pan', 'Pan the wall'],
+];
+
+/** CASE-GL: Classic (CSS 3D) or Canvas (one WebGL canvas), beside the swipe so Ross compares them hands-on. */
+const RENDERERS: readonly [CaseRenderer, string][] = [
+  ['classic', 'Classic'],
+  ['canvas', 'Canvas'],
 ];
 
 interface CaseViewCardProps {
@@ -66,6 +73,16 @@ export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardPro
           {SWIPES.map(([value, label]) => (
             <label key={value} class="case-card__choice">
               <input type="radio" name="case-swipe" checked={prefs.swipe === value} onChange={() => onChange({ swipe: value })} />
+              {label}
+            </label>
+          ))}
+        </fieldset>
+
+        <fieldset class="case-card__group">
+          <legend>Renderer</legend>
+          {RENDERERS.map(([value, label]) => (
+            <label key={value} class="case-card__choice">
+              <input type="radio" name="case-renderer" checked={prefs.renderer === value} onChange={() => onChange({ renderer: value })} />
               {label}
             </label>
           ))}

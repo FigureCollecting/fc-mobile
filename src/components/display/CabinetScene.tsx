@@ -41,7 +41,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform } from './caseCamera';
-import { cabinetBox, frameCase, panFraming, panLimitsPx, settleWalk, swipeCamera, wallPages } from './caseFraming';
+import { atX, cabinetBox, frameCase, nearestCabinet, panFraming, panLimitsPx, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
 import {
   FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
@@ -752,7 +752,7 @@ export function CabinetScene({
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
   const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
   const pageIdx = pages.findIndex((p) => p.includes(focusIdx));
-  const walked = walkX === null ? base : { ...base, camera: { ...base.camera, x: walkX }, look: [walkX, base.look[1], base.look[2]] as const };
+  const walked = walkX === null ? base : atX(base, walkX);
   const swiping = prefs.swipe === 'camera' && liveDx !== 0;
   const framing = swiping ? swipeCamera(walked, wall, liveDx) : walked;
   const [panMin, panMax] = panLimitsPx(framing, wall);
@@ -833,15 +833,12 @@ export function CabinetScene({
       setPan(clampPan(pan + dx));
       return;
     }
-    // a walk of the wall view settles where at least three cabinets stand whole (Ross 12:1xC, desk MN2 a)
-    const swiped = swipeCamera(walked, wall, dx);
-    const moved = prefs.view === 'wall' ? settleWalk(swiped, wall, walked.camera.x) : swiped;
-    setWalkX(moved.camera.x);
-    let nearest = 0;
-    wall.cabinets.forEach((c, i) => {
-      if (Math.abs(c.centerMm - moved.camera.x) < Math.abs(wall.cabinets[nearest].centerMm - moved.camera.x)) nearest = i;
-    });
-    setFocus(nearest);
+    // a walk of the wall view settles on a stop: three cabinets or more whole, the wall's ends, or the one that stands
+    // a cabinet whole that no other does (Ross 12:1xC, desk MN2 a; close-out 3, ruling 27); a short drag stays put
+    const moved = prefs.view === 'wall' ? settleWalk(walked, wall, walkStops(framingInput), dx) : { x: swipeCamera(walked, wall, dx).camera.x };
+    if (moved === null) return;
+    setWalkX(moved.x);
+    setFocus(nearestCabinet(wall, moved.x));
   };
   const onClickCapture = (e: MouseEvent) => {
     if (!swallowClick.current) return;

@@ -253,7 +253,8 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
       const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
       let x0 = Number(host.dataset.cameraX);
       for (let k = 0; k < 4; k++) {
-        drag(host, -40);
+        // past the dead zone (a quarter of a cabinet, at least 40 px: NOTE 30)
+        drag(host, -80);
         const camera = cameraOf(host);
         expect(camera.x, `${frame.width} ${k}`).toBeGreaterThan(x0);
         expect(stops.some((x) => Math.abs(x - camera.x) < 1e-6), `${camera.x}`).toBe(true);
@@ -275,6 +276,25 @@ describe('CabinetScene: taps and the CC4 swipe toggle', () => {
     const before = cameraOf(host);
     drag(host, -40);
     expect(Number(host.dataset.cameraX)).toBeCloseTo(before.x + (40 * before.z) / before.focalPx, 6);
+  });
+
+  it('camera mode, wall view (NOTE 30): a drag short of the dead zone, or one that comes back near its start, settles back; it is still a swipe, not a tap', () => {
+    const { host, onSelect } = scene(getFixtureFigures(60), { swipe: 'camera', view: 'wall' }, { frameFallback: { width: 443, height: 454 } });
+    const x0 = host.dataset.cameraX;
+    drag(host, -30);
+    expect(host.dataset.cameraX).toBe(x0);
+    expect(host.dataset.focus).toBe('0');
+    fireEvent.click(figureButtons(host)[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+    // out a long way and back to 10 px from where it started
+    fireEvent.pointerDown(host, { pointerId: 1, clientX: 300, clientY: 200, button: 0 });
+    fireEvent.pointerMove(host, { pointerId: 1, clientX: 100, clientY: 200 });
+    expect(host.dataset.cameraX).not.toBe(x0);
+    fireEvent.pointerMove(host, { pointerId: 1, clientX: 290, clientY: 200 });
+    fireEvent.pointerUp(host, { pointerId: 1, clientX: 290, clientY: 200 });
+    expect(host.dataset.cameraX).toBe(x0);
+    drag(host, -80);
+    expect(Number(host.dataset.cameraX)).toBeGreaterThan(Number(x0));
   });
 
   it('pan mode: a sideways drag slides the drawn wall like a photo; the camera stays', () => {

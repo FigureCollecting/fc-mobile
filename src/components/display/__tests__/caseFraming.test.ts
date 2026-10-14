@@ -532,7 +532,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
         const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
         const centres = wall.cabinets.map((c) => c.centerMm);
         const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
-        const most = Math.max(...stops.map((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1], 0).length));
+        const most = Math.max(...stops.map((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1]).length));
         const need = Math.min(3, most);
         if (most < 3) short.push(`${name} ${frame.width}x${frame.height} ${most}`);
         const whole = (camera: Camera) =>
@@ -545,7 +545,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
               : [],
           );
         expect(whole(f.camera).length, `${name} ${frame.width}x${frame.height} as it opens`).toBeGreaterThanOrEqual(need);
-        expect(wholeCabinets(f.camera, wall, f.look[1], 0), `${name} ${frame.width}x${frame.height}`).toEqual(whole(f.camera));
+        expect(wholeCabinets(f.camera, wall, f.look[1]), `${name} ${frame.width}x${frame.height}`).toEqual(whole(f.camera));
         let walked = f;
         // short swipes and long ones, forward to the wall's far end and back to its start
         for (const [k, dx] of [...Array.from({ length: 30 }, () => -0.13), ...Array.from({ length: 12 }, () => -0.7), ...Array.from({ length: 30 }, () => 0.4)].entries()) {
@@ -585,7 +585,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
       // a long swipe lands at the stop nearest where the camera walked to
       const far = swipeCamera(f, wall, -3 * frame.width);
       const landed = settleWalk(far, wall, f.camera.x);
-      const ok = stops.filter((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1], 0).length >= 3);
+      const ok = stops.filter((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1]).length >= 3);
       const nearest = ok.reduce((a, b) => (Math.abs(b - far.camera.x) < Math.abs(a - far.camera.x) ? b : a));
       expect(landed.camera.x).toBe(nearest);
       expect(landed.look).toEqual([nearest, f.look[1], f.look[2]]);
@@ -601,9 +601,9 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     // swiped back past the start: the camera would stand on the first cabinet, half the frame on bare wall
     const start = swipeCamera(f, wall, 10 * COVER.width);
     expect(start.camera.x).toBe(wall.cabinets[0].centerMm);
-    expect(wholeCabinets(start.camera, wall, f.look[1], 0).length).toBeLessThan(3);
+    expect(wholeCabinets(start.camera, wall, f.look[1]).length).toBeLessThan(3);
     const snapped = settleWalk(start, wall, f.camera.x);
-    expect(wholeCabinets(snapped.camera, wall, f.look[1], 0).length).toBeGreaterThanOrEqual(3);
+    expect(wholeCabinets(snapped.camera, wall, f.look[1]).length).toBeGreaterThanOrEqual(3);
     expect(snapped.camera.x).toBeLessThanOrEqual(f.camera.x);
     // at the far end, a swipe on stays put
     const end = settleWalk(swipeCamera(f, wall, -100 * COVER.width), wall, f.camera.x);
@@ -612,8 +612,43 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     const two = wallLayout([IKEA_KLINGSBO, IKEA_KLINGSBO]);
     const g = frameCase({ frame: COVER, wall: two, headroomMm: [300, 300], view: 'wall', focus: 0, shelf: 0 });
     const s2 = settleWalk(swipeCamera(g, two, -0.05 * COVER.width), two, g.camera.x);
-    expect(wholeCabinets(s2.camera, two, g.look[1], 0)).toEqual([0, 1]);
-    // the pan's slide counts: a cabinet slid out of the frame is not whole
-    expect(wholeCabinets(f.camera, wall, f.look[1], -COVER.width).length).toBeLessThan(wholeCabinets(f.camera, wall, f.look[1], 0).length);
+    expect(wholeCabinets(s2.camera, two, g.look[1])).toEqual([0, 1]);
+  });
+
+  it('the wall view opens centred on its page where the page stands three whole, or where no stop stands more; else on the stop nearest it that does', () => {
+    let centred = 0;
+    let moved = 0;
+    for (const [name, wall] of WALLS) {
+      const headroomMm = wall.cabinets.map(() => 300);
+      for (const frame of FRAMES) {
+        for (const focus of [0, 4, 9]) {
+          const input = { frame, wall, headroomMm, view: 'wall' as const, focus, shelf: 0 };
+          const page = wallPages(input).find((p) => p.includes(focus))!;
+          const mid = (wall.cabinets[page[0]].leftMm + wall.cabinets[page[page.length - 1]].rightMm) / 2;
+          const f = frameCase(input);
+          const at = `${name} ${frame.width}x${frame.height} focus ${focus}`;
+          const there = wholeCabinets({ ...f.camera, x: mid }, wall, f.look[1]).length;
+          const here = wholeCabinets(f.camera, wall, f.look[1]).length;
+          if (f.camera.x === mid) {
+            centred++;
+            // centred: the page stands three whole, or no stop near it does more
+            if (there < 3) {
+              const centres = wall.cabinets.map((c) => c.centerMm);
+              const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
+              const most = Math.max(...stops.map((x) => wholeCabinets({ ...f.camera, x }, wall, f.look[1]).length));
+              expect(most, at).toBeLessThanOrEqual(there);
+            }
+          } else {
+            moved++;
+            // moved off its page's centre only where that stood fewer than three whole, to where more do
+            expect(there, at).toBeLessThan(3);
+            expect(here, at).toBeGreaterThan(there);
+            expect(f.look[0], at).toBe(f.camera.x);
+          }
+        }
+      }
+    }
+    expect(centred).toBeGreaterThan(50);
+    expect(moved).toBeGreaterThan(0);
   });
 });

@@ -599,6 +599,17 @@ describe('figureScales: the figures cost at most a budget of px wherever the cam
     }
   });
 
+  it('a small figure past a big one is never drawn finer than it: the octave only coarsens outward', () => {
+    const camera: Camera = { x: 0, y: 500, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
+    const view = viewOf(camera);
+    // big and small in turn, outward from the centre: the budget runs out on a big one, which a small one would still fit
+    const figs = Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? box((i - 30) * 160, 400, 600) : box((i - 30) * 160, 20, 40)));
+    const scales = figureScales(view, figs, 0.5, budget);
+    const order = byFrameCentre(view, figs);
+    expect(new Set(scales).size).toBeGreaterThan(2);
+    for (let k = 1; k < order.length; k++) expect(scales[order[k]], `${k}`).toBeLessThanOrEqual(scales[order[k - 1]]);
+  });
+
   it('a figure too big for the budget alone is drawn at the coarsest, never skipped', () => {
     const camera: Camera = { x: 0, y: 500, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
     const huge = box(0, 40_000, 40_000);

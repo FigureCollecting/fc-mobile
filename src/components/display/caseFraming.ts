@@ -340,13 +340,13 @@ export function swipeCamera(framing: Framing, wall: WallLayout, dxPx: number): F
 export const WHOLE_MIN = 3;
 
 /**
- * The cabinets (by wall index) whose body stands whole across the frame, its picture slid panPx: side to side, on
- * the front plane at the height `lookY` the frame aims at, inside the frame.
+ * The cabinets (by wall index) whose body stands whole across the frame (unslid: a walk moves the camera): side to
+ * side, on the front plane at the height `lookY` the frame aims at, inside the frame.
  */
-export function wholeCabinets(camera: Camera, wall: WallLayout, lookY: number, panPx: number): number[] {
+export function wholeCabinets(camera: Camera, wall: WallLayout, lookY: number): number[] {
   return wall.cabinets.flatMap((slot, i) =>
     [slot.leftMm, slot.rightMm].every((x) => {
-      const p = project(camera, [x, lookY, 0]).x + panPx;
+      const p = project(camera, [x, lookY, 0]).x;
       return p >= 0 && p <= camera.frame.width;
     })
       ? [i]
@@ -374,7 +374,7 @@ function wholeStops(framing: Framing, wall: WallLayout): number[] {
   const { camera, look } = framing;
   const centres = wall.cabinets.map((c) => c.centerMm);
   const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
-  const counts = stops.map((x) => wholeCabinets({ ...camera, x }, wall, look[1], 0).length);
+  const counts = stops.map((x) => wholeCabinets({ ...camera, x }, wall, look[1]).length);
   const need = Math.min(WHOLE_MIN, Math.max(...counts));
   return stops.filter((_, i) => counts[i] >= need);
 }
@@ -389,10 +389,10 @@ const atStop = (framing: Framing, x: number): Framing => ({ ...framing, camera: 
  */
 function standWhole(framing: Framing, wall: WallLayout): Framing {
   const { camera, look } = framing;
-  const here = wholeCabinets(camera, wall, look[1], 0).length;
+  const here = wholeCabinets(camera, wall, look[1]).length;
   if (here >= WHOLE_MIN) return framing;
   const moved = atStop(framing, nearestTo(wholeStops(framing, wall), camera.x));
-  return wholeCabinets(moved.camera, wall, look[1], 0).length > here ? moved : framing;
+  return wholeCabinets(moved.camera, wall, look[1]).length > here ? moved : framing;
 }
 
 /**

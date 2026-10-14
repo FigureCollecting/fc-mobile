@@ -588,6 +588,13 @@ describe('a wall of one fixture (?fxonly=<name>): a homogeneous dense wall for t
     }
   });
 
+  it('on its own: one copy of the manifest, every slot that fixture', () => {
+    window.history.pushState({}, '', '/?fxonly=rem');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    expect(figures.map((f) => f.name)).toEqual(FIXTURE_FIGURES.map(() => 'Rem'));
+  });
+
   it('one copy of the manifest is as many of the one fixture; combines with ?fxwidth', () => {
     window.history.pushState({}, '', '/?fxonly=miku-nendo&fxwidth=narrow');
     const figures = getFixtureFigures();

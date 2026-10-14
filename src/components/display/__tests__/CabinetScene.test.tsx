@@ -199,7 +199,7 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     const plates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate')).map((p) => {
       const m = p.style.transform.replace(/^matrix3d\(|\)$/g, '').split(',').map(Number);
       const s = pxPerMm(host);
-      return { name: p.textContent, x0: m[12] / s, x1: (m[12] + parseFloat(p.style.width)) / s, y: m[13], z: m[14] };
+      return { name: p.textContent, x0: m[12] / s, x1: (m[12] + sideMm(p, 'u')) / s, y: m[13], z: m[14] };
     });
     const tap = new Map(figureButtons(host).map((b) => [b.getAttribute('aria-label'), JSON.parse(b.dataset.world!) as { x0: number; x1: number }]));
     expect(plates).toHaveLength(11);
@@ -1134,6 +1134,25 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       }
     }
   }, 120_000);
+
+  it('a nameplate is drawn at its figure\'s px per mm: coarser with it past the budget, the same size in the world', () => {
+    let coarse = 0;
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      const { host } = scene(spikeWall(), { view }, { frameFallback: DENSE_FRAMES[0], labels: true });
+      const s = pxPerMm(host);
+      for (const b of figureButtons(host)) {
+        const plate = b.nextElementSibling as HTMLElement;
+        expect(plate.classList.contains('cab-plate')).toBe(true);
+        const k = Number(b.style.getPropertyValue('--s'));
+        expect(plate.style.getPropertyValue('--s')).toBe(String(k));
+        expect(sideMm(plate, 'v')).toBeCloseTo(30 * s, 6);
+        expect(parseFloat(plate.style.height)).toBeCloseTo(30 * k, 6);
+        if (k < s) coarse++;
+      }
+      cleanup();
+    }
+    expect(coarse).toBeGreaterThan(0);
+  });
 
   it('the px per mm is taken over the room up to the headroom over the tops, where their figures stand', () => {
     // a short frame on a few cabinets: the camera looks down on the tops; the framing aims at the middle of the room

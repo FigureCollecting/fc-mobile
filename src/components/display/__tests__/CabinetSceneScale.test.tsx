@@ -5,6 +5,7 @@ import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import type { PictureMargins } from '../figureArt';
+import { FIGURE_BUDGET_VIEWPORTS } from '../caseCull';
 
 /** What the canvas read of each picture's alpha says, by URL; null while it is still measuring. */
 const measured = vi.hoisted(() => ({ margins: new Map<string, PictureMargins | null>(), fallback: null as PictureMargins | null, loaded: [] as string[] }));
@@ -102,6 +103,40 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
       expect(r.picture.closest('button')!.dataset.art, r.name).toBe('framed');
       expect(r.picture.style.clipPath, r.name).toBe('');
     }
+  });
+
+  it('the figures\' budget counts the clipped pictures: where their whole pictures would overrun it and the clipped ones do not, every figure is drawn at the scene\'s px per mm', () => {
+    measured.fallback = { top: 0.25, bottom: 0.05, left: 0.4, right: 0.4 };
+    const spike = FIXTURE_FIGURES.find((f) => f._id === 'fx-spike')!;
+    // copies of the fixture (fx-spike-xN): matted cut-outs, as getDisplayMeta resolves them
+    const wall = Array.from({ length: 600 }, (_, i) => ({ ...spike, _id: `fx-spike-x${i + 2}` }));
+    let binding = 0;
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      for (const frame of [{ width: 870, height: 400 }, { width: 443, height: 454 }, { width: 616, height: 245 }]) {
+        const { container } = render(<CabinetScene figures={wall} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, view }} frameFallback={frame} />);
+        const host = container.querySelector<HTMLElement>('.cabinet-scene')!;
+        const s = Number(host.dataset.pxPerMm);
+        const buttons = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure'));
+        let whole = 0;
+        let clipped = 0;
+        for (const b of buttons) {
+          const box = b.querySelector<HTMLElement>('.cab-figure__box')!;
+          const k = Number(b.style.getPropertyValue('--s'));
+          // each at the scene's px per mm
+          const [l, t, w, h] = ['left', 'top', 'width', 'height'].map((x) => (parseFloat(box.style.getPropertyValue(x)) * s) / k);
+          const [bw, bh] = [(parseFloat(b.style.width) * s) / k, (parseFloat(b.style.height) * s) / k];
+          whole += (Math.max(bw, l + w) - Math.min(0, l)) * (Math.max(bh, t + h) - Math.min(0, t));
+          clipped += (Math.max(bw, l + 0.6 * w) - Math.min(0, l + 0.4 * w)) * (Math.max(bh, t + 0.95 * h) - Math.min(0, t + 0.25 * h));
+        }
+        const budget = FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height;
+        if (whole > budget && clipped <= budget) {
+          binding++;
+          for (const b of buttons) expect(b.style.getPropertyValue('--s'), `${view} ${frame.width}`).toBe(String(s));
+        }
+        cleanup();
+      }
+    }
+    expect(binding).toBeGreaterThan(0);
   });
 
   it("the image list's measured bottom wins; the top is measured on the mask", () => {

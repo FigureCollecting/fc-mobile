@@ -85,6 +85,25 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
     }
   });
 
+  it("each picture is clipped to the figure in it, its opaque rows and columns: its clear margins cost the figure's layer no px", () => {
+    measured.fallback = { top: 0.25, bottom: 0.05, left: 0.15, right: 0.2 };
+    const rows = figures(FIXTURE_FIGURES);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      expect(r.grounded, r.name).toBe('1');
+      // top right bottom left, of the picture box
+      expect(r.picture.style.clipPath, r.name).toBe('inset(25% 20% 5% 15%)');
+    }
+    // a framed copy is an opaque box: nothing clipped
+    cleanup();
+    const framed = figures(FIXTURE_FIGURES.map((f) => ({ ...f, _id: `framed-${f._id}` })));
+    expect(framed.length).toBeGreaterThan(0);
+    for (const r of framed) {
+      expect(r.picture.closest('button')!.dataset.art, r.name).toBe('framed');
+      expect(r.picture.style.clipPath, r.name).toBe('');
+    }
+  });
+
   it("the image list's measured bottom wins; the top is measured on the mask", () => {
     measured.fallback = { top: 0.2, bottom: 0.02 };
     const ref = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800, bottomMarginFrac: 0.1 });

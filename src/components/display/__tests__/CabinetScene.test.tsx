@@ -1111,7 +1111,10 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
             // the figure's layer: its button and the picture hanging from it, in element px
             const art = b.querySelector<HTMLElement>('.cab-figure__box')!;
             const [w, h] = [parseFloat(b.style.width), parseFloat(b.style.height)];
-            const [l, t, aw, ah] = ['left', 'top', 'width', 'height'].map((k) => parseFloat(art.style.getPropertyValue(k)));
+            const [l0, t0, aw0, ah0] = ['left', 'top', 'width', 'height'].map((k) => parseFloat(art.style.getPropertyValue(k)));
+            // the picture clipped to the figure in it (inset top right bottom left, % of the box)
+            const [it, ir, ib, il] = (/^inset\((.*)\)$/.exec(art.style.clipPath)?.[1].split(' ') ?? ['0%', '0%', '0%', '0%']).map((x) => parseFloat(x) / 100);
+            const [l, t, aw, ah] = [l0 + il * aw0, t0 + it * ah0, aw0 * (1 - il - ir), ah0 * (1 - it - ib)];
             const lw = Math.max(w, l + aw) - Math.min(0, l);
             const lh = Math.max(h, t + ah) - Math.min(0, t);
             area += lw * lh;

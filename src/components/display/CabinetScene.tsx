@@ -59,7 +59,7 @@ import {
   type Rect,
   type TexelGrid,
 } from './caseCull';
-import { figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
+import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -536,7 +536,9 @@ function figureGeometry(draw: FigureDraw, art: FigureArt, aspect: number, margin
   // so neighbours' boxes meet at most; the picture hangs from it by its transparent margins and takes no taps
   const tapW = Math.min(boxW, item.widthMm + FIGURE_GAP_MM);
   const tapX0 = cx - tapW / 2;
-  return { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0 };
+  // the figure's opaque rows and columns: the picture is clipped to them, its clear margins cost no px
+  const clear = clearInset(drawnKind, known);
+  return { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0, clear };
 }
 
 /** What a figure's layer covers (world mm): its tap box and the picture hanging from it, at its depth. */
@@ -544,10 +546,10 @@ function figureLayerBox(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, 
   const top = draw.slot.topMm + draw.placed.heightMm;
   return {
     cab,
-    x0: Math.min(g.tapX0, g.artCx - g.boxW / 2),
-    x1: Math.max(g.tapX0 + g.tapW, g.artCx + g.boxW / 2),
-    y0: Math.min(draw.slot.topMm, g.yBottom),
-    y1: Math.max(top, g.yBottom + g.boxH),
+    x0: Math.min(g.tapX0, g.artCx - g.boxW / 2 + g.clear.left * g.boxW),
+    x1: Math.max(g.tapX0 + g.tapW, g.artCx + g.boxW / 2 - g.clear.right * g.boxW),
+    y0: Math.min(draw.slot.topMm, g.yBottom + g.clear.bottom * g.boxH),
+    y1: Math.max(top, g.yBottom + g.boxH - g.clear.top * g.boxH),
     z: draw.placed.zMm,
   };
 }
@@ -577,7 +579,7 @@ function SceneFigure({
   const { item } = placed;
   const { s } = useContext(DrawContext)!;
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
-  const { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0 } = figureGeometry(draw, art, aspect, margins);
+  const { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0, clear } = figureGeometry(draw, art, aspect, margins);
   const z = placed.zMm;
   const k = scale;
   const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0], { u: tapW * k, v: placed.heightMm * k }, s);
@@ -615,6 +617,7 @@ function SceneFigure({
             top: `${fmt((slot.topMm + placed.heightMm - (yBottom + boxH)) * k)}px`,
             width: `${fmt(boxW * k)}px`,
             height: `${fmt(boxH * k)}px`,
+            clipPath: clear.top + clear.bottom + clear.left + clear.right > 0 ? `inset(${[clear.top, clear.right, clear.bottom, clear.left].map((f) => `${fmt(f * 100)}%`).join(' ')})` : undefined,
             pointerEvents: 'none',
           }}
         >

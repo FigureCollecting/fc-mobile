@@ -4,6 +4,7 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { boxCorners, lensFocalPx, project, type Camera, type Vec3 } from '../caseCamera';
 import { cabinetBox, frameCase, panFraming, wallPages, type FramingInput } from '../caseFraming';
 import { wallLayout } from '../packCabinets';
+import { sideOverhangMm } from '../cabinetProfile';
 import {
   CABINET_HYSTERESIS,
   CULL_MARGIN,
@@ -185,6 +186,33 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     // and a walk of a few cabinets replaces it
     const far = { ...camera, x: camera.x + step * 10 };
     expect(nearestCabinets(viewOf(far), WALL, fresh)).toEqual(nearestCabinets(viewOf(far), WALL, []));
+  });
+
+  it('a front the frame shows only high up (the shelf view at the top) is still a front: drawn before a neighbour kept from before', () => {
+    // level at a top shelf, close in: the frame shows the fronts above some 1.2 m only, the rest of each front below it
+    const H = IKEA_KLINGSBO.outer.heightMm;
+    let checked = 0;
+    for (let x = WALL.cabinets[5].centerMm; x <= WALL.cabinets[7].centerMm; x += 13) {
+      const camera: Camera = { x, y: H * 0.85, z: 1100, pitch: 0, focalPx: lensFocalPx(OPEN), frame: OPEN };
+      const view = viewOf(camera);
+      const bottom = { x0: 0, x1: OPEN.width, y0: 0, y1: OPEN.height };
+      const feet = sideOverhangMm(IKEA_KLINGSBO);
+      const front = (i: number, h: number) => {
+        const slot = WALL.cabinets[i];
+        return trimFace(view, [slot.leftMm - feet, 0, 0], [slot.rightMm - slot.leftMm + 2 * feet, 0, 0], [0, h, 0], bottom);
+      };
+      const fronts = WALL.cabinets.flatMap((_, i) => (front(i, H) ? [i] : []));
+      // none of the lower half of any front is in the frame
+      for (const i of fronts) expect(front(i, H / 2)).toBeNull();
+      expect(fronts.length).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+      // whatever was drawn before (each other cabinet near the frame, given the bonus), every front is drawn
+      for (let prev = fronts[0] - 4; prev <= fronts[fronts.length - 1] + 4; prev++) {
+        const got = nearestCabinets(view, WALL, [prev]);
+        for (const i of fronts) expect(got, `x ${x} prev ${prev}`).toContain(i);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
   });
 
   const MIXED = wallLayout(Array.from({ length: 30 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));

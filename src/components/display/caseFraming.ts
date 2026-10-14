@@ -137,16 +137,13 @@ export function seenDepthsMm(camera: Camera, room: RoomSpan): [number, number] |
 }
 
 /**
- * How long a stretch of the wall (mm) the frame, its picture slid panPx, shows any of the room along: at depth d
- * it spans x from (-w/2 - pan) d / f to (w/2 - pan) d / f off the camera, over the depths it sees. 0 when it sees
- * none of the room.
+ * How long a stretch of the wall (mm) the frame (unslid: a slide is capped by capSlidePx) shows any of the room
+ * along: at depth d it spans d w / f, over the depths it sees. 0 when it sees none of the room.
  */
-export function frameSpanMm(camera: Camera, panPx: number, room: RoomSpan): number {
+export function frameSpanMm(camera: Camera, room: RoomSpan): number {
   const seen = seenDepthsMm(camera, room);
   if (seen === null) return 0;
-  const a = (-camera.frame.width / 2 - panPx) / camera.focalPx;
-  const b = (camera.frame.width / 2 - panPx) / camera.focalPx;
-  return Math.max(b * seen[0], b * seen[1]) - Math.min(a * seen[0], a * seen[1]);
+  return (camera.frame.width * Math.max(seen[0], seen[1])) / camera.focalPx;
 }
 
 /** How far short of the run to the fifth cabinet on the frame's stretch stays (a front only touched is not shown). */
@@ -186,12 +183,12 @@ const CAP_TOLERANCE_MM = 0.5;
  * line of sight, the stretch shrinks with the distance).
  */
 function capDistance(at: (distance: number) => Camera, fit: number, cap: WallCap): number {
-  if (frameSpanMm(at(fit), 0, cap.fronts) <= cap.span) return fit;
+  if (frameSpanMm(at(fit), cap.fronts) <= cap.span) return fit;
   let lo = CAP_NEAREST_MM;
   let hi = fit;
   while (hi - lo > CAP_TOLERANCE_MM) {
     const mid = (lo + hi) / 2;
-    if (frameSpanMm(at(mid), 0, cap.fronts) <= cap.span) lo = mid;
+    if (frameSpanMm(at(mid), cap.fronts) <= cap.span) lo = mid;
     else hi = mid;
   }
   return lo;

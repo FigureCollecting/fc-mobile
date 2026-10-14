@@ -181,8 +181,10 @@ async function drawn(page: Page) {
     // each figure's layer in the world (its tap box and its clipped picture) and its px per mm, for SHOULD 28
     const layers = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => {
       const art = b.querySelector<HTMLElement>('.cab-figure__box')!;
-      const inset = (/^inset\((.*)\)$/.exec(art.style.clipPath)?.[1].split(' ') ?? ['0%', '0%', '0%', '0%']).map((x) => parseFloat(x) / 100);
-      return { tap: JSON.parse(b.dataset.world!), art: JSON.parse(b.dataset.artBox!), right: inset[1], left: inset[3], k: Number(b.style.getPropertyValue('--s')) };
+      // the browser writes the inset as short as it can (top, right = top, bottom = top, left = right)
+      const v = (/^inset\((.*)\)$/.exec(art.style.clipPath)?.[1].trim().split(/\s+/) ?? ['0%']).map((x) => parseFloat(x) / 100);
+      const right = v[1] ?? v[0];
+      return { tap: JSON.parse(b.dataset.world!), art: JSON.parse(b.dataset.artBox!), right, left: v[3] ?? right, k: Number(b.style.getPropertyValue('--s')) };
     });
     // each drawn cabinet's span across the frame, as the browser draws its faces
     const spans = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => {
@@ -290,7 +292,8 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
     const mid = project(cull, [(Math.min(tap.x0, art.x0 + left * artW) + Math.max(tap.x1, art.x1 - right * artW)) / 2, (tap.y0 + tap.y1) / 2, tap.z]);
     return { d: Math.hypot(mid.x + scene.cullPan - camera.frame.width / 2, mid.y - camera.frame.height / 2), k };
   });
-  const coarseNearer = order.filter((a) => order.some((b) => b.k > a.k && b.d > a.d + 1e-3)).length;
+  // a figure whose distance cannot be read counts against it too
+  const coarseNearer = order.filter((a) => !Number.isFinite(a.d) || !(a.k > 0) || order.some((b) => b.k > a.k && b.d > a.d + 1e-3)).length;
   return { published, boxes, framed, seen, nearest, blank, narrowest, throughGlass, whole, coarseNearer };
 }
 

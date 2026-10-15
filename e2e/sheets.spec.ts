@@ -114,7 +114,9 @@ for (const size of FOLD8) {
       const grip = await centre(page.locator(card.handle));
       const way = Math.sign(card.handleDy);
       const finger = await touchDown(page, grip.x, grip.y);
-      await finger.to(grip.x, grip.y + way * 10, 2, 16);
+      // past Chromium's touch slop (it holds back a finger's first moves on a scroller), so the card is taken by now
+      // whether the finger landed on the handle or, the card still settling, just below it on the contents
+      await finger.to(grip.x, grip.y + way * 20, 3, 16);
       // the card is drawn a frame after it moves: read it with the finger still
       await page.waitForTimeout(50);
       const taken = await top(sheet);
@@ -122,7 +124,7 @@ for (const size of FOLD8) {
       await page.waitForTimeout(50);
       const held = await top(sheet);
       await finger.end();
-      const travel = card.handleDy - way * 10;
+      const travel = card.handleDy - way * 20;
       expect.soft(Math.abs(held - taken - travel), `the card follows the finger ${travel} px (from ${taken} to ${held})`).toBeLessThanOrEqual(2);
       const released = Date.now();
       await page.waitForTimeout(400 - (Date.now() - released));

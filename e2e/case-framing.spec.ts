@@ -23,6 +23,8 @@ const H = IKEA_KLINGSBO.outer.heightMm;
 const FEET_FRONT_MM = IKEA_KLINGSBO.footprint!.frontOverhangMm;
 /** Ross: the floor line and the top line hold still within this many px. */
 const STILL_PX = 1;
+/** The camera the scene publishes is rounded: what it aims at, read back from it, is good to a hundredth of a mm. */
+const PUBLISHED_MM = 0.01;
 /** The KLINGSBO with the Detolf and the open steel rack alongside: three heights, three widths. */
 const MIXED = 'ikea-klingsbo+ikea-detolf+open-steel-rack';
 
@@ -233,14 +235,14 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
     const ceiling = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-room'))!).ceilingMm as number;
     for (let k = 0; k < 20; k++) await swipe(page, 0, 200);
     const high = await picture(page);
-    expect(high.camera.y, 'no higher than the ceiling').toBeLessThanOrEqual(ceiling + 1e-6);
+    expect(high.camera.y, 'no higher than the ceiling').toBeLessThanOrEqual(ceiling + PUBLISHED_MM);
     const aimHigh = unprojectToPlaneZ(high.camera, high.camera.frame.width / 2, high.camera.frame.height / 2, 0)![1];
-    expect(aimHigh, 'aimed no higher than the ceiling').toBeLessThanOrEqual(ceiling + 1e-6);
+    expect(aimHigh, 'aimed no higher than the ceiling').toBeLessThanOrEqual(ceiling + PUBLISHED_MM);
     for (let k = 0; k < 40; k++) await swipe(page, 0, -200);
     const low = await picture(page);
-    expect(low.camera.y, 'no lower than the floor').toBeGreaterThanOrEqual(-1e-6);
+    expect(low.camera.y, 'no lower than the floor').toBeGreaterThanOrEqual(-PUBLISHED_MM);
     const aimLow = unprojectToPlaneZ(low.camera, low.camera.frame.width / 2, low.camera.frame.height / 2, 0)![1];
-    expect(aimLow, 'aimed no lower than the floor').toBeGreaterThanOrEqual(-1e-6);
+    expect(aimLow, 'aimed no lower than the floor').toBeGreaterThanOrEqual(-PUBLISHED_MM);
     expect(low.camera.y).toBeLessThan(high.camera.y);
     // a walk from a raised camera keeps it raised: the floor and top lines hold
     await swipe(page, 0, 150);

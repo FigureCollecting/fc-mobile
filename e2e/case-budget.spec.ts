@@ -151,7 +151,8 @@ async function compositedLayers(page: Page) {
  */
 async function drawn(page: Page) {
   return page.locator('.cabinet-scene').evaluate((host, [margin, grid]) => {
-    const f = host.getBoundingClientRect();
+    // the frame the picture is drawn in (CASE-FB1: centred in the scene, cropped narrower on a wide panel)
+    const f = (host.querySelector('.cabinet-scene__frame') ?? host).getBoundingClientRect();
     const mx = f.width * margin;
     const my = f.height * margin;
     const outside: string[] = [];
@@ -167,7 +168,7 @@ async function drawn(page: Page) {
       if (r.right < f.left - mx || r.left > f.right + mx || r.bottom < f.top - my || r.top > f.bottom + my) outside.push(at(el, r));
       // a face on a texel grid (a flat colour or a gradient) costs its grid wherever its cut reaches
       const gridded = el.offsetWidth * el.offsetHeight <= grid;
-      const face = !gridded && !el.matches('.cab-figure, .cab-shadow, .cab-plate, .room-wall, .room-floor');
+      const face = !gridded && !el.matches('.cab-figure, .cab-shadow, .cab-plate, .room-wall, .room-floor, .room-ceiling');
       // 2 px for the rounding of a face cut at the margin
       if (face && (r.left < f.left - mx - 2 || r.right > f.right + mx + 2 || r.top < f.top - my - 2 || r.bottom > f.bottom + my + 2)) spill.push(at(el, r));
     }
@@ -519,7 +520,8 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
         const placed = await host.evaluate((h) => {
           const f = h.getBoundingClientRect();
           const left = (sel: string) => h.querySelector(sel)!.getBoundingClientRect().left - f.left;
-          return { scroll: [h.scrollLeft, h.scrollTop], picture: left('.cabinet-scene__viewport'), prev: left('.cabinet-scene__step--prev') };
+          // the picture slides within the frame it is drawn in (CASE-FB1: centred, cropped on a wide panel)
+          return { scroll: [h.scrollLeft, h.scrollTop], picture: left('.cabinet-scene__viewport') - left('.cabinet-scene__frame'), prev: left('.cabinet-scene__step--prev') };
         });
         const scene = await drawn(page);
         expect.soft(placed.scroll, `${at}: the scene scrolled`).toEqual([0, 0]);

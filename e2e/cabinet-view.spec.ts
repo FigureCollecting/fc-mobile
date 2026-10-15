@@ -78,7 +78,8 @@ async function cameraOf(page: Page): Promise<Camera> {
 async function drawnVsPredicted(page: Page) {
   const camera = await cameraOf(page);
   const pan = Number(await page.locator('.cabinet-scene').getAttribute('data-pan'));
-  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  // the frame the picture is drawn in (CASE-FB1: centred in the scene, cropped narrower on a wide panel)
+  const scene = (await page.locator('.cabinet-scene__frame').boundingBox())!;
   const figures = await page.locator('button.cab-figure').evaluateAll((els) =>
     els.map((el) => {
       const r = el.getBoundingClientRect();
@@ -1003,7 +1004,7 @@ test('the case ends where the cabinets do: the room fills the rest, nothing stre
     project(camera, [slot.leftMm, H, 0]),
     project(camera, [slot.leftMm + sec, H, 0]),
   ];
-  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  const scene = (await page.locator('.cabinet-scene__frame').boundingBox())!;
   const post = (await page.locator('.cab[data-index="0"] .cab-post').first().locator('.f-front').boundingBox())!;
   expect(Math.abs(post.y - scene.y - Math.min(...corners.map((c) => c.y)))).toBeLessThan(1.5);
   expect(Math.abs(post.y + post.height - scene.y - Math.max(...corners.map((c) => c.y)))).toBeLessThan(1.5);

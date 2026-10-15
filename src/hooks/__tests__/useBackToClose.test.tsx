@@ -200,6 +200,24 @@ describe('useBackToClose: Android Back / browser Back closes an overlay (SHEETS-
       a.unmount();
     });
 
+    it('with two waiting for a Back still owed, closes the later one, then the earlier', async () => {
+      history.replaceState(null, '', '/?layout=rows');
+      const gone = render(<Overlay onClose={() => {}} />);
+      gone.unmount();
+      const earlier = vi.fn();
+      const later = vi.fn();
+      const a = render(<Overlay onClose={earlier} />);
+      const b = render(<Overlay onClose={later} />);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(later).toHaveBeenCalledTimes(1);
+      expect(earlier).not.toHaveBeenCalled();
+      b.unmount();
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(earlier).toHaveBeenCalledTimes(1);
+      expect(later).toHaveBeenCalledTimes(1);
+      a.unmount();
+    });
+
     it('other keys close nothing, and Esc with nothing open is harmless', () => {
       const onClose = vi.fn();
       const a = render(<Overlay onClose={onClose} />);

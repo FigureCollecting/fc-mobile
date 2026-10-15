@@ -192,9 +192,11 @@ export function Collection() {
       <DisplayToggle
         layout={layout}
         density={density}
+        caseView={casePrefs.view}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}
+        onCaseView={(view) => setCasePrefs({ view })}
         onLabels={setLabels}
       />
     </>

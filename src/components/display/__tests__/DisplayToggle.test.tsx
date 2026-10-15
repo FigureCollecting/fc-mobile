@@ -13,8 +13,8 @@ function mount(props: Partial<Parameters<typeof DisplayToggle>[0]> = {}) {
   const handlers = { onLayout: vi.fn(), onDensity: vi.fn(), onCaseView: vi.fn(), onLabels: vi.fn() };
   const utils = renderWithProviders(
     <DisplayToggle layout="case" density="compact" caseView="wall" labels={false} {...handlers} {...props} />,
-  );
-  return { ...handlers, ...utils };
+  ) as ReturnType<typeof renderWithProviders> & { container: HTMLElement; unmount: () => void };
+  return Object.assign(utils, handlers);
 }
 
 const caseButton = () => screen.getByRole('button', { name: /^Case/ });
@@ -24,7 +24,7 @@ describe('DisplayToggle: two mode buttons at fixed places, the nameplate toggle 
   it('exactly the two mode buttons and the nameplate toggle, in the same order, in either mode', () => {
     const names = (layout: 'case' | 'rows') => {
       const { container, unmount } = mount({ layout });
-      const out = Array.from(container.querySelectorAll('button')).map((b) => `${b.className.split(' ')[0]}:${b.getAttribute('aria-label')!.split(',')[0]}`);
+      const out = Array.from(container.querySelectorAll('button')).map((b) => `${(b as Element).className.split(' ')[0]}:${(b as Element).getAttribute('aria-label')!.split(',')[0]}`);
       unmount();
       return out;
     };

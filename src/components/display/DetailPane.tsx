@@ -2,6 +2,8 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
+import { useBackToClose } from '../../hooks/useBackToClose';
+import { useEffect, useRef } from 'preact/hooks';
 
 interface DetailPaneProps {
   figure: Figure;
@@ -20,6 +22,17 @@ interface DetailPaneProps {
 export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
   // An image that fails to load is drawn as the placeholder (ADDR-1), never a blank box.
   const images = useBrokenImages();
+  // Back and Esc close it too (SHEETS-FB1 6c)
+  useBackToClose(onClose);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
   const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
   return (
     <aside class="detail-pane">

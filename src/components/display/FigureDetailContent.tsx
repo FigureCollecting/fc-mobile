@@ -76,7 +76,8 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
       {local !== undefined && (
         <button type="button" class="figure-viewer-sheet__open" onClick={() => {
             onBeforeOpen?.();
-            setLocation(`/figure/${local.headId}`);
+            // in the place of the viewer's or pane's history entry: Back from it returns to the collection
+            setLocation(`/figure/${local.headId}`, { replace: true });
           }}>
           Copies and actions
         </button>

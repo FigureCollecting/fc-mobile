@@ -224,12 +224,13 @@ async function swipe(page: Page, dx: number): Promise<void> {
 async function showTab(page: Page, name: 'Owned' | 'Ordered' | 'Wished'): Promise<void> {
   await page.locator('.case-tabs__tab[data-tab="refine"]').tap();
   const holding = page.getByRole('group', { name: 'Holding' });
-  const choice = holding.getByRole('button', { name: new RegExp(`^${name}`) });
-  if ((await choice.getAttribute('aria-pressed')) !== 'true') await choice.tap();
-  for (const other of await holding.getByRole('button', { pressed: true }).all()) {
-    if (!new RegExp(`^${name}`).test((await other.innerText()).trim())) await other.tap();
+  const choice = (label: string) => holding.getByRole('button', { name: new RegExp(`^${label}`) });
+  if ((await choice(name).getAttribute('aria-pressed')) !== 'true') await choice(name).tap();
+  // each other holding by its name (an nth() of the pressed ones would shift as each is let go)
+  for (const other of ['Owned', 'Ordered', 'Wished', 'No longer owned'].filter((n) => n !== name)) {
+    if ((await choice(other).getAttribute('aria-pressed')) === 'true') await choice(other).tap();
   }
-  await expect(choice).toHaveAttribute('aria-pressed', 'true');
+  await expect(choice(name)).toHaveAttribute('aria-pressed', 'true');
   await expect(holding.getByRole('button', { pressed: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Done' }).tap();
   await expect(page.locator('.detent-sheet')).toHaveCount(0);

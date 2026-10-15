@@ -155,7 +155,19 @@ describe('useFigureListParams: holdings, chosen in Refine (SHEETS-FB1 3), and th
     expect(screen.getAllByTestId('status')[3]!.textContent).toBe('owned');
   });
 
-  it('writes holdings to the URL, the default left out, none chosen kept by the all sentinel; an old tab= goes', async () => {
+  it('no address opens on no holding at all: status=all and an empty status= are the default (close-out 2)', () => {
+    renderWithProviders(<HoldProbe />, { initialPath: '/?status=all' });
+    expect(screen.getByTestId('status').textContent).toBe('owned');
+    renderWithProviders(<HoldProbe />, { initialPath: '/?status=' });
+    expect(screen.getAllByTestId('status')[1]!.textContent).toBe('owned');
+    renderWithProviders(<HoldProbe />, { initialPath: '/?tab=wished&status=all' });
+    expect(screen.getAllByTestId('status')[2]!.textContent).toBe('owned');
+    // the fixtures' default is none: there it stays none
+    renderWithProviders(<HoldProbe holdingsDefault={[]} />, { initialPath: '/?status=all' });
+    expect(screen.getAllByTestId('status')[3]!.textContent).toBe('');
+  });
+
+  it('writes holdings to the URL, the default left out, none chosen the default too; an old tab= goes', async () => {
     const user = userEvent.setup();
     const { currentPath } = renderWithProviders(<HoldProbe />, { initialPath: '/?tab=former' });
     await user.click(screen.getByText('hold-wished-ordered'));
@@ -163,8 +175,9 @@ describe('useFigureListParams: holdings, chosen in Refine (SHEETS-FB1 3), and th
     expect(currentPath()).toContain('status=wished%7Cordered');
     expect(currentPath()).not.toContain('tab=');
     await user.click(screen.getByText('hold-none'));
-    expect(screen.getByTestId('status').textContent).toBe('');
-    expect(currentPath()).toContain('status=all');
+    expect(screen.getByTestId('status').textContent).toBe('owned');
+    expect(currentPath()).not.toContain('status=');
+    await user.click(screen.getByText('hold-wished-ordered'));
     await user.click(screen.getByText('hold-owned'));
     expect(screen.getByTestId('status').textContent).toBe('owned');
     expect(currentPath()).not.toContain('status=');

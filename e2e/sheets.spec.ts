@@ -259,6 +259,14 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
     await openFigure(page);
     await expect(viewer).toBeVisible();
     await expect(x).toBeVisible();
+    // clear of PhotoSwipe's own top-bar buttons (its zoom), never over one
+    const xBox = (await x.boundingBox())!;
+    for (const b of await page.locator('.pswp__top-bar .pswp__button').all()) {
+      const box = await b.boundingBox();
+      if (!box || !(await b.isVisible())) continue;
+      const overlaps = box.x < xBox.x + xBox.width && xBox.x < box.x + box.width && box.y < xBox.y + xBox.height && xBox.y < box.y + box.height;
+      expect(overlaps, `the X overlaps ${await b.getAttribute('class')}`).toBe(false);
+    }
     await x.tap();
     await expect(viewer).toHaveCount(0);
     await expect(x).toHaveCount(0);

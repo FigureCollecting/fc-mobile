@@ -37,7 +37,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
   const [detent, setDetent] = useState<Detent>('half');
   const sheetRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const { y } = useSheetDrag({
+  const { y, settleTo } = useSheetDrag({
     open,
     sheetRef,
     contentRef,
@@ -72,9 +72,19 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
             exit={{ y: offScreenY() }}
             transition={{ type: 'tween', duration: 0.2 }}
           >
-            <div class="detent-sheet__handle-area">
-              <div class="detent-sheet__handle" />
-            </div>
+            {/* a button, so a finger on it lands on it, never on a chip beside it (touch adjustment) */}
+            <button
+              type="button"
+              class="detent-sheet__handle-area"
+              aria-label={detent === 'full' ? 'Lower the card' : 'Raise the card'}
+              onClick={() => {
+                const next = detent === 'full' ? 'half' : 'full';
+                setDetent(next);
+                settleTo(DETENTS.indexOf(next));
+              }}
+            >
+              <span class="detent-sheet__handle" />
+            </button>
 
             <div class="detent-sheet__content" ref={contentRef}>{children}</div>
 
@@ -107,6 +117,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
             .detent-sheet__handle-area {
               display: flex;
               justify-content: center;
+              width: 100%;
               padding: var(--space-2) 0;
               cursor: grab;
               flex-shrink: 0;

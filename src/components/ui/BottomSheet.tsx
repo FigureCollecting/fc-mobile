@@ -58,9 +58,10 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
             exit={{ y: offScreenY() }}
             transition={{ type: 'tween', duration: 0.2 }}
           >
-            <div class="bottom-sheet__handle-area">
-              <div class="bottom-sheet__handle" />
-            </div>
+            {/* a button, so a finger on it lands on it, never on a control beside it (touch adjustment); one detent: a tap closes */}
+            <button type="button" class="bottom-sheet__handle-area" aria-label="Close" onClick={onClose}>
+              <span class="bottom-sheet__handle" />
+            </button>
 
             <div class="bottom-sheet__content" ref={contentRef}>
               {children}
@@ -105,6 +106,7 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
             .bottom-sheet__handle-area {
               display: flex;
               justify-content: center;
+              width: 100%;
               padding: var(--space-3) 0;
               cursor: grab;
               flex-shrink: 0;

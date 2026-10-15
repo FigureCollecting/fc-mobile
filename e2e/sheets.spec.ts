@@ -136,6 +136,38 @@ for (const size of FOLD8) {
   }
 }
 
+/** A tap on each card's handle does the opposite of a short drag the other way: View's closes it, Refine's raises it to full, Info's opens every field. */
+const INVERTED: Record<Card['name'], { dy: number; rests: (sheet: Locator) => Promise<void> }> = {
+  View: { dy: -1, rests: async (sheet) => expect(sheet).toHaveCount(1) },
+  Refine: { dy: 1, rests: async (sheet) => expect(sheet).toHaveAttribute('data-detent', 'half') },
+  Info: { dy: 1, rests: async (sheet) => expect(sheet).toHaveAttribute('data-detent', 'summary') },
+};
+
+for (const size of FOLD8) {
+  for (const card of CARDS.filter((c) => c.name !== 'Info' || size.width < DUAL_PANE_MIN_WIDTH)) {
+    for (const px of [6, 12]) {
+      test(`${card.name}: a ${px} px touch drag on the handle is a drag, never also the handle's tap: ${size.name}`, async ({ page }) => {
+        await openCase(page, size);
+        const sheet = await openCard(page, card);
+        const rest = await top(sheet);
+        const grip = await centre(page.locator(card.handle));
+        const way = INVERTED[card.name].dy;
+        // past the card's own slop, within the browser's tap slop: the browser still sends a click on the lift
+        const finger = await touchDown(page, grip.x, grip.y);
+        await finger.to(grip.x, grip.y + way * px, 3, 16);
+        await page.waitForTimeout(50);
+        const held = await top(sheet);
+        await finger.end();
+        await page.waitForTimeout(500);
+        expect.soft(held - rest, `the card followed the finger (rest ${rest}, held ${held})`).not.toBe(0);
+        await INVERTED[card.name].rests(sheet);
+        await atRest(sheet);
+        expect(Math.abs((await top(sheet)) - rest), 'back on the detent it left').toBeLessThanOrEqual(1);
+      });
+    }
+  }
+}
+
 for (const size of FOLD8.filter((v) => v.width >= DUAL_PANE_MIN_WIDTH)) {
   test(`Info pane: no sheet handle to mistake for one, and a swipe on its contents moves nothing: ${size.name}`, async ({ page }) => {
     await openCase(page, size);

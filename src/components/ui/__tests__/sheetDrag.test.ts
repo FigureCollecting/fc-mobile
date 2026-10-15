@@ -52,6 +52,9 @@ describe('restFor', () => {
     expect(restFor(320, 1500, detents, 600)).toBe('close');
     expect(restFor(900, 3000, detents, null)).toBe(1);
   });
+  it('exactly halfway between the lowest detent and off screen, it stays', () => {
+    expect(restFor(450, 0, detents, 600)).toBe(1);
+  });
   it('with no detent at all it closes', () => {
     expect(restFor(10, 0, [], 600)).toBe('close');
   });
@@ -201,6 +204,72 @@ describe('attachSheetDrag', () => {
     });
   });
 
+  describe('a drag is no tap (the browser still sends a click for a touch that moved less than its own tap slop)', () => {
+    /** A click on `el` as the browser sends it after a lift; whether it reached `el`'s own listener. */
+    function click(el: HTMLElement) {
+      const reached = vi.fn();
+      el.addEventListener('click', reached);
+      const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+      el.dispatchEvent(e);
+      el.removeEventListener('click', reached);
+      return { reached: reached.mock.calls.length > 0, prevented: e.defaultPrevented };
+    }
+
+    function dragHandle() {
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
+      window.dispatchEvent(pointer('pointermove', { clientY: 412 }));
+      vi.advanceTimersByTime(200);
+      window.dispatchEvent(pointer('pointerup', { clientY: 412 }));
+    }
+
+    it('the click that follows a drag on the handle never reaches the handle', () => {
+      dragHandle();
+      expect(click(handle)).toEqual({ reached: false, prevented: true });
+    });
+
+    it('the click that follows a card drag from the contents never reaches what the finger was on', () => {
+      button.dispatchEvent(pointer('pointerdown', { clientY: 100 }));
+      button.dispatchEvent(touch('touchstart', [100]));
+      button.dispatchEvent(touch('touchmove', [108]));
+      vi.advanceTimersByTime(200);
+      button.dispatchEvent(touch('touchend', []));
+      expect(click(button).reached).toBe(false);
+    });
+
+    it('only that one click: the next tap goes through', () => {
+      dragHandle();
+      click(handle);
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
+      window.dispatchEvent(pointer('pointerup', { clientY: 400 }));
+      expect(click(handle)).toEqual({ reached: true, prevented: false });
+    });
+
+    it('a drag the browser sent no click for (past its slop) leaves the next tap alone', () => {
+      dragHandle();
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
+      window.dispatchEvent(pointer('pointerup', { clientY: 400 }));
+      expect(click(handle).reached).toBe(true);
+    });
+
+    it('a tap (no drag) is a click', () => {
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
+      window.dispatchEvent(pointer('pointerup', { clientY: 401 }));
+      expect(click(handle).reached).toBe(true);
+    });
+
+    it('a drag that closes the card still swallows its click, though the card lets go of the finger as it leaves', () => {
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 100 }));
+      window.dispatchEvent(pointer('pointermove', { clientY: 110 }));
+      window.dispatchEvent(pointer('pointermove', { clientY: 300 }));
+      vi.advanceTimersByTime(200);
+      window.dispatchEvent(pointer('pointerup', { clientY: 300 }));
+      expect(onClose).toHaveBeenCalledTimes(1);
+      detach();
+      detach = () => {};
+      expect(click(handle).reached).toBe(false);
+    });
+  });
+
   describe('the contents', () => {
     it('at their top, a finger pulling down moves the card with it and keeps the browser from scrolling', () => {
       content.scrollTop = 0;
@@ -263,6 +332,13 @@ describe('attachSheetDrag', () => {
       button.dispatchEvent(touch('touchmove', [340, 360]));
       button.dispatchEvent(touch('touchend', []));
       expect(driver.calls).toEqual([]);
+    });
+
+    it('a first move that does not move leaves the finger undecided: pushing up next still raises the card', () => {
+      button.dispatchEvent(touch('touchstart', [300]));
+      button.dispatchEvent(touch('touchmove', [300]));
+      button.dispatchEvent(touch('touchmove', [290]));
+      expect(driver.y).toBe(290);
     });
 
     it('a move with no finger down first does nothing', () => {

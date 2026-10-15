@@ -263,6 +263,12 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           color: var(--text-primary);
         }
 
+        /* PhotoSwipe's own buttons (its zoom) keep clear of our X */
+        .pswp__top-bar {
+          padding-right: 56px;
+          box-sizing: border-box;
+        }
+
         .figure-viewer__no-image {
           display: flex;
           flex-direction: column;

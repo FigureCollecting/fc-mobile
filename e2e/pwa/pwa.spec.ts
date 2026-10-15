@@ -485,10 +485,35 @@ test.describe('(c) build N+1 ships while 2 edits are pending', () => {
   });
 
   test('a second tab with no controller at load follows the tab that took N+1', async ({ context }) => {
-    const [a, b] = await Promise.all([context.newPage(), context.newPage()]);
-    await Promise.all([a.goto(`${edge.origin}/`), b.goto(`${edge.origin}/discover`)]);
+    // The hard order, every run: b registers while a's install of N still runs, after N's updatefound,
+    // so the plugin in b takes N+1 for b's own and raises b's prompt only from a 200 ms timer; a, the
+    // front tab, takes N+1 before that timer runs. N's precache is held until b has registered.
+    let release = (): void => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await context.route(/\/assets\/[^/?]+\.css(\?|$)/, async (route) => {
+      if (route.request().serviceWorker() !== null) await held;
+      await route.fallback();
+    });
+    const a = await context.newPage();
+    await a.goto(`${edge.origin}/`);
+    await a.waitForFunction(async () => (await navigator.serviceWorker.getRegistration())?.installing != null);
+    const b = await context.newPage();
+    await b.addInitScript(() => {
+      const register = ServiceWorkerContainer.prototype.register;
+      ServiceWorkerContainer.prototype.register = function (...args) {
+        const registered = register.apply(this, args);
+        (window as unknown as { fcRegistered: Promise<unknown> }).fcRegistered = registered;
+        return registered;
+      };
+    });
+    await b.goto(`${edge.origin}/discover`);
+    await b.waitForFunction(() => (window as unknown as { fcRegistered?: Promise<unknown> }).fcRegistered !== undefined);
+    await b.evaluate(() => (window as unknown as { fcRegistered: Promise<unknown> }).fcRegistered.then(() => undefined));
+    expect(await a.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state ?? null)).toBeNull();
+    release();
     await Promise.all([shellInstalled(a), shellInstalled(b)]);
     expect([await controlledAtLoad(a), await controlledAtLoad(b)]).toEqual([false, false]);
+    await a.bringToFront();
     // b's copy of build N loses its precache when N+1 activates: it must not stay on N.
     await takeUpdate(a, b);
   });

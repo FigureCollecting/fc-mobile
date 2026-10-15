@@ -116,20 +116,22 @@ describe('taking the new build', () => {
   });
 
   it('does not treat the first install as an update: no active build when the page registered', () => {
-    const { f, reload, takeOver } = started();
-    f.options().onRegisteredSW?.('/sw.js', registration({ installing: {} as ServiceWorker }) as unknown as ServiceWorkerRegistration);
-    takeOver();
+    const { f, reload, controlBy } = startedWith(null);
+    const first = worker('first');
+    f.options().onRegisteredSW?.('/sw.js', registration({ installing: first }) as unknown as ServiceWorkerRegistration);
+    controlBy(first);
     expect(reload).not.toHaveBeenCalled();
   });
 
   it("does not treat another page's first install as an update: no prompt and no reload when it installs with no active build", () => {
     // The plugin raises onNeedRefresh for a worker another page registered (isExternal), even the
     // first one, which activates at once and claims this page: a sign-in callback reloaded mid-exchange.
-    const { f, reload, takeOver } = started();
-    const reg = registration({ installing: {} as ServiceWorker });
+    const { f, reload, controlBy } = startedWith(null);
+    const first = worker('first');
+    const reg = registration({ installing: first });
     f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
     f.options().onNeedRefresh?.();
-    takeOver();
+    controlBy(first);
     expect(updateReady.value).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });
@@ -169,6 +171,23 @@ describe('taking the new build', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  // Another tab's first install was under way as this page registered, so the plugin missed its
+  // updatefound and takes the next build for this page's own: it raises the prompt only from a 200 ms
+  // timer, which a background tab runs late (a frozen one never). A takeover before it must still reload.
+  it.each(['installing', 'waiting'] as const)(
+    'reloads a page it loaded uncontrolled while the first build was %s when a newer build takes over, with no prompt raised',
+    (slot) => {
+      const { f, reload, controlBy } = startedWith(null);
+      const first = worker('first');
+      f.options().onRegisteredSW?.('/sw.js', registration({ [slot]: first }) as unknown as ServiceWorkerRegistration);
+      controlBy(first);
+      expect(reload).not.toHaveBeenCalled();
+      controlBy(worker('newer'));
+      expect(updateReady.value).toBe(false);
+      expect(reload).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('reloads a page that a build controlled at load when the build active as it registered takes over', () => {
     const { f, reload, controlBy } = startedWith(worker('old'));
     const next = worker('next');
@@ -188,7 +207,7 @@ describe('taking the new build', () => {
 describe('update checks', () => {
   function started(fetchImpl = ok(), reg = registration()) {
     const f = fakeRegister();
-    startServiceWorker({ register: f.register, fetchImpl, supported: true });
+    startServiceWorker({ register: f.register, fetchImpl, supported: true, container: new EventTarget() });
     f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
     return { reg, fetchImpl };
   }
@@ -471,7 +490,7 @@ describe('checkForUpdate (the Settings action)', () => {
     expect(updateReady.value).toBe(false);
   });
 
-  it('arms the takeover reload with the prompt it raises, in a page that registered before any build was active', async () => {
+  it('raises the prompt in a page that registered before any build was active, and the waiting build\'s takeover reloads it', async () => {
     const f = fakeRegister();
     const container = new EventTarget();
     const reload = vi.fn();
@@ -486,20 +505,23 @@ describe('checkForUpdate (the Settings action)', () => {
   });
 
   /**
-   * A page that registered before any build was active, so no takeover reload is armed yet; the first
-   * build has since activated, and update() now leaves a newer build waiting.
+   * A page that registered before any build was active; the first build has since activated, and
+   * update() now leaves a newer build waiting.
    */
   function pageWhoseUpdateLeavesNewerWaiting() {
     const f = fakeRegister();
-    const container = new EventTarget();
+    const container = Object.assign(new EventTarget(), { controller: null as ServiceWorker | null });
     const reload = vi.fn();
     startServiceWorker({ register: f.register, fetchImpl: ok(), supported: true, container, reload });
-    const reg = registration({ installing: newer });
+    const reg = registration({ installing: active });
     f.options().onRegisteredSW?.('/sw.js', reg as unknown as ServiceWorkerRegistration);
     Object.assign(reg, { installing: null, active });
-    reg.update.mockImplementation(async () => void Object.assign(reg, { waiting: {} as ServiceWorker }));
-    const takeOver = () => container.dispatchEvent(new Event('controllerchange'));
-    return { reg, reload, takeOver };
+    reg.update.mockImplementation(async () => void Object.assign(reg, { waiting: newer }));
+    const controlBy = (worker: ServiceWorker) => {
+      container.controller = worker;
+      container.dispatchEvent(new Event('controllerchange'));
+    };
+    return { reg, reload, controlBy };
   }
 
   it.each([
@@ -519,15 +541,15 @@ describe('checkForUpdate (the Settings action)', () => {
         return vi.advanceTimersByTimeAsync(0);
       },
     ],
-  ])('raises it, and arms the takeover reload, from the %s check too', async (_which, runCheck) => {
-    const { reg, reload, takeOver } = pageWhoseUpdateLeavesNewerWaiting();
-    // The first build claiming the page: nothing is armed before the check, so no reload.
-    takeOver();
+  ])('raises it from the %s check too, and the newer build\'s takeover reloads the page', async (_which, runCheck) => {
+    const { reg, reload, controlBy } = pageWhoseUpdateLeavesNewerWaiting();
+    // The first build claiming the page is not a takeover: no reload.
+    controlBy(active);
     expect(reload).not.toHaveBeenCalled();
     await runCheck();
     expect(reg.update).toHaveBeenCalledTimes(1);
     expect(updateReady.value).toBe(true);
-    takeOver();
+    controlBy(newer);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 

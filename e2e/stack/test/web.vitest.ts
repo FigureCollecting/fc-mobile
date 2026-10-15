@@ -1,9 +1,18 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { tentativeInterfaces } from '../src/hostNetwork.js';
 import { DEFAULT_WEB_IMAGE, startWeb, type StackWeb } from '../src/web.js';
 import { request } from './helpers.js';
+
+/** The host side of the container's eth0 that publishes `url`'s port, by name; none where it has no IPv6 address. */
+function hostInterfaceOf(url: string): string | undefined {
+  const id = execFileSync('docker', ['ps', '-q', '--filter', `publish=${new URL(url).port}`], { encoding: 'utf8' }).trim();
+  const peer = Number(execFileSync('docker', ['exec', id, 'cat', '/sys/class/net/eth0/iflink'], { encoding: 'utf8' }));
+  return readFileSync('/proc/net/if_inet6', 'utf8').split('\n').map((l) => l.trim().split(/\s+/)).find((f) => parseInt(f[1] ?? '', 16) === peer)?.[5];
+}
 
 function fakeDist(): string {
   const dir = mkdtempSync(path.join(tmpdir(), 'stack-dist-'));
@@ -56,6 +65,20 @@ describe('web (nginx-unprivileged serving the production build)', () => {
 
   it('refuses a dist without index.html', async () => {
     await expect(startWeb({ dist: mkdtempSync(path.join(tmpdir(), 'stack-empty-')) })).rejects.toThrow(/index\.html/);
+  });
+
+  // Chromium drops its requests in flight (net::ERR_NETWORK_CHANGED) when the host announces an address,
+  // which for a new container's interface comes a second or two after it already answers.
+  it.runIf(existsSync('/proc/net/if_inet6'))('returns, and comes back after a stop, only once the host has announced the container\'s address', async () => {
+    const other = await startWeb({ dist: fakeDist() });
+    try {
+      expect(tentativeInterfaces(readFileSync('/proc/net/if_inet6', 'utf8'))).not.toContain(hostInterfaceOf(other.url));
+      await other.stop();
+      await other.start();
+      expect(tentativeInterfaces(readFileSync('/proc/net/if_inet6', 'utf8'))).not.toContain(hostInterfaceOf(other.url));
+    } finally {
+      await other.stop();
+    }
   });
 
   it('comes back on a new port after a stop', async () => {

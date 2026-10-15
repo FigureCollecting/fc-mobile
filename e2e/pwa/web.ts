@@ -4,6 +4,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { build } from 'vite';
 import { startEdge, type Edge } from '../stack/src/edge.js';
+import { hostAddressesSettled } from '../stack/src/hostNetwork.js';
 
 export interface WebContainer {
   id: string;
@@ -45,6 +46,8 @@ export async function runWeb(image: string, env: Record<string, string> = {}): P
     if (Date.now() > deadline) throw new Error(`${image} did not serve / within 20s:\n${docker('logs', id)}`);
     await new Promise((r) => setTimeout(r, 200));
   }
+  // A page load as the host announces the container's address would lose its requests (hostNetwork.ts).
+  await hostAddressesSettled();
   return { id, image, url, stop: () => void docker('rm', '-f', id) };
 }
 

@@ -43,7 +43,8 @@ export function startServiceWorker({
   let armed = false;
   let registered: Pick<ServiceWorkerRegistration, 'active'> | undefined;
   // A page loaded with no controller came from the network: the build active as it registered,
-  // still activating, then claims it with that same build. That claim is not a takeover.
+  // still activating, then claims it with that same build, as does the first install when none was
+  // active yet. That claim is not a takeover.
   // (The default container is absent where navigator.serviceWorker is, as in jsdom.)
   const loadedUncontrolled = (container?.controller ?? null) === null;
   let ownClaim: ServiceWorker | null = null;
@@ -76,9 +77,11 @@ export function startServiceWorker({
     onRegisteredSW(swUrl, registration) {
       if (registration === undefined) return;
       registered = registration;
-      // With no active build yet, the first install's claim of this page is not an update.
-      if (registration.active !== null) {
-        if (loadedUncontrolled) ownClaim = registration.active;
+      // Armed now, not from the plugin's prompt: for a page that registered during another tab's first
+      // install, the plugin raises that prompt from a timer a background tab runs late.
+      const claimant = registration.active ?? registration.waiting ?? registration.installing;
+      if (claimant !== null) {
+        if (loadedUncontrolled) ownClaim = claimant;
         reloadOnTakeover();
       }
       checkNow = watchForUpdates(swUrl, registration, fetchImpl, raisePrompt);

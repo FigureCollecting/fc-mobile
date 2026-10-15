@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
+import { hostAddressesSettled } from './hostNetwork.js';
 
 export const DEFAULT_WEB_IMAGE = 'nginxinc/nginx-unprivileged:1.30-alpine';
 export const DEFAULT_NGINX_CONF = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'nginx', 'default.conf');
@@ -45,7 +46,14 @@ export async function startWeb(options: WebOptions): Promise<StackWeb> {
     return container;
   };
 
-  let started: StartedTestContainer | undefined = await build().start();
+  // Up once it answers and the host has announced its address (hostNetwork.ts).
+  const run = async (): Promise<StartedTestContainer> => {
+    const container = await build().start();
+    await hostAddressesSettled();
+    return container;
+  };
+
+  let started: StartedTestContainer | undefined = await run();
   let url = `http://${started.getHost()}:${started.getMappedPort(PORT)}`;
 
   return {
@@ -60,7 +68,7 @@ export async function startWeb(options: WebOptions): Promise<StackWeb> {
     },
     start: async () => {
       if (started !== undefined) return;
-      started = await build().start();
+      started = await run();
       url = `http://${started.getHost()}:${started.getMappedPort(PORT)}`;
     },
   };

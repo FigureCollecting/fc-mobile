@@ -125,13 +125,26 @@ describe('FigureViewer (Display D)', () => {
     expect(screen.getByText('4 of 7')).toBeInTheDocument();
   });
 
-  it('expands the sheet for origin and distributor details', async () => {
+  it('every field is in the sheet from the start; its handle toggles it between the summary and all of them (SHEETS-FB1 6)', async () => {
     const user = userEvent.setup();
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} />);
-    expect(screen.queryByText('Original Character')).toBeNull();
-    await user.click(screen.getByRole('button', { name: /expand details/i }));
     expect(screen.getByText('Original Character')).toBeInTheDocument();
     expect(screen.getByText('Distributor')).toBeInTheDocument();
+    const handle = screen.getByRole('button', { name: 'Show all details' });
+    expect(handle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(handle);
+    expect(screen.getByRole('button', { name: 'Show the summary' })).toHaveAttribute('aria-expanded', 'true');
+    await user.click(screen.getByRole('button', { name: 'Show the summary' }));
+    expect(screen.getByRole('button', { name: 'Show all details' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('the fields scroll in their own body under the handle', () => {
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} />);
+    const sheet = document.body.querySelector('.figure-viewer-sheet')!;
+    const body = sheet.querySelector('.figure-viewer-sheet__body')!;
+    expect(body).not.toBeNull();
+    expect(body.contains(sheet.querySelector('.figure-viewer-sheet__handle'))).toBe(false);
+    expect(body.querySelector('.figure-viewer-sheet__more')).not.toBeNull();
   });
 
   it('portals the pull-up sheet to document.body so it stacks over photoswipe', () => {

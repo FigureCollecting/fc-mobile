@@ -19,6 +19,14 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     expect(document.body.querySelector('.figure-viewer-sheet')).toBeNull();
   });
 
+  it('a pane, not a sheet: no handle, and every field shown (SHEETS-FB1 6)', () => {
+    const dark = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
+    const { container } = renderWithProviders(<DetailPane figure={dark} index={1} total={7} onClose={() => {}} />);
+    expect(container.querySelector('.figure-viewer-sheet__handle')).toBeNull();
+    expect(screen.getByText('Original Character')).toBeInTheDocument();
+    expect(screen.getByText('Distributor')).toBeInTheDocument();
+  });
+
   it('asks for its image with crossorigin anonymous, a CORS request (src/sw.ts)', () => {
     const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
     const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);

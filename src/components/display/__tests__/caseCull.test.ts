@@ -643,6 +643,17 @@ describe('G1: the figure cap scales with the drawn cabinets; past a cap, no cabi
     expect(shown).toHaveLength(1);
     expect(dist(figs[shown[0]])).toBe(Math.min(...figs.map(dist)));
   });
+
+  it('a cap ending a round partway: the turn goes to the cabinet nearer the frame centre, not the lower index', () => {
+    // cabinet 0 (the lower indices) stands off to the left, cabinet 1 (the higher) at the frame centre
+    const left: FigureBox[] = Array.from({ length: 10 }, (_, i) => ({ cab: 0, x0: -900 + i * 40, x1: -870 + i * 40, y0: 900, y1: 950, z: 0 }));
+    const mid: FigureBox[] = Array.from({ length: 10 }, (_, i) => ({ cab: 1, x0: -200 + i * 40, x1: -170 + i * 40, y0: 900, y1: 950, z: 0 }));
+    const both = [...left, ...mid];
+    expect(Math.min(...mid.map(dist))).toBeLessThan(Math.min(...left.map(dist)));
+    const { shown } = figuresToDraw(viewOf(camera), cullRect(COVER), both, new Set([0, 1]), () => [], 3);
+    expect(shown).toHaveLength(3);
+    expect([shown.filter((i) => both[i].cab === 0).length, shown.filter((i) => both[i].cab === 1).length]).toEqual([1, 2]);
+  });
 });
 
 describe('figureScales: the figures cost at most a budget of px wherever the camera stands, the farthest from the frame centre drawn coarser first', () => {

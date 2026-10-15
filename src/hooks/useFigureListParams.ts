@@ -6,9 +6,11 @@
  * own look (cabinets, view, swipe) is kept per device in casePrefs.
  *
  * `status` is the holdings chosen in Refine (SHEETS-FB1: Owned, Ordered,
- * Wished, No longer owned; several at once), defaulted like cat/type: Owned
- * unless the caller says otherwise (the fixtures: none, every holding). An
- * old `tab=` link (the tab row it replaces) opens on that holding.
+ * Wished, No longer owned; several at once), defaulted: Owned unless the
+ * caller says otherwise (the fixtures: none, every holding). Unlike cat/type it
+ * has no cleared state: Refine keeps one holding chosen, so a status= naming
+ * none it knows (status=all included) is the default. An old `tab=` link (the
+ * tab row it replaces) opens on that holding.
  *
  * Resolution order for view prefs (layout/density): URL > localStorage
  * > default. Category=Prepainted and type=Figures are PRESELECTED defaults,
@@ -96,7 +98,6 @@ const isHolding = (value: string): value is CollectionTab => (COLLECTION_TABS as
 /** The holdings the URL names: status= (each once, values it does not know left out; none known, the default), else an old tab=. */
 function parseHoldings(params: URLSearchParams, fallback: readonly CollectionTab[]): string[] {
   const value = params.get('status');
-  if (value === CLEARED) return [];
   if (value !== null) {
     const named = [...new Set(value.split('|').filter(isHolding))];
     if (named.length > 0) return named;
@@ -204,7 +205,8 @@ export function useFigureListParams(options: ListParamOptions = {}) {
         return arr.join('|');
       };
       update({
-        status: defaulted(next.status, [...holdingsDefault]),
+        // none chosen reads as the default: no address to write for it
+        status: next.status.length > 0 ? defaulted(next.status, [...holdingsDefault]) : null,
         // the holdings are status= now; an old tab= link is spent once they change
         tab: null,
         mfr: list(next.mfr),

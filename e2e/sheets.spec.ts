@@ -110,14 +110,20 @@ for (const size of FOLD8) {
       const sheet = await openCard(page, card);
       const rest = await top(sheet);
       await swipeContents(page, card);
-      // no wait: the handle takes the card wherever the settle has it
+      // no wait: the handle takes the card wherever the settle has it, then the card moves with the finger
       const grip = await centre(page.locator(card.handle));
-      const start = await top(sheet);
+      const way = Math.sign(card.handleDy);
       const finger = await touchDown(page, grip.x, grip.y);
-      await finger.to(grip.x, grip.y + card.handleDy, 5, 16);
+      await finger.to(grip.x, grip.y + way * 10, 2, 16);
+      // the card is drawn a frame after it moves: read it with the finger still
+      await page.waitForTimeout(50);
+      const taken = await top(sheet);
+      await finger.to(grip.x, grip.y + card.handleDy, 4, 16);
+      await page.waitForTimeout(50);
       const held = await top(sheet);
       await finger.end();
-      expect.soft(Math.abs(held - start - card.handleDy), `the card follows the finger by ${card.handleDy} px (from ${start} to ${held})`).toBeLessThanOrEqual(8);
+      const travel = card.handleDy - way * 10;
+      expect.soft(Math.abs(held - taken - travel), `the card follows the finger ${travel} px (from ${taken} to ${held})`).toBeLessThanOrEqual(2);
       const released = Date.now();
       await page.waitForTimeout(400 - (Date.now() - released));
       const at400 = await top(sheet);

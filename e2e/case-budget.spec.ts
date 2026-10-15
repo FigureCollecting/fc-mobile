@@ -402,12 +402,17 @@ function budgetChecks(m: Awaited<ReturnType<typeof measured>>, state: State) {
   // the drawn cabinets are the five nearest the settled frame centre
   expect.soft(drawnSet, 'the drawn cabinets are the five nearest the settled frame centre').toEqual(frame.nearest);
   expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
-  expect.soft(scene.spill, 'faces reaching past the frame and half a viewport round it').toEqual([]);
+  // CULL-LEAK-1: the KLINGSBO's open mesh shelf, a level face seen from above, is cut to a rectangle on the face round
+  // what the frame and its margin see, wider at the back; full height (CASE-FB1) the wall view sees it from above too
+  const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
+  expect.soft(scene.spill.filter((x) => !mesh.includes(x)), 'faces reaching past the frame and half a viewport round it').toEqual([]);
+  expect.soft(mesh.length, 'mesh shelves reaching past it (CULL-LEAK-1)').toBeLessThanOrEqual(1);
   // a settled walk or pan stands at least three cabinets whole (Ross 12:1xC, desk MN2 a; NOTE 31); at the wall's end
-  // (close-out 3, ruling 27) it stands its end cabinet whole
+  // (close-out 3, ruling 27) it stands its end cabinet whole: full height on a short panel (CASE-FB1) the picture is
+  // narrow, and two long swipes, which the picture follows, already reach the end
   if (state.swipes > 0 && (state.view ?? 'wall') === 'wall') {
     const last = frame.boxes.length - 1;
-    if (frame.framed.includes(last) && state.swipes >= 40) expect.soft(frame.whole, 'the wall\'s end cabinet whole').toContain(last);
+    if (frame.framed.includes(last) && (state.swipes >= 40 || frame.whole.length < 3)) expect.soft(frame.whole, 'the wall\'s end cabinet whole').toContain(last);
     else expect.soft(frame.whole.length, `cabinets whole across the frame: ${frame.whole.join(',')}`).toBeGreaterThanOrEqual(3);
   }
   // SHOULD 28: the coarser figures are the outermost

@@ -269,7 +269,7 @@ describe('CC4 pan: the photo slides at most until its edge looks PAN_EDGE_TAN_MA
     const slide = base.slideMaxPx!;
 
     it(`${name}: the slide ends where the frame's edge looks PAN_EDGE_TAN_MAX off the axis, or sooner where the cap ends it`, () => {
-      // the drawn frame: the panel's, cropped to five fronts where the full-height camera would show more (CASE-FB1)
+      // the drawn frame: the panel's, cropped to its cap's fronts only past DRAWN_CABINETS_LIMIT (CASE-FB1, CF1 a)
       const drawn = base.camera.frame;
       expect(drawn.height).toBe(frame.height);
       const edge = panSlideMaxPx(base.camera);
@@ -277,7 +277,7 @@ describe('CC4 pan: the photo slides at most until its edge looks PAN_EDGE_TAN_MA
       expect(edge).toBeGreaterThan(drawn.width / 2);
       expect(panSlideMaxPx({ ...base.camera, focalPx: 1 })).toBe(0);
       // MOB-NAV-2: the slid frame shows no longer a stretch of the cabinets' fronts than the cap allows
-      expect(slide).toBe(Math.min(edge, capSlidePx(base.camera, fronts, capSpanMm(long))));
+      expect(slide).toBe(Math.min(edge, capSlidePx(base.camera, fronts, capSpanMm(long, base.drawCap))));
       expect(slide).toBeGreaterThanOrEqual(drawn.width / 2);
       expect(slide).toBeLessThanOrEqual(edge);
     });
@@ -463,6 +463,8 @@ describe('frameCase: every view frames the fronts of at most the cabinets the ca
     // a desktop window's short frame: wide enough that even a shelf, fitted by its height, would show six
     { width: 1536, height: 200 },
   ];
+  /** A narrow phone's frame, where the mixed wall pages two at a time and some pages open off their centre. */
+  const NARROW_FRAME = { width: 300, height: 350 };
   const WALLS: [string, WallLayout][] = [
     ['KLINGSBO', wallLayout(Array(30).fill(IKEA_KLINGSBO))],
     ['Detolf', wallLayout(Array(30).fill(IKEA_DETOLF))],
@@ -670,7 +672,8 @@ describe('frameCase: every view frames the fronts of at most the cabinets the ca
     let moved = 0;
     for (const [name, wall] of WALLS) {
       const headroomMm = wall.cabinets.map(() => 300);
-      for (const frame of FRAMES) {
+      // CF1 (a): no Fold8 frame is cropped narrow any more, so a narrow phone's frame, where two-cabinet pages open moved
+      for (const frame of [...FRAMES, NARROW_FRAME]) {
         for (const focus of [0, 4, 9]) {
           const input = { frame, wall, headroomMm, view: 'wall' as const, focus, shelf: 0 };
           const page = wallPages(input).find((p) => p.includes(focus))!;
@@ -712,7 +715,7 @@ describe('frameCase: every view frames the fronts of at most the cabinets the ca
   it('the opening move, page by page: centred where the page stands three whole or no stop within it stands more with the page whole; else the stop of the page (within it, nearest one of its cabinets) nearest its centre that keeps the page whole and stands the most, up to three', () => {
     const mixed = (n: number) => wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
     const cases: [string, WallLayout, { width: number; height: number }][] = [
-      ...WALLS.flatMap(([name, wall]) => FRAMES.map((frame): [string, WallLayout, { width: number; height: number }] => [name, wall, frame])),
+      ...WALLS.flatMap(([name, wall]) => [...FRAMES, NARROW_FRAME].map((frame): [string, WallLayout, { width: number; height: number }] => [name, wall, frame])),
       // a short mixed wall where the centred page already stands three, and a stop within it would stand four
       ['mixed x4', mixed(4), { width: 300, height: 210 }],
       // and one with two stops within the page that stand three
@@ -1109,9 +1112,10 @@ describe('NOTE 31: a pan of the wall view settles on the same kind of stop, wher
     // and past the wall's end a pan goes nowhere
     expect(settlePan(f, wall, stops, 0, 1000)).toBeNull();
     // past the slide the photo is retaken farther along: the dead zone is the cabinet that picture centres on (a mixed
-    // wall, where it is not the one the unslid picture centres on)
+    // wall, where it is not the one the unslid picture centres on; on a tall phone, whose dead zones pass the 40 px least
+    // once the whole panel is drawn, CF1 a)
     const mixed = wallLayout(Array.from({ length: 18 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
-    const g = opening(mixed, { width: 657, height: 473 });
+    const g = opening(mixed, { width: 412, height: 701 });
     const ms = panStops(g, mixed);
     const d0 = walkDeadPx(g, mixed);
     const far = ms.find((x) => walkDeadPx(panFraming(g, x.panPx).framing, mixed) > d0)!;
@@ -1443,7 +1447,7 @@ describe('F2: the shelf view stands one camera height per shelf level for the wh
     }
   });
 
-  it('every cabinet\'s band at that level (its shelf to the one above, or its top to what stands on it) stands whole in the frame, centred on it', () => {
+  it('every cabinet\'s band at that level (its shelf up to the one above) stands whole in the frame, centred on it; its top as wide as it stands', () => {
     for (const frame of PANELS) {
       for (let shelf = 0; shelf < 6; shelf++) {
         for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
@@ -1456,11 +1460,11 @@ describe('F2: the shelf view stands one camera height per shelf level for the wh
           const hi = s.isTop ? slot.profile.outer.heightMm + headroomMm[focus] : slot.profile.surfaces[s.surfaceIndex + 1].topMm;
           const at = `${frame.width}x${frame.height} shelf ${shelf} focus ${focus}`;
           expect(f.camera.x, at).toBe(slot.centerMm);
+          // the top's height is open: the camera steps back at most CC4b's 3 in past the width fit, so there only the
+          // width is held (at the height it aims at)
           for (const x of [slot.leftMm, slot.rightMm]) {
-            for (const y of [lo, hi]) {
+            for (const y of s.isTop ? [f.look[1]] : [lo, hi]) {
               const p = project(f.camera, [x, y, 0]);
-              // the top band: the camera steps back at most CC4b's 3 in to show what stands on the top
-              if (s.isTop && y === hi) continue;
               expect(inside(f.camera.frame.width, f.camera.frame.height, p.x, p.y), `${at} ${x},${y}`).toBe(true);
             }
           }

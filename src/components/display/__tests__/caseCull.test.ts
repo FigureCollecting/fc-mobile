@@ -173,9 +173,8 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
 
   it('a cabinet already drawn keeps its place until another is nearer the centre by a tenth of the frame', () => {
     expect(CABINET_HYSTERESIS).toBe(0.1);
-    // a camera far enough back that the open panel shows some fourteen fronts: the five are chosen among them
-    const capped = framing(OPEN, 10).camera;
-    const camera = { ...capped, z: capped.z * 3.5 };
+    // the open panel's full-height camera shows some fifteen fronts (CF1 a: the whole panel): five are chosen among them
+    const camera = framing(OPEN, 10).camera;
     const fresh = nearestCabinets(viewOf(camera), WALL, []);
     // walk the camera along the wall so the rightmost not drawn comes nearer than the leftmost drawn, by a little
     const step = (WALL.cabinets[1].centerMm - WALL.cabinets[0].centerMm) * 0.6;

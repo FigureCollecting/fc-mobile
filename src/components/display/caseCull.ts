@@ -16,8 +16,14 @@ import type { RoomSpan } from './caseFraming';
 import { sideOverhangMm } from './cabinetProfile';
 import type { WallLayout, WallSlot } from './packCabinets';
 
-/** Ross 2026-10-13: the most cabinets drawn at a time (and so on one wall page). */
+/** Ross 2026-10-13: the most cabinets drawn at a time (and so on one wall page) where the panel needs no more; the fallback. */
 export const MAX_DRAWN_CABINETS = 5;
+/**
+ * CF1 (a): the most a panel may draw, so the full-height wall (CASE-FB1) spans a wide or short panel with no bands at
+ * its sides: each panel draws as many as its frame shows fronts (wallCamera), up to this; the scene's layers stay
+ * under the 3-viewport ceiling (e2e/case-budget). CF1 (b), the frame cropped to five, is this set to MAX_DRAWN_CABINETS.
+ */
+export const DRAWN_CABINETS_LIMIT = 18;
 /** What the case draws past the frame on each side, as a share of the frame: half a viewport. */
 export const CULL_MARGIN = 0.5;
 /** A drawn cabinet keeps its place until another draws nearer the frame centre by this share of the frame width. */

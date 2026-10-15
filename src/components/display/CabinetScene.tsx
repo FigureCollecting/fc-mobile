@@ -810,7 +810,7 @@ export function CabinetScene({
 
   // MOB-NAV-2: while a finger swipes, cull for the picture last culled for until it has moved a quarter frame (the
   // half-viewport margin still covers the frame), a cabinet already drawn keeping its place against a small move;
-  // once the swipe settles, cull for the settled picture itself: the five cabinets nearest its centre. Draw the
+  // once the swipe settles, cull for the settled picture itself: the drawCap cabinets nearest its centre. Draw the
   // faces at the px per mm the screen shows the cabinets' room (floor to headroom, back to the front of the feet)
   // at its nearest
   const moving = liveDx !== 0 || liveDy !== 0;
@@ -818,7 +818,8 @@ export function CabinetScene({
   const cull = moving ? stickyView(culled.current, { camera, panPx }) : { camera, panPx };
   culled.current = cull;
   const chosen = useRef<number[]>([]);
-  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : []);
+  // CF1 (a): as many as the panel's full-height frame shows fronts (wallCamera), the same in every view
+  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : [], base.drawCap);
   chosen.current = drawnCabs;
   const visible = drawnCabs.map((i) => ({ slot: wall.cabinets[i], i }));
   const span = useMemo(
@@ -995,6 +996,7 @@ export function CabinetScene({
       data-cull-pan={String(cull.panPx)}
       data-wall={wallBoxes}
       data-drawn-cabinets={String(drawnCabs.length)}
+      data-drawn-cap={String(base.drawCap)}
       data-drawn-figures={String(onShow.length)}
       data-hidden-figures={String(hidden)}
       onPointerDown={onPointerDown}

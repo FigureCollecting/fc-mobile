@@ -3,7 +3,7 @@ import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 import { useBackToClose } from '../../hooks/useBackToClose';
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 
 interface DetailPaneProps {
   figure: Figure;
@@ -26,7 +26,8 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
   useBackToClose(onClose);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  useEffect(() => {
+  // listening as it commits, so an Esc right after it opens closes it
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCloseRef.current();
     };

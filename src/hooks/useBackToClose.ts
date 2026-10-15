@@ -12,7 +12,7 @@
  * while such a Back is still to come takes its entry once it has landed (pushed before it, the entry
  * would be the one that Back takes off).
  */
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 
 interface Entry {
   close: () => void;
@@ -61,7 +61,8 @@ export function useBackToClose(onClose: () => void): void {
     if (entry.current) entry.current.href = location.href;
   });
 
-  useEffect(() => {
+  // as it commits, not a frame later: a Back right after it opens is already its own
+  useLayoutEffect(() => {
     if (!listening) {
       window.addEventListener('popstate', onPop);
       listening = true;

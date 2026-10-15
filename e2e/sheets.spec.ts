@@ -171,3 +171,157 @@ test('the hand-off: a finger pulling down on scrolled contents scrolls them to t
   expect(moved, `the card moved with the finger once the contents were home (${moved} px)`).toBeGreaterThan(35);
   expect(moved).toBeLessThan(75);
 });
+
+for (const size of FOLD8) {
+  test(`Refine applies live under the finger: a maker narrows the case behind the card at once, N of M; Done closes it; the row shows only while filtered: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    // nothing filtered: no filter row, no filter bar, no holdings tab row
+    await expect(page.locator('.applied-chips')).toHaveCount(0);
+    await expect(page.locator('.filter-bar')).toHaveCount(0);
+    await expect(page.getByRole('tablist', { name: 'Collections' })).toHaveCount(0);
+    await tapCentre(page, page.getByRole('button', { name: 'Refine', exact: true }));
+    const card = page.locator('.detent-sheet');
+    await atRest(card);
+    const count = card.locator('.filter-sheet2__count');
+    const all = Number((await count.innerText()).split(' of ')[1]);
+    await expect(count).toHaveText(`${all} of ${all}`);
+    await expect(card.getByRole('button', { name: /^Show/ })).toHaveCount(0);
+    await card.getByRole('button', { name: /^Good Smile Company\s*\d/ }).first().tap();
+    // the card is still open, and the case behind it already shows only that maker
+    await expect(count).toHaveText(new RegExp(`^[1-9]\\d* of ${all}$`));
+    const shown = Number((await count.innerText()).split(' of ')[0]);
+    expect(shown).toBeLessThan(all);
+    await expect(card).toBeVisible();
+    await expect.poll(async () => (await page.locator('button.cab-figure').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).length).toBeLessThanOrEqual(shown);
+    await card.getByRole('button', { name: 'Done' }).tap();
+    await expect(card).toHaveCount(0);
+    const row = page.locator('.applied-chips');
+    await expect(row).toBeVisible();
+    await expect(row.locator('.applied-chips__count')).toHaveText(`${shown} of ${all}`);
+    await row.getByRole('listitem', { name: 'Remove filter Good Smile Company' }).tap();
+    await expect(row).toHaveCount(0);
+  });
+
+  test(`Holdings live in Refine with their counts; Wished alone applies at once: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    await tapCentre(page, page.getByRole('button', { name: 'Refine', exact: true }));
+    const card = page.locator('.detent-sheet');
+    await atRest(card);
+    const holding = card.getByRole('group', { name: 'Holding' });
+    const names = await holding.getByRole('button').allInnerTexts();
+    expect(names.map((n) => n.replace(/\s*\d+$/, ''))).toEqual(['Owned', 'Ordered', 'Wished', 'No longer owned']);
+    const wished = holding.getByRole('button', { name: /^Wished/ });
+    const n = Number((await wished.innerText()).match(/(\d+)$/)![1]);
+    expect(n).toBeGreaterThan(0);
+    await wished.tap();
+    await expect(wished).toHaveAttribute('aria-pressed', 'true');
+    await expect(card.locator('.filter-sheet2__count')).toHaveText(`${n} of ${n}`);
+  });
+
+  test(`Header: two mode buttons at fixed places, the active one opens its views with the current ticked; no Select: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    await expect(page.getByRole('button', { name: 'Select' })).toHaveCount(0);
+    const caseBtn = page.getByRole('button', { name: /^Case,/ });
+    const tilesBtn = page.getByRole('button', { name: /^Tiles,/ });
+    const labelsBtn = page.getByRole('button', { name: /^Labels:/ });
+    const places = async () => JSON.stringify(await Promise.all([caseBtn, tilesBtn, labelsBtn].map((b) => b.boundingBox())));
+    const at = await places();
+    await caseBtn.tap();
+    const menu = page.getByRole('menu', { name: 'Case views' });
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitemradio', { name: 'Whole cabinets' })).toHaveAttribute('aria-checked', 'true');
+    await menu.getByRole('menuitemradio', { name: 'One shelf' }).tap();
+    await expect(menu).toHaveCount(0);
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', 'shelf');
+    await expect(caseBtn).toHaveAttribute('aria-label', 'Case, One shelf');
+    expect(await places(), 'no button moved or grew picking a view').toBe(at);
+    await tilesBtn.tap();
+    await expect(page.locator('.jrows')).toBeVisible();
+    expect(await places(), 'no button moved or grew switching to the tiles').toBe(at);
+    await tilesBtn.tap();
+    const tiles = page.getByRole('menu', { name: 'Tiles views' });
+    await expect(tiles.getByRole('menuitemradio')).toHaveText(['Comfortable', 'Compact', 'Gallery']);
+    await tiles.getByRole('menuitemradio', { name: 'Gallery' }).tap();
+    await expect(tilesBtn).toHaveAttribute('aria-label', 'Tiles, Gallery');
+    expect(await places(), 'no button moved or grew picking a density').toBe(at);
+    // the tiles keep Refine (and Info) under the thumb
+    await expect(page.locator('.case-tabs__tab[data-tab="refine"]')).toBeVisible();
+  });
+}
+
+for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
+  test(`Info: an X from the first moment, Back, a tap off the picture and Esc each close it; prev/next by swipe stay; every field at the top detent: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    const url = page.url();
+    const viewer = page.locator('.pswp');
+    const x = page.getByRole('button', { name: 'Close', exact: true });
+    // the X, at once, with no tap
+    await openFigure(page);
+    await expect(viewer).toBeVisible();
+    await expect(x).toBeVisible();
+    await x.tap();
+    await expect(viewer).toHaveCount(0);
+    await expect(x).toHaveCount(0);
+    // Back
+    await openFigure(page);
+    await expect(viewer).toBeVisible();
+    await page.goBack();
+    await expect(viewer).toHaveCount(0);
+    expect(page.url()).toBe(url);
+    // a tap off the picture
+    await openFigure(page);
+    await expect(viewer).toBeVisible();
+    await page.waitForTimeout(400);
+    await touchTap(page, 8, Math.round(size.height * 0.2));
+    await expect(viewer).toHaveCount(0);
+    // Esc
+    await openFigure(page);
+    await expect(viewer).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(viewer).toHaveCount(0);
+    // a swipe left on the picture still moves to the next figure, and the sheet follows
+    await openFigure(page);
+    const counter = page.locator('.figure-viewer-sheet__counter');
+    const before = await counter.innerText();
+    await page.waitForTimeout(400);
+    await touchSwipe(page, size.width * 0.75, size.height * 0.35, -size.width * 0.5, 0, 8, 16);
+    await expect(counter).not.toHaveText(before);
+    // every field shows at the top detent: the handle's tap takes it there, nothing else needed
+    const sheet = page.locator('.figure-viewer-sheet');
+    await atRest(sheet);
+    await page.locator('.figure-viewer-sheet__handle').tap();
+    await expect(sheet).toHaveAttribute('data-detent', 'all');
+    await atRest(sheet);
+    const rows = sheet.locator('.figure-viewer-sheet__row');
+    expect(await rows.count()).toBeGreaterThan(2);
+    const body = (await sheet.locator('.figure-viewer-sheet__body').boundingBox())!;
+    const last = (await rows.last().boundingBox())!;
+    expect(last.y + last.height, 'the last field is within the sheet, a scroll away at most').toBeLessThanOrEqual(body.y + Math.max(body.height, (await sheet.locator('.figure-viewer-sheet__body').evaluate((el) => el.scrollHeight))) + 1);
+    expect(body.y + body.height).toBeLessThanOrEqual(size.height + 1);
+  });
+}
+
+for (const size of FOLD8.filter((v) => v.width >= DUAL_PANE_MIN_WIDTH)) {
+  test(`Info pane: its X, Back and Esc each close it; every field shows: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    const url = page.url();
+    const pane = page.locator('.detail-pane');
+    await openFigure(page);
+    await expect(pane).toBeVisible();
+    expect(await pane.locator('.figure-viewer-sheet__row').count()).toBeGreaterThan(2);
+    await pane.getByRole('button', { name: 'Close detail' }).tap();
+    await expect(pane).toHaveCount(0);
+    // the case re-frames to the width the pane leaves it: let it settle before aiming at a figure
+    await page.waitForTimeout(500);
+    await openFigure(page);
+    await expect(pane).toBeVisible();
+    await page.goBack();
+    await expect(pane).toHaveCount(0);
+    expect(page.url()).toBe(url);
+    await page.waitForTimeout(500);
+    await openFigure(page);
+    await expect(pane).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(pane).toHaveCount(0);
+  });
+}

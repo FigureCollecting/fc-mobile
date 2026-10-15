@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/preact';
+import { fireEvent, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 // Fake PhotoSwipe capturing options + event handlers, so we can assert the
@@ -208,6 +208,17 @@ describe('FigureViewer (Display D)', () => {
     expect(onClose).not.toHaveBeenCalled();
     tap(document.createElement('div'));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc closes it from the first moment, the gallery still opening or not', async () => {
+    const onClose = vi.fn();
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);
+    fireEvent.keyDown(document, { key: 'ArrowRight' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // the gallery, once it opens, finds itself already closed
+    await waitFor(() => expect(instances[0]?.destroyed ?? true).toBe(true));
   });
 
   it('Back (Android or the browser) closes it: it opens a history entry', async () => {

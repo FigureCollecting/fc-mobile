@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { motion } from 'framer-motion';
 import type { Figure } from '@figurecollecting/fc-shared';
@@ -80,6 +80,16 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
     onCloseRef.current();
   };
   useBackToClose(closeViewer);
+  // Esc, ours, listening as it commits: PhotoSwipe's own reads keys only once its gallery has opened
+  useLayoutEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeViewer();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // closeViewer reads refs only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +100,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         // CSS rides the same lazy chunk
         import('photoswipe/style.css'),
       ]);
-      if (cancelled) return;
+      // unmounted, or closed (its X, Esc, Back) before the gallery's code arrived
+      if (cancelled || closingRef.current) return;
 
       const dataSource = figures.map((f) => {
         const meta = getDisplayMeta(f);

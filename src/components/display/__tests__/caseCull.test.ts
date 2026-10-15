@@ -263,8 +263,9 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
           const b = cabinetBox(slot, 0);
           return trimFace(view, [b.x0, b.y0, 0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0], rect) ? [i] : [];
         });
-        expect(fronts.length).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
-        expect(nearestCabinets(view, wall, []), `${frame.width} slid ${r.panPx}`).toEqual(expect.arrayContaining(fronts));
+        // CF1 (a): the framing draws its own cap of cabinets (more on a wide panel)
+        expect(fronts.length).toBeLessThanOrEqual(f.drawCap);
+        expect(nearestCabinets(view, wall, [], f.drawCap), `${frame.width} slid ${r.panPx}`).toEqual(expect.arrayContaining(fronts));
         checked++;
       }
     }
@@ -446,11 +447,14 @@ describe('hiddenUnder: a figure wholly behind an opaque board, from where the ca
   });
 });
 
-describe(`wallPages: a page holds at most ${MAX_DRAWN_CABINETS} cabinets, the most drawn at a time`, () => {
-  it('the open panel pages a long wall three at a time: as many as stand whole across the frame stepped in to five fronts', () => {
-    const pages = wallPages({ frame: OPEN, wall: WALL, headroomMm: WALL.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
-    expect(Math.max(...pages.map((p) => p.length))).toBe(3);
-    expect(Math.max(...pages.map((p) => p.length))).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+describe('wallPages: a page holds at most the cabinets drawn at a time (CF1: the framing\'s cap)', () => {
+  it('the open panel pages a long wall as many at a time as stand whole across its frame, never more than its cap', () => {
+    const input: FramingInput = { frame: OPEN, wall: WALL, headroomMm: WALL.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 };
+    const pages = wallPages(input);
+    const cap = frameCase(input).drawCap;
+    expect(cap).toBeGreaterThan(MAX_DRAWN_CABINETS);
+    expect(Math.max(...pages.map((p) => p.length))).toBeGreaterThan(3);
+    expect(Math.max(...pages.map((p) => p.length))).toBeLessThanOrEqual(cap);
     expect(pages.flat()).toEqual(WALL.cabinets.map((_, i) => i));
   });
 });

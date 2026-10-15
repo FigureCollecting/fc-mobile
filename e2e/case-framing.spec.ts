@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
+import * as caseCull from '../src/components/display/caseCull';
 
 /**
  * CASE-FB1 (Ross's first Fold8 session, 10-14): the case is framed full height, from a strip of floor in front of the
@@ -19,6 +20,8 @@ test.beforeEach(({}, testInfo) => {
 });
 
 const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
+/** CF1 (a): the most cabinets a panel may draw. */
+const DRAWN_CABINETS_LIMIT = caseCull.DRAWN_CABINETS_LIMIT;
 const H = IKEA_KLINGSBO.outer.heightMm;
 const FEET_FRONT_MM = IKEA_KLINGSBO.footprint!.frontOverhangMm;
 /** Ross: the floor line and the top line hold still within this many px. */
@@ -64,6 +67,19 @@ const lineY = (p: Awaited<ReturnType<typeof picture>>, y: number, z: number) => 
 /** The floor line under the feet's front, and the cabinets' top line at their front. */
 const lines = (p: Awaited<ReturnType<typeof picture>>) => ({ floor: lineY(p, 0, FEET_FRONT_MM), top: lineY(p, H, 0) });
 
+/**
+ * The lines as the browser draws them (not from the published camera): the room's back wall, its bottom edge (the
+ * floor line at the back wall) and its top edge, px from the drawn frame's top. The wall is cut to what the frame and
+ * its margin see, and a camera that never turns sideways cuts it at the same heights wherever it stands.
+ */
+async function domLines(page: Page) {
+  return page.locator('.cabinet-scene').evaluate((h) => {
+    const f = (h.querySelector('.cabinet-scene__frame') ?? h).getBoundingClientRect();
+    const w = h.querySelector('.room-wall')!.getBoundingClientRect();
+    return { floor: w.bottom - f.top, top: w.top - f.top };
+  });
+}
+
 async function swipe(page: Page, dx: number, dy = 0) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const x = scene.x + scene.width * (dx < 0 ? 0.7 : dx > 0 ? 0.3 : 0.5);
@@ -86,21 +102,27 @@ for (const size of FOLD8) {
         await openCase(page, size, { view, swipe: swipeMode, ...(pattern ? { pattern } : {}) });
         const start = await picture(page);
         const at = lines(start);
+        const domAt = await domLines(page);
         const moved: { step: string; floor: number; top: number; x: number }[] = [];
         let worst = 0;
+        let worstDom = 0;
         let travelled = 0;
         for (const dx of [-150, 150]) {
           for (let k = 0; k < 20; k++) {
             await swipe(page, dx);
             const now = await picture(page);
             const l = lines(now);
-            const off = Math.max(Math.abs(l.floor - at.floor), Math.abs(l.top - at.top));
+            // as drawn, too: the back wall's floor line and top edge hold still
+            const dom = await domLines(page);
+            const domOff = Math.max(Math.abs(dom.floor - domAt.floor), Math.abs(dom.top - domAt.top));
+            if (domOff > worstDom) worstDom = domOff;
+            const off = Math.max(Math.abs(l.floor - at.floor), Math.abs(l.top - at.top), domOff);
             travelled = Math.max(travelled, Math.abs(now.camera.x - now.panX * (now.camera.z / now.camera.focalPx) - (start.camera.x - start.panX * (start.camera.z / start.camera.focalPx))));
             if (off > worst) worst = off;
             if (off > STILL_PX) moved.push({ step: `${dx < 0 ? 'left' : 'right'} ${k + 1}`, floor: +(l.floor - at.floor).toFixed(1), top: +(l.top - at.top).toFixed(1), x: Math.round(now.camera.x) });
           }
         }
-        console.log(`case-fb1 jump ${JSON.stringify({ panel: size.name, view, pattern: pattern ?? 'default', swipe: swipeMode, worstPx: +worst.toFixed(2), travelledMm: Math.round(travelled), moved: moved.length })}`);
+        console.log(`case-fb1 jump ${JSON.stringify({ panel: size.name, view, pattern: pattern ?? 'default', swipe: swipeMode, worstPx: +worst.toFixed(2), worstDomPx: +worstDom.toFixed(2), travelledMm: Math.round(travelled), moved: moved.length })}`);
         expect(travelled, 'the swipes moved the picture along the wall').toBeGreaterThan(300);
         expect(moved, `swipes that moved the floor or top line by more than ${STILL_PX} px (worst ${worst.toFixed(1)} px)`).toEqual([]);
       });
@@ -252,5 +274,104 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
     expect(walked.camera.x).not.toBe(raised.camera.x);
     expect(Math.abs(lines(walked).floor - lines(raised).floor)).toBeLessThanOrEqual(STILL_PX);
     expect(Math.abs(lines(walked).top - lines(raised).top)).toBeLessThanOrEqual(STILL_PX);
+  });
+}
+
+// CF1 (a): the full-height wall fills the panel's width, as many cabinets drawn as it shows, no bands at its sides
+for (const size of FOLD8) {
+  for (const pattern of [undefined, 'ikea-detolf', MIXED]) {
+    for (const view of ['wall', 'cabinet'] as const) {
+      test(`fills the panel: the drawn frame as wide as the scene, every front it shows drawn, ${view} view${pattern ? `, ${pattern}` : ''}: ${size.name}`, async ({ page }) => {
+        await openCase(page, size, { view, swipe: 'camera', ...(pattern ? { pattern } : {}) });
+        const host = page.locator('.cabinet-scene');
+        const widths = await host.evaluate((h) => ({ scene: h.getBoundingClientRect().width, frame: h.querySelector('.cabinet-scene__frame')!.getBoundingClientRect().width }));
+        const cap = Number(await host.getAttribute('data-drawn-cap'));
+        const drawn = Number(await host.getAttribute('data-drawn-cabinets'));
+        console.log(`case-fb1 fill ${JSON.stringify({ panel: size.name, view, pattern: pattern ?? 'default', cap, drawn, scenePx: widths.scene, framePx: widths.frame })}`);
+        expect(cap, 'the cap: five at the least').toBeGreaterThanOrEqual(5);
+        expect(cap, 'and the limit at the most').toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
+        expect(drawn, 'drawn cabinets').toBeLessThanOrEqual(cap);
+        // within the limit the frame is the whole scene: no band at either side
+        if (cap < DRAWN_CABINETS_LIMIT) expect(Math.abs(widths.frame - widths.scene), 'the frame against the scene (px)').toBeLessThanOrEqual(1);
+        else expect(widths.frame).toBeLessThanOrEqual(widths.scene + 1);
+      });
+    }
+  }
+}
+
+// F2: the shelf view on the mixed wall: one camera height per shelf level for the whole wall, so a walk or a pan to
+// another kind of cabinet moves the picture sideways only
+for (const size of FOLD8) {
+  for (const swipeMode of ['camera', 'pan'] as const) {
+    test(`no vertical jump in the shelf view: 20 swipes each way along the mixed wall hold its height, ${swipeMode} mode: ${size.name}`, async ({ page }) => {
+      test.setTimeout(240_000);
+      await openCase(page, size, { view: 'shelf', swipe: swipeMode, pattern: MIXED });
+      const start = await picture(page);
+      const domAt = await domLines(page);
+      let worstDom = 0;
+      let worstMm = 0;
+      const focuses = new Set<string>();
+      for (const dx of [-150, 150]) {
+        for (let k = 0; k < 20; k++) {
+          await swipe(page, dx);
+          const now = await picture(page);
+          focuses.add((await page.locator('.cabinet-scene').getAttribute('data-focus'))!);
+          const dom = await domLines(page);
+          worstDom = Math.max(worstDom, Math.abs(dom.floor - domAt.floor), Math.abs(dom.top - domAt.top));
+          worstMm = Math.max(worstMm, Math.abs(now.camera.y - start.camera.y), Math.abs(now.camera.z - start.camera.z), Math.abs(now.camera.pitch - start.camera.pitch));
+          expect.soft(now.panY, 'never slid up or down').toBe(start.panY);
+        }
+      }
+      console.log(`case-fb1 shelf ${JSON.stringify({ panel: size.name, swipe: swipeMode, worstDomPx: +worstDom.toFixed(2), worstCameraMm: +worstMm.toFixed(3), focuses: [...focuses].join(',') })}`);
+      if (swipeMode === 'camera') expect(focuses.size, 'the walk reached other kinds of cabinet').toBeGreaterThan(2);
+      expect(worstMm, 'camera height, distance and tilt held (mm, rad)').toBeLessThanOrEqual(PUBLISHED_MM);
+      expect(worstDom, 'the drawn floor and top lines held (px)').toBeLessThanOrEqual(STILL_PX);
+    });
+  }
+}
+
+/** A real touch drag through the browser's input pipeline (CDP Input.dispatchTouchEvent), so the scene's touch-action applies. */
+async function touchDrag(page: Page, dx: number, dy: number) {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    const b = (await page.locator('.cabinet-scene').boundingBox())!;
+    const x = b.x + b.width / 2;
+    const y = b.y + b.height * 0.3;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let i = 1; i <= 10; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + (dx * i) / 10, y: y + (dy * i) / 10 }] });
+      await page.waitForTimeout(16);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(150);
+  } finally {
+    await cdp.detach();
+  }
+}
+
+// F3: vertical pan under a REAL touch (the Fold8's): the browser hands the scene every drag (touch-action none), so an
+// up/down finger raises the camera or slides the photo; a drift sideways never walks or slides it
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  test(`touch, camera mode: an up/down finger raises the camera, a sideways drift never walks it: ${size.name}`, async ({ page }) => {
+    await openCase(page, size, { view: 'wall', swipe: 'camera' });
+    const start = await picture(page);
+    await touchDrag(page, 0, 120);
+    const up = await picture(page);
+    expect(up.camera.y, 'a finger down raises the camera').toBeGreaterThan(start.camera.y + 20);
+    expect(up.camera.x).toBe(start.camera.x);
+    await touchDrag(page, -40, -120);
+    const down = await picture(page);
+    expect(down.camera.y, 'a finger up lowers it again').toBeLessThan(up.camera.y - 20);
+    expect(down.camera.x, 'never sideways').toBe(start.camera.x);
+  });
+
+  test(`touch, pan mode: an up/down finger slides the photo, a sideways drift never slides it sideways: ${size.name}`, async ({ page }) => {
+    await openCase(page, size, { view: 'wall', swipe: 'pan' });
+    const start = await picture(page);
+    await touchDrag(page, 40, 120);
+    const down = await picture(page);
+    expect(down.panY, 'a finger down slides the photo down').toBeGreaterThan(start.panY + 20);
+    expect(down.panX, 'never sideways').toBe(start.panX);
+    expect(down.camera).toEqual(start.camera);
   });
 }

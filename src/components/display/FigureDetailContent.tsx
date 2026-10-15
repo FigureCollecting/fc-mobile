@@ -1,4 +1,3 @@
-import { useState } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import type { LocalMeta } from '../../local/figures';
 import { SyncBadge } from '../sync/SyncBadge';
@@ -14,31 +13,51 @@ interface FigureDetailContentProps {
   onBeforeOpen?: () => void;
 }
 
+type Shown = Figure & { local?: Pick<LocalMeta, 'headId' | 'kind' | 'sync' | 'asOf'> & Partial<Pick<LocalMeta, 'character'>> };
+
+/** Every field the figure has beyond the summary's badges (maker, scale, status, count), in reading order, as [label, value]; the ones it lacks are left out. */
+function fieldsOf(figure: Shown): [string, string][] {
+  const rows: [string, string | null | undefined][] = [
+    ['Origin', figure.origin],
+    ['Character', figure.local?.character],
+    ['Version', figure.version],
+    ['Release', figure.releases?.find((r) => r.date)?.date],
+    ['Size', sizeOf(figure)],
+    ['Category', figure.category],
+    ['Type', figure.classification],
+    ['Materials', figure.materials],
+    ...(figure.companyRoles ?? []).map((r): [string, string | undefined] => [r.roleName ?? 'Company', r.companyName]),
+    ...(figure.artistRoles ?? []).map((r): [string, string | undefined] => [r.roleName ?? 'Artist', r.artistName]),
+    ['JAN', figure.jan],
+    ['Tags', figure.tags?.join(', ')],
+    ['Rating', figure.rating === undefined ? undefined : String(figure.rating)],
+    ['Note', figure.note],
+  ];
+  return rows.filter((r): r is [string, string] => typeof r[1] === 'string' && r[1] !== '');
+}
+
+function sizeOf(figure: Figure): string | undefined {
+  const d = figure.dimensions;
+  const mm = [d?.heightMm, d?.widthMm, d?.depthMm].filter((v): v is number => v !== undefined);
+  return mm.length === 0 ? undefined : `${mm.join(' × ')} mm`;
+}
+
 /**
- * The figure's data block — name, position counter, badges, and an
- * expandable detail list. Shared between the full-screen viewer's pull-up
- * sheet (Display D, < 640px) and the Fold-open dual-pane (>= 640px, Display
- * D'): same content component either way, just hosted differently.
+ * The figure's data block: its summary (name, position counter, badges, the way to its copies) and every
+ * field it has, all at once (SHEETS-FB1: nothing hangs on tapping a handle). Shared between the full-screen
+ * viewer's pull-up sheet (Display D, < 640px), which peeks at the summary and pulls up to the rest, and the
+ * Fold-open dual-pane (>= 640px, Display D'), which shows it all.
  */
 export function FigureDetailContent({ figure, index, total, onBeforeOpen }: FigureDetailContentProps) {
-  const [expanded, setExpanded] = useState(false);
   const [, setLocation] = useLocation();
   // The local store's state of the item; fixture figures have none.
-  const local = (figure as Figure & { local?: Pick<LocalMeta, 'headId' | 'kind' | 'sync' | 'asOf'> }).local;
+  const local = (figure as Shown).local;
   const quantity = figure.quantity ?? 1;
+  const fields = fieldsOf(figure as Shown);
 
   return (
     <>
-      <button
-        class="figure-viewer-sheet__handle"
-        type="button"
-        aria-label={expanded ? 'Collapse details' : 'Expand details'}
-        aria-expanded={expanded}
-        onClick={() => setExpanded((e) => !e)}
-      >
-        <span class="figure-viewer-sheet__grip" />
-      </button>
-
+      <div class="figure-viewer-sheet__summary">
       <div class="figure-viewer-sheet__head">
         <span class="figure-viewer-sheet__name">{figure.name}</span>
         <span class="figure-viewer-sheet__counter">
@@ -62,30 +81,17 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
           Copies and actions
         </button>
       )}
+      </div>
 
-      {expanded && (
-        <div class="figure-viewer-sheet__more">
-          {figure.origin && (
-            <div class="figure-viewer-sheet__row">
-              <span class="figure-viewer-sheet__key">Origin</span>
-              <span class="figure-viewer-sheet__val">{figure.origin}</span>
+      {fields.length > 0 && (
+        <dl class="figure-viewer-sheet__more">
+          {fields.map(([key, value], i) => (
+            <div key={`${key}-${i}`} class="figure-viewer-sheet__row">
+              <dt class="figure-viewer-sheet__key">{key}</dt>
+              <dd class="figure-viewer-sheet__val">{value}</dd>
             </div>
-          )}
-          {figure.companyRoles?.map((role) =>
-            role.companyName ? (
-              <div key={role.companyId} class="figure-viewer-sheet__row">
-                <span class="figure-viewer-sheet__key">{role.roleName ?? 'Company'}</span>
-                <span class="figure-viewer-sheet__val">{role.companyName}</span>
-              </div>
-            ) : null,
-          )}
-          {figure.category && (
-            <div class="figure-viewer-sheet__row">
-              <span class="figure-viewer-sheet__key">Category</span>
-              <span class="figure-viewer-sheet__val">{figure.category}</span>
-            </div>
-          )}
-        </div>
+          ))}
+        </dl>
       )}
 
       <Style css={`
@@ -104,18 +110,8 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
           font-size: var(--font-sm);
         }
 
-        .figure-viewer-sheet__handle {
-          display: flex;
-          justify-content: center;
-          width: 100%;
-          padding: var(--space-2) 0;
-        }
-
-        .figure-viewer-sheet__grip {
-          width: 32px;
-          height: 4px;
-          border-radius: var(--radius-full);
-          background: var(--text-tertiary);
+        .figure-viewer-sheet__summary {
+          padding-bottom: var(--space-1);
         }
 
         .figure-viewer-sheet__head {
@@ -167,7 +163,7 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
         }
 
         .figure-viewer-sheet__more {
-          margin-top: var(--space-2);
+          margin: var(--space-2) 0 0;
           padding-top: var(--space-2);
           border-top: 1px solid var(--border-subtle);
           display: flex;
@@ -188,13 +184,12 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
         }
 
         .figure-viewer-sheet__val {
+          margin: 0;
           font-size: var(--font-xs);
           color: var(--text-primary);
           text-align: right;
           min-width: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          overflow-wrap: anywhere;
         }
       `} />
     </>

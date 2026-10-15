@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
+import { screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 // Fake PhotoSwipe capturing options + event handlers, so we can assert the
@@ -111,9 +111,11 @@ describe('FigureViewer (Display D)', () => {
   it('shows the tapped figure data in the pull-up sheet', async () => {
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
     expect(screen.getByText('Rem')).toBeInTheDocument();
-    expect(screen.getByText('1/7')).toBeInTheDocument();
-    expect(screen.getByText('Good Smile Company')).toBeInTheDocument();
-    expect(screen.getByText(/owned/i)).toBeInTheDocument();
+    // the badges; the fields below may repeat a name (Rem's distributor is her maker)
+    const badges = within(document.querySelector<HTMLElement>('.figure-viewer-sheet__badges')!);
+    expect(badges.getByText('1/7')).toBeInTheDocument();
+    expect(badges.getByText('Good Smile Company')).toBeInTheDocument();
+    expect(badges.getByText(/owned/i)).toBeInTheDocument();
   });
 
   it('follows swipes across the result set', async () => {
@@ -127,6 +129,17 @@ describe('FigureViewer (Display D)', () => {
 
   it('every field is in the sheet from the start; its handle toggles it between the summary and all of them (SHEETS-FB1 6)', async () => {
     const user = userEvent.setup();
+    // jsdom lays nothing out: a 400 px sheet whose handle and summary take its top 120 px
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('figure-viewer-sheet') ? 400 : 0;
+    });
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 120 : 0 } as DOMRect;
+    });
+    onTestFinished(() => {
+      height.mockRestore();
+      rect.mockRestore();
+    });
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} />);
     expect(screen.getByText('Original Character')).toBeInTheDocument();
     expect(screen.getByText('Distributor')).toBeInTheDocument();
@@ -136,6 +149,11 @@ describe('FigureViewer (Display D)', () => {
     expect(screen.getByRole('button', { name: 'Show the summary' })).toHaveAttribute('aria-expanded', 'true');
     await user.click(screen.getByRole('button', { name: 'Show the summary' }));
     expect(screen.getByRole('button', { name: 'Show all details' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('a sheet whose summary is all of it has one detent: up', () => {
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} />);
+    expect(document.body.querySelector('.figure-viewer-sheet')).toHaveAttribute('data-detent', 'all');
   });
 
   it('the fields scroll in their own body under the handle', () => {

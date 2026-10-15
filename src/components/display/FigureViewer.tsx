@@ -1,10 +1,27 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
+import { motion } from 'framer-motion';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type PhotoSwipe from 'photoswipe';
 import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
+import { useSheetDrag } from '../ui/useSheetDrag';
+
+/** The sheet's two detents: all of it up, or down to its summary (name, badges, the way to its copies). */
+const ALL = 0;
+const SUMMARY = 1;
+
+/** translateY px of each detent: up, and down by all but its handle and summary. */
+function infoDetents(sheet: HTMLElement): number[] {
+  const summary = sheet.querySelector('.figure-viewer-sheet__summary');
+  const body = sheet.querySelector('.figure-viewer-sheet__body');
+  if (!summary || !body) return [0];
+  const top = sheet.getBoundingClientRect().top;
+  const shown = summary.getBoundingClientRect().bottom - top + body.scrollTop + parseFloat(getComputedStyle(sheet).paddingBottom || '0');
+  const down = Math.max(0, sheet.offsetHeight - shown);
+  return down > 1 ? [0, down] : [0];
+}
 
 /**
  * PhotoSwipe's destroy() only closes a gallery whose opening animation has finished; one still
@@ -36,6 +53,11 @@ interface FigureViewerProps {
  */
 export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   const [current, setCurrent] = useState(index);
+  const [detent, setDetent] = useState(SUMMARY);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // dragged by its handle and handed off from its body (sheetDrag.ts); it peeks at the summary, never closes
+  const { y, settleTo } = useSheetDrag({ open: true, sheetRef, contentRef: bodyRef, detents: infoDetents, initial: SUMMARY, onSettle: setDetent });
   const pswpRef = useRef<PhotoSwipe | null>(null);
   const closingRef = useRef(false);
   const onCloseRef = useRef(onClose);
@@ -115,20 +137,35 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   // (which appends its own root to body). Left inside the page, the sheet's
   // z-index is scoped to the page's stacking context and paints under the
   // viewer no matter how high it is.
+  const expanded = detent === ALL;
   return createPortal(
-    <div class="figure-viewer-sheet">
-      <FigureDetailContent
-        figure={figure}
-        index={current}
-        total={figures.length}
-        onBeforeOpen={() => {
-          const pswp = pswpRef.current;
-          closingRef.current = true;
-          pswpRef.current = null;
-          if (pswp) dispose(pswp);
-          onCloseRef.current();
+    <motion.div class="figure-viewer-sheet" ref={sheetRef} style={{ y }} data-detent={expanded ? 'all' : 'summary'}>
+      <button
+        class="figure-viewer-sheet__handle"
+        type="button"
+        aria-label={expanded ? 'Show the summary' : 'Show all details'}
+        aria-expanded={expanded}
+        onClick={() => {
+          setDetent(expanded ? SUMMARY : ALL);
+          settleTo(expanded ? SUMMARY : ALL);
         }}
-      />
+      >
+        <span class="figure-viewer-sheet__grip" />
+      </button>
+      <div class="figure-viewer-sheet__body" ref={bodyRef}>
+        <FigureDetailContent
+          figure={figure}
+          index={current}
+          total={figures.length}
+          onBeforeOpen={() => {
+            const pswp = pswpRef.current;
+            closingRef.current = true;
+            pswpRef.current = null;
+            if (pswp) dispose(pswp);
+            onCloseRef.current();
+          }}
+        />
+      </div>
 
       <Style css={`
         .figure-viewer-sheet {
@@ -137,12 +174,41 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           right: 0;
           bottom: 0;
           z-index: 100001; /* above the pswp root */
+          display: flex;
+          flex-direction: column;
+          max-height: 80vh;
+          max-height: 80dvh;
           background: color-mix(in srgb, var(--surface-secondary) 92%, transparent);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
           border-radius: var(--radius-lg) var(--radius-lg) 0 0;
           padding: 0 var(--space-page) calc(var(--space-3) + var(--safe-area-bottom));
           box-shadow: var(--shadow-lg);
+          /* the handle and the rest of the card are the sheet's to drag; its body scrolls */
+          touch-action: none;
+        }
+
+        .figure-viewer-sheet__handle {
+          flex-shrink: 0;
+          display: flex;
+          justify-content: center;
+          width: 100%;
+          padding: var(--space-2) 0;
+          cursor: grab;
+        }
+
+        .figure-viewer-sheet__grip {
+          width: 32px;
+          height: 4px;
+          border-radius: var(--radius-full);
+          background: var(--text-tertiary);
+        }
+
+        .figure-viewer-sheet__body {
+          min-height: 0;
+          overflow-y: auto;
+          touch-action: pan-y;
+          overscroll-behavior-y: none;
         }
 
         .figure-viewer__no-image {
@@ -168,7 +234,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           color: #889;
         }
       `} />
-    </div>,
+    </motion.div>,
     document.body,
   );
 }

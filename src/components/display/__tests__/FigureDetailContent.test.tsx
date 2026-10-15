@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { FigureDetailContent } from '../FigureDetailContent';
@@ -12,9 +12,11 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
     renderWithProviders(<FigureDetailContent figure={rem} index={0} total={7} />);
     expect(screen.getByText('Rem')).toBeInTheDocument();
     expect(screen.getByText('1 of 7')).toBeInTheDocument();
-    expect(screen.getByText('1/7')).toBeInTheDocument();
-    expect(screen.getByText('Good Smile Company')).toBeInTheDocument();
-    expect(screen.getByText(/owned/i)).toBeInTheDocument();
+    // the badges; the fields below may repeat a name (Rem's distributor is her maker)
+    const badges = within(document.querySelector<HTMLElement>('.figure-viewer-sheet__badges')!);
+    expect(badges.getByText('1/7')).toBeInTheDocument();
+    expect(badges.getByText('Good Smile Company')).toBeInTheDocument();
+    expect(badges.getByText(/owned/i)).toBeInTheDocument();
   });
 
   it('shows every field the figure has at once, with no tap: nothing hangs on a handle (SHEETS-FB1 6b)', () => {
@@ -52,10 +54,9 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
       local: { headId: 'f1', kind: 'ordered', sync: 'known', asOf: null, character: 'Saber' },
     } as never;
     const { container } = renderWithProviders(<FigureDetailContent figure={full} index={0} total={1} />);
-    const rows = Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).map((r) => r.textContent);
+    const rows = Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).map((r) => (r as Element).textContent);
+    // maker, scale and status are the summary's badges
     expect(rows).toEqual([
-      'MakerAlter',
-      'Scale1/7',
       'OriginFate/stay night',
       'CharacterSaber',
       'VersionSwimsuit ver.',
@@ -74,10 +75,11 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
     ]);
   });
 
-  it('a figure with only a name and maker lists just its maker', () => {
+  it('a figure with only a name and maker has no field list beyond its badges', () => {
     const bare = { _id: 'b', name: 'Bare', manufacturer: 'Kotobukiya', scale: '', userId: 'u', createdAt: '', updatedAt: '' } as never;
     const { container } = renderWithProviders(<FigureDetailContent figure={bare} index={0} total={1} />);
-    expect(Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).map((r) => r.textContent)).toEqual(['MakerKotobukiya']);
+    expect(screen.getByText('Kotobukiya')).toBeInTheDocument();
+    expect(container.querySelector('.figure-viewer-sheet__more')).toBeNull();
   });
 });
 

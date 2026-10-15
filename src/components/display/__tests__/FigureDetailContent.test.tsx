@@ -76,7 +76,7 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
   });
 
   it('a figure with only a name and maker has no field list beyond its badges', () => {
-    const bare = { _id: 'b', name: 'Bare', manufacturer: 'Kotobukiya', scale: '', userId: 'u', createdAt: '', updatedAt: '' } as never;
+    const bare = { _id: 'b', name: 'Bare', manufacturer: 'Kotobukiya', scale: '', origin: '', userId: 'u', createdAt: '', updatedAt: '' } as never;
     const { container } = renderWithProviders(<FigureDetailContent figure={bare} index={0} total={1} />);
     expect(screen.getByText('Kotobukiya')).toBeInTheDocument();
     expect(container.querySelector('.figure-viewer-sheet__more')).toBeNull();

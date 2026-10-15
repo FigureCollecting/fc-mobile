@@ -217,8 +217,9 @@ describe('FigureViewer (Display D)', () => {
     expect(onClose).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
-    // the gallery, once it opens, finds itself already closed
-    await waitFor(() => expect(instances[0]?.destroyed ?? true).toBe(true));
+    // the gallery's code arrives after: it finds the viewer closed and opens nothing
+    await new Promise((r) => setTimeout(r, 50));
+    expect(instances.filter((i) => !i.destroyed)).toHaveLength(0);
   });
 
   it('Back (Android or the browser) closes it: it opens a history entry', async () => {

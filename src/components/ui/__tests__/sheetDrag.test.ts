@@ -63,6 +63,7 @@ describe('restFor', () => {
 describe('rubberBand', () => {
   it('moves freely at or below the top detent, and a quarter as far past it', () => {
     expect(rubberBand(50, 20)).toBe(50);
+    expect(rubberBand(20.5, 20)).toBe(20.5);
     expect(rubberBand(20, 20)).toBe(20);
     expect(rubberBand(-20, 20)).toBe(20 - 40 * RUBBER);
   });
@@ -167,6 +168,12 @@ describe('attachSheetDrag', () => {
       expect(driver.y).toBe(20 - 40 * RUBBER);
     });
 
+    it('a move of just the slop is a drag', () => {
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
+      window.dispatchEvent(pointer('pointermove', { clientY: 400 - SLOP_PX }));
+      expect(driver.calls).toEqual(['stop', 'set 300']);
+    });
+
     it('a tap (no move past the slop) moves nothing and settles nothing', () => {
       handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
       window.dispatchEvent(pointer('pointerup', { clientY: 401 }));
@@ -240,6 +247,14 @@ describe('attachSheetDrag', () => {
       expect(driver.calls).toEqual([]);
     });
 
+    it('below its top detent, a finger that started by scrolling the contents down keeps scrolling when it turns up', () => {
+      content.scrollTop = 50;
+      button.dispatchEvent(touch('touchstart', [300]));
+      button.dispatchEvent(touch('touchmove', [310]));
+      button.dispatchEvent(touch('touchmove', [290]));
+      expect(driver.calls).toEqual([]);
+    });
+
     it('a move that does not move does nothing; neither does a second finger', () => {
       button.dispatchEvent(touch('touchstart', [300]));
       button.dispatchEvent(touch('touchmove', [300]));
@@ -308,6 +323,8 @@ describe('attachSheetDrag', () => {
   });
 
   it('a resize mid-drag leaves the finger in charge', () => {
+    settleTo(1);
+    detents = [10, 250];
     handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
     window.dispatchEvent(pointer('pointermove', { clientY: 390 }));
     const before = driver.calls.length;

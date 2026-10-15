@@ -147,6 +147,9 @@ describe('useFigureListParams: holdings, chosen in Refine (SHEETS-FB1 3), and th
     expect(screen.getAllByTestId('status')[1]!.textContent).toBe('owned');
     renderWithProviders(<HoldProbe />, { initialPath: '/?tab=wished&status=ordered' });
     expect(screen.getAllByTestId('status')[2]!.textContent).toBe('ordered');
+    // a status= that names no holding still outranks the old tab=: the default
+    renderWithProviders(<HoldProbe />, { initialPath: '/?tab=wished&status=bogus' });
+    expect(screen.getAllByTestId('status')[3]!.textContent).toBe('owned');
   });
 
   it('writes holdings to the URL, the default left out, none chosen kept by the all sentinel; an old tab= goes', async () => {

@@ -4,7 +4,7 @@ import { animate, useMotionValue, type AnimationPlaybackControls, type MotionVal
 import { attachSheetDrag, SETTLE_MS, type SheetDragController, type SheetDriver } from './sheetDrag';
 
 /** Where a card stands before it opens and where it goes when it closes: below any screen. */
-export const offScreenY = (): number => (typeof window === 'undefined' ? 2000 : window.innerHeight);
+export const offScreenY = (): number => window.innerHeight;
 
 export interface SheetDragOptions {
   open: boolean;

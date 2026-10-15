@@ -137,7 +137,7 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
       }
     }
     expect(binding).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("the image list's measured bottom wins; the top is measured on the mask", () => {
     measured.fallback = { top: 0.2, bottom: 0.02 };

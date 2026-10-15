@@ -383,6 +383,39 @@ for (const size of FOLD8.filter((v) => v.width >= DUAL_PANE_MIN_WIDTH)) {
   }
 }
 
+for (const size of FOLD8) {
+  test(`Refine: the last chosen holding stays chosen (no empty choice); Clear goes back to the defaults: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    await openCard(page, CARDS.find((c) => c.name === 'Refine')!);
+    const holding = page.getByRole('group', { name: 'Holding' });
+    const owned = holding.getByRole('button', { name: /^Owned/ });
+    const count = page.locator('.filter-sheet2__count');
+    await tapCentre(page, owned);
+    await expect(owned).toHaveAttribute('aria-pressed', 'true');
+    const ownedOnly = await count.textContent();
+    await tapCentre(page, owned);
+    await page.waitForTimeout(300);
+    await expect(owned).toHaveAttribute('aria-pressed', 'true');
+    await expect(count).toHaveText(ownedOnly!);
+    await tapCentre(page, page.getByRole('button', { name: 'Clear', exact: true }));
+    // the fixtures' default holds none: every holding but No longer owned shows
+    await expect(holding.locator('[aria-pressed="true"]')).toHaveCount(0);
+  });
+}
+
+test('a holding the address names twice is one chip; one it does not know is none', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('onboarding_complete', '1');
+    localStorage.setItem('fc-fixture-mode', 'on');
+  });
+  await page.setViewportSize(FOLD8[0]);
+  await page.goto('/?layout=case&status=owned|owned|bogus');
+  await page.waitForSelector('button.cab-figure');
+  const list = page.getByRole('list', { name: 'Applied filters' });
+  await expect(list.getByRole('listitem').filter({ hasText: /^Owned$/ })).toHaveCount(1);
+  await expect(list).not.toContainText('bogus');
+});
+
 /** The collection, reached from Settings, so a Back that is not the viewer's own leaves for Settings. */
 async function openCaseFromSettings(page: Page, size: { width: number; height: number }): Promise<{ settings: string; collection: string }> {
   await page.addInitScript(() => {

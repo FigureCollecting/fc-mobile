@@ -138,6 +138,9 @@ describe('useFigureListParams: holdings, chosen in Refine (SHEETS-FB1 3), and th
     expect(screen.getAllByTestId('status')[1]!.textContent).toBe('wished,former');
     renderWithProviders(<HoldProbe />, { initialPath: '/?status=bogus' });
     expect(screen.getAllByTestId('status')[2]!.textContent).toBe('owned');
+    // a holding named twice is chosen once
+    renderWithProviders(<HoldProbe />, { initialPath: '/?status=owned|owned|bogus|wished|owned' });
+    expect(screen.getAllByTestId('status')[3]!.textContent).toBe('owned,wished');
   });
 
   it('an old tab= link opens on that holding; status= wins over it', () => {

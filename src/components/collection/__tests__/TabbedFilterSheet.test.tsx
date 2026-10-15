@@ -90,8 +90,22 @@ describe('TabbedFilterSheet', () => {
     expect(choices.map((c) => c.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false', 'false']);
     await user.click(choices[2]!);
     expect(onApply).toHaveBeenLastCalledWith({ ...DEFAULTS, status: ['owned', 'wished'] });
-    await user.click(choices[0]!);
-    expect(onApply).toHaveBeenLastCalledWith({ ...DEFAULTS, status: [] });
+  });
+
+  it('a tap takes a holding off while another stays chosen', async () => {
+    const user = userEvent.setup();
+    const { onApply } = mount({ filters: { ...DEFAULTS, status: ['owned', 'wished'] } });
+    await user.click(within(screen.getByRole('group', { name: 'Holding' })).getByRole('button', { name: /^Owned/ }));
+    expect(onApply).toHaveBeenLastCalledWith({ ...DEFAULTS, status: ['wished'] });
+  });
+
+  it('the last chosen holding cannot be taken off: the tap applies nothing and it stays pressed (no empty choice)', async () => {
+    const user = userEvent.setup();
+    const { onApply } = mount();
+    const owned = within(screen.getByRole('group', { name: 'Holding' })).getByRole('button', { name: /^Owned/ });
+    await user.click(owned);
+    expect(onApply).not.toHaveBeenCalled();
+    expect(owned).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('Done closes the card and applies nothing more', async () => {

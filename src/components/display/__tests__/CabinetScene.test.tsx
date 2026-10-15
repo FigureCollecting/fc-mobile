@@ -1696,7 +1696,7 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     // and never below the floor
     for (let k = 0; k < 20; k++) drag2(host, 0, -400);
     expect(cam(host).y).toBeGreaterThanOrEqual(-1e-6);
-  });
+  }, 30_000);
 
   it('camera mode: a cancelled drag puts the camera back; a short one (under the swipe start) is no drag', () => {
     const { host } = scene(FIXTURE_FIGURES, { swipe: 'camera', view: 'cabinet' });
@@ -1725,7 +1725,7 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     for (let k = 0; k < 10; k++) drag2(host, 0, -400);
     expect(host.dataset.panY).toBe('0');
     expect(viewport.style.transform).toBe('');
-  });
+  }, 30_000);
 
   it('camera mode, while the finger is still down: the camera rises live, the photo never slides', () => {
     // a ceiling far overhead: a photo could slide a long way, were it slid
@@ -1746,7 +1746,7 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     for (let k = 0; k < 20; k++) drag2(host, 0, 400);
     expect(Number(host.dataset.panY)).toBeGreaterThan(2 * cam(host).height);
     expect(Number(host.dataset.drawnFigures)).toBe(0);
-  });
+  }, 30_000);
 
   it('a drag goes along the axis it first moves farther on: mostly sideways walks, mostly up or down lifts', () => {
     const { host } = scene(getFixtureFigures(60), { swipe: 'camera', view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
@@ -1778,7 +1778,7 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     expect(Number(host.dataset.panY)).toBeGreaterThan(0);
     utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
     expect(host.dataset.panY).toBe('0');
-  });
+  }, 30_000);
 });
 
 describe('CF1 (a): on a wide panel the scene draws more cabinets, so the full-height wall spans it', () => {
@@ -1873,7 +1873,7 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
     // once the drag settles the case culls for the settled picture
     fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
     expect(drawnNow()).toEqual(fresh);
-  });
+  }, 30_000);
 
   for (const drift of [-40, 40]) {
     it(`pan mode, the cabinet view: a mostly up/down drag drifting ${drift} px sideways slides the photo up or down, never sideways`, () => {

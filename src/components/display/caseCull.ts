@@ -22,8 +22,11 @@ export const MAX_DRAWN_CABINETS = 5;
  * CF1 (a): the most a panel may draw, so the full-height wall (CASE-FB1) spans a wide or short panel with no bands at
  * its sides: each panel draws as many as its frame shows fronts (wallCamera), up to this; the scene's layers stay
  * under the 3-viewport ceiling (e2e/case-budget). CF1 (b), the frame cropped to five, is this set to MAX_DRAWN_CABINETS.
+ * G2 (close-out 2): the most any of the Fold8's four panels needs for any wall pattern at any headroom up to
+ * TOP_CLEARANCE_CAP_MM (fullHeightCap; measured in caseFraming.test: the Detolf wall on the sideways cover, 20), so
+ * no Fold8 panel is ever cropped; only a wider frame (a desktop window) is.
  */
-export const DRAWN_CABINETS_LIMIT = 18;
+export const DRAWN_CABINETS_LIMIT = 20;
 /** What the case draws past the frame on each side, as a share of the frame: half a viewport. */
 export const CULL_MARGIN = 0.5;
 /** A drawn cabinet keeps its place until another draws nearer the frame centre by this share of the frame width. */
@@ -34,8 +37,19 @@ export const RECULL_SHARE = 0.25;
 export const NEAR_MM = 10;
 /** The coarsest px per mm a face is drawn at. */
 const TEXEL_SCALE_MIN = 1 / 64;
-/** Ross 2026-10-12 (12:2xC): the most figures drawn at a time. */
+/**
+ * Ross 2026-10-12 (12:2xC): the most figures drawn at a time, with five cabinets drawn. G1 (close-out 2): with more
+ * cabinets drawn (CF1 a) the cap scales with them (figureCap), so no cabinet the frame shows stands empty; this is
+ * what figuresToDraw caps at when it is given no cap.
+ */
 export const MAX_DRAWN_FIGURES = 250;
+/**
+ * G1: the most figures drawn at a time on any panel, whatever the drawn cabinets hold: the most the scene was measured
+ * drawing under the 3-viewport ceiling of its layers (e2e/case-budget, the densest wall: one 17 mm figure in every
+ * slot, labels on, fifteen KLINGSBOs drawn on the sideways cover: 1,440 figures, 2.49 viewports), the figures past
+ * their budget of px drawn coarser (figureScales). Past it figuresToDraw thins every cabinet in turn, never one empty.
+ */
+export const DRAWN_FIGURES_LIMIT = 1440;
 /**
  * What the figures' layers may cost together, element px, as a share of the frame's area: their pictures, at the
  * scene's px per mm, are what fills the tile budget (a 35 mm figure's picture is some 150 mm wide), and stepping the
@@ -319,9 +333,21 @@ export function byFrameCentre(view: CullView, figures: readonly FigureBox[]): nu
 }
 
 /**
+ * G1: how many figures the case draws for these drawn cabinets (by wall index): each one's kind's capacity (the
+ * most figures one cabinet of that kind holds on this wall, from `counts` and `kinds`, by wall index), summed, at
+ * most `limit`: a drawn cabinet never has fewer figures drawn for it than it holds.
+ */
+export function figureCap(counts: readonly number[], kinds: readonly string[], drawn: readonly number[], limit: number = DRAWN_FIGURES_LIMIT): number {
+  const capacity = new Map<string, number>();
+  counts.forEach((n, i) => capacity.set(kinds[i], Math.max(capacity.get(kinds[i]) ?? 0, n)));
+  return Math.min(limit, drawn.reduce((sum, i) => sum + (capacity.get(kinds[i]) ?? 0), 0));
+}
+
+/**
  * The figures drawn (their indices in `figures`, ascending): those of a drawn cabinet whose box draws into `rect`
- * and that no board of their cabinet hides from the camera, at most `cap` of them, the nearest the frame centre;
- * and how many a board hid.
+ * and that no board of their cabinet hides from the camera, at most `cap` of them; and how many a board hid. Past
+ * the cap (G1) each cabinet keeps its own nearest the frame centre in turn, one each before any keeps another
+ * (ties to the nearer), so no cabinet with a figure in view is left empty while the cap holds one for it.
  */
 export function figuresToDraw(
   view: CullView,
@@ -349,8 +375,19 @@ export function figuresToDraw(
     shown.push(i);
   });
   if (shown.length <= cap) return { shown, hidden };
-  const nearest = byFrameCentre(view, shown.map((i) => figures[i])).slice(0, cap);
-  return { shown: nearest.map((k) => shown[k]).sort((a, b) => a - b), hidden };
+  // each figure's turn: its place among its own cabinet's, nearest the frame centre first
+  const order = byFrameCentre(view, shown.map((i) => figures[i]));
+  const turn = new Array<number>(shown.length);
+  const taken = new Map<number, number>();
+  for (const k of order) {
+    const cab = figures[shown[k]].cab;
+    turn[k] = taken.get(cab) ?? 0;
+    taken.set(cab, turn[k] + 1);
+  }
+  const rank = new Array<number>(shown.length);
+  order.forEach((k, r) => (rank[k] = r));
+  const kept = order.slice().sort((a, b) => turn[a] - turn[b] || rank[a] - rank[b]).slice(0, cap);
+  return { shown: kept.map((k) => shown[k]).sort((a, b) => a - b), hidden };
 }
 
 /**

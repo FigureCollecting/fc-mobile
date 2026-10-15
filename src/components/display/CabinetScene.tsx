@@ -66,6 +66,7 @@ import {
   FLAT_GRID,
   GRADIENT_GRID,
   cullRect,
+  figureCap,
   figureScales,
   figuresToDraw,
   nearestCabinets,
@@ -936,6 +937,9 @@ export function CabinetScene({
       }
     }
   });
+  // what each cabinet holds, and its kind
+  const heldCounts = useMemo(() => cabinets.map((c) => (c ? c.surfaces.reduce((n, x) => n + x.items.length, 0) : 0)), [cabinets]);
+  const heldKinds = useMemo(() => wall.cabinets.map((c) => c.profile.id), [wall]);
   // a figure is drawn when its layer (its tap box and the picture hanging from it) draws into the frame and its margin
   // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
@@ -943,7 +947,9 @@ export function CabinetScene({
     const { art, aspect } = arts[fig.placed.item.index];
     return figureLayerBox(fig, figureGeometry(fig, art, aspect, pictureMargins(art, alpha)), cab);
   });
-  const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]));
+  // G1: as many figures as the drawn cabinets hold (each its kind's most), so no cabinet the frame shows stands empty
+  const figCap = figureCap(heldCounts, heldKinds, drawnCabs);
+  const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]), figCap);
   const onShow = showIdx.map((i) => inDrawn[i]);
   // the figures' layers cost at most their budget wherever the camera stands: the farthest from the frame centre drawn coarser
   // SHOULD 29: a name plate is drawn with its figure where its own box draws into the frame and its margin, and is
@@ -998,6 +1004,7 @@ export function CabinetScene({
       data-drawn-cabinets={String(drawnCabs.length)}
       data-drawn-cap={String(base.drawCap)}
       data-drawn-figures={String(onShow.length)}
+      data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

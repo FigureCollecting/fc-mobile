@@ -258,6 +258,30 @@ function deepestFrontMm(camera: Camera): number {
  * cropped to the width that spans no more (whole px), its height and the lens kept.
  */
 export function wallCamera(input: FramingInput): WallCamera {
+  const { camera, lookY, needs } = fullHeightFrame(input);
+  const drawCap = Math.min(DRAWN_CABINETS_LIMIT, capFor(input.wall, needs));
+  const width = Math.floor((capSpanMm(input.wall, drawCap) * camera.focalPx) / deepestFrontMm(camera));
+  return { camera: width < input.frame.width ? { ...camera, frame: { width, height: input.frame.height } } : camera, lookY, drawCap };
+}
+
+/**
+ * G2: how many cabinets the panel's uncropped full-height frame shows fronts of (wallCamera), with no limit: the
+ * least cap, from MAX_DRAWN_CABINETS, whose capSpanMm it never passes at any height the camera may be raised to (a
+ * wall of fewer cabinets: all of them). DRAWN_CABINETS_LIMIT is the most of it on the Fold8's panels.
+ */
+export function fullHeightCap(input: FramingInput): number {
+  return capFor(input.wall, fullHeightFrame(input).needs);
+}
+
+/** The least cap, from MAX_DRAWN_CABINETS, whose capSpanMm spans `needs` (mm of the fronts). */
+function capFor(wall: WallLayout, needs: number): number {
+  let cap = MAX_DRAWN_CABINETS;
+  while (capSpanMm(wall, cap) < needs) cap++;
+  return cap;
+}
+
+/** The full-height camera over the whole panel (wallCamera before its crop), its aim, and the stretch of the fronts it spans at its deepest. */
+function fullHeightFrame(input: FramingInput): { camera: Camera; lookY: number; needs: number } {
   const top = wallTopMm(input);
   const lookY = top / 2;
   const camY = startCameraY(lookY);
@@ -283,13 +307,8 @@ export function wallCamera(input: FramingInput): WallCamera {
     focalPx: lensFocalPx(input.frame, input.lensMm),
     frame: input.frame,
   };
-  const deepest = deepestFrontMm(camera);
   // the stretch of the fronts the whole frame spans at its deepest
-  const needs = (input.frame.width * deepest) / camera.focalPx;
-  let drawCap = MAX_DRAWN_CABINETS;
-  while (drawCap < DRAWN_CABINETS_LIMIT && capSpanMm(input.wall, drawCap) < needs) drawCap++;
-  const width = Math.floor((capSpanMm(input.wall, drawCap) * camera.focalPx) / deepest);
-  return { camera: width < input.frame.width ? { ...camera, frame: { width, height: input.frame.height } } : camera, lookY, drawCap };
+  return { camera, lookY, needs: (input.frame.width * deepestFrontMm(camera)) / camera.focalPx };
 }
 
 /** The shared camera centred on these cabinets (by wall index, left to right). */

@@ -1722,6 +1722,27 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     expect(viewport.style.transform).toBe('');
   });
 
+  it('camera mode, while the finger is still down: the camera rises live, the photo never slides', () => {
+    // a ceiling far overhead: a photo could slide a long way, were it slid
+    const { host } = scene(FIXTURE_FIGURES, { swipe: 'camera', view: 'cabinet', ceilingMm: 9000 });
+    const before = cam(host);
+    fireEvent.pointerDown(host, { pointerId: 9, clientX: 200, clientY: 200, button: 0 });
+    fireEvent.pointerMove(host, { pointerId: 9, clientX: 200, clientY: 260 });
+    expect(cam(host).y).toBeGreaterThan(before.y);
+    expect(host.dataset.panY).toBe('0');
+    expect((host.querySelector('.cabinet-scene__viewport') as HTMLElement).style.transform).toBe('');
+    fireEvent.pointerUp(host, { pointerId: 9, clientX: 200, clientY: 260 });
+  });
+
+  it('pan mode: what the photo slides out of the frame and its margin is no longer drawn', () => {
+    // a ceiling far overhead: the photo slides down until the cabinets are far below the frame
+    const { host } = scene(FIXTURE_FIGURES, { swipe: 'pan', view: 'cabinet', ceilingMm: 9000 });
+    expect(Number(host.dataset.drawnFigures)).toBeGreaterThan(0);
+    for (let k = 0; k < 20; k++) drag2(host, 0, 400);
+    expect(Number(host.dataset.panY)).toBeGreaterThan(2 * cam(host).height);
+    expect(Number(host.dataset.drawnFigures)).toBe(0);
+  });
+
   it('a drag goes along the axis it first moves farther on: mostly sideways walks, mostly up or down lifts', () => {
     const { host } = scene(getFixtureFigures(60), { swipe: 'camera', view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
     const before = cam(host);
@@ -1739,6 +1760,11 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     const utils = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
     const host = utils.container.querySelector('.cabinet-scene') as HTMLElement;
     const opened = cam(host);
+    drag2(host, 0, 120);
+    expect(cam(host).y).toBeGreaterThan(opened.y);
+    // a new view, the swipe still walking the camera: back down
+    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
+    expect(cam(host).y).toBe(opened.y);
     drag2(host, 0, 120);
     expect(cam(host).y).toBeGreaterThan(opened.y);
     utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);

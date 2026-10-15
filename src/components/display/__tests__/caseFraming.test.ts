@@ -1277,6 +1277,9 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     const low = liftLimitsMm(f, f.camera.y - 100);
     expect(low[1]).toBe(0);
     expect(low[0]).toBe(lo);
+    // an aim under the floor: it may only come up
+    const under = { ...f, look: [f.look[0], -50, 0] as Vec3 };
+    expect(liftLimitsMm(under, ceiling)[0]).toBe(0);
   });
 
   it('pan mode, an up/down drag: the photo slides down until the ceiling over the fronts reaches the frame top, up until the floor line reaches its bottom', () => {

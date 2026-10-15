@@ -4,12 +4,13 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { IN_MM, frameMargins, lensFocalPx, project, startCameraY, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
 import { surfaceSlots, wallLayout, type WallLayout } from '../packCabinets';
-import { sideOverhangMm, CEILING_DEFAULT_MM } from '../cabinetProfile';
+import { sideOverhangMm, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
 import { WALL_PATTERNS } from '../casePrefs';
 import {
   STEP_BACK_MAX_MM,
   cabinetBox,
   frameCase,
+  fullHeightCap,
   PAN_EDGE_TAN_MAX,
   panFraming,
   panLimitsPx,
@@ -1230,8 +1231,7 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     // the open panel, short: the whole panel, its cap raised (CF1 a) where the limit allows, else cropped to the limit;
     // the narrow phone: the whole panel; one cabinet: never cropped
     const open = frameCase({ frame: { width: 870, height: 335 }, wall: WALLS[0][1], headroomMm: WALLS[0][2], view: 'wall', focus: 0, shelf: 0 });
-    if (DRAWN_CABINETS_LIMIT >= 14) expect(open.camera.frame.width).toBe(870);
-    else expect(open.camera.frame.width).toBeLessThan(870);
+    expect(open.camera.frame.width).toBe(870);
     expect(Number.isInteger(open.camera.frame.width)).toBe(true);
     const phone = frameCase({ frame: { width: 412, height: 701 }, wall: WALLS[0][1], headroomMm: WALLS[0][2], view: 'wall', focus: 0, shelf: 0 });
     expect(phone.camera.frame.width).toBe(412);
@@ -1373,11 +1373,10 @@ describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wal
         // the whole panel: as wide as the panel, unless the limit binds
         const whole = { ...f, camera: { ...f.camera, frame } };
         const needs = widest(whole, wall);
-        if (f.drawCap < DRAWN_CABINETS_LIMIT) {
-          expect(f.camera.frame, at).toEqual(frame);
-          // the least: one fewer would have cropped it
-          if (f.drawCap > MAX_DRAWN_CABINETS) expect(capSpanMm(wall, f.drawCap - 1), at).toBeLessThan(needs);
-        } else if (capSpanMm(wall, f.drawCap) < needs) expect(f.camera.frame.width, at).toBeLessThan(frame.width);
+        // G2: no escape at the limit: every Fold8 panel is the whole panel
+        expect(f.camera.frame, at).toEqual(frame);
+        // the least: one fewer would have cropped it
+        if (f.drawCap > MAX_DRAWN_CABINETS) expect(capSpanMm(wall, f.drawCap - 1), at).toBeLessThan(needs);
         // the cabinet and the shelf views draw as many
         for (const view of ['cabinet', 'shelf'] as const) expect(frameCase({ frame, wall, headroomMm, view, focus: 7, shelf: 1 }).drawCap, `${at} ${view}`).toBe(f.drawCap);
         // and a page never holds more than the cap
@@ -1389,16 +1388,68 @@ describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wal
   it('the KLINGSBO wall fills the four Fold8 panels with 7, 15, 14 and 8 cabinets drawn (within the limit)', () => {
     const wall = WALLS[0][1];
     const caps = FOLD8.map((frame) => frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 }).drawCap);
-    expect(caps).toEqual([7, 15, 14, 8].map((n) => Math.min(n, DRAWN_CABINETS_LIMIT)));
+    expect(caps).toEqual([7, 15, 14, 8]);
   });
 
   it('a wall of no more cabinets than the panel would show is never cropped, and draws them all', () => {
     const wall = wallLayout(Array(8).fill(IKEA_KLINGSBO));
     const f = frameCase({ frame: FOLD8[1], wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
-    expect(f.drawCap).toBe(Math.min(8, DRAWN_CABINETS_LIMIT));
+    expect(f.drawCap).toBe(8);
     // all eight drawn: the whole panel (CF1 b, five drawn, would crop it)
-    if (f.drawCap === 8) expect(f.camera.frame).toEqual(FOLD8[1]);
-    else expect(f.camera.frame.width).toBeLessThan(FOLD8[1].width);
+    expect(f.camera.frame).toEqual(FOLD8[1]);
+  });
+
+  // G2 (close-out 2): the limit from the measurement, not the fixture: a tall figure on a top raises the headroom up to
+  // TOP_CLEARANCE_CAP_MM, and the camera steps back to frame it, so the panel shows more fronts
+  const HEADROOMS = [HEADROOM_MIN_MM, 350, 400, 450, 500, 550, 600, TOP_CLEARANCE_CAP_MM];
+
+  it('G2: DRAWN_CABINETS_LIMIT is the most cabinets any Fold8 panel needs for any wall pattern at any headroom up to TOP_CLEARANCE_CAP_MM (the measurement: 20, the Detolf wall on the sideways cover)', () => {
+    let most = 0;
+    let where = '';
+    for (const pattern of WALL_PATTERNS) {
+      const wall = long([...pattern.profiles]);
+      for (const frame of FOLD8) {
+        for (const h of HEADROOMS) {
+          const need = fullHeightCap({ frame, wall, headroomMm: wall.cabinets.map(() => h), view: 'wall', focus: 0, shelf: 0 });
+          if (need > most) [most, where] = [need, `${pattern.id} ${frame.width}x${frame.height}`];
+        }
+      }
+    }
+    expect(where).toBe('ikea-detolf 616x217');
+    expect(most).toBe(20);
+    expect(DRAWN_CABINETS_LIMIT).toBe(most);
+  });
+
+  it('G2: so no Fold8 panel is ever cropped, for any wall pattern and headroom up to TOP_CLEARANCE_CAP_MM, in any view; the cap is what the panel needs', () => {
+    for (const pattern of WALL_PATTERNS) {
+      const wall = long([...pattern.profiles]);
+      for (const frame of FOLD8) {
+        for (const h of HEADROOMS) {
+          const at = `${pattern.id} ${frame.width}x${frame.height} headroom ${h}`;
+          const base = { frame, wall, headroomMm: wall.cabinets.map(() => h), focus: 3, shelf: 1 };
+          for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+            const f = frameCase({ ...base, view });
+            expect(f.camera.frame, `${at} ${view}`).toEqual(frame);
+            expect(f.drawCap, `${at} ${view}`).toBe(fullHeightCap({ ...base, view }));
+          }
+        }
+      }
+    }
+  });
+
+  it('G2: fullHeightCap is the least from five whose span the uncropped frame never passes; a short wall needs all of it, never more', () => {
+    const wall = long([IKEA_KLINGSBO]);
+    const frame = FOLD8[1];
+    const n = fullHeightCap({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(n).toBe(15);
+    // a desktop window's short frame needs more than the limit
+    const desk = fullHeightCap({ frame: { width: 1536, height: 200 }, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(desk).toBeGreaterThan(DRAWN_CABINETS_LIMIT);
+    // a wall of eight: eight (capSpanMm is unbounded past the wall's length); a wall of three: five, the fallback
+    const eight = wallLayout(Array(8).fill(IKEA_KLINGSBO));
+    expect(fullHeightCap({ frame, wall: eight, headroomMm: eight.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 })).toBe(8);
+    const three = wallLayout(Array(3).fill(IKEA_KLINGSBO));
+    expect(fullHeightCap({ frame, wall: three, headroomMm: three.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 })).toBe(MAX_DRAWN_CABINETS);
   });
 
   it('past the limit (a desktop window\'s short frame) the frame is cropped to the span of the limit\'s cabinets', () => {

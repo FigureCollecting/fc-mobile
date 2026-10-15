@@ -5,7 +5,7 @@ import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { DRAWN_CABINETS_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
+import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, clampLift, frameCase, liftForDragMm, lifted, swipeCamera, type Framing } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, unprojectToPlaneZ, type Camera } from '../caseCamera';
@@ -1242,7 +1242,29 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     }, 60_000);
   }
 
-  it('a dense wall (some 1,500 small figures) draws at most 250 of them, in every view, walked or panned (Ross 12:2xC)', () => {
+  /**
+   * G1: per drawn cabinet, by the middle of each figure button's tap box, how many figures it draws; and those whose
+   * front stands wholly inside the frame (side to side, at its feet and its top).
+   */
+  const perCabinet = (host: HTMLElement) => {
+    const camera = cameraOf(host);
+    const pan = Number(host.dataset.pan);
+    const wall = JSON.parse(host.dataset.wall!) as number[][];
+    const mids = figureButtons(host).map((b) => {
+      const w = JSON.parse(b.dataset.world!) as { x0: number; x1: number };
+      return (w.x0 + w.x1) / 2;
+    });
+    const drawn = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
+    const counts = new Map(drawn.map((i) => [i, mids.filter((m) => m > wall[i][0] && m < wall[i][1]).length]));
+    const xAt = (x: number, y: number) => project(camera, [x, y, 0]).x + pan;
+    const whole = drawn.filter((i) => {
+      const [x0, x1, y1] = wall[i];
+      return Math.min(xAt(x0, 0), xAt(x0, y1)) >= 0 && Math.max(xAt(x1, 0), xAt(x1, y1)) <= camera.frame.width;
+    });
+    return { drawn, counts, whole };
+  };
+
+  it('a dense wall (some 1,500 small figures) draws at most its figure cap, what its drawn cabinets hold (G1), in every view, walked or panned', () => {
     const small = FIXTURE_FIGURES.filter((f) => f._id === 'fx-spike' || f._id === 'fx-miku-nendo');
     expect(small).toHaveLength(2);
     const dense = Array.from({ length: 1500 }, (_, i) => ({ ...small[i % 2], _id: `dense-${i}` }));
@@ -1254,7 +1276,9 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
           for (const dx of [0, -400, -400, 300]) {
             if (dx !== 0) drag(host, dx);
             const n = figureButtons(host).length;
-            expect(n, `${frame.width} ${view} ${swipe} ${dx}`).toBeLessThanOrEqual(250);
+            const cap = Number(host.dataset.figureCap);
+            expect(n, `${frame.width} ${view} ${swipe} ${dx}`).toBeLessThanOrEqual(cap);
+            expect(cap, `${frame.width} ${view} ${swipe} ${dx}`).toBeLessThanOrEqual(DRAWN_FIGURES_LIMIT);
             expect(host.dataset.drawnFigures).toBe(String(n));
             most = Math.max(most, n);
           }
@@ -1278,26 +1302,37 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     return Array.from({ length: 1500 }, (_, i) => ({ ...spike, _id: `spike-${i}` }));
   };
 
-  it(`a homogeneous dense wall (1,500 x fx-spike) draws at most ${MAX_DRAWN_FIGURES} figures in every view, walked or panned: the cap binds`, () => {
+  it(`a homogeneous dense wall (1,500 x fx-spike): the figure cap is the drawn cabinets times what one holds, past Ross's ${MAX_DRAWN_FIGURES} at five; no cabinet wholly in the frame drawn empty, or short but for what a board hides (G1)`, () => {
     const dense = spikeWall();
     let most = 0;
-    for (const frame of DENSE_FRAMES) {
+    for (const frame of [...DENSE_FRAMES, { width: 870, height: 335 }, { width: 616, height: 217 }]) {
+      let holds = 0;
       for (const view of ['wall', 'cabinet', 'shelf'] as const) {
         for (const swipe of ['camera', 'pan'] as const) {
           const { host } = scene(dense, { view, swipe }, { frameFallback: frame });
           for (const dx of [0, -400, -400, 300]) {
             if (dx !== 0) drag(host, dx);
+            const at = `${frame.width}x${frame.height} ${view} ${swipe} ${dx}`;
             const n = figureButtons(host).length;
-            expect(n, `${frame.width}x${frame.height} ${view} ${swipe} ${dx}`).toBeLessThanOrEqual(MAX_DRAWN_FIGURES);
+            const cap = Number(host.dataset.figureCap);
+            const { drawn, counts, whole } = perCabinet(host);
+            // one fx-spike in every slot: every cabinet but the wall's last holds the same, all drawn in the wall view
+            if (view === 'wall') holds = Math.max(holds, ...counts.values());
+            expect(cap, at).toBe(drawn.length * holds);
+            expect(n, at).toBeLessThanOrEqual(cap);
             expect(host.dataset.drawnFigures).toBe(String(n));
+            // short of what it holds only by those a board hides from the camera (data-hidden-figures), never empty
+            for (const i of whole) expect(counts.get(i), `${at} cabinet ${i}`).toBeGreaterThan(0);
+            const last = JSON.parse(host.dataset.wall!).length - 1;
+            if (view === 'wall') for (const i of whole.filter((k) => k < last)) expect(counts.get(i)! + Number(host.dataset.hiddenFigures), `${at} cabinet ${i}`).toBeGreaterThanOrEqual(holds);
             most = Math.max(most, n);
           }
           cleanup();
         }
       }
     }
-    expect(most).toBe(MAX_DRAWN_FIGURES);
-  }, 120_000);
+    expect(most).toBeGreaterThan(MAX_DRAWN_FIGURES);
+  }, 240_000);
 
   it('the figures cost at most their budget of element px wherever the camera stands; the one nearest the frame centre drawn at the scene\'s px per mm, the coarser ones farther out', () => {
     const dense = spikeWall();
@@ -1797,7 +1832,8 @@ describe('CF1 (a): on a wide panel the scene draws more cabinets, so the full-he
       const cap = Number(host.dataset.drawnCap);
       expect(cap).toBe(f.drawCap);
       expect(cap).toBeGreaterThan(MAX_DRAWN_CABINETS);
-      if (cap < DRAWN_CABINETS_LIMIT) expect([cam.width, cam.height]).toEqual([frame.width, frame.height]);
+      // G2: never cropped on a Fold8 panel
+      expect([cam.width, cam.height]).toEqual([frame.width, frame.height]);
       // every cabinet whose front the frame shows is drawn
       const camera: Camera = { x: cam.x, y: cam.y, z: cam.z, pitch: cam.pitch, focalPx: cam.focalPx, frame: { width: cam.width, height: cam.height } };
       const rect = { x0: 0, x1: cam.width, y0: 0, y1: cam.height };

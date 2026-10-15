@@ -279,7 +279,7 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
 
 // CF1 (a): the full-height wall fills the panel's width, as many cabinets drawn as it shows, no bands at its sides
 for (const size of FOLD8) {
-  for (const pattern of [undefined, 'ikea-detolf', MIXED]) {
+  for (const pattern of [undefined, 'ikea-detolf', MIXED, 'open-steel-rack']) {
     for (const view of ['wall', 'cabinet'] as const) {
       test(`fills the panel: the drawn frame as wide as the scene, every front it shows drawn, ${view} view${pattern ? `, ${pattern}` : ''}: ${size.name}`, async ({ page }) => {
         await openCase(page, size, { view, swipe: 'camera', ...(pattern ? { pattern } : {}) });
@@ -291,9 +291,9 @@ for (const size of FOLD8) {
         expect(cap, 'the cap: five at the least').toBeGreaterThanOrEqual(5);
         expect(cap, 'and the limit at the most').toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
         expect(drawn, 'drawn cabinets').toBeLessThanOrEqual(cap);
-        // within the limit the frame is the whole scene: no band at either side
-        if (cap < DRAWN_CABINETS_LIMIT) expect(Math.abs(widths.frame - widths.scene), 'the frame against the scene (px)').toBeLessThanOrEqual(1);
-        else expect(widths.frame).toBeLessThanOrEqual(widths.scene + 1);
+        // G2: the limit is what the Fold8's panels need (caseFraming.test), so the frame is the whole scene on every
+        // one of them: no band at either side
+        expect(Math.abs(widths.frame - widths.scene), 'the frame against the scene (px)').toBeLessThanOrEqual(1);
       });
     }
   }

@@ -2,10 +2,10 @@ import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { boxCorners, project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
-import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox, type Box } from '../src/components/display/caseFraming';
-import { DRAWN_CABINETS_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nearestCabinets, trimFace } from '../src/components/display/caseCull';
+import { wallPatternProfiles } from '../src/components/display/casePrefs';
+import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nearestCabinets, trimFace } from '../src/components/display/caseCull';
 
 /**
  * MOB-NAV-2: the case fits the Fold8's GPU tile budget. Chrome rasters a
@@ -17,8 +17,8 @@ import { DRAWN_CABINETS_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nea
  * panels, as the case opens, two swipes into the wall (its loaded middle)
  * and 40 swipes on (its far end), walking the camera or panning the wall:
  * at most the panel's cap of cabinets (CF1 a: as many as its full-height frame
- * shows fronts, from 5 up to DRAWN_CABINETS_LIMIT) and 250 figures drawn (Ross
- * 12:2xC), nothing drawn that lies wholly outside the frame and half a viewport
+ * shows fronts, from 5 up to DRAWN_CABINETS_LIMIT) and as many figures as those
+ * cabinets hold (G1: Ross's 250 at five, scaled with them), nothing drawn that lies wholly outside the frame and half a viewport
  * round it, and the scene's layers at most 3 viewports of pixels; once the
  * swipe settles the case culls for the settled picture: the drawn cabinets are
  * the cap's nearest its centre. And the frame is framed to them (Ross 12:1xC):
@@ -27,19 +27,23 @@ import { DRAWN_CABINETS_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nea
  *
  * The ceiling binds where the figures are dense: a wall of one small figure
  * (fx-spike, 35 mm wide, in every slot), and one denser still (framed at half
- * its labelled width) that would draw past the 250 the case caps it at. The
+ * its labelled width) that once drew past the 250 the case capped it at. The
  * shelf view (walked), the cabinet view (as it opens) and a rack wall are held
- * to the same ceiling and cull to the frame and its margin.
+ * to the same ceiling and cull to the frame and its margin. G1 and G3
+ * (close-out 2): on both dense walls, labels on, every wall pattern (the
+ * KLINGSBO, the Detolf, the mixed wall and the rack) in the wall, cabinet and
+ * shelf views is held to the ceiling on its scene layers (every layer's area
+ * logged), and no cabinet standing wholly inside the frame is drawn empty.
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
+// every test opens its own page: they run side by side on as many workers as the run has
+test.describe.configure({ mode: 'parallel' });
 
 test.beforeEach(({}, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'runs in the chromium project');
 });
 
-/** Ross 12:2xC: the most figures the case draws at a time. */
-const MAX_FIGURES = 250;
 /**
  * The loaded middle of the wall: a picture two swipes in draws at least this many figures; the sideways cover's
  * frame is 143 px tall, so the tops and the open shelves of its five cabinets lie past it and its margin (55 drawn).
@@ -65,7 +69,7 @@ const SPARSE: Wall = { name: 'fixtures', query: 'fx=170' };
 const DENSE: Wall[] = [
   // a wall of one small figure: 35 mm wide, its cut-out drawn
   { name: 'spike wall', query: 'fx=170&fxonly=spike' },
-  // denser: the same figure framed at half its width (17 mm), past the 250 the case draws
+  // denser: the same figure framed at half its width (17 mm), past the 250 the case once capped it at
   { name: 'spike wall at the 250 cap', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed' },
 ];
 const DENSE_STATES = STATES.filter((x) => x.swipes < 40);
@@ -87,6 +91,22 @@ const LABELLED: Wall[] = [
  * more cabinets on a wide panel, so up to two of them do (measured: the cabinet view as it opens and 40 swipes on).
  */
 const MESH_SPILL_MAX = 2;
+/**
+ * G1 and G3 (close-out 2): every wall pattern on the two dense walls, labels on, as the wall view opens and two swipes
+ * in, and as the cabinet and the shelf views open.
+ */
+const MIXED = 'ikea-klingsbo+ikea-detolf+open-steel-rack';
+const PATTERNS = ['ikea-klingsbo', 'ikea-detolf', MIXED, 'open-steel-rack'];
+const DENSE_LABELLED: Wall[] = [
+  { name: 'spike wall, labels on', query: 'fx=170&fxonly=spike&labels=1' },
+  { name: 'spike wall at the 250 cap, labels on', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed&labels=1' },
+];
+const PATTERN_STATES: State[] = [
+  { name: 'wall as it opens', view: 'wall', swipe: 'camera', swipes: 0 },
+  { name: 'wall two swipes in', view: 'wall', swipe: 'camera', swipes: 2 },
+  { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0 },
+  { name: 'shelf view as it opens', view: 'shelf', swipe: 'camera', swipes: 0 },
+];
 const VIEW_STATES: State[] = [
   { name: 'shelf view walked', view: 'shelf', swipe: 'camera', swipes: 2 },
   { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0 },
@@ -211,6 +231,8 @@ async function drawn(page: Page) {
       cullPan: Number(host.dataset.cullPan),
       cabinets: host.querySelectorAll('.cab').length,
       cap: Number(host.dataset.drawnCap),
+      figureCap: Number(host.dataset.figureCap),
+      pattern: host.dataset.pattern ?? '',
       figures: host.querySelectorAll('button.cab-figure').length,
       plates: host.querySelectorAll('.cab-plate').length,
       quads: host.querySelectorAll('.cabinet-scene__root .q').length,
@@ -245,8 +267,9 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
   const c = scene.camera;
   const camera: Camera = { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
   const panPx = scene.pan;
-  // the fixture wall is KLINGSBOs side by side; the scene publishes each one's box, so the two must agree
-  const layout = wallLayout(scene.wall.map(() => IKEA_KLINGSBO));
+  // the wall is its pattern's cabinets in turn; the scene publishes each one's box, so the two must agree
+  const profiles = wallPatternProfiles(scene.pattern);
+  const layout = wallLayout(scene.wall.map((_, i) => profiles[i % profiles.length]));
   const boxes = layout.cabinets.map((slot) => cabinetBox(slot, 0));
   const published = scene.wall.map(([x0, x1, y1, z0, z1]) => ({ x0, x1, y0: 0, y1, z0, z1 }));
   const rect = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
@@ -306,6 +329,29 @@ function frameCheck(scene: Awaited<ReturnType<typeof drawn>>) {
 }
 
 /**
+ * G1 (the challenger's C3): the figures drawn in each cabinet standing wholly inside the frame (side to side, at its
+ * feet and at its top), by the middle of each figure's tap box; those drawn with none, and those drawn with fewer
+ * than the most any cabinet of its kind shows.
+ */
+function fill(scene: Awaited<ReturnType<typeof drawn>>) {
+  const c = scene.camera;
+  const camera: Camera = { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
+  const counts = scene.wall.map(([x0, x1]) => scene.layers.filter(({ tap }) => (tap.x0 + tap.x1) / 2 > x0 && (tap.x0 + tap.x1) / 2 < x1).length);
+  const xAt = (x: number, y: number) => project(camera, [x, y, 0]).x + scene.pan;
+  const whole = scene.wall.flatMap(([x0, x1, y1], i) =>
+    Math.min(xAt(x0, 0), xAt(x0, y1)) >= 0 && Math.max(xAt(x1, 0), xAt(x1, y1)) <= camera.frame.width ? [i] : [],
+  );
+  const kinds = wallPatternProfiles(scene.pattern).length;
+  const full = (i: number) => Math.max(...counts.filter((_, k) => k % kinds === i % kinds));
+  return {
+    whole,
+    counts,
+    empty: whole.filter((i) => counts[i] === 0),
+    short: whole.filter((i) => counts[i] < full(i)).map((i) => `${i}:${counts[i]}/${full(i)}`),
+  };
+}
+
+/**
  * Ruling 33: the widest stretch (px) of the frame where the wall stands, from where its camera and pan put the wall's
  * two ends (the published boxes, any wall), that no drawn cabinet covers as the browser draws it; and the narrowest
  * drawn cabinet.
@@ -335,9 +381,13 @@ async function settled(page: Page, size: { width: number; height: number }, stat
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
   }, { view: state.view ?? 'wall', swipe: state.swipe, ...(state.pattern ? { pattern: state.pattern } : {}) });
   await page.setViewportSize(size);
+  const t0 = Date.now();
   await page.goto(`/?layout=case&${wall.query}`);
   await page.waitForSelector('button.cab-figure');
-  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  // G1: a dense wall draws every figure its drawn cabinets hold (up to DRAWN_FIGURES_LIMIT), so its first picture
+  // takes longer: how long is logged (loadMs)
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
+  const loadMs = Date.now() - t0;
   const x0 = Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x'));
   for (let i = 0; i < state.swipes; i++) await swipe(page, -400);
   if (state.swipes > 0) {
@@ -347,12 +397,12 @@ async function settled(page: Page, size: { width: number; height: number }, stat
   }
   await page.waitForTimeout(500);
   const scene = await drawn(page);
-  return { scene, frame: frameCheck(scene), drawnSet: scene.spans.map((x) => x.i).sort((a, b) => a - b) };
+  return { scene, frame: frameCheck(scene), drawnSet: scene.spans.map((x) => x.i).sort((a, b) => a - b), loadMs };
 }
 
 /** What the scene draws and the layers it costs, logged and attached to the test. */
 async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state: State, wall: Wall, testInfo: TestInfo) {
-  const { scene, frame, drawnSet } = await settled(page, size, state, wall);
+  const { scene, frame, drawnSet, loadMs } = await settled(page, size, state, wall);
   const layers = await compositedLayers(page);
   const viewport = size.width * size.height;
   const report = {
@@ -361,7 +411,10 @@ async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state
     viewport: size.name,
     dpr: FOLD8_DPR,
     cabinets: scene.cabinets,
+    pattern: scene.pattern,
+    loadMs,
     cap: scene.cap,
+    figureCap: scene.figureCap,
     figures: scene.figures,
     plates: scene.plates,
     figuresCoarse: scene.coarse,
@@ -389,15 +442,23 @@ async function measured(page: Page, size: (typeof CASE_VIEWPORTS)[number], state
     cullX: scene.cullX,
     cullPan: scene.cullPan,
   };
+  const filled = fill(scene);
+  Object.assign(report, { whole: filled.whole, empty: filled.empty, short: filled.short });
   console.log(`case-budget ${JSON.stringify(report)}`);
   await testInfo.attach('case budget', { body: JSON.stringify({ ...report, outsideFirst: scene.outside.slice(0, 20), spillFirst: scene.spill.slice(0, 20) }, null, 1), contentType: 'application/json' });
-  return { scene, frame, drawnSet, layers, viewport };
+  return { scene, frame, drawnSet, layers, viewport, filled };
+}
+
+/** G1: at most the panel's figure cap (what its drawn cabinets hold), itself at most the limit the budget was measured at. */
+function figureChecks(scene: Awaited<ReturnType<typeof drawn>>) {
+  expect.soft(scene.figures, 'figures drawn, at most the figure cap (G1)').toBeLessThanOrEqual(scene.figureCap);
+  expect.soft(scene.figureCap, 'the figure cap, at most its limit').toBeLessThanOrEqual(DRAWN_FIGURES_LIMIT);
 }
 
 /** The tile budget of a wall view: cabinets and figures capped, the settled cull, nothing outside, the scene layers under the ceiling. */
 function budgetChecks(m: Awaited<ReturnType<typeof measured>>, state: State) {
   const { scene, frame, drawnSet, layers, viewport } = m;
-  expect.soft(scene.figures, 'figures drawn (Ross 12:2xC)').toBeLessThanOrEqual(MAX_FIGURES);
+  figureChecks(scene);
   expect.soft(scene.cap, 'the panel\'s cap (CF1 a)').toBeGreaterThanOrEqual(MAX_DRAWN_CABINETS);
   expect.soft(scene.cap, 'the panel\'s cap (CF1 a)').toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
   expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(scene.cap);
@@ -435,8 +496,8 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
         test.setTimeout(180_000);
         const m = await measured(page, size, state, wall, testInfo);
         expect(m.scene.figures, 'figures are drawn').toBeGreaterThan(0);
-        // the denser wall would draw past the cap: the case draws exactly the 250 nearest the frame centre
-        if (wall.query.includes('fxwidth=narrow')) expect.soft(m.scene.figures, 'the 250 cap binds').toBe(MAX_FIGURES);
+        // G1: no cabinet standing wholly inside the frame is drawn empty (the old 250 left the outer ones bare)
+        expect.soft(m.filled.empty, 'cabinets wholly inside the frame drawn with no figure').toEqual([]);
         budgetChecks(m, state);
       });
     }
@@ -459,12 +520,50 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
     }
   }
 
+  for (const pattern of PATTERNS) {
+    for (const wall of DENSE_LABELLED) {
+      for (const at of PATTERN_STATES) {
+        const state: State = { ...at, pattern };
+        test(`every pattern on a dense wall: no cabinet wholly in the frame drawn empty, scene layers <= ${CEILING_VIEWPORTS} viewports: ${pattern}, ${wall.name}, ${at.name}, ${size.name}`, async ({ page }, testInfo) => {
+          test.setTimeout(180_000);
+          const { scene, layers, viewport, filled } = await measured(page, size, state, wall, testInfo);
+          expect(scene.pattern).toBe(pattern);
+          expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
+          figureChecks(scene);
+          expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(scene.cap);
+          expect.soft(filled.empty, `cabinets wholly inside the frame drawn with no figure (counts ${filled.counts.join(',')})`).toEqual([]);
+          expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
+          const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
+          expect.soft(scene.spill.filter((x) => !mesh.includes(x)), 'faces reaching past the frame and half a viewport round it').toEqual([]);
+          expect.soft(mesh.length, 'mesh shelves reaching past it (CULL-LEAK-1)').toBeLessThanOrEqual(MESH_SPILL_MAX);
+          expect.soft(frameCheck(scene).coarseNearer, 'figures drawn finer than one nearer the frame centre').toBe(0);
+          // the ruled metric: the scene's layers; every layer's area is logged with it (allLayerAreaViewports)
+          expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
+        });
+      }
+    }
+  }
+
+  // G1: the densest wall the fixtures make (one 17 mm figure in every slot, 1,750 of them, labels on): on the sideways
+  // cover the drawn cabinets hold DRAWN_FIGURES_LIMIT, the most the scene was measured drawing under the ceiling
+  for (const view of ['wall', 'cabinet'] as const) {
+    test(`the densest wall: at most DRAWN_FIGURES_LIMIT figures, none of the cabinets wholly in the frame empty, scene layers <= ${CEILING_VIEWPORTS} viewports, ${view} view: ${size.name}`, async ({ page }, testInfo) => {
+      test.setTimeout(240_000);
+      const wall: Wall = { name: 'densest wall, labels on', query: 'fx=250&fxonly=spike&fxwidth=narrow&fxbranch=framed&labels=1' };
+      const { scene, layers, viewport, filled } = await measured(page, size, { name: `densest ${view}`, view, swipe: 'camera', swipes: 0 }, wall, testInfo);
+      figureChecks(scene);
+      if (size.name === 'fold8-cover-sideways' && view === 'wall') expect.soft(scene.figureCap, 'the sideways cover\'s fifteen KLINGSBOs hold the limit').toBe(DRAWN_FIGURES_LIMIT);
+      expect.soft(filled.empty, `cabinets wholly inside the frame drawn with no figure (counts ${filled.counts.join(',')})`).toEqual([]);
+      expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
+    });
+  }
+
   for (const state of VIEW_STATES) {
     test(`${state.name} costs no more than ${CEILING_VIEWPORTS} viewports of scene layers and draws nothing past the frame and its margin: ${size.name}`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);
       const { scene, layers, viewport } = await measured(page, size, state, SPARSE, testInfo);
       expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
-      expect.soft(scene.figures, 'figures drawn (Ross 12:2xC)').toBeLessThanOrEqual(MAX_FIGURES);
+      figureChecks(scene);
       expect.soft(scene.cabinets, 'cabinets drawn').toBeLessThanOrEqual(scene.cap);
       expect.soft(scene.outside, 'scene elements wholly outside the frame and half a viewport round it').toEqual([]);
       const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
@@ -476,7 +575,7 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
   }
 
   for (const state of STATES) {
-    test(`the case fits the tile budget: at most its cap of cabinets and ${MAX_FIGURES} figures, the cap's nearest the settled frame centre, layers <= ${CEILING_VIEWPORTS} viewports: ${state.name}, ${size.name}`, async ({ page }, testInfo) => {
+    test(`the case fits the tile budget: at most its cap of cabinets and of figures, the cap's nearest the settled frame centre, layers <= ${CEILING_VIEWPORTS} viewports: ${state.name}, ${size.name}`, async ({ page }, testInfo) => {
       test.setTimeout(180_000);
       const m = await measured(page, size, state, SPARSE, testInfo);
       const { scene } = m;

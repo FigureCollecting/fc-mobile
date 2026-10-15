@@ -8,6 +8,8 @@ import { sideOverhangMm } from '../cabinetProfile';
 import {
   CABINET_HYSTERESIS,
   CULL_MARGIN,
+  DRAWN_CABINETS_LIMIT,
+  DRAWN_FIGURES_LIMIT,
   FIGURE_BUDGET_VIEWPORTS,
   MAX_DRAWN_CABINETS,
   MAX_DRAWN_FIGURES,
@@ -15,6 +17,7 @@ import {
   RECULL_SHARE,
   byFrameCentre,
   cullRect,
+  figureCap,
   figureScales,
   figuresToDraw,
   hiddenUnder,
@@ -558,6 +561,87 @@ describe(`figuresToDraw: at most ${MAX_DRAWN_FIGURES} figures, the nearest the f
     expect([...order].sort((a, b) => a - b)).toEqual(figs.map((_, i) => i));
     expect(order[order.length - 1]).toBe(40);
     for (let k = 1; k < order.length - 1; k++) expect(dist(view, figs[order[k]])).toBeGreaterThanOrEqual(dist(view, figs[order[k - 1]]));
+  });
+});
+
+describe('G1: the figure cap scales with the drawn cabinets; past a cap, no cabinet with a figure in view is left empty', () => {
+  it('figureCap: each drawn cabinet\'s kind\'s capacity (the most one of that kind holds on the wall), summed', () => {
+    const kinds = ['k', 'd', 'r', 'k', 'd', 'r', 'k'];
+    const counts = [58, 40, 12, 57, 41, 0, 10];
+    expect(figureCap(counts, kinds, [0, 1, 2])).toBe(58 + 41 + 12);
+    // an emptier cabinet of a kind is given its kind's capacity: the cap never leaves it short
+    expect(figureCap(counts, kinds, [3, 6])).toBe(2 * 58);
+    expect(figureCap(counts, kinds, [5])).toBe(12);
+    expect(figureCap(counts, kinds, [])).toBe(0);
+    // a kind no cabinet holds anything of
+    expect(figureCap([0, 0], ['a', 'b'], [0, 1])).toBe(0);
+  });
+
+  it('figureCap: at most the limit (DRAWN_FIGURES_LIMIT when not given)', () => {
+    const kinds = ['k', 'k', 'k'];
+    expect(figureCap([5000, 1, 1], kinds, [0, 1, 2])).toBe(DRAWN_FIGURES_LIMIT);
+    expect(figureCap([60, 1, 1], kinds, [0, 1, 2], 100)).toBe(100);
+    expect(figureCap([60, 1, 1], kinds, [0, 1, 2], 180)).toBe(180);
+    expect(figureCap([60, 1, 1], kinds, [0, 1, 2], 181)).toBe(180);
+  });
+
+  it('the limit: the most the scene was measured drawing under the layer ceiling (e2e/case-budget), a figure or more for every cabinet the case may draw', () => {
+    expect(DRAWN_FIGURES_LIMIT).toBe(1440);
+    expect(DRAWN_FIGURES_LIMIT).toBeGreaterThanOrEqual(DRAWN_CABINETS_LIMIT);
+  });
+
+  // a full cabinet at the frame centre and a few figures of another at its edge, all inside the frame and its margin
+  const camera: Camera = { x: 0, y: 900, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
+  const centre: FigureBox[] = Array.from({ length: 600 }, (_, i) => {
+    const x = ((i % 30) - 15) * 40;
+    const y = 400 + Math.floor(i / 30) * 60;
+    return { cab: 0, x0: x, x1: x + 30, y0: y, y1: y + 50, z: 0 };
+  });
+  const edge: FigureBox[] = Array.from({ length: 30 }, (_, i) => ({ cab: 1, x0: 1000 + (i % 6) * 40, x1: 1030 + (i % 6) * 40, y0: 400 + Math.floor(i / 6) * 60, y1: 450 + Math.floor(i / 6) * 60, z: 0 }));
+  const figs = [...centre, ...edge];
+  const dist = (f: FigureBox) => {
+    const q = project(camera, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z]);
+    return Math.hypot(q.x - COVER.width / 2, q.y - COVER.height / 2);
+  };
+  const byCab = (shown: number[]) => [shown.filter((i) => figs[i].cab === 0), shown.filter((i) => figs[i].cab === 1)];
+  /** Each cabinet's kept figures are its own nearest the frame centre. */
+  const nearestOwn = (kept: number[], cab: number) => {
+    const own = figs.flatMap((f, i) => (f.cab === cab ? [i] : []));
+    const out = own.filter((i) => !kept.includes(i));
+    if (kept.length === 0 || out.length === 0) return true;
+    return Math.max(...kept.map((i) => dist(figs[i]))) <= Math.min(...out.map((i) => dist(figs[i])));
+  };
+
+  it('every figure in view when the cap holds them all', () => {
+    const all = figuresToDraw(viewOf(camera), cullRect(COVER), figs, new Set([0, 1]), () => [], figs.length);
+    expect(all.shown).toHaveLength(630);
+    // the edge cabinet's lie in the frame's margin: farther than any 250 of the centre cabinet's
+    expect(Math.min(...edge.map(dist))).toBeGreaterThan(Math.max(...[...centre].map(dist).sort((a, b) => a - b).slice(0, 250)));
+  });
+
+  for (const [cap, centreKept, edgeKept] of [
+    [250, 220, 30],
+    [40, 20, 20],
+    [61, 31, 30],
+    [3, 2, 1],
+    [2, 1, 1],
+  ] as const) {
+    it(`past a cap of ${cap}: one each in turn, each cabinet its own nearest the frame centre: ${centreKept} and ${edgeKept}`, () => {
+      const { shown, hidden } = figuresToDraw(viewOf(camera), cullRect(COVER), figs, new Set([0, 1]), () => [], cap);
+      expect(hidden).toBe(0);
+      expect(shown).toHaveLength(cap);
+      expect(shown).toEqual([...shown].sort((a, b) => a - b));
+      const [c, e] = byCab(shown);
+      expect([c.length, e.length]).toEqual([centreKept, edgeKept]);
+      expect(nearestOwn(c, 0)).toBe(true);
+      expect(nearestOwn(e, 1)).toBe(true);
+    });
+  }
+
+  it('past a cap of one: the nearest the frame centre of all', () => {
+    const { shown } = figuresToDraw(viewOf(camera), cullRect(COVER), figs, new Set([0, 1]), () => [], 1);
+    expect(shown).toHaveLength(1);
+    expect(dist(figs[shown[0]])).toBe(Math.min(...figs.map(dist)));
   });
 });
 

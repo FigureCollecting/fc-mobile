@@ -1414,8 +1414,10 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     for (const [frame, view] of DENSE_FRAMES.flatMap((f) => (['wall', 'cabinet', 'shelf'] as const).map((v) => [f, v] as const))) {
       const { host } = scene(spikeWall(), { view }, { frameFallback: frame, labels: true });
       const s = pxPerMm(host);
+      // each figure's button by its id, read once (G1 draws some 800 plates here: a lookup per plate ran past a minute on CI)
+      const byId = new Map(figureButtons(host).map((b) => [b.dataset.figureId, b]));
       for (const plate of Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'))) {
-        const b = host.querySelector<HTMLElement>(`button.cab-figure[data-figure-id="${plate.dataset.figureId}"]`)!;
+        const b = byId.get(plate.dataset.figureId)!;
         const k = Number(b.style.getPropertyValue('--s'));
         expect(plate.style.getPropertyValue('--s')).toBe(String(k));
         expect(sideMm(plate, 'v')).toBeCloseTo(30 * s, 4);
@@ -1454,12 +1456,14 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
             layer(Math.max(w, l + aw) - Math.min(0, l), Math.max(h, t + ah) - Math.min(0, t), Number(b.style.getPropertyValue('--s')));
           }
           const drawnPlates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'));
+          // each figure's button by its id, read once (G1: some 800 plates; a lookup per plate is quadratic)
+          const byId = new Map(figureButtons(host).map((b) => [b.dataset.figureId, b]));
           for (const plate of drawnPlates) {
             // its own box: drawn only where it draws into the frame and its margin, and only with its figure
             const w = JSON.parse(plate.dataset.world!) as { x0: number; x1: number; y0: number; y1: number; z: number };
             expect(trimFace(cull, [w.x0, w.y0, w.z], [w.x1 - w.x0, 0, 0], [0, w.y1 - w.y0, 0], cullRect(camera.frame)), at).not.toBeNull();
-            const figure = host.querySelector<HTMLElement>(`button.cab-figure[data-figure-id="${plate.dataset.figureId}"]`)!;
-            expect(figure, at).not.toBeNull();
+            const figure = byId.get(plate.dataset.figureId)!;
+            expect(figure, at).toBeDefined();
             const k = Number(plate.style.getPropertyValue('--s'));
             expect(k, at).toBe(Number(figure.style.getPropertyValue('--s')));
             layer(parseFloat(plate.style.width), parseFloat(plate.style.height), k);

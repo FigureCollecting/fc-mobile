@@ -205,11 +205,15 @@ describe('attachSheetDrag', () => {
   });
 
   describe('a drag is no tap (the browser still sends a click for a touch that moved less than its own tap slop)', () => {
-    /** A click on `el` as the browser sends it after a lift; whether it reached `el`'s own listener. */
-    function click(el: HTMLElement) {
+    /**
+     * A click on `el`; whether it reached `el`'s own listener. A pointer's click (a tap, a mouse) counts its presses
+     * in `detail` (1 and up); one with no pointer behind it (Enter or Space, an assistive activation, element.click())
+     * has 0.
+     */
+    function click(el: HTMLElement, detail = 1) {
       const reached = vi.fn();
       el.addEventListener('click', reached);
-      const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+      const e = new MouseEvent('click', { bubbles: true, cancelable: true, detail });
       el.dispatchEvent(e);
       el.removeEventListener('click', reached);
       return { reached: reached.mock.calls.length > 0, prevented: e.defaultPrevented };
@@ -244,10 +248,49 @@ describe('attachSheetDrag', () => {
       expect(click(handle)).toEqual({ reached: true, prevented: false });
     });
 
-    it('swallows one click only: a key on the focused handle right after is a click', () => {
+    it('swallows one click only: a second click right after goes through', () => {
       dragHandle();
       click(handle);
       expect(click(handle).reached).toBe(true);
+    });
+
+    it('a click with no pointer behind it (Enter, Space, an assistive activation) right after a drag goes through', () => {
+      dragHandle();
+      expect(click(handle, 0)).toEqual({ reached: true, prevented: false });
+      // and the drag's own click, should the browser still send it, is still no tap
+      expect(click(handle).reached).toBe(false);
+    });
+
+    it('a click with no pointer behind it right after a card drag from the contents goes through', () => {
+      button.dispatchEvent(touch('touchstart', [100]));
+      button.dispatchEvent(touch('touchmove', [140]));
+      vi.advanceTimersByTime(200);
+      button.dispatchEvent(touch('touchend', []));
+      expect(click(button, 0).reached).toBe(true);
+    });
+
+    it('only a click within 400 ms of the lift is the drag\'s: a later one goes through', () => {
+      dragHandle();
+      vi.advanceTimersByTime(400);
+      expect(click(handle).reached).toBe(false);
+      dragHandle();
+      vi.advanceTimersByTime(401);
+      expect(click(handle)).toEqual({ reached: true, prevented: false });
+    });
+
+    it('a drag from the contents that the browser sent no click for leaves a click 401 ms later alone', () => {
+      button.dispatchEvent(touch('touchstart', [100]));
+      button.dispatchEvent(touch('touchmove', [140]));
+      vi.advanceTimersByTime(200);
+      button.dispatchEvent(touch('touchend', []));
+      vi.advanceTimersByTime(400);
+      expect(click(button).reached).toBe(false);
+      button.dispatchEvent(touch('touchstart', [100]));
+      button.dispatchEvent(touch('touchmove', [140]));
+      vi.advanceTimersByTime(200);
+      button.dispatchEvent(touch('touchend', []));
+      vi.advanceTimersByTime(401);
+      expect(click(button).reached).toBe(true);
     });
 
     it('a drag the browser sent no click for (past its slop) leaves the next tap alone', () => {

@@ -168,6 +168,53 @@ for (const size of FOLD8) {
   }
 }
 
+/**
+ * A drag past the browser's tap slop sends no click; a click with no pointer behind it (Enter or Space on a focused
+ * control, an assistive activation) right after one is still the user's (close-out 2): the card swallows only the
+ * click a finger's own tap would send.
+ */
+const REFINE = CARDS.find((c) => c.name === 'Refine')!;
+
+/** An 80 px touch drag up on Refine's handle, lifted; no wait after the lift. */
+async function dragRefineHandle(page: Page) {
+  const grip = await centre(page.locator(REFINE.handle));
+  const finger = await touchDown(page, grip.x, grip.y);
+  await finger.to(grip.x, grip.y - 80, 8, 16);
+  await finger.end();
+}
+
+for (const size of FOLD8) {
+  test(`Refine: Enter on a focused Done right after an 80 px touch drag on its handle closes it: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    const sheet = await openCard(page, REFINE);
+    const done = sheet.getByRole('button', { name: 'Done' });
+    await dragRefineHandle(page);
+    await done.focus();
+    await page.keyboard.press('Enter');
+    await expect(sheet).toHaveCount(0, { timeout: 2000 });
+  });
+
+  test(`Refine: an assistive click on Done (no pointer) right after an 80 px touch drag on its handle closes it: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    const sheet = await openCard(page, REFINE);
+    const done = sheet.getByRole('button', { name: 'Done' });
+    await dragRefineHandle(page);
+    await done.evaluate((el: HTMLElement) => el.click());
+    await expect(sheet).toHaveCount(0, { timeout: 2000 });
+  });
+
+  test(`Refine: Space on a focused holding right after a 40 px swipe on its contents toggles it: ${size.name}`, async ({ page }) => {
+    await openCase(page, size);
+    await openCard(page, REFINE);
+    const ordered = page.getByRole('group', { name: 'Holding' }).getByRole('button', { name: /^Ordered/ });
+    await expect(ordered).toHaveAttribute('aria-pressed', 'false');
+    await swipeContents(page, REFINE);
+    await ordered.focus();
+    await page.keyboard.press('Space');
+    await expect(ordered).toHaveAttribute('aria-pressed', 'true', { timeout: 2000 });
+  });
+}
+
 for (const size of FOLD8.filter((v) => v.width >= DUAL_PANE_MIN_WIDTH)) {
   test(`Info pane: no sheet handle to mistake for one, and a swipe on its contents moves nothing: ${size.name}`, async ({ page }) => {
     await openCase(page, size);

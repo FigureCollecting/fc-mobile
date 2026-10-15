@@ -111,43 +111,72 @@ describe('useFigureListParams', () => {
   });
 });
 
-function TabProbe({ labelsDefault }: { labelsDefault?: boolean }) {
-  const p = useFigureListParams(labelsDefault === undefined ? {} : { labelsDefault });
+function HoldProbe({ labelsDefault, holdingsDefault }: { labelsDefault?: boolean; holdingsDefault?: ('owned' | 'ordered' | 'wished' | 'former')[] }) {
+  const p = useFigureListParams({ labelsDefault, holdingsDefault });
   return (
     <div>
-      <span data-testid="tab">{p.tab}</span>
+      <span data-testid="status">{p.filters.status.join(',')}</span>
+      <span data-testid="default-status">{p.defaults.status.join(',')}</span>
+      <span data-testid="default-cat">{p.defaults.cat.join(',')}</span>
       <span data-testid="labels">{String(p.labels)}</span>
-      <button type="button" onClick={() => p.setTab('former')}>tab-former</button>
-      <button type="button" onClick={() => p.setTab('owned')}>tab-owned</button>
+      <button type="button" onClick={() => p.setFilters({ ...p.filters, status: ['wished', 'ordered'] })}>hold-wished-ordered</button>
+      <button type="button" onClick={() => p.setFilters({ ...p.filters, status: ['owned'] })}>hold-owned</button>
+      <button type="button" onClick={() => p.setFilters({ ...p.filters, status: [] })}>hold-none</button>
       <button type="button" onClick={() => p.setLabels(false)}>labels-off</button>
       <button type="button" onClick={() => p.setLabels(true)}>labels-on</button>
     </div>
   );
 }
 
-describe('useFigureListParams: the collection tab and the labels default (WK-15)', () => {
-  it('defaults the tab to owned, reads a valid one from the URL and ignores any other', () => {
-    renderWithProviders(<TabProbe />);
-    expect(screen.getByTestId('tab').textContent).toBe('owned');
-    renderWithProviders(<TabProbe />, { initialPath: '/?tab=wished' });
-    expect(screen.getAllByTestId('tab')[1]!.textContent).toBe('wished');
-    renderWithProviders(<TabProbe />, { initialPath: '/?tab=bogus' });
-    expect(screen.getAllByTestId('tab')[2]!.textContent).toBe('owned');
+describe('useFigureListParams: holdings, chosen in Refine (SHEETS-FB1 3), and the labels default (WK-15)', () => {
+  it('holdings default to Owned; status= names them, values it does not know left out, none known the default', () => {
+    renderWithProviders(<HoldProbe />);
+    expect(screen.getByTestId('status').textContent).toBe('owned');
+    expect(screen.getByTestId('default-status').textContent).toBe('owned');
+    expect(screen.getByTestId('default-cat').textContent).toBe(DEFAULT_CAT.join(','));
+    renderWithProviders(<HoldProbe />, { initialPath: '/?status=wished|bogus|former' });
+    expect(screen.getAllByTestId('status')[1]!.textContent).toBe('wished,former');
+    renderWithProviders(<HoldProbe />, { initialPath: '/?status=bogus' });
+    expect(screen.getAllByTestId('status')[2]!.textContent).toBe('owned');
   });
 
-  it('writes the tab to the URL, and leaves it out for owned', async () => {
+  it('an old tab= link opens on that holding; status= wins over it', () => {
+    renderWithProviders(<HoldProbe />, { initialPath: '/?tab=wished' });
+    expect(screen.getByTestId('status').textContent).toBe('wished');
+    renderWithProviders(<HoldProbe />, { initialPath: '/?tab=bogus' });
+    expect(screen.getAllByTestId('status')[1]!.textContent).toBe('owned');
+    renderWithProviders(<HoldProbe />, { initialPath: '/?tab=wished&status=ordered' });
+    expect(screen.getAllByTestId('status')[2]!.textContent).toBe('ordered');
+  });
+
+  it('writes holdings to the URL, the default left out, none chosen kept by the all sentinel; an old tab= goes', async () => {
     const user = userEvent.setup();
-    const { currentPath } = renderWithProviders(<TabProbe />);
-    await user.click(screen.getByText('tab-former'));
-    expect(screen.getByTestId('tab').textContent).toBe('former');
-    expect(currentPath()).toContain('tab=former');
-    await user.click(screen.getByText('tab-owned'));
+    const { currentPath } = renderWithProviders(<HoldProbe />, { initialPath: '/?tab=former' });
+    await user.click(screen.getByText('hold-wished-ordered'));
+    expect(screen.getByTestId('status').textContent).toBe('wished,ordered');
+    expect(currentPath()).toContain('status=wished%7Cordered');
     expect(currentPath()).not.toContain('tab=');
+    await user.click(screen.getByText('hold-none'));
+    expect(screen.getByTestId('status').textContent).toBe('');
+    expect(currentPath()).toContain('status=all');
+    await user.click(screen.getByText('hold-owned'));
+    expect(screen.getByTestId('status').textContent).toBe('owned');
+    expect(currentPath()).not.toContain('status=');
+  });
+
+  it('where the holdings default is none (the fixtures), none chosen is the default and needs no URL', async () => {
+    const user = userEvent.setup();
+    const { currentPath } = renderWithProviders(<HoldProbe holdingsDefault={[]} />);
+    expect(screen.getByTestId('status').textContent).toBe('');
+    expect(screen.getByTestId('default-status').textContent).toBe('');
+    await user.click(screen.getByText('hold-wished-ordered'));
+    await user.click(screen.getByText('hold-none'));
+    expect(currentPath()).not.toContain('status=');
   });
 
   it('shows labels by default where asked (no images to show), and an explicit 0 turns them off', async () => {
     const user = userEvent.setup();
-    const { currentPath } = renderWithProviders(<TabProbe labelsDefault />);
+    const { currentPath } = renderWithProviders(<HoldProbe labelsDefault />);
     expect(screen.getByTestId('labels').textContent).toBe('true');
     await user.click(screen.getByText('labels-off'));
     expect(screen.getByTestId('labels').textContent).toBe('false');

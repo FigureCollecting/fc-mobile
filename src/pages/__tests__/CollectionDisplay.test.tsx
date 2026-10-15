@@ -90,7 +90,7 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(rows.container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(false);
   });
 
-  it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the rows do not', async () => {
+  it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the tiles Info and Refine, View kept as an empty slot (SHEETS-FB1)', async () => {
     await respondWith([makeFigure('1')]);
     const { unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
@@ -102,9 +102,16 @@ describe('Collection page (rebuilt display layer)', () => {
       'refine',
     ]);
     unmount();
-    const rows = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(rows.container.ownerDocument.querySelector('.case-tabs')).toBeNull();
+    // the tiles keep their way into Refine now the filter row comes and goes; the case's View card is not theirs
+    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => `${e.dataset.tab}:${e.tagName}`)).toEqual([
+      'view:SPAN',
+      'reserved:SPAN',
+      'dock:SPAN',
+      'info:BUTTON',
+      'refine:BUTTON',
+    ]);
   });
 
   it('the View tab opens the case card; its choices are kept on this device (CC14)', async () => {
@@ -134,7 +141,7 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(instances[1].options.index).toBe(1);
     instances[1].destroy();
     await user.click(screen.getByRole('button', { name: 'Refine' }));
-    expect(await screen.findByRole('button', { name: /show \d/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Done' })).toBeInTheDocument();
   });
 
   it('Info reopens the figure last tapped even after the list is filtered; disabled once that figure is filtered out', async () => {
@@ -231,21 +238,23 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(screen.getByText('2 of 3')).toBeInTheDocument();
   });
 
-  it('pins the preselected default chips and filters via chip removal', async () => {
+  it('while filtered, the row shows the applied filters, the defaults among them, and filters via chip removal', async () => {
     await respondWith([makeFigure('1', { manufacturer: 'Alter' }), makeFigure('2', { manufacturer: 'Kotobukiya' })]);
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/?mfr=Alter' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    // default chips visible
+    // default chips visible while something is filtered
     expect(screen.getByRole('listitem', { name: /remove filter prepainted/i })).toBeInTheDocument();
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
     // the maker chip filters the set
     expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull();
-    // removing it brings figure 2 back
+    // removing it brings figure 2 back, and the row goes: nothing is filtered
     await user.click(screen.getByRole('listitem', { name: /remove filter alter/i }));
     expect(await screen.findByRole('button', { name: 'Figure 2' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('listitem', { name: /remove filter prepainted/i })).toBeNull());
   });
 
-  it('round-trips the tabbed filter sheet: open, pick maker, apply', async () => {
+  it('the Refine card applies live: pick a maker and the grid behind it narrows at once; Done closes it', async () => {
     await respondWith([
       makeFigure('1', { manufacturer: 'Alter' }),
       makeFigure('2', { manufacturer: 'Kotobukiya' }),
@@ -253,13 +262,16 @@ describe('Collection page (rebuilt display layer)', () => {
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    await user.click(screen.getByRole('button', { name: /filter/i }));
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
     await user.click(await screen.findByRole('button', { name: 'Alter1' }));
-    await user.click(screen.getByRole('button', { name: /show 1/i }));
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull();
     });
     expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
+    expect(screen.getAllByText('1 of 2').length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Done' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull();
   });
 
   describe('Fold dual-pane (>= 640px container width)', () => {

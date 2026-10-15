@@ -23,7 +23,8 @@ interface Chip {
  * The page's filter row (SHEETS-FB1): the applied filters as removable chips and what shows of the total
  * ("312 of 559"); gone entirely while nothing is filtered (every filter its default and nothing hidden by
  * them). While it shows, the defaults (the holdings, Category=Prepainted, type=Figures) show as chips too,
- * so what hides a figure stays visible and removable.
+ * so what hides a figure stays visible and removable, but for the only chosen holding, which shows without
+ * its remove (there is no empty choice; Refine or Clear changes it).
  */
 export function AppliedChips({ filters, defaults, shown, total, onChange }: AppliedChipsProps) {
   if (shown >= total && isDefaultFilters(filters, defaults)) return null;
@@ -52,22 +53,29 @@ export function AppliedChips({ filters, defaults, shown, total, onChange }: Appl
   return (
     <div class="applied-chips">
       <div class="applied-chips__list" role="list" aria-label="Applied filters">
-      {chips.map((chip) => (
-        <button
-          key={`${chip.key}:${chip.value}`}
-          class="applied-chips__chip"
-          type="button"
-          role="listitem"
-          aria-label={`Remove filter ${chip.label}`}
-          onClick={() => remove(chip)}
-        >
-          <span class="applied-chips__label">{chip.label}</span>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      ))}
+      {chips.map((chip) =>
+        // the only chosen holding is not removable (no empty choice, as in Refine): it says what the count counts
+        chip.key === 'status' && filters.status.length === 1 ? (
+          <span key={`${chip.key}:${chip.value}`} class="applied-chips__chip applied-chips__chip--fixed" role="listitem">
+            <span class="applied-chips__label">{chip.label}</span>
+          </span>
+        ) : (
+          <button
+            key={`${chip.key}:${chip.value}`}
+            class="applied-chips__chip"
+            type="button"
+            role="listitem"
+            aria-label={`Remove filter ${chip.label}`}
+            onClick={() => remove(chip)}
+          >
+            <span class="applied-chips__label">{chip.label}</span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        ),
+      )}
       </div>
       <span class="applied-chips__count">{`${shown} of ${total}`}</span>
 
@@ -106,6 +114,10 @@ export function AppliedChips({ filters, defaults, shown, total, onChange }: Appl
 
         .applied-chips__chip:active {
           opacity: 0.7;
+        }
+
+        .applied-chips__chip--fixed:active {
+          opacity: 1;
         }
 
         .applied-chips__count {

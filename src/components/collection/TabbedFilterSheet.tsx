@@ -49,7 +49,8 @@ interface TabbedFilterSheetProps {
  * Ordered, Wished, No longer owned, several at once, each with its count) and
  * the sort. Every change applies LIVE to the grid behind it (SHEETS-FB1), the
  * card shows what it shows of the total ("312 of 559"); Done closes it and
- * Clear puts every filter back to its default.
+ * Clear puts every filter back to its default. The last chosen holding cannot
+ * be taken off (a tap on it does nothing): there is no empty choice.
  */
 export function TabbedFilterSheet({
   open,
@@ -69,6 +70,8 @@ export function TabbedFilterSheet({
 
   const toggle = (key: keyof ListFilters, value: string) => {
     const list = filters[key];
+    // the last chosen holding stays: no holding chosen would show what no choice says (Clear goes back to the defaults)
+    if (key === 'status' && list.length === 1 && list[0] === value) return;
     onApply({ ...filters, [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] });
   };
 

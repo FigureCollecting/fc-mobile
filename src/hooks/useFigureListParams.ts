@@ -93,12 +93,12 @@ const DEFAULT_HOLDINGS: readonly CollectionTab[] = ['owned'];
 
 const isHolding = (value: string): value is CollectionTab => (COLLECTION_TABS as readonly string[]).includes(value);
 
-/** The holdings the URL names: status= (values it does not know left out; none known, the default), else an old tab=. */
+/** The holdings the URL names: status= (each once, values it does not know left out; none known, the default), else an old tab=. */
 function parseHoldings(params: URLSearchParams, fallback: readonly CollectionTab[]): string[] {
   const value = params.get('status');
   if (value === CLEARED) return [];
   if (value !== null) {
-    const named = value.split('|').filter(isHolding);
+    const named = [...new Set(value.split('|').filter(isHolding))];
     if (named.length > 0) return named;
   }
   const tab = params.get('tab');

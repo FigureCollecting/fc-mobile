@@ -1,6 +1,6 @@
 /**
- * Android Back / browser Back closes an overlay (SHEETS-FB1 6c: the Info viewer and pane): while it is
- * open it holds a history entry of its own, at the page's address. Back pops that entry and closes it;
+ * Android Back / browser Back closes an overlay (SHEETS-FB1 6c: the Info viewer and pane; Refine and View):
+ * while it is open it holds a history entry of its own, at the page's address. Back pops that entry and closes it;
  * closed any other way (its X, Esc, a swipe), it takes its entry back off, unless the app has gone on
  * to another page meanwhile (that Back would undo the navigation).
  *
@@ -11,6 +11,8 @@
  * browser traverses) is never read as Back over an overlay opened in the meantime; and an overlay opened
  * while such a Back is still to come takes its entry once it has landed (pushed before it, the entry
  * would be the one that Back takes off).
+ *
+ * Esc is the keyboard's Back: it closes the overlay on top (the latest opened), never one under it.
  */
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 
@@ -44,6 +46,12 @@ function hold(entry: Entry) {
   open.push(entry);
 }
 
+function onKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape') return;
+  // the latest opened: one waiting for its entry is newer than every one holding its own
+  (waiting.at(-1) ?? open.at(-1))?.close();
+}
+
 const restore = (href: string) => {
   if (location.href !== href) history.replaceState(history.state, '', href);
 };
@@ -75,6 +83,7 @@ export function useBackToClose(onClose: () => void): void {
   useLayoutEffect(() => {
     if (!listening) {
       window.addEventListener('popstate', onPop);
+      document.addEventListener('keydown', onKey);
       listening = true;
     }
     const pathname = location.pathname;
@@ -97,4 +106,10 @@ export function useBackToClose(onClose: () => void): void {
       if (debt++ === 0) queueMicrotask(payDebt);
     };
   }, []);
+}
+
+/** An overlay's Back and Esc for one rendered while it is open (Refine and View, whose cards are shared). */
+export function BackToClose({ onClose }: { onClose: () => void }): null {
+  useBackToClose(onClose);
+  return null;
 }

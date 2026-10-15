@@ -30,6 +30,7 @@ import { applyFilters, holdingOf } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
 import { getFixtureFigures, getFixtureImageRef, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
+import { BackToClose } from '../hooks/useBackToClose';
 
 /** Fold-open near-square threshold: at or above this container width, the
  *  figure detail opens as a right-hand pane instead of a full-screen
@@ -307,6 +308,9 @@ export function Collection() {
       />
 
       <CaseViewCard open={caseCard === 'view'} prefs={casePrefs} onChange={setCasePrefs} onClose={() => setCaseCard(null)} />
+      {/* Back and Esc close the card on top, never the Info pane under it */}
+      {caseCard === 'view' && <BackToClose onClose={() => setCaseCard(null)} />}
+      {filterOpen && <BackToClose onClose={() => setFilterOpen(false)} />}
 
       <TabbedFilterSheet
         open={filterOpen}

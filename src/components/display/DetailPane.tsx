@@ -3,7 +3,6 @@ import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 import { useBackToClose } from '../../hooks/useBackToClose';
-import { useLayoutEffect, useRef } from 'preact/hooks';
 
 interface DetailPaneProps {
   figure: Figure;
@@ -22,18 +21,8 @@ interface DetailPaneProps {
 export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
   // An image that fails to load is drawn as the placeholder (ADDR-1), never a blank box.
   const images = useBrokenImages();
-  // Back and Esc close it too (SHEETS-FB1 6c)
+  // Back and Esc close it too (SHEETS-FB1 6c), unless a card is open over it: they close the one on top
   useBackToClose(onClose);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  // listening as it commits, so an Esc right after it opens closes it
-  useLayoutEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseRef.current();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []);
   const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
   return (
     <aside class="detail-pane">

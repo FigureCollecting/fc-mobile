@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { motion } from 'framer-motion';
 import type { Figure } from '@figurecollecting/fc-shared';
@@ -79,17 +79,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
     closingRef.current = true;
     onCloseRef.current();
   };
+  // Back, and Esc from the first moment (PhotoSwipe's own reads keys only once its gallery has opened)
   useBackToClose(closeViewer);
-  // Esc, ours, listening as it commits: PhotoSwipe's own reads keys only once its gallery has opened
-  useLayoutEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeViewer();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-    // closeViewer reads refs only
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     let cancelled = false;

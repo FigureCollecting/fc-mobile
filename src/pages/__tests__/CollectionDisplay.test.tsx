@@ -160,7 +160,8 @@ describe('Collection page (rebuilt display layer)', () => {
     // the list changes under it: Figure 1 filtered out, so Figure 2 now sits first
     await user.click(screen.getByRole('button', { name: 'Refine' }));
     await user.click(await screen.findByRole('button', { name: 'Kotobukiya2' }));
-    await user.click(screen.getByRole('button', { name: /show 2/i }));
+    // it applies at once; Done closes the card
+    await user.click(screen.getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 1' })).toBeNull());
     await user.click(screen.getByRole('button', { name: 'Info' }));
     await waitFor(() => expect(instances).toHaveLength(2));
@@ -171,7 +172,7 @@ describe('Collection page (rebuilt display layer)', () => {
     await user.click(screen.getByRole('listitem', { name: /remove filter kotobukiya/i }));
     await user.click(screen.getByRole('button', { name: 'Refine' }));
     await user.click(await screen.findByRole('button', { name: 'Alter1' }));
-    await user.click(screen.getByRole('button', { name: /show 1/i }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Info' })).toBeDisabled();
   });

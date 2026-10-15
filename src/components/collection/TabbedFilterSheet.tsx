@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
+import { useState, useMemo } from 'preact/hooks';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { DetentSheet } from '../ui/DetentSheet';
 import { FacetControl } from './FacetControl';
-import { getFacet, applyFilters } from '../../utils/facets';
-import type { ListFilters } from '../../hooks/useFigureListParams';
+import { TAB_LABEL } from './holdings';
+import { getFacet } from '../../utils/facets';
+import { COLLECTION_TABS, type CollectionTab, type ListFilters } from '../../hooks/useFigureListParams';
 import { hapticLight } from '../../utils/haptics';
 import { Style } from '../../styles/Style';
 
@@ -15,8 +16,6 @@ const TABS: { id: FilterTab; label: string }[] = [
   { id: 'tags', label: 'Tags' },
 ];
 
-const STATUS_VALUES = ['owned', 'ordered', 'wished'];
-
 const SORT_OPTIONS = [
   { value: 'activity', label: 'Added' },
   { value: 'name', label: 'Name' },
@@ -26,48 +25,52 @@ const SORT_OPTIONS = [
 interface TabbedFilterSheetProps {
   open: boolean;
   onClose: () => void;
-  /** Full (unfiltered) figure set — facet values, counts and the live result count come from it. */
+  /** The chosen holdings' figures, before the facets: the facet values and their counts come from them. */
   figures: Figure[];
   filters: ListFilters;
+  /** Every filter at its default: what Clear goes back to. */
+  defaults: ListFilters;
+  /** Each holding's count, on its choice. */
+  holdings: Record<CollectionTab, number>;
+  /** What the grid shows, of what the chosen holdings hold: the live count. */
+  shown: number;
+  total: number;
   sort: string;
   order: 'asc' | 'desc';
+  /** Every change applies at once, to the grid behind the card. */
   onApply: (filters: ListFilters) => void;
   onSort: (sort: string, order: 'asc' | 'desc') => void;
 }
 
 /**
- * The tabbed filter sheet: detented (half/full) bottom sheet with the TAB
- * STRIP AT THE BOTTOM, under the thumb. Tab 1 Maker+Distributor, tab 2
- * Scale+Origin, tab 3 Tags (facet grows as tagging expands). Every control
- * is cardinality-aware and the apply button carries a live result count.
+ * Refine: a draggable detented (half/full) card with the TAB STRIP AT THE
+ * BOTTOM, under the thumb. Tab 1 Maker+Distributor, tab 2 Scale+Origin, tab 3
+ * Tags (facet grows as tagging expands); above them the holdings (Owned,
+ * Ordered, Wished, No longer owned, several at once, each with its count) and
+ * the sort. Every change applies LIVE to the grid behind it (SHEETS-FB1), the
+ * card shows what it shows of the total ("312 of 559"); Done closes it and
+ * Clear puts every filter back to its default.
  */
 export function TabbedFilterSheet({
   open,
   onClose,
   figures,
   filters,
+  defaults,
+  holdings,
+  shown,
+  total,
   sort,
   order,
   onApply,
   onSort,
 }: TabbedFilterSheetProps) {
   const [tab, setTab] = useState<FilterTab>('maker');
-  const [draft, setDraft] = useState<ListFilters>(filters);
 
-  // Re-seed the draft each time the sheet opens.
-  useEffect(() => {
-    if (open) setDraft(filters);
-  }, [open, filters]);
-
-  const toggle = useCallback((key: keyof ListFilters, value: string) => {
-    setDraft((prev) => {
-      const list = prev[key];
-      const next = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
-      return { ...prev, [key]: next };
-    });
-  }, []);
-
-  const liveCount = useMemo(() => applyFilters(figures, draft).length, [figures, draft]);
+  const toggle = (key: keyof ListFilters, value: string) => {
+    const list = filters[key];
+    onApply({ ...filters, [key]: list.includes(value) ? list.filter((v) => v !== value) : [...list, value] });
+  };
 
   const facets = useMemo(
     () => ({
@@ -79,23 +82,6 @@ export function TabbedFilterSheet({
     }),
     [figures],
   );
-
-  const handleApply = useCallback(() => {
-    onApply(draft);
-    onClose();
-  }, [draft, onApply, onClose]);
-
-  const handleClear = useCallback(() => {
-    setDraft((prev) => ({
-      ...prev,
-      status: [],
-      mfr: [],
-      dist: [],
-      scale: [],
-      origin: [],
-      tag: [],
-    }));
-  }, []);
 
   const footer = (
     <div class="filter-sheet2__footer">
@@ -114,11 +100,11 @@ export function TabbedFilterSheet({
         ))}
       </div>
       <div class="filter-sheet2__actions">
-        <button class="filter-sheet2__btn filter-sheet2__btn--clear" type="button" onClick={handleClear}>
+        <button class="filter-sheet2__btn filter-sheet2__btn--clear" type="button" onClick={() => onApply(defaults)}>
           Clear
         </button>
-        <button class="filter-sheet2__btn filter-sheet2__btn--apply" type="button" onClick={handleApply}>
-          Show {liveCount}
+        <button class="filter-sheet2__btn filter-sheet2__btn--done" type="button" onClick={onClose}>
+          Done
         </button>
       </div>
     </div>
@@ -129,18 +115,20 @@ export function TabbedFilterSheet({
       <div class="filter-sheet2">
         {/* Quick facets shared by every tab */}
         <section class="filter-sheet2__quick">
-          <div class="filter-sheet2__status" role="group" aria-label="Collection status">
-            {STATUS_VALUES.map((s) => {
-              const active = draft.status.includes(s);
+          <p class="filter-sheet2__count" aria-live="polite">{`${shown} of ${total}`}</p>
+          <div class="filter-sheet2__status" role="group" aria-label="Holding">
+            {COLLECTION_TABS.map((h) => {
+              const active = filters.status.includes(h);
               return (
                 <button
-                  key={s}
+                  key={h}
                   class={`filter-sheet2__status-chip ${active ? 'filter-sheet2__status-chip--active' : ''}`}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => toggle('status', s)}
+                  onClick={() => toggle('status', h)}
                 >
-                  {s}
+                  {TAB_LABEL[h]}
+                  <span class="filter-sheet2__status-count">{holdings[h]}</span>
                 </button>
               );
             })}
@@ -185,13 +173,13 @@ export function TabbedFilterSheet({
             <FacetControl
               label="Manufacturer"
               values={facets.mfr}
-              selected={draft.mfr}
+              selected={filters.mfr}
               onToggle={(v) => toggle('mfr', v)}
             />
             <FacetControl
               label="Distributor"
               values={facets.dist}
-              selected={draft.dist}
+              selected={filters.dist}
               onToggle={(v) => toggle('dist', v)}
             />
           </div>
@@ -202,13 +190,13 @@ export function TabbedFilterSheet({
             <FacetControl
               label="Scale"
               values={facets.scale}
-              selected={draft.scale}
+              selected={filters.scale}
               onToggle={(v) => toggle('scale', v)}
             />
             <FacetControl
               label="Origin"
               values={facets.origin}
-              selected={draft.origin}
+              selected={filters.origin}
               onToggle={(v) => toggle('origin', v)}
             />
           </div>
@@ -219,7 +207,7 @@ export function TabbedFilterSheet({
             <FacetControl
               label="Tags"
               values={facets.tag}
-              selected={draft.tag}
+              selected={filters.tag}
               onToggle={(v) => toggle('tag', v)}
               hint="many more tags coming soon"
             />
@@ -256,7 +244,20 @@ export function TabbedFilterSheet({
           border: 1px solid var(--border-subtle);
           font-size: var(--font-xs);
           color: var(--text-secondary);
-          text-transform: capitalize;
+        }
+
+        .filter-sheet2__count {
+          margin: 0;
+          font-size: var(--font-sm);
+          font-weight: var(--font-weight-semibold);
+          color: var(--text-primary);
+          font-variant-numeric: tabular-nums;
+        }
+
+        .filter-sheet2__status-count {
+          margin-left: 6px;
+          color: var(--text-tertiary);
+          font-variant-numeric: tabular-nums;
         }
 
         .filter-sheet2__status-chip--active,
@@ -326,13 +327,13 @@ export function TabbedFilterSheet({
           color: var(--text-secondary);
         }
 
-        .filter-sheet2__btn--apply {
+        .filter-sheet2__btn--done {
           flex: 2;
           background: var(--brand-500);
           color: white;
         }
 
-        .filter-sheet2__btn--apply:active {
+        .filter-sheet2__btn--done:active {
           background: var(--brand-600);
         }
       `} />

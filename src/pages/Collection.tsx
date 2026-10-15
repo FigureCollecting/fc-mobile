@@ -14,24 +14,19 @@ import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
 import { FigureViewer } from '../components/display/FigureViewer';
 import { DetailPane } from '../components/display/DetailPane';
-import { FilterBar } from '../components/collection/FilterBar';
 import { AppliedChips } from '../components/collection/AppliedChips';
 import { TabbedFilterSheet } from '../components/collection/TabbedFilterSheet';
-import { useCollection, useCollectionCounts, useCollections } from '../hooks/useCollection';
-import { useCopyActions } from '../hooks/useFigureMutations';
+import { useCollection, useCollectionCounts } from '../hooks/useCollection';
 import { useLastSynced } from '../local/useLocal';
 import { localSession } from '../local/session';
 import type { LocalFigure } from '../local/figures';
-import { CollectionTabs, TAB_LABEL } from '../components/collection/CollectionTabs';
 import { FormerList } from '../components/collection/FormerList';
-import { MoveSheet, type MoveTarget } from '../components/collection/MoveSheet';
-import { showToast } from '../stores/toast';
-import { useFigureListParams } from '../hooks/useFigureListParams';
+import { COLLECTION_TABS, useFigureListParams, type CollectionTab, type ListFilters } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { useOwnedImages } from '../hooks/useOwnedImages';
 import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
-import { applyFilters, countActiveFilters } from '../utils/facets';
+import { applyFilters, holdingOf } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
 import { getFixtureFigures, getFixtureImageRef, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
@@ -90,7 +85,19 @@ const EMPTY_TAB: Record<string, string> = {
   former: 'Nothing here: every copy is still yours.',
 };
 
-const copiesLabel = (n: number): string => (n === 1 ? '1 copy' : `${n} copies`);
+/** The fixtures hold no default: every holding shows until Refine picks some. */
+const NO_HOLDINGS: readonly CollectionTab[] = [];
+const NO_FILTERS: ListFilters = { status: [], mfr: [], dist: [], scale: [], origin: [], cat: [], type: [], tag: [] };
+
+/** Each holding's count over a figure list (the fixtures, which the local store does not count). */
+function countHoldings(figures: Figure[]): Record<CollectionTab, number> {
+  const counts = Object.fromEntries(COLLECTION_TABS.map((h) => [h, 0])) as Record<CollectionTab, number>;
+  for (const f of figures) {
+    const h = holdingOf(f) as CollectionTab;
+    if (h in counts) counts[h] += 1;
+  }
+  return counts;
+}
 
 export function Collection() {
   const phase = useAuthPhase();
@@ -105,28 +112,23 @@ export function Collection() {
     sort,
     order,
     labels,
-    tab,
-    setTab,
+    defaults,
     setLayout,
     setDensity,
     setFilters,
     setSort,
     setLabels,
-  } = useFigureListParams({ labelsDefault: !fixtureMode });
+  } = useFigureListParams({ labelsDefault: !fixtureMode, holdingsDefault: fixtureMode ? NO_HOLDINGS : undefined });
   const [filterOpen, setFilterOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   // the figure last opened, by id: the Info tab opens it again wherever a re-sort or filter has moved it
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [caseCard, setCaseCard] = useState<CaseCard | null>(null);
   const [casePrefs, setCasePrefs] = useCasePrefs();
-  const [selecting, setSelecting] = useState(false);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [moveOpen, setMoveOpen] = useState(false);
   const online = useOnlineStatus();
   const pageRef = useRef<HTMLDivElement>(null);
   const pageWidth = useElementWidth(pageRef, 360);
   const dualPane = pageWidth >= DUAL_PANE_MIN_WIDTH;
-  const actions = useCopyActions();
 
   const fixtureFigures = useMemo(() => getFixtureFigures(), []);
   const fixturesQuery = useQuery<Figure[]>({
@@ -136,10 +138,9 @@ export function Collection() {
     staleTime: Infinity,
   });
 
-  // The local store (WK-15): the whole tab, every item, no page cap and no request.
-  const collectionQuery = useCollection({ sortBy: sort, sortOrder: order, status: tab });
+  // The local store (WK-15): every holding, every item, no page cap and no request; Refine's holdings choose among them.
+  const collectionQuery = useCollection({ sortBy: sort, sortOrder: order, status: 'all' });
   const counts = useCollectionCounts();
-  const collections = useCollections();
   const lastSynced = useLastSynced();
   const syncState = localSession.value?.engine.state.value;
   const outOfReach = !online.value || syncState?.reachability === 'unreachable';
@@ -159,14 +160,20 @@ export function Collection() {
   const figures: Figure[] = fixtureMode ? (fixturesQuery.data ?? []) : withImages;
   const isLoading = fixtureMode ? fixturesQuery.isLoading : phase === 'loading' || collectionQuery.isLoading;
   const isError = fixtureMode ? fixturesQuery.isError : collectionQuery.isError;
-  const total = fixtureMode ? figures.length : (collectionQuery.data?.total ?? figures.length);
-
-  // Facet filters + sort applied client-side over the loaded set (fixture
-  // parity now; keeps working against cached data when offline).
-  const visible = useMemo(
-    () => sortFigures(applyFilters(figures, filters), sort, order),
-    [figures, filters, sort, order],
+  const holdingCounts = useMemo(
+    () => (fixtureMode ? countHoldings(figures) : (counts ?? countHoldings([]))),
+    [fixtureMode, figures, counts],
   );
+
+  // The chosen holdings' figures (the total), then the facet filters and the sort, client-side over the
+  // loaded set (fixture parity; keeps working against cached data when offline).
+  const scoped = useMemo(() => applyFilters(figures, { ...NO_FILTERS, status: filters.status }), [figures, filters.status]);
+  const total = scoped.length;
+  const visible = useMemo(
+    () => sortFigures(applyFilters(scoped, filters), sort, order),
+    [scoped, filters, sort, order],
+  );
+  const onlyHolding = filters.status.length === 1 ? (filters.status[0] as CollectionTab) : null;
   const lastOpened = lastOpenedId === null ? -1 : visible.findIndex((f) => f._id === lastOpenedId);
 
   const handleRefresh = useCallback(async () => {
@@ -174,67 +181,14 @@ export function Collection() {
     else await localSession.peek()?.engine.trigger('manual');
   }, [fixtureMode, fixturesQuery]);
 
-  const handleSelect = useCallback(
-    (figure: Figure, index: number) => {
-      if (!selecting) {
-        setViewerIndex(index);
-        setLastOpenedId(figure._id);
-        return;
-      }
-      setSelected((prev) => {
-        const next = new Set(prev);
-        if (next.has(figure._id)) next.delete(figure._id);
-        else next.add(figure._id);
-        return next;
-      });
-    },
-    [selecting],
-  );
-
-  const endSelect = useCallback(() => {
-    setSelecting(false);
-    setSelected(new Set());
-    setMoveOpen(false);
+  const handleSelect = useCallback((figure: Figure, index: number) => {
+    setViewerIndex(index);
+    setLastOpenedId(figure._id);
   }, []);
 
-  const chosen = (visible as LocalFigure[]).filter((f) => selected.has(f._id));
-  const chosenCopies = chosen.flatMap((f) => f.local.copies.map((c) => c.occ_id));
-
-  // The tabs' default collections, then any user collection of a kind a copy may be filed in.
-  const moveTargets: MoveTarget[] = collections
-    .filter((c) => c.kind !== 'former' && !(c.coll_id === 'default' && c.kind === tab))
-    .map((c) => ({ ref: c.ref, label: c.coll_id === 'default' ? (c.name ?? TAB_LABEL[c.kind]) : `${TAB_LABEL[c.kind]}: ${c.name}` }));
-
-  const handleMove = useCallback(
-    (target: MoveTarget) => {
-      actions
-        .moveCopies(chosenCopies, target.ref)
-        .then(() => showToast(`Moved ${copiesLabel(chosenCopies.length)} to ${target.label}`, 'success'))
-        .catch((err: unknown) => showToast(`Could not move: ${(err as Error).message}`, 'error'))
-        .finally(endSelect);
-    },
-    [actions, chosenCopies, endSelect],
-  );
-
-  const hasActiveFilters = countActiveFilters(filters) > 0;
-
+  // No Select until a selection can do something (BULK-1: move to a cabinet or shelf, change status, mark arrived).
   const headerActions = (
     <>
-      {!fixtureMode && tab !== 'former' && (
-        <button
-          type="button"
-          class="page-collection__select-btn"
-          onClick={() => {
-            if (selecting) endSelect();
-            else {
-              setSelecting(true);
-              setViewerIndex(null);
-            }
-          }}
-        >
-          {selecting ? 'Done' : 'Select'}
-        </button>
-      )}
       <DisplayToggle
         layout={layout}
         density={density}
@@ -284,34 +238,24 @@ export function Collection() {
     );
   }
 
-  const showDetailPane = !selecting && dualPane && viewerIndex !== null && !!visible[viewerIndex];
-  // Select mode lays the tab out as rows, where a tap toggles a tile.
-  const shownLayout = selecting ? 'rows' : layout;
+  const showDetailPane = dualPane && viewerIndex !== null && !!visible[viewerIndex];
+  const shownLayout = layout;
+  const emptyText = fixtureMode ? EMPTY_TAB['owned'] : onlyHolding !== null ? EMPTY_TAB[onlyHolding] : 'Nothing here yet.';
 
   return (
     <div class={`page-collection cq-grid ${shownLayout === 'case' ? 'page-collection--case' : ''}`} data-density={density} ref={pageRef}>
       <SlimHeader context={<span>Collection ({total})</span>} actions={headerActions} />
       {!fixtureMode && outOfReach && <LastSyncedBadge timestamp={lastSynced} />}
-      {!fixtureMode && <CollectionTabs tab={tab} counts={counts} onChange={(t) => { endSelect(); setViewerIndex(null); setTab(t); }} />}
-      <FilterBar
-        filters={filters}
-        sort={sort}
-        order={order}
-        resultCount={visible.length}
-        onOpen={() => setFilterOpen(true)}
-      />
-      <AppliedChips filters={filters} onChange={setFilters} />
+      <AppliedChips filters={filters} defaults={defaults} shown={visible.length} total={total} onChange={setFilters} />
 
       <div class={`page-collection__body ${showDetailPane ? 'page-collection__body--split' : ''}`}>
         <div class="page-collection__grid-col">
           <PullToRefresh onRefresh={handleRefresh}>
-            {figures.length === 0 ? (
-              <p class="page-collection__empty">
-                {hasActiveFilters ? 'No figures match your filters.' : fixtureMode ? EMPTY_TAB['owned'] : EMPTY_TAB[tab]}
-              </p>
+            {scoped.length === 0 ? (
+              <p class="page-collection__empty">{emptyText}</p>
             ) : visible.length === 0 ? (
               <p class="page-collection__empty">No figures match your filters.</p>
-            ) : !fixtureMode && tab === 'former' ? (
+            ) : !fixtureMode && onlyHolding === 'former' ? (
               <FormerList figures={visible as LocalFigure[]} onOpen={(f) => setViewerIndex(visible.indexOf(f))} />
             ) : shownLayout === 'case' ? (
               <div class="page-collection__display page-collection__display--case">
@@ -331,7 +275,6 @@ export function Collection() {
                   onSelect={handleSelect}
                   labels={labels}
                   watermark={<BrandWatermark />}
-                  {...(selecting ? { isSelected: (f: Figure) => selected.has(f._id) } : {})}
                 />
               </div>
             )}
@@ -348,55 +291,37 @@ export function Collection() {
         )}
       </div>
 
-      {selecting && (
-        <div class="page-collection__select-bar">
-          <span>{chosen.length === 0 ? 'Tap figures to select them' : `${chosen.length} selected`}</span>
-          <button
-            type="button"
-            class="page-collection__select-action"
-            disabled={chosenCopies.length === 0}
-            onClick={() => setMoveOpen(true)}
-          >
-            {`Move ${copiesLabel(chosenCopies.length)} to…`}
-          </button>
-        </div>
-      )}
-
-      <MoveSheet
-        open={moveOpen}
-        title={`Move ${copiesLabel(chosenCopies.length)} to`}
-        targets={moveTargets}
-        onPick={handleMove}
-        onClose={() => setMoveOpen(false)}
+      {/* both layouts: Refine's way in now the filter row comes and goes; the View card is the case's */}
+      <CaseTabs
+        order={casePrefs.tabOrder}
+        viewEnabled={shownLayout === 'case'}
+        infoEnabled={lastOpened >= 0}
+        open={caseCard ?? (filterOpen ? 'refine' : null)}
+        onTab={(tab) => {
+          if (tab === 'view') setCaseCard('view');
+          else if (tab === 'refine') setFilterOpen(true);
+          else if (lastOpened >= 0) setViewerIndex(lastOpened);
+        }}
       />
-
-      {shownLayout === 'case' && !selecting && (
-        <CaseTabs
-          order={casePrefs.tabOrder}
-          infoEnabled={lastOpened >= 0}
-          open={caseCard ?? (filterOpen ? 'refine' : null)}
-          onTab={(tab) => {
-            if (tab === 'view') setCaseCard('view');
-            else if (tab === 'refine') setFilterOpen(true);
-            else if (lastOpened >= 0) setViewerIndex(lastOpened);
-          }}
-        />
-      )}
 
       <CaseViewCard open={caseCard === 'view'} prefs={casePrefs} onChange={setCasePrefs} onClose={() => setCaseCard(null)} />
 
       <TabbedFilterSheet
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
-        figures={figures}
+        figures={scoped}
         filters={filters}
+        defaults={defaults}
+        holdings={holdingCounts}
+        shown={visible.length}
+        total={total}
         sort={sort}
         order={order}
         onApply={setFilters}
         onSort={setSort}
       />
 
-      {!selecting && !dualPane && viewerIndex !== null && (
+      {!dualPane && viewerIndex !== null && (
         <FigureViewer
           figures={visible}
           index={viewerIndex}
@@ -478,38 +403,8 @@ const styles = `
     border-right: 1px solid var(--border-subtle);
   }
 
-  .page-collection__select-btn {
-    min-height: 32px;
-    padding: 0 var(--space-3);
-    border-radius: var(--radius-full);
-    font-size: var(--font-sm);
-    color: var(--brand-400);
-  }
-
-  .page-collection__select-bar {
-    position: sticky;
-    bottom: 0;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-page);
-    background: var(--surface-primary);
-    border-top: 1px solid var(--border-subtle);
-    font-size: var(--font-sm);
-  }
-
-  .page-collection__select-action {
-    min-height: 44px;
-    padding: 0 var(--space-4);
-    border-radius: var(--radius-full);
-    background: var(--brand-500);
-    color: #fff;
-    font-weight: 600;
-  }
-
-  .page-collection__select-action:disabled {
-    opacity: 0.5;
+  /* the tiles end above the pull-up tabs (32 px and a 4 px gap), like the case */
+  .page-collection.cq-grid:not(.page-collection--case) {
+    padding-bottom: 36px;
   }
 `;

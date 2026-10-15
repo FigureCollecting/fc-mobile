@@ -60,11 +60,11 @@ describe('Collection page', () => {
     await waitFor(() =>
       expect(within(holding).getAllByRole('button').map((b) => b.textContent)).toEqual(['Owned2', 'Ordered1', 'Wished1', 'No longer owned1']),
     );
-    expect(screen.getByText('2 of 2')).toBeInTheDocument();
+    expect(document.querySelector('.filter-sheet2__count')).toHaveTextContent('2 of 2');
     await user.click(within(holding).getByRole('button', { name: /^Wished/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'D wished' })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'A owned' })).toBeInTheDocument();
-    expect(screen.getByText('3 of 3')).toBeInTheDocument();
+    expect(document.querySelector('.filter-sheet2__count')).toHaveTextContent('3 of 3');
     await user.click(within(holding).getByRole('button', { name: /^Owned/ }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'A owned' })).toBeNull());
     expect(currentPath()).toContain('status=wished');
@@ -85,7 +85,7 @@ describe('Collection page', () => {
     await user.click(screen.getByRole('button', { name: 'Refine' }));
     await user.click(await screen.findByRole('button', { name: /^Alter/ }));
     await waitFor(() => expect(tiles(container)).toHaveLength(1));
-    const row = container.querySelector<HTMLElement>('.applied-chips')!;
+    const row = container.querySelector('.applied-chips') as HTMLElement;
     expect(within(row).getByRole('listitem', { name: 'Remove filter Alter' })).toBeInTheDocument();
     expect(within(row).getByText('1 of 3')).toBeInTheDocument();
     await user.click(within(row).getByRole('listitem', { name: 'Remove filter Alter' }));

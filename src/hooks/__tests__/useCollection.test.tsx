@@ -55,9 +55,12 @@ describe('useCollection', () => {
     const wished = renderHook(() => useCollection({ status: 'wished' }), { wrapper });
     const former = renderHook(() => useCollection({ status: 'former' }), { wrapper });
     const all = renderHook(() => useCollection(), { wrapper });
+    // every holding at once, the No longer owned too: Refine's holdings choose among them (SHEETS-FB1)
+    const every = renderHook(() => useCollection({ status: 'all' }), { wrapper });
     await waitFor(() => expect(former.result.current.data?.total).toBe(1));
     await waitFor(() => expect(wished.result.current.data?.total).toBe(2));
     await waitFor(() => expect(all.result.current.data?.total).toBe(2));
+    await waitFor(() => expect(every.result.current.data?.total).toBe(3));
     expect(former.result.current.data!.data[0]!.local.copies[0]!.disposal).toMatchObject({ reason: 'sold' });
   });
 

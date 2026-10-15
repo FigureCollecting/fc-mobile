@@ -2,7 +2,7 @@ import type { OccurrenceStatus } from '@figurecollecting/fc-api-contract';
 import type { LocalFigure } from '../../local/figures';
 import type { CollectionView } from '../../sync/occurrences';
 import { DisposalLine } from './FormerList';
-import { TAB_LABEL } from './CollectionTabs';
+import { TAB_LABEL } from './holdings';
 import { Style } from '../../styles/Style';
 
 const KINDS: readonly OccurrenceStatus[] = ['owned', 'ordered', 'wished', 'former'];

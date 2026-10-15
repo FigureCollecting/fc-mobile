@@ -244,6 +244,12 @@ describe('attachSheetDrag', () => {
       expect(click(handle)).toEqual({ reached: true, prevented: false });
     });
 
+    it('swallows one click only: a key on the focused handle right after is a click', () => {
+      dragHandle();
+      click(handle);
+      expect(click(handle).reached).toBe(true);
+    });
+
     it('a drag the browser sent no click for (past its slop) leaves the next tap alone', () => {
       dragHandle();
       handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));

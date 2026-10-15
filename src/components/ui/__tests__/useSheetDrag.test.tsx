@@ -11,13 +11,15 @@ interface Props {
   onClose?: () => void;
   onSettle?: (i: number) => void;
   expose?: (api: { settleTo: (i: number) => void; y: () => number }) => void;
+  /** The card stays in the page once closed, as it does while its exit animation runs. */
+  leaving?: boolean;
 }
 
-function Card({ open, onClose, onSettle, expose }: Props) {
+function Card({ open, onClose, onSettle, expose, leaving }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const { y, settleTo } = useSheetDrag({ open, sheetRef, detents: () => [0, 200], initial: 1, onClose, onSettle });
   expose?.({ settleTo, y: () => y.get() });
-  return open ? (
+  return open || leaving ? (
     <motion.div ref={sheetRef} class="card" style={{ y }}>
       <div class="handle">handle</div>
     </motion.div>
@@ -65,6 +67,18 @@ describe('useSheetDrag (the real framer-motion)', () => {
     expect(onSettle).toHaveBeenLastCalledWith(1);
     await act(() => new Promise((r) => setTimeout(r, 400)));
     expect(api.y()).toBeCloseTo(200, 0);
+  });
+
+  it('closed while its card is still leaving (the exit animation), it neither opens it onto a detent again nor follows a finger', async () => {
+    const onSettle = vi.fn();
+    const onClose = vi.fn();
+    const { container, rerender } = render(<Card open leaving onSettle={onSettle} onClose={onClose} />);
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    expect(onSettle).toHaveBeenCalledTimes(1);
+    rerender(<Card open={false} leaving onSettle={onSettle} onClose={onClose} />);
+    drag(container.querySelector('.handle')!, 100, 100 + window.innerHeight);
+    expect(onSettle).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('closed, it has nothing to settle and listens to nothing', () => {

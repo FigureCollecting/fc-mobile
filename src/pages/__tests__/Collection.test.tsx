@@ -154,6 +154,17 @@ describe('Collection page', () => {
     expect(items[1]).toHaveTextContent('Gifted');
   });
 
+  it('No longer owned chosen with another holding: one grid of both, not the no-longer-owned list', async () => {
+    const r = await localRig();
+    await seedFigures(r, [
+      { title: 'Sold one', status: 'former', disposal: { reason: 'sold' } },
+      { title: 'Kept one' },
+    ]);
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows&status=former|owned' });
+    await waitFor(() => expect(tiles(container)).toHaveLength(2));
+    expect(screen.queryByRole('list', { name: 'No longer owned' })).toBeNull();
+  });
+
   it('no Select until a selection can do something (BULK-1): no dead control in the header (SHEETS-FB1 5)', async () => {
     const r = await localRig();
     await seedFigures(r, [{ title: 'Pair', copies: 2, status: 'wished' }]);

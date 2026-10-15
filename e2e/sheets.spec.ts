@@ -341,6 +341,55 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
   });
 }
 
+/** The collection, reached from Settings, so a Back that is not the viewer's own leaves for Settings. */
+async function openCaseFromSettings(page: Page, size: { width: number; height: number }): Promise<{ settings: string; collection: string }> {
+  await page.addInitScript(() => {
+    localStorage.setItem('onboarding_complete', '1');
+    localStorage.setItem('fc-fixture-mode', 'on');
+  });
+  await page.setViewportSize(size);
+  await page.goto('/settings');
+  await page.waitForLoadState('networkidle');
+  const settings = page.url();
+  await page.goto('/?layout=case');
+  await page.waitForSelector('button.cab-figure');
+  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  // the case frames itself to the screen: let it settle before aiming at a figure
+  await page.waitForTimeout(500);
+  return { settings, collection: page.url() };
+}
+
+for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
+  test(`History: Info closed by its X three times leaves no entry behind; Back then leaves the page: ${size.name}`, async ({ page }) => {
+    const { settings, collection } = await openCaseFromSettings(page, size);
+    for (let i = 0; i < 3; i++) {
+      await openFigure(page);
+      await expect(page.locator('.pswp')).toBeVisible();
+      await page.getByRole('button', { name: 'Close', exact: true }).tap();
+      await expect(page.locator('.pswp')).toHaveCount(0);
+    }
+    await page.waitForTimeout(300);
+    expect(page.url()).toBe(collection);
+    await page.goBack();
+    await expect.poll(() => page.url()).toBe(settings);
+  });
+
+  test(`History: Info closed by its X and opened again at once (its Back still owed): Back closes it, the next Back leaves: ${size.name}`, async ({ page }) => {
+    const { settings, collection } = await openCaseFromSettings(page, size);
+    await openFigure(page);
+    await expect(page.locator('.pswp')).toBeVisible();
+    await page.getByRole('button', { name: 'Close', exact: true }).tap();
+    await openFigure(page);
+    await expect(page.locator('.figure-viewer-sheet')).toBeVisible();
+    await page.waitForTimeout(500);
+    await page.goBack();
+    await expect(page.locator('.figure-viewer-sheet')).toHaveCount(0);
+    expect(page.url()).toBe(collection);
+    await page.goBack();
+    await expect.poll(() => page.url()).toBe(settings);
+  });
+}
+
 for (const size of FOLD8.filter((v) => v.width >= DUAL_PANE_MIN_WIDTH)) {
   test(`Info pane: its X, Back and Esc each close it; every field shows: ${size.name}`, async ({ page }) => {
     await openCase(page, size);

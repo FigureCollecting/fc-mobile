@@ -11,6 +11,7 @@ function Overlay({ onClose }: { onClose: () => void }) {
 const settle = () => new Promise((r) => setTimeout(r, 30));
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await settle();
   history.replaceState(null, '', '/');
 });
@@ -114,6 +115,45 @@ describe('useBackToClose: Android Back / browser Back closes an overlay (SHEETS-
     expect(third).not.toHaveBeenCalled();
     history.back();
     await waitFor(() => expect(third).toHaveBeenCalledTimes(1));
+  });
+
+  it('closed by its X, it takes its own entry off: one Back of one step, and the next Back leaves the page', async () => {
+    history.replaceState(null, '', '/settings');
+    history.pushState(null, '', '/?layout=case');
+    await settle();
+    const go = vi.spyOn(history, 'go');
+    const { unmount } = render(<Overlay onClose={() => {}} />);
+    unmount();
+    await settle();
+    expect(go.mock.calls).toEqual([[-1]]);
+    expect(location.search).toBe('?layout=case');
+    history.back();
+    await settle();
+    expect(location.pathname).toBe('/settings');
+  });
+
+  it('two closing at once take both entries off in ONE history.go(-2), never a go(0) after it (a reload)', async () => {
+    history.replaceState(null, '', '/?layout=rows');
+    const go = vi.spyOn(history, 'go');
+    const a = render(<Overlay onClose={() => {}} />);
+    const b = render(<Overlay onClose={() => {}} />);
+    b.unmount();
+    a.unmount();
+    await settle();
+    expect(go.mock.calls).toEqual([[-2]]);
+  });
+
+  it('one opened and closed while a Back is still owed never takes an entry: nothing is pushed for it once the Back lands', async () => {
+    history.replaceState(null, '', '/?layout=rows');
+    const push = vi.spyOn(history, 'pushState');
+    const go = vi.spyOn(history, 'go');
+    const first = render(<Overlay onClose={() => {}} />);
+    first.unmount();
+    const second = render(<Overlay onClose={() => {}} />);
+    second.unmount();
+    await settle();
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(go.mock.calls).toEqual([[-1]]);
   });
 
   it('closed before its entry was taken (a Back still owed), it leaves none behind', async () => {

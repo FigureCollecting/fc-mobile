@@ -1,6 +1,7 @@
 // Shared stub for framer-motion — lets component tests render without dragging
 // into pointer-event / animation-loop territory.
-import type { ComponentChildren } from 'preact';
+import type { ComponentChildren, Ref } from 'preact';
+import { forwardRef } from 'preact/compat';
 
 const SKIP_PROPS = new Set([
   'drag',
@@ -47,13 +48,14 @@ function cleanProps(props: Record<string, unknown>) {
   return cleaned;
 }
 
+// Like the real motion components, a ref reaches the DOM element.
 function makeTag(tag: string) {
-  return (props: { children?: ComponentChildren } & Record<string, unknown>) => {
+  return forwardRef((props: { children?: ComponentChildren } & Record<string, unknown>, ref: Ref<unknown>) => {
     const { children, ...rest } = props;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const TagAny = tag as any;
-    return <TagAny {...cleanProps(rest)}>{children}</TagAny>;
-  };
+    return <TagAny {...cleanProps(rest)} ref={ref}>{children}</TagAny>;
+  });
 }
 
 // One component per tag, so a re-render keeps the same component (and its DOM) like the real one.

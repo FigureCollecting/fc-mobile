@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { screen, fireEvent } from '@testing-library/preact';
 
 vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
 
@@ -33,5 +33,19 @@ describe('DetentSheet', () => {
     );
     expect(document.body.querySelector('.detent-sheet')).toBeNull();
     expect(screen.queryByText('hidden')).toBeNull();
+  });
+
+  it('its handle is a button a finger lands on (not a chip beside it), and a tap raises the card to full and lowers it to half', () => {
+    renderWithProviders(
+      <DetentSheet open onClose={() => {}}>
+        <p>body</p>
+      </DetentSheet>,
+    );
+    const sheet = document.body.querySelector('.detent-sheet')!;
+    expect(sheet).toHaveAttribute('data-detent', 'half');
+    fireEvent.click(screen.getByRole('button', { name: 'Raise the card' }));
+    expect(sheet).toHaveAttribute('data-detent', 'full');
+    fireEvent.click(screen.getByRole('button', { name: 'Lower the card' }));
+    expect(sheet).toHaveAttribute('data-detent', 'half');
   });
 });

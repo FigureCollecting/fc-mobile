@@ -15,6 +15,9 @@
  *   speed from that point, cancelling the browser's scroll where it still can.
  * A release settles on the detent nearest to where the release velocity projects, in one short animation
  * (SETTLE_MS), or closes when that is past the midpoint to off screen.
+ * A drag is never also a tap: the browser still sends a click for a finger that moved less than its own tap
+ * slop (about 15 px in Chromium, 8 dp on Android), which on the handle would undo the drag; that click is
+ * swallowed before it reaches anything on the card.
  */
 
 /** What moves the card: its translateY in px. */
@@ -104,6 +107,8 @@ export function attachSheetDrag(
   let pending: { id: number; y: number } | null = null;
   // a finger on the contents: undecided until it moves, then scrolling them or holding the card
   let touch: { last: number; mode: 'undecided' | 'scroll' | 'card' } | null = null;
+  // a drag has just been let go: the click the browser may still send for it is no tap
+  let dragged = false;
 
   const top = () => config.detents()[0] ?? 0;
 
@@ -129,6 +134,7 @@ export function attachSheetDrag(
   const release = () => {
     const held = hold!;
     hold = null;
+    dragged = true;
     const y = driver.get();
     held.samples.push({ t: Date.now(), y });
     const rest = restFor(y, releaseVelocity(held.samples), config.detents(), config.closeY());
@@ -160,6 +166,8 @@ export function attachSheetDrag(
   };
 
   const onPointerDown = (e: PointerEvent) => {
+    // a new finger: a click from here on is its own
+    dragged = false;
     if (e.button !== 0) return;
     // the contents scroll; their own touch moves hand off to the card (below)
     if (content !== null && content.contains(e.target as Node)) return;
@@ -201,6 +209,14 @@ export function attachSheetDrag(
     if (held && hold !== null) release();
   };
 
+  // capturing, so nothing on the card (the handle's own tap) sees the click
+  const onClick = (e: MouseEvent) => {
+    if (!dragged) return;
+    dragged = false;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   // a turn of the phone, or new contents: back on its detent where that moved, at once
   const onResize = () => {
     if (hold !== null || restIndex === null) return;
@@ -214,6 +230,9 @@ export function attachSheetDrag(
   resized?.observe(sheet);
 
   sheet.addEventListener('pointerdown', onPointerDown);
+  // never taken off: a drag that closes the card detaches it before the click comes, while the card, leaving, is
+  // still under the finger; it does nothing until a drag lets go
+  sheet.addEventListener('click', onClick, true);
   window.addEventListener('resize', onResize);
   if (content !== null) {
     content.addEventListener('touchstart', onTouchStart, { passive: true });

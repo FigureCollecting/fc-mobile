@@ -17,7 +17,9 @@
  * (SETTLE_MS), or closes when that is past the midpoint to off screen.
  * A drag is never also a tap: the browser still sends a click for a finger that moved less than its own tap
  * slop (about 15 px in Chromium, 8 dp on Android), which on the handle would undo the drag; that click is
- * swallowed before it reaches anything on the card.
+ * swallowed before it reaches anything on the card. Only that one: a pointer's click (detail 1 and up) within
+ * CLICK_AFTER_DRAG_MS of the lift. A click no pointer made (Enter or Space on a focused control, an assistive
+ * activation: detail 0) is always the user's, and so is any click later than that.
  */
 
 /** What moves the card: its translateY in px. */
@@ -50,6 +52,8 @@ export interface SheetDragController {
 export const SETTLE_MS = 240;
 /** How far a pointer moves before it is a drag rather than a tap. */
 export const SLOP_PX = 4;
+/** The browser's click for a lift comes at once; one later than this after a drag is not the drag's. */
+export const CLICK_AFTER_DRAG_MS = 400;
 /** Past the top detent the card moves this fraction of the finger. */
 export const RUBBER = 0.25;
 /** A release is judged where its velocity would carry the card in this long. */
@@ -107,8 +111,8 @@ export function attachSheetDrag(
   let pending: { id: number; y: number } | null = null;
   // a finger on the contents: undecided until it moves, then scrolling them or holding the card
   let touch: { last: number; mode: 'undecided' | 'scroll' | 'card' } | null = null;
-  // a drag has just been let go: the click the browser may still send for it is no tap
-  let dragged = false;
+  // when a drag was let go (its lift's event time), until the click the browser may still send for it; that is no tap
+  let releasedAt: number | null = null;
 
   const top = () => config.detents()[0] ?? 0;
 
@@ -131,10 +135,10 @@ export function attachSheetDrag(
     config.onSettle(restIndex);
   };
 
-  const release = () => {
+  const release = (at: number) => {
     const held = hold!;
     hold = null;
-    dragged = true;
+    releasedAt = at;
     const y = driver.get();
     held.samples.push({ t: Date.now(), y });
     const rest = restFor(y, releaseVelocity(held.samples), config.detents(), config.closeY());
@@ -162,12 +166,12 @@ export function attachSheetDrag(
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerEnd);
     window.removeEventListener('pointercancel', onPointerEnd);
-    if (hold !== null) release();
+    if (hold !== null) release(e.timeStamp);
   };
 
   const onPointerDown = (e: PointerEvent) => {
     // a new finger: a click from here on is its own
-    dragged = false;
+    releasedAt = null;
     if (e.button !== 0) return;
     // the contents scroll; their own touch moves hand off to the card (below)
     if (content !== null && content.contains(e.target as Node)) return;
@@ -203,16 +207,19 @@ export function attachSheetDrag(
     follow(y);
   };
 
-  const onTouchEnd = () => {
+  const onTouchEnd = (e: TouchEvent) => {
     const held = touch?.mode === 'card';
     touch = null;
-    if (held && hold !== null) release();
+    if (held && hold !== null) release(e.timeStamp);
   };
 
   // capturing, so nothing on the card (the handle's own tap) sees the click
   const onClick = (e: MouseEvent) => {
-    if (!dragged) return;
-    dragged = false;
+    // no pointer made it (a key, an assistive activation): the user's, whenever it comes
+    if (releasedAt === null || e.detail === 0) return;
+    const late = e.timeStamp - releasedAt > CLICK_AFTER_DRAG_MS;
+    releasedAt = null;
+    if (late) return;
     e.preventDefault();
     e.stopPropagation();
   };

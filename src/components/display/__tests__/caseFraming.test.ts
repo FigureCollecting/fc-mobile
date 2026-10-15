@@ -269,14 +269,17 @@ describe('CC4 pan: the photo slides at most until its edge looks PAN_EDGE_TAN_MA
     const slide = base.slideMaxPx!;
 
     it(`${name}: the slide ends where the frame's edge looks PAN_EDGE_TAN_MAX off the axis, or sooner where the cap ends it`, () => {
+      // the drawn frame: the panel's, cropped to five fronts where the full-height camera would show more (CASE-FB1)
+      const drawn = base.camera.frame;
+      expect(drawn.height).toBe(frame.height);
       const edge = panSlideMaxPx(base.camera);
-      expect(edge).toBeCloseTo(base.camera.focalPx * PAN_EDGE_TAN_MAX - frame.width / 2, 9);
-      expect(edge).toBeGreaterThan(frame.width / 2);
+      expect(edge).toBeCloseTo(base.camera.focalPx * PAN_EDGE_TAN_MAX - drawn.width / 2, 9);
+      expect(edge).toBeGreaterThan(drawn.width / 2);
       expect(panSlideMaxPx({ ...base.camera, focalPx: 1 })).toBe(0);
       // MOB-NAV-2: the slid frame shows no longer a stretch of the cabinets' fronts than the cap allows
       expect(slide).toBe(Math.min(edge, capSlidePx(base.camera, fronts, capSpanMm(long))));
-      expect(slide).toBeGreaterThanOrEqual(frame.width / 2);
-      expect(slide).toBeLessThan(edge);
+      expect(slide).toBeGreaterThanOrEqual(drawn.width / 2);
+      expect(slide).toBeLessThanOrEqual(edge);
     });
 
     it(`${name}: within the slide the camera stays and the picture slides by the pan`, () => {
@@ -564,11 +567,12 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
         const most = Math.max(...stops.map((s) => s.whole.length));
         const need = Math.min(3, most);
         if (most < 3) short.push(`${name} ${frame.width}x${frame.height} ${most}`);
+        // across the drawn frame (CASE-FB1: cropped to five fronts where the full-height camera would show more)
         const whole = (camera: Camera, lookY: number) =>
           wall.cabinets.flatMap((slot, i) =>
             [slot.leftMm, slot.rightMm].every((x) => {
               const p = project(camera, [x, lookY, 0]);
-              return p.x >= 0 && p.x <= frame.width;
+              return p.x >= 0 && p.x <= camera.frame.width;
             })
               ? [i]
               : [],
@@ -836,7 +840,8 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
         expect(stops[stops.length - 1].x, at).toBe(wall.cabinets[wall.cabinets.length - 1].centerMm);
         for (const [out, back] of [
           [(f: Framing) => -walkDeadPx(f, wall), (f: Framing) => walkDeadPx(f, wall)],
-          [() => -0.7 * frame.width, () => 0.4 * frame.width],
+          // long swipes: a share of the drawn frame (CASE-FB1: cropped to five fronts on a short panel), past the dead zone
+          [(f: Framing) => -Math.max(0.7 * f.camera.frame.width, walkDeadPx(f, wall)), (f: Framing) => Math.max(0.4 * f.camera.frame.width, walkDeadPx(f, wall))],
         ]) {
           let focus = 0;
           let x: number | null = null;
@@ -1170,8 +1175,18 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
             for (const i of f.page) {
               const b = cabinetBox(wall.cabinets[i], top - wall.cabinets[i].profile.outer.heightMm);
               const at = `${name} ${frame.width}x${frame.height} ${view} ${focus}: cabinet ${i}`;
+              const m = frameMargins(f.camera.frame);
               for (const x of [b.x0, b.x1]) {
-                for (const z of [b.z0, b.z1]) for (const y of [0, top]) expect(insideOf(f.camera, [x, y, z]), `${at} corner ${x},${y},${z}`).toBe(true);
+                for (const z of [b.z0, b.z1]) {
+                  for (const y of [0, top]) {
+                    const p = project(f.camera, [x, y, z]);
+                    // floor to top inside the frame's top and bottom margins; side to side too, where the view centres
+                    // on the one cabinet (the wall view opens a page whole across at the height it aims at: wholeCabinets)
+                    expect(p.y, `${at} corner ${x},${y},${z}`).toBeGreaterThanOrEqual(m.y - 1e-3);
+                    expect(p.y, `${at} corner ${x},${y},${z}`).toBeLessThanOrEqual(f.camera.frame.height - m.y + 1e-3);
+                    if (view === 'cabinet') expect(insideOf(f.camera, [x, y, z]), `${at} corner ${x},${y},${z}`).toBe(true);
+                  }
+                }
               }
               expect(insideOf(f.camera, [wall.cabinets[i].centerMm, 0, b.z1 + FLOOR_STRIP_MM]), `${at}: the floor strip`).toBe(true);
             }
@@ -1291,7 +1306,9 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
 
   it('the room: its back wall stands from the floor to the ceiling, behind the deepest cabinet, past both ends of the wall', () => {
     const wall = WALLS[1][1];
-    expect(roomBox(wall, 2438.4)).toEqual({ x0: wall.leftMm - 6000, x1: wall.rightMm + 6000, y1: 2438.4, zBack: -400 - 450, zFront: -400 - 450 + 6500 });
+    // the rack is the deepest of the three
+    const zBack = -OPEN_STEEL_RACK.outer.depthMm - 450;
+    expect(roomBox(wall, 2438.4)).toEqual({ x0: wall.leftMm - 6000, x1: wall.rightMm + 6000, y1: 2438.4, zBack, zFront: zBack + 6500 });
     expect(roomBox(wall, 3048).y1).toBe(3048);
   });
 });

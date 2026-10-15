@@ -105,7 +105,8 @@ describe('CabinetScene: faithful cabinets from the profile (CASE-CABINET)', () =
     const a = mm(narrow.host);
     cleanup();
     const wide = scene(FIXTURE_FIGURES, {}, { frameFallback: { width: 900, height: 480 } });
-    expect(mm(wide.host)).toBeCloseTo(a, 6);
+    // the width is written to 1e-6 px: at the farther full-height camera's px per mm that is some 1e-5 mm
+    expect(mm(wide.host)).toBeCloseTo(a, 4);
   });
 });
 
@@ -1063,8 +1064,9 @@ describe("CabinetScene: the room's wall and floor never cost the screen its chro
     expect(sizes.map(([, px]) => px)).toEqual([sizes[0][1], sizes[1][1], sizes[0][1], sizes[1][1]]);
   });
 
-  it('they still stand where they stood: 6 m past each end of the wall, the floor 6.5 m deep, the wall 3.2 m tall, cut to what the frame sees', () => {
+  it('they still stand where they stood: 6 m past each end of the wall, the floor 6.5 m deep, the wall up to the room\'s ceiling (CASE-FB1), cut to what the frame sees', () => {
     const { host } = scene(FIXTURE_FIGURES);
+    const ceiling = DEFAULT_CASE_PREFS.ceilingMm;
     const s = pxPerMm(host);
     const wall = wallLayout([IKEA_KLINGSBO]);
     const zBack = -IKEA_KLINGSBO.outer.depthMm - 450;
@@ -1084,8 +1086,12 @@ describe("CabinetScene: the room's wall and floor never cost the screen its chro
     near(f1, [x1, -0, zBack + 6500]);
     const back = host.querySelector('.q.room-wall') as HTMLElement;
     const [w0, w1] = whole(back);
-    near(w0, [x0, -3200, zBack]);
+    near(w0, [x0, -ceiling, zBack]);
     near(w1, [x1, -0, zBack]);
+    // the ceiling over the room, as deep as the floor
+    const [c0, c1] = whole(host.querySelector('.q.room-ceiling') as HTMLElement);
+    near(c0, [x0, -ceiling, zBack]);
+    near(c1, [x1, -ceiling, zBack + 6500]);
     // and the element itself, the part drawn, lies inside them
     const [ww, wh] = [parseFloat(back.style.width), parseFloat(back.style.height)];
     for (const [x, y] of [
@@ -1095,7 +1101,7 @@ describe("CabinetScene: the room's wall and floor never cost the screen its chro
       const [wx, wy] = world(back, x, y);
       expect(wx).toBeGreaterThanOrEqual(x0 - 1e-6);
       expect(wx).toBeLessThanOrEqual(x1 + 1e-6);
-      expect(wy).toBeGreaterThanOrEqual(-3200 - 1e-6);
+      expect(wy).toBeGreaterThanOrEqual(-ceiling - 1e-6);
       expect(wy).toBeLessThanOrEqual(1e-6);
     }
   });
@@ -1633,5 +1639,113 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     expect(getComputedStyle(nav).display).toBe('contents');
     // the buttons still stand at the scene's edges
     expect(getComputedStyle(host.querySelector('.cabinet-scene__step--prev')!).position).toBe('absolute');
+  });
+});
+
+describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down drag', () => {
+  const cam = (host: HTMLElement) => JSON.parse(host.dataset.camera!) as { x: number; y: number; z: number; pitch: number; focalPx: number; width: number; height: number };
+
+  /** A one-finger drag by (dx, dy), in steps, then lifted (or cancelled). */
+  function drag2(el: HTMLElement, dx: number, dy: number, end: 'up' | 'cancel' = 'up') {
+    fireEvent.pointerDown(el, { pointerId: 7, clientX: 200, clientY: 200, button: 0 });
+    for (let k = 1; k <= 4; k++) fireEvent.pointerMove(el, { pointerId: 7, clientX: 200 + (dx * k) / 4, clientY: 200 + (dy * k) / 4 });
+    if (end === 'up') fireEvent.pointerUp(el, { pointerId: 7, clientX: 200 + dx, clientY: 200 + dy });
+    else fireEvent.pointerCancel(el, { pointerId: 7, clientX: 200 + dx, clientY: 200 + dy });
+  }
+
+  it('the picture is drawn in the camera\'s frame, centred: cropped on a short wide panel, the whole panel on a tall one', () => {
+    const wide = scene(getFixtureFigures(60), { view: 'wall' }, { frameFallback: { width: 870, height: 335 } });
+    const c = cam(wide.host);
+    const el = wide.host.querySelector('.cabinet-scene__frame') as HTMLElement;
+    expect(c.width).toBeLessThan(870);
+    expect(c.height).toBe(335);
+    expect(el.style.width).toBe(`${c.width}px`);
+    expect(el.style.left).toBe(`${(870 - c.width) / 2}px`);
+    cleanup();
+    const tall = scene(getFixtureFigures(60), { view: 'wall' }, { frameFallback: { width: 412, height: 701 } });
+    expect(cam(tall.host).width).toBe(412);
+    expect((tall.host.querySelector('.cabinet-scene__frame') as HTMLElement).style.left).toBe('0px');
+  });
+
+  it('publishes its room: the ceiling the View card sets, and the back wall', () => {
+    const { host } = scene(FIXTURE_FIGURES, { ceilingMm: 3048 });
+    expect(JSON.parse(host.dataset.room!)).toEqual({ ceilingMm: 3048, zBack: -IKEA_KLINGSBO.outer.depthMm - 450 });
+  });
+
+  it('camera mode: a drag down raises the camera and its aim, nothing else; it keeps that height through a walk', () => {
+    const { host } = scene(getFixtureFigures(60), { swipe: 'camera', view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
+    const before = cam(host);
+    drag2(host, 3, 60);
+    const up = cam(host);
+    expect(up.y).toBeGreaterThan(before.y + 10);
+    expect({ ...up, y: before.y }).toEqual(before);
+    expect(host.dataset.panY).toBe('0');
+    // a sideways walk keeps the height
+    drag2(host, -200, 5);
+    const walked = cam(host);
+    expect(walked.x).toBeGreaterThan(up.x);
+    expect(walked.y).toBe(up.y);
+    // never past the ceiling, however far it is dragged
+    for (let k = 0; k < 10; k++) drag2(host, 0, 400);
+    expect(cam(host).y).toBeLessThanOrEqual(DEFAULT_CASE_PREFS.ceilingMm + 1e-6);
+    // and never below the floor
+    for (let k = 0; k < 20; k++) drag2(host, 0, -400);
+    expect(cam(host).y).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it('camera mode: a cancelled drag puts the camera back; a short one (under the swipe start) is no drag', () => {
+    const { host } = scene(FIXTURE_FIGURES, { swipe: 'camera', view: 'cabinet' });
+    const before = cam(host);
+    drag2(host, 0, 60, 'cancel');
+    expect(cam(host)).toEqual(before);
+    drag2(host, 0, SWIPE_START_PX - 1);
+    expect(cam(host)).toEqual(before);
+  });
+
+  it('pan mode: a drag down slides the photo down to the ceiling, never past it, and back up no farther than it opened', () => {
+    const { host } = scene(FIXTURE_FIGURES, { swipe: 'pan', view: 'cabinet' });
+    const before = cam(host);
+    drag2(host, 0, 30);
+    expect(Number(host.dataset.panY)).toBe(30);
+    expect(cam(host)).toEqual(before);
+    expect(host.dataset.pan).toBe('0');
+    const viewport = host.querySelector('.cabinet-scene__viewport') as HTMLElement;
+    expect(viewport.style.transform).toBe('translate(0px, 30px)');
+    for (let k = 0; k < 10; k++) drag2(host, 0, 400);
+    const top = Number(host.dataset.panY);
+    expect(top).toBeGreaterThan(30);
+    const c = cam(host);
+    const camera: Camera = { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
+    expect(project(camera, [c.x, DEFAULT_CASE_PREFS.ceilingMm, 0]).y + top).toBeCloseTo(0, 0);
+    for (let k = 0; k < 10; k++) drag2(host, 0, -400);
+    expect(host.dataset.panY).toBe('0');
+    expect(viewport.style.transform).toBe('');
+  });
+
+  it('a drag goes along the axis it first moves farther on: mostly sideways walks, mostly up or down lifts', () => {
+    const { host } = scene(getFixtureFigures(60), { swipe: 'camera', view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
+    const before = cam(host);
+    drag2(host, 40, 120);
+    expect(cam(host).x).toBe(before.x);
+    expect(cam(host).y).toBeGreaterThan(before.y);
+    const raised = cam(host);
+    drag2(host, -200, 60);
+    expect(cam(host).x).toBeGreaterThan(raised.x);
+    expect(cam(host).y).toBe(raised.y);
+  });
+
+  it('a new swipe mode, view or pattern starts from its own framing: the camera back down, the photo unslid', () => {
+    const figures = getFixtureFigures(60);
+    const utils = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
+    const host = utils.container.querySelector('.cabinet-scene') as HTMLElement;
+    const opened = cam(host);
+    drag2(host, 0, 120);
+    expect(cam(host).y).toBeGreaterThan(opened.y);
+    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
+    expect(cam(host).y).toBe(opened.y);
+    drag2(host, 0, 40);
+    expect(Number(host.dataset.panY)).toBeGreaterThan(0);
+    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
+    expect(host.dataset.panY).toBe('0');
   });
 });

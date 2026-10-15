@@ -160,7 +160,7 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     const camera = framing(OPEN, 10).camera;
     const got = nearestCabinets(viewOf(camera), WALL, []);
     expect(got).toHaveLength(MAX_DRAWN_CABINETS);
-    const dist = (i: number) => Math.abs(screen(viewOf(camera), [WALL.cabinets[i].centerMm, IKEA_KLINGSBO.outer.heightMm / 2, 0]).x - OPEN.width / 2);
+    const dist = (i: number) => Math.abs(screen(viewOf(camera), [WALL.cabinets[i].centerMm, IKEA_KLINGSBO.outer.heightMm / 2, 0]).x - camera.frame.width / 2);
     const rest = WALL.cabinets.map((_, i) => i).filter((i) => !got.includes(i));
     expect(Math.max(...got.map(dist))).toBeLessThanOrEqual(Math.min(...rest.map(dist)));
     expect(got).toEqual([...got].sort((x, y) => x - y));
@@ -256,8 +256,9 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
       for (let k = -12; k <= 12; k++) {
         const r = panFraming(f, (k / 12) * (f.slideMaxPx ?? 0) * 1.5);
         const view = viewOf(r.framing.camera, r.panPx);
-        // each cabinet's front, feet to top, on the front plane, where it draws inside the frame itself
-        const rect = { x0: 0, x1: frame.width, y0: 0, y1: frame.height };
+        // each cabinet's front, feet to top, on the front plane, where it draws inside the frame itself (CASE-FB1: the
+        // drawn frame, cropped to five fronts where the full-height camera would show more)
+        const rect = { x0: 0, x1: f.camera.frame.width, y0: 0, y1: f.camera.frame.height };
         const fronts = wall.cabinets.flatMap((slot, i) => {
           const b = cabinetBox(slot, 0);
           return trimFace(view, [b.x0, b.y0, 0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0], rect) ? [i] : [];
@@ -308,18 +309,18 @@ describe('stickyView: re-cull on a camera change, not on every small move', () =
 
   it(`keeps the culled view while the picture has moved less than ${RECULL_SHARE * 100} % of the frame width, by a pan or a walk`, () => {
     expect(RECULL_SHARE).toBe(0.25);
-    const smallPan = viewOf(camera, -0.2 * COVER.width);
+    const smallPan = viewOf(camera, -0.2 * camera.frame.width);
     expect(stickyView(view, smallPan)).toBe(view);
     const perPx = (camera.z - 0) / camera.focalPx;
-    const smallWalk = viewOf({ ...camera, x: camera.x + 0.2 * COVER.width * perPx * 0.9 });
+    const smallWalk = viewOf({ ...camera, x: camera.x + 0.2 * camera.frame.width * perPx * 0.9 });
     expect(stickyView(view, smallWalk)).toBe(view);
   });
 
   it('takes the new view once the picture moved farther, or anything but the camera x and the pan changed', () => {
-    const bigPan = viewOf(camera, -0.3 * COVER.width);
+    const bigPan = viewOf(camera, -0.3 * camera.frame.width);
     expect(stickyView(view, bigPan)).toBe(bigPan);
     const perPx = (camera.z - 0) / camera.focalPx;
-    const bigWalk = viewOf({ ...camera, x: camera.x + 0.4 * COVER.width * perPx });
+    const bigWalk = viewOf({ ...camera, x: camera.x + 0.4 * camera.frame.width * perPx });
     expect(stickyView(view, bigWalk)).toBe(bigWalk);
     for (const patch of [{ z: camera.z + 1 }, { y: camera.y + 1 }, { pitch: camera.pitch + 0.01 }, { focalPx: camera.focalPx + 1 }, { frame: OPEN }]) {
       const next = viewOf({ ...camera, ...patch });

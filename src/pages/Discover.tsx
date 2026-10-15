@@ -14,7 +14,7 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { requireSession } from '../local/session';
 import type { LocalFigure } from '../local/figures';
 import { cardName } from '../local/cardName';
-import { TAB_LABEL } from '../components/collection/CollectionTabs';
+import { TAB_LABEL } from '../components/collection/holdings';
 import { showToast } from '../stores/toast';
 import { Style } from '../styles/Style';
 

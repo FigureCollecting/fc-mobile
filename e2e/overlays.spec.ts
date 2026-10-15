@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { atRest } from './sheetRest';
 
 /**
  * These tests exist because jsdom (the unit-test environment) cannot see
@@ -30,7 +31,7 @@ test.describe('overlay layout and stacking (real browser, fixture mode)', () => 
     await page.goto('/?layout=case');
     await page.waitForSelector('button.cab-figure');
 
-    await page.locator('.filter-bar__btn').first().click();
+    await page.getByRole('button', { name: 'Refine' }).click();
     const sheet = page.locator('.detent-sheet[data-detent="half"]');
     await expect(sheet).toBeVisible();
     // The open/detent transition is a framer-motion spring — let it settle
@@ -64,6 +65,8 @@ test.describe('overlay layout and stacking (real browser, fixture mode)', () => 
     await page.waitForSelector('.pswp');
     const sheet = page.locator('.figure-viewer-sheet');
     await expect(sheet).toBeVisible();
+    // it pulls up like the other cards (SHEETS-FB1): read it at rest
+    await atRest(sheet);
 
     // Portaled to body, sharing photoswipe's stacking context.
     const parentTag = await sheet.evaluate((el) => el.parentElement?.tagName.toLowerCase());
@@ -72,7 +75,9 @@ test.describe('overlay layout and stacking (real browser, fixture mode)', () => 
     const box = await sheet.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.top ?? box!.y).toBeLessThan(780);
-    expect(box!.y + box!.height).toBeLessThanOrEqual(780 + 2);
+    // it peeks at its summary (the rest pulls up from below the screen, SHEETS-FB1): the summary is on screen
+    const summary = (await sheet.locator('.figure-viewer-sheet__summary').boundingBox())!;
+    expect(summary.y + summary.height).toBeLessThanOrEqual(780 + 2);
 
     const [sheetZ, pswpZ] = await Promise.all([
       sheet.evaluate((el) => Number(getComputedStyle(el).zIndex)),

@@ -56,15 +56,17 @@ function Icon({ tab }: { tab: CaseCard }) {
 
 interface CaseTabsProps {
   order: readonly CaseTab[];
+  /** The View card is the case's: on the tiles its slot stays, empty, so the others never move. */
+  viewEnabled?: boolean;
   /** Info opens the figure last tapped; until then there is nothing to show. */
   infoEnabled: boolean;
   open: CaseCard | null;
   onTab: (tab: CaseCard) => void;
 }
 
-export function CaseTabs({ order, infoEnabled, open, onTab }: CaseTabsProps) {
+export function CaseTabs({ order, viewEnabled = true, infoEnabled, open, onTab }: CaseTabsProps) {
   const slot = (tab: CaseTab) => {
-    if (tab === 'reserved') return <span key={tab} class="case-tabs__slot case-tabs__slot--reserved" data-tab={tab} aria-hidden="true" />;
+    if (tab === 'reserved' || (tab === 'view' && !viewEnabled)) return <span key={tab} class="case-tabs__slot case-tabs__slot--reserved" data-tab={tab} aria-hidden="true" />;
     return (
       <button
         key={tab}

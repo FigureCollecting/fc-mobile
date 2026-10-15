@@ -2,6 +2,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { FigureDetailContent } from './FigureDetailContent';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
+import { useBackToClose } from '../../hooks/useBackToClose';
 
 interface DetailPaneProps {
   figure: Figure;
@@ -20,6 +21,8 @@ interface DetailPaneProps {
 export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
   // An image that fails to load is drawn as the placeholder (ADDR-1), never a blank box.
   const images = useBrokenImages();
+  // Back and Esc close it too (SHEETS-FB1 6c), unless a card is open over it: they close the one on top
+  useBackToClose(onClose);
   const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
   return (
     <aside class="detail-pane">

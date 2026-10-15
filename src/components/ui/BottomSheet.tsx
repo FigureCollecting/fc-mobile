@@ -1,7 +1,8 @@
-import { useRef, useCallback } from 'preact/hooks';
+import { useRef } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
-import { motion, AnimatePresence, useDragControls } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Style } from '../../styles/Style';
+import { offScreenY, useSheetDrag } from './useSheetDrag';
 
 /** 'fit': as tall as its content, at most 85 % of the space it opens in and never past its top, its body scrolling the rest; its bottom just above the raised +. */
 type SnapPoint = 'closed' | 'half' | 'full' | 'fit';
@@ -13,27 +14,29 @@ interface BottomSheetProps {
   children: ComponentChildren;
 }
 
-const SNAP_POSITIONS = {
-  closed: '100%',
-  half: '50%',
-  full: '6%',
-  fit: '0%',
-} as const;
+/** How far down the card stands at its one detent, as a fraction of its height. */
+const DOWN_BY: Record<SnapPoint, number> = {
+  closed: 1,
+  half: 0.5,
+  full: 0.06,
+  fit: 0,
+};
 
+/**
+ * A pull-up card with one detent: its handle drags it, a finger on its contents scrolls them and then hands
+ * off to the card at their top (sheetDrag.ts); a release settles back, or closes past the midpoint down.
+ */
 export function BottomSheet({ open, onClose, snapPoint = 'half', children }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
-  const dragControls = useDragControls();
-
-  const handleDragEnd = useCallback(
-    (_event: PointerEvent, info: { velocity: { y: number }; offset: { y: number } }) => {
-      const { velocity, offset } = info;
-
-      if (velocity.y > 500 || offset.y > 200) {
-        onClose();
-      }
-    },
-    [onClose],
-  );
+  const contentRef = useRef<HTMLDivElement>(null);
+  const { y } = useSheetDrag({
+    open,
+    sheetRef,
+    contentRef,
+    detents: (sheet) => [DOWN_BY[snapPoint] * sheet.offsetHeight],
+    initial: 0,
+    onClose,
+  });
 
   return (
     <AnimatePresence>
@@ -51,24 +54,16 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
           <motion.div
             ref={sheetRef}
             class={snapPoint === 'fit' ? 'bottom-sheet bottom-sheet--fit' : 'bottom-sheet'}
-            initial={{ y: '100%' }}
-            animate={{ y: SNAP_POSITIONS[snapPoint] }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            drag="y"
-            dragControls={dragControls}
-            dragConstraints={{ top: 0 }}
-            dragElastic={0.1}
-            onDragEnd={handleDragEnd}
+            style={{ y }}
+            exit={{ y: offScreenY() }}
+            transition={{ type: 'tween', duration: 0.2 }}
           >
-            <div
-              class="bottom-sheet__handle-area"
-              onPointerDown={(e) => dragControls.start(e)}
-            >
-              <div class="bottom-sheet__handle" />
-            </div>
+            {/* a button, so a finger on it lands on it, never on a control beside it (touch adjustment); one detent: a tap closes */}
+            <button type="button" class="bottom-sheet__handle-area" aria-label="Close" onClick={onClose}>
+              <span class="bottom-sheet__handle" />
+            </button>
 
-            <div class="bottom-sheet__content">
+            <div class="bottom-sheet__content" ref={contentRef}>
               {children}
             </div>
           </motion.div>
@@ -111,6 +106,7 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
             .bottom-sheet__handle-area {
               display: flex;
               justify-content: center;
+              width: 100%;
               padding: var(--space-3) 0;
               cursor: grab;
               flex-shrink: 0;
@@ -131,6 +127,9 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
               flex: 1;
               overflow-y: auto;
               -webkit-overflow-scrolling: touch;
+              /* the contents scroll natively and never chain to the page; their top hands off to the card */
+              touch-action: pan-y;
+              overscroll-behavior-y: none;
               padding: 0 var(--space-4) var(--space-4);
             }
           `} />

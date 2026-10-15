@@ -1,6 +1,7 @@
 // The whole collection from the local store (WK-15): every item, with no page cap and no request.
-// One item per figure and kind; `status` picks a tab, the No longer owned tab ('former') included.
-// Without one, every held item (former copies are not in the collection).
+// One item per figure and kind; `status` picks a holding, the No longer owned ('former') included,
+// or 'all' of them (Refine chooses among them, SHEETS-FB1). Without one, every held item (former
+// copies are not in the collection).
 import { useCallback, useEffect } from 'preact/hooks';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { CollectionStatus, PaginatedResponse } from '@figurecollecting/fc-shared';
@@ -17,14 +18,14 @@ interface UseCollectionOptions {
   limit?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
-  status?: CollectionTab;
+  status?: CollectionTab | 'all';
 }
 
 export function useCollection(options: UseCollectionOptions = {}): UseQueryResult<PaginatedResponse<LocalFigure>> {
   const { status } = options;
   const select = useCallback(
     (s: Snapshot): PaginatedResponse<LocalFigure> => {
-      const data = s.figures.filter((f) => (status === undefined ? f.local.kind !== 'former' : f.local.kind === status));
+      const data = s.figures.filter((f) => (status === 'all' ? true : status === undefined ? f.local.kind !== 'former' : f.local.kind === status));
       return { success: true, data, count: data.length, total: data.length, page: 1, pages: 1 };
     },
     [status],

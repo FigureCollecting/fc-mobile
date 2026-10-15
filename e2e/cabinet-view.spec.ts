@@ -267,9 +267,10 @@ for (const size of FOLD8) {
       await expectFramedAboveTabs(page, view, 'reloaded without chips');
       await page.getByRole('button', { name: 'Refine' }).click();
       await expectSheetAtRest(page);
-      await page.getByRole('button', { name: 'owned', exact: true }).click();
-      await page.locator('.filter-sheet2__btn--apply').click();
-      await expect(page.locator('.applied-chips__chip')).toHaveCount(1);
+      // Refine applies at once (SHEETS-FB1); Done closes it, and the filter row it brought stays
+      await page.getByRole('group', { name: 'Holding' }).getByRole('button', { name: /^Owned/ }).click();
+      await page.getByRole('button', { name: 'Done' }).click();
+      await expect(page.locator('.applied-chips')).toHaveCount(1);
       await expectReframedAboveTabs(page, view, 'a chip added');
     });
   }
@@ -965,8 +966,8 @@ test.describe('a read landing after a new list is drawn, before its effects run,
       // the list narrows to the wished figures: Ryuko alone, still being read
       await page.getByRole('button', { name: 'Refine' }).click();
       await expectSheetAtRest(page);
-      await page.getByRole('button', { name: 'wished', exact: true }).click();
-      await page.locator('.filter-sheet2__btn--apply').click();
+      await page.getByRole('group', { name: 'Holding' }).getByRole('button', { name: /^Wished/ }).click();
+      await page.getByRole('button', { name: 'Done' }).click();
       await expect(page.locator('button.cab-figure')).toHaveCount(3);
       if (when === 'after the effects (control)') {
         await page.waitForTimeout(500);

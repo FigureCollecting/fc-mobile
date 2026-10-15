@@ -1,6 +1,6 @@
-// The Collection screen on the local store (WK-15): the whole collection with no cap, the four
-// tabs over the default collections, xN stacks, one sync badge per item, LastSynced from sync_meta,
-// and bulk 'Move N copies to…'.
+// The Collection screen on the local store (WK-15): the whole collection with no cap, the holdings
+// chosen in Refine (SHEETS-FB1), xN stacks, one sync badge per item, LastSynced from sync_meta; no
+// Select until bulk actions exist (BULK-1).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
@@ -14,7 +14,6 @@ import { localRig } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
-import { shownCopies } from '../../sync/occurrences';
 
 afterEach(() => {
   localSession.value = undefined;
@@ -43,7 +42,7 @@ describe('Collection page', () => {
     expect(screen.getByRole('button', { name: 'Figure 44' })).toBeInTheDocument();
   });
 
-  it('shows four tabs with their counts, Owned first, and switches tab in the URL', async () => {
+  it('no tab row: the holdings are chosen in Refine, each with its count, and apply to the grid at once (SHEETS-FB1 3)', async () => {
     const r = await localRig();
     await seedFigures(r, [
       { title: 'A owned', status: 'owned' },
@@ -54,16 +53,60 @@ describe('Collection page', () => {
     ]);
     const user = userEvent.setup();
     const { container, currentPath } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
-    const tabs = await screen.findByRole('tablist', { name: 'Collections' });
+    await waitFor(() => expect(tiles(container)).toHaveLength(2));
+    expect(screen.queryByRole('tablist', { name: 'Collections' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    const holding = await screen.findByRole('group', { name: 'Holding' });
     await waitFor(() =>
-      expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Owned (2)', 'Ordered (1)', 'Wished (1)', 'No longer owned (1)']),
+      expect(within(holding).getAllByRole('button').map((b) => b.textContent)).toEqual(['Owned2', 'Ordered1', 'Wished1', 'No longer owned1']),
     );
-    expect(within(tabs).getByRole('tab', { name: 'Owned (2)' })).toHaveAttribute('aria-selected', 'true');
-    expect(tiles(container).map((t) => t.getAttribute('aria-label') ?? t.textContent)).toHaveLength(2);
-    await user.click(within(tabs).getByRole('tab', { name: 'Wished (1)' }));
+    expect(document.querySelector('.filter-sheet2__count')).toHaveTextContent('2 of 2');
+    await user.click(within(holding).getByRole('button', { name: /^Wished/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'D wished' })).toBeInTheDocument());
-    expect(currentPath()).toContain('tab=wished');
-    expect(screen.queryByRole('button', { name: 'A owned' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'A owned' })).toBeInTheDocument();
+    expect(document.querySelector('.filter-sheet2__count')).toHaveTextContent('3 of 3');
+    await user.click(within(holding).getByRole('button', { name: /^Owned/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'A owned' })).toBeNull());
+    expect(currentPath()).toContain('status=wished');
+  });
+
+  it('Refine and View each hold a Back entry: Back and Esc close the card on top, one at a time (SHEETS-FB1 close-out)', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'A owned' }]);
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/?layout=case' });
+    await user.click(await screen.findByRole('button', { name: 'Refine' }));
+    await screen.findByRole('group', { name: 'Holding' });
+    // Back closes Refine
+    history.back();
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Holding' })).toBeNull());
+    // Esc closes View
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await waitFor(() => expect(document.querySelector('.bottom-sheet')).not.toBeNull());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.querySelector('.bottom-sheet')).toBeNull());
+  });
+
+  it('the filter row is gone while nothing is filtered, and shows the applied filters and visible of total once something is', async () => {
+    const r = await localRig();
+    await seedFigures(r, [
+      { title: 'One', manufacturer: 'Alter' },
+      { title: 'Two', manufacturer: 'Kotobukiya' },
+      { title: 'Three', manufacturer: 'Kotobukiya' },
+    ]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await waitFor(() => expect(tiles(container)).toHaveLength(3));
+    expect(container.querySelector('.applied-chips')).toBeNull();
+    expect(container.querySelector('.filter-bar')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.click(await screen.findByRole('button', { name: /^Alter/ }));
+    await waitFor(() => expect(tiles(container)).toHaveLength(1));
+    const row = container.querySelector('.applied-chips') as HTMLElement;
+    expect(within(row).getByRole('listitem', { name: 'Remove filter Alter' })).toBeInTheDocument();
+    expect(within(row).getByText('1 of 3')).toBeInTheDocument();
+    await user.click(within(row).getByRole('listitem', { name: 'Remove filter Alter' }));
+    await waitFor(() => expect(container.querySelector('.applied-chips')).toBeNull());
   });
 
   it('stacks copies of one figure: a tile with xN', async () => {
@@ -128,23 +171,23 @@ describe('Collection page', () => {
     expect(items[1]).toHaveTextContent('Gifted');
   });
 
-  it('moves the copies of the selected items to another tab in one batch: Move N copies to…', async () => {
+  it('No longer owned chosen with another holding: one grid of both, not the no-longer-owned list', async () => {
     const r = await localRig();
-    await seedFigures(r, [{ title: 'Pair', copies: 2, status: 'wished' }, { title: 'Solo', status: 'wished' }, { title: 'Stay', status: 'wished' }]);
-    const user = userEvent.setup();
+    await seedFigures(r, [
+      { title: 'Sold one', status: 'former', disposal: { reason: 'sold' } },
+      { title: 'Kept one' },
+    ]);
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows&status=former|owned' });
+    await waitFor(() => expect(tiles(container)).toHaveLength(2));
+    expect(screen.queryByRole('list', { name: 'No longer owned' })).toBeNull();
+  });
+
+  it('no Select until a selection can do something (BULK-1): no dead control in the header (SHEETS-FB1 5)', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Pair', copies: 2, status: 'wished' }]);
     renderWithProviders(<Collection />, { initialPath: '/?layout=rows&tab=wished' });
     await screen.findByRole('button', { name: 'Pair' });
-    await user.click(screen.getByRole('button', { name: 'Select' }));
-    await user.click(screen.getByRole('button', { name: 'Pair' }));
-    await user.click(screen.getByRole('button', { name: 'Solo' }));
-    await user.click(screen.getByRole('button', { name: 'Move 3 copies to…' }));
-    await user.click(await screen.findByRole('button', { name: 'Ordered' }));
-    await waitFor(async () =>
-      expect(shownCopies(await r.store.getView()).map((c) => c.status).sort()).toEqual(['ordered', 'ordered', 'ordered', 'wished']),
-    );
-    const outbox = await r.store.listOutbox();
-    expect(new Set(outbox.map((e) => e.group)).size).toBe(1);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Pair' })).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Select' })).toBeNull();
   });
 
   it('shows the error state when the local store cannot be read', async () => {

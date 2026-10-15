@@ -141,16 +141,10 @@ async function openApp(page: Page): Promise<void> {
 
 /** The case screen's chrome, each control by the name Ross would give it. */
 function chrome(page: Page): [string, Locator][] {
-  const tabs = page.getByRole('tablist', { name: 'Collections' });
+  // SHEETS-FB1: no Select, no holdings tab row and no filter bar; the holdings are chosen in Refine
   const controls: [string, Locator][] = [
     ['the header title', page.locator('.slim-header__context')],
-    ['Select', page.locator('.page-collection__select-btn')],
     ['the layout toggle', page.locator('.slim-header .display-toggle').first()],
-    ['Owned', tabs.getByRole('tab', { name: /^Owned/ })],
-    ['Ordered', tabs.getByRole('tab', { name: /^Ordered/ })],
-    ['Wished', tabs.getByRole('tab', { name: /^Wished/ })],
-    ['Filter', page.locator('.filter-bar__btn').first()],
-    ['the sort', page.locator('.filter-bar__btn').nth(1)],
     ['the View tab', page.locator('.case-tabs__tab[data-tab="view"]')],
     ['the Refine tab', page.locator('.case-tabs__tab[data-tab="refine"]')],
     ['Collection (tab bar)', page.getByRole('button', { name: 'Collection', exact: true })],
@@ -226,10 +220,20 @@ async function swipe(page: Page, dx: number): Promise<void> {
   await page.mouse.up();
 }
 
+/** Show one holding alone, chosen in Refine (SHEETS-FB1: it applies at once), then Done. */
 async function showTab(page: Page, name: 'Owned' | 'Ordered' | 'Wished'): Promise<void> {
-  const tab = page.getByRole('tablist', { name: 'Collections' }).getByRole('tab', { name: new RegExp(`^${name}`) });
-  await tab.tap();
-  await expect(tab).toHaveAttribute('aria-selected', 'true');
+  await page.locator('.case-tabs__tab[data-tab="refine"]').tap();
+  const holding = page.getByRole('group', { name: 'Holding' });
+  const choice = (label: string) => holding.getByRole('button', { name: new RegExp(`^${label}`) });
+  if ((await choice(name).getAttribute('aria-pressed')) !== 'true') await choice(name).tap();
+  // each other holding by its name (an nth() of the pressed ones would shift as each is let go)
+  for (const other of ['Owned', 'Ordered', 'Wished', 'No longer owned'].filter((n) => n !== name)) {
+    if ((await choice(other).getAttribute('aria-pressed')) === 'true') await choice(other).tap();
+  }
+  await expect(choice(name)).toHaveAttribute('aria-pressed', 'true');
+  await expect(holding.getByRole('button', { pressed: true })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Done' }).tap();
+  await expect(page.locator('.detent-sheet')).toHaveCount(0);
   await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
 }
 
@@ -248,19 +252,13 @@ test("the case screen's chrome and cards are drawn after every collection switch
     await check(page, testInfo, failures, `after ${name}`, chrome(page));
   }
 
-  // the filters, from the filter bar (every build has it) and from the case's Refine tab
+  // the filters, from the case's Refine tab (the filter bar is gone, SHEETS-FB1)
   const filterSheet = page.locator('.detent-sheet');
   const filterControls: [string, Locator][] = [
     ['the first filter group', page.locator('.filter-sheet2__tab').first()],
     ['Clear', page.locator('.filter-sheet2__btn--clear')],
-    ['Apply', page.locator('.filter-sheet2__btn--apply')],
+    ['Done', page.locator('.filter-sheet2__btn--done')],
   ];
-  await page.locator('.filter-bar__btn').first().tap();
-  await atRest(filterSheet);
-  await check(page, testInfo, failures, 'the filters (Filter)', filterControls);
-  await page.locator('.detent-sheet__backdrop').tap({ position: top });
-  await expect(filterSheet).toHaveCount(0);
-  await check(page, testInfo, failures, 'after closing the filters', chrome(page));
 
   await page.locator('.case-tabs__tab[data-tab="view"]').tap();
   const card = page.locator('.bottom-sheet');

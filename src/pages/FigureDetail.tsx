@@ -13,7 +13,7 @@ import { DeleteSheet } from '../components/collection/DeleteSheet';
 import { DisposalSheet } from '../components/collection/DisposalSheet';
 import { MoveSheet, type MoveTarget } from '../components/collection/MoveSheet';
 import { CopyList } from '../components/collection/CopyList';
-import { TAB_LABEL } from '../components/collection/CollectionTabs';
+import { TAB_LABEL } from '../components/collection/holdings';
 import { SyncBadge, formatAsOf } from '../components/sync/SyncBadge';
 import { showToast } from '../stores/toast';
 import type { Disposal } from '../storage/userStore';

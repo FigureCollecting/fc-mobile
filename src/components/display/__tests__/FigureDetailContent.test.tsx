@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { screen } from '@testing-library/preact';
+import { screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { FigureDetailContent } from '../FigureDetailContent';
@@ -12,37 +12,74 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
     renderWithProviders(<FigureDetailContent figure={rem} index={0} total={7} />);
     expect(screen.getByText('Rem')).toBeInTheDocument();
     expect(screen.getByText('1 of 7')).toBeInTheDocument();
-    expect(screen.getByText('1/7')).toBeInTheDocument();
-    expect(screen.getByText('Good Smile Company')).toBeInTheDocument();
-    expect(screen.getByText(/owned/i)).toBeInTheDocument();
+    // the badges; the fields below may repeat a name (Rem's distributor is her maker)
+    const badges = within(document.querySelector<HTMLElement>('.figure-viewer-sheet__badges')!);
+    expect(badges.getByText('1/7')).toBeInTheDocument();
+    expect(badges.getByText('Good Smile Company')).toBeInTheDocument();
+    expect(badges.getByText(/owned/i)).toBeInTheDocument();
   });
 
-  it('expands to show origin, distributor, and category on tap', async () => {
-    const user = userEvent.setup();
+  it('shows every field the figure has at once, with no tap: nothing hangs on a handle (SHEETS-FB1 6b)', () => {
     const dark = FIXTURE_FIGURES.find((f) => f._id === 'fx-dark-angel')!;
     renderWithProviders(<FigureDetailContent figure={dark} index={1} total={7} />);
-    expect(screen.queryByText('Original Character')).toBeNull();
-    await user.click(screen.getByRole('button', { name: /expand details/i }));
     expect(screen.getByText('Original Character')).toBeInTheDocument();
     expect(screen.getByText('Distributor')).toBeInTheDocument();
+    expect(screen.getByText('wings, dark')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /expand details|collapse details/i })).toBeNull();
   });
 
-  it('manages its own expand state independent of other mounted instances', async () => {
-    const user = userEvent.setup();
-    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
-    const { container } = renderWithProviders(
-      <>
-        <div data-testid="a"><FigureDetailContent figure={rem} index={0} total={7} /></div>
-        <div data-testid="b"><FigureDetailContent figure={rem} index={0} total={7} /></div>
-      </>,
-    );
-    const buttons = container.querySelectorAll('[aria-label="Expand details"]');
-    expect(buttons).toHaveLength(2);
-    await user.click(buttons[0]);
-    const stillCollapsed = container.querySelectorAll('[aria-label="Expand details"]');
-    const nowExpanded = container.querySelectorAll('[aria-label="Collapse details"]');
-    expect(stillCollapsed).toHaveLength(1);
-    expect(nowExpanded).toHaveLength(1);
+  it('lists each field it has, by name, and leaves out the ones it lacks', () => {
+    const full = {
+      _id: 'f1',
+      name: 'Full one',
+      manufacturer: 'Alter',
+      scale: '1/7',
+      userId: 'u',
+      createdAt: '',
+      updatedAt: '',
+      collectionStatus: 'ordered',
+      origin: 'Fate/stay night',
+      category: 'Prepainted',
+      classification: 'Figures',
+      version: 'Swimsuit ver.',
+      materials: 'PVC, ABS',
+      jan: '4580416940000',
+      releases: [{ date: '2026-03' }],
+      dimensions: { heightMm: 250, widthMm: 120 },
+      companyRoles: [{ companyId: 'c1', companyName: 'Good Smile', roleId: 'r', roleName: 'Distributor' }, { companyId: 'c2', roleId: 'r' }],
+      artistRoles: [{ artistId: 'a1', artistName: 'Sculptor San', roleId: 'r', roleName: 'Sculptor' }, { artistId: 'a2', artistName: 'Nameless', roleId: 'r' }],
+      tags: ['a', 'b'],
+      note: 'top shelf',
+      rating: 9,
+      local: { headId: 'f1', kind: 'ordered', sync: 'known', asOf: null, character: 'Saber' },
+    } as never;
+    const { container } = renderWithProviders(<FigureDetailContent figure={full} index={0} total={1} />);
+    const rows = Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).map((r) => (r as Element).textContent);
+    // maker, scale and status are the summary's badges
+    expect(rows).toEqual([
+      'OriginFate/stay night',
+      'CharacterSaber',
+      'VersionSwimsuit ver.',
+      'Release2026-03',
+      'Size250 × 120 mm',
+      'CategoryPrepainted',
+      'TypeFigures',
+      'MaterialsPVC, ABS',
+      'DistributorGood Smile',
+      'SculptorSculptor San',
+      'ArtistNameless',
+      'JAN4580416940000',
+      'Tagsa, b',
+      'Rating9',
+      'Notetop shelf',
+    ]);
+  });
+
+  it('a figure with only a name and maker has no field list beyond its badges', () => {
+    const bare = { _id: 'b', name: 'Bare', manufacturer: 'Kotobukiya', scale: '', origin: '', userId: 'u', createdAt: '', updatedAt: '' } as never;
+    const { container } = renderWithProviders(<FigureDetailContent figure={bare} index={0} total={1} />);
+    expect(screen.getByText('Kotobukiya')).toBeInTheDocument();
+    expect(container.querySelector('.figure-viewer-sheet__more')).toBeNull();
   });
 });
 

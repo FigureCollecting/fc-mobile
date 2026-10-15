@@ -53,13 +53,24 @@ function matchesList(figure: Figure, kind: FacetKind, selected: string[]): boole
   return values.some((v) => selected.includes(v));
 }
 
+/** Where a figure is held: its local kind (owned, ordered, wished, former), else (a fixture) its collection status. */
+export function holdingOf(figure: Figure): string {
+  return (figure as Figure & { local?: { kind: string } }).local?.kind ?? figure.collectionStatus ?? '';
+}
+
+/** In the chosen holdings (`status`); none chosen: every holding but No longer owned, which is out of the collection. */
+function held(figure: Figure, status: string[]): boolean {
+  const holding = holdingOf(figure);
+  return status.length === 0 ? holding !== 'former' : status.includes(holding);
+}
+
 /**
  * Apply the full filter state to a figure list (client-side; the query/idb
  * layer stays the single source of figures — eventual-consistency friendly).
  */
 export function applyFilters(figures: Figure[], filters: ListFilters): Figure[] {
   return figures.filter((f) => {
-    if (filters.status.length > 0 && !filters.status.includes(f.collectionStatus ?? '')) {
+    if (!held(f, filters.status)) {
       return false;
     }
     return (
@@ -84,4 +95,13 @@ export function countActiveFilters(filters: ListFilters): number {
     filters.origin.length +
     filters.tag.length
   );
+}
+
+/** Whether every filter list holds just its default values (in any order). */
+export function isDefaultFilters(filters: ListFilters, defaults: ListFilters): boolean {
+  return (Object.keys(defaults) as (keyof ListFilters)[]).every((key) => {
+    const now = filters[key];
+    const base = defaults[key];
+    return now.length === base.length && now.every((v) => base.includes(v));
+  });
 }

@@ -5,7 +5,11 @@ import { boxCorners, project, unprojectToPlaneZ, type Camera, type Vec3 } from '
 import { wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox, type Box } from '../src/components/display/caseFraming';
 import { wallPatternProfiles } from '../src/components/display/casePrefs';
-import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nearestCabinets, trimFace } from '../src/components/display/caseCull';
+import * as caseCull from '../src/components/display/caseCull';
+import { DRAWN_CABINETS_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nearestCabinets, trimFace } from '../src/components/display/caseCull';
+
+/** G1: the most figures drawn at a time (read through the module, so the spec loads against code without it: the red run). */
+const DRAWN_FIGURES_LIMIT = caseCull.DRAWN_FIGURES_LIMIT;
 
 /**
  * MOB-NAV-2: the case fits the Fold8's GPU tile budget. Chrome rasters a

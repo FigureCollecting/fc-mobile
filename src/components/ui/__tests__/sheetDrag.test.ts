@@ -85,8 +85,8 @@ describe('attachSheetDrag', () => {
   let handle: HTMLElement;
   let content: HTMLElement;
   let button: HTMLElement;
-  let onClose: ReturnType<typeof vi.fn>;
-  let onSettle: ReturnType<typeof vi.fn>;
+  let onClose: ReturnType<typeof vi.fn<() => void>>;
+  let onSettle: ReturnType<typeof vi.fn<(index: number) => void>>;
   let detach: () => void;
   let driver: ReturnType<typeof fakeDriver>;
   let settleTo: (index: number) => void;
@@ -109,8 +109,8 @@ describe('attachSheetDrag', () => {
     document.body.appendChild(sheet);
     driver = fakeDriver(300);
     detents = [20, 300];
-    onClose = vi.fn();
-    onSettle = vi.fn();
+    onClose = vi.fn<() => void>();
+    onSettle = vi.fn<(index: number) => void>();
     attach();
   });
 
@@ -280,6 +280,31 @@ describe('attachSheetDrag', () => {
     detents = [10, 250];
     window.dispatchEvent(new Event('resize'));
     expect(driver.calls.slice(-2)).toEqual(['stop', 'set 250']);
+  });
+
+  it('a resize that leaves its detent where it was does nothing, so an opening settle runs on', () => {
+    settleTo(1);
+    window.dispatchEvent(new Event('resize'));
+    expect(driver.calls).toEqual(['settle 300']);
+  });
+
+  it("a change in the card's own size (its contents) puts it back on its detent too", () => {
+    detach();
+    const observed: Array<() => void> = [];
+    const RO = vi.fn(function (this: unknown, cb: () => void) {
+      observed.push(cb);
+      return { observe: vi.fn(), disconnect: vi.fn() };
+    });
+    vi.stubGlobal('ResizeObserver', RO);
+    const c = attachSheetDrag(sheet, content, driver, { detents: () => detents, closeY: () => null, onSettle, onClose });
+    detach = c.detach;
+    c.settleTo(1);
+    detents = [20, 340];
+    observed[0]();
+    expect(driver.calls.slice(-2)).toEqual(['stop', 'set 340']);
+    c.detach();
+    detach = () => {};
+    vi.unstubAllGlobals();
   });
 
   it('a resize mid-drag leaves the finger in charge', () => {

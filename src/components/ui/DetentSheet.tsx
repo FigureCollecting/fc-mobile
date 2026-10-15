@@ -1,8 +1,9 @@
-import { useState, useCallback, useEffect } from 'preact/hooks';
+import { useState, useEffect, useRef } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
 import { createPortal } from 'preact/compat';
-import { motion, AnimatePresence, useDragControls } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Style } from '../../styles/Style';
+import { offScreenY, useSheetDrag } from './useSheetDrag';
 
 type Detent = 'half' | 'full';
 
@@ -14,14 +15,16 @@ interface DetentSheetProps {
   footer?: ComponentChildren;
 }
 
-const POSITIONS: Record<Detent, string> = {
-  half: '48%',
-  full: '4%',
-};
+/** The detents, top-most first, as fractions of the card's height it stands down by. */
+const DETENTS: readonly Detent[] = ['full', 'half'];
+const DOWN_BY: Record<Detent, number> = { full: 0.04, half: 0.48 };
+const detentsOf = (sheet: HTMLElement) => DETENTS.map((d) => DOWN_BY[d] * sheet.offsetHeight);
 
 /**
- * Bottom sheet with two detents (half / full). Drag up snaps to full, drag
- * down snaps to half then closes. Distinct from the shared BottomSheet: the
+ * Bottom sheet with two detents (half / full). Its handle drags it; a finger
+ * on its contents scrolls them, then hands off to the card at their top
+ * (sheetDrag.ts). A release settles on the nearest detent, or closes past
+ * half. Distinct from the shared BottomSheet: the
  * footer slot stays pinned to the physical bottom of the sheet, which is what
  * the tabbed filter sheet needs (tabs at the bottom, under the thumb).
  *
@@ -32,24 +35,21 @@ const POSITIONS: Record<Detent, string> = {
  */
 export function DetentSheet({ open, onClose, children, footer }: DetentSheetProps) {
   const [detent, setDetent] = useState<Detent>('half');
-  const dragControls = useDragControls();
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const { y } = useSheetDrag({
+    open,
+    sheetRef,
+    contentRef,
+    detents: detentsOf,
+    initial: DETENTS.indexOf('half'),
+    onClose,
+    onSettle: (i) => setDetent(DETENTS[i]),
+  });
 
   useEffect(() => {
     if (open) setDetent('half');
   }, [open]);
-
-  const handleDragEnd = useCallback(
-    (_event: PointerEvent, info: { velocity: { y: number }; offset: { y: number } }) => {
-      const { velocity, offset } = info;
-      if (velocity.y < -300 || offset.y < -110) {
-        setDetent('full');
-      } else if (velocity.y > 500 || offset.y > 160) {
-        if (detent === 'full') setDetent('half');
-        else onClose();
-      }
-    },
-    [detent, onClose],
-  );
 
   return createPortal(
     <AnimatePresence>
@@ -65,26 +65,18 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
           />
 
           <motion.div
+            ref={sheetRef}
             class="detent-sheet"
             data-detent={detent}
-            initial={{ y: '100%' }}
-            animate={{ y: POSITIONS[detent] }}
-            exit={{ y: '100%' }}
-            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            drag="y"
-            dragControls={dragControls}
-            dragConstraints={{ top: 0 }}
-            dragElastic={0.08}
-            onDragEnd={handleDragEnd}
+            style={{ y }}
+            exit={{ y: offScreenY() }}
+            transition={{ type: 'tween', duration: 0.2 }}
           >
-            <div
-              class="detent-sheet__handle-area"
-              onPointerDown={(e) => dragControls.start(e)}
-            >
+            <div class="detent-sheet__handle-area">
               <div class="detent-sheet__handle" />
             </div>
 
-            <div class="detent-sheet__content">{children}</div>
+            <div class="detent-sheet__content" ref={contentRef}>{children}</div>
 
             {footer && <div class="detent-sheet__footer">{footer}</div>}
           </motion.div>
@@ -132,6 +124,9 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               min-height: 0;
               overflow-y: auto;
               -webkit-overflow-scrolling: touch;
+              /* the contents scroll natively and never chain to the page; their top hands off to the card */
+              touch-action: pan-y;
+              overscroll-behavior-y: none;
               padding: 0 var(--space-page);
               /* at half detent, keep the scroll region clear of the footer */
             }

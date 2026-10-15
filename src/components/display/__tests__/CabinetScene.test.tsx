@@ -1334,6 +1334,20 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     expect(most).toBeGreaterThan(MAX_DRAWN_FIGURES);
   }, 240_000);
 
+  it('G1: on the mixed wall each drawn cabinet counts its own kind\'s capacity: the figure cap is their sum, not the drawn cabinets times the fullest kind', () => {
+    const dense = spikeWall();
+    for (const frame of [{ width: 616, height: 217 }, { width: 870, height: 335 }, { width: 443, height: 418 }]) {
+      const { host } = scene(dense, { view: 'wall', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' }, { frameFallback: frame });
+      const { drawn, counts } = perCabinet(host);
+      const last = JSON.parse(host.dataset.wall!).length - 1;
+      // what each kind holds (the pattern's three in turn): the most any drawn cabinet of it shows, the wall's last aside
+      const holds = [0, 1, 2].map((k) => Math.max(0, ...drawn.filter((i) => i % 3 === k && i < last).map((i) => counts.get(i)!)));
+      expect(new Set(holds).size, `${frame.width}: the three kinds hold different counts`).toBe(3);
+      expect(Number(host.dataset.figureCap), `${frame.width}`).toBe(drawn.reduce((n, i) => n + holds[i % 3], 0));
+      cleanup();
+    }
+  }, 60_000);
+
   it('the figures cost at most their budget of element px wherever the camera stands; the one nearest the frame centre drawn at the scene\'s px per mm, the coarser ones farther out', () => {
     const dense = spikeWall();
     let coarsened = 0;

@@ -70,6 +70,23 @@ describe('Collection page', () => {
     expect(currentPath()).toContain('status=wished');
   });
 
+  it('Refine and View each hold a Back entry: Back and Esc close the card on top, one at a time (SHEETS-FB1 close-out)', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'A owned' }]);
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/?layout=case' });
+    await user.click(await screen.findByRole('button', { name: 'Refine' }));
+    await screen.findByRole('group', { name: 'Holding' });
+    // Back closes Refine
+    history.back();
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Holding' })).toBeNull());
+    // Esc closes View
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await waitFor(() => expect(document.querySelector('.bottom-sheet')).not.toBeNull());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.querySelector('.bottom-sheet')).toBeNull());
+  });
+
   it('the filter row is gone while nothing is filtered, and shows the applied filters and visible of total once something is', async () => {
     const r = await localRig();
     await seedFigures(r, [

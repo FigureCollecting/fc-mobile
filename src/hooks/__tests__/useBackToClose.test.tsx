@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, waitFor } from '@testing-library/preact';
+import { fireEvent, render, waitFor } from '@testing-library/preact';
 import { useBackToClose } from '../useBackToClose';
 
 function Overlay({ onClose }: { onClose: () => void }) {
@@ -166,5 +166,48 @@ describe('useBackToClose: Android Back / browser Back closes an overlay (SHEETS-
     await settle();
     expect(waiting).not.toHaveBeenCalled();
     expect(location.search).toBe('?layout=rows');
+  });
+
+  describe('Esc, the keyboard\'s Back: it closes the TOP overlay only (SHEETS-FB1 close-out: Refine over the Info pane)', () => {
+    it('closes the latest overlay and leaves the one under it open', async () => {
+      const under = vi.fn();
+      const over = vi.fn();
+      const a = render(<Overlay onClose={under} />);
+      const b = render(<Overlay onClose={over} />);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(over).toHaveBeenCalledTimes(1);
+      expect(under).not.toHaveBeenCalled();
+      b.unmount();
+      await settle();
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(under).toHaveBeenCalledTimes(1);
+      expect(over).toHaveBeenCalledTimes(1);
+      a.unmount();
+    });
+
+    it('closes one opened while a Back is still owed (its entry not yet taken), not the one under it', async () => {
+      history.replaceState(null, '', '/?layout=rows');
+      const under = vi.fn();
+      const a = render(<Overlay onClose={under} />);
+      const gone = render(<Overlay onClose={() => {}} />);
+      gone.unmount();
+      const waiting = vi.fn();
+      const c = render(<Overlay onClose={waiting} />);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(waiting).toHaveBeenCalledTimes(1);
+      expect(under).not.toHaveBeenCalled();
+      c.unmount();
+      a.unmount();
+    });
+
+    it('other keys close nothing, and Esc with nothing open is harmless', () => {
+      const onClose = vi.fn();
+      const a = render(<Overlay onClose={onClose} />);
+      fireEvent.keyDown(document, { key: 'Enter' });
+      expect(onClose).not.toHaveBeenCalled();
+      a.unmount();
+      expect(() => fireEvent.keyDown(document, { key: 'Escape' })).not.toThrow();
+      expect(onClose).not.toHaveBeenCalled();
+    });
   });
 });

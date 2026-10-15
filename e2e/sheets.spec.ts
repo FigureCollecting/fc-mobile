@@ -341,6 +341,48 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
   });
 }
 
+for (const size of FOLD8) {
+  for (const card of CARDS.filter((c) => c.name !== 'Info')) {
+    test(`${card.name}: Back and Esc close it, the page stays where it was: ${size.name}`, async ({ page }) => {
+      await openCase(page, size);
+      const url = page.url();
+      const sheet = await openCard(page, card);
+      await page.goBack();
+      await expect(sheet).toHaveCount(0);
+      expect(page.url()).toBe(url);
+      await openCard(page, card);
+      await page.keyboard.press('Escape');
+      await expect(sheet).toHaveCount(0);
+      expect(page.url()).toBe(url);
+    });
+  }
+}
+
+for (const size of FOLD8.filter((v) => v.width >= DUAL_PANE_MIN_WIDTH)) {
+  for (const card of CARDS.filter((c) => c.name !== 'Info')) {
+    test(`Info pane under ${card.name}: Esc and Back close ${card.name} on top and leave the pane; the next Back closes the pane: ${size.name}`, async ({ page }) => {
+      await openCase(page, size);
+      const url = page.url();
+      const pane = page.locator('.detail-pane');
+      await openFigure(page);
+      await expect(pane).toBeVisible();
+      const sheet = await openCard(page, card);
+      await page.keyboard.press('Escape');
+      await expect(sheet).toHaveCount(0);
+      await expect(pane).toBeVisible();
+      await openCard(page, card);
+      await page.goBack();
+      await expect(sheet).toHaveCount(0);
+      await page.waitForTimeout(300);
+      await expect(pane).toBeVisible();
+      expect(page.url()).toBe(url);
+      await page.goBack();
+      await expect(pane).toHaveCount(0);
+      expect(page.url()).toBe(url);
+    });
+  }
+}
+
 /** The collection, reached from Settings, so a Back that is not the viewer's own leaves for Settings. */
 async function openCaseFromSettings(page: Page, size: { width: number; height: number }): Promise<{ settings: string; collection: string }> {
   await page.addInitScript(() => {

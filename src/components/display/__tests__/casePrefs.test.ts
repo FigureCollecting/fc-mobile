@@ -13,6 +13,20 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 
 beforeEach(() => localStorage.clear());
 
+describe('the renderer, kept per device (CASE-GL): Classic until Ross picks after his Fold8 check', () => {
+  it('Classic by default; Canvas once chosen; anything else Classic', () => {
+    expect(readCasePrefs().renderer).toBe('classic');
+    writeCasePrefs({ renderer: 'canvas' });
+    expect(readCasePrefs().renderer).toBe('canvas');
+    for (const junk of ['webgl', 1, null, { canvas: true }]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ renderer: junk }));
+      expect(readCasePrefs().renderer).toBe('classic');
+    }
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ renderer: 'classic', swipe: 'pan' }));
+    expect(readCasePrefs()).toMatchObject({ renderer: 'classic', swipe: 'pan' });
+  });
+});
+
 describe('case prefs, kept per device (CC14)', () => {
   it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, the camera walks (CC4 playable), an 8 ft ceiling, IC1-R1 tab order', () => {
     expect(DEFAULT_CASE_PREFS).toEqual({
@@ -21,6 +35,7 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'camera',
       ceilingMm: 2438.4,
       tabOrder: ['view', 'reserved', 'info', 'refine'],
+      renderer: 'classic',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -32,6 +47,7 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'pan',
       ceilingMm: 2700,
       tabOrder: ['refine', 'info', 'reserved', 'view'],
+      renderer: 'canvas',
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);

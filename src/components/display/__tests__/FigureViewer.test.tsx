@@ -26,6 +26,9 @@ class FakePswp {
     this.destroyed = true;
     this.handlers['destroy']?.();
   }
+  close() {
+    this.destroy();
+  }
   swipeTo(i: number) {
     this.currIndex = i;
     this.handlers['change']?.();
@@ -175,6 +178,53 @@ describe('FigureViewer (Display D)', () => {
     const sheet = document.body.querySelector('.figure-viewer-sheet');
     expect(sheet).not.toBeNull();
     expect(sheet?.parentElement).toBe(document.body);
+  });
+
+  it('an X shows from the first moment, before the gallery opens, and closes it (SHEETS-FB1 6c)', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);
+    const x = screen.getByRole('button', { name: 'Close' });
+    expect(x.parentElement).toBe(document.body);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    await user.click(x);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(instances[0]!.destroyed).toBe(true);
+  });
+
+  it('PhotoSwipe draws no X of its own; a tap off the picture closes, a tap on the picture or its plate does not', async () => {
+    const onClose = vi.fn();
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    const pswp = instances[0]!;
+    expect(pswp.options.close).toBe(false);
+    const tap = (el: Element) => pswp.options.tapAction.call(pswp, { x: 1, y: 1 }, { target: el });
+    const img = document.createElement('img');
+    img.className = 'pswp__img';
+    const plate = document.createElement('span');
+    plate.className = 'figure-viewer__plate-name';
+    tap(img);
+    tap(plate);
+    expect(onClose).not.toHaveBeenCalled();
+    tap(document.createElement('div'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Back (Android or the browser) closes it: it opens a history entry', async () => {
+    const onClose = vi.fn();
+    const before = history.length;
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);
+    expect(history.length).toBe(before + 1);
+    history.back();
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+
+  it("the full detail of a local figure takes the viewer's place in history, so Back from it returns to the collection", async () => {
+    const user = userEvent.setup();
+    const local = { ...FIXTURE_FIGURES[0]!, imageUrl: undefined, local: { headId: 'h1', kind: 'owned', sync: 'known', asOf: null } } as never;
+    const { history: visited } = renderWithProviders(<FigureViewer figures={[local]} index={0} onClose={() => {}} />, { initialPath: '/?layout=case' });
+    await user.click(screen.getByRole('button', { name: 'Copies and actions' }));
+    expect(visited).toEqual(['/figure/h1']);
   });
 
   it('reports close when photoswipe is dismissed', async () => {

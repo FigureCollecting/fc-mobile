@@ -50,4 +50,20 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     await user.click(screen.getByRole('button', { name: /close detail/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('Esc closes it, and so does Back: it opens a history entry (SHEETS-FB1 6c)', async () => {
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const onClose = vi.fn();
+    const { unmount } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={onClose} />);
+    fireEvent.keyDown(document, { key: 'Enter' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+    await new Promise((r) => setTimeout(r, 30));
+    const onBack = vi.fn();
+    renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={onBack} />);
+    history.back();
+    await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
+  });
 });

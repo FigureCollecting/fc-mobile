@@ -218,6 +218,21 @@ describe('Collection page (rebuilt display layer)', () => {
     }
   });
 
+  it('HDR (a): the active Case button opens its views and sets the case view, kept on this device; Tiles switches mode', async () => {
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    const { container, currentPath } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    await user.click(screen.getByRole('button', { name: /^Case/ }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'One shelf' }));
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-view="shelf"]')).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ view: 'shelf' });
+    expect(screen.getByRole('button', { name: /^Case/ })).toHaveAttribute('aria-label', 'Case, One shelf');
+    await user.click(screen.getByRole('button', { name: /^Tiles/ }));
+    await waitFor(() => expect(container.querySelector('.jrows')).not.toBeNull());
+    expect(currentPath()).toContain('layout=rows');
+  });
+
   it('honors the layout URL param for Display B', async () => {
     await respondWith([makeFigure('1')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });

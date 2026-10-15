@@ -452,7 +452,8 @@ describe('wallPages: a page holds at most the cabinets drawn at a time (CF1: the
     const pages = wallPages(input);
     const cap = frameCase(input).drawCap;
     expect(cap).toBeGreaterThan(MAX_DRAWN_CABINETS);
-    expect(Math.max(...pages.map((p) => p.length))).toBeGreaterThan(3);
+    // more than the fallback five: the whole panel stands a dozen whole across
+    expect(Math.max(...pages.map((p) => p.length))).toBeGreaterThan(MAX_DRAWN_CABINETS);
     expect(Math.max(...pages.map((p) => p.length))).toBeLessThanOrEqual(cap);
     expect(pages.flat()).toEqual(WALL.cabinets.map((_, i) => i));
   });

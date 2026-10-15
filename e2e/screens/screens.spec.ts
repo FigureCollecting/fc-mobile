@@ -257,7 +257,13 @@ test('(a) with 1,200 holdings the last tile is reached by scrolling, IndexedDB h
   await expect(header).toHaveText(/^Collection \(\d+\)$/, { timeout: 30_000 });
   const total = Number((await header.innerText()).match(/\((\d+)\)/)![1]);
   expect(total).toBeGreaterThanOrEqual(SEED);
-  await expect(page.getByRole('tab', { name: `Owned (${total})` })).toHaveAttribute('aria-selected', 'true');
+  // the holdings are chosen in Refine now (SHEETS-FB1): Owned, the default, holds every seeded item
+  await page.locator('.case-tabs__tab[data-tab="refine"]').tap();
+  const owned = page.getByRole('group', { name: 'Holding' }).getByRole('button', { name: /^Owned/ });
+  await expect(owned).toHaveAttribute('aria-pressed', 'true');
+  await expect(owned).toHaveText(new RegExp(`^Owned\\s*${total}$`));
+  await page.getByRole('button', { name: 'Done' }).tap();
+  await expect(page.locator('.detent-sheet')).toHaveCount(0);
   await shot(page, testInfo, 'collection-rows');
 
   // Scroll the page's scroller to its end until the virtualizer has drawn the last tile.

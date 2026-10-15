@@ -24,9 +24,19 @@ interface Entry {
 const open: Entry[] = [];
 /** Overlays opened while a Back is owed: their entries wait for it to land. */
 const waiting: Entry[] = [];
-/** Backs taken by overlays closing themselves, whose popstate is still to come: [address to leave it at]. */
-const owed: string[] = [];
+/** Entries overlays closing themselves still have to take off (taken together, in one go, after the task). */
+let debt = 0;
+/** The address to leave the page at once that go lands (its popstate is still to come); null when none is. */
+let owed: string | null = null;
 let listening = false;
+
+/** One history.go for every entry owed: browsers do not reliably run two Backs queued in one task. */
+function payDebt() {
+  const steps = debt;
+  debt = 0;
+  owed = location.href;
+  history.go(-steps);
+}
 
 function hold(entry: Entry) {
   entry.href = location.href;
@@ -39,10 +49,10 @@ const restore = (href: string) => {
 };
 
 function onPop() {
-  const href = owed.shift();
-  if (href !== undefined) {
-    restore(href);
-    if (owed.length === 0) waiting.splice(0).forEach(hold);
+  if (owed !== null) {
+    restore(owed);
+    owed = null;
+    waiting.splice(0).forEach(hold);
     return;
   }
   const top = open.pop();
@@ -70,7 +80,7 @@ export function useBackToClose(onClose: () => void): void {
     const pathname = location.pathname;
     const mine: Entry = { close: () => latest.current(), href: location.href };
     entry.current = mine;
-    if (owed.length > 0) waiting.push(mine);
+    if (debt > 0 || owed !== null) waiting.push(mine);
     else hold(mine);
     return () => {
       entry.current = null;
@@ -84,8 +94,7 @@ export function useBackToClose(onClose: () => void): void {
       if (at < 0) return;
       open.splice(at, 1);
       if (location.pathname !== pathname) return;
-      owed.push(location.href);
-      history.back();
+      if (debt++ === 0) queueMicrotask(payDebt);
     };
   }, []);
 }

@@ -70,8 +70,61 @@ describe('useBackToClose: Android Back / browser Back closes an overlay (SHEETS-
     history.replaceState(null, '', '/');
     const { unmount } = render(<Overlay onClose={() => {}} />);
     history.replaceState(null, '', '/figure/h1');
+    const traversed = vi.fn();
+    window.addEventListener('popstate', traversed);
     unmount();
     await settle();
+    window.removeEventListener('popstate', traversed);
     expect(location.pathname).toBe('/figure/h1');
+    expect(traversed).not.toHaveBeenCalled();
+  });
+
+  it('one opened after a closing one has sent its Back, before that Back lands, takes its entry once it has', async () => {
+    history.replaceState(null, '', '/?layout=case');
+    const first = render(<Overlay onClose={() => {}} />);
+    first.unmount();
+    // the Back is on its way (sent after the task), not yet landed
+    await Promise.resolve();
+    const second = vi.fn();
+    render(<Overlay onClose={second} />);
+    await settle();
+    expect(second).not.toHaveBeenCalled();
+    history.back();
+    await waitFor(() => expect(second).toHaveBeenCalledTimes(1));
+  });
+
+  it('a Back with no overlay open closes nothing', async () => {
+    history.pushState(null, '', location.href);
+    const bystander = vi.fn();
+    window.addEventListener('popstate', bystander);
+    history.back();
+    await waitFor(() => expect(bystander).toHaveBeenCalledTimes(1));
+    window.removeEventListener('popstate', bystander);
+  });
+
+  it('two overlays closing at once owe two Backs; one opened meanwhile takes its entry after both land', async () => {
+    history.replaceState(null, '', '/?layout=rows');
+    const a = render(<Overlay onClose={() => {}} />);
+    const b = render(<Overlay onClose={() => {}} />);
+    b.unmount();
+    a.unmount();
+    const third = vi.fn();
+    render(<Overlay onClose={third} />);
+    await settle();
+    expect(third).not.toHaveBeenCalled();
+    history.back();
+    await waitFor(() => expect(third).toHaveBeenCalledTimes(1));
+  });
+
+  it('closed before its entry was taken (a Back still owed), it leaves none behind', async () => {
+    history.replaceState(null, '', '/?layout=rows');
+    const first = render(<Overlay onClose={() => {}} />);
+    first.unmount();
+    const waiting = vi.fn();
+    const second = render(<Overlay onClose={waiting} />);
+    second.unmount();
+    await settle();
+    expect(waiting).not.toHaveBeenCalled();
+    expect(location.search).toBe('?layout=rows');
   });
 });

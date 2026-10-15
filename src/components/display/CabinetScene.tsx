@@ -41,12 +41,32 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform, type Vec3 } from './caseCamera';
-import { atX, cabinetBox, frameCase, nearestCabinet, pageInView, panFraming, panLimitsPx, panStops, settlePan, settleWalk, swipeCamera, walkStops, wallPages } from './caseFraming';
+import {
+  atX,
+  cabinetBox,
+  clampLift,
+  frameCase,
+  liftForDragMm,
+  lifted,
+  nearestCabinet,
+  pageInView,
+  panFraming,
+  panLimitsPx,
+  panStops,
+  panYLimitsPx,
+  roomBox,
+  settlePan,
+  settleWalk,
+  swipeCamera,
+  walkStops,
+  wallPages,
+} from './caseFraming';
 import {
   FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
   GRADIENT_GRID,
   cullRect,
+  figureCap,
   figureScales,
   figuresToDraw,
   nearestCabinets,
@@ -746,11 +766,17 @@ export function CabinetScene({
   const [walkX, setWalkX] = useState<number | null>(null);
   const [pan, setPan] = useState(0);
   const [liveDx, setLiveDx] = useState(0);
+  // CASE-FB1 item 5: an up/down drag raises the camera with its aim (camera mode, mm) or slides the photo (pan mode, px)
+  const [lift, setLift] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [liveDy, setLiveDy] = useState(0);
 
   // a new view, wall or swipe mode starts from its own framing
   useEffect(() => {
     setWalkX(null);
     setPan(0);
+    setLift(0);
+    setPanY(0);
   }, [prefs.view, prefs.pattern, prefs.swipe]);
 
   const lastIndex = wall.cabinets.length - 1;
@@ -762,7 +788,11 @@ export function CabinetScene({
   );
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
   const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
-  const walked = walkX === null ? base : atX(base, walkX);
+  // CASE-FB1: a walk moves the camera along the wall only; an up/down drag (camera mode) raises it and its aim together,
+  // between the floor and the ceiling, and the walk keeps that height
+  const along = walkX === null ? base : atX(base, walkX);
+  const liftBy = (dy: number) => clampLift(along, ceilingMm, lift + (dy === 0 ? 0 : liftForDragMm(along, dy)));
+  const walked = lifted(along, prefs.swipe === 'camera' ? liftBy(liveDy) : 0);
   const swiping = prefs.swipe === 'camera' && liveDx !== 0;
   const framing = swiping ? swipeCamera(walked, wall, liveDx) : walked;
   const [panMin, panMax] = panLimitsPx(framing, wall);
@@ -774,18 +804,23 @@ export function CabinetScene({
   const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx) : focusIdx;
   const { panPx } = shown;
   const { camera } = shown.framing;
+  // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
+  const [panYMin, panYMax] = panYLimitsPx(shown.framing, wall, ceilingMm);
+  const clampPanY = (v: number) => Math.min(panYMax, Math.max(panYMin, v));
+  const panYPx = prefs.swipe === 'pan' ? clampPanY(panY + liveDy) : 0;
 
   // MOB-NAV-2: while a finger swipes, cull for the picture last culled for until it has moved a quarter frame (the
   // half-viewport margin still covers the frame), a cabinet already drawn keeping its place against a small move;
-  // once the swipe settles, cull for the settled picture itself: the five cabinets nearest its centre. Draw the
+  // once the swipe settles, cull for the settled picture itself: the drawCap cabinets nearest its centre. Draw the
   // faces at the px per mm the screen shows the cabinets' room (floor to headroom, back to the front of the feet)
   // at its nearest
-  const moving = liveDx !== 0;
+  const moving = liveDx !== 0 || liveDy !== 0;
   const culled = useRef<CullView | null>(null);
   const cull = moving ? stickyView(culled.current, { camera, panPx }) : { camera, panPx };
   culled.current = cull;
   const chosen = useRef<number[]>([]);
-  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : []);
+  // CF1 (a): as many as the panel's full-height frame shows fronts (wallCamera), the same in every view
+  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : [], base.drawCap);
   chosen.current = drawnCabs;
   const visible = drawnCabs.map((i) => ({ slot: wall.cabinets[i], i }));
   const span = useMemo(
@@ -809,13 +844,16 @@ export function CabinetScene({
     [wall],
   );
   const s = texelScale(camera, span);
-  const draw: Draw = { view: cull, rect: cullRect(camera.frame), s };
+  // a photo slid up or down draws, in the unslid picture, the rows the slide brings into the frame
+  const rect = cullRect(camera.frame);
+  const draw: Draw = { view: cull, rect: { ...rect, y0: rect.y0 - panYPx, y1: rect.y1 - panYPx }, s };
 
   // --- swipe (CC4) and tap
-  const press = useRef<{ id: number; x0: number; active: boolean } | null>(null);
+  // a press turns into a swipe along the axis it first moves farther on (CASE-FB1: sideways walks or pans, up and down lifts)
+  const press = useRef<{ id: number; x0: number; y0: number; axis: 'x' | 'y' | null } | null>(null);
   const swallowClick = useRef(false);
   const onPointerDown = useCallback((e: PointerEvent) => {
-    press.current = { id: e.pointerId, x0: e.clientX, active: false };
+    press.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
     // a touch swipe makes no click: whatever it left to swallow ends with the next press
     swallowClick.current = false;
   }, []);
@@ -823,25 +861,35 @@ export function CabinetScene({
     const p = press.current;
     if (!p || p.id !== e.pointerId) return;
     const dx = e.clientX - p.x0;
-    if (!p.active && Math.abs(dx) >= SWIPE_START_PX) {
-      p.active = true;
+    const dy = e.clientY - p.y0;
+    if (p.axis === null && Math.max(Math.abs(dx), Math.abs(dy)) >= SWIPE_START_PX) {
+      p.axis = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
       try {
         hostRef.current?.setPointerCapture(e.pointerId);
       } catch {
         /* a synthetic pointer cannot be captured */
       }
     }
-    if (p.active) setLiveDx(dx);
+    if (p.axis === 'x') setLiveDx(dx);
+    else if (p.axis === 'y') setLiveDy(dy);
   }, []);
   const endPress = (e: PointerEvent, commit: boolean) => {
     const p = press.current;
     if (!p || p.id !== e.pointerId) return;
     press.current = null;
-    if (!p.active) return;
+    if (p.axis === null) return;
     const dx = e.clientX - p.x0;
+    const dy = e.clientY - p.y0;
     swallowClick.current = true;
     setLiveDx(0);
+    setLiveDy(0);
     if (!commit) return;
+    if (p.axis === 'y') {
+      // an up/down drag: the camera keeps the height it was raised to, the photo where it slid (CASE-FB1 item 5)
+      if (prefs.swipe === 'pan') setPanY(clampPanY(panY + dy));
+      else setLift(liftBy(dy));
+      return;
+    }
     if (prefs.swipe === 'pan') {
       // a pan of the wall view settles on the same kind of stop as a walk, where the photo can slide to one (NOTE 31)
       if (prefs.view !== 'wall') setPan(clampPan(pan + dx));
@@ -889,6 +937,9 @@ export function CabinetScene({
       }
     }
   });
+  // what each cabinet holds, and its kind
+  const heldCounts = useMemo(() => cabinets.map((c) => (c ? c.surfaces.reduce((n, x) => n + x.items.length, 0) : 0)), [cabinets]);
+  const heldKinds = useMemo(() => wall.cabinets.map((c) => c.profile.id), [wall]);
   // a figure is drawn when its layer (its tap box and the picture hanging from it) draws into the frame and its margin
   // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
@@ -896,7 +947,9 @@ export function CabinetScene({
     const { art, aspect } = arts[fig.placed.item.index];
     return figureLayerBox(fig, figureGeometry(fig, art, aspect, pictureMargins(art, alpha)), cab);
   });
-  const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]));
+  // G1: as many figures as the drawn cabinets hold (each its kind's most), so no cabinet the frame shows stands empty
+  const figCap = figureCap(heldCounts, heldKinds, drawnCabs);
+  const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]), figCap);
   const onShow = showIdx.map((i) => inDrawn[i]);
   // the figures' layers cost at most their budget wherever the camera stands: the farthest from the frame centre drawn coarser
   // SHOULD 29: a name plate is drawn with its figure where its own box draws into the frame and its margin, and is
@@ -915,10 +968,10 @@ export function CabinetScene({
   const flagged = packed.violators.length + overhangs.length;
   const activeName = pattern[0].name;
 
-  const maxDepth = Math.max(...wall.cabinets.map((c) => c.profile.outer.depthMm));
-  const zBack = -maxDepth - 450;
-  const roomX0 = wall.leftMm - 6000;
-  const roomW = wall.rightMm - wall.leftMm + 12000;
+  // the room: its back wall from the floor to the ceiling the View card sets (CASE-FB1 item 3), its floor and ceiling
+  const room = roomBox(wall, ceilingMm);
+  const roomW = room.x1 - room.x0;
+  const roomD = room.zFront - room.zBack;
 
   return (
     <div
@@ -942,12 +995,16 @@ export function CabinetScene({
         height: camera.frame.height,
       })}
       data-pan={String(Math.round(panPx))}
+      data-pan-y={String(Math.round(panYPx))}
+      data-room={JSON.stringify({ ceilingMm: num(room.y1), zBack: num(room.zBack) })}
       data-px-per-mm={String(s)}
       data-cull-x={String(cull.camera.x)}
       data-cull-pan={String(cull.panPx)}
       data-wall={wallBoxes}
       data-drawn-cabinets={String(drawnCabs.length)}
+      data-drawn-cap={String(base.drawCap)}
       data-drawn-figures={String(onShow.length)}
+      data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -961,34 +1018,42 @@ export function CabinetScene({
       }}
     >
       <div
-        class="cabinet-scene__viewport"
-        style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx ? `translateX(${panPx}px)` : undefined }}
+        class="cabinet-scene__frame"
+        // CASE-FB1: the picture is drawn in the camera's frame, centred in the scene: on a wide panel cropped narrower
+        // (fewer cabinets across, never a cropped height)
+        style={{ left: `${(frame.width - camera.frame.width) / 2}px`, width: `${camera.frame.width}px` }}
       >
-        <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
-          <DrawContext.Provider value={draw}>
-            <Quad cls="room-wall" a={[roomX0, 3200, zBack]} u={[roomW, 0, 0]} v={[0, -3200, 0]} grid={ROOM_GRID} />
-            <Quad cls="room-floor" a={[roomX0, 0, zBack]} u={[roomW, 0, 0]} v={[0, 0, 6500]} grid={ROOM_GRID} />
-            {visible.map(({ slot, i }) => (
-              <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
-            ))}
-            {onShow.map(({ draw: fig }, n) => {
-              const { figure, index } = fig.placed.item;
-              const { art, aspect } = arts[index];
-              return (
-                <SceneFigure
-                  key={figure._id}
-                  draw={fig}
-                  art={art}
-                  aspect={aspect}
-                  margins={pictureMargins(art, alpha)}
-                  scale={scales[n]}
-                  plate={plates[n]}
-                  onSelect={() => onSelect(figure, index)}
-                  onBroken={images.failed}
-                />
-              );
-            })}
-          </DrawContext.Provider>
+        <div
+          class="cabinet-scene__viewport"
+          style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx || panYPx ? `translate(${panPx}px, ${panYPx}px)` : undefined }}
+        >
+          <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
+            <DrawContext.Provider value={draw}>
+              <Quad cls="room-wall" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />
+              <Quad cls="room-floor" a={[room.x0, 0, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
+              <Quad cls="room-ceiling" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
+              {visible.map(({ slot, i }) => (
+                <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
+              ))}
+              {onShow.map(({ draw: fig }, n) => {
+                const { figure, index } = fig.placed.item;
+                const { art, aspect } = arts[index];
+                return (
+                  <SceneFigure
+                    key={figure._id}
+                    draw={fig}
+                    art={art}
+                    aspect={aspect}
+                    margins={pictureMargins(art, alpha)}
+                    scale={scales[n]}
+                    plate={plates[n]}
+                    onSelect={() => onSelect(figure, index)}
+                    onBroken={images.failed}
+                  />
+                );
+              })}
+            </DrawContext.Provider>
+          </div>
         </div>
       </div>
 
@@ -1060,16 +1125,20 @@ const styles = `
     overflow: clip;
     height: 60vh;
     background: #0b0c0f;
-    touch-action: pan-y;
+    /* CASE-FB1: every drag is the case's: sideways walks or pans, up and down raises the camera or slides the photo */
+    touch-action: none;
     user-select: none;
     -webkit-user-select: none;
   }
+  /* the camera's frame, centred; clipped with no scroll box (ruling 33) */
+  .cabinet-scene__frame { position: absolute; top: 0; bottom: 0; overflow: hidden; overflow: clip; }
   .cabinet-scene__viewport { position: absolute; inset: 0; perspective-origin: 50% 50%; }
   .cabinet-scene__root { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0 0; transform-style: preserve-3d; }
   .cabinet-scene .cab, .cabinet-scene .part { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-style: preserve-3d; pointer-events: none; }
   .cabinet-scene .q { position: absolute; left: 0; top: 0; transform-origin: 0 0 0; pointer-events: none; box-sizing: border-box; }
   .cabinet-scene .room-wall { background: linear-gradient(180deg, #2d3037 0%, #23262c 55%, #1a1c21 100%); }
   .cabinet-scene .room-floor { background: linear-gradient(180deg, #121317 0%, #1b1d22 45%, #262930 100%); }
+  .cabinet-scene .room-ceiling { background: linear-gradient(0deg, #3a3d44 0%, #2d3037 100%); }
   .cabinet-scene .m-steel { background: #1d1e22; }
   .cabinet-scene .m-steel.f-side { background: #131417; }
   .cabinet-scene .m-steel.f-top { background: #2b2d32; }

@@ -1,15 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { IN_MM, frameMargins, project, startCameraY, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
-import { MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
-import { wallLayout, type WallLayout } from '../packCabinets';
-import { sideOverhangMm } from '../cabinetProfile';
+import { IN_MM, frameMargins, lensFocalPx, project, startCameraY, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
+import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
+import { surfaceSlots, wallLayout, type WallLayout } from '../packCabinets';
+import { sideOverhangMm, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
 import { WALL_PATTERNS } from '../casePrefs';
 import {
   STEP_BACK_MAX_MM,
   cabinetBox,
   frameCase,
+  fullHeightCap,
   PAN_EDGE_TAN_MAX,
   panFraming,
   panLimitsPx,
@@ -31,6 +32,14 @@ import {
   settlePan,
   frameCentreX,
   pageInView,
+  FLOOR_STRIP_MM,
+  clampLift,
+  frameSpanMm,
+  liftLimitsMm,
+  liftForDragMm,
+  lifted,
+  panYLimitsPx,
+  roomBox,
   type Box,
   type Framing,
   type FramingInput,
@@ -261,14 +270,17 @@ describe('CC4 pan: the photo slides at most until its edge looks PAN_EDGE_TAN_MA
     const slide = base.slideMaxPx!;
 
     it(`${name}: the slide ends where the frame's edge looks PAN_EDGE_TAN_MAX off the axis, or sooner where the cap ends it`, () => {
+      // the drawn frame: the panel's, cropped to its cap's fronts only past DRAWN_CABINETS_LIMIT (CASE-FB1, CF1 a)
+      const drawn = base.camera.frame;
+      expect(drawn.height).toBe(frame.height);
       const edge = panSlideMaxPx(base.camera);
-      expect(edge).toBeCloseTo(base.camera.focalPx * PAN_EDGE_TAN_MAX - frame.width / 2, 9);
-      expect(edge).toBeGreaterThan(frame.width / 2);
+      expect(edge).toBeCloseTo(base.camera.focalPx * PAN_EDGE_TAN_MAX - drawn.width / 2, 9);
+      expect(edge).toBeGreaterThan(drawn.width / 2);
       expect(panSlideMaxPx({ ...base.camera, focalPx: 1 })).toBe(0);
       // MOB-NAV-2: the slid frame shows no longer a stretch of the cabinets' fronts than the cap allows
-      expect(slide).toBe(Math.min(edge, capSlidePx(base.camera, fronts, capSpanMm(long))));
-      expect(slide).toBeGreaterThanOrEqual(frame.width / 2);
-      expect(slide).toBeLessThan(edge);
+      expect(slide).toBe(Math.min(edge, capSlidePx(base.camera, fronts, capSpanMm(long, base.drawCap))));
+      expect(slide).toBeGreaterThanOrEqual(drawn.width / 2);
+      expect(slide).toBeLessThanOrEqual(edge);
     });
 
     it(`${name}: within the slide the camera stays and the picture slides by the pan`, () => {
@@ -438,7 +450,7 @@ describe('capSlidePx: how far the photo may slide and still show no more of the 
   });
 });
 
-describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CABINETS} cabinets the case draws (MOB-NAV-2, Ross 12:1xC)`, () => {
+describe('frameCase: every view frames the fronts of at most the cabinets the case draws (MOB-NAV-2, Ross 12:1xC; CF1: its cap per panel)', () => {
   // the scene's frame at the Fold8's four panels (the page's chrome takes the rest), short and tall
   const FRAMES = [
     { width: 443, height: 344 },
@@ -452,6 +464,8 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     // a desktop window's short frame: wide enough that even a shelf, fitted by its height, would show six
     { width: 1536, height: 200 },
   ];
+  /** A narrow phone's frame, where the mixed wall pages two at a time and some pages open off their centre. */
+  const NARROW_FRAME = { width: 300, height: 350 };
   const WALLS: [string, WallLayout][] = [
     ['KLINGSBO', wallLayout(Array(30).fill(IKEA_KLINGSBO))],
     ['Detolf', wallLayout(Array(30).fill(IKEA_DETOLF))],
@@ -504,7 +518,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
   };
 
   for (const [name, wall] of WALLS) {
-    it(`${name} wall: the wall, cabinet and shelf views, walked or panned, never frame the fronts of more than ${MAX_DRAWN_CABINETS}`, () => {
+    it(`${name} wall: the wall, cabinet and shelf views, walked or panned, never frame the fronts of more than the cabinets drawn`, () => {
       const headroomMm = wall.cabinets.map(() => 300);
       const mid = Math.floor(wall.cabinets.length / 2);
       let checked = 0;
@@ -520,9 +534,9 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
           for (const p of pictures(f, wall)) {
             const shows = framed(p.camera, p.panPx, wall, f.look[1]);
             const at = `${frame.width}x${frame.height} ${view} ${focus}/${shelf} ${p.at}`;
-            expect(shows.fronts.length, `${at}: fronts ${shows.fronts.join(',')}`).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+            expect(shows.fronts.length, `${at}: fronts ${shows.fronts.join(',')}`).toBeLessThanOrEqual(f.drawCap);
             // past them, at most a neighbour each side is seen, at its back through the glass at the frame's edge
-            expect(shows.any.length, `${at}: any part ${shows.any.join(',')}`).toBeLessThanOrEqual(MAX_DRAWN_CABINETS + 2);
+            expect(shows.any.length, `${at}: any part ${shows.any.join(',')}`).toBeLessThanOrEqual(f.drawCap + 2);
             checked++;
           }
         }
@@ -556,11 +570,12 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
         const most = Math.max(...stops.map((s) => s.whole.length));
         const need = Math.min(3, most);
         if (most < 3) short.push(`${name} ${frame.width}x${frame.height} ${most}`);
+        // across the drawn frame (CASE-FB1: cropped to five fronts where the full-height camera would show more)
         const whole = (camera: Camera, lookY: number) =>
           wall.cabinets.flatMap((slot, i) =>
             [slot.leftMm, slot.rightMm].every((x) => {
               const p = project(camera, [x, lookY, 0]);
-              return p.x >= 0 && p.x <= frame.width;
+              return p.x >= 0 && p.x <= camera.frame.width;
             })
               ? [i]
               : [],
@@ -579,7 +594,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
           const at = `${name} ${frame.width}x${frame.height} walk ${k}`;
           const n = whole(g.camera, g.look[1]);
           const fronts = framed(g.camera, 0, wall, g.look[1]).fronts;
-          expect(fronts.length, at).toBeLessThanOrEqual(MAX_DRAWN_CABINETS);
+          expect(fronts.length, at).toBeLessThanOrEqual(g.drawCap);
           if (stop === stops[0] || stop === stops[stops.length - 1]) {
             // the wall's end: its end cabinet whole, centred, the rest of the frame on what stands beside it
             ends++;
@@ -658,7 +673,8 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
     let moved = 0;
     for (const [name, wall] of WALLS) {
       const headroomMm = wall.cabinets.map(() => 300);
-      for (const frame of FRAMES) {
+      // CF1 (a): no Fold8 frame is cropped narrow any more, so a narrow phone's frame, where two-cabinet pages open moved
+      for (const frame of [...FRAMES, NARROW_FRAME]) {
         for (const focus of [0, 4, 9]) {
           const input = { frame, wall, headroomMm, view: 'wall' as const, focus, shelf: 0 };
           const page = wallPages(input).find((p) => p.includes(focus))!;
@@ -700,7 +716,7 @@ describe(`frameCase: every view frames the fronts of at most the ${MAX_DRAWN_CAB
   it('the opening move, page by page: centred where the page stands three whole or no stop within it stands more with the page whole; else the stop of the page (within it, nearest one of its cabinets) nearest its centre that keeps the page whole and stands the most, up to three', () => {
     const mixed = (n: number) => wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
     const cases: [string, WallLayout, { width: number; height: number }][] = [
-      ...WALLS.flatMap(([name, wall]) => FRAMES.map((frame): [string, WallLayout, { width: number; height: number }] => [name, wall, frame])),
+      ...WALLS.flatMap(([name, wall]) => [...FRAMES, NARROW_FRAME].map((frame): [string, WallLayout, { width: number; height: number }] => [name, wall, frame])),
       // a short mixed wall where the centred page already stands three, and a stop within it would stand four
       ['mixed x4', mixed(4), { width: 300, height: 210 }],
       // and one with two stops within the page that stand three
@@ -828,7 +844,8 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
         expect(stops[stops.length - 1].x, at).toBe(wall.cabinets[wall.cabinets.length - 1].centerMm);
         for (const [out, back] of [
           [(f: Framing) => -walkDeadPx(f, wall), (f: Framing) => walkDeadPx(f, wall)],
-          [() => -0.7 * frame.width, () => 0.4 * frame.width],
+          // long swipes: a share of the drawn frame (CASE-FB1: cropped to five fronts on a short panel), past the dead zone
+          [(f: Framing) => -Math.max(0.7 * f.camera.frame.width, walkDeadPx(f, wall)), (f: Framing) => Math.max(0.4 * f.camera.frame.width, walkDeadPx(f, wall))],
         ]) {
           let focus = 0;
           let x: number | null = null;
@@ -1096,14 +1113,423 @@ describe('NOTE 31: a pan of the wall view settles on the same kind of stop, wher
     // and past the wall's end a pan goes nowhere
     expect(settlePan(f, wall, stops, 0, 1000)).toBeNull();
     // past the slide the photo is retaken farther along: the dead zone is the cabinet that picture centres on (a mixed
-    // wall, where it is not the one the unslid picture centres on)
+    // wall, where it is not the one the unslid picture centres on; on a tall phone, whose dead zones pass the 40 px least
+    // once the whole panel is drawn, CF1 a)
     const mixed = wallLayout(Array.from({ length: 18 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
-    const g = opening(mixed, { width: 657, height: 473 });
+    const g = opening(mixed, { width: 412, height: 701 });
     const ms = panStops(g, mixed);
     const d0 = walkDeadPx(g, mixed);
     const far = ms.find((x) => walkDeadPx(panFraming(g, x.panPx).framing, mixed) > d0)!;
     const d1 = walkDeadPx(panFraming(g, far.panPx).framing, mixed);
     expect(settlePan(g, mixed, ms, far.panPx, (d0 + d1) / 2)).toBeNull();
     expect(settlePan(g, mixed, ms, far.panPx, d1)!.panPx).toBeGreaterThan(far.panPx);
+  });
+});
+
+describe('CASE-FB1: full height, one height for the whole wall, the room, the vertical pan (Ross, Fold8 10-14)', () => {
+  // the scene's frame at the Fold8's four panels as the e2e opens them (SHEETS-FB1: no filter rows), and short and tall ones
+  const PANELS = [
+    { width: 443, height: 418 },
+    { width: 616, height: 217 },
+    { width: 870, height: 335 },
+    { width: 657, height: 547 },
+    { width: 444, height: 701 },
+    { width: 870, height: 657 },
+    { width: 412, height: 701 },
+    { width: 1536, height: 200 },
+  ];
+  const MIXED = wallLayout(Array.from({ length: 30 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+  const WALLS: [string, WallLayout, number[]][] = [
+    ['KLINGSBO', wallLayout(Array(20).fill(IKEA_KLINGSBO)), Array(20).fill(300)],
+    // a tall figure on some tops: the headroom differs cabinet to cabinet
+    ['mixed', MIXED, MIXED.cabinets.map((_, i) => (i % 4 === 1 ? 457.2 : 300))],
+    ['one Detolf', wallLayout([IKEA_DETOLF]), [300]],
+  ];
+  const vertical = (f: Framing) => ({ y: f.camera.y, z: f.camera.z, pitch: f.camera.pitch, focalPx: f.camera.focalPx, frame: f.camera.frame, lookY: f.look[1] });
+  const insideOf = (camera: Camera, p: Vec3, slack = 1e-3) => {
+    const s = project(camera, p);
+    return s.depth > 0 && inside(camera.frame.width, camera.frame.height, s.x, s.y, slack);
+  };
+
+  it('every view of the wall and the cabinet, at every focus and every stop, stands the camera at one height, distance, tilt and frame: only x moves', () => {
+    for (const [name, wall, headroomMm] of WALLS) {
+      for (const frame of PANELS) {
+        const base: FramingInput = { frame, wall, headroomMm, view: 'cabinet', focus: 0, shelf: 0 };
+        const one = vertical(frameCase(base));
+        for (const view of ['wall', 'cabinet'] as const) {
+          for (let focus = 0; focus < wall.cabinets.length; focus++) {
+            const f = frameCase({ ...base, view, focus });
+            expect(vertical(f), `${name} ${frame.width}x${frame.height} ${view} ${focus}`).toEqual(one);
+          }
+          for (const stop of walkStops({ ...base, view: 'wall' })) {
+            const g = atX(frameCase({ ...base, view: 'wall', focus: stop.focus }), stop.x);
+            expect(vertical(g), `${name} ${frame.width}x${frame.height} stop ${stop.x}`).toEqual(one);
+          }
+        }
+      }
+    }
+  });
+
+  it('full height: every cabinet the view frames stands whole in it, from a strip of floor in front of its feet to the top of what stands on the tallest top', () => {
+    for (const [name, wall, headroomMm] of WALLS) {
+      const top = Math.max(...wall.cabinets.map((c, i) => c.profile.outer.heightMm + headroomMm[i]));
+      for (const frame of PANELS) {
+        for (const view of ['wall', 'cabinet'] as const) {
+          for (let focus = 0; focus < wall.cabinets.length; focus += 3) {
+            const f = frameCase({ frame, wall, headroomMm, view, focus, shelf: 0 });
+            for (const i of f.page) {
+              const b = cabinetBox(wall.cabinets[i], top - wall.cabinets[i].profile.outer.heightMm);
+              const at = `${name} ${frame.width}x${frame.height} ${view} ${focus}: cabinet ${i}`;
+              const m = frameMargins(f.camera.frame);
+              for (const x of [b.x0, b.x1]) {
+                for (const z of [b.z0, b.z1]) {
+                  for (const y of [0, top]) {
+                    const p = project(f.camera, [x, y, z]);
+                    // floor to top inside the frame's top and bottom margins; side to side too, where the view centres
+                    // on the one cabinet (the wall view opens a page whole across at the height it aims at: wholeCabinets)
+                    expect(p.y, `${at} corner ${x},${y},${z}`).toBeGreaterThanOrEqual(m.y - 1e-3);
+                    expect(p.y, `${at} corner ${x},${y},${z}`).toBeLessThanOrEqual(f.camera.frame.height - m.y + 1e-3);
+                    if (view === 'cabinet') expect(insideOf(f.camera, [x, y, z]), `${at} corner ${x},${y},${z}`).toBe(true);
+                  }
+                }
+              }
+              expect(insideOf(f.camera, [wall.cabinets[i].centerMm, 0, b.z1 + FLOOR_STRIP_MM]), `${at}: the floor strip`).toBe(true);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('the KLINGSBO on the cover: aimed at the middle of the top figures (1050 mm), from the CC15 start height, stepped back to show the floor strip', () => {
+    const wall = wallLayout(Array(12).fill(IKEA_KLINGSBO));
+    const f = frameCase({ frame: { width: 443, height: 418 }, wall, headroomMm: Array(12).fill(300), view: 'cabinet', focus: 5, shelf: 0 });
+    expect(f.look).toEqual([wall.cabinets[5].centerMm, 1050, 0]);
+    expect(f.camera.y).toBeCloseTo(startCameraY(1050), 9);
+    // the floor strip, the last thing in, binds: it draws on the bottom margin
+    const strip = project(f.camera, [wall.cabinets[5].centerMm, 0, 50 + FLOOR_STRIP_MM]);
+    expect(strip.y).toBeCloseTo(418 - frameMargins({ width: 443, height: 418 }).y, 0);
+  });
+
+  it('a wide panel crops the frame to the cabinets it may show (its cap\'s fronts), never the cabinets\' height: the lens stays the panel\'s', () => {
+    for (const [name, wall, headroomMm] of WALLS) {
+      for (const frame of PANELS) {
+        const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
+        const at = `${name} ${frame.width}x${frame.height}`;
+        expect(f.camera.frame.height, at).toBe(frame.height);
+        expect(f.camera.frame.width, at).toBeLessThanOrEqual(frame.width);
+        expect(f.camera.focalPx, at).toBe(lensFocalPx(frame));
+        const fronts = { y0: 0, y1: Math.max(...wall.cabinets.map((c, i) => c.profile.outer.heightMm + headroomMm[i])), z0: 0, z1: 0 };
+        // raised or lowered anywhere between the floor and the ceiling, the frame shows no more of the fronts than five cabinets'
+        const [lo, hi] = liftLimitsMm(f, 2438.4);
+        for (let k = 0; k <= 10; k++) {
+          const g = lifted(f, lo + ((hi - lo) * k) / 10);
+          expect(frameSpanMm(g.camera, fronts), `${at} lift ${k}`).toBeLessThanOrEqual(capSpanMm(wall, f.drawCap) + 1e-6);
+        }
+      }
+    }
+    // the open panel, short: the whole panel, its cap raised (CF1 a) where the limit allows, else cropped to the limit;
+    // the narrow phone: the whole panel; one cabinet: never cropped
+    const open = frameCase({ frame: { width: 870, height: 335 }, wall: WALLS[0][1], headroomMm: WALLS[0][2], view: 'wall', focus: 0, shelf: 0 });
+    expect(open.camera.frame.width).toBe(870);
+    expect(Number.isInteger(open.camera.frame.width)).toBe(true);
+    const phone = frameCase({ frame: { width: 412, height: 701 }, wall: WALLS[0][1], headroomMm: WALLS[0][2], view: 'wall', focus: 0, shelf: 0 });
+    expect(phone.camera.frame.width).toBe(412);
+    const lone = frameCase({ frame: { width: 1536, height: 200 }, wall: WALLS[2][1], headroomMm: WALLS[2][2], view: 'wall', focus: 0, shelf: 0 });
+    expect(lone.camera.frame.width).toBe(1536);
+  });
+
+  it('the shelf view, a deliberate zoom, keeps the whole panel and its own framing', () => {
+    const wall = WALLS[0][1];
+    const f = frameCase({ frame: { width: 870, height: 335 }, wall, headroomMm: WALLS[0][2], view: 'shelf', focus: 2, shelf: 1 });
+    expect(f.camera.frame).toEqual({ width: 870, height: 335 });
+    expect(f.camera.pitch).toBe(0);
+  });
+
+  it('camera mode, an up/down drag: the camera and its aim rise and fall together, x, distance and tilt kept, the aim following the finger', () => {
+    const wall = WALLS[1][1];
+    for (const frame of PANELS) {
+      const f = frameCase({ frame, wall, headroomMm: WALLS[1][2], view: 'wall', focus: 4, shelf: 0 });
+      const up = liftForDragMm(f, 40);
+      const down = liftForDragMm(f, -40);
+      expect(up).toBeGreaterThan(0);
+      expect(down).toBeLessThan(0);
+      const g = lifted(f, up);
+      expect(g.camera).toEqual({ ...f.camera, y: f.camera.y + up });
+      expect(g.look).toEqual([f.look[0], f.look[1] + up, f.look[2]]);
+      // a finger moving down 40 px raises the camera: what it aimed at draws 40 px lower, and 40 px higher the other way
+      expect(project(g.camera, f.look).y - project(f.camera, f.look).y).toBeCloseTo(40, 6);
+      expect(project(lifted(f, down).camera, f.look).y - project(f.camera, f.look).y).toBeCloseTo(-40, 6);
+      expect(lifted(f, 0)).toBe(f);
+      // a drag longer than the camera can follow (the aim would pass the horizon) is as far as the limits allow
+      expect(liftForDragMm(f, 1e9)).toBe(Infinity);
+    }
+  });
+
+  it('camera mode: the lift stops with the camera and its aim between the floor and the ceiling', () => {
+    const wall = WALLS[0][1];
+    const f = frameCase({ frame: { width: 443, height: 418 }, wall, headroomMm: WALLS[0][2], view: 'cabinet', focus: 3, shelf: 0 });
+    const ceiling = 2438.4;
+    const [lo, hi] = liftLimitsMm(f, ceiling);
+    // the camera stands above its aim (it looks down): the aim meets the floor first, the camera the ceiling
+    expect(f.look[1] + lo).toBeCloseTo(0, 9);
+    expect(f.camera.y + hi).toBeCloseTo(ceiling, 9);
+    expect(lo).toBeLessThan(0);
+    expect(hi).toBeGreaterThan(0);
+    expect(clampLift(f, ceiling, hi + 500)).toBe(hi);
+    expect(clampLift(f, ceiling, lo - 500)).toBe(lo);
+    expect(clampLift(f, ceiling, 12)).toBe(12);
+    // a ceiling under the camera: it may only come down, and it stays where it is until it does
+    const low = liftLimitsMm(f, f.camera.y - 100);
+    expect(low[1]).toBe(0);
+    expect(low[0]).toBe(lo);
+    // an aim under the floor: it may only come up
+    const under = { ...f, look: [f.look[0], -50, 0] as Vec3 };
+    expect(liftLimitsMm(under, ceiling)[0]).toBe(0);
+  });
+
+  it('pan mode, an up/down drag: the photo slides down until the ceiling over the fronts reaches the frame top, up until the floor line reaches its bottom', () => {
+    const wall = WALLS[0][1];
+    for (const frame of PANELS) {
+      for (const ceiling of [2133.6, 2438.4, 3048]) {
+        const f = frameCase({ frame, wall, headroomMm: WALLS[0][2], view: 'wall', focus: 4, shelf: 0, ceilingMm: ceiling });
+        const [lo, hi] = panYLimitsPx(f, wall, ceiling);
+        const at = `${frame.width}x${frame.height} ceiling ${ceiling}`;
+        const ceilingY = project(f.camera, [f.camera.x, ceiling, 0]).y;
+        const floorY = project(f.camera, [f.camera.x, 0, 50]).y;
+        expect(lo, at).toBeLessThanOrEqual(0);
+        expect(hi, at).toBeGreaterThanOrEqual(0);
+        // the ceiling line above the frame: down until it reaches the top; else no slide down
+        expect(hi, at).toBeCloseTo(Math.max(0, -ceilingY), 9);
+        // the floor strip already shows: no slide up
+        expect(floorY, at).toBeLessThan(frame.height);
+        expect(lo, at).toBe(0);
+      }
+    }
+    // a camera raised past where the floor shows: the photo may slide up until the floor line reaches the frame's bottom
+    const f = frameCase({ frame: PANELS[0], wall, headroomMm: WALLS[0][2], view: 'wall', focus: 4, shelf: 0 });
+    const g = lifted(f, liftLimitsMm(f, 2438.4)[1]);
+    const [lo] = panYLimitsPx(g, wall, 2438.4);
+    expect(project(g.camera, [g.camera.x, 0, 50]).y + lo).toBeCloseTo(PANELS[0].height, 9);
+  });
+
+  it('the room: its back wall stands from the floor to the ceiling, behind the deepest cabinet, past both ends of the wall', () => {
+    const wall = WALLS[1][1];
+    // the rack is the deepest of the three
+    const zBack = -OPEN_STEEL_RACK.outer.depthMm - 450;
+    expect(roomBox(wall, 2438.4)).toEqual({ x0: wall.leftMm - 6000, x1: wall.rightMm + 6000, y1: 2438.4, zBack, zFront: zBack + 6500 });
+    expect(roomBox(wall, 3048).y1).toBe(3048);
+  });
+});
+
+describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wall spans the panel (MAX_DRAWN_CABINETS the fallback)', () => {
+  // the scene's frame at the Fold8's four panels as the e2e opens them
+  const FOLD8 = [
+    { width: 443, height: 418 },
+    { width: 616, height: 217 },
+    { width: 870, height: 335 },
+    { width: 657, height: 547 },
+  ];
+  const long = (profiles: (typeof IKEA_KLINGSBO)[]) => wallLayout(Array.from({ length: 40 }, (_, i) => profiles[i % profiles.length]));
+  const WALLS: [string, WallLayout][] = [
+    ['KLINGSBO', long([IKEA_KLINGSBO])],
+    ['Detolf', long([IKEA_DETOLF])],
+    ['rack', long([OPEN_STEEL_RACK])],
+    ['mixed', long([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK])],
+  ];
+  const fronts = (wall: WallLayout) => ({ y0: 0, y1: Math.max(...wall.cabinets.map((c) => c.profile.outer.heightMm + 300)), z0: 0, z1: 0 });
+  /** The longest stretch of the fronts the frame shows at any height the camera may be lifted to. */
+  const widest = (f: Framing, wall: WallLayout) => {
+    const [lo, hi] = liftLimitsMm(f, 2438.4);
+    let most = 0;
+    for (let k = 0; k <= 10; k++) most = Math.max(most, frameSpanMm(lifted(f, lo + ((hi - lo) * k) / 10).camera, fronts(wall)));
+    return most;
+  };
+
+  it('capSpanMm takes the cap: short of the narrowest run from a cabinet to the n-th after it; five when not given', () => {
+    const wall = wallLayout(Array(20).fill(IKEA_KLINGSBO));
+    expect(capSpanMm(wall, 5)).toBe(capSpanMm(wall));
+    expect(capSpanMm(wall, 5)).toBe(4 * 545 - 1);
+    expect(capSpanMm(wall, 9)).toBe(8 * 545 - 1);
+    expect(capSpanMm(wall, 19)).toBe(18 * 545 - 1);
+    expect(capSpanMm(wall, 20)).toBe(Infinity);
+  });
+
+  it('the limit: at least the fallback five; MAX_DRAWN_CABINETS stays the fallback (Ross 2026-10-13)', () => {
+    expect(MAX_DRAWN_CABINETS).toBe(5);
+    expect(DRAWN_CABINETS_LIMIT).toBeGreaterThanOrEqual(MAX_DRAWN_CABINETS);
+  });
+
+  it('every wall at the four Fold8 panels: the least cap (five at the least, the limit at the most) whose span the uncropped frame never passes, lifted anywhere; the frame is the whole panel where that cap is within the limit', () => {
+    for (const [name, wall] of WALLS) {
+      const headroomMm = wall.cabinets.map(() => 300);
+      for (const frame of FOLD8) {
+        const at = `${name} ${frame.width}x${frame.height}`;
+        const f = frameCase({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 });
+        expect(f.drawCap, at).toBeGreaterThanOrEqual(MAX_DRAWN_CABINETS);
+        expect(f.drawCap, at).toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
+        // whatever it is cropped to, the frame never shows more of the fronts than the cap allows
+        expect(widest(f, wall), at).toBeLessThanOrEqual(capSpanMm(wall, f.drawCap) + 1e-6);
+        // the whole panel: as wide as the panel, unless the limit binds
+        const whole = { ...f, camera: { ...f.camera, frame } };
+        const needs = widest(whole, wall);
+        // G2: no escape at the limit: every Fold8 panel is the whole panel
+        expect(f.camera.frame, at).toEqual(frame);
+        // the least: one fewer would have cropped it
+        if (f.drawCap > MAX_DRAWN_CABINETS) expect(capSpanMm(wall, f.drawCap - 1), at).toBeLessThan(needs);
+        // the cabinet and the shelf views draw as many
+        for (const view of ['cabinet', 'shelf'] as const) expect(frameCase({ frame, wall, headroomMm, view, focus: 7, shelf: 1 }).drawCap, `${at} ${view}`).toBe(f.drawCap);
+        // and a page never holds more than the cap
+        for (const page of wallPages({ frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 })) expect(page.length, at).toBeLessThanOrEqual(f.drawCap);
+      }
+    }
+  });
+
+  it('the KLINGSBO wall fills the four Fold8 panels with 7, 15, 14 and 8 cabinets drawn (within the limit)', () => {
+    const wall = WALLS[0][1];
+    const caps = FOLD8.map((frame) => frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 }).drawCap);
+    expect(caps).toEqual([7, 15, 14, 8]);
+  });
+
+  it('a wall of no more cabinets than the panel would show is never cropped, and draws them all', () => {
+    const wall = wallLayout(Array(8).fill(IKEA_KLINGSBO));
+    const f = frameCase({ frame: FOLD8[1], wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(f.drawCap).toBe(8);
+    // all eight drawn: the whole panel (CF1 b, five drawn, would crop it)
+    expect(f.camera.frame).toEqual(FOLD8[1]);
+  });
+
+  // G2 (close-out 2): the limit from the measurement, not the fixture: a tall figure on a top raises the headroom up to
+  // TOP_CLEARANCE_CAP_MM, and the camera steps back to frame it, so the panel shows more fronts
+  const HEADROOMS = [HEADROOM_MIN_MM, 350, 400, 450, 500, 550, 600, TOP_CLEARANCE_CAP_MM];
+
+  it('G2: DRAWN_CABINETS_LIMIT is the most cabinets any Fold8 panel needs for any wall pattern at any headroom up to TOP_CLEARANCE_CAP_MM (the measurement: 20, the Detolf wall on the sideways cover)', () => {
+    let most = 0;
+    let where = '';
+    for (const pattern of WALL_PATTERNS) {
+      const wall = long([...pattern.profiles]);
+      for (const frame of FOLD8) {
+        for (const h of HEADROOMS) {
+          const need = fullHeightCap({ frame, wall, headroomMm: wall.cabinets.map(() => h), view: 'wall', focus: 0, shelf: 0 });
+          if (need > most) [most, where] = [need, `${pattern.id} ${frame.width}x${frame.height}`];
+        }
+      }
+    }
+    expect(where).toBe('ikea-detolf 616x217');
+    expect(most).toBe(20);
+    expect(DRAWN_CABINETS_LIMIT).toBe(most);
+  });
+
+  it('G2: so no Fold8 panel is ever cropped, for any wall pattern and headroom up to TOP_CLEARANCE_CAP_MM, in any view; the cap is what the panel needs', () => {
+    for (const pattern of WALL_PATTERNS) {
+      const wall = long([...pattern.profiles]);
+      for (const frame of FOLD8) {
+        for (const h of HEADROOMS) {
+          const at = `${pattern.id} ${frame.width}x${frame.height} headroom ${h}`;
+          const base = { frame, wall, headroomMm: wall.cabinets.map(() => h), focus: 3, shelf: 1 };
+          for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+            const f = frameCase({ ...base, view });
+            expect(f.camera.frame, `${at} ${view}`).toEqual(frame);
+            expect(f.drawCap, `${at} ${view}`).toBe(fullHeightCap({ ...base, view }));
+          }
+        }
+      }
+    }
+  });
+
+  it('G2: fullHeightCap is the least from five whose span the uncropped frame never passes; a short wall needs all of it, never more', () => {
+    const wall = long([IKEA_KLINGSBO]);
+    const frame = FOLD8[1];
+    const n = fullHeightCap({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(n).toBe(15);
+    // a desktop window's short frame needs more than the limit
+    const desk = fullHeightCap({ frame: { width: 1536, height: 200 }, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(desk).toBeGreaterThan(DRAWN_CABINETS_LIMIT);
+    // a wall of eight: eight (capSpanMm is unbounded past the wall's length); a wall of three: five, the fallback
+    const eight = wallLayout(Array(8).fill(IKEA_KLINGSBO));
+    expect(fullHeightCap({ frame, wall: eight, headroomMm: eight.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 })).toBe(8);
+    const three = wallLayout(Array(3).fill(IKEA_KLINGSBO));
+    expect(fullHeightCap({ frame, wall: three, headroomMm: three.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 })).toBe(MAX_DRAWN_CABINETS);
+  });
+
+  it('past the limit (a desktop window\'s short frame) the frame is cropped to the span of the limit\'s cabinets', () => {
+    const wall = WALLS[0][1];
+    const frame = { width: 1536, height: 200 };
+    const f = frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+    expect(f.drawCap).toBe(DRAWN_CABINETS_LIMIT);
+    expect(f.camera.frame.width).toBeLessThan(frame.width);
+    expect(f.camera.frame.height).toBe(frame.height);
+    expect(Number.isInteger(f.camera.frame.width)).toBe(true);
+    expect(widest(f, wall)).toBeLessThanOrEqual(capSpanMm(wall, DRAWN_CABINETS_LIMIT) + 1e-6);
+  });
+});
+
+describe('F2: the shelf view stands one camera height per shelf level for the whole wall (a walk changes only x)', () => {
+  const PANELS = [
+    { width: 443, height: 418 },
+    { width: 616, height: 217 },
+    { width: 870, height: 335 },
+    { width: 657, height: 547 },
+  ];
+  const MIXED = wallLayout(Array.from({ length: 12 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+  const headroomMm = MIXED.cabinets.map((_, i) => (i % 4 === 1 ? 457.2 : 300));
+  const vertical = (f: Framing) => ({ y: f.camera.y, z: f.camera.z - f.look[2], pitch: f.camera.pitch, frame: f.camera.frame, lookY: f.look[1] });
+
+  it('on the mixed wall, every focus at one shelf level frames from one height, distance and tilt', () => {
+    for (const frame of PANELS) {
+      for (let shelf = 0; shelf < 6; shelf++) {
+        const one = vertical(frameCase({ frame, wall: MIXED, headroomMm, view: 'shelf', focus: 0, shelf }));
+        for (let focus = 1; focus < MIXED.cabinets.length; focus++) {
+          expect(vertical(frameCase({ frame, wall: MIXED, headroomMm, view: 'shelf', focus, shelf })), `${frame.width}x${frame.height} shelf ${shelf} focus ${focus}`).toEqual(one);
+        }
+      }
+    }
+  });
+
+  it('a walk to another cabinet type keeps the height: walked, then refocused there, only x differs', () => {
+    for (const frame of PANELS) {
+      const f = frameCase({ frame, wall: MIXED, headroomMm, view: 'shelf', focus: 0, shelf: 2 });
+      const walked = swipeCamera(f, MIXED, -0.6 * frame.width);
+      const focus = nearestCabinet(MIXED, walked.camera.x);
+      expect(focus).toBeGreaterThan(0);
+      const there = atX(frameCase({ frame, wall: MIXED, headroomMm, view: 'shelf', focus, shelf: 2 }), walked.camera.x);
+      expect(there.camera).toEqual(walked.camera);
+      expect(there.look).toEqual(walked.look);
+    }
+  });
+
+  it('every cabinet\'s band at that level (its shelf up to the one above) stands whole in the frame, centred on it; its top as wide as it stands', () => {
+    for (const frame of PANELS) {
+      for (let shelf = 0; shelf < 6; shelf++) {
+        for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
+          const slot = MIXED.cabinets[focus];
+          const f = frameCase({ frame, wall: MIXED, headroomMm, view: 'shelf', focus, shelf });
+          const slots = surfaceSlots(slot.profile, CEILING_DEFAULT_MM);
+          const s = slots[Math.min(shelf, slots.length - 1)];
+          const surface = slot.profile.surfaces[s.surfaceIndex];
+          const lo = surface.topMm - surface.thicknessMm;
+          const hi = s.isTop ? slot.profile.outer.heightMm + headroomMm[focus] : slot.profile.surfaces[s.surfaceIndex + 1].topMm;
+          const at = `${frame.width}x${frame.height} shelf ${shelf} focus ${focus}`;
+          expect(f.camera.x, at).toBe(slot.centerMm);
+          // the top's height is open: the camera steps back at most CC4b's 3 in past the width fit, so there only the
+          // width is held (at the height it aims at)
+          for (const x of [slot.leftMm, slot.rightMm]) {
+            for (const y of s.isTop ? [f.look[1]] : [lo, hi]) {
+              const p = project(f.camera, [x, y, 0]);
+              expect(inside(f.camera.frame.width, f.camera.frame.height, p.x, p.y), `${at} ${x},${y}`).toBe(true);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('a wall of one kind with one headroom frames each shelf as before: the KLINGSBO\'s glass shelf, level at the middle of its band', () => {
+    const wall = wallLayout(Array(6).fill(IKEA_KLINGSBO));
+    const f = frameCase({ frame: OPEN, wall, headroomMm: Array(6).fill(300), view: 'shelf', focus: 3, shelf: 1 });
+    const one = frameCase({ frame: OPEN, wall: wallLayout([IKEA_KLINGSBO]), headroomMm: [300], view: 'shelf', focus: 0, shelf: 1 });
+    expect(f.camera.pitch).toBe(0);
+    expect(f.look[1]).toBeCloseTo((1519 - 17 + 1800) / 2, 9);
+    expect(vertical(f)).toEqual(vertical(one));
   });
 });

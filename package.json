@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "build:stack": "tsc -b && vite build --mode stack --outDir dist-stack",
     "preview": "vite preview",
+    "brand": "node scripts/generate-brand.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

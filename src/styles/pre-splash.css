@@ -1,15 +1,25 @@
-/* The static splash: painted before any script runs, faded once the app mounts (src/pwa/preSplash.ts). */
+/* The static splash: painted before any script runs, held and faded once the app mounts (src/pwa/preSplash.ts). */
 .pre-splash {
   position: fixed;
   inset: 0;
   z-index: 9998;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 1.25rem;
   background: #0a0a0a;
-  transition: opacity 400ms ease-out;
+  transition: opacity 300ms ease-out;
 }
 .pre-splash--hidden { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pre-splash { transition: none; }
+}
+.pre-splash__art {
+  display: block;
+  height: min(46vh, 22rem);
+  width: auto;
+}
 .pre-splash__text {
   font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 1.375rem;

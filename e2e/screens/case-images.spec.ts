@@ -10,8 +10,11 @@
 //   (b) on a slow link, while the sync is still fetching, the figures it kept already stand as pictures.
 //   (c) a case view left part way shows what its sync kept the moment it opens again, and its sync
 //       carries on with only what is missing.
+//   (d) user C's Ordered and Wished (on figures C owns none of): filtered to each, every figure in view
+//       with an image stands as its cut-out, and the tiles show the pictures (FB-QUICK, Ross 10-16).
 // On 6f458ce3 every figure stood as its plate until the whole sync ended (all 1,200 images), a case
 // view left part way showed nothing when it opened again, and a synced one drew framed pictures only.
+// On 692149fe only the owned figures were synced: an Ordered or Wished figure not also owned stood as its plate.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
@@ -57,9 +60,17 @@ const ORIGIN_HEADERS = {
  */
 const MIN_DRAWN_SHARE = 0.05;
 
+/** User C's Ordered and Wished (Ross's shape: a few ordered, many wished), from head HELD_FROM on. C owns nothing. */
+const HELD_ORDERED = 8;
+const HELD_WISHED = 40;
+const HELD_FROM = 900;
+const HELD_PREFIX = 'occ/fb0c0000-';
+const heldOcc = (i: number): string => `fb0c0000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`;
+
 let state: StackState;
 let stack: StackClient;
 let USER_A: StackUser;
+let USER_C: StackUser;
 let HEADS: { headId: string }[];
 
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -68,7 +79,7 @@ const maskId = (head: string) => sha(`mask:${head}`);
 const MASKS = new Set<string>();
 /** About half the figures have images, fixed by their head ids. */
 const imaged = (head: string): boolean => parseInt(sha(head).slice(0, 2), 16) % 2 === 0;
-/** Where each imaged figure comes in the sync's fetches (the owned heads in order, src/hooks/useOwnedImages.ts). */
+/** Where each imaged figure comes in the sync's fetches (the owned heads in order, src/hooks/useCollectionImages.ts). */
 let RANK = new Map<string, number>();
 
 async function seed(): Promise<void> {
@@ -97,6 +108,32 @@ async function seed(): Promise<void> {
   }
 }
 
+/** C's ordered and wished copies (no other suite signs C in). */
+async function seedHeld(): Promise<void> {
+  const held = await stack.sync.counts({ user: USER_C.sub, prefix: HELD_PREFIX });
+  if (held.facets >= (HELD_ORDERED + HELD_WISHED) * 2) return;
+  const device = await loginDevice({
+    origin: state.origin,
+    authorizationEndpoint: state.issuer.authorizationEndpoint,
+    tokenEndpoint: state.issuer.tokenEndpoint,
+    clientId: state.issuer.clientId,
+    loginHint: USER_C.email,
+  });
+  expect((await device.enrol('fb-quick seed')).status).toBe(201);
+  const dev = device.deviceId!.replace(/-/g, '');
+  const stamp = { edited_at: '2026-10-01T00:00:00.000+00:00', tz: 'UTC' };
+  let counter = 0;
+  const version = () => `2026-10-01T00:00:00.000000Z#${String(++counter).padStart(10, '0')}#${dev}`;
+  const events = [];
+  for (let i = 0; i < HELD_ORDERED + HELD_WISHED; i++) {
+    const status = i < HELD_ORDERED ? 'ordered' : 'wished';
+    events.push({ facetKey: `occ/${heldOcc(i)}/head`, version: version(), op: 'SYNC_OP_UPSERT', payload: JSON.stringify({ head_id: HEADS[HELD_FROM + i]!.headId, ...stamp }), basis: '' });
+    events.push({ facetKey: `occ/${heldOcc(i)}/status`, version: version(), op: 'SYNC_OP_UPSERT', payload: JSON.stringify({ status, ...stamp }), basis: '' });
+  }
+  const res = await device.connect('coordinator.v1.SyncService', 'Push', { clientId: `fb-quick-seed-${dev}`, events });
+  expect(res.status).toBe(200);
+}
+
 test.describe.configure({ mode: 'default' });
 
 test.beforeAll(async () => {
@@ -105,7 +142,7 @@ test.beforeAll(async () => {
   if (found === undefined) throw new Error('no stack state file: run through playwright.stack.config.ts');
   state = found;
   stack = stackClient(state.controlUrl);
-  USER_A = state.users[0]!;
+  [USER_A, USER_C] = [state.users[0]!, state.users[2]!];
   HEADS = (JSON.parse(readFileSync(state.catalog.file, 'utf8')) as { heads: { headId: string }[] }).heads;
   for (const h of HEADS.slice(0, OWNED)) MASKS.add(maskId(h.headId));
   RANK = new Map(
@@ -116,6 +153,7 @@ test.beforeAll(async () => {
       .map((h, i) => [h, i]),
   );
   await seed();
+  await seedHeld();
 });
 
 test.beforeEach(async ({ context }) => {
@@ -190,7 +228,13 @@ const authStatus = (page: Page) => page.evaluate(() => window.__fcAuth?.status()
 
 /** The app signed in as A with every owned copy on the device, on the case view. */
 async function openCase(page: Page): Promise<void> {
-  await stack.issuer.loginAs(USER_A.sub);
+  await openAs(page, USER_A, OWNED_PREFIX, OWNED);
+  await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
+}
+
+/** The app signed in as `user` with the `count` copies whose occ ids start `prefix` on the device. */
+async function openAs(page: Page, user: StackUser, prefix: string, count: number): Promise<void> {
+  await stack.issuer.loginAs(user.sub);
   await page.goto('/');
   await page.waitForFunction(() => window.__fcAuth !== undefined && window.__fcSync !== undefined, undefined, { timeout: 30_000 }).catch(() => {
     throw new Error('no window.__fcAuth / __fcSync: the stack must serve dist-stack (npm run build:stack)');
@@ -201,11 +245,10 @@ async function openCase(page: Page): Promise<void> {
     await expect.poll(() => authStatus(page), { timeout: 30_000 }).toBe('signed-in');
   }
   await expect
-    .poll(async () => (await page.evaluate(() => window.__fcSync!.copies())).filter((c) => c.occ_id.startsWith(OWNED_PREFIX.slice(4)) && c.shown_in !== null).length, {
+    .poll(async () => (await page.evaluate(() => window.__fcSync!.copies())).filter((c) => c.occ_id.startsWith(prefix.slice(4)) && c.shown_in !== null).length, {
       timeout: 180_000,
     })
-    .toBe(OWNED);
-  await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
+    .toBe(count);
 }
 
 interface Drawn {
@@ -398,4 +441,56 @@ test('(c) a case view left part way shows what its sync kept the moment it opens
   const twice = served.filter((u, i) => served.indexOf(u) !== i);
   // at most the fetches in flight when the case view went away are asked again
   expect(twice.length, twice.join('\n')).toBeLessThanOrEqual(4);
+});
+
+// ------------------------------------------------------------------ (d)
+
+/** Show one holding alone, chosen in Refine (SHEETS-FB1: it applies at once), then Done. */
+async function showHolding(page: Page, name: 'Owned' | 'Ordered' | 'Wished'): Promise<void> {
+  await page.locator('.case-tabs__tab[data-tab="refine"]').tap();
+  const holding = page.getByRole('group', { name: 'Holding' });
+  const choice = (label: string) => holding.getByRole('button', { name: new RegExp(`^${label}`) });
+  if ((await choice(name).getAttribute('aria-pressed')) !== 'true') await choice(name).tap();
+  for (const other of ['Owned', 'Ordered', 'Wished', 'No longer owned'].filter((n) => n !== name)) {
+    if ((await choice(other).getAttribute('aria-pressed')) === 'true') await choice(other).tap();
+  }
+  await expect(holding.getByRole('button', { pressed: true })).toHaveCount(1);
+  await page.getByRole('button', { name: 'Done' }).tap();
+  await expect(page.locator('.detent-sheet')).toHaveCount(0);
+  await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
+}
+
+test("(d) filtered to Ordered and to Wished, figures not owned stand as their cut-outs, not plates, and the tiles show their pictures", async ({ context, page }, testInfo) => {
+  test.setTimeout(240_000);
+  await imageHost(context);
+  await imageLists(page);
+  await openAs(page, USER_C, HELD_PREFIX, HELD_ORDERED + HELD_WISHED);
+  // C owns nothing (so on 692149fe, which synced owned figures only, every one stood as its plate): an empty Owned
+  expect((await page.evaluate(() => window.__fcSync!.copies())).filter((c) => c.status === 'owned')).toEqual([]);
+  await expect(page.locator('.case-tabs__tab[data-tab="refine"]')).toBeVisible({ timeout: 30_000 });
+
+  // each holding told on its own: a red Ordered still shows what the Wished draws
+  const soft = expect.configure({ soft: true });
+  for (const holding of ['Ordered', 'Wished'] as const) {
+    await showHolding(page, holding);
+    await soft
+      .poll(async () => {
+        const all = await drawn(page);
+        const cutOuts = all.filter(cutOut).length;
+        return cutOuts >= 3 && wrong(all).length === 0 ? 'ok' : `${cutOuts} cut-outs; wrong: ${wrong(all).slice(0, 6).join(', ')}`;
+      }, { timeout: 60_000, message: holding })
+      .toBe('ok');
+    const shares = await drawnShares(page, (await drawn(page)).filter(cutOut).map((d) => d.id), 2);
+    testInfo.annotations.push({ type: `drawn share, ${holding}`, description: JSON.stringify(shares) });
+    for (const { id, share } of shares) expect(share, `the cut-out of ${id} is drawn (${holding})`).toBeGreaterThanOrEqual(MIN_DRAWN_SHARE);
+    await shot(page, testInfo, `case-images-${holding.toLowerCase()}`);
+  }
+
+  // the tiles of the Wished show their pictures
+  await navigate(page, '/?status=wished&layout=rows');
+  const wishedPictures = () =>
+    page.locator('img.jrows__img').evaluateAll((imgs) => (imgs as HTMLImageElement[]).filter((i) => i.complete && i.naturalWidth > 0).map((i) => i.src));
+  const wishedImages = new Set(HEADS.slice(HELD_FROM + HELD_ORDERED, HELD_FROM + HELD_ORDERED + HELD_WISHED).map((h) => h.headId).filter(imaged).map((h) => `${MEDIA}/${imageId(h)}`));
+  await expect.poll(async () => (await wishedPictures()).filter((src) => wishedImages.has(src)).length, { timeout: 30_000 }).toBeGreaterThan(0);
+  await shot(page, testInfo, 'case-images-wished-tiles');
 });

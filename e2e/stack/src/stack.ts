@@ -20,7 +20,7 @@ import { startControl, type Control } from './control.js';
 import { startEdge, type Edge } from './edge.js';
 import { generateEntitlementKey } from './entitlement.js';
 import { CACHE_DIR, REPO_ROOT, STACK_ROOT } from './paths.js';
-import { startMockIssuer, USER_A, USER_B, type MockIssuer, type StackUser } from './issuer.js';
+import { startMockIssuer, USER_A, USER_B, USER_C, type MockIssuer, type StackUser } from './issuer.js';
 import { startFakeOpenFga, type FakeOpenFga } from './openfga.js';
 import { identifyProcess } from './procs.js';
 import { startPostgres, type LocaleReport, type StackPostgres } from './postgres.js';
@@ -282,7 +282,7 @@ export async function startStack(options: StackOptions = {}): Promise<Stack> {
         endSessionEndpoint: issuer.endSessionEndpoint,
         jwksUri: issuer.jwksUri,
       },
-      users: [USER_A, USER_B],
+      users: [USER_A, USER_B, USER_C],
       coordinator: {
         url: coordinator.url,
         dir: checkout.dir,

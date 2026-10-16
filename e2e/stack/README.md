@@ -50,6 +50,7 @@ stack left behind.
 |---|---|---|
 | A (entitled) | `11111111-1111-4111-8111-111111111111` | `collector-a@stack.test` |
 | B (not entitled) | `22222222-2222-4222-8222-222222222222` | `collector-b@stack.test` |
+| C (not entitled; only e2e/screens/case-images.spec.ts (d) uses it) | `33333333-3333-4333-8333-333333333333` | `collector-c@stack.test` |
 
 `/authorize` signs in the `login_hint` user, or the one set with
 `POST /issuer/login-as`, default A. Registered redirect URIs are

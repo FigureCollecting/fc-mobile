@@ -24,7 +24,7 @@ import type { LocalFigure } from '../local/figures';
 import { FormerList } from '../components/collection/FormerList';
 import { COLLECTION_TABS, useFigureListParams, type CollectionTab, type ListFilters } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { useOwnedImages } from '../hooks/useOwnedImages';
+import { useCollectionImages } from '../hooks/useCollectionImages';
 import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, holdingOf } from '../utils/facets';
@@ -147,25 +147,26 @@ export function Collection() {
   const syncState = localSession.value?.engine.state.value;
   const outOfReach = !online.value || syncState?.reachability === 'unreachable';
 
-  // ADDR-1: an owned figure stands in the case as its kept image (online or off); the rest as plates.
-  const ownedImages = useOwnedImages();
+  // ADDR-1: a figure owned, ordered or wished stands in the case as its kept image (online or off); one
+  // without, as its plate.
+  const collectionImages = useCollectionImages();
   const localFigures = collectionQuery.data?.data;
   const withImages = useMemo(
     () =>
       (localFigures ?? []).map((f) => {
-        // Kept for the owned figures only; the same product on another tab shows the same image.
-        const image = ownedImages.get(f.local.headId);
+        // Kept by product: the same product on another tab shows the same image.
+        const image = collectionImages.get(f.local.headId);
         return image === undefined ? f : { ...f, imageUrl: image.url };
       }),
-    [localFigures, ownedImages],
+    [localFigures, collectionImages],
   );
-  // IMG-SHOW-1: the case draws an owned figure from its kept image, mask and grounding, as fixtures are drawn
-  const ownedImageFor = useCallback(
+  // IMG-SHOW-1: the case draws a figure from its kept image, mask and grounding, as fixtures are drawn
+  const keptImageFor = useCallback(
     (f: Figure) => {
-      const kept = ownedImages.get((f as LocalFigure).local.headId);
+      const kept = collectionImages.get((f as LocalFigure).local.headId);
       return kept && imageRefFromProductImage({ ...kept, ...(kept.maskUrl === undefined ? {} : { mask: { url: kept.maskUrl } }) });
     },
-    [ownedImages],
+    [collectionImages],
   );
   const figures: Figure[] = fixtureMode ? (fixturesQuery.data ?? []) : withImages;
   const isLoading = fixtureMode ? fixturesQuery.isLoading : phase === 'loading' || collectionQuery.isLoading;
@@ -276,7 +277,7 @@ export function Collection() {
                   onSelect={handleSelect}
                   prefs={casePrefs}
                   labels={labels}
-                  imageFor={fixtureMode ? getFixtureImageRef : ownedImageFor}
+                  imageFor={fixtureMode ? getFixtureImageRef : keptImageFor}
                 />
               </div>
             ) : (

@@ -3,7 +3,7 @@ import path from 'node:path';
 import fc from 'fast-check';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { API_NAVIGATION } from '../routes';
-import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, withheldKey } from '../../media/ownedImages';
+import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, withheldKey } from '../../media/keptImages';
 
 // Workbox is mocked so the entry's wiring can be read back; its behaviour in a
 // real browser is covered by e2e/pwa.
@@ -42,7 +42,7 @@ type Listener = (event: unknown) => void;
 const listeners: Record<string, Listener[]> = {};
 const skipWaiting = vi.fn(async () => undefined);
 const MANIFEST = [{ url: '/index.html', revision: 'r1' }];
-// The owned-figure cache the page fills (src/media/ownedImages.ts): one entry, read first.
+// The owned-figure cache the page fills (src/media/keptImages.ts): one entry, read first.
 const OWNED_URL = `https://images.figurecollecting.com/d/${'cd'.repeat(32)}`;
 // As the origin answers (fc-infra edge README): immutable for a year.
 const IMMUTABLE = 'public, max-age=31536000, immutable';
@@ -66,7 +66,7 @@ function corsAnswer(body: string, init: ResponseInit = {}): Response {
 const ownedResponse = () => corsAnswer('owned');
 const opened: string[] = [];
 const matchOptions: (CacheQueryOptions | undefined)[] = [];
-/** The addresses the last owned sync withheld (src/media/ownedImages.ts): the page keeps a record of each. */
+/** The addresses the last owned sync withheld (src/media/keptImages.ts): the page keeps a record of each. */
 const withheld = new Set<string>();
 
 beforeAll(async () => {
@@ -125,7 +125,7 @@ describe('service worker wiring', () => {
 
   it('serves the public image address from the owned-figure cache first, else CacheFirst for an <img>, keeping only a CORS 200, bounded', async () => {
     const cacheFirst = wb.CacheFirst.mock.instances[0] as unknown as { options: { cacheName: string; plugins: unknown[]; matchOptions: CacheQueryOptions; fetchOptions: RequestInit }; handle?: unknown };
-    // The one the owned sync also deletes from (src/media/ownedImages.ts).
+    // The one the owned sync also deletes from (src/media/keptImages.ts).
     expect(cacheFirst.options.cacheName).toBe(BROWSED_MEDIA_CACHE);
     // The origin sends Vary: Origin (fc-infra edge README); an <img crossorigin> request then misses a
     // response a fetch() stored, so the content-addressed caches ignore Vary (one app origin per worker).

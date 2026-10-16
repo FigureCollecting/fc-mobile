@@ -3,51 +3,134 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   ICON_BG,
-  ICON_FIGURE_SCALE,
+  ICON_FIGURE_CENTER,
+  ICON_RING_RADIUS,
   ICON_SIZES,
+  boundsOf,
   figureLayout,
   iconFigureFraction,
+  iconFigureScale,
+  outlinePoints,
   parseFigureArt,
+  ringFitFraction,
   roundPathData,
   splashArtMarkup,
+  type Point,
 } from '../brandArt';
 import { decodePng, encodeRgbPng } from '../png';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (rel: string): Buffer => readFileSync(path.join(ROOT, rel));
 
+const art = parseFigureArt(read('src/assets/brand/final-E.svg').toString('utf8'));
+
+/** The icon's figure pixels: each with its coverage (0 = the background, 1 = the figure's colour). */
+function figurePixels(size: number): { x: number; y: number; coverage: number }[] {
+  const png = decodePng(read(`public/icons/icon-${size}.png`));
+  expect([png.width, png.height]).toEqual([size, size]);
+  const bg = png.pixel(0, 0);
+  expect(`#${bg.map((v) => v.toString(16).padStart(2, '0')).join('')}`).toBe(ICON_BG);
+  const out: { x: number; y: number; coverage: number }[] = [];
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const p = png.pixel(x, y);
+      const diff = Math.abs(p[0] - bg[0]) + Math.abs(p[1] - bg[1]) + Math.abs(p[2] - bg[2]);
+      if (diff > 0) out.push({ x, y, coverage: diff / (0xee - 0x14 + 0xec - 0x16 + 0xe6 - 0x1a) });
+    }
+  }
+  return out;
+}
+
 describe('the generated app icons', () => {
-  it('draws the figure at ICON_FIGURE_SCALE times the old 59 % of the icon height', () => {
-    expect(ICON_FIGURE_SCALE).toBe(1.4);
-    expect(iconFigureFraction()).toBeCloseTo(0.826, 3);
+  it('draws the figure at the largest scale its outline fits inside the 90 % ring, centred, its head and base both touching the ring', () => {
+    expect(ICON_RING_RADIUS).toBe(0.45);
+    // Ross, 10-16: centred, so the head reaches the ring as the base does.
+    expect(ICON_FIGURE_CENTER).toEqual({ x: 0.5, y: 0.5 });
+    const scale = iconFigureScale(art);
+    // Bigger than the 1.4 that fitted the plinth to the 80 % ring.
+    expect(scale).toBeGreaterThan(1.4);
+    const fraction = iconFigureFraction(scale);
+    const outline = outlinePoints(art.d).map(([x, y]): Point => [x + art.tx, y + art.ty]);
+    const box = boundsOf(outline);
+    const k = fraction / box.height;
+    const fromCentre = ([x, y]: Point) =>
+      Math.hypot(ICON_FIGURE_CENTER.x + k * (x - box.x - box.width / 2) - 0.5, ICON_FIGURE_CENTER.y + k * (y - box.y - box.height / 2) - 0.5);
+    expect(Math.max(...outline.map(fromCentre))).toBeCloseTo(ICON_RING_RADIUS, 6);
+    // the top of the head and the bottom of the base each within 1 px (at 512) of the ring
+    const top = outline.reduce((a, b) => (b[1] < a[1] ? b : a));
+    const bottom = outline.reduce((a, b) => (b[1] > a[1] ? b : a));
+    for (const p of [top, bottom]) expect(Math.abs(fromCentre(p) - ICON_RING_RADIUS)).toBeLessThanOrEqual(1 / 512);
   });
 
   for (const size of ICON_SIZES) {
     it(`${size}px: figure bounding box height is within 2 % of the scale target, centred, on the brand background`, () => {
-      const png = decodePng(read(`public/icons/icon-${size}.png`));
-      expect([png.width, png.height]).toEqual([size, size]);
-      const bg = png.pixel(0, 0);
-      expect(`#${bg.map((v) => v.toString(16).padStart(2, '0')).join('')}`).toBe(ICON_BG);
       let [x0, y0, x1, y1] = [size, size, -1, -1];
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const p = png.pixel(x, y);
-          if (Math.abs(p[0] - bg[0]) + Math.abs(p[1] - bg[1]) + Math.abs(p[2] - bg[2]) > 60) {
-            x0 = Math.min(x0, x);
-            x1 = Math.max(x1, x);
-            y0 = Math.min(y0, y);
-            y1 = Math.max(y1, y);
-          }
-        }
+      for (const { x, y, coverage } of figurePixels(size)) {
+        if (coverage <= 60 / 636) continue;
+        x0 = Math.min(x0, x);
+        x1 = Math.max(x1, x);
+        y0 = Math.min(y0, y);
+        y1 = Math.max(y1, y);
       }
       const height = y1 - y0 + 1;
-      const target = iconFigureFraction() * size;
+      const target = iconFigureFraction(iconFigureScale(art)) * size;
       expect(Math.abs(height - target) / target).toBeLessThanOrEqual(0.02);
-      // Same centre as before: horizontally in the middle, a little below it (the plinth is the heavy end).
+      // Centred on ICON_FIGURE_CENTER.
       expect(Math.abs((x0 + x1 + 1) / 2 - size / 2)).toBeLessThanOrEqual(size * 0.01);
-      expect(Math.abs((y0 + y1 + 1) / 2 / size - 0.5127)).toBeLessThanOrEqual(0.01);
+      expect(Math.abs((y0 + y1 + 1) / 2 / size - ICON_FIGURE_CENTER.y)).toBeLessThanOrEqual(0.005);
+    });
+
+    it(`${size}px: the figure fills the 90 % ring: its farthest opaque pixel, its top and its bottom each 0.45 x size from the centre, within 1 px`, () => {
+      const ring = ICON_RING_RADIUS * size;
+      // An opaque pixel: at least half of it the figure. Distances are to the pixel's centre.
+      const opaque = figurePixels(size).filter((p) => p.coverage >= 0.5);
+      const distance = (p: { x: number; y: number }) => Math.hypot(p.x + 0.5 - size / 2, p.y + 0.5 - size / 2);
+      expect(Math.max(...opaque.map(distance))).toBeLessThanOrEqual(ring + 1);
+      // the topmost and the bottommost rows: the farthest pixel of each touches the ring
+      const [top, bottom] = [Math.min(...opaque.map((p) => p.y)), Math.max(...opaque.map((p) => p.y))];
+      for (const row of [top, bottom]) {
+        const reach = Math.max(...opaque.filter((p) => p.y === row).map(distance));
+        expect(Math.abs(reach - ring), `row ${row}: ${reach.toFixed(2)} px from the centre, the ring ${ring}`).toBeLessThanOrEqual(1);
+      }
     });
   }
+});
+
+describe('the 90 % ring fit', () => {
+  it('reads the outline of an absolute M/C/Z path: each move, every curve sampled, ends included', () => {
+    const points = outlinePoints('M0 0 C0 10 10 10 10 0 Z M20 20 C20 30 30 30 30 20 Z', 4);
+    expect(points).toHaveLength(10);
+    expect(points[0]).toEqual([0, 0]);
+    // the curve's middle: (0 + 3*0 + 3*10 + 10) / 8, (0 + 3*10 + 3*10 + 0) / 8
+    expect(points[2]).toEqual([5, 7.5]);
+    expect(points[4]).toEqual([10, 0]);
+    expect(points[5]).toEqual([20, 20]);
+    expect(boundsOf(points)).toEqual({ x: 0, y: 0, width: 30, height: 27.5 });
+  });
+
+  it('rejects a path command it does not read', () => {
+    expect(() => outlinePoints('M0 0 L10 10 Z')).toThrow(/L/);
+    expect(() => outlinePoints('M0 0 c1 1 2 2 3 3 Z')).toThrow(/c/);
+  });
+
+  it("fits a square centred in the icon by its corners: half its diagonal is the ring's radius", () => {
+    const square: Point[] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    expect(ringFitFraction(square, { x: 0, y: 0, width: 1, height: 1 }, { x: 0.5, y: 0.5 }, 0.45)).toBeCloseTo(0.9 / Math.SQRT2, 9);
+  });
+
+  it('fits a square centred below the middle by its bottom corners', () => {
+    const square: Point[] = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    const f = ringFitFraction(square, { x: 0, y: 0, width: 1, height: 1 }, { x: 0.5, y: 0.6 }, 0.45);
+    // a bottom corner at (h, 0.1 + h) from the centre, h = f / 2: 2h^2 + 0.2h + 0.01 = 0.2025
+    const h = (-0.2 + Math.sqrt(0.04 + 8 * 0.1925)) / 4;
+    expect(f).toBeCloseTo(2 * h, 9);
+  });
+
+  it('ignores a point at the centre of the box (it never moves) and refuses a centre outside the ring', () => {
+    const pts: Point[] = [[0.5, 0.5], [0, 0], [1, 1]];
+    expect(ringFitFraction(pts, { x: 0, y: 0, width: 1, height: 1 }, { x: 0.5, y: 0.5 }, 0.45)).toBeCloseTo(0.9 / Math.SQRT2, 9);
+    expect(() => ringFitFraction(pts, { x: 0, y: 0, width: 1, height: 1 }, { x: 0.5, y: 0.96 }, 0.45)).toThrow(/ring/);
+  });
 });
 
 describe('figure layout', () => {

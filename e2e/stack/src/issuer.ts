@@ -26,6 +26,13 @@ export const USER_B: StackUser = {
   name: 'Collector B',
   preferredUsername: 'collector-b',
 };
+/** e2e/screens/case-images.spec.ts (d) only: an Ordered and a Wished on figures C owns none of. */
+export const USER_C: StackUser = {
+  sub: '33333333-3333-4333-8333-333333333333',
+  email: 'collector-c@stack.test',
+  name: 'Collector C',
+  preferredUsername: 'collector-c',
+};
 
 export interface IssuerSettings {
   accessTokenTtlSeconds: number;
@@ -124,7 +131,7 @@ export async function startMockIssuer(options: IssuerOptions): Promise<MockIssue
   const host = options.host ?? '127.0.0.1';
   const clientId = options.clientId ?? PROVIDER;
   const now = options.now ?? Date.now;
-  const users = options.users ?? [USER_A, USER_B];
+  const users = options.users ?? [USER_A, USER_B, USER_C];
   const settings: IssuerSettings = {
     accessTokenTtlSeconds: options.accessTokenTtlSeconds ?? 600,
     offlineAccess: options.offlineAccess ?? true,

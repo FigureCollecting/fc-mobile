@@ -13,6 +13,11 @@ function pngSize(file: string): { width: number; height: number; alpha: boolean 
 }
 
 describe('web manifest', () => {
+  it("labels the home-screen icon 'FigCollect' (Ross, 10-16) and keeps the full name 'FigureCollecting'", () => {
+    expect(WEB_MANIFEST.short_name).toBe('FigCollect');
+    expect(WEB_MANIFEST.name).toBe('FigureCollecting');
+  });
+
   it("identifies the app as '/' and lets a Fold unfold into landscape", () => {
     expect(WEB_MANIFEST.id).toBe('/');
     expect(WEB_MANIFEST.start_url).toBe('/');

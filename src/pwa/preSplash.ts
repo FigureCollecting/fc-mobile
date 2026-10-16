@@ -4,7 +4,8 @@
 // uses the same figure). A slow load has already used the minimum, so the
 // fade starts on mount with no extra wait. No inline script: a strict CSP
 // forbids it.
-export const SPLASH_MIN_MS = 600;
+/** Ross, 10-16: 0.6 s was too short to take in; 2 s. */
+export const SPLASH_MIN_MS = 2000;
 export const SPLASH_FADE_MS = 300;
 
 export interface PreSplashOptions {

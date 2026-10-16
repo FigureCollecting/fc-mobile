@@ -184,6 +184,8 @@ export function Collection() {
     () => sortFigures(applyFilters(scoped, filters), sort, order),
     [scoped, filters, sort, order],
   );
+  // PINCH-1: a new filter or sort starts the case's picture at 1x; new data under the same one (an image kept) does not
+  const filterKey = useMemo(() => JSON.stringify([filters, sort, order]), [filters, sort, order]);
   const onlyHolding = filters.status.length === 1 ? (filters.status[0] as CollectionTab) : null;
   const lastOpened = lastOpenedId === null ? -1 : visible.findIndex((f) => f._id === lastOpenedId);
 
@@ -278,6 +280,7 @@ export function Collection() {
                   prefs={casePrefs}
                   labels={labels}
                   imageFor={fixtureMode ? getFixtureImageRef : keptImageFor}
+                  filterKey={filterKey}
                 />
               </div>
             ) : (

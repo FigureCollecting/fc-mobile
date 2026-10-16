@@ -562,6 +562,20 @@ describe(`figuresToDraw: at most ${MAX_DRAWN_FIGURES} figures, the nearest the f
     expect(order[order.length - 1]).toBe(40);
     for (let k = 1; k < order.length - 1; k++) expect(dist(view, figs[order[k]])).toBeGreaterThanOrEqual(dist(view, figs[order[k - 1]]));
   });
+
+  it('byFrameCentre about another point of the picture (PINCH-1: the middle of a zoomed view): nearest that point first', () => {
+    const view = viewOf(camera, 40);
+    const figs = grid(40, 8);
+    const at = { x: 90, y: 300 };
+    const order = byFrameCentre(view, figs, at);
+    const from = (f: FigureBox) => {
+      const q = screen(view, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z]);
+      return Math.hypot(q.x - at.x, q.y - at.y);
+    };
+    expect([...order].sort((a, b) => a - b)).toEqual(figs.map((_, i) => i));
+    for (let k = 1; k < order.length; k++) expect(from(figs[order[k]])).toBeGreaterThanOrEqual(from(figs[order[k - 1]]));
+    expect(order[0]).not.toBe(byFrameCentre(view, figs)[0]);
+  });
 });
 
 describe('G1: the figure cap scales with the drawn cabinets; past a cap, no cabinet with a figure in view is left empty', () => {
@@ -697,6 +711,21 @@ describe('figureScales: the figures cost at most a budget of px wherever the cam
       const f = figs[order[first]];
       expect(cost(before, before.map(() => s)) + (f.x1 - f.x0) * (f.y1 - f.y0) * (2 * scales[order[first]]) ** 2, `${z}`).toBeGreaterThan(budget);
     }
+  });
+
+  it('PINCH-1: zoomed, the figures nearest the middle of the zoomed view are drawn at the zoom\'s px per mm, the rest coarser outward from it', () => {
+    const camera: Camera = { x: 0, y: 500, z: 3000, pitch: 0, focalPx: 600, frame: COVER };
+    const view = viewOf(camera);
+    const figs = Array.from({ length: 41 }, (_, i) => box((i - 20) * 160));
+    // 4x on the scene's 0.25 px per mm, about a point left of the frame centre
+    const at = { x: 60, y: COVER.height / 2 };
+    const scales = figureScales(view, figs, 1, budget, at);
+    const order = byFrameCentre(view, figs, at);
+    expect(scales[order[0]]).toBe(1);
+    expect(order[0]).not.toBe(byFrameCentre(view, figs)[0]);
+    for (let k = 1; k < order.length; k++) expect(scales[order[k]], `${k}`).toBeLessThanOrEqual(scales[order[k - 1]]);
+    const floor = figs.reduce((a, f) => a + (f.x1 - f.x0) * (f.y1 - f.y0) * (1 / 64) ** 2, 0);
+    expect(cost(figs, scales)).toBeLessThanOrEqual(budget + floor);
   });
 
   it('a small figure past a big one is never drawn finer than it: the octave only coarsens outward', () => {

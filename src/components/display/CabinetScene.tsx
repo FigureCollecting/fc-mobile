@@ -717,6 +717,21 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
   return frame;
 }
 
+/**
+ * PINCH-1: the Reset view chip, while the picture is zoomed. It holds whether it shows and hands the scene its
+ * setter (`shown`), so it comes and goes as its own render, never the scene's.
+ */
+function ResetChip({ shown, right, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; right?: number; onReset: () => void }) {
+  const [zoomed, setZoomed] = useState(false);
+  shown.current = setZoomed;
+  if (!zoomed) return null;
+  return (
+    <button type="button" class="cabinet-scene__reset" style={right === undefined ? undefined : { right: `${right}px` }} onClick={onReset}>
+      Reset view
+    </button>
+  );
+}
+
 const prefersReducedMotion = (): boolean => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const zoomData = (z: Zoom): string => JSON.stringify({ k: num(z.k), x: num(z.x), y: num(z.y) });
 
@@ -867,10 +882,21 @@ export function CabinetScene({
   const frameRef = useRef<HTMLDivElement>(null);
   const zoomRef = useRef<HTMLDivElement>(null);
   const zoom = useRef<Zoom>(UNZOOMED);
-  const [zoomed, setZoomed] = useState(false);
-  // the zoom the figures are drawn sharp for: set once a gesture lets go, never while fingers move it
+  // the Reset view chip's setter: the chip coming and going renders nothing else
+  const showChip = useRef<((zoomed: boolean) => void) | null>(null);
+  // the zoom the figures are drawn sharp for: set once a gesture lets go (after any animation), never while fingers
+  // move it: the scene renders once per gesture
   const [sharp, setSharp] = useState<Zoom>(UNZOOMED);
   const settling = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // a settle ends (or a touch cuts it short): the layer's transition off, the scene redrawn for where it settles
+  const settled = useCallback(() => {
+    if (settling.current === undefined) return;
+    clearTimeout(settling.current);
+    settling.current = undefined;
+    zoomRef.current?.classList.remove('cabinet-scene__zoom--settling');
+    setSharp(zoom.current);
+  }, []);
+  useEffect(() => () => clearTimeout(settling.current), []);
   // the picture the zoom magnifies: the camera's frame
   const picture = useRef(camera.frame);
   picture.current = camera.frame;
@@ -879,16 +905,17 @@ export function CabinetScene({
   const showZoom = useCallback((z: Zoom, how: 'live' | 'still' | 'settle') => {
     zoom.current = z;
     clearTimeout(settling.current);
+    settling.current = undefined;
     const layer = zoomRef.current!;
     const animate = how === 'settle' && !prefersReducedMotion();
     layer.classList.toggle('cabinet-scene__zoom--live', how === 'live');
     layer.classList.toggle('cabinet-scene__zoom--settling', animate);
     layer.style.transform = zoomTransform(z);
-    if (animate) settling.current = setTimeout(() => layer.classList.remove('cabinet-scene__zoom--settling'), ZOOM_SETTLE_MS);
     hostRef.current!.dataset.zoom = zoomData(z);
-    setZoomed(isZoomed(z));
-    if (how !== 'live') setSharp(z);
-  }, []);
+    showChip.current?.(isZoomed(z));
+    if (animate) settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
+    else if (how !== 'live') setSharp(z);
+  }, [settled]);
   // a new view, wall, swipe mode, filter or frame starts the picture at 1x, at once
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
@@ -916,8 +943,7 @@ export function CabinetScene({
   };
   const onPointerDown = useCallback((e: PointerEvent) => {
     // a new touch cuts a settling zoom short
-    clearTimeout(settling.current);
-    zoomRef.current?.classList.remove('cabinet-scene__zoom--settling');
+    settled();
     if (pinching.current) {
       fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       return;
@@ -1197,17 +1223,12 @@ export function CabinetScene({
             </div>
           </div>
         </div>
-        {zoomed && (
-          <button
-            type="button"
-            class="cabinet-scene__reset"
-            // the frame's top corner, clear of the tab bar and the cards; in the shelf view, of the shelf steps
-            style={prefs.view === 'shelf' ? { right: `${Math.max(8, SHELF_STEPS_PX - side)}px` } : undefined}
-            onClick={() => showZoom(UNZOOMED, 'settle')}
-          >
-            Reset view
-          </button>
-        )}
+        <ResetChip
+          shown={showChip}
+          // the frame's top corner, clear of the tab bar and the cards; in the shelf view, of the shelf steps
+          right={prefs.view === 'shelf' ? Math.max(8, SHELF_STEPS_PX - side) : undefined}
+          onReset={() => showZoom(UNZOOMED, 'settle')}
+        />
       </div>
 
       <div class="cabinet-scene__nav">

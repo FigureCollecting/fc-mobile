@@ -11,6 +11,19 @@ import { ZOOM_MAX, ZOOM_UNDER, toScreen, type Zoom } from '../caseZoom';
 // walks, and quick ways back to 1x. jsdom has no layout, so the frame's top-left is the client origin (its
 // bounding box is all zeros) and a client point is a frame point.
 
+/** Every render of the scene works out its figures' px per mm (figureScales) once: a count of its renders. */
+const renders = vi.hoisted(() => vi.fn());
+vi.mock('../caseCull', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../caseCull')>();
+  return {
+    ...real,
+    figureScales: (...args: Parameters<typeof real.figureScales>) => {
+      renders();
+      return real.figureScales(...args);
+    },
+  };
+});
+
 const FRAME = { width: 443, height: 454 };
 const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 const realMatchMedia = window.matchMedia;
@@ -189,7 +202,8 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
   const layerScales = (host: HTMLElement) => figureButtons(host).map((b) => Number(b.style.getPropertyValue('--s')));
   const sceneScale = (host: HTMLElement) => Number(host.dataset.pxPerMm);
 
-  it('let go, the figures in the zoomed view are drawn at the zoom times the scene\'s px per mm; never while the fingers move; at 1x again, at the scene\'s', () => {
+  it('let go, the figures in the zoomed view are drawn at the zoom times the scene\'s px per mm; never while the fingers move; at 1x again, at the scene\'s once the way back has animated', () => {
+    vi.useFakeTimers();
     const { host } = scene(getFixtureFigures(8));
     const s = sceneScale(host);
     expect(Math.max(...layerScales(host))).toBe(s);
@@ -199,8 +213,51 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
     up(host, 11, { x: 140, y: 260 });
     up(host, 12, { x: 300, y: 260 });
     expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
+    // the way back animates on the zoom layer alone: the scene is redrawn at 1x once it ends
     tap(chip()!);
+    expect(chip()).toBeNull();
+    expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
     expect(Math.max(...layerScales(host))).toBe(s);
+  });
+
+  it('a touch cutting the way back short redraws the scene at 1x at once', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    const s = sceneScale(host);
+    zoomIn(host);
+    tap(chip()!);
+    expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
+    down(host, 1, { x: 100, y: 100 });
+    expect(Math.max(...layerScales(host))).toBe(s);
+    up(host, 1, { x: 100, y: 100 });
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(Math.max(...layerScales(host))).toBe(s);
+  });
+
+  it('a pinch, the chip it shows and the chip going render nothing of the scene: only the gesture\'s end redraws it', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    // the scene works out its figures' px per mm once per render
+    renders.mockClear();
+    pinch(host, { x: 180, y: 260 }, { x: 260, y: 260 }, { x: 140, y: 260 }, { x: 300, y: 260 }, false);
+    expect(chip()).not.toBeNull();
+    expect(renders).not.toHaveBeenCalled();
+    up(host, 11, { x: 140, y: 260 });
+    up(host, 12, { x: 300, y: 260 });
+    expect(renders).toHaveBeenCalledTimes(1);
+    renders.mockClear();
+    tap(chip()!);
+    expect(chip()).toBeNull();
+    expect(renders).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(renders).toHaveBeenCalledTimes(1);
   });
 
   it('where the budget binds (4x), a pan while zoomed redraws them about the middle of the view it lets go at', () => {

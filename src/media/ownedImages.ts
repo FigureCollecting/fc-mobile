@@ -256,6 +256,11 @@ interface SyncOptions {
   lockWaitMs?: number;
   /** Called once the sync has read the lists, its signal not aborted, before it touches any cache. */
   onListsRead?: () => void;
+  /**
+   * Told what the device keeps for the owned figures, as keptImages answers it: once every kept list is
+   * written, and again as each image lands, so a case view shows them while the rest still come.
+   */
+  onKept?: (kept: ReadonlyMap<string, CachedImage>) => void;
 }
 
 /**
@@ -440,6 +445,17 @@ async function bringToOwned(
     await records.put(listKey(head), listOf(list));
   }
   const missing = [...keep].filter((u) => !have.has(u));
+  // Each fresh list's primary whose bytes are here (none of them is withheld): what keptImages would answer now.
+  const tellKept = () => {
+    if (options.onKept === undefined) return;
+    const now = new Map<string, CachedImage>();
+    for (const [head, list] of kept) {
+      const primary = primaryImage(list)!;
+      if (have.has(primary.url)) now.set(head, primary);
+    }
+    options.onKept(now);
+  };
+  tellKept();
   // Each fetch is aborted when the sync's signal aborts, or when it has received nothing (its headers,
   // a byte of its body) for OWNED_SYNC_STEP_MS; then the link is taken as stalled and no other fetch
   // starts. Only an ok answer with a body is kept (Cache.add kept any ok one), once all of it arrived.
@@ -473,6 +489,8 @@ async function bringToOwned(
         clearTimeout(quiet);
         await media.put(request, new Response(joined(chunks), { status: res.status, statusText: res.statusText, headers: res.headers }));
         result.added += 1;
+        have.add(next);
+        tellKept();
       } catch {
         result.failed += 1;
       } finally {

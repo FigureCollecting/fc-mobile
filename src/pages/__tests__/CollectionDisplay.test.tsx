@@ -197,6 +197,48 @@ describe('Collection page (rebuilt display layer)', () => {
     }
   });
 
+  it('stands an owned figure as its cut-out from the kept image and mask, as the coordinator sends them: no primary, the mask and grounding on the first row (IMG-SHOW-1)', async () => {
+    const storage = fakeCaches();
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    try {
+      const r = await localRig();
+      const src = `https://images.figurecollecting.com/d/${'a'.repeat(64)}`;
+      const mask = `https://images.figurecollecting.com/d/${'c'.repeat(64)}`;
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, {
+          products: [
+            {
+              headId: headOf(0),
+              images: [
+                {
+                  derivativeId: 'a'.repeat(64),
+                  role: 'gallery',
+                  url: src,
+                  width: 550,
+                  height: 800,
+                  mask: { maskId: 'c'.repeat(64), contentType: 'image/png', url: mask },
+                  bottomMarginFrac: 0.03,
+                  contactBand: { centerXFrac: 0.48, widthFrac: 0.6 },
+                },
+                { derivativeId: 'b'.repeat(64), role: 'gallery', url: `https://images.figurecollecting.com/d/${'b'.repeat(64)}`, width: 550, height: 800 },
+              ],
+            },
+          ],
+        }),
+      );
+      await seedFigures(r, [makeFigure('1'), makeFigure('2')]);
+      renderWithProviders(<Collection />, { initialPath: '/' });
+      await waitFor(() => expect(document.querySelector('.cab-figure[data-art="masked"]')).not.toBeNull());
+      const art = document.querySelector('.cab-figure[data-art="masked"] .cab-figure__art--masked');
+      expect(art).toHaveAttribute('data-image-url', src);
+      expect(art).toHaveAttribute('data-mask-url', mask);
+      expect(document.querySelectorAll('.cab-figure[data-art="plate"]')).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps an owned figure as its plate when its image bytes could not be kept (ADDR-1)', async () => {
     const storage = fakeCaches(async () => new Response('', { status: 404 }));
     vi.stubGlobal('caches', storage);

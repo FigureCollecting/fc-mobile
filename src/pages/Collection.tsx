@@ -12,6 +12,7 @@ import { useCasePrefs } from '../components/display/casePrefs';
 import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
+import { imageRefFromProductImage } from '../components/display/figureArt';
 import { FigureViewer } from '../components/display/FigureViewer';
 import { DetailPane } from '../components/display/DetailPane';
 import { AppliedChips } from '../components/collection/AppliedChips';
@@ -158,6 +159,14 @@ export function Collection() {
       }),
     [localFigures, ownedImages],
   );
+  // IMG-SHOW-1: the case draws an owned figure from its kept image, mask and grounding, as fixtures are drawn
+  const ownedImageFor = useCallback(
+    (f: Figure) => {
+      const kept = ownedImages.get((f as LocalFigure).local.headId);
+      return kept && imageRefFromProductImage({ ...kept, ...(kept.maskUrl === undefined ? {} : { mask: { url: kept.maskUrl } }) });
+    },
+    [ownedImages],
+  );
   const figures: Figure[] = fixtureMode ? (fixturesQuery.data ?? []) : withImages;
   const isLoading = fixtureMode ? fixturesQuery.isLoading : phase === 'loading' || collectionQuery.isLoading;
   const isError = fixtureMode ? fixturesQuery.isError : collectionQuery.isError;
@@ -267,7 +276,7 @@ export function Collection() {
                   onSelect={handleSelect}
                   prefs={casePrefs}
                   labels={labels}
-                  imageFor={fixtureMode ? getFixtureImageRef : undefined}
+                  imageFor={fixtureMode ? getFixtureImageRef : ownedImageFor}
                 />
               </div>
             ) : (

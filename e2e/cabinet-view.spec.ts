@@ -272,6 +272,12 @@ for (const size of FOLD8) {
       await page.getByRole('group', { name: 'Holding' }).getByRole('button', { name: /^Owned/ }).click();
       await page.getByRole('button', { name: 'Done' }).click();
       await expect(page.locator('.applied-chips')).toHaveCount(1);
+      if (view === 'shelf') {
+        // CASE-FB2a: a new filter starts the view again at the wall's start, its top first; on to shelf 1 as at load
+        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '0');
+        await page.getByRole('button', { name: 'Shelf below' }).click();
+        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
+      }
       await expectReframedAboveTabs(page, view, 'a chip added');
     });
   }

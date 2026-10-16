@@ -20,7 +20,7 @@ describe('dismissPreSplash', () => {
 
   it('holds a fast load to the minimum, then fades for the fade duration and removes it', () => {
     dismissPreSplash({ now: () => 150, firstPaintAt: 50, reducedMotion: false });
-    // 100 ms since first paint: 500 ms to go.
+    // 100 ms since first paint: 1,900 ms to go.
     vi.advanceTimersByTime(SPLASH_MIN_MS - 100 - 1);
     expect(hidden()).toBe(false);
     vi.advanceTimersByTime(1);
@@ -108,8 +108,8 @@ describe('the static splash markup', () => {
   const html = readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const css = readFileSync(path.join(ROOT, 'src/styles/pre-splash.css'), 'utf8');
 
-  it('fades over SPLASH_FADE_MS in the stylesheet', () => {
-    expect(SPLASH_MIN_MS).toBe(600);
+  it('holds 2 s (Ross, 10-16: 0.6 s was too short) and fades over SPLASH_FADE_MS in the stylesheet', () => {
+    expect(SPLASH_MIN_MS).toBe(2000);
     expect(SPLASH_FADE_MS).toBe(300);
     expect(css).toMatch(new RegExp(`transition:\\s*opacity ${SPLASH_FADE_MS}ms`));
   });

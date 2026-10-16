@@ -3,6 +3,7 @@
 // primary; offline it answers from what was kept, asking nothing.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
+import { QueryClient } from '@tanstack/react-query';
 import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
@@ -155,6 +156,99 @@ describe('useOwnedImages', () => {
     } finally {
       uninstall();
     }
+  });
+
+  // IMG-SHOW-1: the coordinator's lists as they are (no row marked primary, the mask on the first), and a link
+  // whose answer to `held` waits until released: the sync is still fetching while the figures it kept are shown.
+  const realShaped = () =>
+    create(GetProductImagesResponseSchema, {
+      products: [
+        { headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), role: 'gallery', url: url('a'), width: 550, height: 800 }] },
+        {
+          headId: headOf(1),
+          images: [{ derivativeId: 'b'.repeat(64), role: 'gallery', url: url('b'), width: 550, height: 800, mask: { maskId: 'c'.repeat(64), contentType: 'image/png', url: url('c') } }],
+        },
+      ],
+    });
+  const holding = (held: string) => {
+    let release!: () => void;
+    const released = new Promise<void>((res) => (release = res));
+    return {
+      release,
+      caches: fakeCaches(async (req) => {
+        if (req.url === held) await released;
+        return new Response('img');
+      }),
+    };
+  };
+  /** As the app's: an answer outlives its case view (gcTime), so one opened again finds it. */
+  const appClient = () => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 30 * 60_000, networkMode: 'always' } } });
+
+  it('while its sync is still fetching, answers what the device kept at once and each image as the sync keeps it (IMG-SHOW-1)', async () => {
+    const link = holding(url('c'));
+    storage = link.caches;
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Kept by the last sync' }, { title: 'Fetched by this one' }]);
+    await keep(headOf(0), 'a');
+    const { result, unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
+    await waitFor(() => expect(result.current.get(headOf(1))).toMatchObject({ url: url('b'), maskUrl: url('c') }), { timeout: 3000 });
+    // the mask is still on its way: the sync has not ended
+    expect(storage.stores.get(OWNED_MEDIA_CACHE)?.has(url('c'))).toBe(false);
+    unmount();
+    link.release();
+  });
+
+  it('a case view gone part way leaves what its sync kept: opened again it shows that at once, and its sync fetches only what is missing (IMG-SHOW-1)', async () => {
+    // b's link never answers: only the case view going away (the request's abort) ends it
+    storage = fakeCaches((req) =>
+      req.url === url('b') ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('img')),
+    );
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched first' }, { title: 'On a stalled link' }]);
+    const client = appClient();
+    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    await waitFor(() => expect(storage.added.some((q) => q.url === url('b'))).toBe(true));
+    const fetching = storage.added.find((q) => q.url === url('b'))!.signal;
+    first.unmount();
+    await waitFor(() => expect(fetching.aborted).toBe(true));
+    const asked = r.clients.getProductImages.mock.calls.length;
+
+    const second = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    expect(second.result.current.get(headOf(0))?.url).toBe(url('a'));
+    await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked));
+    await waitFor(() => expect(storage.added.filter((q) => q.url === url('b'))).toHaveLength(2));
+    expect(storage.added.filter((q) => q.url === url('a'))).toHaveLength(1);
+    second.unmount();
+  });
+
+  it('a sync that left an image unfetched answers what it kept, and the case view opened again syncs again (IMG-SHOW-1)', async () => {
+    storage = fakeCaches(async (req) => (req.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched' }, { title: 'Refused' }]);
+    const client = appClient();
+    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(storage.added.map((q) => q.url).sort()).toEqual([url('a'), url('b'), url('c')]));
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'owned-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    expect(first.result.current.get(headOf(0))?.url).toBe(url('a'));
+    expect(first.result.current.has(headOf(1))).toBe(false);
+    first.unmount();
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+
+    const second = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    expect(second.result.current.get(headOf(0))?.url).toBe(url('a'));
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+    second.unmount();
   });
 
   it('answers nothing while signed out', async () => {

@@ -165,6 +165,29 @@ describe('syncOwnedImages', () => {
     expect(await keptImage('h1', storage)).toBeUndefined();
   });
 
+  it('tells onKept what the device keeps once the kept lists are written and again as each image lands, while the rest still come (IMG-SHOW-1)', async () => {
+    let release!: () => void;
+    const released = new Promise<void>((res) => (release = res));
+    const storage = device(async (r) => {
+      if (r.url === url('f')) await released;
+      return new Response('img');
+    });
+    await rememberImages('h1', [{ url: url('a'), width: 600, height: 800, role: 'gallery', primary: false }], storage);
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(url('a'), new Response('kept'));
+    const told: string[][] = [];
+    const onKept = (kept: ReadonlyMap<string, CachedImage>) => told.push([...kept].map(([head, i]) => `${head} ${i.url.slice(-1)}${i.maskUrl === undefined ? '' : `+${i.maskUrl.slice(-1)}`}`));
+    const fetchLists = lists({ h1: [img('a')], h2: [img('b', { mask: { maskId: hex('f'), contentType: 'image/png', url: url('f') } })], h3: [img('c')] });
+    const sync = syncOwnedImages(['h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, onKept });
+    // the mask's link holds its answer: what was told so far stands while the sync waits on it
+    await vi.waitFor(() => expect(told).toEqual([['h1 a'], ['h1 a', 'h2 b+f']]));
+    release();
+    await sync;
+    expect(told).toEqual([['h1 a'], ['h1 a', 'h2 b+f'], ['h1 a', 'h2 b+f'], ['h1 a', 'h2 b+f', 'h3 c']]);
+    expect(new Map(told.at(-1)!.map((t) => [t.split(' ')[0], t]))).toEqual(
+      new Map([...(await keptImages(['h1', 'h2', 'h3'], storage))].map(([head, i]) => [head, `${head} ${i.url.slice(-1)}${i.maskUrl === undefined ? '' : `+${i.maskUrl.slice(-1)}`}`])),
+    );
+  });
+
   it('does nothing where the browser has no Cache API', async () => {
     const fetchLists = lists({});
     expect(await syncOwnedImages(['h1'], fetchLists, { storage: undefined })).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0 });

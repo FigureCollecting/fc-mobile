@@ -27,7 +27,12 @@
 // that read older lists never undoes what a later one withheld. A collection with no image costs a few
 // cache calls, not a few per figure, and a sync stops when the case view goes away (its fetches in
 // flight aborted) or a step of it stalls (src/media/ownedImages.ts OWNED_SYNC_STEP_MS).
-import { useQuery } from '@tanstack/react-query';
+// IMG-SHOW-1: a sync of a large collection takes minutes (two images a figure), so the case view never
+// waits on it: it shows at once what the device kept, then each image as the sync keeps it (at most
+// every KEPT_SHOWN_EVERY_MS). Such an answer, and that of a sync that left an image unfetched, is
+// partial: never fresh, so the case view opened again syncs again, fetching only what is missing. A
+// case view gone part way keeps its last partial answer, for when it opens again.
+import { useQuery, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCallback } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
@@ -36,6 +41,32 @@ import { answersFromKept, dropImageAnswers, duringOwnSync, hearOwnedSyncs, tellO
 import { useOnlineStatus } from './useOnlineStatus';
 
 const EMPTY: ReadonlyMap<string, CachedImage> = new Map();
+/** How often the case view is drawn again with what its sync has kept so far. */
+const KEPT_SHOWN_EVERY_MS = 1000;
+/** The answers of syncs that did not complete: never fresh. */
+const partial = new WeakSet<ReadonlyMap<string, CachedImage>>();
+
+/** Shows each answer a sync tells, at most every KEPT_SHOWN_EVERY_MS and the latest last, until the sync aborts or `stop`. */
+function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let shownAt = -Infinity;
+  let latest: ReadonlyMap<string, CachedImage> = EMPTY;
+  const flush = () => {
+    timer = undefined;
+    shownAt = Date.now();
+    // the case view gone: the answer it showed last stands
+    if (signal.aborted) return;
+    partial.add(latest);
+    client.setQueryData(key, latest);
+  };
+  return {
+    show: (kept: ReadonlyMap<string, CachedImage>) => {
+      latest = kept;
+      timer ??= setTimeout(flush, Math.max(0, shownAt + KEPT_SHOWN_EVERY_MS - Date.now()));
+    },
+    stop: () => clearTimeout(timer),
+  };
+}
 
 export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
   const session = localSession.value;
@@ -55,33 +86,42 @@ export function useOwnedImages(): ReadonlyMap<string, CachedImage> {
     queryFn: async ({ signal, client, queryKey }) => {
       hearOwnedSyncs(client);
       const owned = (heads ?? []).slice(0, MAX_OWNED_FIGURES);
+      let incomplete = false;
       if (reachable && !answersFromKept(client, queryKey)) {
+        const shown = showKept(client, queryKey, signal);
+        shown.show(await keptImages(owned));
         let read = false;
         try {
           const synced = await duringOwnSync(client, queryKey, () =>
-            syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal, onListsRead: () => (read = true) }),
+            syncOwnedImages(owned, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal, onListsRead: () => (read = true), onKept: shown.show }),
           );
           void dropImageAnswers(client, queryKey);
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
           // stalled link, refused): the other documents drop their answers too, and a sync of theirs
           // under way runs on.
-          tellOwnedSync(client, signal.aborted || synced.failed > 0 ? 'stopped' : 'synced');
+          incomplete = synced.failed > 0;
+          tellOwnedSync(client, signal.aborted || incomplete ? 'stopped' : 'synced');
         } catch (err) {
           // Failed or stopped after it read the lists (a write refused, its case view gone): told as
           // stopped, as one that leaves an image unfetched is. Its own run is spared, neither stopped
           // nor run again.
           if (read) {
+            incomplete = true;
             void dropImageAnswers(client, queryKey);
             tellOwnedSync(client, 'stopped');
           }
           if (signal.aborted) throw err;
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
+        } finally {
+          shown.stop();
         }
       }
-      return keptImages(owned);
+      const answer = await keptImages(owned);
+      if (incomplete) partial.add(answer);
+      return answer;
     },
     enabled: session !== undefined && phase === 'signed-in' && heads !== undefined,
-    staleTime: 10 * 60_000,
+    staleTime: (q) => (q.state.data !== undefined && partial.has(q.state.data) ? 0 : 10 * 60_000),
     retry: false,
   });
   return query.data ?? EMPTY;

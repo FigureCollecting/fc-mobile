@@ -1,10 +1,11 @@
 // Draws the app icons (public/icons/icon-{180,192,512}.png) and the static
 // splash's inline art (index.html, between the brand:splash-art markers) from
 // the vector figure src/assets/brand/final-E.svg, never from a PNG. The sizes
-// and colours are in deploy/brandArt.ts (ICON_FIGURE_SCALE is the one knob).
+// and colours are in deploy/brandArt.ts; the figure's scale is derived from the art (iconFigureScale:
+// the largest at which its outline fits inside the 90 % ring, ICON_RING_RADIUS).
 // Chromium (Playwright's, already a dev dependency) rasterises the SVG.
 // Re-run after changing the art or a constant: npm run brand
-//   --scale=<n>   figure scale for this run (default ICON_FIGURE_SCALE)
+//   --scale=<n>   figure scale for this run (default iconFigureScale of the art)
 //   --out=<dir>   write the icons there, leaving public/ and index.html alone
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -14,9 +15,11 @@ import {
   ICON_FG,
   ICON_FIGURE_CENTER,
   ICON_SIZES,
-  ICON_FIGURE_SCALE,
+  boundsOf,
   figureLayout,
+  figureOutline,
   iconFigureFraction,
+  iconFigureScale,
   parseFigureArt,
   roundPathData,
   splashArtMarkup,
@@ -25,22 +28,17 @@ import { decodePng, encodeRgbPng } from '../deploy/png.ts';
 
 const ROOT = path.join(import.meta.dirname, '..');
 const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
-const scale = arg('scale') === undefined ? ICON_FIGURE_SCALE : Number(arg('scale'));
 const outDir = arg('out');
 
 const art = parseFigureArt(readFileSync(path.join(ROOT, 'src/assets/brand/final-E.svg'), 'utf8'));
+const scale = arg('scale') === undefined ? iconFigureScale(art) : Number(arg('scale'));
+// The figure's box in the SVG's own canvas: the one iconFigureScale fits to the ring.
+const bbox = boundsOf(figureOutline(art));
 const pathTag = (d) => `<path d="${d}" transform="translate(${art.tx},${art.ty})"/>`;
 
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 512, height: 512 }, deviceScaleFactor: 1 });
-
-  // The figure's box in the SVG's own canvas, as the browser measures it.
-  await page.setContent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="900"><g id="art">${pathTag(art.d)}</g></svg>`);
-  const bbox = await page.evaluate(() => {
-    const b = document.getElementById('art').getBBox();
-    return { x: b.x, y: b.y, width: b.width, height: b.height };
-  });
 
   const dir = outDir === undefined ? path.join(ROOT, 'public/icons') : path.resolve(outDir);
   mkdirSync(dir, { recursive: true });
@@ -55,7 +53,7 @@ try {
     const rgb = new Uint8Array(size * size * 3);
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) rgb.set(shot.pixel(x, y), (y * size + x) * 3);
     writeFileSync(path.join(dir, `icon-${size}.png`), encodeRgbPng(size, size, rgb));
-    console.log(`icon-${size}.png  figure ${Math.round(bbox.height * s)} px of ${size}  (scale ${scale})`);
+    console.log(`icon-${size}.png  figure ${Math.round(bbox.height * s)} px of ${size}  (scale ${scale.toFixed(4)})`);
   }
 
   if (outDir === undefined) {

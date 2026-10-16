@@ -3,7 +3,7 @@
  * tap-to-view, applied chips, and the filter sheet round-trip.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { fireEvent, screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
@@ -175,6 +175,34 @@ describe('Collection page (rebuilt display layer)', () => {
     await user.click(screen.getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 2' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Info' })).toBeDisabled();
+  });
+
+  it('PINCH-1: a filter picked in Refine starts a zoomed case at 1x', async () => {
+    await respondWith([
+      makeFigure('1', { manufacturer: 'Alter' }),
+      makeFigure('2', { manufacturer: 'Kotobukiya' }),
+      makeFigure('3', { manufacturer: 'Kotobukiya' }),
+    ]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 2' });
+    const scene = container.querySelector('.cabinet-scene') as HTMLElement;
+    const zoom = () => (JSON.parse(scene.dataset.zoom!) as { k: number }).k;
+    // two fingers spread to twice their distance
+    fireEvent.pointerDown(scene, { pointerId: 11, clientX: 100, clientY: 200 });
+    fireEvent.pointerDown(scene, { pointerId: 12, clientX: 180, clientY: 200 });
+    fireEvent.pointerMove(scene, { pointerId: 11, clientX: 60, clientY: 200 });
+    fireEvent.pointerMove(scene, { pointerId: 12, clientX: 220, clientY: 200 });
+    fireEvent.pointerUp(scene, { pointerId: 11, clientX: 60, clientY: 200 });
+    fireEvent.pointerUp(scene, { pointerId: 12, clientX: 220, clientY: 200 });
+    expect(zoom()).toBe(2);
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.click(await screen.findByRole('button', { name: 'Kotobukiya2' }));
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Figure 1' })).toBeNull());
+    expect(zoom()).toBe(1);
+    expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
   });
 
   it('stands an owned figure\'s kept image in the case (ADDR-1), a CORS image, and keeps the others as plates', async () => {

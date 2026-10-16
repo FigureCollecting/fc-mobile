@@ -52,3 +52,32 @@ export async function touchTap(page: Page, x: number, y: number): Promise<void> 
   const finger = await touchDown(page, x, y);
   await finger.end();
 }
+
+export interface TouchPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Two fingers: the first down at a0, the second at b0, both moved together in `steps` moves to a1 and b1, and
+ * lifted (a pinch, when they spread or close).
+ */
+export async function touchPinch(page: Page, a0: TouchPoint, b0: TouchPoint, a1: TouchPoint, b1: TouchPoint, steps = 8, stepMs = 16): Promise<void> {
+  const session = await cdp(page);
+  const at = (p: TouchPoint, q: TouchPoint, t: number) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...a0, id: 0 }] });
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...a0, id: 0 }, { ...b0, id: 1 }] });
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...at(a0, a1, t), id: 0 }, { ...at(b0, b1, t), id: 1 }] });
+    await page.waitForTimeout(stepMs);
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
+/** Two quick taps of one finger at (x, y), `gapMs` apart. */
+export async function touchDoubleTap(page: Page, x: number, y: number, gapMs = 80): Promise<void> {
+  await touchTap(page, x, y);
+  await page.waitForTimeout(gapMs);
+  await touchTap(page, x, y);
+}

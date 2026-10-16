@@ -82,10 +82,18 @@ import {
 import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { UNZOOMED, ZOOM_DOUBLE_TAP, isZoomed, panZoom, pinchZoom, settleZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
+/** PINCH-1: the way back to 1x (a double-tap, the Reset view chip) animates this long, unless motion is reduced. */
+export const ZOOM_SETTLE_MS = 200;
+/** Two taps on the room this close in time (ms) and place (CSS px) are a double-tap. */
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_PX = 40;
+/** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
+const SHELF_STEPS_PX = 44;
 const DEFAULT_FRAME = { width: 360, height: 480 };
 /** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
 const PLATE_MAX_MM = 110;
@@ -681,6 +689,8 @@ export interface CabinetSceneProps {
   imageFor?: (figure: Figure) => FigureImageRef | undefined;
   /** The frame where nothing can be measured (tests). */
   frameFallback?: { width: number; height: number };
+  /** What the figures are filtered and sorted by (Collection): a new filter starts the picture at 1x (PINCH-1). */
+  filterKey?: string;
 }
 
 const REASON: Record<Violator['reason'], string> = { 'too-tall': 'too tall', 'too-wide': 'too wide', 'too-deep': 'too deep' };
@@ -707,6 +717,9 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
   return frame;
 }
 
+const prefersReducedMotion = (): boolean => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const zoomData = (z: Zoom): string => JSON.stringify({ k: num(z.k), x: num(z.x), y: num(z.y) });
+
 export function CabinetScene({
   figures,
   onSelect,
@@ -714,6 +727,7 @@ export function CabinetScene({
   labels = false,
   imageFor,
   frameFallback = DEFAULT_FRAME,
+  filterKey,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
@@ -848,39 +862,152 @@ export function CabinetScene({
   const rect = cullRect(camera.frame);
   const draw: Draw = { view: cull, rect: { ...rect, y0: rect.y0 - panYPx, y1: rect.y1 - panYPx }, s };
 
-  // --- swipe (CC4) and tap
-  // a press turns into a swipe along the axis it first moves farther on (CASE-FB1: sideways walks or pans, up and down lifts)
-  const press = useRef<{ id: number; x0: number; y0: number; axis: 'x' | 'y' | null } | null>(null);
+  // --- pinch zoom (PINCH-1): a magnification over the camera's picture toward the point pinched, drawn as one
+  // transform on the zoom layer; set on the layer as the fingers move (no render of the scene), never the camera
+  const frameRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const zoom = useRef<Zoom>(UNZOOMED);
+  const [zoomed, setZoomed] = useState(false);
+  const settling = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // the picture the zoom magnifies: the camera's frame
+  const picture = useRef(camera.frame);
+  picture.current = camera.frame;
+  // 'live' while fingers move it (promoted for the gesture), 'still' once let go (rastered at its zoom), or
+  // 'settle': animated there, unless motion is reduced
+  const showZoom = useCallback((z: Zoom, how: 'live' | 'still' | 'settle') => {
+    zoom.current = z;
+    clearTimeout(settling.current);
+    const layer = zoomRef.current!;
+    const animate = how === 'settle' && !prefersReducedMotion();
+    layer.classList.toggle('cabinet-scene__zoom--live', how === 'live');
+    layer.classList.toggle('cabinet-scene__zoom--settling', animate);
+    layer.style.transform = zoomTransform(z);
+    if (animate) settling.current = setTimeout(() => layer.classList.remove('cabinet-scene__zoom--settling'), ZOOM_SETTLE_MS);
+    hostRef.current!.dataset.zoom = zoomData(z);
+    setZoomed(isZoomed(z));
+  }, []);
+  // a new view, wall, swipe mode, filter or frame starts the picture at 1x, at once
+  useLayoutEffect(() => {
+    if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
+  }, [prefs.view, prefs.pattern, prefs.swipe, filterKey, frame.width, frame.height, showZoom]);
+  const toFrame = (x: number, y: number): Point => {
+    const r = frameRef.current!.getBoundingClientRect();
+    return { x: x - r.left, y: y - r.top };
+  };
+
+  // --- swipe (CC4), pinch and tap
+  // a press turns into a swipe along the axis it first moves farther on (CASE-FB1: sideways walks or pans, up and down
+  // lifts); zoomed, or the finger a pinch leaves down, it pans the magnified picture from `zoom` instead, never walking
+  const press = useRef<{ id: number; x0: number; y0: number; axis: 'x' | 'y' | null; zoom: Zoom | null; pinched: boolean } | null>(null);
+  // the fingers down on the scene (client px), and the pinch of the first two (where they started, in frame px)
+  const fingers = useRef(new Map<number, Point>());
+  const pinching = useRef<{ a: number; b: number; a0: Point; b0: Point; from: Zoom } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
   const swallowClick = useRef(false);
+  const capture = (id: number) => {
+    try {
+      hostRef.current?.setPointerCapture(id);
+    } catch {
+      /* a synthetic pointer cannot be captured */
+    }
+  };
   const onPointerDown = useCallback((e: PointerEvent) => {
-    press.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+    // a new touch cuts a settling zoom short
+    clearTimeout(settling.current);
+    zoomRef.current?.classList.remove('cabinet-scene__zoom--settling');
+    if (pinching.current) {
+      fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      return;
+    }
+    const p = press.current;
+    const a = p && p.id !== e.pointerId ? fingers.current.get(p.id) : undefined;
+    // no other finger down: whatever a lost press left is gone
+    if (!a) fingers.current.clear();
+    fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (p && a) {
+      // a second finger: a pinch; the first one's swipe goes back where it started (a two-finger gesture never walks)
+      press.current = null;
+      setLiveDx(0);
+      setLiveDy(0);
+      swallowClick.current = true;
+      lastTap.current = null;
+      pinching.current = { a: p.id, b: e.pointerId, a0: toFrame(a.x, a.y), b0: toFrame(e.clientX, e.clientY), from: zoom.current };
+      capture(p.id);
+      capture(e.pointerId);
+      return;
+    }
+    press.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null, zoom: isZoomed(zoom.current) ? zoom.current : null, pinched: false };
     // a touch swipe makes no click: whatever it left to swallow ends with the next press
     swallowClick.current = false;
   }, []);
   const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!fingers.current.has(e.pointerId)) return;
+    fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pin = pinching.current;
+    if (pin) {
+      if (e.pointerId !== pin.a && e.pointerId !== pin.b) return;
+      const a = fingers.current.get(pin.a)!;
+      const b = fingers.current.get(pin.b)!;
+      showZoom(pinchZoom(pin.from, pin.a0, pin.b0, toFrame(a.x, a.y), toFrame(b.x, b.y), picture.current), 'live');
+      return;
+    }
     const p = press.current;
     if (!p || p.id !== e.pointerId) return;
     const dx = e.clientX - p.x0;
     const dy = e.clientY - p.y0;
     if (p.axis === null && Math.max(Math.abs(dx), Math.abs(dy)) >= SWIPE_START_PX) {
       p.axis = Math.abs(dy) > Math.abs(dx) ? 'y' : 'x';
-      try {
-        hostRef.current?.setPointerCapture(e.pointerId);
-      } catch {
-        /* a synthetic pointer cannot be captured */
-      }
+      capture(e.pointerId);
     }
-    if (p.axis === 'x') setLiveDx(dx);
-    else if (p.axis === 'y') setLiveDy(dy);
+    if (p.axis === null) return;
+    if (p.zoom) showZoom(panZoom(p.zoom, dx, dy, picture.current), 'live');
+    else if (p.axis === 'x') setLiveDx(dx);
+    else setLiveDy(dy);
   }, []);
+  // a tap on the room (no figure, no control): the second of two quick ones is a double-tap, back to 1x when
+  // zoomed, else 2x at that point (the case handled no double-tap before)
+  const tapped = (e: PointerEvent) => {
+    const last = lastTap.current;
+    const t = Date.now();
+    lastTap.current = null;
+    if ((e.target as Element).closest('button, a, details')) return;
+    if (last && t - last.t <= DOUBLE_TAP_MS && Math.hypot(e.clientX - last.x, e.clientY - last.y) <= DOUBLE_TAP_PX) {
+      const at = toFrame(e.clientX, e.clientY);
+      showZoom(isZoomed(zoom.current) ? UNZOOMED : zoomAt(UNZOOMED, at, ZOOM_DOUBLE_TAP, picture.current), 'settle');
+      return;
+    }
+    lastTap.current = { t, x: e.clientX, y: e.clientY };
+  };
   const endPress = (e: PointerEvent, commit: boolean) => {
+    fingers.current.delete(e.pointerId);
+    const pin = pinching.current;
+    if (pin) {
+      if (e.pointerId !== pin.a && e.pointerId !== pin.b) return;
+      // let go: under 1x, or nearly, it settles back at 1x; the finger left down pans the picture, never walks
+      pinching.current = null;
+      const now = zoom.current;
+      const settled = settleZoom(now, picture.current);
+      showZoom(settled, settled.k === now.k && settled.x === now.x && settled.y === now.y ? 'still' : 'settle');
+      const other = e.pointerId === pin.a ? pin.b : pin.a;
+      const at = fingers.current.get(other)!;
+      press.current = { id: other, x0: at.x, y0: at.y, axis: null, zoom: settled, pinched: true };
+      return;
+    }
     const p = press.current;
     if (!p || p.id !== e.pointerId) return;
     press.current = null;
-    if (p.axis === null) return;
+    if (p.axis === null) {
+      if (commit && !p.pinched) tapped(e);
+      return;
+    }
+    lastTap.current = null;
     const dx = e.clientX - p.x0;
     const dy = e.clientY - p.y0;
     swallowClick.current = true;
+    if (p.zoom) {
+      showZoom(zoom.current, 'still');
+      return;
+    }
     setLiveDx(0);
     setLiveDy(0);
     if (!commit) return;
@@ -972,6 +1099,8 @@ export function CabinetScene({
   const room = roomBox(wall, ceilingMm);
   const roomW = room.x1 - room.x0;
   const roomD = room.zFront - room.zBack;
+  // the camera's frame is centred in the scene: on a wide panel, these px of the scene on each side are outside it
+  const side = (frame.width - camera.frame.width) / 2;
 
   return (
     <div
@@ -1006,6 +1135,7 @@ export function CabinetScene({
       data-drawn-figures={String(onShow.length)}
       data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
+      data-zoom={zoomData(zoom.current)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endPress(e, true)}
@@ -1018,43 +1148,58 @@ export function CabinetScene({
       }}
     >
       <div
+        ref={frameRef}
         class="cabinet-scene__frame"
         // CASE-FB1: the picture is drawn in the camera's frame, centred in the scene: on a wide panel cropped narrower
         // (fewer cabinets across, never a cropped height)
-        style={{ left: `${(frame.width - camera.frame.width) / 2}px`, width: `${camera.frame.width}px` }}
+        style={{ left: `${side}px`, width: `${camera.frame.width}px` }}
       >
-        <div
-          class="cabinet-scene__viewport"
-          style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx || panYPx ? `translate(${panPx}px, ${panYPx}px)` : undefined }}
-        >
-          <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
-            <DrawContext.Provider value={draw}>
-              <Quad cls="room-wall" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />
-              <Quad cls="room-floor" a={[room.x0, 0, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
-              <Quad cls="room-ceiling" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
-              {visible.map(({ slot, i }) => (
-                <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
-              ))}
-              {onShow.map(({ draw: fig }, n) => {
-                const { figure, index } = fig.placed.item;
-                const { art, aspect } = arts[index];
-                return (
-                  <SceneFigure
-                    key={figure._id}
-                    draw={fig}
-                    art={art}
-                    aspect={aspect}
-                    margins={pictureMargins(art, alpha)}
-                    scale={scales[n]}
-                    plate={plates[n]}
-                    onSelect={() => onSelect(figure, index)}
-                    onBroken={images.failed}
-                  />
-                );
-              })}
-            </DrawContext.Provider>
+        {/* PINCH-1: the magnification, one 2D transform over the flattened 3D picture (set as the fingers move) */}
+        <div ref={zoomRef} class="cabinet-scene__zoom" style={{ transform: zoomTransform(zoom.current) }}>
+          <div
+            class="cabinet-scene__viewport"
+            style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx || panYPx ? `translate(${panPx}px, ${panYPx}px)` : undefined }}
+          >
+            <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
+              <DrawContext.Provider value={draw}>
+                <Quad cls="room-wall" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />
+                <Quad cls="room-floor" a={[room.x0, 0, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
+                <Quad cls="room-ceiling" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
+                {visible.map(({ slot, i }) => (
+                  <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
+                ))}
+                {onShow.map(({ draw: fig }, n) => {
+                  const { figure, index } = fig.placed.item;
+                  const { art, aspect } = arts[index];
+                  return (
+                    <SceneFigure
+                      key={figure._id}
+                      draw={fig}
+                      art={art}
+                      aspect={aspect}
+                      margins={pictureMargins(art, alpha)}
+                      scale={scales[n]}
+                      plate={plates[n]}
+                      onSelect={() => onSelect(figure, index)}
+                      onBroken={images.failed}
+                    />
+                  );
+                })}
+              </DrawContext.Provider>
+            </div>
           </div>
         </div>
+        {zoomed && (
+          <button
+            type="button"
+            class="cabinet-scene__reset"
+            // the frame's top corner, clear of the tab bar and the cards; in the shelf view, of the shelf steps
+            style={prefs.view === 'shelf' ? { right: `${Math.max(8, SHELF_STEPS_PX - side)}px` } : undefined}
+            onClick={() => showZoom(UNZOOMED, 'settle')}
+          >
+            Reset view
+          </button>
+        )}
       </div>
 
       <div class="cabinet-scene__nav">
@@ -1132,6 +1277,11 @@ const styles = `
   }
   /* the camera's frame, centred; clipped with no scroll box (ruling 33) */
   .cabinet-scene__frame { position: absolute; top: 0; bottom: 0; overflow: hidden; overflow: clip; }
+  /* PINCH-1: the zoom layer covers the frame and scales from its top-left (caseZoom); promoted only while fingers
+     move it, so once let go its picture rasters again at the zoom it settled at */
+  .cabinet-scene__zoom { position: absolute; inset: 0; transform-origin: 0 0; }
+  .cabinet-scene__zoom--live { will-change: transform; }
+  .cabinet-scene__zoom--settling { transition: transform ${ZOOM_SETTLE_MS}ms ease-out; }
   .cabinet-scene__viewport { position: absolute; inset: 0; perspective-origin: 50% 50%; }
   .cabinet-scene__root { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0 0; transform-style: preserve-3d; }
   .cabinet-scene .cab, .cabinet-scene .part { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-style: preserve-3d; pointer-events: none; }
@@ -1259,4 +1409,21 @@ const styles = `
     font: 600 12px/1.3 var(--font-sans, system-ui);
   }
   .cabinet-scene__fit ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
+  /* the fit list keeps clear of the Reset view chip */
+  .cabinet-scene:has(.cabinet-scene__reset) .cabinet-scene__fit { max-width: calc(100% - 160px); }
+  .cabinet-scene__reset {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: var(--radius-full, 9999px);
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font: 600 var(--font-sm, 13px)/1 var(--font-sans, system-ui);
+    white-space: nowrap;
+    pointer-events: auto;
+  }
+  /* a 48 px target (--touch-min) round the small chip */
+  .cabinet-scene__reset::before { content: ''; position: absolute; inset: -8px; }
 `;

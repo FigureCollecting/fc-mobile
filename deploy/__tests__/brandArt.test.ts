@@ -42,8 +42,10 @@ function figurePixels(size: number): { x: number; y: number; coverage: number }[
 }
 
 describe('the generated app icons', () => {
-  it('draws the figure at the largest scale its outline fits inside the 90 % ring, centred like the first icons', () => {
+  it('draws the figure at the largest scale its outline fits inside the 90 % ring, centred, its head and base both touching the ring', () => {
     expect(ICON_RING_RADIUS).toBe(0.45);
+    // Ross, 10-16: centred, so the head reaches the ring as the base does.
+    expect(ICON_FIGURE_CENTER).toEqual({ x: 0.5, y: 0.5 });
     const scale = iconFigureScale(art);
     // Bigger than the 1.4 that fitted the plinth to the 80 % ring.
     expect(scale).toBeGreaterThan(1.4);
@@ -51,12 +53,13 @@ describe('the generated app icons', () => {
     const outline = outlinePoints(art.d).map(([x, y]): Point => [x + art.tx, y + art.ty]);
     const box = boundsOf(outline);
     const k = fraction / box.height;
-    const far = Math.max(
-      ...outline.map(([x, y]) =>
-        Math.hypot(ICON_FIGURE_CENTER.x + k * (x - box.x - box.width / 2) - 0.5, ICON_FIGURE_CENTER.y + k * (y - box.y - box.height / 2) - 0.5),
-      ),
-    );
-    expect(far).toBeCloseTo(ICON_RING_RADIUS, 6);
+    const fromCentre = ([x, y]: Point) =>
+      Math.hypot(ICON_FIGURE_CENTER.x + k * (x - box.x - box.width / 2) - 0.5, ICON_FIGURE_CENTER.y + k * (y - box.y - box.height / 2) - 0.5);
+    expect(Math.max(...outline.map(fromCentre))).toBeCloseTo(ICON_RING_RADIUS, 6);
+    // the top of the head and the bottom of the base each within 1 px (at 512) of the ring
+    const top = outline.reduce((a, b) => (b[1] < a[1] ? b : a));
+    const bottom = outline.reduce((a, b) => (b[1] > a[1] ? b : a));
+    for (const p of [top, bottom]) expect(Math.abs(fromCentre(p) - ICON_RING_RADIUS)).toBeLessThanOrEqual(1 / 512);
   });
 
   for (const size of ICON_SIZES) {
@@ -72,20 +75,23 @@ describe('the generated app icons', () => {
       const height = y1 - y0 + 1;
       const target = iconFigureFraction(iconFigureScale(art)) * size;
       expect(Math.abs(height - target) / target).toBeLessThanOrEqual(0.02);
-      // Same centre as before: horizontally in the middle, a little below it (the plinth is the heavy end).
+      // Centred on ICON_FIGURE_CENTER.
       expect(Math.abs((x0 + x1 + 1) / 2 - size / 2)).toBeLessThanOrEqual(size * 0.01);
-      expect(Math.abs((y0 + y1 + 1) / 2 / size - 0.5127)).toBeLessThanOrEqual(0.01);
+      expect(Math.abs((y0 + y1 + 1) / 2 / size - ICON_FIGURE_CENTER.y)).toBeLessThanOrEqual(0.005);
     });
 
-    it(`${size}px: the figure fills the 90 % ring: its farthest opaque pixel from the centre is 0.45 x size, within 1 px`, () => {
+    it(`${size}px: the figure fills the 90 % ring: its farthest opaque pixel, its top and its bottom each 0.45 x size from the centre, within 1 px`, () => {
       const ring = ICON_RING_RADIUS * size;
       // An opaque pixel: at least half of it the figure. Distances are to the pixel's centre.
-      const distances = figurePixels(size)
-        .filter((p) => p.coverage >= 0.5)
-        .map((p) => Math.hypot(p.x + 0.5 - size / 2, p.y + 0.5 - size / 2));
-      const farthest = Math.max(...distances);
-      expect(farthest).toBeLessThanOrEqual(ring + 1);
-      expect(distances.some((d) => Math.abs(d - ring) <= 1)).toBe(true);
+      const opaque = figurePixels(size).filter((p) => p.coverage >= 0.5);
+      const distance = (p: { x: number; y: number }) => Math.hypot(p.x + 0.5 - size / 2, p.y + 0.5 - size / 2);
+      expect(Math.max(...opaque.map(distance))).toBeLessThanOrEqual(ring + 1);
+      // the topmost and the bottommost rows: the farthest pixel of each touches the ring
+      const [top, bottom] = [Math.min(...opaque.map((p) => p.y)), Math.max(...opaque.map((p) => p.y))];
+      for (const row of [top, bottom]) {
+        const reach = Math.max(...opaque.filter((p) => p.y === row).map(distance));
+        expect(Math.abs(reach - ring), `row ${row}: ${reach.toFixed(2)} px from the centre, the ring ${ring}`).toBeLessThanOrEqual(1);
+      }
     });
   }
 });

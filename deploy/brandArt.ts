@@ -5,8 +5,11 @@
 
 /** The figure's share of the icon height at scale 1 (302 px of 512 in the first icons). */
 export const ICON_BASE_FIGURE_FRACTION = 0.59;
-/** Where the figure's bounding box is centred, as fractions of the icon (a little low: the plinth is the heavy end). */
-export const ICON_FIGURE_CENTER = { x: 0.5, y: 0.5127 };
+/**
+ * Where the figure's bounding box is centred, as fractions of the icon: the middle (Ross, 10-16), so
+ * at the fitted scale the head and the base both reach the ring. The first icons sat a little low (0.5127).
+ */
+export const ICON_FIGURE_CENTER = { x: 0.5, y: 0.5 };
 /**
  * The ring the figure fills (Ross, 10-16: the 90 % mark, not the strict 80 % maskable one): the circle
  * of this radius, a fraction of the icon size, about the icon's centre. iconFigureScale finds the scale.

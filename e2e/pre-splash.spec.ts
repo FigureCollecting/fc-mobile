@@ -20,7 +20,7 @@ test('the splash paints the silhouette and name, holds 2 s from first paint, the
   await page.goto('/', { waitUntil: 'commit' });
   const splash = page.locator('#pre-splash');
   await expect(splash.locator('svg.pre-splash__art path')).toHaveCount(1);
-  await expect(splash).toContainText('Figure Collecting');
+  await expect(splash).toContainText('FigureCollecting');
   await expect(splash).toHaveCount(0, { timeout: 15_000 });
   const { removedAt, mountedAt, firstPaint } = await page.evaluate(() => ({
     ...(window as unknown as { __splash: { removedAt: number; mountedAt: number } }).__splash,

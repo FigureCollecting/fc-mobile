@@ -122,7 +122,7 @@ describe('the static splash markup', () => {
     const splash = html.slice(html.indexOf('id="pre-splash"'), html.indexOf('id="app"'));
     expect(splash).toMatch(/<svg[^>]*class="pre-splash__art"[^>]*viewBox="[-\d. ]+"/);
     expect(splash).toMatch(/<path d="M[^"]+"/);
-    expect(splash.indexOf('<svg')).toBeLessThan(splash.indexOf('Figure Collecting'));
+    expect(splash.indexOf('<svg')).toBeLessThan(splash.indexOf('FigureCollecting'));
   });
 
   it('is CSP-safe: no inline script, no style attribute, no inline <style>', () => {

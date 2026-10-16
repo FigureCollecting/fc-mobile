@@ -14,8 +14,8 @@ const icon = (size: number, purpose: 'any' | 'maskable'): Icon => ({
 
 export const WEB_MANIFEST: Partial<ManifestOptions> = {
   id: '/',
-  name: 'Figure Collecting',
-  short_name: 'Figure Collecting',
+  name: 'FigureCollecting',
+  short_name: 'FC',
   description: 'Your collectibles, anywhere',
   start_url: '/',
   scope: '/',

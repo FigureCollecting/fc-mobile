@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { CabinetScene, SWIPE_START_PX, quadStyle } from '../CabinetScene';
+import { CabinetScene, LABEL_HEIGHT_MM, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
@@ -215,11 +215,11 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
       }
     }
     expect(pairs).toBeGreaterThan(0);
-    // each plate centred under its figure: as wide as the figure, at most the full 110 mm
+    // each plate centred under its figure, as wide as the figure (CASE-FB2a: its brass face as wide as the name within it)
     for (const p of plates) {
       const t = tap.get(p.name)!;
       expect((p.x0 + p.x1) / 2, p.name!).toBeCloseTo((t.x0 + t.x1) / 2, 6);
-      expect(p.x1 - p.x0, p.name!).toBeCloseTo(p.name === 'Nendoroid 10' ? 110 : 60, 6);
+      expect(p.x1 - p.x0, p.name!).toBeCloseTo(p.name === 'Nendoroid 10' ? 150 : 60, 6);
     }
   });
 });
@@ -1413,16 +1413,20 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     let coarse = 0;
     for (const [frame, view] of DENSE_FRAMES.flatMap((f) => (['wall', 'cabinet', 'shelf'] as const).map((v) => [f, v] as const))) {
       const { host } = scene(spikeWall(), { view }, { frameFallback: frame, labels: true });
-      const s = pxPerMm(host);
-      // each figure's button by its id, read once (G1 draws some 800 plates here: a lookup per plate ran past a minute on CI)
-      const byId = new Map(figureButtons(host).map((b) => [b.dataset.figureId, b]));
-      for (const plate of Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'))) {
-        const b = byId.get(plate.dataset.figureId)!;
-        const k = Number(b.style.getPropertyValue('--s'));
-        expect(plate.style.getPropertyValue('--s')).toBe(String(k));
-        expect(sideMm(plate, 'v')).toBeCloseTo(30 * s, 4);
-        expect(parseFloat(plate.style.height)).toBeCloseTo(30 * k, 6);
-        if (k < s) coarse++;
+      // where the camera stands and walked on (CASE-FB2a's one-line plates cost less: at rest the budget may not bind)
+      for (const dx of [0, -400]) {
+        if (dx !== 0) drag(host, dx);
+        const s = pxPerMm(host);
+        // each figure's button by its id, read once (G1 draws some 800 plates here: a lookup per plate ran past a minute on CI)
+        const byId = new Map(figureButtons(host).map((b) => [b.dataset.figureId, b]));
+        for (const plate of Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'))) {
+          const b = byId.get(plate.dataset.figureId)!;
+          const k = Number(b.style.getPropertyValue('--s'));
+          expect(plate.style.getPropertyValue('--s')).toBe(String(k));
+          expect(sideMm(plate, 'v')).toBeCloseTo(LABEL_HEIGHT_MM * s, 4);
+          expect(parseFloat(plate.style.height)).toBeCloseTo(LABEL_HEIGHT_MM * k, 6);
+          if (k < s) coarse++;
+        }
       }
       cleanup();
     }

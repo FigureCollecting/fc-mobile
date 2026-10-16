@@ -15,6 +15,7 @@
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, adjacencyGapMm, clearHeightsMm, sideOverhangMm, topClearanceMm } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
+import { baseDepth, type BaseDepth } from './caseInterim';
 import type { FigureDisplayMeta } from './displayMeta';
 import { drawnWidthMm, type PictureMargins } from './figureArt';
 import { MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm } from './sizeResolution';
@@ -80,6 +81,11 @@ export interface SurfaceSlot {
   readonly depthMm: number;
   /** z of the usable area's front edge (0 = the cabinet front, negative = back). */
   readonly frontZMm: number;
+  /**
+   * z of the front edge the case draws for the surface, its lip: a glass plate's own front, else the cabinet front
+   * (a board, a framed floor or a beam is drawn to it, though the usable area may start behind the door).
+   */
+  readonly lipZMm: number;
 }
 
 /** The profile's surfaces in reading order: the top (when usable), then the shelves top to bottom. */
@@ -97,6 +103,7 @@ export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILIN
       widthMm: profile.outer.widthMm,
       depthMm: profile.outer.depthMm,
       frontZMm: 0,
+      lipZMm: 0,
     });
   }
   const doorWall = profile.rack ? profile.rack.postMm : profile.materials.front === 'glassDoor' ? (profile.glassMm ?? 0) : 0;
@@ -112,6 +119,7 @@ export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILIN
       widthMm: onPlate ? profile.plate!.widthMm : profile.interior.widthMm,
       depthMm: onPlate ? profile.plate!.depthMm : profile.interior.depthMm,
       frontZMm: onPlate ? -profile.plate!.frontInsetMm : frontWall > 0 ? -frontWall : 0,
+      lipZMm: onPlate ? -profile.plate!.frontInsetMm : 0,
     });
   }
   return slots;
@@ -144,8 +152,10 @@ export interface PlacedFigure {
   readonly item: CaseFigure;
   /** Left edge from the slot's left edge, mm. */
   readonly xMm: number;
-  /** The billboard's plane: the middle of the slot's depth. */
+  /** The billboard's plane: its base's front (CASE-FB2a). */
   readonly zMm: number;
+  /** Where its base stands front to back: centred in the slot's usable depth (caseInterim). */
+  readonly base: BaseDepth;
   readonly heightMm: number;
   /** Deeper than this surface (it overhangs). */
   readonly tooDeep: boolean;
@@ -252,9 +262,9 @@ export function packCabinets(
       const row = b.rows[j];
       const total = row.reduce((sum, i) => sum + i.widthMm, 0) + FIGURE_GAP_MM * Math.max(0, row.length - 1);
       let x = (slot.widthMm - total) / 2;
-      const zMm = slot.frontZMm - slot.depthMm / 2;
       const placed = row.map((item) => {
-        const p: PlacedFigure = { item, xMm: x, zMm, heightMm: item.heightMm, tooDeep: !within(item.depthMm, slot.depthMm) };
+        const base = baseDepth(slot, item.depthMm);
+        const p: PlacedFigure = { item, xMm: x, zMm: base.frontMm, base, heightMm: item.heightMm, tooDeep: !within(item.depthMm, slot.depthMm) };
         x += item.widthMm + FIGURE_GAP_MM;
         return p;
       });

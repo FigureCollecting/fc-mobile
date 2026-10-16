@@ -123,7 +123,9 @@ describe('packCabinets', () => {
     expect(b.xMm - (a.xMm + 100)).toBeCloseTo(FIGURE_GAP_MM, 9);
     // centred across 430 mm: (430 - 210) / 2 = 110 from the left
     expect(a.xMm).toBeCloseTo((430 - (200 + FIGURE_GAP_MM)) / 2, 9);
-    expect(a.zMm).toBeCloseTo(-185, 9); // middle of the 370 mm deep top
+    // CASE-FB2a: its 80 mm base centred in the 370 mm deep top, the picture at the base's front
+    expect(a.base).toEqual({ frontMm: -145, backMm: -225 });
+    expect(a.zMm).toBeCloseTo(-145, 9);
   });
 
   it('overflow opens a new cabinet', () => {
@@ -317,5 +319,47 @@ describe('measureCaseFigure', () => {
 
   it('a corrupt height is capped at 2500 mm', () => {
     expect(measureCaseFigure(fig({ dimensions: { heightMm: 660580570 } }), 0, UNMATTED_META).heightMm).toBe(2500);
+  });
+});
+
+describe("CASE-FB2a: where each surface's lip is drawn, and figures centred in depth", () => {
+  it("each surface's lip (the front edge the case draws for it): a glass plate's own front, else the cabinet front", () => {
+    // the KLINGSBO: top, four glass plates 12 mm in, the cabinet floor and the open shelf, framed at the front
+    expect(surfaceSlots(IKEA_KLINGSBO).map((s) => s.lipZMm)).toEqual([0, -12, -12, -12, -12, 0, 0]);
+    // the Detolf: top, three glass plates 20 mm in, the base board
+    expect(surfaceSlots(IKEA_DETOLF).map((s) => s.lipZMm)).toEqual([0, -20, -20, -20, 0]);
+    // the rack: its beams are its fronts
+    expect(surfaceSlots(OPEN_STEEL_RACK).map((s) => s.lipZMm)).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it('the usable depth starts behind the door, the lip may not: the KLINGSBO floor\'s usable front is 4 mm in, its lip at the front', () => {
+    const floor = surfaceSlots(IKEA_KLINGSBO)[5];
+    expect(floor.frontZMm).toBe(-4);
+    expect(floor.lipZMm).toBe(0);
+  });
+
+  it("every figure's base stands centred in its surface's usable depth, each on its own, its picture at its front", () => {
+    const items = [item(0, 200, 100, 60), item(1, 200, 100, 120), item(2, 200, 100, 200)];
+    const { cabinets } = packCabinets(items, [IKEA_KLINGSBO]);
+    const placed = cabinets[0].surfaces.flatMap((s) => s.items.map((p) => ({ p, slot: s.slot })));
+    expect(placed).toHaveLength(3);
+    for (const { p, slot } of placed) {
+      const middle = slot.frontZMm - slot.depthMm / 2;
+      expect((p.base.frontMm + p.base.backMm) / 2, p.item.figure.name).toBeCloseTo(middle, 9);
+      expect(p.base.frontMm - p.base.backMm).toBeCloseTo(p.item.depthMm, 9);
+      expect(p.zMm).toBe(p.base.frontMm);
+    }
+    // deeper bases stand nearer the front: not one line at the middle
+    expect(new Set(placed.map(({ p }) => p.zMm)).size).toBe(3);
+  });
+
+  it('a figure deeper than its surface stands at its front and overhangs behind, still flagged', () => {
+    // two 220 mm figures fill the KLINGSBO's top; the third, 330 mm deep (the 335 mm floor takes it), goes on in
+    // reading order to the first 314 mm glass plate
+    const { cabinets } = packCabinets([item(0, 200, 220), item(1, 200, 220), item(2, 200, 100, 330)], [IKEA_KLINGSBO]);
+    const [p] = cabinets[0].surfaces[1].items;
+    expect(p.item.index).toBe(2);
+    expect(p.tooDeep).toBe(true);
+    expect(p.base).toEqual({ frontMm: -12, backMm: -342 });
   });
 });

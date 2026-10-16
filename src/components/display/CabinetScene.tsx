@@ -81,6 +81,7 @@ import {
 } from './caseCull';
 import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
+import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -95,10 +96,19 @@ const DOUBLE_TAP_PX = 40;
 /** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
 const SHELF_STEPS_PX = 44;
 const DEFAULT_FRAME = { width: 360, height: 480 };
-/** A nameplate's full width; a narrower figure's plate is its own width, so neighbours' plates never meet. */
-const PLATE_MAX_MM = 110;
-/** A nameplate's height, hanging from the front edge of its figure's surface. */
-const PLATE_H_MM = 30;
+/**
+ * CASE-FB2a (Ross 10-16: "one line height and fairly minimal space around the text"): a name plate is one line of
+ * the name, LABEL_FONT_MM high on a LABEL_LINE_MM line, with LABEL_PAD_MM above and below it (about 2 px on the
+ * Fold8's wall and cabinet views). It was 30 mm on an 11 mm line, twice a shelf's lip or more.
+ */
+export const LABEL_FONT_MM = 11;
+export const LABEL_LINE_MM = 13.2;
+export const LABEL_PAD_MM = 2;
+/** Room at each end of the name, so an ellipsis never meets the plate's edge. */
+const LABEL_SIDE_MM = 3;
+export const LABEL_HEIGHT_MM = LABEL_LINE_MM + 2 * LABEL_PAD_MM;
+/** How far a name plate stands in front of its surface's lip: off its plane, so the two never fight over which draws on top. */
+export const LABEL_LIFT_MM = 1;
 
 type V3 = readonly [number, number, number];
 
@@ -586,11 +596,17 @@ function figureLayerBox(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, 
   };
 }
 
-/** A figure's name plate (world mm): its corner and sides, hanging just in front of the front edge of its surface. */
+/**
+ * Where a figure's name plate may draw (world mm): its corner and sides, its figure's width centred under it (so
+ * neighbours' plates keep the packing's gap apart), hanging from the top of its surface's lip, LABEL_LIFT_MM in front
+ * of it. CASE-FB2a: it hung from the usable area's front edge (slot.frontZMm), which lies behind the door's glass,
+ * or (a rack) behind its posts; where the case draws a surface's lip at the cabinet front (the KLINGSBO's framed
+ * floor, the Detolf's base board, every beam of the rack) the lip stood in front of the plate and hid it.
+ */
 function plateOf(draw: FigureDraw): { a: Vec3; u: Vec3; v: Vec3 } {
   const { placed, slot, cx } = draw;
-  const w = Math.min(PLATE_MAX_MM, placed.item.widthMm);
-  return { a: [cx - w / 2, slot.topMm + 1, slot.frontZMm + 1], u: [w, 0, 0], v: [0, -PLATE_H_MM, 0] };
+  const w = placed.item.widthMm;
+  return { a: [cx - w / 2, slot.topMm, slot.lipZMm + LABEL_LIFT_MM], u: [w, 0, 0], v: [0, -LABEL_HEIGHT_MM, 0] };
 }
 
 function SceneFigure({
@@ -631,11 +647,14 @@ function SceneFigure({
   const shadowW = Math.max(20, contact.widthFrac * boxW * 1.15);
   const shadowD = Math.min(slot.depthMm, Math.max(40, item.depthMm));
   const shadowX = artCx - boxW / 2 + contact.centerXFrac * boxW;
+  // the shadow lies under the base (CASE-FB2a: centred in the surface's depth), never past the surface's front or back
+  const slotBack = slot.frontZMm - slot.depthMm;
+  const shadowZ = Math.min(slot.frontZMm - shadowD, Math.max(slotBack, (placed.base.frontMm + placed.base.backMm) / 2 - shadowD / 2));
   const box = (x0: number, x1: number, y0: number, y1: number) =>
     JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
   return (
     <>
-      <Quad grid={GRADIENT_GRID} cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, z - shadowD / 2]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} />
+      <Quad grid={GRADIENT_GRID} cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, shadowZ]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} />
       <button
         type="button"
         class={`q cab-figure ${placed.tooDeep ? 'cab-figure--overhang' : ''}`}
@@ -643,9 +662,11 @@ function SceneFigure({
         aria-label={item.figure.name}
         data-art={art.kind}
         data-figure-id={item.figure._id}
+        data-index={String(item.index)}
         data-grounded={grounded ? '1' : '0'}
         data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
         data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
+        data-depth={JSON.stringify({ front: num(placed.base.frontMm), back: num(placed.base.backMm), slotFront: num(slot.frontZMm), slotBack: num(slotBack) })}
         onClick={onSelect}
       >
         <span
@@ -667,11 +688,11 @@ function SceneFigure({
       {plate && (
         <div
           class="q cab-plate"
-          style={{ ...quadStyle(plate.a, plate.u, plate.v, { u: plate.u[0] * k, v: PLATE_H_MM * k }, s), '--s': String(k) }}
+          style={{ ...quadStyle(plate.a, plate.u, plate.v, { u: plate.u[0] * k, v: LABEL_HEIGHT_MM * k }, s), '--s': String(k) }}
           data-figure-id={item.figure._id}
           data-world={box(plate.a[0], plate.a[0] + plate.u[0], plate.a[1] + plate.v[1], plate.a[1])}
         >
-          {item.figure.name}
+          <span class="cab-plate__face">{item.figure.name}</span>
         </div>
       )}
     </>
@@ -807,6 +828,17 @@ export function CabinetScene({
     setLift(0);
     setPanY(0);
   }, [prefs.view, prefs.pattern, prefs.swipe]);
+  // CASE-FB2a (interim, REPACK_ON_FILTER): a new filter or sort packs its figures from the wall's start, and the view
+  // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened
+  useLayoutEffect(() => {
+    if (!REPACK_ON_FILTER) return;
+    setFocus(0);
+    setShelf(0);
+    setWalkX(null);
+    setPan(0);
+    setLift(0);
+    setPanY(0);
+  }, [filterKey]);
 
   const lastIndex = wall.cabinets.length - 1;
   const focusIdx = Math.min(focus, lastIndex);
@@ -1120,7 +1152,7 @@ export function CabinetScene({
   const middle = toPicture(sharp, { x: camera.frame.width / 2, y: camera.frame.height / 2 });
   const scales = figureScales(
     cull,
-    showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * PLATE_H_MM : 0 })),
+    showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * LABEL_HEIGHT_MM : 0 })),
     s * sharp.k,
     FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,
     isZoomed(sharp) ? { x: middle.x, y: middle.y - panYPx } : undefined,
@@ -1387,17 +1419,33 @@ const styles = `
     overflow: hidden;
   }
   .cabinet-scene .cab-figure__plate--reading { position: absolute; inset: 0; }
+  /* a name plate (CASE-FB2a): the room its figure's width gives it, its brass face as wide as the name, cut short with
+     an ellipsis where the room ends, one line high */
   .cabinet-scene .cab-plate {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
-    background: #d9cfb8;
-    color: #2b2620;
-    font: 600 calc(11px * var(--s, 1))/1 var(--font-sans, system-ui);
+    font: 600 calc(${LABEL_FONT_MM}px * var(--s, 1)) / calc(${LABEL_LINE_MM}px * var(--s, 1)) var(--font-sans, system-ui);
+  }
+  .cabinet-scene .cab-plate__face {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: calc(${LABEL_PAD_MM}px * var(--s, 1)) calc(${LABEL_SIDE_MM}px * var(--s, 1));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    padding: 0 calc(4px * var(--s, 1));
+    /* antique brass: a brushed, aged warm gold-brown, lit from above, a darker bevelled edge, the name engraved dark */
+    background:
+      repeating-linear-gradient(90deg, rgba(255, 236, 190, 0.07) 0 calc(1px * var(--s, 1)), rgba(70, 45, 12, 0.06) calc(1px * var(--s, 1)) calc(2.5px * var(--s, 1))),
+      linear-gradient(180deg, #dcb978 0%, #b8904a 45%, #8f6a2e 100%);
+    box-shadow:
+      inset 0 0 0 calc(0.7px * var(--s, 1)) rgba(68, 44, 14, 0.85),
+      inset 0 calc(1px * var(--s, 1)) 0 calc(0.4px * var(--s, 1)) rgba(255, 232, 170, 0.35);
+    border-radius: calc(1.5px * var(--s, 1));
+    color: #2e1f0a;
+    text-shadow: 0 calc(0.6px * var(--s, 1)) 0 rgba(255, 228, 160, 0.4);
   }
   /* no box of its own: a layer the size of the scene over the 3D faces, for two buttons (MOB-NAV-2) */
   .cabinet-scene__nav { display: contents; }

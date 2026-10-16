@@ -82,7 +82,7 @@ import {
 import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
-import { UNZOOMED, ZOOM_DOUBLE_TAP, isZoomed, panZoom, pinchZoom, settleZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
+import { UNZOOMED, ZOOM_DOUBLE_TAP, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
@@ -868,6 +868,8 @@ export function CabinetScene({
   const zoomRef = useRef<HTMLDivElement>(null);
   const zoom = useRef<Zoom>(UNZOOMED);
   const [zoomed, setZoomed] = useState(false);
+  // the zoom the figures are drawn sharp for: set once a gesture lets go, never while fingers move it
+  const [sharp, setSharp] = useState<Zoom>(UNZOOMED);
   const settling = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // the picture the zoom magnifies: the camera's frame
   const picture = useRef(camera.frame);
@@ -885,6 +887,7 @@ export function CabinetScene({
     if (animate) settling.current = setTimeout(() => layer.classList.remove('cabinet-scene__zoom--settling'), ZOOM_SETTLE_MS);
     hostRef.current!.dataset.zoom = zoomData(z);
     setZoomed(isZoomed(z));
+    if (how !== 'live') setSharp(z);
   }, []);
   // a new view, wall, swipe mode, filter or frame starts the picture at 1x, at once
   useLayoutEffect(() => {
@@ -1085,11 +1088,16 @@ export function CabinetScene({
     const p = labels ? plateOf(fig) : null;
     return p && trimFace(cull, p.a, p.u, p.v, draw.rect) ? p : null;
   });
+  // PINCH-1: Chrome rasters a layer under the perspective at the device pixel ratio per layer px, whatever the zoom
+  // magnifies it by; so once a zoom settles the figures nearest the middle of the zoomed view are drawn at the zoom
+  // times the scene's px per mm, out of the same budget (the rest coarser outward from it)
+  const middle = toPicture(sharp, { x: camera.frame.width / 2, y: camera.frame.height / 2 });
   const scales = figureScales(
     cull,
     showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * PLATE_H_MM : 0 })),
-    s,
+    s * sharp.k,
     FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,
+    isZoomed(sharp) ? { x: middle.x, y: middle.y - panYPx } : undefined,
   );
   const overhangs = draws.filter((d) => d.draw.placed.tooDeep);
   const flagged = packed.violators.length + overhangs.length;

@@ -322,12 +322,16 @@ export interface FigureBox {
   readonly plateMm2?: number;
 }
 
-/** The figures (their indices) nearest the frame centre on screen first, by their box's middle; one behind the camera last. */
-export function byFrameCentre(view: CullView, figures: readonly FigureBox[]): number[] {
+/**
+ * The figures (their indices) nearest the frame centre on screen first, by their box's middle; one behind the camera
+ * last. Zoomed (PINCH-1), nearest `at` first: the middle of the zoomed view, a point of the picture.
+ */
+export function byFrameCentre(view: CullView, figures: readonly FigureBox[], at?: { x: number; y: number }): number[] {
   const { camera, panPx } = view;
+  const { x, y } = at ?? { x: camera.frame.width / 2, y: camera.frame.height / 2 };
   const d = figures.map((f) => {
     const q = project(camera, [(f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z]);
-    return q.depth > NEAR_MM ? Math.hypot(q.x + panPx - camera.frame.width / 2, q.y - camera.frame.height / 2) : Infinity;
+    return q.depth > NEAR_MM ? Math.hypot(q.x + panPx - x, q.y - y) : Infinity;
   });
   return figures.map((_, i) => i).sort((a, b) => d[a] - d[b] || a - b);
 }
@@ -395,13 +399,13 @@ export function figuresToDraw(
  * area and its name plate's at its px per mm), wherever the camera stands: the nearest the frame centre first
  * (byFrameCentre), each at the scene's `s` while the budget holds, then a whole octave coarser at a time, never finer
  * than a nearer one, down to the coarsest a face is drawn at; one the budget cannot hold even there is drawn there
- * all the same.
+ * all the same. Zoomed (PINCH-1), `s` is the zoom's and the nearest `at` (the middle of the zoomed view) come first.
  */
-export function figureScales(view: CullView, figures: readonly FigureBox[], s: number, budgetPx: number): number[] {
+export function figureScales(view: CullView, figures: readonly FigureBox[], s: number, budgetPx: number, at?: { x: number; y: number }): number[] {
   const scales: number[] = new Array<number>(figures.length);
   let octave = 0;
   let spent = 0;
-  for (const i of byFrameCentre(view, figures)) {
+  for (const i of byFrameCentre(view, figures, at)) {
     const f = figures[i];
     const area = (f.x1 - f.x0) * (f.y1 - f.y0) + (f.plateMm2 ?? 0);
     while (s / 2 ** (octave + 1) >= TEXEL_SCALE_MIN && spent + area * (s / 2 ** octave) ** 2 > budgetPx) octave++;

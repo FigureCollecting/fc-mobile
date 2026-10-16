@@ -22,7 +22,7 @@ import { expect, test } from '../fixtures';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
-import { decodePng, type Rgba } from '../paintCheck';
+import { decodePng } from '../paintCheck';
 import { FOLD8_DPR, SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { touchDoubleTap, touchPinch, touchSwipe, touchTap } from '../touch';
@@ -512,33 +512,33 @@ test('(e) a filter picked in Refine starts the picture at 1x, and so does leavin
 
 // ------------------------------------------------------------------ (f)
 
-/** Grey levels of an RGBA image. */
-const grey = (img: Rgba) => {
-  const g = new Float64Array(img.width * img.height);
-  for (let i = 0; i < g.length; i++) g[i] = 0.299 * img.data[i * 4]! + 0.587 * img.data[i * 4 + 1]! + 0.114 * img.data[i * 4 + 2]!;
-  return g;
-};
-
-/** Detail: the mean absolute Laplacian of the grey levels (a blurred picture has less). */
-function detail(png: Buffer): number {
+/**
+ * How crisp a picture's edges are: the 99th percentile of the Sobel gradient of its grey levels, so its strongest
+ * edges (a figure's outline, its dress against its coat) and not the derivative's grain. A picture magnified from a
+ * coarser raster spreads each edge over more device pixels and lowers it.
+ */
+function edges(png: Buffer): number {
   const img = decodePng(png);
-  const g = grey(img);
   const w = img.width;
-  let sum = 0;
-  let n = 0;
+  const g = new Float64Array(w * img.height);
+  for (let i = 0; i < g.length; i++) g[i] = 0.299 * img.data[i * 4]! + 0.587 * img.data[i * 4 + 1]! + 0.114 * img.data[i * 4 + 2]!;
+  const mags: number[] = [];
   for (let y = 1; y < img.height - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       const i = y * w + x;
-      sum += Math.abs(4 * g[i]! - g[i - 1]! - g[i + 1]! - g[i - w]! - g[i + w]!);
-      n++;
+      const gx = g[i - w + 1]! + 2 * g[i + 1]! + g[i + w + 1]! - g[i - w - 1]! - 2 * g[i - 1]! - g[i + w - 1]!;
+      const gy = g[i + w - 1]! + 2 * g[i + w]! + g[i + w + 1]! - g[i - w - 1]! - 2 * g[i - w]! - g[i - w + 1]!;
+      mags.push(Math.hypot(gx, gy));
     }
   }
-  return sum / n;
+  mags.sort((a, b) => a - b);
+  return mags[Math.floor(0.99 * (mags.length - 1))]!;
 }
 
 /**
  * How sharp a cut-out's art is at the zoom: the middle of its picture box on screen, shot as the case draws it and
- * as the same derivative and mask draw flat over it at the same size (the sharpest that derivative gives there).
+ * as the same derivative and mask draw flat over it at the same size (the sharpest that derivative gives there);
+ * and how many device pixels each pixel of the derivative takes there (over 1, the derivative itself runs short).
  */
 async function sharpness(page: Page, d: Drawn): Promise<{ boxCssPx: number; devicePxPerImagePx: number; case: number; flat: number; ratio: number }> {
   const art = page.locator(`button.cab-figure[data-figure-id="${d.id}"] .cab-figure__box`);
@@ -578,36 +578,77 @@ async function sharpness(page: Page, d: Drawn): Promise<{ boxCssPx: number; devi
   await page.waitForTimeout(200);
   const ref = await page.screenshot({ clip, scale: 'device', animations: 'disabled' });
   await page.evaluate(() => document.getElementById('pinch-flat')?.remove());
-  const caseDetail = detail(drawn);
-  const flatDetail = detail(ref);
+  const caseEdges = edges(drawn);
+  const flatEdges = edges(ref);
   const round = (v: number) => Math.round(v * 100) / 100;
   return {
     boxCssPx: round(box.height),
     devicePxPerImagePx: round((box.height * FOLD8_DPR) / DERIVATIVE.height),
-    case: round(caseDetail),
-    flat: round(flatDetail),
-    ratio: round(caseDetail / flatDetail),
+    case: round(caseEdges),
+    flat: round(flatEdges),
+    ratio: round(caseEdges / flatEdges),
   };
 }
 
-test('(f) the sign-off shots at 1x, 2x and 4x with the chip, and how sharp a cut-out is at each', async ({ context, page }, testInfo) => {
+/** The case scene's composited layers, in viewports of pixels (CDP LayerTree, as e2e/case-budget.spec.ts reads them). */
+async function sceneLayerViewports(page: Page): Promise<number> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    type Layer = { backendNodeId?: number; width: number; height: number; drawsContent: boolean };
+    // the first tree after LayerTree.enable can come before the frame is committed, with almost nothing drawing:
+    // of the trees a few frames bring, the one with the most drawing layers
+    const trees: Layer[][] = [];
+    const drawing = (ls: Layer[]) => ls.filter((l) => l.drawsContent && l.backendNodeId !== undefined);
+    cdp.on('LayerTree.layerTreeDidChange', (e: { layers?: Layer[] }) => e.layers && trees.push(drawing(e.layers)));
+    await cdp.send('LayerTree.enable');
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    await expect.poll(() => trees.length, { timeout: 10_000, message: 'a LayerTree.layerTreeDidChange' }).toBeGreaterThan(0);
+    await page.waitForTimeout(300);
+    const layers = trees.reduce((a, b) => (b.length > a.length ? b : a));
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    const { nodeIds: inScene } = await cdp.send('DOM.querySelectorAll', { nodeId: root.nodeId, selector: '.cabinet-scene, .cabinet-scene *' });
+    const { nodeIds } = await cdp.send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: layers.map((l) => l.backendNodeId!) });
+    const scene = new Set(inScene);
+    await cdp.send('LayerTree.disable');
+    const area = layers.filter((_, i) => scene.has(nodeIds[i]!)).reduce((a, l) => a + l.width * l.height, 0);
+    const viewport = page.viewportSize()!;
+    return Math.round((area / (viewport.width * viewport.height)) * 100) / 100;
+  } finally {
+    await cdp.detach();
+  }
+}
+
+/** MOB-NAV-2's ceiling on the scene's layers, in viewports of pixels (e2e/case-budget.spec.ts). */
+const CEILING_VIEWPORTS = 3;
+/**
+ * Zoomed, a cut-out's edges stay at least this share as crisp, against the derivative drawn flat at the same size,
+ * as at 1x: once a zoom settles its layer is drawn at the zoom's px per mm. Magnified from its 1x layer instead (the
+ * zoom's first cut) they kept 0.65 at 2x and 0.40 at 4x on the cover, 0.61 and 0.37 on the open panel.
+ */
+const KEPT_EDGES = 0.72;
+
+test('(f) the sign-off shots at 1x, 2x and 4x with the chip; a cut-out as sharp zoomed as at 1x, within the layer ceiling', async ({ context, page }, testInfo) => {
   test.setTimeout(300_000);
   await openCase(context, page);
   const target = await central(page, 40);
   const m = centre(target.tap);
-  const measured: Record<string, unknown> = {};
-  await page.waitForTimeout(500);
-  measured['1x'] = await sharpness(page, target);
+  const measured: Record<string, Awaited<ReturnType<typeof sharpness>> & { layerViewports: number }> = {};
+  const measure = async (at: string) => {
+    await page.waitForTimeout(500);
+    measured[at] = { ...(await sharpness(page, target)), layerViewports: await sceneLayerViewports(page) };
+  };
+  await measure('1x');
   await shot(page, testInfo, 'case-zoom-1x');
   await pinchAbout(page, m, 40, 80);
   await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
-  await page.waitForTimeout(500);
-  measured['2x'] = await sharpness(page, target);
+  await measure('2x');
   await shot(page, testInfo, 'case-zoom-2x');
   await pinchAbout(page, m, 40, 80);
   expect((await zoomOf(page)).k).toBeCloseTo(4, 1);
-  await page.waitForTimeout(500);
-  measured['4x'] = await sharpness(page, target);
+  await measure('4x');
   await shot(page, testInfo, 'case-zoom-4x');
   testInfo.annotations.push({ type: 'sharpness', description: JSON.stringify({ figure: target.id, derivative: DERIVATIVE, ...measured }) });
+  for (const at of ['2x', '4x']) expect(measured[at]!.ratio / measured['1x']!.ratio, `the edges kept at ${at}`).toBeGreaterThanOrEqual(KEPT_EDGES);
+  for (const at of ['1x', '2x', '4x']) expect(measured[at]!.layerViewports, `the scene layers at ${at}`).toBeLessThanOrEqual(CEILING_VIEWPORTS);
 });
+

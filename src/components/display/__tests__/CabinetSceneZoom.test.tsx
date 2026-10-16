@@ -184,6 +184,40 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 });
 
+describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
+  /** The px per mm each figure's layer is drawn at (its --s), and the scene's. */
+  const layerScales = (host: HTMLElement) => figureButtons(host).map((b) => Number(b.style.getPropertyValue('--s')));
+  const sceneScale = (host: HTMLElement) => Number(host.dataset.pxPerMm);
+
+  it('let go, the figures in the zoomed view are drawn at the zoom times the scene\'s px per mm; never while the fingers move; at 1x again, at the scene\'s', () => {
+    const { host } = scene(getFixtureFigures(8));
+    const s = sceneScale(host);
+    expect(Math.max(...layerScales(host))).toBe(s);
+    pinch(host, { x: 180, y: 260 }, { x: 260, y: 260 }, { x: 140, y: 260 }, { x: 300, y: 260 }, false);
+    // the fingers still down: the layers as they were, only the zoom layer's transform moves
+    expect(Math.max(...layerScales(host))).toBe(s);
+    up(host, 11, { x: 140, y: 260 });
+    up(host, 12, { x: 300, y: 260 });
+    expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
+    tap(chip()!);
+    expect(Math.max(...layerScales(host))).toBe(s);
+  });
+
+  it('where the budget binds (4x), a pan while zoomed redraws them about the middle of the view it lets go at', () => {
+    const { host } = scene(getFixtureFigures(60), { view: 'wall' });
+    const s = sceneScale(host);
+    pinch(host, { x: 210, y: 260 }, { x: 230, y: 260 }, { x: 180, y: 260 }, { x: 260, y: 260 });
+    expect(zoomOf(host).k).toBeCloseTo(4, 6);
+    const before = layerScales(host);
+    expect(Math.max(...before)).toBeCloseTo(4 * s, 9);
+    expect(Math.min(...before)).toBeLessThan(4 * s);
+    drag(host, -300);
+    const after = layerScales(host);
+    expect(after).not.toEqual(before);
+    expect(Math.max(...after)).toBeCloseTo(4 * s, 9);
+  });
+});
+
 describe('CabinetScene: panning while zoomed (PINCH-1)', () => {
   for (const swipe of ['camera', 'pan'] as const) {
     it(`${swipe} mode: zoomed, one finger pans the magnified picture; it never walks the wall, changes cabinets, lifts or slides the photo`, () => {

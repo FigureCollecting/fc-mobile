@@ -229,6 +229,33 @@ describe('useOwnedImages', () => {
     second.unmount();
   });
 
+  it('a figure added (a new set of owned figures) keeps the pictures the case view shows while their sync runs (IMG-SHOW-1)', async () => {
+    const link = holding(url('b'));
+    storage = link.caches;
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    const all = [
+      { headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), role: 'gallery', url: url('a'), width: 550, height: 800 }] },
+      { headId: headOf(1), images: [{ derivativeId: 'b'.repeat(64), role: 'gallery', url: url('b'), width: 550, height: 800 }] },
+    ];
+    r.clients.getProductImages.mockImplementation(async (req: { headIds: string[] }) =>
+      create(GetProductImagesResponseSchema, { products: all.filter((p) => req.headIds.includes(p.headId)) }),
+    );
+    await seedFigures(r, [{ title: 'Shown' }]);
+    const { result, unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(appClient()) });
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+
+    // the owned figures change: the case view's answer is asked again, under a new key
+    await r.engine.write((store) => store.createCopy(headOf(1), 'owned'));
+    await waitFor(() => expect(storage.added.some((q) => q.url === url('b'))).toBe(true));
+    // the added figure's image is still on its way, and the figure shown keeps its picture
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
+    expect(result.current.has(headOf(1))).toBe(false);
+    unmount();
+    link.release();
+  });
+
   it('a sync that left an image unfetched answers what it kept, and the case view opened again syncs again (IMG-SHOW-1)', async () => {
     storage = fakeCaches(async (req) => (req.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
     vi.stubGlobal('caches', storage);

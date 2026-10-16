@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
-import { startMockIssuer, USER_A, USER_B, type MockIssuer } from '../src/issuer.js';
+import { startMockIssuer, USER_A, USER_B, USER_C, type MockIssuer } from '../src/issuer.js';
 import { form, request, type Reply } from './helpers.js';
 
 const APP = 'http://localhost:8480';
@@ -259,7 +259,8 @@ describe('mock OIDC issuer', () => {
     const unknown = await authorize(goodParams(verifier(), { login_hint: 'nobody@example' }));
     expect(new URL(unknown.headers.location!).searchParams.get('error')).toBe('access_denied');
     expect(() => issuer.loginAs('not-a-user')).toThrow(/unknown user/);
-    expect(issuer.users().map((u) => u.sub)).toEqual([USER_A.sub, USER_B.sub]);
+    expect(decodeJwt((await login({ login_hint: USER_C.email }))['access_token']!).sub).toBe(USER_C.sub);
+    expect(issuer.users().map((u) => u.sub)).toEqual([USER_A.sub, USER_B.sub, USER_C.sub]);
   });
 
   it('honours a short access-token lifetime', async () => {

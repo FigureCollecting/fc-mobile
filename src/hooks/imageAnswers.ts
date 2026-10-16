@@ -1,5 +1,5 @@
-// ADDR-1: what an owned sync (src/hooks/useOwnedImages.ts) that read the lists does to the image
-// answers of the case view's hook (useOwnedImages) and the figure page's (useProductImage), in every
+// ADDR-1: what an image sync (src/hooks/useCollectionImages.ts) that read the lists does to the image
+// answers of the case view's hook (useCollectionImages) and the figure page's (useProductImage), in every
 // open document of the app, however it ends. Each document (a tab, the installed window) has its own
 // QueryClient over the same caches, which hears other documents' syncs from its first image answer on.
 // The one that ran the sync drops its earlier answers but the sync's own, and tells every other one on
@@ -21,19 +21,19 @@
 // view gone before its sync ends answers, opened again, the answer without the address, and syncs as
 // it would have. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
-import { withheldAmong, type CachedImage } from '../media/ownedImages';
+import { withheldAmong, type CachedImage } from '../media/keptImages';
 
-/** The channel every document of the app hears another's completed sync on: one name across builds. */
+/** The channel every document of the app hears another's completed sync on: one name across builds (so still 'owned'). */
 export const OWNED_SYNC_CHANNEL = 'fc-owned-images';
 
-const isImageAnswer = (key: QueryKey): boolean => key[0] === 'local' && (key[1] === 'owned-images' || key[1] === 'image');
+const isImageAnswer = (key: QueryKey): boolean => key[0] === 'local' && (key[1] === 'kept-images' || key[1] === 'image');
 const channels = new WeakMap<QueryClient, BroadcastChannel>();
 /** Per QueryClient, the case views (query hashes) told to answer again from what another document's sync kept. */
 const toldOfSync = new WeakMap<QueryClient, Set<string>>();
 /** Per QueryClient, each run of a case view (its query hash) inside its own sync. */
 const inOwnSync = new WeakMap<QueryClient, Set<{ hash: string }>>();
 /** What a document tells the others of its sync once it read the lists: it completed with every image fetched, or it ended any other way (stopped). */
-export type OwnedSyncEnd = 'synced' | 'stopped';
+export type KeptSyncEnd = 'synced' | 'stopped';
 
 /** The addresses an image answer names: the figure page's image; each of the case view's images and masks. */
 function addressesIn(key: QueryKey, data: unknown): string[] {
@@ -88,11 +88,11 @@ export async function dropImageAnswers(client: QueryClient, own?: QueryKey, spar
  * inside its own sync is left to finish it: it reads the lists after the other let go of the lock, its
  * answer meanwhile naming nothing the record withholds.
  */
-async function toldOfAnotherSync(client: QueryClient, end: OwnedSyncEnd): Promise<void> {
+async function toldOfAnotherSync(client: QueryClient, end: KeptSyncEnd): Promise<void> {
   const syncing = new Set(end === 'stopped' ? [...(inOwnSync.get(client) ?? [])].map((run) => run.hash) : []);
   const open = client
     .getQueryCache()
-    .findAll({ type: 'active', predicate: (q) => q.queryKey[0] === 'local' && q.queryKey[1] === 'owned-images' })
+    .findAll({ type: 'active', predicate: (q) => q.queryKey[0] === 'local' && q.queryKey[1] === 'kept-images' })
     .map((q) => q.queryHash);
   const told = toldOfSync.get(client) ?? new Set<string>();
   toldOfSync.set(client, told);
@@ -108,7 +108,7 @@ async function toldOfAnotherSync(client: QueryClient, end: OwnedSyncEnd): Promis
  * This client's channel, opened the first time it answers an image: from then on it hears every other
  * document's completed sync. Undefined where the browser has no BroadcastChannel.
  */
-export function hearOwnedSyncs(client: QueryClient): BroadcastChannel | undefined {
+export function hearKeptSyncs(client: QueryClient): BroadcastChannel | undefined {
   if (typeof BroadcastChannel === 'undefined') return undefined;
   let channel = channels.get(client);
   if (channel === undefined) {
@@ -120,8 +120,8 @@ export function hearOwnedSyncs(client: QueryClient): BroadcastChannel | undefine
 }
 
 /** Tell every other document a sync completed or stopped, on this client's own channel, which never hears its own message. */
-export function tellOwnedSync(client: QueryClient, end: OwnedSyncEnd): void {
-  hearOwnedSyncs(client)?.postMessage(end);
+export function tellKeptSync(client: QueryClient, end: KeptSyncEnd): void {
+  hearKeptSyncs(client)?.postMessage(end);
 }
 
 /** Run this case view's own sync, marked as inside it (toldOfAnotherSync) until it settles. */

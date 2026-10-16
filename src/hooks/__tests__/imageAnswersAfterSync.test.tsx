@@ -1,5 +1,5 @@
 // ADDR-1: an image an owned sync withheld, once it read the lists, however it ends, is not answered
-// again by the case view's hook (useOwnedImages) or the figure page's (useProductImage), offline or
+// again by the case view's hook (useCollectionImages) or the figure page's (useProductImage), offline or
 // online, whatever answer either gave before the sync: in the document that ran it, and in every other
 // open document of the app (a tab, the installed window), each with its own QueryClient over the same
 // caches, told on a BroadcastChannel. Each QueryClient has the app's defaults (src/app.tsx): an answer no view shows is
@@ -9,7 +9,7 @@ import { act, renderHook, waitFor } from '@testing-library/preact';
 import { create } from '@bufbuild/protobuf';
 import { QueryClient } from '@tanstack/react-query';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
-import { useOwnedImages } from '../useOwnedImages';
+import { useCollectionImages } from '../useCollectionImages';
 import { useProductImage } from '../useProductImage';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper, type LocalRig } from '../../local/__tests__/localHarness';
@@ -17,8 +17,8 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, recallImages, rememberImages, syncOwnedImages, withheldAmong } from '../../media/ownedImages';
-import { tellOwnedSync } from '../imageAnswers';
+import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, recallImages, rememberImages, syncKeptImages, withheldAmong } from '../../media/keptImages';
+import { tellKeptSync } from '../imageAnswers';
 import { fakeLocks, installFakeLocks, type FakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
@@ -57,9 +57,9 @@ async function keptX(): Promise<void> {
 async function caseViewSyncs(r: LocalRig, client: QueryClient, fresh: ReturnType<typeof listOf>): Promise<void> {
   r.clients.getProductImages.mockResolvedValue(fresh);
   // Its answer of an earlier sync is stale (ten minutes on), so this one syncs.
-  client.removeQueries({ queryKey: ['local', 'owned-images'] });
+  client.removeQueries({ queryKey: ['local', 'kept-images'] });
   const asked = r.clients.getProductImages.mock.calls.length;
-  const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+  const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
   await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked));
   await waitFor(() => expect(client.isFetching()).toBe(0));
   view.unmount();
@@ -88,7 +88,7 @@ afterEach(() => {
   localSession.value = undefined;
 });
 
-describe('the case view (useOwnedImages), offline, then online a sync withholds the kept image, then offline again', () => {
+describe('the case view (useCollectionImages), offline, then online a sync withholds the kept image, then offline again', () => {
   it.each([
     ['the plate, when the figure has no image left', [] as string[], undefined],
     ['the image the sync kept instead', [B], B],
@@ -98,7 +98,7 @@ describe('the case view (useOwnedImages), offline, then online a sync withholds 
     await keptX();
     const client = appQueryClient();
     setOnline(false);
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(X));
     r.clients.getProductImages.mockResolvedValue(listOf(...fresh));
     setOnline(true);
@@ -205,16 +205,16 @@ describe('the case view\'s own answer', () => {
     const client = appQueryClient();
     // A sync that dropped its own answer would sync again, endlessly: the coordinator stops answering after 3.
     r.clients.getProductImages.mockImplementation(async () => (r.clients.getProductImages.mock.calls.length > 3 ? new Promise(() => {}) : listOf(B)));
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(B));
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
-    await act(() => client.refetchQueries({ queryKey: ['local', 'owned-images'] }));
+    await act(() => client.refetchQueries({ queryKey: ['local', 'kept-images'] }));
     await waitFor(() => expect(client.isFetching()).toBe(0));
     await settle();
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
     expect(result.current.get(headOf(0))?.url).toBe(B);
     // The document that told never hears its own message: a case view that did would answer again from the caches.
-    expect(client.getQueryCache().findAll({ queryKey: ['local', 'owned-images'] }).map((q) => q.state.dataUpdateCount)).toEqual([2]);
+    expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'] }).map((q) => q.state.dataUpdateCount)).toEqual([2]);
   });
 });
 
@@ -228,7 +228,7 @@ describe('a sync whose read of the lists fails', () => {
     expect((await figurePage(client)).settled).toBe(X);
     setOnline(true);
     r.clients.getProductImages.mockRejectedValue(new Error('unavailable'));
-    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
     await waitFor(() => expect(client.isFetching()).toBe(0));
     view.unmount();
@@ -275,10 +275,10 @@ describe('another open document of the app (a tab, the installed window): its ow
     const docA = appQueryClient();
     const docB = appQueryClient();
     r.clients.getProductImages.mockResolvedValue(listOf(X));
-    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    const viewB = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
     r.clients.getProductImages.mockResolvedValue(listOf(B));
-    const viewA = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const viewA = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(viewA.result.current.get(headOf(0))?.url).toBe(B));
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(B));
     await settle();
@@ -288,7 +288,7 @@ describe('another open document of the app (a tab, the installed window): its ow
     expect(viewA.result.current.get(headOf(0))?.url).toBe(B);
     expect(viewB.result.current.get(headOf(0))?.url).toBe(B);
     // Only that once: the other document's next sync of its own asks the coordinator.
-    await act(() => docB.refetchQueries({ queryKey: ['local', 'owned-images'] }));
+    await act(() => docB.refetchQueries({ queryKey: ['local', 'kept-images'] }));
     await waitFor(() => expect(docB.isFetching()).toBe(0));
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
   });
@@ -300,11 +300,11 @@ describe('another open document of the app (a tab, the installed window): its ow
     const docA = appQueryClient();
     const docB = appQueryClient();
     setOnline(false);
-    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    const viewB = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
     // The first document, in reach, completes a sync the coordinator's lists withhold the image in.
-    await syncOwnedImages([headOf(0)], async () => new Map(), { storage });
-    tellOwnedSync(docA, 'synced');
+    await syncKeptImages([headOf(0)], async () => new Map(), { storage });
+    tellKeptSync(docA, 'synced');
     await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
     expect(r.clients.getProductImages).not.toHaveBeenCalled();
   });
@@ -372,7 +372,7 @@ describe('another open document of the app (a tab, the installed window): its ow
     listener.onmessage = (e) => heard.push(e.data);
     setOnline(true);
     r.clients.getProductImages.mockRejectedValue(new Error('unavailable'));
-    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
     await waitFor(() => expect(docA.isFetching()).toBe(0));
     view.unmount();
@@ -438,14 +438,14 @@ describe('an answer a view shows, while it is asked again after a sync that with
     const docA = appQueryClient();
     const docB = other ? appQueryClient() : docA;
     r.clients.getProductImages.mockResolvedValue(listOf(X));
-    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
     first.unmount();
     const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(page.result.current.data?.url).toBe(X));
     const coordinator = laterAnswersWait(r);
-    docA.removeQueries({ queryKey: ['local', 'owned-images'] });
-    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    docA.removeQueries({ queryKey: ['local', 'kept-images'] });
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(coordinator.asked()).toBe(2));
     // The page's re-ask is with the coordinator: its answer is already the plate.
     await waitFor(() => expect(page.result.current.data).toBeNull());
@@ -462,14 +462,14 @@ describe('an answer a view shows, while it is asked again after a sync that with
     const docA = appQueryClient();
     const docB = appQueryClient();
     r.clients.getProductImages.mockResolvedValue(listOf(X));
-    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
     first.unmount();
     const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(page.result.current.data?.url).toBe(X));
     const coordinator = laterAnswersWait(r);
-    docA.removeQueries({ queryKey: ['local', 'owned-images'] });
-    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    docA.removeQueries({ queryKey: ['local', 'kept-images'] });
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(coordinator.asked()).toBe(2));
     await waitFor(() => expect(page.result.current.data).toBeNull());
     await new Promise((res) => setTimeout(res, 500));
@@ -495,7 +495,7 @@ describe('an answer a view shows, while it is asked again after a sync that with
       if (n >= 2) await later;
       return listOf(B);
     });
-    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     // The page's re-ask is with the coordinator.
     await waitFor(() => expect(n).toBe(2));
     expect(docB.isFetching()).toBe(1);
@@ -518,9 +518,9 @@ describe('an answer a view shows, while it is asked again after a sync that with
 
   /** The first document's sync, run as its case view runs it, told to the others; then `onTold` runs, before any of them hears. */
   async function anotherDocumentSyncs(fresh: ReturnType<typeof listOf>, onTold: () => void): Promise<void> {
-    await syncOwnedImages([headOf(0)], async () => new Map([[headOf(0), fresh.products[0]?.images ?? []]]), { storage });
+    await syncKeptImages([headOf(0)], async () => new Map([[headOf(0), fresh.products[0]?.images ?? []]]), { storage });
     onTold();
-    tellOwnedSync(appQueryClient(), 'synced');
+    tellKeptSync(appQueryClient(), 'synced');
   }
 
   /** Holds the next read of the kept lists (the case view answering again from what the sync kept) until released. */
@@ -549,7 +549,7 @@ describe('an answer a view shows, while it is asked again after a sync that with
     const docB = appQueryClient();
     setOnline(online);
     r.clients.getProductImages.mockResolvedValue(listOf(X));
-    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    const viewB = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.url).toBe(X));
     await waitFor(() => expect(docB.isFetching()).toBe(0));
     const kept = holdNextKeptRead();
@@ -570,13 +570,13 @@ describe('an answer a view shows, while it is asked again after a sync that with
     await (await storage.open(OWNED_MEDIA_CACHE)).put(Y, new Response('bytes'));
     const docB = appQueryClient();
     setOnline(false);
-    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    const viewB = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(viewB.result.current.get(headOf(1))?.url).toBe(Y));
     expect(viewB.result.current.get(headOf(0))?.url).toBe(X);
     const kept = holdNextKeptRead();
-    await syncOwnedImages([headOf(0), headOf(1)], async () => new Map([[headOf(1), listOf(Y).products[0]!.images]]), { storage });
+    await syncKeptImages([headOf(0), headOf(1)], async () => new Map([[headOf(1), listOf(Y).products[0]!.images]]), { storage });
     kept.hold();
-    tellOwnedSync(appQueryClient(), 'synced');
+    tellKeptSync(appQueryClient(), 'synced');
     await waitFor(() => expect(viewB.result.current.get(headOf(0))).toBeUndefined());
     expect(viewB.result.current.get(headOf(1))?.url).toBe(Y);
     expect(docB.isFetching()).toBe(1);
@@ -595,8 +595,8 @@ describe('an answer a view shows, while it is asked again after a sync that with
       create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: X.slice(-64), role: 'gallery', primary: true, url: X, width: 600, height: 800, mask: { maskId: mask.slice(-64), contentType: 'image/png', url: mask } }] }] });
     const docB = appQueryClient();
     setOnline(false);
-    await syncOwnedImages([headOf(0)], async () => new Map([[headOf(0), withMask(M).products[0]!.images]]), { storage });
-    const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+    await syncKeptImages([headOf(0)], async () => new Map([[headOf(0), withMask(M).products[0]!.images]]), { storage });
+    const viewB = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docB) });
     await waitFor(() => expect(viewB.result.current.get(headOf(0))?.maskUrl).toBe(M));
     const kept = holdNextKeptRead();
     await anotherDocumentSyncs(withMask(M2), kept.hold);
@@ -632,7 +632,7 @@ describe('an answer a view shows, while it is asked again after a sync that with
     const docA = appQueryClient();
     const docB = other ? appQueryClient() : docA;
     r.clients.getProductImages.mockResolvedValue(listOf(X));
-    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
     first.unmount();
     // The figure page answered X, and the user left it: its answer is kept, no view shows it.
@@ -651,8 +651,8 @@ describe('an answer a view shows, while it is asked again after a sync that with
       // This document's case view syncs and withholds X; its own open of the record goes, its drop's lookup waits.
       coordinator = laterAnswersWait(r);
       lookup = holdWithheldLookups(1);
-      docA.removeQueries({ queryKey: ['local', 'owned-images'] });
-      view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+      docA.removeQueries({ queryKey: ['local', 'kept-images'] });
+      view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     }
     await waitFor(() => expect(lookup!.reached()).toBe(true));
     // The user opens the figure page again while the lookup runs.
@@ -680,7 +680,7 @@ describe('an answer a view shows, while it is asked again after a sync that with
     const docA = appQueryClient();
     const docB = other ? appQueryClient() : docA;
     r.clients.getProductImages.mockResolvedValue(listOf(X));
-    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
     first.unmount();
     const page = renderHook(() => useProductImage(headOf(0)), { wrapper: queryWrapper(docB) });
@@ -688,8 +688,8 @@ describe('an answer a view shows, while it is asked again after a sync that with
     await waitFor(() => expect(page.result.current.data?.url).toBe(X));
     await waitFor(() => expect(plate.result.current.data).toBeNull());
     const coordinator = laterAnswersWait(r);
-    docA.removeQueries({ queryKey: ['local', 'owned-images'] });
-    const view = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+    docA.removeQueries({ queryKey: ['local', 'kept-images'] });
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
     await waitFor(() => expect(coordinator.asked()).toBeGreaterThanOrEqual(2));
     await waitFor(() => expect(page.result.current.data).toBeNull());
     expect(docB.getQueryState(['local', 'image', headOf(0), true])?.fetchStatus).toBe('fetching');
@@ -744,9 +744,9 @@ describe('two documents sync at once, and the coordinator withholds the image be
         }
         return listOf(Y);
       });
-      const viewB = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docB) });
+      const viewB = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docB) });
       await waitFor(() => expect(call).toBe(1));
-      const viewA = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(docA) });
+      const viewA = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(docA) });
       await settle();
       await settle();
       releaseB();
@@ -759,7 +759,7 @@ describe('two documents sync at once, and the coordinator withholds the image be
       expect(forgotten.filter((k) => k.includes(X))).toEqual([]);
       expect(storage.added.map((q) => q.url)).not.toContain(X);
       // The next sync of either reads the lists after the restriction: it withholds X, and both answer Y.
-      await act(() => docA.refetchQueries({ queryKey: ['local', 'owned-images'] }));
+      await act(() => docA.refetchQueries({ queryKey: ['local', 'kept-images'] }));
       await waitFor(() => expect(docA.isFetching() + docB.isFetching()).toBe(0));
       await settle();
       expect([...(await withheldAmong([X, Y], storage))]).toEqual([X]);
@@ -801,7 +801,7 @@ describe('a sync stopped part way, after it read the lists: its case view gone, 
     vi.stubGlobal('fetch', storage.fetch);
   });
   afterEach(() => uninstall());
-  const caseView = (doc: QueryClient) => renderHook(() => useOwnedImages(), { wrapper: queryWrapper(doc) });
+  const caseView = (doc: QueryClient) => renderHook(() => useCollectionImages(), { wrapper: queryWrapper(doc) });
   /** The first document's case view syncs, records what the lists withhold, stalls on Z's fetch, and goes away. */
   async function stopsPartWay(docA: QueryClient, before?: () => Promise<void>): Promise<void> {
     const viewA = caseView(docA);
@@ -822,7 +822,7 @@ describe('a sync stopped part way, after it read the lists: its case view gone, 
     const named: (string | undefined)[] = [];
     const view = renderHook(
       () => {
-        const images = useOwnedImages();
+        const images = useCollectionImages();
         named.push(images.get(headOf(0))?.url);
         return images;
       },
@@ -837,7 +837,7 @@ describe('a sync stopped part way, after it read the lists: its case view gone, 
     await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(X));
     await idle(docB);
     first.unmount();
-    const [answer] = docB.getQueryCache().findAll({ queryKey: ['local', 'owned-images'] });
+    const [answer] = docB.getQueryCache().findAll({ queryKey: ['local', 'kept-images'] });
     docB.setQueryData(answer!.queryKey, answer!.state.data, { updatedAt: Date.now() - 11 * 60_000 });
   }
   /** The first document's case view reads lists that withhold X, records it, and stalls on Z's fetch, holding the lock. */

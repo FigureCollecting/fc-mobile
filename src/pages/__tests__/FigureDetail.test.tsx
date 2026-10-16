@@ -19,7 +19,7 @@ import { headOf } from '../../sync/__tests__/engineSupport';
 import { shownCopies } from '../../sync/occurrences';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { fakeCaches } from '../../test/fakeCaches';
-import { OWNED_MEDIA_CACHE, rememberImages } from '../../media/ownedImages';
+import { OWNED_MEDIA_CACHE, rememberImages } from '../../media/keptImages';
 
 afterEach(() => {
   localSession.value = undefined;

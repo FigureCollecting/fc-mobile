@@ -247,13 +247,13 @@ test('(b) derivatives: the one public image address, kept by the worker for an <
   // The no-cors <img> and the CORS one; nothing after the origin went down.
   expect(count(present)).toBe(2);
 
-  // The owned figures' images, through the app's own sync (src/media/ownedImages.ts): the sync stores them
+  // The owned figures' images, through the app's own sync (src/media/keptImages.ts): the sync stores them
   // in the owned cache only, and the worker serves them from it first, offline too. A withheld one is
   // deleted from every CacheStorage cache, and the worker refuses it with a network error, online and
   // offline, though an <img> showed it online before it was owned and offline while it was. Every answer the worker gave this
   // page for it was marked no-store. With this context's caches off, the test cannot show what Chromium's
   // HTTP cache or the tab's memory cache would keep: src/sw/__tests__/sw.test.ts and
-  // src/media/__tests__/ownedImages.test.ts pin each fetch of an image address to cache 'no-store', and
+  // src/media/__tests__/keptImages.test.ts pin each fetch of an image address to cache 'no-store', and
   // sw.test.ts each answer to the page to Cache-Control no-store.
   down = false;
   await context.addInitScript({ content: await bundleImageProbe() });

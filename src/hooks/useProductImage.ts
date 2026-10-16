@@ -1,9 +1,9 @@
 // A figure's derivative image (MG-2, ADDR-1): in reach, the one GetProductImages returns on the public
 // image address (src/media/address.ts), never figure.imageUrl or a spine image claim, and never an
-// address the last owned sync withheld until a sync carries it again; out of reach (offline, or the
-// sync engine found the server unreachable) or when that call fails, the image kept for an owned
+// address the last image sync withheld until a sync carries it again; out of reach (offline, or the
+// sync engine found the server unreachable) or when that call fails, the image kept for its
 // figure, if its bytes were on the device when asked and no sync recorded it withheld
-// (src/media/ownedImages.ts). An answer given before a completed owned sync is not reused after it,
+// (src/media/keptImages.ts). An answer given before a completed image sync is not reused after it,
 // in any open document of the app: the one that ran the sync drops it and tells the others, which
 // drop theirs (src/hooks/imageAnswers.ts), and the page asks again; once that document has read what
 // the sync withheld, an answer that named an image it withheld is the plate until the coordinator
@@ -15,8 +15,8 @@ import { localSession } from '../local/session';
 import { useAuthPhase } from '../local/useLocal';
 import { useOnlineStatus } from './useOnlineStatus';
 import { isMediaUrl } from '../media/address';
-import { keptImage, withheldAmong } from '../media/ownedImages';
-import { hearOwnedSyncs } from './imageAnswers';
+import { keptImage, withheldAmong } from '../media/keptImages';
+import { hearKeptSyncs } from './imageAnswers';
 
 export interface DerivativeImage {
   url: string;
@@ -38,7 +38,7 @@ export function useProductImage(headId: string | undefined) {
   return useQuery<DerivativeImage | null>({
     queryKey: ['local', 'image', headId, reachable],
     queryFn: async ({ signal, client }) => {
-      hearOwnedSyncs(client);
+      hearKeptSyncs(client);
       if (!reachable) return asDerivative(await keptImage(headId!));
       let images;
       try {
@@ -48,7 +48,7 @@ export function useProductImage(headId: string | undefined) {
         // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
         return asDerivative(await keptImage(headId!));
       }
-      // An address the last owned sync withheld is not answered until a sync carries it again.
+      // An address the last image sync withheld is not answered until a sync carries it again.
       const withheld = await withheldAmong(images.map((i) => i.url));
       images = images.filter((i) => !withheld.has(i.url));
       return asDerivative(images.find((i) => i.primary) ?? images[0]);

@@ -6,7 +6,7 @@ import { CacheFirst } from 'workbox-strategies';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { API_NAVIGATION, isDerivativeRequest } from './sw/routes';
-import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, withheldKey } from './media/ownedImages';
+import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, WITHHELD_CACHE, withheldKey } from './media/keptImages';
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -19,12 +19,12 @@ cleanupOutdatedCaches();
 // coordinator on this origin: never answered here, online or off.
 registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [API_NAVIGATION] }));
 
-// Derivatives and masks on the one public image address. An address the last owned sync withheld (a
-// record in fc-withheld-v1, src/media/ownedImages.ts) is refused first, a network error: no cache
-// answers it, nothing is fetched or stored, online or offline. The owned figures' images come next,
+// Derivatives and masks on the one public image address. An address the last image sync withheld (a
+// record in fc-withheld-v1, src/media/keptImages.ts) is refused first, a network error: no cache
+// answers it, nothing is fetched or stored, online or offline. The kept figures' images come next,
 // from the cache the page fills and evicts with the collection. Any other image an <img> shows is
 // CacheFirst in its own bounded cache. The page's own fetch of an image (the
-// owned sync's fetch) goes to the origin and is never stored here a second time. Every fetch this
+// image sync's fetch) goes to the origin and is never stored here a second time. Every fetch this
 // route sends is cache 'no-store', so it neither reads nor fills the browser's HTTP cache: the origin
 // answers immutable, and a copy there would outlive the sync's eviction. For the same reason the page
 // gets every answer as a copy marked Cache-Control: no-store. Chromium's memory cache inside a tab

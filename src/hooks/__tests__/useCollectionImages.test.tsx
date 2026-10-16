@@ -1,5 +1,5 @@
 // ADDR-1: the owned figures' images, kept for the offline case view. Online and signed in, the hook
-// brings the caches to the owned figures (src/media/ownedImages.ts) and answers each figure's
+// brings the caches to the owned figures (src/media/keptImages.ts) and answers each figure's
 // primary; offline it answers from what was kept, asking nothing.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/preact';
@@ -7,14 +7,14 @@ import { QueryClient } from '@tanstack/react-query';
 import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
-import { useOwnedImages } from '../useOwnedImages';
+import { useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { OWNED_MEDIA_CACHE, rememberImages, syncOwnedImages } from '../../media/ownedImages';
+import { OWNED_MEDIA_CACHE, rememberImages, syncKeptImages } from '../../media/keptImages';
 import { installFakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
@@ -38,8 +38,8 @@ afterEach(() => {
   localSession.value = undefined;
 });
 
-describe('useOwnedImages', () => {
-  it('online: caches the owned figures\' images, never a wished one\'s, and answers each primary', async () => {
+describe('useCollectionImages', () => {
+  it('online: caches the figures\' images, a wished one\'s asked for too, and answers each primary; one with no image answers none', async () => {
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(
       create(GetProductImagesResponseSchema, {
@@ -47,11 +47,50 @@ describe('useOwnedImages', () => {
       }),
     );
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Wished', status: 'wished' }]);
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
-    expect(r.clients.getProductImages).toHaveBeenCalledWith({ headIds: [headOf(0)], pageSize: 200 }, { signal: expect.any(AbortSignal), timeoutMs: 20_000 });
+    expect(r.clients.getProductImages).toHaveBeenCalledWith({ headIds: [headOf(0), headOf(1)], pageSize: 200 }, { signal: expect.any(AbortSignal), timeoutMs: 20_000 });
     expect(result.current.has(headOf(1))).toBe(false);
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([url('a')]);
+  });
+
+  // FB-QUICK (Ross, 10-16): his Ordered and Wished stood as plates; every copy in the collection is kept.
+  const listWithMask = (i: number, image: string, mask: string) => ({
+    headId: headOf(i),
+    images: [{ derivativeId: image.repeat(64), role: 'gallery', url: url(image), width: 550, height: 800, mask: { maskId: mask.repeat(64), contentType: 'image/png', url: url(mask) } }],
+  });
+
+  it('online: an ordered and a wished figure get their kept image and mask, as an owned one does', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, { products: [listWithMask(0, 'a', 'b'), listWithMask(1, 'c', 'd'), listWithMask(2, 'e', 'f')] }),
+    );
+    await seedFigures(r, [{ title: 'Owned' }, { title: 'Ordered', status: 'ordered' }, { title: 'Wished', status: 'wished' }]);
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.get(headOf(1))).toMatchObject({ url: url('c'), maskUrl: url('d') }), { timeout: 3000 });
+    await waitFor(() => expect(result.current.get(headOf(2))).toMatchObject({ url: url('e'), maskUrl: url('f') }), { timeout: 3000 });
+    expect(result.current.get(headOf(0))).toMatchObject({ url: url('a'), maskUrl: url('b') });
+    expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f'].map(url));
+  });
+
+  it('asks for the owned figures first, then the ordered, then the wished, each figure once; never one no longer owned', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(create(GetProductImagesResponseSchema, {}));
+    await seedFigures(r, [
+      { title: 'Wished', status: 'wished' },
+      { title: 'Ordered', status: 'ordered' },
+      { title: 'Owned' },
+      { title: 'Sold', status: 'former', disposal: { reason: 'sold' } },
+      { title: 'Owned too' },
+    ]);
+    // the first owned figure is wished as well: it is asked for once, with the owned ones
+    await r.engine.write((store) => store.createCopy(headOf(2), 'wished'));
+    renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
+    expect(r.clients.getProductImages).toHaveBeenLastCalledWith(
+      { headIds: [headOf(2), headOf(4), headOf(1), headOf(0)], pageSize: 200 },
+      { signal: expect.any(AbortSignal), timeoutMs: 20_000 },
+    );
   });
 
   it('offline: answers from the kept lists and asks the coordinator nothing', async () => {
@@ -63,7 +102,7 @@ describe('useOwnedImages', () => {
       const r = await localRig();
       await seedFigures(r, [{ title: 'Owned' }]);
       await keep(headOf(0), 'b');
-      const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+      const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
       await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
       expect(r.clients.getProductImages).not.toHaveBeenCalled();
     } finally {
@@ -78,7 +117,7 @@ describe('useOwnedImages', () => {
     await seedFigures(r, [{ title: 'Owned' }]);
     await keep(headOf(0), 'b');
     r.clients.getProductImages.mockRejectedValue(new ConnectError('display restrictions are unavailable', Code.Unavailable));
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
   });
@@ -91,7 +130,7 @@ describe('useOwnedImages', () => {
     expect(r.engine.state.value.reachability).toBe('unreachable');
     await keep(headOf(0), 'b');
     await keep(headOf(1), 'c', false);
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
     expect(result.current.has(headOf(1))).toBe(false);
     expect(r.clients.getProductImages).not.toHaveBeenCalled();
@@ -109,7 +148,7 @@ describe('useOwnedImages', () => {
     );
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned too' }]);
     await keep(headOf(1), 'c', false);
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
     await settle();
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])]).toEqual([]);
@@ -124,7 +163,7 @@ describe('useOwnedImages', () => {
       return new Promise(() => {});
     });
     await seedFigures(r, [{ title: 'Owned' }]);
-    const { unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { unmount } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
     expect(seen?.aborted).toBe(false);
     unmount();
@@ -144,14 +183,14 @@ describe('useOwnedImages', () => {
         create(GetProductImagesResponseSchema, { products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), role: 'gallery', primary: true, url: url('a'), width: 1, height: 1 }] }] }),
       );
       await seedFigures(r, [{ title: 'Owned' }]);
-      const { unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+      const { unmount } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
       await waitFor(() => expect(storage.added).toHaveLength(1));
       const fetching = storage.added[0]!.signal;
       expect(fetching.aborted).toBe(false);
       unmount();
       await waitFor(() => expect(fetching.aborted).toBe(true));
       // The lock is free: the next sync (another document's) runs at once.
-      const next = await syncOwnedImages([headOf(0)], async () => new Map(), { storage, lockWaitMs: 100 }).then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
+      const next = await syncKeptImages([headOf(0)], async () => new Map(), { storage, lockWaitMs: 100 }).then(() => 'synced', (e: unknown) => (e as { name?: string }).name);
       expect(next).toBe('synced');
     } finally {
       uninstall();
@@ -193,7 +232,7 @@ describe('useOwnedImages', () => {
     r.clients.getProductImages.mockResolvedValue(realShaped());
     await seedFigures(r, [{ title: 'Kept by the last sync' }, { title: 'Fetched by this one' }]);
     await keep(headOf(0), 'a');
-    const { result, unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { result, unmount } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
     await waitFor(() => expect(result.current.get(headOf(1))).toMatchObject({ url: url('b'), maskUrl: url('c') }), { timeout: 3000 });
     // the mask is still on its way: the sync has not ended
@@ -213,7 +252,7 @@ describe('useOwnedImages', () => {
     r.clients.getProductImages.mockResolvedValue(realShaped());
     await seedFigures(r, [{ title: 'Fetched first' }, { title: 'On a stalled link' }]);
     const client = appClient();
-    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
     await waitFor(() => expect(storage.added.some((q) => q.url === url('b'))).toBe(true));
     const fetching = storage.added.find((q) => q.url === url('b'))!.signal;
@@ -221,7 +260,7 @@ describe('useOwnedImages', () => {
     await waitFor(() => expect(fetching.aborted).toBe(true));
     const asked = r.clients.getProductImages.mock.calls.length;
 
-    const second = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const second = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     expect(second.result.current.get(headOf(0))?.url).toBe(url('a'));
     await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked));
     await waitFor(() => expect(storage.added.filter((q) => q.url === url('b'))).toHaveLength(2));
@@ -243,7 +282,7 @@ describe('useOwnedImages', () => {
       create(GetProductImagesResponseSchema, { products: all.filter((p) => req.headIds.includes(p.headId)) }),
     );
     await seedFigures(r, [{ title: 'Shown' }]);
-    const { result, unmount } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(appClient()) });
+    const { result, unmount } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(appClient()) });
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
 
     // the owned figures change: the case view's answer is asked again, under a new key
@@ -264,22 +303,23 @@ describe('useOwnedImages', () => {
     r.clients.getProductImages.mockResolvedValue(realShaped());
     await seedFigures(r, [{ title: 'Fetched' }, { title: 'Refused' }]);
     const client = appClient();
-    const first = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(storage.added.map((q) => q.url).sort()).toEqual([url('a'), url('b'), url('c')]));
-    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'owned-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
-    expect(first.result.current.get(headOf(0))?.url).toBe(url('a'));
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    // the hook renders the cache's answer a tick after the cache holds it
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(url('a')));
     expect(first.result.current.has(headOf(1))).toBe(false);
     first.unmount();
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
 
-    const second = renderHook(() => useOwnedImages(), { wrapper: queryWrapper(client) });
+    const second = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     expect(second.result.current.get(headOf(0))?.url).toBe(url('a'));
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
     second.unmount();
   });
 
   it('answers nothing while signed out', async () => {
-    const { result } = renderHook(() => useOwnedImages(), { wrapper: queryWrapper() });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await new Promise((res) => setTimeout(res, 20));
     expect(result.current.size).toBe(0);
   });

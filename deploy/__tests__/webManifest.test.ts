@@ -13,6 +13,17 @@ function pngSize(file: string): { width: number; height: number; alpha: boolean 
 }
 
 describe('web manifest', () => {
+  it("names the app 'Figure Collecting' on the home screen and everywhere else, with the space", () => {
+    expect(WEB_MANIFEST.short_name).toBe('Figure Collecting');
+    expect(WEB_MANIFEST.name).toBe('Figure Collecting');
+  });
+
+  it('uses the same name under the splash silhouette and as the document title', () => {
+    const html = readFileSync(path.resolve(__dirname, '../../index.html'), 'utf8');
+    expect(html).toContain(`<span class="pre-splash__text">${WEB_MANIFEST.name}</span>`);
+    expect(html).toContain(`<title>${WEB_MANIFEST.name}</title>`);
+  });
+
   it("identifies the app as '/' and lets a Fold unfold into landscape", () => {
     expect(WEB_MANIFEST.id).toBe('/');
     expect(WEB_MANIFEST.start_url).toBe('/');

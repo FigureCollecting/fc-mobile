@@ -67,7 +67,7 @@ jobs:
           api=$(curl -s -o /dev/null -w '%{http_code}' -D headers.txt http://localhost:8480/api/x)
           grep -qi '^dpop-nonce:' headers.txt
           root=$(curl -s -o root.html -w '%{http_code}' http://localhost:8480/)
-          grep -q '<title>FigureCollecting</title>' root.html
+          grep -q '<title>Figure Collecting</title>' root.html
           echo "/api/x -> ${api} (DPoP-Nonce present), / -> ${root}"
           test "${api}" = 401 && test "${root}" = 200
           npm run stack:down

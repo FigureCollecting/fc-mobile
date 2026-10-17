@@ -158,7 +158,7 @@ describe('packCabinets', () => {
 
   it('too wide and too deep figures are violators; deeper than a plate is flagged where it stands', () => {
     const { cabinets, violators } = packCabinets(
-      [item(0, 200, 500), item(1, 200, 100, 400), item(2, 300, 250, 300), item(3, 300, 250, 300)],
+      [item(0, 200, 500), item(1, 200, 100, 500), item(2, 300, 250, 300), item(3, 300, 250, 300)],
       [IKEA_DETOLF],
     );
     expect(violators.map((v) => [v.item.index, v.reason])).toEqual([

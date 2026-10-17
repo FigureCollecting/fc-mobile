@@ -18,7 +18,7 @@ import type { CabinetProfile } from './cabinetProfile';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT, baseDepth, type BaseDepth } from './caseInterim';
 import type { FigureDisplayMeta } from './displayMeta';
 import { drawnWidthMm, type PictureMargins } from './figureArt';
-import { MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm } from './sizeResolution';
+import { DEPTH_WIDTH_RATIO, MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm, resolveWidthCap } from './sizeResolution';
 
 /** Space left between neighbours on a surface. */
 export const FIGURE_GAP_MM = 10;
@@ -38,7 +38,14 @@ export interface CaseFigure {
   readonly depthMm: number;
   /** True when the height is a scale estimate or the default, not a measurement. */
   readonly heightEstimated: boolean;
+  /** Where widthMm comes from (CASE-FB3b); absent = labeled. */
+  readonly widthBasis?: WidthBasis;
+  /** Stood turned on its shelf (CASE-FB3b): widthMm and depthMm are its footprint's sides the other way round. */
+  readonly turned?: boolean;
 }
+
+/** A labeled width; the picture's shape (no width labeled); capped at a labeled length, or at the scale's nominal height. */
+export type WidthBasis = 'labeled' | 'photo' | 'length' | 'scale';
 
 const positive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
@@ -51,20 +58,29 @@ const positive = (v: unknown): v is number => typeof v === 'number' && Number.is
  */
 export function measureCaseFigure(figure: Figure, index: number, meta: FigureDisplayMeta, drawn?: PictureMargins): CaseFigure {
   const resolved = resolveHeightMm(figure);
-  const heightMm = Math.min(resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
-  const billboardWidthMm = meta.aspect * heightMm;
+  const heightEstimated = resolved?.source !== 'labeled';
+  let heightMm = Math.min(resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
   const labelledWidth = figure.dimensions?.widthMm;
+  const hasLabelledWidth = positive(labelledWidth);
+  // what the picture draws as wide at a height: a cut-out's clear part once read, else the whole picture
+  const pictureWidth = (h: number) => (drawn ? drawnWidthMm(h, meta.aspect, drawn) : meta.aspect * h);
+  // CASE-FB3b: a height only an estimate gives gives way to what the labels support of the width (a labeled length, else
+  // the scale's nominal height): a lying figure's wide picture at the 200 mm default was 400-700 mm. The picture is then
+  // drawn no wider than the footprint it is packed by. A labeled height stands: the picture is what it is
+  const cap = resolveWidthCap(figure);
+  let capped = false;
+  if (cap && heightEstimated && pictureWidth(heightMm) > cap.capMm) {
+    heightMm = (heightMm * cap.capMm) / pictureWidth(heightMm);
+    capped = true;
+  }
+  const billboardWidthMm = meta.aspect * heightMm;
   const drawnWidth = drawn ? drawnWidthMm(heightMm, meta.aspect, drawn) : 0;
-  const widthMm = positive(labelledWidth) ? Math.max(labelledWidth, drawnWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
-  return {
-    figure,
-    index,
-    heightMm,
-    widthMm,
-    billboardWidthMm,
-    depthMm: resolveDepthMm(figure, meta, heightMm).depthMm,
-    heightEstimated: resolved?.source !== 'labeled',
-  };
+  const widthMm = hasLabelledWidth ? Math.max(labelledWidth, drawnWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
+  const widthBasis: WidthBasis = hasLabelledWidth ? 'labeled' : cap && capped ? cap.basis : 'photo';
+  const labelledDepth = figure.dimensions?.depthMm;
+  // a capped width gives a depth in Ross's ratio of its own, not of the picture's
+  const depthMm = !positive(labelledDepth) && cap && capped ? DEPTH_WIDTH_RATIO * widthMm : resolveDepthMm(figure, meta, heightMm).depthMm;
+  return { figure, index, heightMm, widthMm, billboardWidthMm, depthMm, heightEstimated, widthBasis };
 }
 
 /** One display surface as the packer and the renderer see it. */
@@ -250,6 +266,76 @@ interface Building {
   tall: Set<number>;
 }
 
+/** How well a verdict places a figure: a shelf, a tier, the top, nowhere. */
+const RANK: Record<FitVerdict, number> = { fits: 0, 'needs-tier': 1, 'top-only': 2, 'too-tall': 3, 'too-wide': 3, 'too-deep': 3 };
+
+/** The best any cabinet of the pattern does for a figure, by RANK. */
+const bestRank = (pattern: readonly CabinetProfile[], item: CaseFigure, ceilingMm: number, shelfRemoval: boolean): number =>
+  Math.min(...pattern.map((p) => RANK[fitCheck(p, item, ceilingMm, shelfRemoval).verdict]));
+
+/**
+ * CASE-FB3b: a figure may stand turned on its shelf: it fits a surface where its longer footprint side fits the width
+ * and its shorter the depth, or the reverse. Turned only where that places it better than it stands (a shelf over a
+ * tier over a top over nowhere), its footprint's sides then swapped (widthMm along the shelf).
+ */
+function oriented(item: CaseFigure, pattern: readonly CabinetProfile[], ceilingMm: number, shelfRemoval: boolean): CaseFigure {
+  if (item.widthMm === item.depthMm) return item;
+  const turned: CaseFigure = { ...item, widthMm: item.depthMm, depthMm: item.widthMm, turned: true };
+  return bestRank(pattern, turned, ceilingMm, shelfRemoval) < bestRank(pattern, item, ceilingMm, shelfRemoval) ? turned : item;
+}
+
+/** Every place a cabinet of `profile` offers, the stock shelves and (shelf removal on) each way of taking lift-out shelves out. */
+function placesOf(profile: CabinetProfile, ceilingMm: number, shelfRemoval: boolean): SurfaceSlot[] {
+  return shelfRemoval ? arrangements(profile, ceilingMm).flatMap((a) => a.slots) : surfaceSlots(profile, ceilingMm);
+}
+
+/**
+ * CASE-FB3b: why a figure fits nowhere on the wall, and the most any place takes of what it exceeds: the first of its
+ * height, width and depth that is over every place's (the real reason, tiers and tops counted), else, where each fits
+ * some place but none takes them all, the dimension it overshoots most at the closest place.
+ */
+function violation(item: CaseFigure, pattern: readonly CabinetProfile[], ceilingMm: number, shelfRemoval: boolean): { reason: ViolatorReason; limitMm: number } {
+  const places = pattern.flatMap((p) => placesOf(p, ceilingMm, shelfRemoval));
+  const most = { tall: Math.max(...places.map((x) => x.maxHeightMm)), wide: Math.max(...places.map((x) => x.widthMm)), deep: Math.max(...places.map((x) => x.depthMm)) };
+  if (!within(item.heightMm, most.tall)) return { reason: 'too-tall', limitMm: most.tall };
+  if (!within(item.widthMm, most.wide)) return { reason: 'too-wide', limitMm: most.wide };
+  if (!within(item.depthMm, most.deep)) return { reason: 'too-deep', limitMm: most.deep };
+  // none over every place: the place it overshoots least, and what it overshoots there
+  let best: { over: number; reason: ViolatorReason; limitMm: number } | null = null;
+  for (const x of places) {
+    const over = [
+      { over: item.heightMm / x.maxHeightMm, reason: 'too-tall' as const, limitMm: x.maxHeightMm },
+      { over: item.widthMm / x.widthMm, reason: 'too-wide' as const, limitMm: x.widthMm },
+      { over: item.depthMm / x.depthMm, reason: 'too-deep' as const, limitMm: x.depthMm },
+    ].reduce((a, b) => (b.over > a.over ? b : a));
+    if (best === null || over.over < best.over) best = over;
+  }
+  return best!;
+}
+
+const mm = (v: number): string => `${Math.round(v)} mm`;
+
+/**
+ * CASE-FB3b: what the "does not fit" list says of a violator: its reason, the measure that is over, where the measure
+ * comes from (labeled, the picture's shape, a scale or a length that caps it), and the most any place of the pattern takes.
+ */
+export function describeViolator(v: Violator, pattern: readonly CabinetProfile[], ceilingMm: number = CEILING_DEFAULT_MM, shelfRemoval: boolean = TALL_SHELF_REMOVAL_DEFAULT): string {
+  const { item } = v;
+  const { limitMm } = violation(item, pattern, ceilingMm, shelfRemoval);
+  if (v.reason === 'too-tall') {
+    const how = !item.heightEstimated ? ', labeled' : item.figure.scale ? ` estimated from its ${item.figure.scale} scale` : ', the default (no size known)';
+    return `too tall: ${mm(item.heightMm)}${how}; the most any place takes is ${mm(limitMm)}`;
+  }
+  if (v.reason === 'too-wide') {
+    const basis = item.widthBasis ?? 'labeled';
+    const how =
+      basis === 'labeled' ? ', labeled' : basis === 'photo' ? " from the photo's shape, no labeled width" : basis === 'length' ? ', capped at its labeled length' : " capped at its scale's height";
+    return `too wide: ${mm(item.widthMm)}${how}; the widest place takes ${mm(limitMm)}`;
+  }
+  const how = positive(item.figure.dimensions?.depthMm) ? ', labeled' : ' estimated from its width';
+  return `too deep: ${mm(item.depthMm)}${how}; the deepest place takes ${mm(limitMm)}`;
+}
+
 /** The packer's interim rules (caseInterim); a saved layout will set its own. */
 export interface PackRules {
   /** CASE-FB2a: a figure for a top waits for a top on the wall, never opening a cabinet ahead of the shelves. */
@@ -297,6 +383,7 @@ export function packCabinets(
   rules: PackRules = PACK_RULES,
 ): PackResult {
   if (pattern.length === 0) throw new RangeError('packCabinets needs at least one cabinet profile');
+  items = items.map((item) => oriented(item, pattern, ceilingMm, rules.shelfRemoval));
   // CASE-FB2b: the first lean that leaves no cabinet before the last with nothing on its shelves, else the fewest such
   let best: { building: Building[]; violators: Violator[]; bare: number } | null = null;
   for (const lean of rules.shelfRemoval ? LEANS : [1]) {
@@ -497,7 +584,7 @@ function placeAll(
   let k = 0;
   for (const [i, item] of items.entries()) {
     if (kinds.every((ks) => ks[i] === 'none')) {
-      violators.push({ item, reason: stockFit(pattern[0], item, ceilingMm).verdict as ViolatorReason });
+      violators.push({ item, reason: violation(item, pattern, ceilingMm, rules.shelfRemoval).reason });
       continue;
     }
     const here = open(cab, i);

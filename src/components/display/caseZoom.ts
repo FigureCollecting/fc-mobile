@@ -93,3 +93,29 @@ export function settleZoom(z: Zoom, frame: Frame): Zoom {
 export function zoomTransform(z: Zoom): string {
   return z.k === 1 && z.x === 0 && z.y === 0 ? '' : `translate(${z.x}px, ${z.y}px) scale(${z.k})`;
 }
+
+/**
+ * CSS's `ease-out`, cubic-bezier(0, 0, 0.58, 1): how far along a glide is a fraction t of the way through its time
+ * (the curve the way back had as a CSS transition).
+ */
+export function easeOut(t: number): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  const bezier = (a: number, b: number, u: number): number => 3 * (1 - u) * (1 - u) * u * a + 3 * (1 - u) * u * u * b + u * u * u;
+  // the parameter u at which the curve's x is t, by bisection (x rises with u)
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 30; i++) {
+    const u = (lo + hi) / 2;
+    if (bezier(0, 0.58, u) < t) lo = u;
+    else hi = u;
+  }
+  return bezier(0, 1, (lo + hi) / 2);
+}
+
+/** The zoom a fraction t of the way through a glide from `from` to `to`: each of k and the offsets eased the same way. */
+export function glideZoom(from: Zoom, to: Zoom, t: number): Zoom {
+  const e = easeOut(t);
+  if (e === 1) return to;
+  return { k: from.k + (to.k - from.k) * e, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e };
+}

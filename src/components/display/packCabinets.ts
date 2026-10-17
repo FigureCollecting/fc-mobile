@@ -164,6 +164,8 @@ function arrangements(profile: CabinetProfile, ceilingMm: number): Arrangement[]
   const list: Arrangement[] = [];
   for (let mask = 0; mask < 1 << out.length; mask++) {
     const removed = out.filter((_, b) => mask & (1 << b));
+    // a top and one shelf at least (withShelfLayout)
+    if (profile.surfaces.length - removed.length < 2) continue;
     const derived = withShelfLayout(profile, { removed, moved: [] });
     const slots = surfaceSlots(derived, ceilingMm);
     const tiers = slots.flatMap((s, k) => (!s.isTop && s.maxHeightMm > stockMax + FIT_EPSILON_MM ? [k] : []));
@@ -552,8 +554,7 @@ function assemble(building: Building[]): PackedCabinet[] {
     surfaces: b.slots.map((slot, j) => {
       const row = b.rows[j];
       const total = row.reduce((sum, i) => sum + i.widthMm, 0) + FIGURE_GAP_MM * Math.max(0, row.length - 1);
-      // (a row as wide as its surface, within the fit's slack, starts at its edge)
-      let x = Math.max(0, (slot.widthMm - total) / 2);
+      let x = (slot.widthMm - total) / 2;
       const placed = row.map((item) => {
         const base = baseDepth(slot, item.depthMm);
         const p: PlacedFigure = { item, xMm: x, zMm: base.frontMm, base, heightMm: item.heightMm, tooDeep: !within(item.depthMm, slot.depthMm) };

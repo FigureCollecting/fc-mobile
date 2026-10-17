@@ -80,7 +80,8 @@ export interface CabinetSurface {
 }
 
 /** CC5: 'fit shelves to figures' exists only for adjustable profiles. */
-export type ShelfMode = { readonly mode: 'fixed' } | { readonly mode: 'adjustable'; readonly pinPitchMm: number };
+/** `topMoves` (CASE-FB2b): the top is a shelf like the rest and moves by the pitch too (a boltless rack's top beam). */
+export type ShelfMode = { readonly mode: 'fixed' } | { readonly mode: 'adjustable'; readonly pinPitchMm: number; readonly topMoves?: boolean };
 
 export interface LegSpec {
   readonly sectionMm?: number;
@@ -172,14 +173,15 @@ export interface ShelfLayout {
 /** Every shelf where the profile has it. */
 export const STOCK_LAYOUT: ShelfLayout = { removed: [], moved: [] };
 
-/** The shelves an instance may stand without: those that lift out (the KLINGSBO's and the Detolf's glass), by index. */
+/** The shelves an instance may stand without: those that lift out (the KLINGSBO's and the Detolf's glass, every rack beam), by index. */
 export function liftOutShelves(profile: CabinetProfile): number[] {
-  return profile.surfaces.flatMap((s, i) => (s.liftsOut === true && i < profile.surfaces.length - 1 ? [i] : []));
+  return profile.surfaces.flatMap((s, i) => (s.liftsOut === true ? [i] : []));
 }
 
-/** The shelves that move by the pin pitch: every one but the top, on an adjustable profile (the rack); none on a fixed one. */
+/** The shelves that move by the pin pitch: every one on an adjustable profile, but its top unless it says it moves; none on a fixed one. */
 export function movableShelves(profile: CabinetProfile): number[] {
-  return profile.shelves.mode === 'adjustable' ? profile.surfaces.slice(0, -1).map((_, i) => i) : [];
+  if (profile.shelves.mode !== 'adjustable') return [];
+  return profile.surfaces.slice(0, profile.shelves.topMoves === true ? undefined : -1).map((_, i) => i);
 }
 
 /**
@@ -199,9 +201,12 @@ export function withShelfLayout(profile: CabinetProfile, layout: ShelfLayout): C
     if (!movable.has(index) || profile.shelves.mode !== 'adjustable') throw new RangeError(`${profile.id}: surface ${index} does not move`);
     const pins = (topMm - surfaces[index].topMm) / profile.shelves.pinPitchMm;
     if (Math.abs(pins - Math.round(pins)) > FIT_EPSILON_MM) throw new RangeError(`${profile.id}: ${topMm} mm is off the ${profile.shelves.pinPitchMm} mm pitch`);
+    if (topMm > profile.outer.heightMm + FIT_EPSILON_MM) throw new RangeError(`${profile.id}: ${topMm} mm is above the cabinet's ${profile.outer.heightMm} mm`);
     surfaces[index] = { ...surfaces[index], topMm };
   }
   const kept = surfaces.filter((_, i) => !layout.removed.includes(i));
+  // something to stand on and something to stand under: a top and one shelf at least
+  if (kept.length < 2) throw new RangeError(`${profile.id}: ${JSON.stringify(layout.removed)} leaves no shelf`);
   // each surface clear of the one below it; the lowest one on the floor at most
   for (let i = 0; i < kept.length; i++) {
     const underside = kept[i].topMm - kept[i].thicknessMm;

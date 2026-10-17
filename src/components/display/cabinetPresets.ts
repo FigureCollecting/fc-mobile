@@ -36,6 +36,11 @@ function plate(s: CabinetSurface): CabinetSurface {
   return { ...s, plate: true, liftsOut: true };
 }
 
+/** A rack's beam: it comes out (CASE-FB2b, Ross 10-17), as it moves, by its keyholes. */
+function beam(s: CabinetSurface): CabinetSurface {
+  return { ...s, liftsOut: true };
+}
+
 // --------------------------------------------------------------- IKEA KLINGSBO
 // THE DEFAULT (Ross 2026-10-11): a glass-door case on a steel frame, one open
 // shelf below it near the floor, an open top, splayed legs. IKEA no longer
@@ -214,22 +219,29 @@ export const OPEN_STEEL_RACK: CabinetProfile = {
   materials: { sides: 'open', back: 'open', front: 'open' },
   glassMm: null,
   surfaces: [
-    surface('shelf 1', inchesToMm(6.5), RACK_BEAM_MM, 'wood', {
-      kind: 'placeholder',
-      source: 'shelf 2 less 5.5 in (Ross); shelf 2 is itself a placeholder',
-    }),
-    surface('shelf 2', inchesToMm(12), RACK_BEAM_MM, 'wood', {
-      kind: 'placeholder',
-      source: '12 in until Ross measures it',
-    }),
-    surface('shelf 3', inchesToMm(24), RACK_BEAM_MM, 'wood', { kind: 'measured', source: 'Ross: 24 in' }),
-    surface('shelf 4', inchesToMm(47), RACK_BEAM_MM, 'wood', {
-      kind: 'placeholder',
-      source: 'about 47 in from a photo (46-48 in) until Ross measures it',
-    }),
-    surface('top', inchesToMm(72), RACK_BEAM_MM, 'wood', { kind: 'measured', source: 'Ross: 72 in' }),
+    beam(
+      surface('shelf 1', inchesToMm(6.5), RACK_BEAM_MM, 'wood', {
+        kind: 'placeholder',
+        source: 'shelf 2 less 5.5 in (Ross); shelf 2 is itself a placeholder',
+      }),
+    ),
+    beam(
+      surface('shelf 2', inchesToMm(12), RACK_BEAM_MM, 'wood', {
+        kind: 'placeholder',
+        source: '12 in until Ross measures it',
+      }),
+    ),
+    beam(surface('shelf 3', inchesToMm(24), RACK_BEAM_MM, 'wood', { kind: 'measured', source: 'Ross: 24 in' })),
+    beam(
+      surface('shelf 4', inchesToMm(47), RACK_BEAM_MM, 'wood', {
+        kind: 'placeholder',
+        source: 'about 47 in from a photo (46-48 in) until Ross measures it',
+      }),
+    ),
+    beam(surface('top', inchesToMm(72), RACK_BEAM_MM, 'wood', { kind: 'measured', source: 'Ross: 72 in' })),
   ],
-  shelves: { mode: 'adjustable', pinPitchMm: inchesToMm(2) },
+  // Ross 10-17: all five beams, the top one too, come out or move, in 2 in steps
+  shelves: { mode: 'adjustable', pinPitchMm: inchesToMm(2), topMoves: true },
   top: { usable: true },
   base: { style: 'posts', heightMm: inchesToMm(6.5 - 1.75) },
   rack: { postMm: RACK_POST_MM, beamMm: RACK_BEAM_MM },

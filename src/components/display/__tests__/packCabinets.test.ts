@@ -15,7 +15,7 @@ import {
 } from '../packCabinets';
 import { UNMATTED_META } from '../displayMeta';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT } from '../caseInterim';
-import { clearHeightsMm, liftOutShelves, withShelfLayout } from '../cabinetProfile';
+import { clearHeightsMm, inchesToMm, liftOutShelves, withShelfLayout } from '../cabinetProfile';
 
 /** The rules before CASE-FB2a and FB2b: tall figures on the first top from the shelf cursor on, no shelf taken out. */
 const AS_BEFORE = { tallOnOpenedTops: false, shelfRemoval: false } as const;
@@ -598,13 +598,14 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
   it('fitCheck says a figure fits once shelves come out', () => {
     expect(fitCheck(IKEA_KLINGSBO, item(0, 425, 160)).verdict).toBe('needs-tier');
     expect(fitCheck(IKEA_KLINGSBO, item(0, 200, 100)).verdict).toBe('fits');
-    // a profile whose shelves do not lift out: the top, as before
-    expect(fitCheck(OPEN_STEEL_RACK, item(0, 600, 160)).verdict).toBe('top-only');
+    // the rack: a beam out makes room for it too (Ross 10-17); off, its top only
+    expect(fitCheck(OPEN_STEEL_RACK, item(0, 600, 160)).verdict).toBe('needs-tier');
+    expect(fitCheck(OPEN_STEEL_RACK, item(0, 600, 160), undefined, false).verdict).toBe('top-only');
     // off: as before CASE-FB2b
     expect(fitCheck(IKEA_KLINGSBO, item(0, 425, 160), undefined, false).verdict).toBe('top-only');
   });
 
-  it('the Detolf takes out its glass too; the rack, whose beams only move, sends a tall figure to its top', () => {
+  it('the Detolf takes out its glass too; the rack sends a tall figure its top holds there, taking nothing out', () => {
     // 700 mm: over the Detolf's top (24 in) and its tallest compartment (396 mm): only a shelf out takes it
     const detolf = packCabinets([...Array.from({ length: 4 }, (_, i) => item(i, 200, 100)), item(4, 700, 200)], [IKEA_DETOLF]);
     expect(detolf.cabinets.some((c) => (c.profile.layout?.removed.length ?? 0) === 1)).toBe(true);
@@ -612,7 +613,16 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     const rack = packCabinets([item(0, 200, 100), item(1, 600, 200)], [OPEN_STEEL_RACK]);
     expect(rack.cabinets[0].surfaces.find((s) => s.slot.isTop)!.items.map((p) => p.item.index)).toContain(1);
     expect(rack.cabinets.every((c) => c.profile.layout === undefined)).toBe(true);
-    expect(liftOutShelves(OPEN_STEEL_RACK)).toEqual([]);
+  });
+
+  it("a figure taller than the rack's top takes and its tallest compartment: one beam comes out, the figure in the tier", () => {
+    const { cabinets, violators } = packCabinets([item(0, 200, 100), item(1, 700, 200)], [OPEN_STEEL_RACK]);
+    expect(violators).toEqual([]);
+    expect(cabinets).toHaveLength(1);
+    expect(cabinets[0].profile.layout?.removed).toHaveLength(1);
+    // the tier: taller than the rack's tallest stock compartment (590.55 mm)
+    const rackTiers = cabinets[0].surfaces.filter((x) => !x.slot.isTop && x.slot.maxHeightMm > inchesToMm(72 - 1.75 - 47) + 1e-6);
+    expect(rackTiers.flatMap((t) => t.items.map((p) => p.item.index))).toEqual([1]);
   });
 
   it('off (a saved layout that keeps its shelves): tall figures go to the tops, as before', () => {

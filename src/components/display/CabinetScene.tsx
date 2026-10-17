@@ -83,12 +83,12 @@ import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, typ
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
-import { UNZOOMED, ZOOM_DOUBLE_TAP, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
+import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
 export const SWIPE_START_PX = 8;
-/** PINCH-1: the way back to 1x (a double-tap, the Reset view chip) animates this long, unless motion is reduced. */
+/** PINCH-1: a double-tap and the way back to 1x (the chip, a pinch let go under it) glide this long, unless motion is reduced. */
 export const ZOOM_SETTLE_MS = 200;
 /** Two taps on the room this close in time (ms) and place (CSS px) are a double-tap. */
 const DOUBLE_TAP_MS = 300;
@@ -920,33 +920,62 @@ export function CabinetScene({
   // move it: the scene renders once per gesture
   const [sharp, setSharp] = useState<Zoom>(UNZOOMED);
   const settling = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // a settle ends (or a touch cuts it short): the layer's transition off, the scene redrawn for where it settles
+  // the glide's next frame (CASE-FB3a): a CSS transition on the layer had the compositor raster every layer under it at the
+  // zoom's scale, 3 to 5x the tiles for seconds on the open Fold8 (e2e/case-zoom-return), so a settle is frames of the
+  // layer's transform, as the fingers' moves are
+  const glide = useRef<number | undefined>(undefined);
+  const stopGlide = () => {
+    if (glide.current !== undefined) cancelAnimationFrame(glide.current);
+    glide.current = undefined;
+  };
+  // a settle ends (or a touch cuts it short): the layer on the zoom it settles at, the scene redrawn for it
   const settled = useCallback(() => {
     if (settling.current === undefined) return;
     clearTimeout(settling.current);
     settling.current = undefined;
-    zoomRef.current?.classList.remove('cabinet-scene__zoom--settling');
+    stopGlide();
+    const layer = zoomRef.current;
+    if (layer) {
+      layer.classList.remove('cabinet-scene__zoom--settling');
+      layer.style.transform = zoomTransform(zoom.current);
+    }
     setSharp(zoom.current);
   }, []);
-  useEffect(() => () => clearTimeout(settling.current), []);
+  useEffect(
+    () => () => {
+      clearTimeout(settling.current);
+      stopGlide();
+    },
+    [],
+  );
   // the picture the zoom magnifies: the camera's frame
   const picture = useRef(camera.frame);
   picture.current = camera.frame;
   // 'live' while fingers move it (promoted for the gesture), 'still' once let go (rastered at its zoom), or
   // 'settle': animated there, unless motion is reduced
   const showZoom = useCallback((z: Zoom, how: 'live' | 'still' | 'settle') => {
+    const from = zoom.current;
     zoom.current = z;
     clearTimeout(settling.current);
     settling.current = undefined;
+    stopGlide();
     const layer = zoomRef.current!;
     const animate = how === 'settle' && !prefersReducedMotion();
     layer.classList.toggle('cabinet-scene__zoom--live', how === 'live');
     layer.classList.toggle('cabinet-scene__zoom--settling', animate);
-    layer.style.transform = zoomTransform(z);
+    layer.style.transform = zoomTransform(animate ? from : z);
     hostRef.current!.dataset.zoom = zoomData(z);
     showChip.current?.(isZoomed(z));
-    if (animate) settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
-    else if (how !== 'live') setSharp(z);
+    if (animate) {
+      let began: number | undefined;
+      const frame = (now: number) => {
+        began ??= now;
+        layer.style.transform = zoomTransform(glideZoom(from, z, (now - began) / ZOOM_SETTLE_MS));
+        glide.current = requestAnimationFrame(frame);
+      };
+      glide.current = requestAnimationFrame(frame);
+      settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
+    } else if (how !== 'live') setSharp(z);
   }, [settled]);
   // a new view, wall, swipe mode, filter or frame starts the picture at 1x, at once
   useLayoutEffect(() => {
@@ -1354,10 +1383,10 @@ const styles = `
   /* the camera's frame, centred; clipped with no scroll box (ruling 33) */
   .cabinet-scene__frame { position: absolute; top: 0; bottom: 0; overflow: hidden; overflow: clip; }
   /* PINCH-1: the zoom layer covers the frame and scales from its top-left (caseZoom); promoted only while fingers
-     move it, so once let go its picture rasters again at the zoom it settled at */
+     move it, so once let go its picture rasters again at the zoom it settled at. Never a CSS transition: it would have
+     the compositor raster every layer under it at the zoom's scale (CASE-FB3a); a settle glides by frames instead */
   .cabinet-scene__zoom { position: absolute; inset: 0; transform-origin: 0 0; }
   .cabinet-scene__zoom--live { will-change: transform; }
-  .cabinet-scene__zoom--settling { transition: transform ${ZOOM_SETTLE_MS}ms ease-out; }
   .cabinet-scene__viewport { position: absolute; inset: 0; perspective-origin: 50% 50%; }
   .cabinet-scene__root { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0 0; transform-style: preserve-3d; }
   .cabinet-scene .cab, .cabinet-scene .part { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-style: preserve-3d; pointer-events: none; }

@@ -139,7 +139,6 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
     up(host, 11, { x: 200, y: 250 });
     up(host, 12, { x: 240, y: 250 });
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
-    expect(layer.style.transform).toBe('');
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
     expect(chip()).toBeNull();
   });
@@ -323,7 +322,6 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     tap(host);
     tap(host);
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
-    expect(layer.style.transform).toBe('');
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
     expect(chip()).toBeNull();
   });
@@ -344,6 +342,97 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
     down(host, 11, { x: 100, y: 100 });
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+  });
+
+  // CASE-FB3a item 1 (Ross 10-17, his Fold8 open: the rack's wall, boards and figures gone after returning from zoom):
+  // a CSS transition on the zoom layer made the compositor raster every layer under it at the zoom's scale (3 to 5x
+  // the tiles for seconds: e2e/case-zoom-return), so the animation is frames of the layer's transform, as the fingers'
+  // moves are
+  const scaleOf = (transform: string): number => Number(/scale\(([\d.]+)\)/.exec(transform)?.[1] ?? 1);
+
+  it('the way back eases the zoom layer by frames from the picture it left, to 1x, never by a CSS transition', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    zoomIn(host);
+    tap(chip()!);
+    // the scene's state is the target at once; the layer is still where the picture was
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    expect(layer.style.transform).toBe('translate(-220px, -260px) scale(2)');
+    const ks: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      act(() => {
+        vi.advanceTimersByTime(ZOOM_SETTLE_MS / 5);
+      });
+      ks.push(scaleOf(layer.style.transform));
+    }
+    // each frame nearer 1x than the last, in between
+    expect(ks.every((k) => k > 1 && k < 2)).toBe(true);
+    expect([...ks].sort((a, b) => b - a)).toEqual(ks);
+    expect(new Set(ks).size).toBe(ks.length);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(layer.style.transform).toBe('');
+    // and the case's own style gives the layer no transition to animate by
+    const css = Array.from(document.querySelectorAll('style'), (el) => el.textContent ?? '').join('\n');
+    expect(css).toMatch(/\.cabinet-scene__zoom\b/);
+    expect(css).not.toMatch(/\.cabinet-scene__zoom[^{]*\{[^}]*transition/);
+  });
+
+  it('a double-tap in glides from 1x to the zoom, ending exactly there', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    tap(host);
+    tap(host);
+    expect(zoomOf(host).k).toBe(2);
+    expect(layer.style.transform).toBe('');
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
+    });
+    expect(scaleOf(layer.style.transform)).toBeGreaterThan(1);
+    expect(scaleOf(layer.style.transform)).toBeLessThan(2);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(layer.style.transform).toBe(`translate(${zoomOf(host).x}px, ${zoomOf(host).y}px) scale(2)`);
+  });
+
+  it('a touch cutting a glide short puts the layer on the zoom it settles at at once, and no frame moves it after', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    zoomIn(host);
+    tap(chip()!);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 4);
+    });
+    expect(layer.style.transform).not.toBe('');
+    down(host, 1, { x: 100, y: 100 });
+    expect(layer.style.transform).toBe('');
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+    });
+    expect(layer.style.transform).toBe('');
+  });
+
+  it('a pinch beginning mid-glide takes the layer from where the fingers find it, not from the glide\'s start', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    zoomIn(host);
+    tap(chip()!);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
+    });
+    down(host, 11, { x: 180, y: 260 });
+    down(host, 12, { x: 260, y: 260 });
+    move(host, 11, { x: 140, y: 260 });
+    move(host, 12, { x: 300, y: 260 });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+    const held = layer.style.transform;
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+    });
+    // no glide frame writes over the fingers' picture
+    expect(layer.style.transform).toBe(held);
   });
 
   it('a double-tap at 1x zooms 2x at the tapped point (no double-tap was handled in the case before)', () => {

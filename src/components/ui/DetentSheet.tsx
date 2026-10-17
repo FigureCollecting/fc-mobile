@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { type ComponentChildren } from 'preact';
 import { createPortal } from 'preact/compat';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -19,6 +19,9 @@ interface DetentSheetProps {
 const DETENTS: readonly Detent[] = ['full', 'half'];
 const DOWN_BY: Record<Detent, number> = { full: 0.04, half: 0.48 };
 const detentsOf = (sheet: HTMLElement) => DETENTS.map((d) => DOWN_BY[d] * sheet.offsetHeight);
+/** A field an on-screen keyboard comes up for. */
+const KEYBOARD_FIELD =
+  'input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="number"], input[type="password"], input[type="tel"], input[type="url"], textarea';
 
 /**
  * Bottom sheet with two detents (half / full). Its handle drags it; a finger
@@ -32,9 +35,16 @@ const detentsOf = (sheet: HTMLElement) => DETENTS.map((d) => DOWN_BY[d] * sheet.
  * container-type (the collection grid is a `.cq-grid` inline-size container)
  * becomes the containing block for `position: fixed` descendants, which would
  * anchor the sheet to the page instead of the viewport. The portal escapes it.
+ *
+ * A field a keyboard types into raises the card to full and brings itself to
+ * the top of the contents (SEARCH-1): the keyboard covers the bottom half of a
+ * phone, where the half detent stands, so what is typed and its matches would
+ * sit under it. The room below the contents that lets the field rise stays
+ * until the card closes, so nothing jumps under a finger when the field lets go.
  */
 export function DetentSheet({ open, onClose, children, footer }: DetentSheetProps) {
   const [detent, setDetent] = useState<Detent>('half');
+  const [typing, setTyping] = useState<{ field: HTMLElement } | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const { y, settleTo } = useSheetDrag({
@@ -48,8 +58,23 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
   });
 
   useEffect(() => {
-    if (open) setDetent('half');
+    if (!open) return;
+    setDetent('half');
+    setTyping(null);
   }, [open]);
+
+  // Once the card stands at full with the room below, the field goes to the top of the contents.
+  useLayoutEffect(() => {
+    typing?.field.scrollIntoView({ block: 'start' });
+  }, [typing]);
+
+  const raiseForKeyboard = (e: FocusEvent) => {
+    const field = e.target as HTMLElement;
+    if (!field.matches(KEYBOARD_FIELD)) return;
+    setDetent('full');
+    settleTo(DETENTS.indexOf('full'));
+    setTyping({ field });
+  };
 
   return createPortal(
     <AnimatePresence>
@@ -68,6 +93,7 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
             ref={sheetRef}
             class="detent-sheet"
             data-detent={detent}
+            data-keyboard={typing === null ? undefined : ''}
             style={{ y }}
             exit={{ y: offScreenY() }}
             transition={{ type: 'tween', duration: 0.2 }}
@@ -86,7 +112,9 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               <span class="detent-sheet__handle" />
             </button>
 
-            <div class="detent-sheet__content" ref={contentRef}>{children}</div>
+            <div class="detent-sheet__content" ref={contentRef} onFocusIn={raiseForKeyboard}>
+              {children}
+            </div>
 
             {footer && <div class="detent-sheet__footer">{footer}</div>}
           </motion.div>
@@ -145,6 +173,13 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
             .detent-sheet[data-detent='half'] .detent-sheet__content {
               max-height: calc(48vh - 110px);
               flex: 0 1 auto;
+            }
+
+            /* room for a field to rise to the top of the contents, above the keyboard */
+            .detent-sheet[data-keyboard] .detent-sheet__content::after {
+              content: '';
+              display: block;
+              height: 100%;
             }
 
             .detent-sheet__footer {

@@ -42,6 +42,26 @@ describe('FacetControl (cardinality-aware)', () => {
     expect(onToggle).toHaveBeenCalledWith('Maker T');
   });
 
+  it('keeps its matches on Enter (Go) and puts the keyboard away: the box lets go of focus (SEARCH-1)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FacetControl label="Manufacturer" values={large} selected={[]} onToggle={() => {}} />);
+    const box = screen.getByRole('searchbox', { name: /search manufacturer/i });
+    await user.type(box, 'maker t');
+    expect(box).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(box).not.toHaveFocus();
+    expect(box).toHaveValue('maker t');
+    expect(screen.getByRole('option', { name: /maker t/i })).toBeInTheDocument();
+  });
+
+  it('leaves other keys to the box', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<FacetControl label="Manufacturer" values={large} selected={[]} onToggle={() => {}} />);
+    const box = screen.getByRole('searchbox', { name: /search manufacturer/i });
+    await user.type(box, 'maker{Escape}');
+    expect(box).toHaveFocus();
+  });
+
   it('pins selected values into the shortlist', () => {
     renderWithProviders(
       <FacetControl label="Manufacturer" values={large} selected={['Maker T']} onToggle={() => {}} />,

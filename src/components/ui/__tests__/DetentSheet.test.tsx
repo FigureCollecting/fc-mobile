@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { screen, fireEvent } from '@testing-library/preact';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { act, screen, fireEvent } from '@testing-library/preact';
 
 vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
 
@@ -47,5 +47,71 @@ describe('DetentSheet', () => {
     expect(sheet).toHaveAttribute('data-detent', 'full');
     fireEvent.click(screen.getByRole('button', { name: 'Lower the card' }));
     expect(sheet).toHaveAttribute('data-detent', 'half');
+  });
+});
+
+describe('DetentSheet: a field a keyboard types into (SEARCH-1)', () => {
+  const scrolled = vi.fn();
+  beforeEach(() => {
+    scrolled.mockReset();
+    Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
+      scrolled(this, arg);
+    };
+  });
+  afterEach(() => {
+    delete (Element.prototype as Partial<Element>).scrollIntoView;
+  });
+
+  /** Focus moves to `el`, as a tap on it does (focusin bubbles to the card's contents). */
+  const focus = (el: HTMLElement) => act(() => el.focus());
+
+  const card = (open = true) => (
+    <DetentSheet open={open} onClose={() => {}}>
+      <input type="search" aria-label="Search makers" />
+      <textarea aria-label="Note" />
+      <button type="button">A chip</button>
+    </DetentSheet>
+  );
+
+  it('raises the card to full and brings the field to the top of the contents, with room below it, above the keyboard', () => {
+    renderWithProviders(card());
+    const sheet = document.body.querySelector('.detent-sheet')!;
+    expect(sheet).not.toHaveAttribute('data-keyboard');
+    const box = screen.getByRole('searchbox', { name: 'Search makers' });
+    focus(box);
+    expect(sheet).toHaveAttribute('data-detent', 'full');
+    expect(sheet).toHaveAttribute('data-keyboard');
+    expect(scrolled).toHaveBeenCalledWith(box, { block: 'start' });
+  });
+
+  it('does the same for a text area, and again for each field that takes focus', () => {
+    renderWithProviders(card());
+    const note = screen.getByRole('textbox', { name: 'Note' });
+    focus(note);
+    focus(screen.getByRole('searchbox', { name: 'Search makers' }));
+    focus(note);
+    expect(scrolled.mock.calls.map(([el]) => (el as HTMLElement).getAttribute('aria-label'))).toEqual(['Note', 'Search makers', 'Note']);
+  });
+
+  it('leaves the card where it stands for a control no keyboard comes up for', () => {
+    renderWithProviders(card());
+    focus(screen.getByRole('button', { name: 'A chip' }));
+    const sheet = document.body.querySelector('.detent-sheet')!;
+    expect(sheet).toHaveAttribute('data-detent', 'half');
+    expect(sheet).not.toHaveAttribute('data-keyboard');
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it('keeps the room after the field lets go (nothing jumps under a finger), and opens again at half without it', () => {
+    const { rerender } = renderWithProviders(card());
+    const box = screen.getByRole('searchbox', { name: 'Search makers' });
+    focus(box);
+    act(() => box.blur());
+    expect(document.body.querySelector('.detent-sheet')).toHaveAttribute('data-keyboard');
+    rerender(card(false));
+    rerender(card(true));
+    const reopened = document.body.querySelector('.detent-sheet')!;
+    expect(reopened).toHaveAttribute('data-detent', 'half');
+    expect(reopened).not.toHaveAttribute('data-keyboard');
   });
 });

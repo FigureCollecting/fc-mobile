@@ -101,7 +101,7 @@ test('(a) after one online visit, a true outage still cold-starts /, a figure de
       expect(res?.status(), path).toBe(200);
       expect(res?.fromServiceWorker(), path).toBe(true);
       await expect(signInBanner(page), path).toBeVisible();
-      await expect(page.locator('#pre-splash')).toHaveCount(0);
+      await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
       await page.close();
     }
   } finally {

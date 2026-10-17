@@ -137,6 +137,8 @@ async function openApp(page: Page): Promise<void> {
       { timeout: 180_000 },
     )
     .toBe(true);
+  // the 4 s splash covers the chrome until it goes
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
 }
 
 /** The case screen's chrome, each control by the name Ross would give it. */

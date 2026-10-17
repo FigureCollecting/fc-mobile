@@ -108,6 +108,22 @@ export function iconFigureScale(art: FigureArt): number {
   return ringFitFraction(outline, boundsOf(outline), ICON_FIGURE_CENTER, ICON_RING_RADIUS) / ICON_BASE_FIGURE_FRACTION;
 }
 
+/**
+ * Android 12+ draws an installed web app's launch splash itself, and Chrome then shows a screenshot of it
+ * until the page first paints (Chromium SplashUtilsForS, WebappSplashController). The launcher icon is an
+ * adaptive icon in the system splash's icon view: AOSP starting_surface_icon_size (core/res/res/values/
+ * dimens.xml) is that view, the adaptive icon's 72 dp viewport, its 108 dp layers drawn 1.5 times as big.
+ * The WebAPK puts the maskable icon at webapk_adaptive_icon_size inside the 108 dp layer (Chromium
+ * components/webapps/browser/android/java/res/values/dimens.xml), so its W3C safe zone meets Android's.
+ */
+export const ANDROID_SPLASH_ICON_DP = 160;
+export const ANDROID_ADAPTIVE_VIEWPORT_DP = 72;
+export const WEBAPK_MASKABLE_ICON_DP = 83;
+
+/** The figure's height, in CSS px (= dp in Chrome on Android), as the system splash drew it: where the static splash starts. */
+export const splashStartHeight = (art: FigureArt): number =>
+  iconFigureFraction(iconFigureScale(art)) * WEBAPK_MASKABLE_ICON_DP * (ANDROID_SPLASH_ICON_DP / ANDROID_ADAPTIVE_VIEWPORT_DP);
+
 export interface FigureArt {
   d: string;
   tx: number;

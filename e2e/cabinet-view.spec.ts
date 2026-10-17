@@ -40,7 +40,7 @@ async function openCase(page: Page, size: { width: number; height: number }, que
   await page.setViewportSize(size);
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
-  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   await settle(page, stalled);
 }
 
@@ -631,7 +631,8 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
 
     test(`a picture 4 s late: the others grounded meanwhile, then it lands and the case relays out around it: ${size.name}`, async ({ page }) => {
       await page.route(RYUKO, async (route) => {
-        await new Promise((r) => setTimeout(r, 4_000));
+        // 4 s after the 4 s splash (SPLASH_MIN_MS), which the case is opened behind
+        await new Promise((r) => setTimeout(r, 4_000 + 4_000));
         // on to the hands-off guard, which sends it
         await route.fallback();
       });

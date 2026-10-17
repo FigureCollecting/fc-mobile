@@ -15,6 +15,10 @@ import {
   ringFitFraction,
   roundPathData,
   splashArtMarkup,
+  splashStartHeight,
+  ANDROID_SPLASH_ICON_DP,
+  ANDROID_ADAPTIVE_VIEWPORT_DP,
+  WEBAPK_MASKABLE_ICON_DP,
   type Point,
 } from '../brandArt';
 import { decodePng, encodeRgbPng } from '../png';
@@ -198,5 +202,28 @@ describe('the figure art', () => {
   it('keeps the inline art small enough to ship in the document', () => {
     const html = read('index.html').toString('utf8');
     expect(html.length).toBeLessThan(24_000);
+  });
+});
+
+describe("the static splash's first frame: the figure as Android's system splash drew it", () => {
+  it('takes the system splash geometry from the platform sources', () => {
+    // AOSP core/res/res/values/dimens.xml starting_surface_icon_size: the icon view, the adaptive icon's 72 dp viewport
+    expect(ANDROID_SPLASH_ICON_DP).toBe(160);
+    expect(ANDROID_ADAPTIVE_VIEWPORT_DP).toBe(72);
+    // Chromium components/webapps dimens.xml webapk_adaptive_icon_size: the maskable icon inside the 108 dp layer
+    expect(WEBAPK_MASKABLE_ICON_DP).toBe(83);
+  });
+
+  it("is the icon figure's share of the maskable icon at the system splash's scale (CSS px = dp)", () => {
+    const expected = iconFigureFraction(iconFigureScale(art)) * WEBAPK_MASKABLE_ICON_DP * (ANDROID_SPLASH_ICON_DP / ANDROID_ADAPTIVE_VIEWPORT_DP);
+    expect(splashStartHeight(art)).toBeCloseTo(expected, 9);
+    expect(splashStartHeight(art)).toBeCloseTo(165.8, 1);
+  });
+
+  it('is the start height the splash stylesheet grows the figure from (written by the generator)', () => {
+    const css = read('src/styles/pre-splash.css').toString('utf8');
+    const m = css.match(/--pre-splash-start-height:\s*([\d.]+)px;\s*\/\* brand:splash-start/);
+    expect(m, 'the brand:splash-start custom property').not.toBeNull();
+    expect(Number(m?.[1])).toBeCloseTo(splashStartHeight(art), 1);
   });
 });

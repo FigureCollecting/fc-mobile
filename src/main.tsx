@@ -6,6 +6,10 @@ import { App } from './app';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { dismissPreSplash } from './pwa/preSplash';
 import { startServiceWorker } from './pwa/updates';
+import { releaseReplacedVNodes } from './utils/releaseReplacedVNodes';
+
+// MEM-1: before the first render, so no vnode a component replaces keeps the DOM it removed
+releaseReplacedVNodes();
 
 render(
   <ErrorBoundary>

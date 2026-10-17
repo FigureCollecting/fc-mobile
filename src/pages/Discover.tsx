@@ -119,6 +119,8 @@ export function Discover() {
   const handleSubmit = useCallback(
     (e: Event) => {
       e.preventDefault();
+      // Go puts the keyboard away and leaves the hits in view
+      inputRef.current?.blur();
       if (query.trim()) {
         saveRecentSearch(query.trim());
         setRecentSearches(getRecentSearches());

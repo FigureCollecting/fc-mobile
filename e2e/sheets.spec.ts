@@ -29,7 +29,7 @@ async function openCase(page: Page, size: { width: number; height: number }) {
   await page.setViewportSize(size);
   await page.goto('/?layout=case');
   await page.waitForSelector('button.cab-figure');
-  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
 }
 
 async function centre(locator: Locator): Promise<{ x: number; y: number }> {
@@ -475,7 +475,7 @@ async function openCaseFromSettings(page: Page, size: { width: number; height: n
   const settings = page.url();
   await page.goto('/?layout=case');
   await page.waitForSelector('button.cab-figure');
-  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   // the case frames itself to the screen: let it settle before aiming at a figure
   await page.waitForTimeout(500);
   return { settings, collection: page.url() };

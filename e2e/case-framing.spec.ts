@@ -42,7 +42,7 @@ async function openCase(page: Page, size: { width: number; height: number }, pre
   await page.setViewportSize(size);
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
-  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   await page.waitForTimeout(300);
 }
 

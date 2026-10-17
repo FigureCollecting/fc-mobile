@@ -47,7 +47,7 @@ for (const screen of SCREENS) {
     const v = shotViewport(testInfo.project.name);
     await page.goto(screen.path);
     await page.waitForSelector(screen.ready);
-    await expect(page.locator('#pre-splash')).toHaveCount(0);
+    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
     await page.waitForFunction(() => Array.from(document.images).every((img) => img.complete && img.naturalWidth > 0));
 
     // signoffShot reads the size from the saved file's PNG header.

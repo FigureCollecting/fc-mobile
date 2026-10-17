@@ -160,6 +160,8 @@ export async function openHeld(page: Page, held: HeldStack): Promise<void> {
     })
     .toBe(held.heads.length);
   await expect(page.locator('.case-tabs__tab[data-tab="refine"]')).toBeVisible({ timeout: 30_000 });
+  // the 4 s splash covers the case until it goes
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
 }
 
 export type Holding = 'Owned' | 'Ordered' | 'Wished' | 'No longer owned';

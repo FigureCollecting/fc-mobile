@@ -49,7 +49,7 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
   await page.setViewportSize({ width: size.width, height: size.height });
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
-  await expect(page.locator('#pre-splash')).toHaveCount(0);
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   // every picture decoded and every figure grounded on its measured margin
   await page.waitForFunction(() =>
     Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure')).every(

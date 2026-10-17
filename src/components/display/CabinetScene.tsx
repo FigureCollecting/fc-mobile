@@ -1033,6 +1033,8 @@ export function CabinetScene({
     lastTap.current = null;
     if ((e.target as Element).closest('button, a, details')) return;
     if (last && t - last.t <= DOUBLE_TAP_MS && Math.hypot(e.clientX - last.x, e.clientY - last.y) <= DOUBLE_TAP_PX) {
+      // the click this tap makes comes after the picture has moved (at once with reduced motion): it opens nothing
+      swallowClick.current = true;
       const at = toFrame(e.clientX, e.clientY);
       showZoom(isZoomed(zoom.current) ? UNZOOMED : zoomAt(UNZOOMED, at, ZOOM_DOUBLE_TAP, picture.current), 'settle');
       return;

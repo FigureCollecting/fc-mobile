@@ -188,6 +188,11 @@ function expectOpaqueApart(rows: ReturnType<typeof drawn>, sides: { left: number
 }
 
 const unlabelled = (f: Figure) => ({ ...f, dimensions: { heightMm: f.dimensions!.heightMm } }) as Figure;
+/**
+ * The fixtures a stock KLINGSBO shelf takes (all but the 260 mm Dark Angel Olivia): with her, CASE-FB2b keeps the
+ * top for her and the wide cut-outs stand one to a shelf, so no two would be neighbours to compare.
+ */
+const SHELF_FIXTURES = FIXTURE_FIGURES.filter((f) => f.dimensions!.heightMm! <= 256);
 const labelled = (widthMm: number) => (f: Figure) => ({ ...f, dimensions: { ...f.dimensions, widthMm } }) as Figure;
 
 describe('CabinetScene: cut-out and masked art packed by what it draws at true scale, so no figure reaches over a neighbour', () => {
@@ -197,7 +202,7 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
 
   it('an unlabelled cut-out: its opaque columns never meet a neighbour\'s', () => {
     measured.fallback = margins;
-    expectOpaqueApart(figures(FIXTURE_FIGURES.map(unlabelled)), margins);
+    expectOpaqueApart(figures(SHELF_FIXTURES.map(unlabelled)), margins);
   });
 
   it('masked art without a label: the same, by its mask', () => {
@@ -207,7 +212,7 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
 
   it('a label narrower than what the cut-out draws (as the real sign-off cut-outs have) is packed by what it draws', () => {
     measured.fallback = margins;
-    expectOpaqueApart(figures(FIXTURE_FIGURES.map(labelled(20))), margins);
+    expectOpaqueApart(figures(SHELF_FIXTURES.map(labelled(20))), margins);
   });
 
   it('a label wider than what it draws is kept: neighbours stand a label apart', () => {
@@ -218,14 +223,15 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
   });
 
   it('a picture still measuring holds back only its own figure: it stands as its plate on its label, ungrounded; the rest are grounded and packed by what they draw', () => {
-    const figs = FIXTURE_FIGURES.map(labelled(20));
+    const figs = SHELF_FIXTURES.map(labelled(20));
     measured.fallback = margins;
     // Spike's picture is still being read
-    measured.margins.set(figs[4].imageUrl!, null);
+    const spikeAt = figs.findIndex((f) => f._id === 'fx-spike');
+    measured.margins.set(figs[spikeAt].imageUrl!, null);
     const onSelect = vi.fn();
     const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
     const before = drawn(container);
-    const spike = before.find((r) => r.name === figs[4].name)!;
+    const spike = before.find((r) => r.name === figs[spikeAt].name)!;
     expect(spike.grounded).toBe('0');
     // packed by its 20 mm label: its plate that wide, and the plate takes its taps
     expect(spike.tap.x1 - spike.tap.x0).toBeCloseTo(20, 6);

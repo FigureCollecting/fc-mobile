@@ -31,9 +31,9 @@ function surface(
   return { name, topMm, thicknessMm, material, maxLoadKg, provenance };
 }
 
-/** A glass shelf that is the profile's plate (smaller than the interior, set back from the front). */
+/** A glass shelf that is the profile's plate (smaller than the interior, set back from the front); it lifts out (CASE-FB2b). */
 function plate(s: CabinetSurface): CabinetSurface {
-  return { ...s, plate: true };
+  return { ...s, plate: true, liftsOut: true };
 }
 
 // --------------------------------------------------------------- IKEA KLINGSBO

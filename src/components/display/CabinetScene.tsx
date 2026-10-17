@@ -461,7 +461,7 @@ function Rack({ slot }: { slot: WallSlot }) {
 function Cabinet({ slot, index }: { slot: WallSlot; index: number }) {
   const p = slot.profile;
   return (
-    <div class="cab" data-profile={p.id} data-index={index}>
+    <div class="cab" data-profile={p.id} data-index={index} data-removed={p.layout ? p.layout.removed.join(',') : undefined}>
       {p.frame === 'open-rack' ? (
         <Rack slot={slot} />
       ) : (

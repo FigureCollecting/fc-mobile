@@ -75,6 +75,8 @@ export interface CabinetSurface {
   readonly plate?: boolean;
   /** An open shelf outside the doors (the KLINGSBO's shelf below its glass case): nothing in front of it. */
   readonly outsideDoor?: boolean;
+  /** CASE-FB2b: the shelf lifts out (glass on clip supports or a ladder): an instance may stand without it. */
+  readonly liftsOut?: boolean;
 }
 
 /** CC5: 'fit shelves to figures' exists only for adjustable profiles. */
@@ -153,6 +155,59 @@ export interface CabinetProfile {
   /** Every published source the sizes were taken from (empty for a cabinet measured by its owner). */
   readonly sources: readonly ProfileSource[];
   readonly provenance: ProfileProvenance;
+  /** CASE-FB2b: this instance's own shelves (withShelfLayout), when they are not the profile's stock ones. */
+  readonly layout?: ShelfLayout;
+}
+
+/**
+ * CASE-FB2b (Ross TALL1 10-15, option 1): one cabinet instance's own shelves, by their index in the profile's
+ * surfaces: those taken out (they lift out) and those moved to another pin position (an adjustable profile). Derived
+ * by the packer in this unit, never saved (saved layouts come later).
+ */
+export interface ShelfLayout {
+  readonly removed: readonly number[];
+  readonly moved: readonly { readonly index: number; readonly topMm: number }[];
+}
+
+/** Every shelf where the profile has it. */
+export const STOCK_LAYOUT: ShelfLayout = { removed: [], moved: [] };
+
+/** The shelves an instance may stand without: those that lift out (the KLINGSBO's and the Detolf's glass), by index. */
+export function liftOutShelves(profile: CabinetProfile): number[] {
+  return profile.surfaces.flatMap((s, i) => (s.liftsOut === true && i < profile.surfaces.length - 1 ? [i] : []));
+}
+
+/** The shelves that move by the pin pitch: every one but the top, on an adjustable profile (the rack); none on a fixed one. */
+export function movableShelves(profile: CabinetProfile): number[] {
+  return profile.shelves.mode === 'adjustable' ? profile.surfaces.slice(0, -1).map((_, i) => i) : [];
+}
+
+/**
+ * The profile as one instance stands with `layout`: the shelves taken out gone, the moved ones at their new tops, the
+ * layout kept on it; the stock layout is the profile itself. Throws (RangeError) on what the furniture cannot do: a
+ * shelf that does not lift out or move, one named twice, a move off the pin pitch or onto or past a neighbour.
+ */
+export function withShelfLayout(profile: CabinetProfile, layout: ShelfLayout): CabinetProfile {
+  if (layout.removed.length === 0 && layout.moved.length === 0) return profile;
+  const named = [...layout.removed, ...layout.moved.map((m) => m.index)];
+  if (new Set(named).size !== named.length) throw new RangeError(`a shelf is named twice in ${JSON.stringify(layout)}`);
+  const out = new Set(liftOutShelves(profile));
+  for (const i of layout.removed) if (!out.has(i)) throw new RangeError(`${profile.id}: surface ${i} does not lift out`);
+  const movable = new Set(movableShelves(profile));
+  const surfaces = profile.surfaces.map((s) => ({ ...s }));
+  for (const { index, topMm } of layout.moved) {
+    if (!movable.has(index) || profile.shelves.mode !== 'adjustable') throw new RangeError(`${profile.id}: surface ${index} does not move`);
+    const pins = (topMm - surfaces[index].topMm) / profile.shelves.pinPitchMm;
+    if (Math.abs(pins - Math.round(pins)) > FIT_EPSILON_MM) throw new RangeError(`${profile.id}: ${topMm} mm is off the ${profile.shelves.pinPitchMm} mm pitch`);
+    surfaces[index] = { ...surfaces[index], topMm };
+  }
+  const kept = surfaces.filter((_, i) => !layout.removed.includes(i));
+  // each surface clear of the one below it; the lowest one on the floor at most
+  for (let i = 0; i < kept.length; i++) {
+    const underside = kept[i].topMm - kept[i].thicknessMm;
+    if (i === 0 ? underside < -FIT_EPSILON_MM : !(underside > kept[i - 1].topMm)) throw new RangeError(`${profile.id}: ${kept[i].name} meets the surface below it`);
+  }
+  return { ...profile, surfaces: kept, layout };
 }
 
 /** The structural part the CC9 rules read; any profile (or a bare height) satisfies it. */

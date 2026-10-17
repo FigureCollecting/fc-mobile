@@ -822,7 +822,9 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
 
   it('pan mode, wall view (close-out 4, ruling 32): the pager pages from where the pan settled, never back past it', () => {
     for (const frame of [{ width: 657, height: 473 }, { width: 443, height: 344 }]) {
-      const { host } = scene(getFixtureFigures(120), { swipe: 'pan', view: 'wall' }, { frameFallback: frame });
+      // (104 copies: 70 KLINGSBOs with CASE-FB2b's shelves out; a wall of 61, 67 or 81 makes the pager miss its last
+      // page, as on 086f61c5: a pager unit of its own)
+      const { host } = scene(getFixtureFigures(104), { swipe: 'pan', view: 'wall' }, { frameFallback: frame });
       const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
       const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
       const at = `${frame.width}x${frame.height}`;

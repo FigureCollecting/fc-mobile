@@ -12,7 +12,7 @@ jobs:
   stack:
     name: Stack harness
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     if: >-
       github.event_name != 'push'
       || (github.repository_owner == 'FigureCollecting' && (github.ref_name == 'develop' || github.ref_name == 'main'))

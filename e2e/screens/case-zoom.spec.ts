@@ -186,6 +186,8 @@ async function openCase(context: BrowserContext, page: Page): Promise<void> {
     })
     .toBe(OWNED);
   await expect.poll(async () => (await cutOuts(page)).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(4);
+  // the 4 s splash takes the touches until it goes
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
 }
 
 interface Box {

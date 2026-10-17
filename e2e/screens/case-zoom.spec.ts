@@ -292,16 +292,23 @@ async function pinchAbout(page: Page, m: { x: number; y: number }, from: number,
   await expect(page.locator('.cabinet-scene__zoom--live')).toHaveCount(0);
 }
 
-/** A point of the frame where a tap lands on no figure and no control: the room. */
+/**
+ * A point of the frame where a tap lands on no figure and no control: the room, with no figure within a finger's
+ * reach of it either (Chrome moves a touch onto a button near it).
+ */
 async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
   const frame = await frameBox(page);
   const spot = await page.evaluate((f) => {
+    const room = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y);
+      return !!hit?.closest('.cabinet-scene__frame') && !hit.closest('button, a, details');
+    };
+    const reach = 24;
     for (let fy = 0.08; fy < 0.95; fy += 0.04) {
       for (let fx = 0.3; fx < 0.75; fx += 0.04) {
         const x = f.x + f.width * fx;
         const y = f.y + f.height * fy;
-        const hit = document.elementFromPoint(x, y);
-        if (hit?.closest('.cabinet-scene__frame') && !hit.closest('button, a, details')) return { x, y };
+        if ([[0, 0], [-reach, 0], [reach, 0], [0, -reach], [0, reach]].every(([dx, dy]) => room(x + dx!, y + dy!))) return { x, y };
       }
     }
     return null;

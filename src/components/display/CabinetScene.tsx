@@ -461,7 +461,7 @@ function Rack({ slot }: { slot: WallSlot }) {
 function Cabinet({ slot, index }: { slot: WallSlot; index: number }) {
   const p = slot.profile;
   return (
-    <div class="cab" data-profile={p.id} data-index={index}>
+    <div class="cab" data-profile={p.id} data-index={index} data-removed={p.layout ? p.layout.removed.join(',') : undefined}>
       {p.frame === 'open-rack' ? (
         <Rack slot={slot} />
       ) : (
@@ -1033,6 +1033,8 @@ export function CabinetScene({
     lastTap.current = null;
     if ((e.target as Element).closest('button, a, details')) return;
     if (last && t - last.t <= DOUBLE_TAP_MS && Math.hypot(e.clientX - last.x, e.clientY - last.y) <= DOUBLE_TAP_PX) {
+      // the click this tap makes comes after the picture has moved (at once with reduced motion): it opens nothing
+      swallowClick.current = true;
       const at = toFrame(e.clientX, e.clientY);
       showZoom(isZoomed(zoom.current) ? UNZOOMED : zoomAt(UNZOOMED, at, ZOOM_DOUBLE_TAP, picture.current), 'settle');
       return;
@@ -1128,6 +1130,18 @@ export function CabinetScene({
   // what each cabinet holds, and its kind
   const heldCounts = useMemo(() => cabinets.map((c) => (c ? c.surfaces.reduce((n, x) => n + x.items.length, 0) : 0)), [cabinets]);
   const heldKinds = useMemo(() => wall.cabinets.map((c) => c.profile.id), [wall]);
+  // CASE-FB2b: what every cabinet holds, drawn or not (inside, on its top) and the shelves it stands without, for the e2e
+  const held = useMemo(
+    () =>
+      JSON.stringify(
+        cabinets.map((c) => {
+          const inside = c ? c.surfaces.reduce((n, x) => n + (x.slot.isTop ? 0 : x.items.length), 0) : 0;
+          const onTop = c ? c.surfaces.reduce((n, x) => n + (x.slot.isTop ? x.items.length : 0), 0) : 0;
+          return [inside, onTop, c?.profile.layout?.removed ?? []];
+        }),
+      ),
+    [cabinets],
+  );
   // a figure is drawn when its layer (its tap box and the picture hanging from it) draws into the frame and its margin
   // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
@@ -1196,6 +1210,7 @@ export function CabinetScene({
       data-cull-x={String(cull.camera.x)}
       data-cull-pan={String(cull.panPx)}
       data-wall={wallBoxes}
+      data-held={held}
       data-drawn-cabinets={String(drawnCabs.length)}
       data-drawn-cap={String(base.drawCap)}
       data-drawn-figures={String(onShow.length)}

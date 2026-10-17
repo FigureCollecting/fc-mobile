@@ -9,12 +9,17 @@
 //     picture (a CSS background or mask, an img) are those figures' own, at most two each;
 //   - the case scene's composited layers are at most 3 viewports of pixels (CDP LayerTree, as e2e/case-budget);
 //   - after a garbage collection, at most DETACHED_MAX detached DOM nodes are alive (CDP DOM.getDetachedDomNodes), and
-//     the DOM's nodes and listeners (CDP Memory.getDOMCounters) are at most GROWTH over the walk's warm-up and, back at
-//     the start, within GROWTH of what the start held.
-// At the far end and back at the start the chrome is drawn (its ink: e2e/paintCheck), and back at the start the cabinet
-// the walk ends on holds its figures, each imaged one standing as its cut-out, the central ones drawing their art.
-// Past cabinet 50 or so the wall's cabinets hold a few figures each, on their tops (taller than every shelf: packCabinets
-// opens a cabinet ahead for a top-only figure): that is the packing (CASE-FB2's tall figures), not checked here.
+//     the DOM's nodes and listeners (CDP Memory.getDOMCounters) are at most GROWTH over what the page holds at that
+//     step: its document's nodes at the warm-up's nodes alive per node in the document, and the case scene's own
+//     listeners (CDP DOMDebugger.getEventListeners) plus the warm-up's past them; the document outside the scene is at
+//     most GROWTH over the warm-up's; back at the start, the DOM is within GROWTH of what the start held.
+// The walk draws every cabinet of the packed wall on the way out and again on the way back. At the far end and back at
+// the start the chrome is drawn (its ink: e2e/paintCheck), and back at the start the cabinet the walk ends on holds its
+// figures, each imaged one standing as its cut-out, the central ones drawing their art.
+// What a cabinet holds is the packing's (CASE-FB2b takes shelves out for tall figures, so stretches of the wall draw a
+// third more figures than its start), so each bound follows what the page holds at that step and the walk's length the
+// wall's cabinets, never a wall of a given shape. Alive per node in the document runs steady along the walk (3.43 to
+// 3.60 at both panels on a wall of 109 cabinets), where the DOM's nodes rose up to 17 % past the warm-up's.
 // On 4d3333b3 the walk failed at both panels: Preact left the scene's vnode of the collection page's last render in that
 // render's JSX with the children it drew then, so every cabinet and figure drawn at that render stayed alive, detached,
 // once walked past: on the open panel 8,762 detached nodes five swipes in and 15,351 DOM nodes (7,989 once released),
@@ -64,9 +69,9 @@ const OWNED_MEDIA_CACHE = 'fc-owned-media-v1';
 const CEILING_VIEWPORTS = 3;
 /** Detached DOM nodes a garbage collection may leave alive: what the app holds besides the case (measured 2 to 10). */
 const DETACHED_MAX = 100;
-/** How far the DOM's nodes and listeners may stray from the walk's warm-up, and the start's on the way back. */
+/** How far the DOM's nodes and listeners may stray past what the page holds at the warm-up's rates, and from the start's on the way back. */
 const GROWTH = 0.1;
-/** The swipes, the open, and the two after it whose largest DOM is the warm-up. */
+/** The swipes, the open, and the two after it whose largest DOM for what the page held is the warm-up. */
 const WARM_UP = 3;
 /** A finger's swipe across this share of the frame: about 7 cabinets on the open panel, 3 on the cover. */
 const SWIPE_SHARE = 0.85;
@@ -244,7 +249,16 @@ const domState = (page: Page) =>
       pictures += held.length;
       if (!el.closest('button.cab-figure')) strays.push(`${el.tagName.toLowerCase()}.${el.className}`);
     }
+    const count = (root: Node) => {
+      let n = 1;
+      for (const walker = document.createTreeWalker(root, NodeFilter.SHOW_ALL); walker.nextNode(); ) n++;
+      return n;
+    };
     return {
+      /** Every node in the document, and those of the case scene. */
+      pageNodes: count(document),
+      sceneNodes: count(scene),
+      drawnAt: Array.from(scene.querySelectorAll<HTMLElement>('.cab[data-index]'), (c) => Number(c.dataset.index)),
       focus: Number(scene.dataset.focus),
       cameraX: Number(scene.dataset.cameraX),
       cabinets: Number(scene.dataset.drawnCabinets),
@@ -285,16 +299,21 @@ async function sceneLayerViewports(page: Page): Promise<number> {
   }
 }
 
-/** After a garbage collection: the DOM's nodes and listeners (Memory.getDOMCounters), and the detached nodes still alive. */
-async function retained(page: Page): Promise<{ nodes: number; listeners: number; detached: number }> {
+/**
+ * After a garbage collection: the DOM's nodes and listeners (Memory.getDOMCounters), the listeners on the case scene and
+ * everything in it, and the detached nodes still alive.
+ */
+async function retained(page: Page): Promise<{ nodes: number; listeners: number; sceneListeners: number; detached: number }> {
   const cdp = await page.context().newCDPSession(page);
   try {
     await cdp.send('HeapProfiler.collectGarbage');
     const { nodes, jsEventListeners } = await cdp.send('Memory.getDOMCounters');
+    const { result: scene } = await cdp.send('Runtime.evaluate', { expression: "document.querySelector('.cabinet-scene')" });
+    const { listeners: inScene } = await cdp.send('DOMDebugger.getEventListeners', { objectId: scene.objectId!, depth: -1 });
     await cdp.send('DOM.enable');
     // experimental (Chromium): each detached tree and the nodes it keeps alive
     const { detachedNodes } = await cdp.send('DOM.getDetachedDomNodes');
-    return { nodes, listeners: jsEventListeners, detached: detachedNodes.reduce((n, t) => n + t.retainedNodeIds.length, 0) };
+    return { nodes, listeners: jsEventListeners, sceneListeners: inScene.length, detached: detachedNodes.reduce((n, t) => n + t.retainedNodeIds.length, 0) };
   } finally {
     await cdp.detach();
   }
@@ -457,6 +476,7 @@ interface Step {
   sceneViewports: number;
   nodes: number;
   listeners: number;
+  sceneListeners: number;
   detached: number;
 }
 
@@ -480,6 +500,35 @@ function overruns(s: Step): string[] {
   return out;
 }
 
+/** The warm-up's DOM for what its page held, the largest of its steps'. */
+interface Rates {
+  /** DOM nodes alive per node in the document */
+  perNode: number;
+  /** nodes in the document outside the case scene */
+  outsideScene: number;
+  /** DOM listeners past the case scene's own */
+  pastScene: number;
+}
+
+const ratesOf = (warm: Step[]): Rates => ({
+  perNode: Math.max(...warm.map((s) => s.nodes / s.dom.pageNodes)),
+  outsideScene: Math.max(...warm.map((s) => s.dom.pageNodes - s.dom.sceneNodes)),
+  pastScene: Math.max(...warm.map((s) => s.listeners - s.sceneListeners)),
+});
+
+/** A step's DOM past what its page holds, at the warm-up's rates, by more than GROWTH. */
+function domOverruns(s: Step, r: Rates): string[] {
+  const out: string[] = [];
+  const at = `step ${s.step} (${s.what}, cabinet ${s.dom.focus})`;
+  const nodes = r.perNode * s.dom.pageNodes * (1 + GROWTH);
+  if (s.nodes > nodes) out.push(`${at}: ${s.nodes} DOM nodes for ${s.dom.pageNodes} in the document, over ${Math.round(nodes)}`);
+  const outside = s.dom.pageNodes - s.dom.sceneNodes;
+  if (outside > r.outsideScene * (1 + GROWTH)) out.push(`${at}: ${outside} nodes in the document outside the case, over ${Math.round(r.outsideScene * (1 + GROWTH))}`);
+  const listeners = (r.pastScene + s.sceneListeners) * (1 + GROWTH);
+  if (s.listeners > listeners) out.push(`${at}: ${s.listeners} DOM listeners for the case's ${s.sceneListeners}, over ${Math.round(listeners)}`);
+  return out;
+}
+
 async function attachSteps(testInfo: TestInfo, steps: Step[]): Promise<void> {
   await testInfo.attach('case-memory steps', {
     body: JSON.stringify(steps.map((s) => ({ ...s, dom: { ...s.dom, strays: s.dom.strays.length } })), null, 1),
@@ -498,6 +547,7 @@ test('walking the wall end to end and back keeps only what the case draws, the c
   const start = await at();
   const steps: Step[] = [await measure(page, 0, 'at the start')];
   const failures: string[] = overruns(steps[0]!);
+  let rates: Rates | undefined;
 
   // out to the far end, a pinch on the way, then back to the start, each swipe a step
   let pinched = false;
@@ -513,9 +563,16 @@ test('walking the wall end to end and back keeps only what the case draws, the c
         what += ', pinch to 4x, Reset view';
       }
       moved = (await at()) !== before;
-      const s = await measure(page, steps.length, what);
+      let s = await measure(page, steps.length, what);
+      if (rates !== undefined && domOverruns(s, rates).length > 0) {
+        // requests in flight (the sync's IndexedDB, a fetch) hold listeners for a moment: a second on, what the page keeps
+        // (its layers as read: an idle page commits no new layer tree)
+        await page.waitForTimeout(1000);
+        s = { ...s, dom: await domState(page), ...(await retained(page)) };
+      }
       steps.push(s);
-      failures.push(...overruns(s));
+      failures.push(...overruns(s), ...(rates === undefined ? [] : domOverruns(s, rates)));
+      if (steps.length === WARM_UP) rates = ratesOf(steps);
       if (steps.length > 400) throw new Error('the walk never reached the end of the wall');
     }
     if (dir > 0) {
@@ -526,13 +583,18 @@ test('walking the wall end to end and back keeps only what the case draws, the c
   await attachSteps(testInfo, steps);
   expect(lastDrawn, `the far end draws the last cabinet (${lastIndex})`).toBe(true);
   expect(await at(), 'back at the start').toBe(start);
-  expect(steps.length, 'swipes, out and back').toBeGreaterThanOrEqual(30);
+  expect(rates, `a walk past its warm-up (${steps.length} swipes)`).toBeDefined();
 
-  // the DOM: never past the warm-up's by more than GROWTH, and back at the start what the start held
-  const warm = steps.slice(0, WARM_UP);
+  // every cabinet of the packed wall drawn on the way out (the far end's step closes it) and on the way back from there
+  const turn = steps.findIndex((s) => s.what.startsWith('left'));
+  for (const [way, part] of [['out', steps.slice(0, turn)], ['back', steps.slice(turn - 1)]] as const) {
+    const seen = new Set(part.flatMap((s) => s.dom.drawnAt));
+    const missed = Array.from({ length: lastIndex + 1 }, (_, i) => i).filter((i) => !seen.has(i));
+    if (missed.length > 0) failures.push(`on the way ${way}: ${missed.length} of the wall's ${lastIndex + 1} cabinets never drawn, from ${missed[0]}`);
+  }
+
+  // the DOM back at the start: what the start held
   for (const k of ['nodes', 'listeners'] as const) {
-    const bound = Math.max(...warm.map((s) => s[k])) * (1 + GROWTH);
-    for (const s of steps.slice(WARM_UP)) if (s[k] > bound) failures.push(`step ${s.step} (cabinet ${s.dom.focus}): ${s[k]} DOM ${k}, over ${Math.round(bound)}`);
     const [first, last] = [steps[0]![k], steps[steps.length - 1]![k]];
     if (Math.abs(last - first) > first * GROWTH) failures.push(`back at the start: ${last} DOM ${k}, the start held ${first}`);
   }
@@ -542,9 +604,18 @@ test('walking the wall end to end and back keeps only what the case draws, the c
   failures.push(...(await endCabinet(page)).map((c) => `back at the start: ${c}`));
 
   const peak = (k: 'nodes' | 'detached' | 'sceneViewports') => Math.max(...steps.map((s) => s[k]));
+  const perNode = steps.map((s) => s.nodes / s.dom.pageNodes);
   testInfo.annotations.push({
     type: 'case-memory',
-    description: JSON.stringify({ steps: steps.length, cabinets: lastIndex + 1, warmNodes: Math.max(...warm.map((s) => s.nodes)), peakNodes: peak('nodes'), peakDetached: peak('detached'), peakSceneViewports: peak('sceneViewports') }),
+    description: JSON.stringify({
+      steps: steps.length,
+      cabinets: lastIndex + 1,
+      warm: rates,
+      perNode: [Math.min(...perNode), Math.max(...perNode)].map((r) => Math.round(r * 1000) / 1000),
+      peakNodes: peak('nodes'),
+      peakDetached: peak('detached'),
+      peakSceneViewports: peak('sceneViewports'),
+    }),
   });
   expect(failures).toEqual([]);
 });

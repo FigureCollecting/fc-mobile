@@ -300,7 +300,7 @@ describe("v2 golden: Ross's open steel rack (36 x 18 x 72 in, inch-native, never
   it('models 1.75 in beams on 1.5 in posts and a 2 in keyhole pitch, all estimates', () => {
     expect(OPEN_STEEL_RACK.rack).toEqual({ postMm: 38.1, beamMm: 44.45 });
     expect(OPEN_STEEL_RACK.surfaces.every((s) => s.thicknessMm === 44.45)).toBe(true);
-    expect(OPEN_STEEL_RACK.shelves).toEqual({ mode: 'adjustable', pinPitchMm: 50.8 });
+    expect(OPEN_STEEL_RACK.shelves).toEqual({ mode: 'adjustable', pinPitchMm: 50.8, topMoves: true });
     expect(OPEN_STEEL_RACK.base).toEqual({ style: 'posts', heightMm: 120.65 });
     const flagged = unverifiedFields(OPEN_STEEL_RACK).map((f) => f.field);
     expect(flagged).toEqual(

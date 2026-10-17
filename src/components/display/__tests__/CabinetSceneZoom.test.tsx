@@ -401,6 +401,23 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     expect(chip()).toBeNull();
   });
 
+  it('the click a double-tap leaves never opens the figure that comes under the finger as the picture returns to 1x', () => {
+    // CASE-FB2b (found by the stack e2e): with reduced motion the picture is at 1x before the browser makes the second
+    // tap's click, which then lands on whatever figure now stands under the finger
+    reducedMotion();
+    const { host, onSelect } = scene(getFixtureFigures(8));
+    zoomIn(host);
+    tap(host);
+    down(host, 3, { x: 120, y: 90 });
+    up(host, 3, { x: 120, y: 90 });
+    expect(zoomOf(host).k).toBe(1);
+    fireEvent.click(figureButtons(host)[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+    // the next tap on a figure opens it
+    tap(figureButtons(host)[0]);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
   it('reduced motion: the double-tap and the chip return to 1x at once, with no animation', () => {
     reducedMotion();
     const { host, layer } = scene(getFixtureFigures(8));

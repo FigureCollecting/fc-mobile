@@ -1,5 +1,6 @@
-// User C's case on the local full stack (FB-QUICK's holdings, IMG-SHOW-1's image doubles): 8 Ordered and 40 Wished
-// copies of heads 900 to 947 (C owns nothing), their images answered as production answers them: GetProductImages
+// The screens' stack users and their cases (FB-QUICK's holdings, IMG-SHOW-1's seed and image doubles): user C's 8
+// Ordered and 40 Wished copies of heads 900 to 947 (C owns nothing), user A's 1,200 owned copies of heads 0 to 1,199
+// (ownedStack), their images answered as production answers them: GetProductImages
 // by a page route as the live coordinator answers it, and the images from images.figurecollecting.com with the
 // production headers. About half the figures have images, fixed by their head ids. The same seed as
 // e2e/screens/case-images.spec.ts (d): whichever runs first writes it.
@@ -143,7 +144,12 @@ const authStatus = (page: Page) => page.evaluate(() => window.__fcAuth?.status()
 
 /** The app signed in as C with every held copy on the device. */
 export async function openHeld(page: Page, held: HeldStack): Promise<void> {
-  await held.stack.issuer.loginAs(held.user.sub);
+  await openAs(page, held, HELD_PREFIX);
+}
+
+/** The app signed in as `who.user` with its `who.heads.length` copies whose occ ids start `prefix` on the device. */
+async function openAs(page: Page, who: Pick<HeldStack, 'stack' | 'user' | 'heads'>, prefix: string): Promise<void> {
+  await who.stack.issuer.loginAs(who.user.sub);
   await page.goto('/');
   await page.waitForFunction(() => window.__fcAuth !== undefined && window.__fcSync !== undefined, undefined, { timeout: 30_000 }).catch(() => {
     throw new Error('no window.__fcAuth / __fcSync: the stack must serve dist-stack (npm run build:stack)');
@@ -153,15 +159,60 @@ export async function openHeld(page: Page, held: HeldStack): Promise<void> {
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect.poll(() => authStatus(page), { timeout: 30_000 }).toBe('signed-in');
   }
-  const prefix = HELD_PREFIX.slice(4);
+  const occ = prefix.slice(4);
   await expect
-    .poll(async () => (await page.evaluate(() => window.__fcSync!.copies())).filter((c) => c.occ_id.startsWith(prefix) && c.shown_in !== null).length, {
+    .poll(async () => (await page.evaluate(() => window.__fcSync!.copies())).filter((c) => c.occ_id.startsWith(occ) && c.shown_in !== null).length, {
       timeout: 180_000,
     })
-    .toBe(held.heads.length);
+    .toBe(who.heads.length);
   await expect(page.locator('.case-tabs__tab[data-tab="refine"]')).toBeVisible({ timeout: 30_000 });
   // the 4 s splash covers the case until it goes
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
+}
+
+const OWNED = 1200;
+const OWNED_PREFIX = 'occ/5eed0000-';
+const ownedOcc = (i: number): string => `5eed0000-0000-4000-8000-${i.toString(16).padStart(12, '0')}`;
+
+/**
+ * User A's 1,200 owned copies of heads 0 to 1,199 (IMG-SHOW-1's seed, the same as e2e/screens/case-images.spec.ts and
+ * e2e/sync: whichever runs first writes them), on the server.
+ */
+export async function ownedStack(): Promise<Omit<HeldStack, 'ordered'>> {
+  const state = readStackState();
+  if (state === undefined) throw new Error('no stack state file: run through playwright.stack.config.ts');
+  const stack = stackClient(state.controlUrl);
+  const user = state.users[0]!;
+  const heads = (JSON.parse(readFileSync(state.catalog.file, 'utf8')) as { heads: { headId: string }[] }).heads.slice(0, OWNED).map((h) => h.headId);
+  const owned = await stack.sync.counts({ user: user.sub, prefix: OWNED_PREFIX });
+  if (owned.facets < OWNED * 2) {
+    const device = await loginDevice({
+      origin: state.origin,
+      authorizationEndpoint: state.issuer.authorizationEndpoint,
+      tokenEndpoint: state.issuer.tokenEndpoint,
+      clientId: state.issuer.clientId,
+      loginHint: user.email,
+    });
+    expect((await device.enrol('img-show-1 seed')).status).toBe(201);
+    const dev = device.deviceId!.replace(/-/g, '');
+    const stamp = { edited_at: '2026-10-01T00:00:00.000+00:00', tz: 'UTC' };
+    let counter = 0;
+    const version = () => `2026-10-01T00:00:00.000000Z#${String(++counter).padStart(10, '0')}#${dev}`;
+    for (let start = 0; start < OWNED; start += 100) {
+      const events = heads.slice(start, start + 100).flatMap((head, j) => [
+        { facetKey: `occ/${ownedOcc(start + j)}/head`, version: version(), op: 'SYNC_OP_UPSERT', payload: JSON.stringify({ head_id: head, ...stamp }), basis: '' },
+        { facetKey: `occ/${ownedOcc(start + j)}/status`, version: version(), op: 'SYNC_OP_UPSERT', payload: JSON.stringify({ status: 'owned', ...stamp }), basis: '' },
+      ]);
+      const res = await device.connect('coordinator.v1.SyncService', 'Push', { clientId: `wk15-seed-${dev}-${start}`, events });
+      expect(res.status).toBe(200);
+    }
+  }
+  return { state, stack, user, heads };
+}
+
+/** The app signed in as A with every owned copy on the device. */
+export async function openOwned(page: Page, owned: Omit<HeldStack, 'ordered'>): Promise<void> {
+  await openAs(page, owned, OWNED_PREFIX);
 }
 
 export type Holding = 'Owned' | 'Ordered' | 'Wished' | 'No longer owned';

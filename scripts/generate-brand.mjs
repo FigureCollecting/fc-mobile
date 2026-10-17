@@ -1,5 +1,6 @@
-// Draws the app icons (public/icons/icon-{180,192,512}.png) and the static
-// splash's inline art (index.html, between the brand:splash-art markers) from
+// Draws the app icons (public/icons/icon-{180,192,512}.png), the static
+// splash's inline art (index.html, between the brand:splash-art markers) and
+// its first-frame size (src/styles/pre-splash.css, brand:splash-start) from
 // the vector figure src/assets/brand/final-E.svg, never from a PNG. The sizes
 // and colours are in deploy/brandArt.ts; the figure's scale is derived from the art (iconFigureScale:
 // the largest at which its outline fits inside the 90 % ring, ICON_RING_RADIUS).
@@ -23,6 +24,7 @@ import {
   parseFigureArt,
   roundPathData,
   splashArtMarkup,
+  splashStartHeight,
 } from '../deploy/brandArt.ts';
 import { decodePng, encodeRgbPng } from '../deploy/png.ts';
 
@@ -64,6 +66,14 @@ try {
     const markup = splashArtMarkup(art, bbox);
     writeFileSync(htmlPath, html.replace(markers, (_, open, indent, close) => `${open}${indent}${markup}${close}`));
     console.log(`index.html  splash art ${roundPathData(art.d).length} path chars`);
+
+    const cssPath = path.join(ROOT, 'src/styles/pre-splash.css');
+    const css = readFileSync(cssPath, 'utf8');
+    const start = /(--pre-splash-start-height:\s*)[\d.]+(px;\s*\/\* brand:splash-start)/;
+    if (!start.test(css)) throw new Error('pre-splash.css has no brand:splash-start height');
+    const height = Math.round(splashStartHeight(art) * 10) / 10;
+    writeFileSync(cssPath, css.replace(start, (_, before, after) => `${before}${height}${after}`));
+    console.log(`pre-splash.css  start height ${height}px (the system splash's figure)`);
   }
 } finally {
   await browser.close();

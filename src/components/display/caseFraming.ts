@@ -654,14 +654,24 @@ export function panFraming(framing: Framing, panPx: number): { framing: Framing;
 }
 
 /**
+ * CASE-FB3a item 3 (Ross 10-17): how far under the ceiling the camera stays at the top of its lift. At the ceiling's own
+ * height the ceiling plane is edge-on, every point of it draws on the horizon, and the frame above the wall's top is
+ * blank; under it, the ceiling is overhead and fills that band to the frame's top once the frame's top ray meets it past
+ * the near plane (NEAR_MM, 10 mm: the ray meets it about twice the clearance along the axis on the Fold8's panels).
+ * 50 mm leaves room.
+ */
+export const CEILING_CLEARANCE_MM = 50;
+
+/**
  * CASE-FB1 item 5, camera mode: how far (mm) the camera may be raised (positive) or lowered with its aim, x, distance
- * and tilt kept, so that neither it nor the point it aims at on the cabinets' front leaves the floor..ceiling; never
- * a range that moves it where it stands (a camera already past a bound stays until it moves back).
+ * and tilt kept, so that neither it nor the point it aims at on the cabinets' front leaves the floor..ceiling (the
+ * camera staying CEILING_CLEARANCE_MM under the ceiling); never a range that moves it where it stands (a camera
+ * already past a bound stays until it moves back).
  */
 export function liftLimitsMm(framing: Framing, ceilingMm: number): [number, number] {
   const lo = Math.min(framing.camera.y, framing.look[1]);
-  const hi = Math.max(framing.camera.y, framing.look[1]);
-  return [Math.min(0, -lo), Math.max(0, ceilingMm - hi)];
+  const up = Math.min(ceilingMm - CEILING_CLEARANCE_MM - framing.camera.y, ceilingMm - framing.look[1]);
+  return [Math.min(0, -lo), Math.max(0, up)];
 }
 
 /** The lift (liftLimitsMm) nearest `liftMm` that stays within the floor..ceiling. */

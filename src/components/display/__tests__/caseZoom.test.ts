@@ -7,6 +7,8 @@ import {
   ZOOM_SNAP,
   ZOOM_UNDER,
   clampZoom,
+  easeOut,
+  glideZoom,
   isZoomed,
   panZoom,
   pinchZoom,
@@ -196,5 +198,34 @@ describe('caseZoom: bounds, settling and the quick way back', () => {
     expect(under.y).toBeCloseTo(260, 9);
     // a point past the frame (the open panel's side bands): the edges hold, the picture never pulls inside the frame
     expect(zoomAt(UNZOOMED, { x: -30, y: 600 }, ZOOM_DOUBLE_TAP, COVER)).toEqual({ k: 2, x: 0, y: -COVER.height });
+  });
+  it('ease-out (the curve the way back had as a CSS transition) starts at 0, ends at 1, never goes back and is quick at first', () => {
+    expect(easeOut(0)).toBe(0);
+    expect(easeOut(1)).toBe(1);
+    expect(easeOut(-0.5)).toBe(0);
+    expect(easeOut(1.5)).toBe(1);
+    let last = 0;
+    for (let t = 0.05; t <= 1; t += 0.05) {
+      const e = easeOut(t);
+      expect(e).toBeGreaterThanOrEqual(last);
+      last = e;
+    }
+    // CSS cubic-bezier(0, 0, 0.58, 1), its x solved for t by bisection outside this module
+    expect(easeOut(0.25)).toBeCloseTo(0.3781, 3);
+    expect(easeOut(0.5)).toBeCloseTo(0.6846, 3);
+    expect(easeOut(0.75)).toBeCloseTo(0.9065, 3);
+  });
+
+  it('a glide moves the zoom from where it stands to where it settles, k and the offsets alike, ending exactly there', () => {
+    const from: Zoom = { k: 4, x: -900, y: -600 };
+    expect(glideZoom(from, UNZOOMED, 0)).toEqual(from);
+    expect(glideZoom(from, UNZOOMED, 1)).toEqual(UNZOOMED);
+    const half = glideZoom(from, UNZOOMED, 0.5);
+    const e = easeOut(0.5);
+    expect(half.k).toBeCloseTo(4 + (1 - 4) * e, 9);
+    expect(half.x).toBeCloseTo(-900 * (1 - e), 9);
+    expect(half.y).toBeCloseTo(-600 * (1 - e), 9);
+    // and the other way: a double-tap's 1x to 2x
+    expect(glideZoom(UNZOOMED, { k: 2, x: -220, y: -260 }, 1)).toEqual({ k: 2, x: -220, y: -260 });
   });
 });

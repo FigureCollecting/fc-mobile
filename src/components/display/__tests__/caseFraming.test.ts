@@ -33,6 +33,7 @@ import {
   frameCentreX,
   pageInView,
   FLOOR_STRIP_MM,
+  CEILING_CLEARANCE_MM,
   clampLift,
   frameSpanMm,
   liftLimitsMm,
@@ -1271,9 +1272,9 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     const f = frameCase({ frame: { width: 443, height: 418 }, wall, headroomMm: WALLS[0][2], view: 'cabinet', focus: 3, shelf: 0 });
     const ceiling = 2438.4;
     const [lo, hi] = liftLimitsMm(f, ceiling);
-    // the camera stands above its aim (it looks down): the aim meets the floor first, the camera the ceiling
+    // the camera stands above its aim (it looks down): the aim meets the floor first, the camera its clearance under the ceiling
     expect(f.look[1] + lo).toBeCloseTo(0, 9);
-    expect(f.camera.y + hi).toBeCloseTo(ceiling, 9);
+    expect(f.camera.y + hi).toBeCloseTo(ceiling - CEILING_CLEARANCE_MM, 9);
     expect(lo).toBeLessThan(0);
     expect(hi).toBeGreaterThan(0);
     expect(clampLift(f, ceiling, hi + 500)).toBe(hi);
@@ -1286,6 +1287,29 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     // an aim under the floor: it may only come up
     const under = { ...f, look: [f.look[0], -50, 0] as Vec3 };
     expect(liftLimitsMm(under, ceiling)[0]).toBe(0);
+  });
+
+  it('CASE-FB3a item 3 (Ross 10-17): raised as far as it goes, the camera still sees the ceiling at the frame top, the room top drawn whole', () => {
+    // at the ceiling's own height the ceiling is edge-on: every point of it draws on the horizon, and the frame above the
+    // wall's top is blank until the camera comes "very slightly lower"
+    for (const frame of PANELS) {
+      for (const ceiling of [2133.6, CEILING_DEFAULT_MM, 3048]) {
+        const wall = WALLS[1][1];
+        const f = frameCase({ frame, wall, headroomMm: WALLS[1][2], view: 'wall', focus: 4, shelf: 0, ceilingMm: ceiling });
+        const top = lifted(f, liftLimitsMm(f, ceiling)[1]);
+        const at = `${frame.width}x${frame.height} ceiling ${ceiling}`;
+        expect.soft(top.camera.y, at).toBeLessThanOrEqual(ceiling - CEILING_CLEARANCE_MM + 1e-9);
+        // the ceiling straight ahead, from the camera back to the room's back wall: some of it draws at the frame's top row
+        const room = roomBox(wall, ceiling);
+        let highest = Infinity;
+        for (let k = 0; k <= 400; k++) {
+          const z = top.camera.z + ((room.zBack - top.camera.z) * k) / 400;
+          const p = project(top.camera, [top.camera.x, ceiling, z]);
+          if (p.depth > 10) highest = Math.min(highest, p.y);
+        }
+        expect(highest, `${at}: the ceiling reaches the frame's top row`).toBeLessThanOrEqual(0);
+      }
+    }
   });
 
   it('pan mode, an up/down drag: the photo slides down until the ceiling over the fronts reaches the frame top, up until the floor line reaches its bottom', () => {

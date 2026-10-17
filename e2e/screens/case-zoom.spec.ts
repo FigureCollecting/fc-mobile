@@ -6,7 +6,7 @@
 //   (a) a two-finger pinch zooms toward the midpoint between the fingers: the figure under it stays under it, twice
 //       the size, its neighbours pushed out from it; 4x at most; the camera never moves;
 //   (b) zoomed, one finger pans the magnified picture up to its edges and never walks the wall or changes cabinets;
-//   (c) a double-tap on an empty spot and the Reset view chip each return to 1x with a transition of about 200 ms
+//   (c) a double-tap on an empty spot and the Reset view chip each return to 1x, animated about 200 ms (frames, not a CSS transition)
 //       (at once with reduced motion); the chip sits in the frame's top corner, clear of the tab bar and the tabs;
 //       a double-tap at 1x zooms 2x at that point;
 //   (d) zoomed, a tap on a figure opens THAT figure, where at 1x the same spot showed something else;
@@ -317,17 +317,24 @@ async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
   return spot!;
 }
 
-/** Record the zoom layer's transform transitions from now: when each began and ended (ms). */
-const watchTransitions = (page: Page) =>
+/**
+ * Record the zoom layer's settles from now: when each began and ended (ms), as the case marks them with its settling
+ * class (CASE-FB3a: a settle is frames of the layer's transform, no CSS transition, so no transitionrun or transitionend).
+ */
+const watchSettles = (page: Page) =>
   page.locator('.cabinet-scene__zoom').evaluate((layer) => {
-    const w = window as unknown as { __zoomTransitions: { run: number[]; end: number[] } };
-    const first = w.__zoomTransitions === undefined;
-    w.__zoomTransitions = { run: [], end: [] };
+    const w = window as unknown as { __zoomSettles: { run: number[]; end: number[] } };
+    const first = w.__zoomSettles === undefined;
+    w.__zoomSettles = { run: [], end: [] };
     if (!first) return;
-    layer.addEventListener('transitionrun', (e) => (e as TransitionEvent).propertyName === 'transform' && w.__zoomTransitions.run.push(performance.now()));
-    layer.addEventListener('transitionend', (e) => (e as TransitionEvent).propertyName === 'transform' && w.__zoomTransitions.end.push(performance.now()));
+    let settling = layer.classList.contains('cabinet-scene__zoom--settling');
+    new MutationObserver(() => {
+      const now = layer.classList.contains('cabinet-scene__zoom--settling');
+      if (now !== settling) (now ? w.__zoomSettles.run : w.__zoomSettles.end).push(performance.now());
+      settling = now;
+    }).observe(layer, { attributes: true, attributeFilter: ['class'] });
   });
-const transitions = (page: Page) => page.evaluate(() => (window as unknown as { __zoomTransitions: { run: number[]; end: number[] } }).__zoomTransitions);
+const settles = (page: Page) => page.evaluate(() => (window as unknown as { __zoomSettles: { run: number[]; end: number[] } }).__zoomSettles);
 
 interface ScaleSamples {
   from: number;
@@ -449,22 +456,23 @@ test('(c) a double-tap on an empty spot and the Reset view chip each return to 1
   await pinchAbout(page, mid, 40, 100);
   expect((await zoomOf(page)).k).toBeCloseTo(2.5, 1);
 
-  // the double-tap: back to 1x through a transition (about 200 ms; its measured length on a loaded runner ranged
+  // the double-tap: back to 1x, animated (about 200 ms; its measured length on a loaded runner ranged
   // 140 to 419 ms, so it is held to finishing within 1 s and to drawing at least one frame between the two scales)
   const spot = await emptySpot(page);
   const start = (await zoomOf(page)).k;
-  await watchTransitions(page);
+  await watchSettles(page);
   await watchScale(page);
   await touchDoubleTap(page, spot.x, spot.y);
   expect(await zoomOf(page)).toEqual({ k: 1, x: 0, y: 0 });
-  await expect.poll(async () => (await transitions(page)).end.length, { timeout: 2_000 }).toBe(1);
-  expect((await transitions(page)).run).toHaveLength(1);
+  await expect.poll(async () => (await settles(page)).end.length, { timeout: 2_000 }).toBe(1);
+  expect((await settles(page)).run).toHaveLength(1);
   const drawn = await scaleSamples(page);
   const back = drawn.samples.find((f) => f.k === 1);
   expect(back, 'drawn back at exactly 1x').toBeDefined();
   expect(back!.t - drawn.from, 'back at 1x within 1 s of the double-tap').toBeLessThanOrEqual(1_000);
   expect(between(drawn, start).length, 'a frame between: animated, not instant').toBeGreaterThan(0);
   expect(await layerTransform(page)).toBe('none');
+  expect(await page.locator('.cabinet-scene__zoom').evaluate((layer) => getComputedStyle(layer).transitionDuration), 'no CSS transition on the layer (CASE-FB3a)').toBe('0s');
   await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
 
   // the chip: in the frame's top corner, clear of the tab bar, the pull-up tabs and the cabinet steps
@@ -480,10 +488,10 @@ test('(c) a double-tap on an empty spot and the Reset view chip each return to 1
       expect(meets(c, box), `the chip meets ${clear}`).toBe(false);
     }
   }
-  await watchTransitions(page);
+  await watchSettles(page);
   await touchTap(page, c.x + c.width / 2, c.y + c.height / 2);
   expect(await zoomOf(page)).toEqual({ k: 1, x: 0, y: 0 });
-  await expect.poll(async () => (await transitions(page)).end.length, { timeout: 2_000 }).toBe(1);
+  await expect.poll(async () => (await settles(page)).end.length, { timeout: 2_000 }).toBe(1);
   await expect(chip).toHaveCount(0);
   await expect(opened(page)).toHaveCount(0);
 
@@ -506,7 +514,7 @@ test('(c) with reduced motion the double-tap and the chip return to 1x at once, 
   await pinchAbout(page, mid, 40, 100);
   const spot = await emptySpot(page);
   const start = (await zoomOf(page)).k;
-  await watchTransitions(page);
+  await watchSettles(page);
   await watchScale(page);
   await touchDoubleTap(page, spot.x, spot.y);
   expect(await layerTransform(page)).toBe('none');
@@ -517,7 +525,7 @@ test('(c) with reduced motion the double-tap and the chip return to 1x at once, 
   await touchTap(page, chip.x, chip.y);
   expect(await layerTransform(page)).toBe('none');
   await page.waitForTimeout(400);
-  expect(await transitions(page)).toEqual({ run: [], end: [] });
+  expect(await settles(page)).toEqual({ run: [], end: [] });
   expect((await zoomOf(page)).k).toBe(1);
 });
 

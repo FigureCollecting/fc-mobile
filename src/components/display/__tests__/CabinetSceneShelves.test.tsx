@@ -73,3 +73,23 @@ describe('CASE-FB2b: a cabinet with shelves out, drawn as it stands', () => {
     expect(host.querySelector('.cab')!.querySelectorAll('.cab-shelf--glass')).toHaveLength(4);
   });
 });
+
+// CASE-FB3a item 2 (Ross 10-17: "the 2nd to lowest shelf vanished at exactly horizontal but reappears otherwise"): a glass
+// shelf's top is edge-on at the camera's height, so what shows of it is its front edge, which is glass whatever its
+// thickness: lit, as the Detolf's 4 mm one is (the KLINGSBO's 17 mm one was dark steel, 4 to 11 against the room at that
+// height: e2e/case-shelf-edge)
+describe('CASE-FB3a: a glass shelf\'s front edge is a glass edge, whatever its thickness', () => {
+  for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF]) {
+    it(`${profile.id}: every glass shelf's front edge is lit glass, none steel`, () => {
+      const host = scene(wall(TALL[profile.id]), profile.id);
+      const shelves = Array.from(host.querySelectorAll<HTMLElement>('.cab-shelf--glass'));
+      expect(shelves.length).toBeGreaterThan(0);
+      for (const shelf of shelves) {
+        const front = shelf.querySelector('.f-front, .m-glass-edge');
+        expect(front, 'a front edge').not.toBeNull();
+        expect(front!.classList.contains('m-glass-edge')).toBe(true);
+        expect(shelf.querySelector('.m-steel')).toBeNull();
+      }
+    });
+  }
+});

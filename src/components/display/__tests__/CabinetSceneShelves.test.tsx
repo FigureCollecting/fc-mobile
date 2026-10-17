@@ -17,14 +17,14 @@ const sized = (i: number, heightMm: number, widthMm: number): Figure => ({ _id: 
 
 /**
  * Short figures with a run of taller ones among them, more than the tops hold: in a KLINGSBO 1/6 (270 mm) and 1/4
- * (425 mm) figures; in a Detolf, whose compartments are taller, 450 mm ones and 700 mm ones over its top's 24 in.
+ * (425 mm) figures; in a Detolf, whose compartments are taller, 450 mm ones and 780 mm ones over what its top's room leaves (757.6 mm).
  */
 const wall = (tall: readonly [number, number]): Figure[] => [
   ...Array.from({ length: 20 }, (_, i) => sized(i, 200, 100)),
   ...Array.from({ length: 10 }, (_, i) => sized(20 + i, tall[i % 2], i % 2 === 0 ? 120 : 160)),
   ...Array.from({ length: 16 }, (_, i) => sized(30 + i, 200, 100)),
 ];
-const TALL: Record<string, readonly [number, number]> = { [IKEA_KLINGSBO.id]: [270, 425], [IKEA_DETOLF.id]: [450, 700] };
+const TALL: Record<string, readonly [number, number]> = { [IKEA_KLINGSBO.id]: [270, 425], [IKEA_DETOLF.id]: [450, 780] };
 
 function scene(figures: Figure[], pattern: string) {
   const { container } = render(

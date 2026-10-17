@@ -182,11 +182,11 @@ describe('IKEA KLINGSBO (Wayback snapshots of the discontinued product page, mea
     ]);
   });
 
-  it('G17: the top takes up to 24 in (the cap binds: the 96 in room leaves 638.4 mm)', () => {
-    expect(Math.abs(topClearanceMm(IKEA_KLINGSBO) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
-    expect(Math.abs(topClearanceRawMm(IKEA_KLINGSBO, 2438.4 + 1000) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
-    expect(fitsOnTop(IKEA_KLINGSBO, 609.6)).toBe(true);
-    expect(fitsOnTop(IKEA_KLINGSBO, 610.6)).toBe(false);
+  it('G17: the top takes what the room leaves (the 96 in room leaves 638.4 mm, less 2 in of hand room: 587.6 mm)', () => {
+    expect(Math.abs(topClearanceMm(IKEA_KLINGSBO) - 587.6)).toBeLessThanOrEqual(GOLDEN_EPS);
+    expect(Math.abs(topClearanceRawMm(IKEA_KLINGSBO, 2438.4 + 1000) - 1587.6)).toBeLessThanOrEqual(GOLDEN_EPS);
+    expect(fitsOnTop(IKEA_KLINGSBO, 587.6)).toBe(true);
+    expect(fitsOnTop(IKEA_KLINGSBO, 588.6)).toBe(false);
     expect(Math.min(...clearHeightsMm(IKEA_KLINGSBO))).toBe(220);
   });
 
@@ -243,14 +243,14 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
     ]);
   });
 
-  it('G17 on the preset: clearance 609.6 mm (the cap binds; the room allows 808.4)', () => {
-    expect(Math.abs(topClearanceMm(IKEA_DETOLF) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
-    expect(Math.abs(topClearanceRawMm(IKEA_DETOLF, Number.MAX_VALUE) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
+  it('G17 on the preset: clearance 757.6 mm (the room allows 808.4, less 2 in of hand room; no 24 in cap)', () => {
+    expect(Math.abs(topClearanceMm(IKEA_DETOLF) - 757.6)).toBeLessThanOrEqual(GOLDEN_EPS);
+    expect(Math.abs(topClearanceRawMm(IKEA_DETOLF, 2438.4) - 757.6)).toBeLessThanOrEqual(GOLDEN_EPS);
     expect(Math.abs(2438.4 - IKEA_DETOLF.outer.heightMm - 808.4)).toBeLessThanOrEqual(GOLDEN_EPS);
-    expect(fitsOnTop(IKEA_DETOLF, 609.6)).toBe(true);
-    expect(fitsOnTop(IKEA_DETOLF, 610.6)).toBe(false);
-    // a user ceiling of 1800 mm leaves 170 mm on top (CC9: the ceiling becomes a user setting)
-    expect(fitsOnTop(IKEA_DETOLF, 170, 1800)).toBe(true);
+    expect(fitsOnTop(IKEA_DETOLF, 757.6)).toBe(true);
+    expect(fitsOnTop(IKEA_DETOLF, 758.6)).toBe(false);
+    // a user ceiling of 1800 mm leaves 119.2 mm on top (CC9: the ceiling becomes a user setting)
+    expect(fitsOnTop(IKEA_DETOLF, 119.2, 1800)).toBe(true);
     expect(fitsOnTop(IKEA_DETOLF, 300, 1800)).toBe(false);
     expect(framingHeadroomMm(IKEA_DETOLF, null)).toBe(300);
     expect(Math.abs(framingHeadroomMm(IKEA_DETOLF, 600) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
@@ -309,10 +309,10 @@ describe("v2 golden: Ross's open steel rack (36 x 18 x 72 in, inch-native, never
     expect(flagged).not.toContain('outer');
   });
 
-  it('G17 on the preset: clearance exactly 24 in (96 - 72), and the CC9 headroom golden', () => {
-    expect(Math.abs(topClearanceRawMm(OPEN_STEEL_RACK) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
-    expect(Math.abs(topClearanceMm(OPEN_STEEL_RACK) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
-    expect(fitsOnTop(OPEN_STEEL_RACK, 609.6)).toBe(true);
+  it('G17 on the preset: clearance 24 in (96 - 72) less 2 in of hand room, and the CC9 headroom golden', () => {
+    expect(Math.abs(topClearanceRawMm(OPEN_STEEL_RACK) - 558.8)).toBeLessThanOrEqual(GOLDEN_EPS);
+    expect(Math.abs(topClearanceMm(OPEN_STEEL_RACK) - 558.8)).toBeLessThanOrEqual(GOLDEN_EPS);
+    expect(fitsOnTop(OPEN_STEEL_RACK, 558.8)).toBe(true);
     expect(Math.abs(framingHeadroomMm(OPEN_STEEL_RACK, 417.2) - 457.2)).toBeLessThanOrEqual(GOLDEN_EPS);
   });
 });

@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import {
   CEILING_DEFAULT_MM,
   TOP_CLEARANCE_CAP_MM,
+  TOP_HAND_ROOM_MM,
   HEADROOM_MIN_MM,
   STACK_TOLERANCE_MM,
   FIT_EPSILON_MM,
@@ -76,10 +77,12 @@ function boxOfHeight(heightMm: number): CabinetProfile {
 }
 
 describe('inch constants (CC9 rounding rule: exact x 25.4, never rounded)', () => {
-  it('pins the 24 in cap and the 96 in default ceiling as exact decimals', () => {
+  it('pins the 24 in framing cap, the 2 in hand room and the 96 in default ceiling as exact decimals', () => {
     expect(TOP_CLEARANCE_CAP_MM).toBe(609.6);
+    expect(TOP_HAND_ROOM_MM).toBe(50.8);
     expect(CEILING_DEFAULT_MM).toBe(2438.4);
     expect(inchesToMm(24)).toBe(TOP_CLEARANCE_CAP_MM);
+    expect(inchesToMm(2)).toBe(TOP_HAND_ROOM_MM);
     expect(inchesToMm(96)).toBe(CEILING_DEFAULT_MM);
   });
 
@@ -95,14 +98,15 @@ describe('inch constants (CC9 rounding rule: exact x 25.4, never rounded)', () =
   });
 });
 
-describe('topClearanceMm / topClearanceRawMm (CC9, G17 goldens from camera-out-v3.json cc9)', () => {
-  // camera-out-v3.json (DESIGN-RECOMPUTE, 2026-09-30T01:02Z) cc9.goldens: height, raw, clearance.
+describe('topClearanceMm / topClearanceRawMm (CC9 as TALL1 3a changed it: the room, less 2 in, no 24 in cap)', () => {
+  // CASE-FB3b (Ross TALL1 10-15, "3a"): height, raw, clearance in the 96 in default room. camera-out-v3.json's cc9
+  // goldens capped them at 24 in (609.6 mm); the cap is now only the framing's (framingHeadroomMm).
   it.each([
-    ['Detolf', 1630, 609.6, 609.6],
-    ['rack (72 in)', 1828.8, 609.6, 609.6],
-    ['2000 mm', 2000, 438.4, 438.4],
-    ['room height (96 in)', 2438.4, 0, 0],
-    ['2500 mm', 2500, -61.6, 0],
+    ['Detolf', 1630, 757.6, 757.6],
+    ['rack (72 in)', 1828.8, 558.8, 558.8],
+    ['2000 mm', 2000, 387.6, 387.6],
+    ['room height (96 in)', 2438.4, -50.8, 0],
+    ['2500 mm', 2500, -112.4, 0],
   ])('%s: raw %s -> clearance %s within 1e-6 mm', (_label, heightMm, raw, clearance) => {
     const profile = boxOfHeight(heightMm);
     expect(Math.abs(topClearanceRawMm(profile) - raw)).toBeLessThanOrEqual(GOLDEN_EPS);
@@ -115,10 +119,11 @@ describe('topClearanceMm / topClearanceRawMm (CC9, G17 goldens from camera-out-v
     expect(topClearanceRawMm(profile)).toBe(topClearanceRawMm(profile, 2438.4));
   });
 
-  it('takes a user ceiling: the room binds below the cap, the cap binds above it', () => {
-    expect(topClearanceMm(boxOfHeight(1630), 1800)).toBeCloseTo(170, 9);
-    expect(topClearanceMm(boxOfHeight(2500), 3000)).toBeCloseTo(500, 9);
-    expect(topClearanceMm(boxOfHeight(1630), 3000)).toBe(TOP_CLEARANCE_CAP_MM);
+  it('takes a user ceiling: the room decides, a high one lets a top figure stand over 24 in', () => {
+    expect(topClearanceMm(boxOfHeight(1630), 1800)).toBeCloseTo(119.2, 9);
+    expect(topClearanceMm(boxOfHeight(2500), 3000)).toBeCloseTo(449.2, 9);
+    expect(topClearanceMm(boxOfHeight(1630), 3000)).toBeCloseTo(1319.2, 9);
+    expect(topClearanceMm(boxOfHeight(1630), 3000)).toBeGreaterThan(TOP_CLEARANCE_CAP_MM);
   });
 
   it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
@@ -140,7 +145,7 @@ describe('topClearanceMm / topClearanceRawMm (CC9, G17 goldens from camera-out-v
     },
   );
 
-  it('is never negative and never above the cap, for any finite room and cabinet', () => {
+  it('is never negative and never above the room less the hand room, for any finite room and cabinet', () => {
     fc.assert(
       fc.property(
         fc.double({ min: -5000, max: 10000, noNaN: true }),
@@ -149,8 +154,8 @@ describe('topClearanceMm / topClearanceRawMm (CC9, G17 goldens from camera-out-v
           const profile = boxOfHeight(height);
           const clearance = topClearanceMm(profile, ceiling);
           expect(clearance).toBeGreaterThanOrEqual(0);
-          expect(clearance).toBeLessThanOrEqual(TOP_CLEARANCE_CAP_MM);
           expect(clearance).toBe(Math.max(0, topClearanceRawMm(profile, ceiling)));
+          expect(clearance).toBeLessThanOrEqual(Math.max(0, ceiling - height) + 1e-9);
         },
       ),
     );
@@ -158,11 +163,11 @@ describe('topClearanceMm / topClearanceRawMm (CC9, G17 goldens from camera-out-v
 });
 
 describe('fitsOnTop (G17: a figure over the clearance is a violator)', () => {
-  it('Detolf height: 609.6 mm fits, 610.6 mm (1 mm over) does not', () => {
+  it('Detolf height: 757.6 mm (the room less 2 in) fits, 758.6 mm (1 mm over) does not', () => {
     const detolfHeight = boxOfHeight(1630);
-    expect(fitsOnTop(detolfHeight, 609.6)).toBe(true);
-    expect(fitsOnTop(detolfHeight, 610.6)).toBe(false);
-    expect(fitsOnTop(detolfHeight, 609.6 + 2 * GOLDEN_EPS)).toBe(false);
+    expect(fitsOnTop(detolfHeight, 757.6)).toBe(true);
+    expect(fitsOnTop(detolfHeight, 758.6)).toBe(false);
+    expect(fitsOnTop(detolfHeight, 757.6 + 2 * GOLDEN_EPS)).toBe(false);
   });
 
   it('the 1e-6 mm tolerance is inclusive at its edge', () => {
@@ -174,13 +179,13 @@ describe('fitsOnTop (G17: a figure over the clearance is a violator)', () => {
   it('tolerates float drift within 1e-6 mm (a ceiling typed as 96 * 25.4 on a 72 in rack)', () => {
     const rackHeight = boxOfHeight(1828.8);
     const driftedCeiling = 96 * 25.4; // 2438.3999999999996
-    expect(topClearanceMm(rackHeight, driftedCeiling)).toBeLessThan(609.6);
-    expect(fitsOnTop(rackHeight, 609.6, driftedCeiling)).toBe(true);
+    expect(topClearanceMm(rackHeight, driftedCeiling)).toBeLessThan(558.8);
+    expect(fitsOnTop(rackHeight, 558.8, driftedCeiling)).toBe(true);
   });
 
   it('reads the clearance against the ceiling it is given, not the 96 in default (CC9 user ceiling)', () => {
-    const detolfHeight = boxOfHeight(1630); // 1800 mm room: clearance 170 mm; the default room allows 609.6
-    expect(fitsOnTop(detolfHeight, 170, 1800)).toBe(true);
+    const detolfHeight = boxOfHeight(1630); // 1800 mm room: clearance 119.2 mm; the default room allows 757.6
+    expect(fitsOnTop(detolfHeight, 119.2, 1800)).toBe(true);
     expect(fitsOnTop(detolfHeight, 300, 1800)).toBe(false);
     expect(fitsOnTop(detolfHeight, 300)).toBe(true);
   });
@@ -215,8 +220,9 @@ describe('framingHeadroomMm (CC9 headroom goldens from camera-out-v3.json cc9)',
   it.each([
     ['Detolf, new user (nothing on top)', 1630, null, 300],
     ["rack, v2's tallest top figure (417.2 mm)", 1828.8, 417.2, 457.2],
-    ['Detolf, a 600 mm top figure (cap binds)', 1630, 600, 609.6],
-    ['2200 mm cabinet (clearance under 300 binds)', 2200, null, 238.4],
+    ['Detolf, a 600 mm top figure (framing cap binds)', 1630, 600, 609.6],
+    ['2200 mm cabinet (clearance under 300 binds)', 2200, null, 187.6],
+    ['Detolf, a 700 mm top figure (the framing cap binds, not the room)', 1630, 700, 609.6],
     ['2500 mm cabinet (no usable top)', 2500, null, 0],
   ])('%s -> %s mm', (_label, heightMm, tallest, headroom) => {
     expect(Math.abs(framingHeadroomMm(boxOfHeight(heightMm), tallest) - headroom)).toBeLessThanOrEqual(GOLDEN_EPS);
@@ -227,8 +233,8 @@ describe('framingHeadroomMm (CC9 headroom goldens from camera-out-v3.json cc9)',
     expect(framingHeadroomMm(boxOfHeight(1630), 300)).toBe(340);
   });
 
-  it('passes the ceiling through to the clearance cap', () => {
-    expect(framingHeadroomMm(boxOfHeight(1630), null, 1830)).toBeCloseTo(200, 9);
+  it('passes the ceiling through to the clearance (the room, less 2 in)', () => {
+    expect(framingHeadroomMm(boxOfHeight(1630), null, 1830)).toBeCloseTo(149.2, 9);
   });
 
   it('frames the 300 mm minimum above a top that takes nothing, as above an empty one (top.usable is not read)', () => {

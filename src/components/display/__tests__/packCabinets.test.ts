@@ -38,7 +38,7 @@ describe('surfaceSlots', () => {
     expect(slots.map((s) => s.surfaceIndex)).toEqual([4, 3, 2, 1, 0]);
     const [top, shelf4, , , base] = slots;
     expect(top).toMatchObject({ isTop: true, widthMm: 430, depthMm: 370, frontZMm: 0 });
-    expect(top.maxHeightMm).toBeCloseTo(609.6, 6);
+    expect(top.maxHeightMm).toBeCloseTo(757.6, 6);
     // glass shelves carry the 383 x 290 plate, 20 mm back from the front
     expect(shelf4).toMatchObject({ isTop: false, widthMm: 383, depthMm: 290, frontZMm: -20, maxHeightMm: 378 });
     // the base floor is wood: the whole interior
@@ -74,13 +74,14 @@ describe('fitCheck (FIT-CHECK)', () => {
   });
 
   // (the stock shelves: CASE-FB2b's taken-out shelves, on by default, have their own tests below)
-  it('a figure taller than every compartment but within the 24 in clearance goes on the top only', () => {
+  it('a figure taller than every compartment but within the room above goes on the top only (no 24 in cap)', () => {
     expect(fitCheck(IKEA_DETOLF, item(0, 450), undefined, false).verdict).toBe('top-only');
     expect(fitCheck(IKEA_DETOLF, item(0, 609.6), undefined, false).verdict).toBe('top-only');
+    expect(fitCheck(IKEA_DETOLF, item(0, 757.6), undefined, false).verdict).toBe('top-only');
   });
 
-  it('a known too-tall figure is flagged in the Detolf: 1 mm over the 609.6 mm clearance', () => {
-    const r = fitCheck(IKEA_DETOLF, item(0, 610.6), undefined, false);
+  it('a known too-tall figure is flagged in the Detolf: 1 mm over the 757.6 mm the room leaves', () => {
+    const r = fitCheck(IKEA_DETOLF, item(0, 758.6), undefined, false);
     expect(r.verdict).toBe('too-tall');
     expect(r.tooTall).toBe(true);
   });
@@ -150,7 +151,7 @@ describe('packCabinets', () => {
   });
 
   it('the top takes a figure of exactly the clearance; 1 mm over is a violator, never placed', () => {
-    const { cabinets, violators } = packCabinets([item(0, 609.6), item(1, 610.6)], [IKEA_DETOLF], undefined, AS_BEFORE);
+    const { cabinets, violators } = packCabinets([item(0, 757.6), item(1, 758.6)], [IKEA_DETOLF], undefined, AS_BEFORE);
     expect(violators).toEqual([{ item: expect.objectContaining({ index: 1 }), reason: 'too-tall' }]);
     expect(cabinets[0].surfaces.flatMap((s) => s.items.map((p) => p.item.index))).toEqual([0]);
   });
@@ -534,11 +535,11 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     expect.soft(idle, 'tiers holding no tall figure').toEqual([]);
     expect.soft(cabinets.every((c) => (c.profile.layout?.removed.length ?? 0) === 0 || tiers(c).length > 0)).toBe(true);
     // about as few cabinets as the figures fill: within half again of the fewest any mix of layouts could hold them in,
-    // counting only widths (lowerBound), and far fewer than with the tops alone, where 35 stood nowhere
+    // counting only widths (lowerBound), and far fewer than with the tops alone, where 36 stood nowhere
     const bound = lowerBound(items);
     expect.soft(cabinets.length, `the width bound is ${bound}`).toBeLessThanOrEqual(Math.ceil(bound * 1.5));
     const topsOnly = packCabinets(items, [IKEA_KLINGSBO], undefined, { tallOnOpenedTops: true, shelfRemoval: false });
-    expect.soft(topsOnly.violators).toHaveLength(35);
+    expect.soft(topsOnly.violators).toHaveLength(36);
     expect.soft(cabinets.length, `${topsOnly.cabinets.length} with the tops alone`).toBeLessThan(topsOnly.cabinets.length * 0.7);
   });
 
@@ -600,18 +601,23 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     expect(fitCheck(IKEA_KLINGSBO, item(0, 200, 100)).verdict).toBe('fits');
     // the rack: a beam out makes room for it too (Ross 10-17); off, its top only
     expect(fitCheck(OPEN_STEEL_RACK, item(0, 600, 160)).verdict).toBe('needs-tier');
-    expect(fitCheck(OPEN_STEEL_RACK, item(0, 600, 160), undefined, false).verdict).toBe('top-only');
+    expect(fitCheck(OPEN_STEEL_RACK, item(0, 600, 160), undefined, false).verdict).toBe('too-tall');
     // off: as before CASE-FB2b
     expect(fitCheck(IKEA_KLINGSBO, item(0, 425, 160), undefined, false).verdict).toBe('top-only');
+    // the rack's top takes 558.8 mm (the room less 2 in), less than its tallest compartment: 600 mm is a tier's or nothing's
   });
 
   it('the Detolf takes out its glass too; the rack sends a tall figure its top holds there, taking nothing out', () => {
-    // 700 mm: over the Detolf's top (24 in) and its tallest compartment (396 mm): only a shelf out takes it
-    const detolf = packCabinets([...Array.from({ length: 4 }, (_, i) => item(i, 200, 100)), item(4, 700, 200)], [IKEA_DETOLF]);
+    // 780 mm: over the Detolf's top (757.6 mm, the room less 2 in) and its tallest compartment (396 mm): one shelf out (787 mm) takes it
+    const detolf = packCabinets([...Array.from({ length: 4 }, (_, i) => item(i, 200, 100)), item(4, 780, 200)], [IKEA_DETOLF]);
     expect(detolf.cabinets.some((c) => (c.profile.layout?.removed.length ?? 0) === 1)).toBe(true);
-    // over the rack's tallest compartment (590.55 mm under its top), within its top's 24 in
-    const rack = packCabinets([item(0, 200, 100), item(1, 600, 200)], [OPEN_STEEL_RACK]);
-    expect(rack.cabinets[0].surfaces.find((s) => s.slot.isTop)!.items.map((p) => p.item.index)).toContain(1);
+    // 700 mm: over its tallest compartment, within its top's room: the top takes it, nothing comes out
+    const detolfTop = packCabinets([...Array.from({ length: 4 }, (_, i) => item(i, 200, 100)), item(4, 700, 200)], [IKEA_DETOLF]);
+    expect(detolfTop.cabinets[0].surfaces.find((s) => s.slot.isTop)!.items.map((p) => p.item.index)).toContain(4);
+    expect(detolfTop.cabinets.every((c) => c.profile.layout === undefined)).toBe(true);
+    // the rack's tallest compartment (590.55 mm under its top) is over its top's room (558.8 mm): a figure one takes, the other does
+    const rack = packCabinets([item(0, 200, 100), item(1, 575, 200)], [OPEN_STEEL_RACK]);
+    expect(rack.cabinets[0].surfaces.find((s) => !s.slot.isTop && s.items.some((p) => p.item.index === 1))).toBeDefined();
     expect(rack.cabinets.every((c) => c.profile.layout === undefined)).toBe(true);
   });
 

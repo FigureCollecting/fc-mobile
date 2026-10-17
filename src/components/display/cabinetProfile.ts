@@ -11,14 +11,17 @@
  * invariant: a preset added as data only is covered by it (G19).
  *
  * CC9 (Ross 2026-09-29): rooms are about 8 ft and most cabinets have about
- * 2 ft of top clearance. topClearanceMm = max(0, min(24 in, ceiling - outer
- * height)), ceiling 96 in by default (a user setting later). Inch constants
+ * 2 ft of top clearance. CASE-FB3b (Ross TALL1, 2026-10-15, "3a"): the room
+ * decides, no 24 in cap: topClearanceMm = max(0, ceiling - outer height - 2 in
+ * of hand room), ceiling 96 in by default (a user setting). Inch constants
  * and inch-native presets are exact (x 25.4), never rounded to whole mm;
  * round only for display.
  */
 
-/** 24 in: the CC9 cap on what may stand on a cabinet's top. Never 610. */
+/** 24 in: the most headroom the camera frames above a cabinet's top (framingHeadroomMm); once CC9's cap on what may stand there. Never 610. */
 export const TOP_CLEARANCE_CAP_MM = 609.6;
+/** 2 in: the room kept between a figure on a cabinet's top and the ceiling (TALL1 3a). */
+export const TOP_HAND_ROOM_MM = 50.8;
 /** 96 in: the CC9 default room ceiling (an 8 ft room). */
 export const CEILING_DEFAULT_MM = 2438.4;
 /** v1 framing rule: headroom = max(300, tallest top figure + 40), now capped by the clearance. */
@@ -224,14 +227,14 @@ function requireFinite(value: number, what: string): void {
   if (!Number.isFinite(value)) throw new RangeError(`${what} must be a finite number of mm, got ${value}`);
 }
 
-/** CC9 before the floor: min(24 in, ceiling - outer height). Negative = taller than the room. */
+/** The room above a cabinet before the floor: ceiling - outer height - 2 in. Negative = no room for a hand. */
 export function topClearanceRawMm(profile: HasOuterHeight, ceilingMm: number = CEILING_DEFAULT_MM): number {
   requireFinite(ceilingMm, 'ceilingMm');
-  return Math.min(TOP_CLEARANCE_CAP_MM, ceilingMm - profile.outer.heightMm);
+  return ceilingMm - profile.outer.heightMm - TOP_HAND_ROOM_MM;
 }
 
 /**
- * CC9: max(0, min(24 in, ceiling - outer height)): how tall a figure may stand
+ * TALL1 3a: max(0, ceiling - outer height - 2 in): how tall a figure may stand
  * on the top. A non-finite ceiling or outer height throws (RangeError); the
  * raw value above does not check the height, so G19 can name it instead.
  */
@@ -254,9 +257,12 @@ export function fitsOnTop(profile: CabinetProfile, figureHeightMm: number, ceili
 }
 
 /**
- * CC9 framing headroom above the top: min(clearance, max(300, tallest top
- * figure + 40)), from the UNFILTERED collection; null = nothing on the top.
- * top.usable is not read: a top that takes nothing is framed like an empty one.
+ * CC9 framing headroom above the top: min(24 in, clearance, max(300, tallest
+ * top figure + 40)), from the UNFILTERED collection; null = nothing on the
+ * top. top.usable is not read: a top that takes nothing is framed like an
+ * empty one. The 24 in cap is the framing's (the room's clearance may be more:
+ * the wall camera, measured at up to 24 in of headroom, stays as it was); a
+ * figure standing higher is cropped at the frame's top until the camera lifts.
  */
 export function framingHeadroomMm(
   profile: HasOuterHeight,
@@ -268,7 +274,7 @@ export function framingHeadroomMm(
     requireFinite(tallestTopFigureMm, 'tallestTopFigureMm');
     wanted = Math.max(HEADROOM_MIN_MM, tallestTopFigureMm + HEADROOM_PAD_MM);
   }
-  return Math.min(topClearanceMm(profile, ceilingMm), wanted);
+  return Math.min(TOP_CLEARANCE_CAP_MM, topClearanceMm(profile, ceilingMm), wanted);
 }
 
 /** Clear height of each compartment, bottom to top: the next surface's underside minus this surface's top. */
@@ -381,7 +387,8 @@ export function checkCabinetProfile(profile: CabinetProfile, ceilingMm: number =
     ['gap', clearHeightsMm(profile).every((c) => c >= 0)],
     ['top-height', top !== undefined && Math.abs(top.topMm - outer.heightMm) <= STACK_TOLERANCE_MM],
     ['stack-sum', Math.abs(stackSumMm(profile) - outer.heightMm) <= STACK_TOLERANCE_MM],
-    ['clearance', topClearanceRawMm(profile, ceilingMm) >= 0],
+    // the cabinet stands in the room (the 2 in of hand room above it is a figure's, not the cabinet's)
+    ['clearance', topClearanceRawMm(profile, ceilingMm) + TOP_HAND_ROOM_MM >= 0],
     ['interior', interiorOk(profile)],
     ['footprint', footprintOk(profile)],
   ];

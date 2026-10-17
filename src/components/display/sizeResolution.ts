@@ -60,10 +60,26 @@ export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
   return null;
 }
 
+export type WidthCapBasis = 'length' | 'scale';
+
+/**
+ * CASE-FB3b: the widest a figure's footprint can be when its width is not labeled, from what is: its labeled length L
+ * (MFC's "L" lands in depth: the long side of the footprint), else the scale's nominal character height (1600 mm / n),
+ * a figure being no longer than it is tall as a character at that scale. null when a width is labeled (never capped) or
+ * nothing is (a picture's shape and the default height are all there is).
+ */
+export function resolveWidthCap(figure: Figure): { capMm: number; basis: WidthCapBasis } | null {
+  if (isPositiveFinite(figure.dimensions?.widthMm)) return null;
+  const length = figure.dimensions?.depthMm;
+  if (isPositiveFinite(length)) return { capMm: length, basis: 'length' };
+  const fraction = parseScaleFraction(figure.scale);
+  return fraction ? { capMm: fraction * NOMINAL_CHARACTER_HEIGHT_MM, basis: 'scale' } : null;
+}
+
 /** Typical depth-to-width ratio for a figure's footprint — Ross's estimate
  *  for a "normal" figure stance, used when a real depth measurement isn't
  *  available (figure_sizing_and_case_dimension_model). */
-const DEPTH_WIDTH_RATIO = 0.65;
+export const DEPTH_WIDTH_RATIO = 0.65;
 
 /** Absolute last-resort width (mm) if literally nothing — no labeled width,
  *  no resolvable height to derive one from — is available. Should be

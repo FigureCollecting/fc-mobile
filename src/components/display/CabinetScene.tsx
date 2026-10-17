@@ -31,13 +31,13 @@ import { getDisplayMeta } from './displayMeta';
 import { framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
 import {
   FIGURE_GAP_MM,
+  describeViolator,
   measureCaseFigure,
   packCabinets,
   wallLayout,
   type PackedCabinet,
   type PlacedFigure,
   type SurfaceSlot,
-  type Violator,
   type WallSlot,
 } from './packCabinets';
 import { cssSceneTransform, type Vec3 } from './caseCamera';
@@ -715,7 +715,6 @@ export interface CabinetSceneProps {
   filterKey?: string;
 }
 
-const REASON: Record<Violator['reason'], string> = { 'too-tall': 'too tall', 'too-wide': 'too wide', 'too-deep': 'too deep' };
 
 function useFrame(ref: { current: HTMLElement | null }, fallback: { width: number; height: number }) {
   const [frame, setFrame] = useState(fallback);
@@ -1203,7 +1202,8 @@ export function CabinetScene({
   );
   const overhangs = draws.filter((d) => d.draw.placed.tooDeep);
   const flagged = packed.violators.length + overhangs.length;
-  const activeName = pattern[0].name;
+  // CASE-FB3b: what the list says of each, with what was measured and from what (describeViolator)
+  const wallName = pattern.length === 1 ? `the ${pattern[0].name}` : 'this wall';
 
   // the room: its back wall from the floor to the ceiling the View card sets (CASE-FB1 item 3), its floor and ceiling
   const room = roomBox(wall, ceilingMm);
@@ -1350,7 +1350,7 @@ export function CabinetScene({
           <ul>
             {packed.violators.map((v) => (
               <li key={v.item.figure._id}>
-                {v.item.figure.name}: {REASON[v.reason]} for the {activeName}
+                {v.item.figure.name}: {describeViolator(v, pattern, ceilingMm)}, for {wallName}
               </li>
             ))}
             {overhangs.map(({ draw }) => (

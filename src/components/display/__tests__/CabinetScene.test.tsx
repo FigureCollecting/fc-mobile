@@ -523,8 +523,10 @@ describe('CabinetScene: the scene is the space its page gives it, and the camera
 });
 
 describe('CabinetScene: will it fit (FIT-CHECK)', () => {
-  const tall = { ...FIXTURE_FIGURES[0], _id: 'tall', name: 'Tall Statue', dimensions: { heightMm: 700 } } as Figure;
-  const deep = { ...FIXTURE_FIGURES[1], _id: 'deep', name: 'Deep Diorama', dimensions: { heightMm: 200, depthMm: 420 } } as Figure;
+  // taller than any place: the top's room less 2 in (587.6 mm) and the tallest tier (the KLINGSBO with its four glass shelves out, 1351 mm)
+  const tall = { ...FIXTURE_FIGURES[0], _id: 'tall', name: 'Tall Statue', dimensions: { heightMm: 1500 } } as Figure;
+  // deeper than any place is wide or deep, turned or not (the top takes 450 x 400)
+  const deep = { ...FIXTURE_FIGURES[1], _id: 'deep', name: 'Deep Diorama', dimensions: { heightMm: 200, depthMm: 520 } } as Figure;
 
   it('flags figures that fit nowhere in the active profile, never drawing them', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
@@ -536,6 +538,20 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
     expect(fit.textContent).toContain('too deep');
     expect(fit.textContent).toContain('IKEA KLINGSBO');
     expect(figureButtons(host).map((b) => b.getAttribute('aria-label'))).not.toContain('Tall Statue');
+  });
+
+  it('says what was measured and from what: the reason, the size and where it came from, the most any place takes, and the wall (CASE-FB3b)', () => {
+    const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
+    const lines = Array.from(host.querySelectorAll('.cabinet-scene__fit li'), (li) => li.textContent);
+    expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1351 mm, for the IKEA KLINGSBO glass-door cabinet');
+    expect(lines).toContain('Deep Diorama: too deep: 520 mm, labeled; the deepest place takes 400 mm, for the IKEA KLINGSBO glass-door cabinet');
+  });
+
+  it('a wall of several cabinets names none of them: this wall', () => {
+    const giant = { ...FIXTURE_FIGURES[0], _id: 'giant', name: 'Giant', dimensions: { heightMm: 2400 } } as Figure;
+    const { host } = scene([...FIXTURE_FIGURES, giant], { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    const line = host.querySelector('.cabinet-scene__fit li')!.textContent!;
+    expect(line).toMatch(/^Giant: too tall: 2400 mm, labeled; the most any place takes is [\d.]+ mm, for this wall$/);
   });
 
   it('one misfit reads in the singular', () => {

@@ -285,6 +285,28 @@ const watchTransitions = (page: Page) =>
     layer.addEventListener('transitionend', (e) => (e as TransitionEvent).propertyName === 'transform' && w.__zoomTransitions.end.push(performance.now()));
   });
 const transitions = (page: Page) => page.evaluate(() => (window as unknown as { __zoomTransitions: { run: number[]; end: number[] } }).__zoomTransitions);
+
+interface ScaleSamples {
+  from: number;
+  samples: { t: number; k: number }[];
+}
+/** Sample the zoom layer's drawn scale every frame from now (ms on the page clock; 1 with no transform), for at most 600 frames. */
+const watchScale = (page: Page) =>
+  page.locator('.cabinet-scene__zoom').evaluate((layer) => {
+    const w = window as unknown as { __zoomScale: ScaleSamples };
+    const mine: ScaleSamples = { from: performance.now(), samples: [] };
+    w.__zoomScale = mine;
+    const frame = () => {
+      if (w.__zoomScale !== mine) return;
+      const m = getComputedStyle(layer).transform;
+      mine.samples.push({ t: performance.now(), k: m === 'none' ? 1 : new DOMMatrixReadOnly(m).a });
+      if (mine.samples.length < 600) requestAnimationFrame(frame);
+    };
+    frame();
+  });
+const scaleSamples = (page: Page) => page.evaluate(() => (window as unknown as { __zoomScale: ScaleSamples }).__zoomScale);
+/** Frames drawn strictly between 1x and `start`: the reset animated rather than jumped. */
+const between = (s: ScaleSamples, start: number) => s.samples.filter((f) => f.k > 1 + 1e-3 && f.k < start - 1e-3);
 const layerTransform = (page: Page) => page.locator('.cabinet-scene__zoom').evaluate((l) => getComputedStyle(l).transform);
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -384,16 +406,21 @@ test('(c) a double-tap on an empty spot and the Reset view chip each return to 1
   await pinchAbout(page, mid, 40, 100);
   expect((await zoomOf(page)).k).toBeCloseTo(2.5, 1);
 
-  // the double-tap: back to 1x through a transition of about 200 ms
+  // the double-tap: back to 1x through a transition (about 200 ms; its measured length on a loaded runner ranged
+  // 140 to 419 ms, so it is held to finishing within 1 s and to drawing at least one frame between the two scales)
   const spot = await emptySpot(page);
+  const start = (await zoomOf(page)).k;
   await watchTransitions(page);
+  await watchScale(page);
   await touchDoubleTap(page, spot.x, spot.y);
   expect(await zoomOf(page)).toEqual({ k: 1, x: 0, y: 0 });
   await expect.poll(async () => (await transitions(page)).end.length, { timeout: 2_000 }).toBe(1);
-  const t = await transitions(page);
-  expect(t.run).toHaveLength(1);
-  expect(t.end[0]! - t.run[0]!).toBeGreaterThanOrEqual(150);
-  expect(t.end[0]! - t.run[0]!).toBeLessThanOrEqual(400);
+  expect((await transitions(page)).run).toHaveLength(1);
+  const drawn = await scaleSamples(page);
+  const back = drawn.samples.find((f) => f.k === 1);
+  expect(back, 'drawn back at exactly 1x').toBeDefined();
+  expect(back!.t - drawn.from, 'back at 1x within 1 s of the double-tap').toBeLessThanOrEqual(1_000);
+  expect(between(drawn, start).length, 'a frame between: animated, not instant').toBeGreaterThan(0);
   expect(await layerTransform(page)).toBe('none');
   await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
 
@@ -435,9 +462,13 @@ test('(c) with reduced motion the double-tap and the chip return to 1x at once, 
   const mid = centre(await frameBox(page));
   await pinchAbout(page, mid, 40, 100);
   const spot = await emptySpot(page);
+  const start = (await zoomOf(page)).k;
   await watchTransitions(page);
+  await watchScale(page);
   await touchDoubleTap(page, spot.x, spot.y);
   expect(await layerTransform(page)).toBe('none');
+  // instant: no frame drawn between the two scales
+  expect(between(await scaleSamples(page), start)).toEqual([]);
   await pinchAbout(page, mid, 40, 100);
   const chip = centre((await page.getByRole('button', { name: 'Reset view' }).boundingBox())!);
   await touchTap(page, chip.x, chip.y);

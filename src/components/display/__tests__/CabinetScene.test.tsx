@@ -551,7 +551,7 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
     const giant = { ...FIXTURE_FIGURES[0], _id: 'giant', name: 'Giant', dimensions: { heightMm: 2400 } } as Figure;
     const { host } = scene([...FIXTURE_FIGURES, giant], { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
     const line = host.querySelector('.cabinet-scene__fit li')!.textContent!;
-    expect(line).toMatch(/^Giant: too tall: 2400 mm, labeled; the most any place takes is \d+ mm, for this wall$/);
+    expect(line).toMatch(/^Giant: too tall: 2400 mm, labeled; the most any place takes is [\d.]+ mm, for this wall$/);
   });
 
   it('one misfit reads in the singular', () => {

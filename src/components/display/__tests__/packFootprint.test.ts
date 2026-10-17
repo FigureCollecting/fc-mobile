@@ -197,6 +197,23 @@ describe('what the list says', () => {
     expect(listed(fig('Estimated tall', {}, '1/1'), 0.3)).toBe('too tall: 1600 mm estimated from its 1/1 scale; the most any place takes is 1351 mm');
   });
 
+  it('too wide, capped: a labeled length or a scale that bounds the picture still over every place says so', () => {
+    // L=500, an estimated height gives way to it: 500 mm wide, over the top's 450
+    expect(listed(fig('Long', { depthMm: 500 }), 3)).toBe('too wide: 500 mm, capped at its labeled length; the widest place takes 450 mm');
+    // 1/2 scale: its nominal 800 mm
+    expect(listed(fig('Half', {}, '1/2'), 3)).toBe("too wide: 800 mm capped at its scale's height; the widest place takes 450 mm");
+  });
+
+  it('where each measure fits some place but none takes them all, the closest place says how far over', () => {
+    // 600 tall (a tier takes it), 430 wide (the top takes it): the top is the closest, 588 over its 587.6 mm
+    expect(listed(fig('In between', { heightMm: 600, widthMm: 430, depthMm: 100 }), 1)).toBe('too tall: 600 mm, labeled; no place takes all of it, the closest takes 587.6 mm');
+  });
+
+  it('a depth the labels do not give is said to come from the width', () => {
+    const hand: CaseFigure = { figure: fig('Hand', {}), index: 0, heightMm: 100, widthMm: 100, billboardWidthMm: 100, depthMm: 500, heightEstimated: false };
+    expect(describeViolator({ item: hand, reason: 'too-deep' }, pattern)).toBe('too deep: 500 mm estimated from its width; the deepest place takes 400 mm');
+  });
+
   it('too deep: a labeled length', () => {
     expect(listed(fig('Deep', { heightMm: 100, widthMm: 100, depthMm: 500 }), 1)).toBe('too deep: 500 mm, labeled; the deepest place takes 400 mm');
   });

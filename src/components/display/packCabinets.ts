@@ -294,12 +294,17 @@ function placesOf(profile: CabinetProfile, ceilingMm: number, shelfRemoval: bool
  * height, width and depth that is over every place's (the real reason, tiers and tops counted), else, where each fits
  * some place but none takes them all, the dimension it overshoots most at the closest place.
  */
-function violation(item: CaseFigure, pattern: readonly CabinetProfile[], ceilingMm: number, shelfRemoval: boolean): { reason: ViolatorReason; limitMm: number } {
+function violation(
+  item: CaseFigure,
+  pattern: readonly CabinetProfile[],
+  ceilingMm: number,
+  shelfRemoval: boolean,
+): { reason: ViolatorReason; limitMm: number; combined: boolean } {
   const places = pattern.flatMap((p) => placesOf(p, ceilingMm, shelfRemoval));
   const most = { tall: Math.max(...places.map((x) => x.maxHeightMm)), wide: Math.max(...places.map((x) => x.widthMm)), deep: Math.max(...places.map((x) => x.depthMm)) };
-  if (!within(item.heightMm, most.tall)) return { reason: 'too-tall', limitMm: most.tall };
-  if (!within(item.widthMm, most.wide)) return { reason: 'too-wide', limitMm: most.wide };
-  if (!within(item.depthMm, most.deep)) return { reason: 'too-deep', limitMm: most.deep };
+  if (!within(item.heightMm, most.tall)) return { reason: 'too-tall', limitMm: most.tall, combined: false };
+  if (!within(item.widthMm, most.wide)) return { reason: 'too-wide', limitMm: most.wide, combined: false };
+  if (!within(item.depthMm, most.deep)) return { reason: 'too-deep', limitMm: most.deep, combined: false };
   // none over every place: the place it overshoots least, and what it overshoots there
   let best: { over: number; reason: ViolatorReason; limitMm: number } | null = null;
   for (const x of places) {
@@ -310,10 +315,10 @@ function violation(item: CaseFigure, pattern: readonly CabinetProfile[], ceiling
     ].reduce((a, b) => (b.over > a.over ? b : a));
     if (best === null || over.over < best.over) best = over;
   }
-  return best!;
+  return { reason: best!.reason, limitMm: best!.limitMm, combined: true };
 }
 
-const mm = (v: number): string => `${Math.round(v)} mm`;
+const mm = (v: number): string => `${Math.round(v * 10) / 10} mm`;
 
 /**
  * CASE-FB3b: what the "does not fit" list says of a violator: its reason, the measure that is over, where the measure
@@ -321,19 +326,21 @@ const mm = (v: number): string => `${Math.round(v)} mm`;
  */
 export function describeViolator(v: Violator, pattern: readonly CabinetProfile[], ceilingMm: number = CEILING_DEFAULT_MM, shelfRemoval: boolean = TALL_SHELF_REMOVAL_DEFAULT): string {
   const { item } = v;
-  const { limitMm } = violation(item, pattern, ceilingMm, shelfRemoval);
-  if (v.reason === 'too-tall') {
+  const { reason, limitMm, combined } = violation(item, pattern, ceilingMm, shelfRemoval);
+  // each measure fits some place but no place takes them all: the closest place says how far over
+  const limit = (most: string): string => (combined ? `no place takes all of it, the closest takes ${mm(limitMm)}` : `${most} ${mm(limitMm)}`);
+  if (reason === 'too-tall') {
     const how = !item.heightEstimated ? ', labeled' : item.figure.scale ? ` estimated from its ${item.figure.scale} scale` : ', the default (no size known)';
-    return `too tall: ${mm(item.heightMm)}${how}; the most any place takes is ${mm(limitMm)}`;
+    return `too tall: ${mm(item.heightMm)}${how}; ${limit('the most any place takes is')}`;
   }
-  if (v.reason === 'too-wide') {
+  if (reason === 'too-wide') {
     const basis = item.widthBasis ?? 'labeled';
     const how =
       basis === 'labeled' ? ', labeled' : basis === 'photo' ? " from the photo's shape, no labeled width" : basis === 'length' ? ', capped at its labeled length' : " capped at its scale's height";
-    return `too wide: ${mm(item.widthMm)}${how}; the widest place takes ${mm(limitMm)}`;
+    return `too wide: ${mm(item.widthMm)}${how}; ${limit('the widest place takes')}`;
   }
   const how = positive(item.figure.dimensions?.depthMm) ? ', labeled' : ' estimated from its width';
-  return `too deep: ${mm(item.depthMm)}${how}; the deepest place takes ${mm(limitMm)}`;
+  return `too deep: ${mm(item.depthMm)}${how}; ${limit('the deepest place takes')}`;
 }
 
 /** The packer's interim rules (caseInterim); a saved layout will set its own. */

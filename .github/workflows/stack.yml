@@ -12,7 +12,8 @@ jobs:
   stack:
     name: Stack harness
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # e2e/screens/case-memory walks a 254-cabinet wall out and back at two panels: about 6 of these minutes
+    timeout-minutes: 40
     if: >-
       github.event_name != 'push'
       || (github.repository_owner == 'FigureCollecting' && (github.ref_name == 'develop' || github.ref_name == 'main'))

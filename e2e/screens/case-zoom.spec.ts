@@ -188,6 +188,42 @@ async function openCase(context: BrowserContext, page: Page): Promise<void> {
   await expect.poll(async () => (await cutOuts(page)).length, { timeout: 120_000 }).toBeGreaterThanOrEqual(4);
   // the 4 s splash takes the touches until it goes
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
+  await settledWall(page);
+}
+
+/**
+ * Wait for a settled wall: the packed wall (data-wall), the figures drawn and the cut-outs among them the same across
+ * two animation frames, and still the same a second later. While pictures land the wall re-packs (428 to 416 cabinets
+ * at the open panel), and a pinch measured across a re-pack misplaces every figure.
+ */
+async function settledWall(page: Page): Promise<void> {
+  const signature = () =>
+    page.locator('.cabinet-scene').evaluate(async (scene) => {
+      const read = () => {
+        const d = (scene as HTMLElement).dataset;
+        const cut = scene.querySelectorAll('button.cab-figure[data-art="masked"][data-grounded="1"]').length;
+        return `${d.wall}|${d.drawnFigures}|${cut}`;
+      };
+      const before = read();
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      return before === read() ? before : null;
+    });
+  let last: string | null = null;
+  let since = Date.now();
+  await expect
+    .poll(
+      async () => {
+        const now = await signature();
+        if (now === null || now !== last) {
+          last = now;
+          since = Date.now();
+          return false;
+        }
+        return Date.now() - since >= 1_000;
+      },
+      { timeout: 120_000, intervals: [250], message: 'a settled wall' },
+    )
+    .toBe(true);
 }
 
 interface Box {

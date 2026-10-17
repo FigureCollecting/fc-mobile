@@ -116,11 +116,12 @@ describe('the static splash markup', () => {
   const html = readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const css = readFileSync(path.join(ROOT, 'src/styles/pre-splash.css'), 'utf8');
 
+  const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // One rule's declarations, whitespace folded.
   const rule = (selector: string): string =>
-    css.match(new RegExp(`(?:^|\\n)${selector.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`))?.[1]?.replace(/\s+/g, ' ').trim() ?? '';
+    css.match(new RegExp(`(?:^|\\n)${escaped(selector)}\\s*\\{([^}]*)\\}`))?.[1]?.replace(/\s+/g, ' ').trim() ?? '';
   const keyframes = (name: string): string =>
-    css.match(new RegExp(`@keyframes ${name}\\s*\\{([\\s\\S]*?\\})\\s*\\}`))?.[1]?.replace(/\s+/g, ' ').trim() ?? '';
+    css.match(new RegExp(`@keyframes ${escaped(name)}\\s*\\{([\\s\\S]*?\\})\\s*\\}`))?.[1]?.replace(/\s+/g, ' ').trim() ?? '';
   const growth = `${SPLASH_GROW_MS - SPLASH_HANDOVER_MS}ms ease-out ${SPLASH_HANDOVER_MS}ms both`;
 
   it('lasts 4 s (Ross, 10-16): the figure grows for 3.5 s, then the splash fades over 0.5 s', () => {

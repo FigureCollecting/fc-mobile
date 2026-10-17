@@ -340,11 +340,12 @@ function Surfaces({ slot }: { slot: WallSlot }) {
           const w = p.plate.widthMm;
           const zf = -p.plate.frontInsetMm;
           const zb = zf - p.plate.depthMm;
-          const framed = s.thicknessMm > 8;
+          // CASE-FB3a: a glass shelf's edge is glass, lit, at its profile's thickness whatever that is: its top is edge-on at
+          // the camera's height, and a dark steel edge left nothing of it to see there
           return (
             <Part key={i} cls="cab-shelf cab-shelf--glass">
               <RimmedFace cls="m-glass-plate" rimCls="m-glass-rim" mm={GLASS_RIM_MM} a={[cx - w / 2, s.topMm, zb]} u={[w, 0, 0]} v={[0, 0, zf - zb]} />
-              <Quad grid={FLAT_GRID} cls={framed ? 'm-steel f-front' : 'm-glass-edge'} a={[cx - w / 2, s.topMm, zf]} u={[w, 0, 0]} v={[0, -s.thicknessMm, 0]} />
+              <Quad grid={FLAT_GRID} cls="m-glass-edge" a={[cx - w / 2, s.topMm, zf]} u={[w, 0, 0]} v={[0, -s.thicknessMm, 0]} />
             </Part>
           );
         }

@@ -103,6 +103,37 @@ const figures = (page: Page) =>
     buttons.map((b) => ({ id: b.getAttribute('data-figure-id')!, cutOut: b.getAttribute('data-art') === 'masked' && b.querySelector('.cab-figure__art--masked') !== null })),
   );
 
+/**
+ * The drawn cabinets standing wholly in the frame that hold figures (data-held) yet draw none, by wall index (the case
+ * draws every figure of a cabinet in view: e2e/case-budget's fill checks; Ross's 11:07 shot showed three such bays).
+ */
+const emptyInView = (page: Page): Promise<number[]> =>
+  page.locator('.cabinet-scene').evaluate((host) => {
+    const f = host.querySelector('.cabinet-scene__frame')!.getBoundingClientRect();
+    const wall = JSON.parse(host.getAttribute('data-wall')!) as number[][];
+    const held = JSON.parse(host.getAttribute('data-held')!) as [number, number, number[]][];
+    const centres = Array.from(host.querySelectorAll('button.cab-figure'), (b) => {
+      const w = JSON.parse(b.getAttribute('data-world')!) as { x0: number; x1: number };
+      return (w.x0 + w.x1) / 2;
+    });
+    const out: number[] = [];
+    for (const c of Array.from(host.querySelectorAll<HTMLElement>('.cab[data-index]'))) {
+      const i = Number(c.dataset.index);
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      for (const q of Array.from(c.querySelectorAll('.q'))) {
+        const r = q.getBoundingClientRect();
+        if (r.width * r.height === 0) continue;
+        x0 = Math.min(x0, r.left);
+        x1 = Math.max(x1, r.right);
+      }
+      const whole = x0 >= f.left && x1 <= f.right;
+      const drawn = centres.filter((x) => x > wall[i]![0]! && x < wall[i]![1]!).length;
+      if (whole && held[i]![0] + held[i]![1] > 0 && drawn === 0) out.push(i);
+    }
+    return out;
+  });
+
 async function openRack(page: Page, size: { width: number; height: number }): Promise<void> {
   await page.addInitScript((pattern) => {
     localStorage.setItem('onboarding_complete', '1');
@@ -155,6 +186,8 @@ async function tileCycles(page: Page, idle: number, drawn: Awaited<ReturnType<ty
     expect(await zoomOf(page), `return ${i}: at 1x`).toEqual({ k: 1, x: 0, y: 0 });
     const again = await figures(page);
     if (JSON.stringify(again) !== JSON.stringify(drawn)) failures.push(`return ${i}: the figures drawn changed (${drawn.length} before, ${again.length} after), or one is no longer its cut-out`);
+    const empty = await emptyInView(page);
+    if (empty.length > 0) failures.push(`return ${i}: cabinets in view drawn empty: ${empty.join(', ')}`);
   }
 }
 
@@ -171,6 +204,7 @@ for (const panel of [open, turned]) {
     const drawn = await figures(page);
     expect(drawn.length, 'figures drawn').toBeGreaterThan(20);
     expect(drawn.every((f) => f.cutOut), 'every figure drawn is its cut-out').toBe(true);
+    expect(await emptyInView(page), 'cabinets in view drawn empty at the start').toEqual([]);
     const idle = await tileMb(page);
     const readings: Reading[] = [];
     const failures: string[] = [];

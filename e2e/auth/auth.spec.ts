@@ -669,7 +669,7 @@ for (const shot of FOLD8_SHOTS) {
     await expect.poll(() => status(page)).toBe('reload-required');
     await expect(reloadBanner(page)).toBeVisible();
     // The static splash covers the page until the app has mounted; frame what the user sees after it.
-    await expect(page.locator('#pre-splash')).toHaveCount(0);
+    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
     const file = testInfo.outputPath(`reload-required-${shot.name}.png`);
     await page.screenshot({ path: file });
     await testInfo.attach(`reload-required-${shot.name}`, { path: file, contentType: 'image/png' });

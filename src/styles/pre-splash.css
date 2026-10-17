@@ -1,29 +1,52 @@
-/* The static splash: painted before any script runs, held and faded once the app mounts (src/pwa/preSplash.ts). */
+/* The static splash: painted before any script runs, held and faded once the app mounts (src/pwa/preSplash.ts).
+   The figure starts at the size the system splash drew it, at the screen's centre where the system drew the
+   icon, holds it for SPLASH_HANDOVER_MS (300 ms), grows ease-out to full size by SPLASH_GROW_MS (3.5 s) as the
+   name below it fades in, then the splash fades over SPLASH_FADE_MS (500 ms). */
 .pre-splash {
+  /* scripts/generate-brand.mjs writes this from deploy/brandArt.ts splashStartHeight */
+  --pre-splash-start-height: 165.8px; /* brand:splash-start */
   position: fixed;
   inset: 0;
   z-index: 9998;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1.25rem;
   background: #0a0a0a;
-  transition: opacity 300ms ease-out;
+  transition: opacity 500ms ease-out;
 }
 .pre-splash--hidden { opacity: 0; pointer-events: none; }
-@media (prefers-reduced-motion: reduce) {
-  .pre-splash { transition: none; }
+/* Sized by the figure alone, so the figure stays centred while the name hangs below it. */
+.pre-splash__stack {
+  position: relative;
 }
 .pre-splash__art {
   display: block;
   height: min(46vh, 22rem);
   width: auto;
+  animation: pre-splash-grow 3200ms ease-out 300ms both;
 }
 .pre-splash__text {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-top: 1.25rem;
+  transform: translateX(-50%);
+  white-space: nowrap;
   font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 1.375rem;
   font-weight: 700;
   color: #f0f0f0;
   letter-spacing: -0.01em;
+  animation: pre-splash-name 3200ms ease-out 300ms both;
+}
+@keyframes pre-splash-grow {
+  from { height: var(--pre-splash-start-height); }
+}
+@keyframes pre-splash-name {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pre-splash { transition: none; }
+  .pre-splash__art, .pre-splash__text { animation: none; }
 }

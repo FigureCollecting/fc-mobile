@@ -166,6 +166,8 @@ async function openAs(page: Page, who: Pick<HeldStack, 'stack' | 'user' | 'heads
     })
     .toBe(who.heads.length);
   await expect(page.locator('.case-tabs__tab[data-tab="refine"]')).toBeVisible({ timeout: 30_000 });
+  // the 4 s splash covers the case until it goes
+  await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
 }
 
 const OWNED = 1200;

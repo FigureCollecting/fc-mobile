@@ -1,12 +1,20 @@
 // The static splash in index.html (the figure silhouette over the name) is
-// painted before any script runs. This holds it at least SPLASH_MIN_MS from
-// first paint, then fades it over SPLASH_FADE_MS (src/styles/pre-splash.css
-// uses the same figure). A slow load has already used the minimum, so the
-// fade starts on mount with no extra wait. No inline script: a strict CSP
-// forbids it.
-/** Ross, 10-16: 0.6 s was too short to take in; 2 s. */
-export const SPLASH_MIN_MS = 2000;
-export const SPLASH_FADE_MS = 300;
+// painted before any script runs. Its figure starts at the size Android's
+// system splash drew it (deploy/brandArt.ts splashStartHeight) and holds it for
+// SPLASH_HANDOVER_MS, while Chrome fades its own splash out over the first
+// paint, then grows to full size and the name fades in, SPLASH_GROW_MS from
+// first paint (src/styles/pre-splash.css). This then fades the splash over
+// SPLASH_FADE_MS: SPLASH_MIN_MS in all. A load slower than the growth fades it
+// on mount with no extra wait. With reduced motion the figure stands at full
+// size and the splash goes at once after SPLASH_GROW_MS. No inline script: a
+// strict CSP forbids it.
+/** Chromium WebappSplashController.HIDE_ANIMATION_DURATION_MS: Chrome's splash fades out over the page's first paint. */
+export const SPLASH_HANDOVER_MS = 300;
+/** Ross, 10-16: from first paint until the figure is full size (the hand-over hold, then the growth). */
+export const SPLASH_GROW_MS = 3500;
+export const SPLASH_FADE_MS = 500;
+/** From first paint until the splash is gone: 4 s (Ross, 10-16: "at least 1 s longer" than 2 s, and the figure grows). */
+export const SPLASH_MIN_MS = SPLASH_GROW_MS + SPLASH_FADE_MS;
 
 export interface PreSplashOptions {
   doc?: Document;
@@ -44,7 +52,7 @@ export function dismissPreSplash(options: PreSplashOptions = {}): void {
     setTimeout(() => el.remove(), SPLASH_FADE_MS);
   };
 
-  const wait = Math.max(0, SPLASH_MIN_MS - (current - paintedAt));
+  const wait = Math.max(0, SPLASH_GROW_MS - (current - paintedAt));
   if (wait === 0) hide();
   else setTimeout(hide, wait);
 }

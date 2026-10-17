@@ -81,6 +81,19 @@ describe('Discover: search on the device', () => {
     expect(r.server.calls.length).toBe(calls);
   });
 
+  it('keeps the hits on Enter (Go) and puts the keyboard away: the field lets go of focus (SEARCH-1)', async () => {
+    await seeded();
+    renderWithProviders(<Discover />);
+    const user = await searchFor('miku');
+    const field = screen.getByPlaceholderText(/search your figures/i);
+    await screen.findByRole('list', { name: 'Search results' });
+    expect(field).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(field).not.toHaveFocus();
+    expect(field).toHaveValue('miku');
+    expect(within(screen.getByRole('list', { name: 'Search results' })).getAllByRole('listitem')).toHaveLength(1);
+  });
+
   it('searches offline', async () => {
     await seeded();
     goOffline();

@@ -72,6 +72,10 @@ export function FacetControl({ label, values, selected, onToggle, hint }: FacetC
             placeholder={`Search ${values.length} ${label.toLowerCase()}…`}
             value={query}
             onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+            // Go puts the keyboard away; the matches stay to be tapped
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
             aria-label={`Search ${label}`}
           />
           {matches.length > 0 && (

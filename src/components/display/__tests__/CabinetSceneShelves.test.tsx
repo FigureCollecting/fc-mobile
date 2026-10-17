@@ -56,6 +56,17 @@ describe('CASE-FB2b: a cabinet with shelves out, drawn as it stands', () => {
     });
   }
 
+  it('the scene says what every cabinet holds, drawn or not: figures inside, on its top, the shelves it stands without', () => {
+    const figures = wall(TALL[IKEA_KLINGSBO.id]);
+    const host = scene(figures, IKEA_KLINGSBO.id);
+    const held = JSON.parse(host.dataset.held!) as [number, number, number[]][];
+    expect(held).toHaveLength(JSON.parse(host.dataset.wall!).length);
+    expect(held.reduce((n, [inside, top]) => n + inside + top, 0)).toBe(figures.length);
+    for (const c of Array.from(host.querySelectorAll<HTMLElement>('.cab'))) {
+      expect(held[Number(c.dataset.index)][2].join(',')).toBe(c.dataset.removed ?? '');
+    }
+  });
+
   it('a wall with no figure too tall for a stock shelf takes no shelf out', () => {
     const host = scene(Array.from({ length: 40 }, (_, i) => sized(i, 200, 100)), IKEA_KLINGSBO.id);
     expect(host.querySelectorAll('.cab[data-removed]')).toHaveLength(0);

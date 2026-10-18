@@ -4,7 +4,9 @@ import { motion } from 'framer-motion';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type PhotoSwipe from 'photoswipe';
 import { getDisplayMeta } from './displayMeta';
-import { FigureDetailContent } from './FigureDetailContent';
+import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
+import { FigureRail, readySections } from './figureSections';
+import { RAIL_INSET_PX, RAIL_WIDTH_PX, railHeightPx } from '../ui/SideRail';
 import { Style } from '../../styles/Style';
 import { useSheetDrag } from '../ui/useSheetDrag';
 import { useBackToClose } from '../../hooks/useBackToClose';
@@ -15,6 +17,8 @@ const ON_THE_FIGURE = '.pswp__img, .figure-viewer__plate-name, .figure-viewer__p
 /** The sheet's two detents: all of it up, or down to its summary (name, badges, the way to its copies). */
 const ALL = 0;
 const SUMMARY = 1;
+/** SIDE-RAIL-1: the room kept above the rail on top of its own height: the gap above the sheet and the screen's top bar. */
+const RAIL_ROOM_PX = 12 + 64;
 
 /** translateY px of each detent: up, and down by all but its handle and summary. */
 function infoDetents(sheet: HTMLElement): number[] {
@@ -172,7 +176,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         secondaryZoomLevel: 2,
         maxZoomLevel: 4,
         // the photo stands whole above the Info sheet (STRETCH-FIX), never under it
-        paddingFn: () => ({ top: 0, left: 0, right: 0, bottom: sheetPeekPx(sheetRef.current) }),
+        // and left of the section rail: its width, its inset from the edge and a little air (SIDE-RAIL-1)
+        paddingFn: () => ({ top: 0, left: 0, right: RAIL_INSET_PX + RAIL_WIDTH_PX + 8, bottom: sheetPeekPx(sheetRef.current) }),
         // our own X, always shown (SHEETS-FB1 6c), not PhotoSwipe's, which a tap hides
         close: false,
         // a tap off the figure closes; on it, it shows or hides the zoom and arrows as before
@@ -214,6 +219,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   }, [current]);
 
   const figure = figures[current];
+  const openCopies = useCopiesAction(figure ?? ({} as Figure), closeViewer);
   if (!figure) return null;
 
   // Portaled to document.body so it shares a stacking context with PhotoSwipe
@@ -229,7 +235,22 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         <path d="M6 6l12 12" />
       </svg>
     </button>
-    <motion.div class="figure-viewer-sheet" ref={sheetRef} style={{ y }} data-detent={expanded ? 'all' : 'summary'}>
+    <motion.div
+      class="figure-viewer-sheet"
+      ref={sheetRef}
+      style={{ y, '--rail-room': `${railHeightPx(readySections().length) + RAIL_ROOM_PX}px` }}
+      data-detent={expanded ? 'all' : 'summary'}
+    >
+      {/* SIDE-RAIL-1: the figure card's sections on a right rail, riding the sheet's top edge so it is always above it */}
+      <FigureRail
+        class="figure-viewer-sheet__rail"
+        detailsOpen={expanded}
+        onDetails={() => {
+          setDetent(expanded ? SUMMARY : ALL);
+          settleTo(expanded ? SUMMARY : ALL);
+        }}
+        onCopies={openCopies}
+      />
       <button
         class="figure-viewer-sheet__handle"
         type="button"
@@ -262,6 +283,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           flex-direction: column;
           max-height: 80vh;
           max-height: 80dvh;
+          /* leaves the rail its room above, so it is never pushed off the top of the screen */
+          max-height: min(80dvh, calc(100dvh - var(--rail-room, 0px)));
           background: color-mix(in srgb, var(--surface-secondary) 92%, transparent);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
@@ -270,6 +293,18 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           box-shadow: var(--shadow-lg);
           /* the handle and the rest of the card are the sheet's to drag; its body scrolls */
           touch-action: none;
+        }
+
+        /* the rail: 24 px in from the edge, just above the sheet's top edge (its own height away from it) */
+        .figure-viewer-sheet__rail {
+          position: absolute;
+          right: calc(24px + var(--safe-area-right, 0px));
+          bottom: calc(100% + 12px);
+        }
+
+        /* PhotoSwipe's prev/next arrows stand higher than its default middle, so they never meet the rail */
+        .pswp .pswp__button--arrow {
+          top: 28%;
         }
 
         .figure-viewer-sheet__handle {

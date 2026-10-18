@@ -1,5 +1,7 @@
+import { useRef } from 'preact/hooks';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { FigureDetailContent } from './FigureDetailContent';
+import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
+import { FigureRail } from './figureSections';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 import { useBackToClose } from '../../hooks/useBackToClose';
@@ -24,14 +26,26 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
   // Back and Esc close it too (SHEETS-FB1 6c), unless a card is open over it: they close the one on top
   useBackToClose(onClose);
   const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
+  const pane = useRef<HTMLElement>(null);
+  const openCopies = useCopiesAction(figure);
   return (
-    <aside class="detail-pane">
+    <aside class="detail-pane" ref={pane}>
       <button class="detail-pane__close" type="button" onClick={onClose} aria-label="Close detail">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 6L6 18" />
           <path d="M6 6l12 12" />
         </svg>
       </button>
+
+      {/* SIDE-RAIL-1: the figure card's sections on a right rail, held at the pane's top as it scrolls */}
+      <div class="detail-pane__rail-anchor">
+        <FigureRail
+          class="detail-pane__rail"
+          detailsOpen
+          onDetails={() => pane.current?.querySelector('.figure-viewer-sheet__more')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
+          onCopies={openCopies}
+        />
+      </div>
 
       {imageUrl ? (
         <img class="detail-pane__image" src={imageUrl} alt={figure.name} crossOrigin="anonymous" onError={() => images.failed(imageUrl)} />
@@ -53,6 +67,24 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
           height: 100%;
           overflow-y: auto;
           background: var(--surface-secondary);
+          /* leaves the section rail its room at the right: its width, its 24 px inset and a little air */
+          padding-right: calc(24px + 60px + 8px);
+          box-sizing: border-box;
+        }
+
+        /* held at the pane's top as it scrolls, and reaching out over the room the pane leaves, to the pane's own edge */
+        .detail-pane__rail-anchor {
+          position: sticky;
+          top: 0;
+          height: 0;
+          z-index: 2;
+          margin-right: calc(-1 * (24px + 60px + 8px));
+        }
+
+        .detail-pane__rail {
+          position: absolute;
+          right: calc(24px + var(--safe-area-right, 0px));
+          top: calc(var(--space-2) + 44px);
         }
 
         .detail-pane__close {

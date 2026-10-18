@@ -176,7 +176,7 @@ async function framedBottomPx(page: Page, view: 'wall' | 'cabinet' | 'shelf'): P
 
 type View = 'wall' | 'cabinet' | 'shelf';
 
-/** Open the case in `view`; the shelf view frames shelf 1 (the top's band may not fit, the camera steps back only 3 in, CC4b). */
+/** Open the case in `view`; the shelf view frames shelf 1 (the top step, shelf 0, frames its band up to the ceiling, TOP1). */
 async function openFramed(page: Page, size: { width: number; height: number }, view: View) {
   await openCase(page, size, '&fx=3', { view });
   if (view === 'shelf') {

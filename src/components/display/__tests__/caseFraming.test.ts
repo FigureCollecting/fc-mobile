@@ -4,10 +4,11 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { IN_MM, frameMargins, lensFocalPx, project, startCameraY, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
 import { surfaceSlots, wallLayout, type WallLayout } from '../packCabinets';
-import { sideOverhangMm, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
+import { sideOverhangMm, withShelfLayout, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
 import { WALL_PATTERNS } from '../casePrefs';
 import {
-  STEP_BACK_MAX_MM,
+  FRAME_CEILING_MAX_MM,
+  TOP_BAND_MAX_MM,
   cabinetBox,
   frameCase,
   fullHeightCap,
@@ -41,6 +42,8 @@ import {
   lifted,
   panYLimitsPx,
   roomBox,
+  shelfSteps,
+  topBandTopMm,
   type Box,
   type Framing,
   type FramingInput,
@@ -150,7 +153,7 @@ describe('frameCase: whole cabinets (as many side by side as the one-cabinet dis
   });
 });
 
-describe('frameCase: one shelf (level; CC4b steps back at the top)', () => {
+describe('frameCase: one shelf (level; the top step shows its band up to the ceiling, TOP1)', () => {
   it('a glass shelf of the KLINGSBO: level at the middle of its band, the whole width and height in the margins', () => {
     const wall = wallLayout([IKEA_KLINGSBO]);
     // reading order: 0 = the top, 1 = glass shelf 5, ...
@@ -165,16 +168,22 @@ describe('frameCase: one shelf (level; CC4b steps back at the top)', () => {
     }
   });
 
-  it('CC4b: at the top the camera steps back at most 3 in past the width fit to show a tall top figure', () => {
+  it('TOP1: the top step stands back as far as its whole band needs, past the old 3 in step-back cap, whatever stands on it', () => {
     const wall = wallLayout([IKEA_DETOLF]);
     const crop = frameCase(input({ wall, view: 'shelf', shelf: 0, frame: OPEN, headroomMm: [40] }));
     const tall = frameCase(input({ wall, view: 'shelf', shelf: 0, frame: OPEN, headroomMm: [609.6] }));
-    const dCrop = crop.camera.z - crop.look[2];
-    const dTall = tall.camera.z - tall.look[2];
-    expect(STEP_BACK_MAX_MM).toBe(3 * IN_MM);
-    expect(dTall).toBeGreaterThan(dCrop);
-    expect(dTall - dCrop).toBeLessThanOrEqual(STEP_BACK_MAX_MM + 1e-9);
-    expect(dTall - dCrop).toBeCloseTo(STEP_BACK_MAX_MM, 6);
+    // what stands on the top no longer sets the frame: the ceiling does (topBandTopMm)
+    expect(tall.camera).toEqual(crop.camera);
+    // the band, the top's board up to the ceiling, is whole in the frame on the short, wide open panel
+    const lo = 1630 - 35;
+    for (const y of [lo, CEILING_DEFAULT_MM]) {
+      const p = project(tall.camera, [0, y, 0]);
+      expect(inside(OPEN.width, OPEN.height, p.x, p.y), `y ${y}`).toBe(true);
+    }
+    // so it stands back more than the width fit plus 3 in (CC4b)
+    const m = frameMargins(OPEN);
+    const widthFit = (lensFocalPx(OPEN) * IKEA_DETOLF.outer.widthMm) / 2 / (OPEN.width / 2 - m.x);
+    expect(tall.camera.z - tall.look[2]).toBeGreaterThan(widthFit + 3 * IN_MM);
   });
 
   it('a shelf index past the cabinet is clamped to its lowest surface', () => {
@@ -1522,7 +1531,7 @@ describe('F2: the shelf view stands one camera height per shelf level for the wh
     }
   });
 
-  it('every cabinet\'s band at that level (its shelf up to the one above) stands whole in the frame, centred on it; its top as wide as it stands', () => {
+  it('every cabinet\'s band at that level (its shelf up to the one above; at the top, up to the ceiling) stands whole in the frame, centred on it', () => {
     for (const frame of PANELS) {
       for (let shelf = 0; shelf < 6; shelf++) {
         for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
@@ -1532,13 +1541,13 @@ describe('F2: the shelf view stands one camera height per shelf level for the wh
           const s = slots[Math.min(shelf, slots.length - 1)];
           const surface = slot.profile.surfaces[s.surfaceIndex];
           const lo = surface.topMm - surface.thicknessMm;
-          const hi = s.isTop ? slot.profile.outer.heightMm + headroomMm[focus] : slot.profile.surfaces[s.surfaceIndex + 1].topMm;
+          const hi = s.isTop ? topBandTopMm(slot.profile.outer.heightMm, CEILING_DEFAULT_MM) : slot.profile.surfaces[s.surfaceIndex + 1].topMm;
           const at = `${frame.width}x${frame.height} shelf ${shelf} focus ${focus}`;
           expect(f.camera.x, at).toBe(slot.centerMm);
-          // the top's height is open: the camera steps back at most CC4b's 3 in past the width fit, so there only the
-          // width is held (at the height it aims at)
+          // TOP1: the top's band is whole too (from its board to the ceiling): the camera stands back as far as the
+          // height or the width needs, whichever dictates, never cropping the other
           for (const x of [slot.leftMm, slot.rightMm]) {
-            for (const y of s.isTop ? [f.look[1]] : [lo, hi]) {
+            for (const y of [lo, hi]) {
               const p = project(f.camera, [x, y, 0]);
               expect(inside(f.camera.frame.width, f.camera.frame.height, p.x, p.y), `${at} ${x},${y}`).toBe(true);
             }
@@ -1555,5 +1564,158 @@ describe('F2: the shelf view stands one camera height per shelf level for the wh
     expect(f.camera.pitch).toBe(0);
     expect(f.look[1]).toBeCloseTo((1519 - 17 + 1800) / 2, 9);
     expect(vertical(f)).toEqual(vertical(one));
+  });
+});
+
+describe('SHELF-STEPS-1 (a): the shelf steps are the wall\'s levels, not the focus cabinet\'s own surfaces (Ross 10-18)', () => {
+  const PANELS = [
+    { width: 443, height: 418 },
+    { width: 616, height: 217 },
+    { width: 870, height: 335 },
+    { width: 657, height: 547 },
+  ];
+  /** A cabinet with the glass shelf (beam) at `index` lifted out, as FB2b stands one for a tall figure. */
+  const out = (profile: typeof IKEA_DETOLF, index: number) => withShelfLayout(profile, { removed: [index], moved: [] });
+  // the four mixed walls (and what each profile has: Detolf 5 levels, a shelf out 4; KLINGSBO 7, 6; rack 5, 4)
+  const WALLS: Record<string, { cabinets: (typeof IKEA_DETOLF)[]; steps: number }> = {
+    'Detolf with a shelf out + stock Detolf': { cabinets: [out(IKEA_DETOLF, 1), IKEA_DETOLF], steps: 4 },
+    // the shelf out is not the lowest glass one: the stock cabinet's fifth level is its own picture
+    'Detolf with its middle shelf out + stock Detolf': { cabinets: [out(IKEA_DETOLF, 2), IKEA_DETOLF], steps: 5 },
+    'KLINGSBO with a shelf out + stock KLINGSBO': { cabinets: [out(IKEA_KLINGSBO, 2), IKEA_KLINGSBO], steps: 7 },
+    'rack with a beam out + stock rack': { cabinets: [out(OPEN_STEEL_RACK, 1), OPEN_STEEL_RACK], steps: 4 },
+    'KLINGSBO + Detolf': { cabinets: [IKEA_KLINGSBO, IKEA_DETOLF], steps: 7 },
+  };
+  const base = (cabinets: (typeof IKEA_DETOLF)[], frame: { width: number; height: number }, focus: number, shelf = 0): FramingInput => ({
+    frame,
+    wall: wallLayout(cabinets),
+    headroomMm: cabinets.map(() => 490),
+    view: 'shelf',
+    focus,
+    shelf,
+  });
+
+  for (const [name, { cabinets, steps }] of Object.entries(WALLS)) {
+    describe(name, () => {
+      it(`offers ${steps} steps, the same whichever cabinet is in focus, on every panel`, () => {
+        for (const frame of PANELS) {
+          for (let focus = 0; focus < cabinets.length; focus++) {
+            expect(shelfSteps(base(cabinets, frame, focus)), `${frame.width}x${frame.height} focus ${focus}`).toBe(steps);
+          }
+        }
+      });
+
+      it('every step down frames a different band: no step that looks like the one above it', () => {
+        for (const frame of PANELS) {
+          for (let focus = 0; focus < cabinets.length; focus++) {
+            const n = shelfSteps(base(cabinets, frame, focus));
+            for (let k = 0; k + 1 < n; k++) {
+              const a = frameCase(base(cabinets, frame, focus, k)).camera;
+              const b = frameCase(base(cabinets, frame, focus, k + 1)).camera;
+              expect([b.y, b.z], `${frame.width}x${frame.height} focus ${focus}: step ${k} -> ${k + 1}`).not.toEqual([a.y, a.z]);
+            }
+          }
+        }
+      });
+
+      it('the last step shows every cabinet\'s lowest surface', () => {
+        for (const frame of PANELS) {
+          for (let focus = 0; focus < cabinets.length; focus++) {
+            const f = frameCase(base(cabinets, frame, focus, shelfSteps(base(cabinets, frame, focus)) - 1));
+            cabinets.forEach((profile, i) => {
+              const p = project(f.camera, [f.look[0], profile.surfaces[0].topMm, 0]);
+              expect(inside(frame.width, frame.height, frame.width / 2, p.y), `${frame.width}x${frame.height} focus ${focus} cabinet ${i}: its lowest surface`).toBe(true);
+            });
+          }
+        }
+      });
+    });
+  }
+
+  it('a wall of the same stock cabinets keeps their own count (the Detolf 5, the KLINGSBO 7, the rack 5)', () => {
+    for (const [profile, n] of [[IKEA_DETOLF, 5], [IKEA_KLINGSBO, 7], [OPEN_STEEL_RACK, 5]] as const) {
+      expect(shelfSteps(base([profile, profile], OPEN, 0))).toBe(n);
+    }
+  });
+});
+
+describe('SHELF-STEPS-1 (b) TOP1: the top step shows from the top surface up to the ceiling as set (Ross 10-18)', () => {
+  const PANELS = [
+    { width: 443, height: 418 },
+    { width: 616, height: 217 },
+    { width: 870, height: 335 },
+    { width: 657, height: 547 },
+  ];
+
+  it('Ross\'s bounds: the band above a top is 84 in at most (one named constant), the ceiling never counts past 192 in', () => {
+    expect(TOP_BAND_MAX_MM).toBe(84 * IN_MM);
+    expect(Math.round(TOP_BAND_MAX_MM)).toBe(2134);
+    expect(FRAME_CEILING_MAX_MM).toBe(192 * IN_MM);
+    expect(Math.round(FRAME_CEILING_MAX_MM)).toBe(4877);
+  });
+
+  it('topBandTopMm: up to the ceiling as set; at most 84 in above the top; the ceiling capped at 192 in; none when the ceiling is under the top', () => {
+    expect(topBandTopMm(1630, CEILING_DEFAULT_MM)).toBe(CEILING_DEFAULT_MM);
+    expect(topBandTopMm(1630, 3000)).toBe(3000);
+    expect(topBandTopMm(1630, 9000)).toBe(1630 + TOP_BAND_MAX_MM);
+    expect(topBandTopMm(3000, 9000)).toBe(FRAME_CEILING_MAX_MM);
+    expect(topBandTopMm(2000, 1500)).toBe(2000);
+  });
+
+  it('on every wall and panel the top step stands every cabinet\'s top board and the whole way up to the ceiling in the frame, whatever stands on them', () => {
+    const walls = [
+      [IKEA_DETOLF, IKEA_DETOLF],
+      [IKEA_KLINGSBO, IKEA_KLINGSBO],
+      [OPEN_STEEL_RACK, OPEN_STEEL_RACK],
+      [IKEA_KLINGSBO, IKEA_DETOLF],
+      [IKEA_DETOLF, OPEN_STEEL_RACK],
+    ];
+    for (const cabinets of walls) {
+      const wall = wallLayout(cabinets);
+      for (const frame of PANELS) {
+        for (const headroom of [40, 300, 609.6]) {
+          for (let focus = 0; focus < cabinets.length; focus++) {
+            const f = frameCase({ frame, wall, headroomMm: cabinets.map(() => headroom), view: 'shelf', focus, shelf: 0 });
+            const at = `${cabinets.map((c) => c.id).join('+')} ${frame.width}x${frame.height} headroom ${headroom} focus ${focus}`;
+            cabinets.forEach((c, i) => {
+              const board = c.surfaces[c.surfaces.length - 1];
+              for (const y of [board.topMm - board.thicknessMm, topBandTopMm(c.outer.heightMm, CEILING_DEFAULT_MM)]) {
+                expect(inside(frame.width, frame.height, frame.width / 2, project(f.camera, [f.look[0], y, 0]).y), `${at} cabinet ${i} y ${y}`).toBe(true);
+              }
+            });
+          }
+        }
+      }
+    }
+  });
+
+  it('the focus cabinet\'s top step is whole in width too: height or width dictates the distance, the other shows more, never cropped', () => {
+    for (const frame of PANELS) {
+      const wall = wallLayout([IKEA_DETOLF, IKEA_KLINGSBO]);
+      for (let focus = 0; focus < 2; focus++) {
+        const f = frameCase({ frame, wall, headroomMm: [300, 300], view: 'shelf', focus, shelf: 0 });
+        const slot = wall.cabinets[focus];
+        const board = slot.profile.surfaces[slot.profile.surfaces.length - 1];
+        for (const x of [slot.leftMm, slot.rightMm]) {
+          for (const y of [board.topMm - board.thicknessMm, CEILING_DEFAULT_MM]) {
+            const p = project(f.camera, [x, y, 0]);
+            expect(inside(frame.width, frame.height, p.x, p.y), `${frame.width}x${frame.height} focus ${focus} ${x},${y}`).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it('the ceiling as set is the top of the band: a lower ceiling frames closer, a higher one past the 84 in band or 192 in changes nothing', () => {
+    const wall = wallLayout([IKEA_DETOLF]);
+    const at = (ceilingMm: number) => frameCase({ frame: OPEN, wall, headroomMm: [300], view: 'shelf', focus: 0, shelf: 0, ceilingMm }).camera;
+    expect(at(2000).z).toBeLessThan(at(CEILING_DEFAULT_MM).z);
+    expect(at(1630 + TOP_BAND_MAX_MM + 500)).toEqual(at(1630 + TOP_BAND_MAX_MM));
+    expect(at(FRAME_CEILING_MAX_MM + 3000)).toEqual(at(FRAME_CEILING_MAX_MM));
+  });
+
+  it('the shelves below the top are framed as before (their band, no ceiling)', () => {
+    const wall = wallLayout([IKEA_DETOLF]);
+    const f = frameCase({ frame: OPEN, wall, headroomMm: [300], view: 'shelf', focus: 0, shelf: 1 });
+    expect(f.look[1]).toBeCloseTo((1217 - 4 + 1630) / 2, 9);
   });
 });

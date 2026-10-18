@@ -9,9 +9,10 @@
  *  - wall: the same distance, centred on a PAGE of cabinets: as many side by
  *    side as that distance shows, so wide screens show several.
  *  - shelf: level at one shelf level's band (the band all the wall's cabinets
- *    span there), its full width and height in view; at the top, whose height
- *    is open, the camera steps back up to 3 in past the width fit to show a
- *    tall top figure (CC4b = a).
+ *    span there), its full width and height in view, whichever dictates the
+ *    distance and the other showing more; at the top, whose height is open, the
+ *    band runs from its board up to the ceiling as set (TOP1, Ross 10-18:
+ *    TOP_BAND_MAX_MM, FRAME_CEILING_MAX_MM), which replaced CC4b's step-back cap.
  *
  * The screen only picks the distance and how many cabinets share a page;
  * the cabinets, their shelves and the figures never change (Ross 09-26).
@@ -33,7 +34,7 @@
  * the camera with its aim (camera mode, liftLimitsMm) or slides the photo
  * (pan mode, panYLimitsPx), between the floor and the ceiling.
  */
-import { HEADROOM_MIN_MM, sideOverhangMm, CEILING_DEFAULT_MM } from './cabinetProfile';
+import { HEADROOM_MIN_MM, sideOverhangMm, CEILING_DEFAULT_MM, type CabinetProfile } from './cabinetProfile';
 import {
   IN_MM,
   boxCorners,
@@ -52,8 +53,10 @@ import { surfaceSlots, type WallLayout, type WallSlot } from './packCabinets';
 import type { CaseView } from './casePrefs';
 import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, NEAR_MM, clipConvex } from './caseCull';
 
-/** CC4b: how far past the width fit the camera may step back at a cabinet's top. */
-export const STEP_BACK_MAX_MM = 3 * IN_MM;
+/** TOP1 (Ross 10-18): the most the top step shows above a top surface. Ross gave 72 to 96 in; this is the one value to tune. */
+export const TOP_BAND_MAX_MM = 84 * IN_MM;
+/** TOP1: the highest the top step shows up to, however high the ceiling is set. */
+export const FRAME_CEILING_MAX_MM = 192 * IN_MM;
 /** CASE-FB1 item 1: the floor the full-height views keep in sight in front of the cabinets' feet (about a foot). */
 export const FLOOR_STRIP_MM = 300;
 /** A corner within this much of a side margin is inside it. */
@@ -355,38 +358,63 @@ export function wallPages(input: FramingInput): number[][] {
   return pages;
 }
 
-/** One cabinet's band at a shelf level (reading order, clamped to its lowest): its surface up to the one above, or its top up to what stands on it. */
-function shelfBand(input: FramingInput, i: number): { lo: number; hi: number; isTop: boolean } {
-  const { profile } = input.wall.cabinets[i];
-  const slots = surfaceSlots(profile, input.ceilingMm ?? CEILING_DEFAULT_MM);
-  const s = slots[Math.min(Math.max(0, Math.trunc(input.shelf)), slots.length - 1)];
+/**
+ * TOP1: the height the top step shows up to above a cabinet `heightMm` tall: the ceiling as set (at most
+ * FRAME_CEILING_MAX_MM), but no more than TOP_BAND_MAX_MM above the top, and never under the top itself.
+ */
+export function topBandTopMm(heightMm: number, ceilingMm: number): number {
+  return Math.min(heightMm + TOP_BAND_MAX_MM, Math.max(heightMm, Math.min(ceilingMm, FRAME_CEILING_MAX_MM)));
+}
+
+/** One cabinet's band at a shelf level (reading order, clamped to its lowest): its surface up to the one above, or its top up to the ceiling (topBandTopMm). */
+function levelBand(profile: CabinetProfile, level: number, ceilingMm: number): { lo: number; hi: number } {
+  const slots = surfaceSlots(profile, ceilingMm);
+  const s = slots[Math.min(Math.max(0, Math.trunc(level)), slots.length - 1)];
   const surface = profile.surfaces[s.surfaceIndex];
-  const hi = s.isTop ? profile.outer.heightMm + headroomOf(input, i) : profile.surfaces[s.surfaceIndex + 1].topMm;
-  return { lo: surface.topMm - surface.thicknessMm, hi, isTop: s.isTop };
+  const hi = s.isTop ? topBandTopMm(profile.outer.heightMm, ceilingMm) : profile.surfaces[s.surfaceIndex + 1].topMm;
+  return { lo: surface.topMm - surface.thicknessMm, hi };
+}
+
+/** The band every cabinet of the wall spans at a shelf level: the lowest surface to the highest top of any. */
+function wallBand(input: FramingInput, level: number): { lo: number; hi: number } {
+  const ceiling = input.ceilingMm ?? CEILING_DEFAULT_MM;
+  const bands = input.wall.cabinets.map((c) => levelBand(c.profile, level, ceiling));
+  return { lo: Math.min(...bands.map((b) => b.lo)), hi: Math.max(...bands.map((b) => b.hi)) };
+}
+
+/**
+ * The shelf steps the wall offers (the shelf view's camera is per wall level, CASE-FB1): as many as the most slots any
+ * cabinet has, less the levels at the bottom whose wall band is the one above's (a cabinet with a shelf out has fewer
+ * levels, and its last stands for the rest: stepping down to them would show the same picture).
+ */
+export function shelfSteps(input: FramingInput): number {
+  const ceiling = input.ceilingMm ?? CEILING_DEFAULT_MM;
+  let steps = Math.max(1, ...input.wall.cabinets.map((c) => surfaceSlots(c.profile, ceiling).length));
+  while (steps > 1) {
+    const a = wallBand(input, steps - 1);
+    const b = wallBand(input, steps - 2);
+    if (a.lo !== b.lo || a.hi !== b.hi) break;
+    steps--;
+  }
+  return steps;
 }
 
 /**
  * The shelf view (F2, close-out 1): one camera per shelf level for the whole wall, so a walk or a new focus moves
- * only x. Level, at the middle of the band every cabinet's own band at that level spans (shelfBand); as far back as
- * the widest of them needs to show its band whole, at the top stepping back at most CC4b's STEP_BACK_MAX_MM past its
- * width fit for what stands there; stepped in where that frame would show more fronts than the case draws.
+ * only x. Level, at the middle of the band every cabinet's own band at that level spans (levelBand); as far back as
+ * its height or the widest cabinet's width needs, whichever dictates, to show the band whole in the margins, the
+ * other showing more (TOP1: no cap on the step back at the top, whose band runs up to the ceiling); stepped in where
+ * that frame would show more fronts than the case draws.
  */
 function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
-  const bands = input.wall.cabinets.map((_, i) => shelfBand(input, i));
-  const lo = Math.min(...bands.map((b) => b.lo));
-  const hi = Math.max(...bands.map((b) => b.hi));
+  const { lo, hi } = wallBand(input, input.shelf);
   const look: Vec3 = [input.wall.cabinets[focus].centerMm, (lo + hi) / 2, 0];
   const focalPx = lensFocalPx(input.frame, input.lensMm);
   const m = frameMargins(input.frame);
   const heightFit = (focalPx * (hi - lo)) / 2 / (input.frame.height / 2 - m.y);
-  const fit = Math.max(
-    ...input.wall.cabinets.map((slot, i) => {
-      const widthFit = (focalPx * slot.profile.outer.widthMm) / 2 / (input.frame.width / 2 - m.x);
-      return bands[i].isTop ? Math.max(widthFit, Math.min(heightFit, widthFit + STEP_BACK_MAX_MM)) : Math.max(widthFit, heightFit);
-    }),
-  );
+  const widthFit = (focalPx * Math.max(...input.wall.cabinets.map((slot) => slot.profile.outer.widthMm))) / 2 / (input.frame.width / 2 - m.x);
   const at = (d: number): Camera => ({ x: look[0], y: look[1], z: look[2] + d, pitch: 0, focalPx, frame: input.frame });
-  return { camera: at(capDistance(at, fit, cap)), look, page: [focus], drawCap: cap.cap };
+  return { camera: at(capDistance(at, Math.max(widthFit, heightFit), cap)), look, page: [focus], drawCap: cap.cap };
 }
 
 /** The camera for the view, the focus cabinet and (in the shelf view) its surface. */

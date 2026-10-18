@@ -16,6 +16,9 @@ import { Collection } from '../Collection';
 import { renderWithProviders } from '../../test/testUtils';
 import { localRig } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
+import { create } from '@bufbuild/protobuf';
+import { ProductCardSchema } from '@figurecollecting/fc-api-contract';
+import { headOf, seedCopies } from '../../sync/__tests__/engineSupport';
 import { localSession } from '../../local/session';
 import { SyncEngine } from '../../sync/engine';
 import { CASE_PREFS_KEY } from '../../components/display/casePrefs';
@@ -78,5 +81,35 @@ describe('a cold launch: the case under the prefs this device keeps, whatever th
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 0' });
     expect(screen.getByRole('button', { name: /^Case, One shelf/ })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  // STALE-CONTENT (Ross 10-18: "I had to change the pan mode before it redrew and honored the current settings", after a cold
+  // launch that began "offline"). The launch draws what the device has (figures whose cards have not been fetched stand at the
+  // default size); when the server is reached and the cards arrive, the case must redraw with them, with no pref change.
+  it('the cards that arrive once the server is reached redraw the case at once: no pref change is needed to size its figures', async () => {
+    const r = await localRig();
+    // the last session left the copies but no cards (they are fetched after the first probe)
+    seedCopies(r.server, 3);
+    await r.engine.trigger('start');
+    expect(await r.store.listProducts()).toEqual([]);
+    const launch = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal, random: () => 0.5, coldRetry: true });
+    localSession.value = { ...r.session, engine: launch };
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('radio warming', Code.Unavailable) });
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await launch.trigger('start');
+    expect(launch.state.value.reachability).toBe('connecting');
+    const heights = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button.cab-figure')).map((b) => { const w = JSON.parse(b.dataset.world!) as { y0: number; y1: number }; return Math.round(w.y1 - w.y0); });
+    await waitFor(() => expect(heights().length).toBeGreaterThan(0));
+    const before = heights();
+    // the cards arrive, 330 mm tall
+    for (let i = 0; i < 3; i++) {
+      r.server.products.set(headOf(i), create(ProductCardSchema, { headId: headOf(i), requestedAs: [{ ref: { case: 'headId', value: headOf(i) } }], title: { value: `Figure ${i}` }, heightMm: 330, widthMm: 120 }));
+    }
+    act(() => r.timers.fireAll());
+    await waitFor(() => expect(launch.state.value.reachability).toBe('reachable'));
+    await waitFor(() => expect(heights().every((h) => h === 330)).toBe(true), { timeout: 3000 });
+    expect(before.every((h) => h !== 330)).toBe(true);
+    // and the prefs are the stored ones throughout
+    expect(prefsOf(document.body.querySelector<HTMLElement>('.cabinet-scene')!)).toEqual(STORED);
   });
 });

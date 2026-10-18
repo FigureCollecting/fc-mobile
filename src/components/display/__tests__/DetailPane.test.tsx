@@ -66,4 +66,39 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     history.back();
     await waitFor(() => expect(onBack).toHaveBeenCalledTimes(1));
   });
+
+  // SIDE-RAIL-1 (Ross 10-18): the same rail of the figure card's sections, at the pane's right edge
+  it('carries the figure sections on a right rail: Details and Copies, 24 px in, the pane leaving it room', () => {
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    const rail = container.querySelector('.detail-pane .side-rail') as HTMLElement;
+    expect(rail.getAttribute('aria-label')).toBe('Figure sections');
+    expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Copies']);
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-current', 'true');
+    const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent ?? '').join('\n');
+    expect(css).toMatch(/\.detail-pane__rail\s*\{[^}]*right:\s*calc\(24px \+ var\(--safe-area-right/);
+    expect(css).toMatch(/\.detail-pane\s*\{[^}]*padding-right:\s*calc\(24px \+ 60px \+ 8px/);
+  });
+
+  it('Copies opens the figure\'s full page; a figure with no local item has none to open', async () => {
+    const user = userEvent.setup();
+    const rem = { ...FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!, local: { headId: 'h9', kind: 'owned', sync: 'known', asOf: null } } as never;
+    const { currentPath, unmount } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    await user.click(screen.getByRole('button', { name: 'Copies' }));
+    expect(currentPath()).toBe('/figure/h9');
+    unmount();
+    renderWithProviders(<DetailPane figure={FIXTURE_FIGURES[0]!} index={0} total={7} onClose={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Copies' })).toBeDisabled();
+  });
+
+  it('Details brings the fields into view', async () => {
+    const user = userEvent.setup();
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    const fields = container.querySelector('.figure-viewer-sheet__more') as HTMLElement;
+    const into = vi.fn();
+    fields.scrollIntoView = into;
+    await user.click(screen.getByRole('button', { name: 'Details' }));
+    expect(into).toHaveBeenCalledTimes(1);
+  });
 });

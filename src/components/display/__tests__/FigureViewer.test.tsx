@@ -40,6 +40,7 @@ vi.mock('photoswipe', () => ({ default: FakePswp }));
 vi.mock('photoswipe/style.css', () => ({}));
 
 import { FigureViewer, fitSlideToPicture } from '../FigureViewer';
+import { RAIL_INSET_PX, RAIL_WIDTH_PX } from '../../ui/SideRail';
 import { renderWithProviders, flushAll } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META } from '../../../dev-fixtures/fixtures';
 
@@ -161,6 +162,80 @@ describe('FigureViewer (Display D)', () => {
     expect(sheet.style.transform).toBe(low());
   });
 
+  // SIDE-RAIL-1 (Ross 10-18): the figure card's sections on a right rail, above its sheet
+  describe('the right rail: the card\'s sections, stacked icon over label, beside the photo and above the sheet', () => {
+    const local = (f: (typeof FIGURE_FIXTURES)[number]) => ({ ...f, imageUrl: undefined, local: { headId: 'h1', kind: 'owned', sync: 'known', asOf: null } }) as never;
+    const FIGURE_FIXTURES = FIXTURE_FIGURES;
+
+    it('carries Details and Copies, a rail of the figure sections inside the sheet so it rides above the sheet\'s top edge', () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      const rail = document.body.querySelector('.figure-viewer-sheet .side-rail')!;
+      expect(rail).not.toBeNull();
+      expect(rail.getAttribute('aria-label')).toBe('Figure sections');
+      expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Copies']);
+    });
+
+    it('Details does what the handle does: it takes the sheet up to all of its fields and back to the summary', async () => {
+      const user = userEvent.setup();
+      // jsdom lays nothing out: a 400 px sheet whose handle and summary take its top 120 px (two detents)
+      const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('figure-viewer-sheet') ? 400 : 0;
+      });
+      const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 120 : 0 } as DOMRect;
+      });
+      onTestFinished(() => {
+        height.mockRestore();
+        rect.mockRestore();
+      });
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={1} onClose={() => {}} />);
+      const sheet = document.body.querySelector('.figure-viewer-sheet')!;
+      const details = screen.getByRole('button', { name: 'Details' });
+      expect(sheet.getAttribute('data-detent')).toBe('summary');
+      expect(details).not.toHaveAttribute('aria-current');
+      await user.click(details);
+      expect(sheet.getAttribute('data-detent')).toBe('all');
+      expect(details).toHaveAttribute('aria-current', 'true');
+      await user.click(details);
+      expect(sheet.getAttribute('data-detent')).toBe('summary');
+      expect(details).not.toHaveAttribute('aria-current');
+    });
+
+    it('Copies closes the viewer and opens the figure\'s full page, as "Copies and actions" does', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      const { currentPath } = renderWithProviders(<FigureViewer figures={[local(FIGURE_FIXTURES[0]!)]} index={0} onClose={onClose} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      await user.click(screen.getByRole('button', { name: 'Copies' }));
+      expect(instances[0]!.destroyed).toBe(true);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(currentPath()).toBe('/figure/h1');
+    });
+
+    it('a figure with no local item has no copies to open: Copies is disabled', () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      expect(screen.getByRole('button', { name: 'Copies' })).toBeDisabled();
+    });
+
+    it('the photo leaves the rail\'s room on its right: the rail\'s width and its 24 px inset, and a little more', async () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      const { right } = instances[0]!.options.paddingFn();
+      expect(right).toBe(RAIL_INSET_PX + RAIL_WIDTH_PX + 8);
+    });
+
+    it('the rail sits 24 px in from the edge, above the sheet, and the sheet leaves it room above; the prev/next arrows keep above the rail\'s places', () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      const css = Array.from(document.querySelectorAll('style')).map((st) => st.textContent ?? '').join('\n');
+      expect(css).toMatch(/\.figure-viewer-sheet__rail\s*\{[^}]*right:\s*calc\(24px \+ var\(--safe-area-right/);
+      expect(css).toMatch(/\.figure-viewer-sheet__rail\s*\{[^}]*bottom:\s*calc\(100% \+ 12px\)/);
+      // the sheet stops short of the top by the rail's room, so the rail is never pushed off the screen
+      expect(css).toMatch(/\.figure-viewer-sheet\s*\{[^}]*max-height:\s*min\(80dvh, calc\(100dvh - var\(--rail-room, 0px\)\)\)/);
+      // PhotoSwipe's arrows are moved up, clear of the rail
+      expect(css).toMatch(/\.pswp \.pswp__button--arrow\s*\{[^}]*top:\s*28%/);
+    });
+  });
+
   // STRETCH-FIX (Ross 10-18, Fold8 cover: "She's stretched")
   describe('the photo is laid out in its own shape, whole, above the sheet', () => {
     const picture = (naturalWidth: number, naturalHeight: number) => {
@@ -225,7 +300,7 @@ describe('FigureViewer (Display D)', () => {
       });
       renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
       await waitFor(() => expect(instances[0]?.initialized).toBe(true));
-      expect(instances[0]!.options.paddingFn()).toEqual({ top: 0, left: 0, right: 0, bottom: 120 });
+      expect(instances[0]!.options.paddingFn()).toEqual({ top: 0, left: 0, right: RAIL_INSET_PX + RAIL_WIDTH_PX + 8, bottom: 120 });
     });
 
     it('reserves nothing before the sheet is there, and the whole sheet when it has no lower detent', async () => {

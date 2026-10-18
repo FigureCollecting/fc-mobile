@@ -14,6 +14,7 @@ import {
   getFixtureAsym,
   getFixtureUnique,
   getFixtureSync,
+  getFixtureFields,
   getFixtureOnly,
   getFixtureImageRef,
   resolveFixtureArt,
@@ -600,5 +601,41 @@ describe('a wall of one fixture (?fxonly=<name>): a homogeneous dense wall for t
     const figures = getFixtureFigures();
     expect(figures).toHaveLength(FIXTURE_FIGURES.length);
     for (const f of figures) expect(f.dimensions).toEqual({ heightMm: 100, widthMm: 43 });
+  });
+});
+
+describe('fixture longer cards (?fxfields=1): cards that carry different numbers of fields, as real figures do', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('off unless asked for: the manifest as it is', () => {
+    for (const query of ['/', '/?fxfields=0', '/?fxfields=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureFields(), query).toBe(false);
+      expect(getFixtureFigures(), query).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('?fxfields=1: every other figure carries a version, its materials and a note more; the rest are as they were', () => {
+    window.history.pushState({}, '', '/?fxfields=1');
+    expect(getFixtureFields()).toBe(true);
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    figures.forEach((f, i) => {
+      if (i % 2 === 1) {
+        expect(f.version, f._id).toBe('Limited edition');
+        expect(f.materials, f._id).toBe('PVC, ABS');
+        expect(f.note, f._id).toMatch(/\S/);
+        expect({ ...f, version: undefined, materials: undefined, note: undefined }).toEqual({ ...FIXTURE_FIGURES[i], version: undefined, materials: undefined, note: undefined });
+      } else expect(f).toEqual(FIXTURE_FIGURES[i]);
+    });
+  });
+
+  it('with the multiplier, every copy of every other fixture slot is the longer card', () => {
+    window.history.pushState({}, '', '/?fx=2&fxfields=1');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
+    expect(figures.map((f) => f.note !== undefined)).toEqual(figures.map((_, i) => i % FIXTURE_FIGURES.length % 2 === 1));
   });
 });

@@ -385,6 +385,17 @@ export function getFixtureSync(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_SYNC_PARAM) === '1';
 }
 
+const FIXTURE_FIELDS_PARAM = 'fxfields';
+
+/**
+ * Dev-only switch for cards of different lengths: `?fxfields=1` gives every other fixture slot a version, its
+ * materials and a note more, as real figures carry different numbers of fields (the Info card's height then differs
+ * from one figure to the next; CARD-FLICKER-1's e2e). Off for anything else.
+ */
+export function getFixtureFields(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_FIELDS_PARAM) === '1';
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Each state's badge (sync, and how long ago its data was current; null for none) and count. */
@@ -475,7 +486,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * their pictures (getFixtureAsym), `?fxuniq=1` draws each copy at its own
  * picture URL (getFixtureUnique), `?fxsync=1` gives each a sync badge and a
  * count (getFixtureSync), `?fxonly=<name>` stands one fixture in every slot
- * (getFixtureOnly).
+ * (getFixtureOnly), `?fxfields=1` gives every other slot a longer card
+ * (getFixtureFields).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -485,15 +497,17 @@ export function getFixtureFigures(
   unique = getFixtureUnique(),
   sync = getFixtureSync(),
   only = getFixtureOnly(),
+  fields = getFixtureFields(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const [slot, each] of FIXTURE_FIGURES.entries()) {
       // one fixture in every slot: its copies numbered through the whole wall
       const base = only ?? each;
       const n = only ? (copy - 1) * FIXTURE_FIGURES.length + slot + 1 : copy;
-      const figure = withWidths(toBranch(n === 1 ? base : { ...base, _id: `${base._id}-x${n}` }, branch, asym), widths);
+      const shaped = withWidths(toBranch(n === 1 ? base : { ...base, _id: `${base._id}-x${n}` }, branch, asym), widths);
+      const figure = fields && slot % 2 === 1 ? { ...shaped, version: 'Limited edition', materials: 'PVC, ABS', note: 'Bought at the con; box is signed on the back.' } : shaped;
       out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }

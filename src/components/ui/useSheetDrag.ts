@@ -27,6 +27,8 @@ export interface SheetDragOptions {
 export function useSheetDrag({ open, sheetRef, contentRef, detents, initial, onClose, onSettle }: SheetDragOptions): {
   y: MotionValue<number>;
   settleTo: (index: number) => void;
+  /** Call as the card's contents change (a layout effect): it stands on its detent, measured anew, before the next paint. */
+  refit: () => void;
 } {
   const y = useMotionValue(offScreenY());
   const latest = useRef({ detents, onClose, onSettle });
@@ -50,8 +52,16 @@ export function useSheetDrag({ open, sheetRef, contentRef, detents, initial, onC
         running = animate(y, to, { type: 'tween', duration: SETTLE_MS / 1000, ease: [0.22, 1, 0.36, 1] });
       },
       stop,
+      // framer-motion writes a motion value to the page on its next frame, a frame after contents that changed size
+      // were laid out: the card stood that frame at its old translateY (dropped, or risen). Write what it writes now.
+      jump: (to) => {
+        stop();
+        y.set(to);
+        const sheet = sheetRef.current;
+        if (sheet) sheet.style.transform = `translateY(${to}px)`;
+      },
     };
-  }, [y]);
+  }, [y, sheetRef]);
 
   useEffect(() => {
     const sheet = sheetRef.current;
@@ -73,5 +83,5 @@ export function useSheetDrag({ open, sheetRef, contentRef, detents, initial, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  return { y, settleTo: (i) => controller.current?.settleTo(i) };
+  return { y, settleTo: (i) => controller.current?.settleTo(i), refit: () => controller.current?.refit() };
 }

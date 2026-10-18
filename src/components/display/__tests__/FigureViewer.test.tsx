@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/preact';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 // Fake PhotoSwipe capturing options + event handlers, so we can assert the
@@ -128,6 +128,36 @@ describe('FigureViewer (Display D)', () => {
     await flushAll();
     expect(await screen.findByText('Madoka Kaname')).toBeInTheDocument();
     expect(screen.getByText('4 of 7')).toBeInTheDocument();
+  });
+
+  it('CARD-FLICKER-1: a swipe to a figure whose card is taller stands the sheet on its low detent in the same frame, never a frame at the old one', async () => {
+    // jsdom lays nothing out: a sheet is 200 px and 40 more per field row, its summary the top 120 px
+    const rows = (el: HTMLElement) => el.querySelectorAll('.figure-viewer-sheet__row').length;
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('figure-viewer-sheet') ? 200 + 40 * rows(this) : 0;
+    });
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 120 : 0 } as DOMRect;
+    });
+    onTestFinished(() => {
+      height.mockRestore();
+      rect.mockRestore();
+    });
+    const longer = { ...FIXTURE_FIGURES[1]!, note: 'A note.', version: 'Limited', materials: 'PVC, ABS' };
+    renderWithProviders(<FigureViewer figures={[FIXTURE_FIGURES[0]!, longer]} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    const sheet = document.body.querySelector<HTMLElement>('.figure-viewer-sheet')!;
+    const low = () => `translateY(${200 + 40 * rows(sheet) - 120}px)`;
+    // opened on the summary: its detent is the sheet's height less the summary's 120 px
+    await waitFor(() => expect(sheet.style.transform).toBe(low()));
+    const before = rows(sheet);
+    act(() => instances[0]!.swipeTo(1));
+    expect(rows(sheet)).toBeGreaterThan(before);
+    // written already, before framer-motion's next frame would write it
+    expect(sheet.style.transform).toBe(low());
+    // and back to the shorter card
+    act(() => instances[0]!.swipeTo(0));
+    expect(sheet.style.transform).toBe(low());
   });
 
   it('every field is in the sheet from the start; its handle toggles it between the summary and all of them (SHEETS-FB1 6)', async () => {

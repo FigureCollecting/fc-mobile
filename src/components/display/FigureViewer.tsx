@@ -28,6 +28,54 @@ function infoDetents(sheet: HTMLElement): number[] {
 }
 
 /**
+ * How much of the screen's bottom the sheet covers at its summary detent: the photo is laid out above it, whole (STRETCH-FIX).
+ * Measured from the sheet's own size and detents, not where it stands now, which it is still rising to as the gallery opens.
+ */
+function sheetPeekPx(sheet: HTMLElement | null): number {
+  if (!sheet) return 0;
+  return Math.max(0, sheet.offsetHeight - (infoDetents(sheet)[1] ?? 0));
+}
+
+/** The parts of PhotoSwipe's slide content and slide the fit reads and sets (its types are not exported by path). */
+export interface PictureContent {
+  element: HTMLElement | undefined;
+  width: number;
+  height: number;
+  data: { width?: number; height?: number };
+}
+export interface PictureSlide {
+  width: number;
+  height: number;
+  calculateSize(): void;
+  zoomAndPanToInitial(): void;
+  applyCurrentZoomPan(): void;
+  updateContentSize(force?: boolean): void;
+}
+
+/**
+ * STRETCH-FIX (Ross 10-18, Fold8 cover: "She's stretched"): a figure's display meta carries no real picture size (every
+ * real figure's says 600 x 800), and PhotoSwipe sizes the <img> to the shape it is told, so the real picture was stretched
+ * into that box. Once the picture has loaded, the slide is laid out in the picture's own shape: uniform scale, bars where
+ * its shape differs from the room's. Fixture figures declare their own pictures' sizes and are left alone.
+ */
+export function fitSlideToPicture(content: PictureContent, slide: PictureSlide): void {
+  const img = content.element;
+  if (!(img instanceof HTMLImageElement) || img.naturalWidth === 0 || img.naturalHeight === 0) return;
+  const { naturalWidth: width, naturalHeight: height } = img;
+  if (Math.abs(width / height / (content.width / content.height) - 1) <= 0.001) return;
+  content.width = width;
+  content.height = height;
+  content.data.width = width;
+  content.data.height = height;
+  slide.width = width;
+  slide.height = height;
+  slide.calculateSize();
+  slide.zoomAndPanToInitial();
+  slide.applyCurrentZoomPan();
+  slide.updateContentSize(true);
+}
+
+/**
  * PhotoSwipe's destroy() only closes a gallery whose opening animation has finished; one still
  * opening keeps its element and listeners. Take them down here either way.
  */
@@ -127,6 +175,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         initialZoomLevel: 'fit',
         secondaryZoomLevel: 2,
         maxZoomLevel: 4,
+        // the photo stands whole above the Info sheet (STRETCH-FIX), never under it
+        paddingFn: () => ({ top: 0, left: 0, right: 0, bottom: sheetPeekPx(sheetRef.current) }),
         // our own X, always shown (SHEETS-FB1 6c), not PhotoSwipe's, which a tap hides
         close: false,
         // a tap off the figure closes; on it, it shows or hides the zoom and arrows as before
@@ -137,6 +187,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
       });
 
       pswp.on('change', () => setCurrent(pswp.currIndex));
+      pswp.on('loadComplete', ({ content, slide }) => fitSlideToPicture(content, slide));
       pswp.on('destroy', () => {
         pswpRef.current = null;
         if (!closingRef.current) {
@@ -160,6 +211,11 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
     // The viewer is mounted per open; result set and start index are fixed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // another figure's card is another height: the photo fits above its sheet's summary
+  useLayoutEffect(() => {
+    pswpRef.current?.updateSize(true);
+  }, [current]);
 
   const figure = figures[current];
   if (!figure) return null;

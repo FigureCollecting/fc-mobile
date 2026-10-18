@@ -148,7 +148,7 @@ for (const size of FOLD8) {
     expect(Math.abs(l.right - box.left), 'the left veil ends at the focus cabinet\'s left').toBeLessThanOrEqual(3);
     expect(Math.abs(r.left - box.right), 'the right veil starts at its right').toBeLessThanOrEqual(3);
     for (const v of info.veils) {
-      expect(v.color).toBe('rgba(0, 0, 0, 0.4)');
+      expect(v.color).toBe('rgba(0, 0, 0, 0.6)');
       expect(v.events).toBe('none');
     }
     // a neighbour's figure stays tappable: the topmost element at its middle is the figure's button, not a veil

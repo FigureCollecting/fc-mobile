@@ -156,9 +156,8 @@ describe('CAB-FOCUS-1 (2): the cabinets either side of the focus are dimmed in t
   const sides = (host: HTMLElement) => veils(host).map((v) => v.dataset.side).sort();
   const wallOf = (host: HTMLElement) => JSON.parse(host.dataset.wall!) as [number, number, number, number, number][];
 
-  it('the strength is one named constant, light to moderate: 35 to 45 % dark', () => {
-    expect(NEIGHBOUR_DIM).toBeGreaterThanOrEqual(0.35);
-    expect(NEIGHBOUR_DIM).toBeLessThanOrEqual(0.45);
+  it('the strength is one named constant, 60 % dark (Ross 2026-10-18, chosen by eye)', () => {
+    expect(NEIGHBOUR_DIM).toBe(0.6);
     const { host } = scene(MANY, { view: 'cabinet' });
     next();
     for (const v of veils(host)) expect(v.style.backgroundColor).toBe(`rgba(0, 0, 0, ${NEIGHBOUR_DIM})`);

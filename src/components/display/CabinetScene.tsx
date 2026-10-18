@@ -103,8 +103,9 @@ const SHELF_STEPS_PX = 44;
  * black over them): light to moderate, to focus the current cabinet where the screen shows neighbours, and to mark the
  * mode. The one value to tune. The room is dark whatever the app's theme (the scene's colours are its own), so the same
  * black veil serves the dark and the light theme.
+ * Ross 2026-10-18: 60 %, chosen by eye.
  */
-export const NEIGHBOUR_DIM = 0.4;
+export const NEIGHBOUR_DIM = 0.6;
 /** A dimming veil reaches this far past the window the frame shows, so a pinch or a sub-pixel slide never shows its edge. */
 const DIM_PAD_PX = 4;
 const DEFAULT_FRAME = { width: 360, height: 480 };

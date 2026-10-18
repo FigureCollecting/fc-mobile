@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { motion } from 'framer-motion';
 import type { Figure } from '@figurecollecting/fc-shared';
@@ -61,7 +61,11 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // dragged by its handle and handed off from its body (sheetDrag.ts); it peeks at the summary, never closes
-  const { y, settleTo } = useSheetDrag({ open: true, sheetRef, contentRef: bodyRef, detents: infoDetents, initial: SUMMARY, onSettle: setDetent });
+  const { y, settleTo, refit } = useSheetDrag({ open: true, sheetRef, contentRef: bodyRef, detents: infoDetents, initial: SUMMARY, onSettle: setDetent });
+  // CARD-FLICKER-1: another figure's card measures differently; the sheet is back on its detent before that is painted,
+  // so the card swaps in place (the ResizeObserver comes after layout and framer-motion writes a frame later: the
+  // sheet dropped or rose for a frame between)
+  useLayoutEffect(refit, [current]);
   const pswpRef = useRef<PhotoSwipe | null>(null);
   const closingRef = useRef(false);
   const onCloseRef = useRef(onClose);

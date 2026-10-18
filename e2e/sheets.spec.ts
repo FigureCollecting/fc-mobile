@@ -21,13 +21,13 @@ const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 /** Below this width Info is the viewer's pull-up sheet; at or above it, the pane beside the case (Collection.tsx). */
 const DUAL_PANE_MIN_WIDTH = 640;
 
-async function openCase(page: Page, size: { width: number; height: number }) {
+async function openCase(page: Page, size: { width: number; height: number }, query = '') {
   await page.addInitScript(() => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
   await page.setViewportSize(size);
-  await page.goto('/?layout=case');
+  await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
 }
@@ -370,11 +370,14 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
     await openFigure(page);
     const counter = page.locator('.figure-viewer-sheet__counter');
     const before = await counter.innerText();
-    await page.waitForTimeout(400);
+    // the swipe goes in once the gallery's opening animation and the sheet's rise are over, not after a guess at how
+    // long they take (a swipe in that animation is no swipe: the old 400 ms wait lost it on a busy host)
+    const sheet = page.locator('.figure-viewer-sheet');
+    await atRest(sheet);
+    await atRest(page.locator('.pswp__img').first());
     await touchSwipe(page, size.width * 0.75, size.height * 0.35, -size.width * 0.5, 0, 8, 16);
     await expect(counter).not.toHaveText(before);
     // every field shows at the top detent: the handle's tap takes it there, nothing else needed
-    const sheet = page.locator('.figure-viewer-sheet');
     await atRest(sheet);
     await page.locator('.figure-viewer-sheet__handle').tap();
     await expect(sheet).toHaveAttribute('data-detent', 'all');
@@ -385,6 +388,55 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
     const last = (await rows.last().boundingBox())!;
     expect(last.y + last.height, 'the last field is within the sheet, a scroll away at most').toBeLessThanOrEqual(body.y + Math.max(body.height, (await sheet.locator('.figure-viewer-sheet__body').evaluate((el) => el.scrollHeight))) + 1);
     expect(body.y + body.height).toBeLessThanOrEqual(size.height + 1);
+  });
+}
+
+// CARD-FLICKER-1 (Ross 10-17, Fold8 cover): switching figures with the Info card's arrows made its sheet drop, update and
+// rise. The cards of different figures carry different numbers of fields (?fxfields=1), so the sheet's height changes
+// with each swap; the sheet's top (what the eye follows) must not move through it, in any frame or any layout.
+for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
+  test(`Info: the arrows swap the card in place, the sheet never drops or rises through a swap: ${size.name}`, async ({ page }) => {
+    await openCase(page, size, '&fxfields=1');
+    await openFigure(page);
+    const sheet = page.locator('.figure-viewer-sheet');
+    await expect(page.locator('.pswp')).toBeVisible();
+    await atRest(sheet);
+    await atRest(page.locator('.pswp__img').first());
+    // the sheet's top and height in every animation frame, and in every layout pass (a ResizeObserver reports one right
+    // before the paint it makes), from here on
+    await page.evaluate(() => {
+      const el = document.querySelector('.figure-viewer-sheet')!;
+      const seen: { top: number; height: number }[] = [];
+      const take = () => {
+        const r = el.getBoundingClientRect();
+        seen.push({ top: r.top, height: r.height });
+      };
+      new ResizeObserver(take).observe(el);
+      const frame = () => {
+        take();
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+      (window as unknown as { __sheetSeen: typeof seen }).__sheetSeen = seen;
+    });
+    const rest = (await sheet.boundingBox())!.y;
+    const counter = page.locator('.figure-viewer-sheet__counter');
+    const arrow = (name: 'next' | 'prev') => page.locator(`.pswp__button--arrow--${name}`).evaluate((b: HTMLElement) => b.click());
+    for (let i = 2; i <= 7; i++) {
+      await arrow('next');
+      await expect(counter).toHaveText(`${i} of 7`);
+      await page.waitForTimeout(150);
+    }
+    for (let i = 6; i >= 1; i--) {
+      await arrow('prev');
+      await expect(counter).toHaveText(`${i} of 7`);
+      await page.waitForTimeout(150);
+    }
+    await page.waitForTimeout(300);
+    const seen = await page.evaluate(() => (window as unknown as { __sheetSeen: { top: number; height: number }[] }).__sheetSeen);
+    expect(new Set(seen.map((s) => Math.round(s.height))).size, 'the cards differ in height, so a swap changes the sheet\'s').toBeGreaterThan(1);
+    const worst = Math.max(...seen.map((s) => Math.abs(s.top - rest)));
+    expect(worst, `the sheet's top, at its worst, moved ${worst.toFixed(1)} px off its low detent through ${seen.length} frames`).toBeLessThan(2);
   });
 }
 

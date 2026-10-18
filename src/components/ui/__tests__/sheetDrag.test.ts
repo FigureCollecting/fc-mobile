@@ -21,6 +21,10 @@ function fakeDriver(start = 0) {
     stop() {
       calls.push('stop');
     },
+    jump(y) {
+      calls.push(`jump ${Math.round(y)}`);
+      this.y = y;
+    },
   };
   return driver;
 }
@@ -94,12 +98,14 @@ describe('attachSheetDrag', () => {
   let detach: () => void;
   let driver: ReturnType<typeof fakeDriver>;
   let settleTo: (index: number) => void;
+  let refit: () => void;
   let detents: number[];
 
   function attach(closeY: number | null = 600) {
     const c = attachSheetDrag(sheet, content, driver, { detents: () => detents, closeY: () => closeY, onSettle, onClose });
     detach = c.detach;
     settleTo = c.settleTo;
+    refit = c.refit;
   }
 
   beforeEach(() => {
@@ -419,7 +425,7 @@ describe('attachSheetDrag', () => {
     settleTo(1);
     detents = [10, 250];
     window.dispatchEvent(new Event('resize'));
-    expect(driver.calls.slice(-2)).toEqual(['stop', 'set 250']);
+    expect(driver.calls.slice(-2)).toEqual(['stop', 'jump 250']);
   });
 
   it('a resize that leaves its detent where it was does nothing, so an opening settle runs on', () => {
@@ -441,10 +447,49 @@ describe('attachSheetDrag', () => {
     c.settleTo(1);
     detents = [20, 340];
     observed[0]();
-    expect(driver.calls.slice(-2)).toEqual(['stop', 'set 340']);
+    expect(driver.calls.slice(-2)).toEqual(['stop', 'jump 340']);
     c.detach();
     detach = () => {};
     vi.unstubAllGlobals();
+  });
+
+  // CARD-FLICKER-1: new contents measure differently at once, and the card must stand on its detent in that same frame
+  describe('refit: the card back on its detent for contents that just changed, on the screen before the next paint', () => {
+    it('measures the detent anew and jumps there (a set would reach the screen a frame late)', () => {
+      settleTo(1);
+      detents = [20, 340];
+      refit();
+      expect(driver.calls.slice(-2)).toEqual(['stop', 'jump 340']);
+    });
+
+    it('stays put when its detent did not move, so an opening settle runs on', () => {
+      settleTo(1);
+      refit();
+      expect(driver.calls).toEqual(['settle 300']);
+    });
+
+    it('does nothing before the card has settled anywhere', () => {
+      detents = [20, 340];
+      refit();
+      expect(driver.calls).toEqual([]);
+    });
+
+    it('leaves a finger holding the card in charge', () => {
+      settleTo(1);
+      detents = [10, 250];
+      handle.dispatchEvent(pointer('pointerdown', { clientY: 400 }));
+      window.dispatchEvent(pointer('pointermove', { clientY: 390 }));
+      const before = driver.calls.length;
+      refit();
+      expect(driver.calls.length).toBe(before);
+    });
+
+    it('takes the card to its new detent even when an opening settle is still running', () => {
+      settleTo(0);
+      detents = [30, 300];
+      refit();
+      expect(driver.calls.slice(-2)).toEqual(['stop', 'jump 30']);
+    });
   });
 
   it('a resize mid-drag leaves the finger in charge', () => {

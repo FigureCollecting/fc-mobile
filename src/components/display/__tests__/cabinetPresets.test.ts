@@ -297,16 +297,37 @@ describe("v2 golden: Ross's open steel rack (36 x 18 x 72 in, inch-native, never
     expect(measured).toEqual(['shelf 3', 'top']);
   });
 
-  it('models 1.75 in beams on 1.5 in posts and a 2 in keyhole pitch, all estimates', () => {
-    expect(OPEN_STEEL_RACK.rack).toEqual({ postMm: 38.1, beamMm: 44.45 });
-    expect(OPEN_STEEL_RACK.surfaces.every((s) => s.thicknessMm === 44.45)).toBe(true);
-    expect(OPEN_STEEL_RACK.shelves).toEqual({ mode: 'adjustable', pinPitchMm: 50.8, topMoves: true });
-    expect(OPEN_STEEL_RACK.base).toEqual({ style: 'posts', heightMm: 120.65 });
+  it("models Ross's measured 2 in beams and 1.5 in keyhole pitch (10-18) on 1.5 in posts (still an estimate), with the limits he gave", () => {
+    expect(OPEN_STEEL_RACK.rack).toEqual({ postMm: 38.1, beamMm: 50.8 });
+    expect(OPEN_STEEL_RACK.surfaces.every((s) => s.thicknessMm === 50.8)).toBe(true);
+    expect(OPEN_STEEL_RACK.shelves).toEqual({
+      mode: 'adjustable',
+      pinPitchMm: 38.1,
+      topMoves: true,
+      // the highest notch is the top's (72 in, about 1 in below the post tops); the lowest beam's underside about 2.5 in off the
+      // floor (4.5 in to its top); the top comes down one notch at most
+      limits: { lowestTopMm: 114.3, highestTopMm: 1828.8, topMaxDropMm: 38.1 },
+      minBeamsPerHalf: 2,
+    });
+    expect(OPEN_STEEL_RACK.base).toEqual({ style: 'posts', heightMm: 114.3 });
+    // the beam and the pitch are Ross's measurements, split from the post and keyhole estimates
+    expect(OPEN_STEEL_RACK.provenance.boards).toEqual({ kind: 'measured', source: 'Ross: beam 2 in (measured 2026-10-18)' });
+    expect(OPEN_STEEL_RACK.provenance.shelves).toEqual({ kind: 'measured', source: "Ross's own unit, 2026-10-18; varies rack to rack (keyhole pitch 1.5 in)" });
+    expect(OPEN_STEEL_RACK.provenance.limits?.kind).toBe('measured');
+    expect(OPEN_STEEL_RACK.provenance.limits?.source).toMatch(/approximate/);
     const flagged = unverifiedFields(OPEN_STEEL_RACK).map((f) => f.field);
-    expect(flagged).toEqual(
-      expect.arrayContaining(['boards', 'shelves', 'base', 'rack', 'surface:shelf 1', 'surface:shelf 2', 'surface:shelf 4']),
-    );
+    expect(flagged).toEqual(expect.arrayContaining(['base', 'rack', 'surface:shelf 1', 'surface:shelf 2', 'surface:shelf 4']));
+    expect(flagged).not.toContain('boards');
+    expect(flagged).not.toContain('shelves');
     expect(flagged).not.toContain('outer');
+  });
+
+  it("the lowest shelf is Ross's storage shelf (small flat items), never a display one: a data flag, with where it comes from", () => {
+    const [lowest, ...others] = OPEN_STEEL_RACK.surfaces;
+    expect(lowest.role).toBe('storage');
+    expect(lowest.roleProvenance).toEqual({ kind: 'measured', source: "Ross's use, 2026-10-18" });
+    expect(others.every((s) => s.role === undefined)).toBe(true);
+    for (const p of [IKEA_KLINGSBO, IKEA_DETOLF]) expect(p.surfaces.every((s) => s.role === undefined)).toBe(true);
   });
 
   it('G17 on the preset: clearance 24 in (96 - 72) less 2 in of hand room, and the CC9 headroom golden', () => {

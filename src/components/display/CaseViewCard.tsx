@@ -1,8 +1,9 @@
 /**
  * The View tab's card: how the case looks, kept on this device (CC14): the
  * view (whole cabinets, one cabinet, one shelf), which cabinets line the
- * wall, the room's ceiling (CC9, which limits what may stand on a top) and
- * which side the tabs sit on. What a sideways swipe does (CC4: walk the
+ * wall, the room's ceiling (CC9, which limits what may stand on a top), the
+ * clearance every compartment keeps above a figure (CLEAR-1) and which side the
+ * tabs sit on. What a sideways swipe does (CC4: walk the
  * camera or pan the wall) moved to the header, beside the display modes
  * (CAM1, Ross 10-18).
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
@@ -11,7 +12,7 @@
  */
 import { BottomSheet } from '../ui/BottomSheet';
 import { Style } from '../../styles/Style';
-import { inchesToMm } from './cabinetProfile';
+import { CLEARANCE_MAX_MM, CLEARANCE_STEP_MM, inchesToMm } from './cabinetProfile';
 import { IN_MM } from './caseCamera';
 import { WALL_PATTERNS, type CasePrefs, type CaseView } from './casePrefs';
 
@@ -30,6 +31,7 @@ interface CaseViewCardProps {
 
 export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
+  const clearanceIn = Math.round((prefs.clearanceMm / IN_MM) * 100) / 100;
   return (
     <BottomSheet open={open} onClose={onClose} snapPoint="fit">
       <div class="case-card">
@@ -69,6 +71,22 @@ export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardPro
               const inches = Number((e.currentTarget as HTMLInputElement).value);
               const raw = (e.currentTarget as HTMLInputElement).value.trim();
               if (raw !== '' && Number.isFinite(inches) && inches > 0) onChange({ ceilingMm: inchesToMm(inches) });
+            }}
+          />
+        </label>
+
+        <label class="case-card__ceiling">
+          Clearance above a figure (in)
+          <input
+            type="number"
+            min={0}
+            max={CLEARANCE_MAX_MM / IN_MM}
+            step={CLEARANCE_STEP_MM / IN_MM}
+            value={clearanceIn}
+            onChange={(e) => {
+              const raw = (e.currentTarget as HTMLInputElement).value.trim();
+              const inches = Number(raw);
+              if (raw !== '' && Number.isFinite(inches) && inches >= 0 && inches <= CLEARANCE_MAX_MM / IN_MM) onChange({ clearanceMm: inchesToMm(inches) });
             }}
           />
         </label>

@@ -109,7 +109,13 @@ export const IKEA_KLINGSBO: CabinetProfile = {
   provenance: {
     outer: { kind: 'cited', source: 'IKEA listing: 45 x 40 x 180 cm (US: 17 3/4 x 15 3/4 x 70 7/8 in)' },
     interior: KLINGSBO_FROM_DRAWING,
-    panels: { kind: 'derived', source: 'steel corner posts (and legs) about 33 mm, from the illustration; glass in between; verify' },
+    // CLEAR-1 (10-18): the illustration shows the door glass running up to the top frame's underside, no rail below it, so
+    // the top compartment's room is the board's underside less the clearance, no frame drop modelled
+    panels: {
+      kind: 'derived',
+      source:
+        "steel corner posts (and legs) about 33 mm, from the illustration; glass in between; verify. No door rail below the top board's underside (illustration, checked 2026-10-18), so no frame drop is modelled",
+    },
     boards: KLINGSBO_FROM_DRAWING,
     shelves: { kind: 'derived', source: 'fixed: each glass shelf rests on four clip supports (assembly step 11); heights from the illustration' },
     base: { kind: 'cited', source: 'IKEA: the open shelf sits 15.5 cm up on four legs, the front pair splayed' },
@@ -203,9 +209,12 @@ export const IKEA_DETOLF: CabinetProfile = {
 // until he measures them.
 const RACK_ESTIMATE: Provenance = {
   kind: 'placeholder',
-  source: 'estimated from photos (beam ~1.75 in, post ~1.5 in, keyhole pitch ~2 in); confirm',
+  source: 'estimated from photos (post ~1.5 in); confirm',
 };
-const RACK_BEAM_MM = inchesToMm(1.75);
+// Ross 10-18 measured the beam (2 in) and the keyhole pitch (1.5 in) on his own unit; both vary rack to rack
+const RACK_BEAM: Provenance = { kind: 'measured', source: 'Ross: beam 2 in (measured 2026-10-18)' };
+const RACK_BEAM_MM = inchesToMm(2);
+const RACK_PITCH_MM = inchesToMm(1.5);
 const RACK_POST_MM = inchesToMm(1.5);
 
 export const OPEN_STEEL_RACK: CabinetProfile = {
@@ -219,12 +228,17 @@ export const OPEN_STEEL_RACK: CabinetProfile = {
   materials: { sides: 'open', back: 'open', front: 'open' },
   glassMm: null,
   surfaces: [
-    beam(
-      surface('shelf 1', inchesToMm(6.5), RACK_BEAM_MM, 'wood', {
-        kind: 'placeholder',
-        source: 'shelf 2 less 5.5 in (Ross); shelf 2 is itself a placeholder',
-      }),
-    ),
+    {
+      ...beam(
+        surface('shelf 1', inchesToMm(6.5), RACK_BEAM_MM, 'wood', {
+          kind: 'placeholder',
+          source: 'shelf 2 less 5.5 in (Ross); shelf 2 is itself a placeholder',
+        }),
+      ),
+      // Ross 10-18: the lowest shelf holds small flat things; it is drawn, bears the posts, and takes no figure
+      role: 'storage',
+      roleProvenance: { kind: 'measured', source: "Ross's use, 2026-10-18" },
+    },
     beam(
       surface('shelf 2', inchesToMm(12), RACK_BEAM_MM, 'wood', {
         kind: 'placeholder',
@@ -240,10 +254,18 @@ export const OPEN_STEEL_RACK: CabinetProfile = {
     ),
     beam(surface('top', inchesToMm(72), RACK_BEAM_MM, 'wood', { kind: 'measured', source: 'Ross: 72 in' })),
   ],
-  // Ross 10-17: all five beams, the top one too, come out or move, in 2 in steps
-  shelves: { mode: 'adjustable', pinPitchMm: inchesToMm(2), topMoves: true },
+  // Ross 10-17, 10-18: all five beams, the top one too, move in 1.5 in steps (the display four also come out); the highest
+  // notch is the top's (about 1 in below the post tops), the lowest beam's underside about 2.5 in off the floor, the top
+  // may come down one notch; the posts need two beams in each half of their height
+  shelves: {
+    mode: 'adjustable',
+    pinPitchMm: RACK_PITCH_MM,
+    topMoves: true,
+    limits: { lowestTopMm: inchesToMm(2.5) + RACK_BEAM_MM, highestTopMm: inchesToMm(72), topMaxDropMm: RACK_PITCH_MM },
+    minBeamsPerHalf: 2,
+  },
   top: { usable: true },
-  base: { style: 'posts', heightMm: inchesToMm(6.5 - 1.75) },
+  base: { style: 'posts', heightMm: inchesToMm(6.5) - RACK_BEAM_MM },
   rack: { postMm: RACK_POST_MM, beamMm: RACK_BEAM_MM },
   discontinued: false,
   sources: [],
@@ -251,10 +273,15 @@ export const OPEN_STEEL_RACK: CabinetProfile = {
     outer: { kind: 'measured', source: 'Ross: 36 x 18 x 72 in to the top surface' },
     interior: { kind: 'derived', source: 'outer less two corner posts each way (the posts are an estimate)' },
     panels: { kind: 'measured', source: 'Ross: open sides and back, no doors' },
-    boards: RACK_ESTIMATE,
-    shelves: RACK_ESTIMATE,
+    boards: RACK_BEAM,
+    shelves: { kind: 'measured', source: "Ross's own unit, 2026-10-18; varies rack to rack (keyhole pitch 1.5 in)" },
     base: { kind: 'placeholder', source: "the corner posts are the legs, open below shelf 1's beam (shelf 1 is a placeholder)" },
     rack: RACK_ESTIMATE,
+    limits: {
+      kind: 'measured',
+      source:
+        "Ross's own unit, 2026-10-18, approximate: the highest beam about 1 in below the post tops (the top at 72 in), the lowest about 2.5 in off the floor (its underside), the top comes down one notch at most; varies rack to rack",
+    },
   },
 };
 

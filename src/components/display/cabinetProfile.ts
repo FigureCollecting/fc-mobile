@@ -80,11 +80,35 @@ export interface CabinetSurface {
   readonly outsideDoor?: boolean;
   /** CASE-FB2b: the shelf lifts out (glass on clip supports or a ladder): an instance may stand without it. */
   readonly liftsOut?: boolean;
+  /**
+   * CLEAR-1 (Ross 10-18): what the surface is used for when it is not display. 'storage': a shelf for small flat things (the
+   * rack's lowest): drawn, counted as a beam for the posts' bracing, never given a figure and never taken out.
+   */
+  readonly role?: 'storage';
+  /** Provenance of the role. */
+  readonly roleProvenance?: Provenance;
+}
+
+/**
+ * CLEAR-1: how far an adjustable profile's beams may go: the lowest a beam's top may stand and the highest (the top's own
+ * notch), and how far the top may come down from it (`topMaxDropMm`): a rack's top "would look funny" far from its posts' ends.
+ */
+export interface ShelfLimits {
+  readonly lowestTopMm: number;
+  readonly highestTopMm: number;
+  readonly topMaxDropMm: number;
 }
 
 /** CC5: 'fit shelves to figures' exists only for adjustable profiles. */
-/** `topMoves` (CASE-FB2b): the top is a shelf like the rest and moves by the pitch too (a boltless rack's top beam). */
-export type ShelfMode = { readonly mode: 'fixed' } | { readonly mode: 'adjustable'; readonly pinPitchMm: number; readonly topMoves?: boolean };
+/**
+ * `topMoves` (CASE-FB2b): the top is a shelf like the rest and moves by the pitch too (a boltless rack's top beam).
+ * `limits` (CLEAR-1): how far they may go. `minBeamsPerHalf` (CLEAR-1): an open rack's posts need bracing: this many beams in
+ * the lower half and in the upper half of the posts' height, or the rack is unstable; removals and moves that would leave
+ * fewer are never made. The beams are counted by their tops, the storage shelf included.
+ */
+export type ShelfMode =
+  | { readonly mode: 'fixed' }
+  | { readonly mode: 'adjustable'; readonly pinPitchMm: number; readonly topMoves?: boolean; readonly limits?: ShelfLimits; readonly minBeamsPerHalf?: number };
 
 export interface LegSpec {
   readonly sectionMm?: number;
@@ -109,6 +133,8 @@ export interface ProfileProvenance {
   readonly plate?: Provenance;
   readonly rack?: Provenance;
   readonly loads?: Provenance;
+  /** CLEAR-1: where the beams may go (ShelfLimits). */
+  readonly limits?: Provenance;
 }
 
 /** Where a profile's sizes come from: the exact page, image or document, and the snapshot (or fetch) date. */
@@ -161,6 +187,8 @@ export interface CabinetProfile {
   readonly provenance: ProfileProvenance;
   /** CASE-FB2b: this instance's own shelves (withShelfLayout), when they are not the profile's stock ones. */
   readonly layout?: ShelfLayout;
+  /** CLEAR-1: the room a compartment keeps above a figure (withClearance), when it keeps any. */
+  readonly clearanceMm?: number;
 }
 
 /**
@@ -176,15 +204,36 @@ export interface ShelfLayout {
 /** Every shelf where the profile has it. */
 export const STOCK_LAYOUT: ShelfLayout = { removed: [], moved: [] };
 
-/** The shelves an instance may stand without: those that lift out (the KLINGSBO's and the Detolf's glass, every rack beam), by index. */
+/** The shelves an instance may stand without: those that lift out (the KLINGSBO's and the Detolf's glass, every rack beam but a storage shelf), by index. */
 export function liftOutShelves(profile: CabinetProfile): number[] {
-  return profile.surfaces.flatMap((s, i) => (s.liftsOut === true ? [i] : []));
+  return profile.surfaces.flatMap((s, i) => (s.liftsOut === true && s.role !== 'storage' ? [i] : []));
 }
 
 /** The shelves that move by the pin pitch: every one on an adjustable profile, but its top unless it says it moves; none on a fixed one. */
 export function movableShelves(profile: CabinetProfile): number[] {
   if (profile.shelves.mode !== 'adjustable') return [];
   return profile.surfaces.slice(0, profile.shelves.topMoves === true ? undefined : -1).map((_, i) => i);
+}
+
+/** The surfaces' tops after `layout`: the removed gone, the moved at their new tops. */
+function topsAfter(profile: CabinetProfile, layout: ShelfLayout): number[] {
+  return profile.surfaces.flatMap((s, i) => {
+    if (layout.removed.includes(i)) return [];
+    return [layout.moved.find((m) => m.index === i)?.topMm ?? s.topMm];
+  });
+}
+
+/**
+ * CLEAR-1: whether `layout` leaves the profile's posts braced: at least `minBeamsPerHalf` beams in the lower half of the
+ * posts' height and as many in the upper (a profile with no such rule is always stable).
+ */
+export function stableLayout(profile: CabinetProfile, layout: ShelfLayout): boolean {
+  const min = profile.shelves.mode === 'adjustable' ? profile.shelves.minBeamsPerHalf : undefined;
+  if (min === undefined) return true;
+  const half = profile.outer.heightMm / 2;
+  const tops = topsAfter(profile, layout);
+  const lower = tops.filter((t) => t <= half).length;
+  return lower >= min && tops.length - lower >= min;
 }
 
 /**
@@ -205,8 +254,14 @@ export function withShelfLayout(profile: CabinetProfile, layout: ShelfLayout): C
     const pins = (topMm - surfaces[index].topMm) / profile.shelves.pinPitchMm;
     if (Math.abs(pins - Math.round(pins)) > FIT_EPSILON_MM) throw new RangeError(`${profile.id}: ${topMm} mm is off the ${profile.shelves.pinPitchMm} mm pitch`);
     if (topMm > profile.outer.heightMm + FIT_EPSILON_MM) throw new RangeError(`${profile.id}: ${topMm} mm is above the cabinet's ${profile.outer.heightMm} mm`);
+    const limits = profile.shelves.limits;
+    if (limits) {
+      if (topMm < limits.lowestTopMm - FIT_EPSILON_MM || topMm > limits.highestTopMm + FIT_EPSILON_MM) throw new RangeError(`${profile.id}: ${topMm} mm is outside the beams' limits`);
+      if (index === profile.surfaces.length - 1 && topMm < limits.highestTopMm - limits.topMaxDropMm - FIT_EPSILON_MM) throw new RangeError(`${profile.id}: the top comes down ${limits.topMaxDropMm} mm at most`);
+    }
     surfaces[index] = { ...surfaces[index], topMm };
   }
+  if (!stableLayout(profile, layout)) throw new RangeError(`${profile.id}: ${JSON.stringify(layout)} leaves a half of the posts with too few beams`);
   const kept = surfaces.filter((_, i) => !layout.removed.includes(i));
   // something to stand on and something to stand under: a top and one shelf at least
   if (kept.length < 2) throw new RangeError(`${profile.id}: ${JSON.stringify(layout.removed)} leaves no shelf`);
@@ -216,6 +271,29 @@ export function withShelfLayout(profile: CabinetProfile, layout: ShelfLayout): C
     if (i === 0 ? underside < -FIT_EPSILON_MM : !(underside > kept[i - 1].topMm)) throw new RangeError(`${profile.id}: ${kept[i].name} meets the surface below it`);
   }
   return { ...profile, surfaces: kept, layout };
+}
+
+/**
+ * CLEAR-1: every top the shelf `index` may stand at, lowest first: its own top and whole pins either way, within the
+ * profile's limits (else the floor's and the cabinet's), the top shelf no more than `topMaxDropMm` below the highest notch.
+ * Derived, never listed. Throws (RangeError) on a profile whose shelves do not move, or a shelf that does not.
+ */
+export function shelfPositionsMm(profile: CabinetProfile, index: number): number[] {
+  if (profile.shelves.mode !== 'adjustable' || !movableShelves(profile).includes(index)) throw new RangeError(`${profile.id}: surface ${index} does not move`);
+  const pitch = profile.shelves.pinPitchMm;
+  const here = profile.surfaces[index].topMm;
+  const limits = profile.shelves.limits;
+  let lowest = limits?.lowestTopMm ?? profile.surfaces[index].thicknessMm;
+  const highest = limits?.highestTopMm ?? profile.outer.heightMm;
+  if (limits && index === profile.surfaces.length - 1) lowest = Math.max(lowest, highest - limits.topMaxDropMm);
+  const out: number[] = [];
+  for (let k = Math.ceil((lowest - here) / pitch - FIT_EPSILON_MM); here + k * pitch <= highest + FIT_EPSILON_MM; k++) out.push(here + k * pitch);
+  return out;
+}
+
+/** CLEAR-1: the notch nearest `wantedMm` that shelf `index` may stand at (shelfPositionsMm). */
+export function snapShelfTopMm(profile: CabinetProfile, index: number, wantedMm: number): number {
+  return shelfPositionsMm(profile, index).reduce((best, p) => (Math.abs(p - wantedMm) < Math.abs(best - wantedMm) ? p : best));
 }
 
 /** The structural part the CC9 rules read; any profile (or a bare height) satisfies it. */
@@ -277,12 +355,35 @@ export function framingHeadroomMm(
   return Math.min(TOP_CLEARANCE_CAP_MM, topClearanceMm(profile, ceilingMm), wanted);
 }
 
-/** Clear height of each compartment, bottom to top: the next surface's underside minus this surface's top. */
+/** CLEAR-1 (Ross 10-18): the room kept above a figure unless the user sets another: 1 in, up to 2 in in quarter inches. */
+export const DEFAULT_CLEARANCE_MM = 25.4;
+export const CLEARANCE_MAX_MM = 50.8;
+export const CLEARANCE_STEP_MM = 6.35;
+
+const clearanceCache = new WeakMap<CabinetProfile, Map<number, CabinetProfile>>();
+
+/** The profile with each of its compartments keeping `clearanceMm` above a figure (clearHeightsMm); the same object for the same arguments, so the packer's caches hold. */
+export function withClearance(profile: CabinetProfile, clearanceMm: number): CabinetProfile {
+  if ((profile.clearanceMm ?? 0) === clearanceMm) return profile;
+  let byMm = clearanceCache.get(profile);
+  if (!byMm) clearanceCache.set(profile, (byMm = new Map()));
+  let out = byMm.get(clearanceMm);
+  if (!out) byMm.set(clearanceMm, (out = { ...profile, clearanceMm }));
+  return out;
+}
+
+/**
+ * Clear height of each compartment, bottom to top: the next surface's underside (a rack's beam is its own underside)
+ * minus this surface's top, less the clearance the profile keeps above a figure (CLEAR-1); never less than nothing for
+ * a compartment that has room.
+ */
 export function clearHeightsMm(profile: CabinetProfile): number[] {
   const { surfaces } = profile;
+  const keep = profile.clearanceMm ?? 0;
   const clear: number[] = [];
   for (let i = 0; i + 1 < surfaces.length; i++) {
-    clear.push(surfaces[i + 1].topMm - surfaces[i + 1].thicknessMm - surfaces[i].topMm);
+    const room = surfaces[i + 1].topMm - surfaces[i + 1].thicknessMm - surfaces[i].topMm;
+    clear.push(room <= 0 ? room : Math.max(0, room - keep));
   }
   return clear;
 }

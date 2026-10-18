@@ -393,7 +393,8 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
 
 // CARD-FLICKER-1 (Ross 10-17, Fold8 cover): switching figures with the Info card's arrows made its sheet drop, update and
 // rise. The cards of different figures carry different numbers of fields (?fxfields=1), so the sheet's height changes
-// with each swap; the sheet's top (what the eye follows) must not move through it, in any frame or any layout.
+// with each swap (where it is not held at its cap); the sheet's top (what the eye follows) must not move through it,
+// in any frame or any layout.
 for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
   test(`Info: the arrows swap the card in place, the sheet never drops or rises through a swap: ${size.name}`, async ({ page }) => {
     await openCase(page, size, '&fxfields=1');
@@ -406,10 +407,11 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
     // before the paint it makes), from here on
     await page.evaluate(() => {
       const el = document.querySelector('.figure-viewer-sheet')!;
-      const seen: { top: number; height: number }[] = [];
+      const body = el.querySelector('.figure-viewer-sheet__body')!;
+      const seen: { top: number; height: number; content: number; cap: number }[] = [];
       const take = () => {
         const r = el.getBoundingClientRect();
-        seen.push({ top: r.top, height: r.height });
+        seen.push({ top: r.top, height: r.height, content: body.scrollHeight, cap: parseFloat(getComputedStyle(el).maxHeight) });
       };
       new ResizeObserver(take).observe(el);
       const frame = () => {
@@ -433,8 +435,12 @@ for (const size of FOLD8.filter((v) => v.width < DUAL_PANE_MIN_WIDTH)) {
       await page.waitForTimeout(150);
     }
     await page.waitForTimeout(300);
-    const seen = await page.evaluate(() => (window as unknown as { __sheetSeen: { top: number; height: number }[] }).__sheetSeen);
-    expect(new Set(seen.map((s) => Math.round(s.height))).size, 'the cards differ in height, so a swap changes the sheet\'s').toBeGreaterThan(1);
+    const seen = await page.evaluate(() => (window as unknown as { __sheetSeen: { top: number; height: number; content: number; cap: number }[] }).__sheetSeen);
+    expect(new Set(seen.map((s) => Math.round(s.content))).size, 'the cards differ in length').toBeGreaterThan(1);
+    // a swap changes the sheet's height, unless a short panel holds every sheet at its cap (the rail's room above it),
+    // the longer card then scrolling inside it: the sheet has no height to drop or rise by
+    const heldAtCap = seen.every((s) => s.height >= s.cap - 1);
+    expect(new Set(seen.map((s) => Math.round(s.height))).size > 1 || heldAtCap, 'the cards differ in height, so a swap changes the sheet\'s, or the cap holds it').toBe(true);
     const worst = Math.max(...seen.map((s) => Math.abs(s.top - rest)));
     expect(worst, `the sheet's top, at its worst, moved ${worst.toFixed(1)} px off its low detent through ${seen.length} frames`).toBeLessThan(2);
   });

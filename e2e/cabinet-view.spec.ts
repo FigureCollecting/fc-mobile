@@ -631,8 +631,8 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
 
     test(`a picture 4 s late: the others grounded meanwhile, then it lands and the case relays out around it: ${size.name}`, async ({ page }) => {
       await page.route(RYUKO, async (route) => {
-        // 4 s after the 4 s splash (SPLASH_MIN_MS), which the case is opened behind
-        await new Promise((r) => setTimeout(r, 4_000 + 4_000));
+        // 4 s after the 3 s splash (SPLASH_MIN_MS), which the case is opened behind
+        await new Promise((r) => setTimeout(r, 3_000 + 4_000));
         // on to the hands-off guard, which sends it
         await route.fallback();
       });

@@ -286,12 +286,19 @@ describe('design tokens: one notch up at desktop widths, the phone and Fold8 siz
 /**
  * The small literal font sizes allowed outside tokens.css, by file and CSS
  * rule: the case's in-scene plates, drawn in scene px and scaled by the case
- * camera. Every other rule of those files is guarded like any file.
+ * camera; the static splash's wordmark, sized from the figure it hangs below
+ * (SPLASH-3: 0.0775 of the figure, 39.6 px at the target, 22 px where the
+ * container units are unsupported). Every other rule of those files is
+ * guarded like any file.
  */
 const LITERAL_SIZE_EXEMPT: Record<string, { rule: RegExp; why: string }> = {
   'components/display/CabinetScene.tsx': {
     rule: /^\.cabinet-scene \.(?:cab-plate|cab-figure__plate)$/,
     why: 'the in-scene plates, sized in scene px and scaled by the case camera',
+  },
+  'styles/pre-splash.css': {
+    rule: /^\.pre-splash__text$/,
+    why: 'the splash wordmark, a brand lockup painted before any script or token, sized from the figure it hangs below',
   },
 };
 

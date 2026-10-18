@@ -39,6 +39,8 @@ export const PROBE_TIMEOUT_MS = 3_000;
 export const CALL_TIMEOUT_MS = 30_000;
 export const PRODUCT_TTL_MS = 24 * 60 * 60 * 1000;
 export const WRITE_DELAY_MS = 1_000;
+/** OFFLINE-BANNER-1: how long a cold launch waits to retry its first failed probe (the backoff is for the next failures). */
+export const COLD_RETRY_MS = 1_500;
 export const BACKOFF_MIN_MS = 2_000;
 export const BACKOFF_MAX_MS = 5 * 60 * 1000;
 /** Push rounds in one pass, a guard against a store that never empties. */
@@ -51,7 +53,8 @@ const MAX_PRODUCT_PAGES = 1_000;
 export type SyncCalls = Pick<Client<typeof SyncService>, 'status' | 'delta' | 'push'>;
 export type CatalogCalls = Pick<Client<typeof CatalogService>, 'getProducts'>;
 export type SyncTrigger = 'start' | 'online' | 'offline' | 'visible' | 'pageshow' | 'write' | 'retry' | 'poll' | 'auth' | 'manual';
-export type Reachability = 'unknown' | 'reachable' | 'unreachable';
+/** connecting: the first probe of a launch failed and its one short retry is pending (OFFLINE-BANNER-1); not yet unreachable. */
+export type Reachability = 'unknown' | 'connecting' | 'reachable' | 'unreachable';
 /** unreachable: retry on the backoff; paused: wait for the session (sign in, reload); error: retry on the backoff. */
 export type FailureKind = 'unreachable' | 'paused' | 'error';
 
@@ -95,6 +98,12 @@ export interface SyncEngineDeps {
   window?: EventTarget;
   /** Pull every pollMs while the page is visible and the last pass succeeded; none when unset. */
   pollMs?: number;
+  /**
+   * A cold launch's first failed probe reads 'connecting' and is retried once after COLD_RETRY_MS before the engine
+   * says 'unreachable' (OFFLINE-BANNER-1: the radio, DNS and TLS are still warming). The app sets it; the engine
+   * tests that fail the first probe by hand leave it off.
+   */
+  coldRetry?: boolean;
   document?: EventTarget & { visibilityState: DocumentVisibilityState };
 }
 
@@ -170,6 +179,10 @@ export class SyncEngine {
   private running: Promise<void> | undefined;
   private again = false;
   private attempt = 0;
+  /** OFFLINE-BANNER-1: the server has answered a probe this session; the one cold retry is spent; the retry scheduled next is that one. */
+  private reached = false;
+  private coldSpent = false;
+  private coldRetryNext = false;
   private retryTimer: unknown;
   private writeTimer: unknown;
   private started = false;
@@ -215,8 +228,10 @@ export class SyncEngine {
   };
 
   /** Run a pass now; one already running takes one more pass after it. Resolves when the passes end. */
-  trigger(_reason: SyncTrigger): Promise<void> {
+  trigger(reason: SyncTrigger): Promise<void> {
     if (this.stopped) return Promise.resolve();
+    // the browser itself says there is no network: that is no cold launch to wait out
+    if (reason === 'offline') this.coldSpent = true;
     this.clearRetry();
     if (this.running !== undefined) {
       this.again = true;
@@ -307,9 +322,12 @@ export class SyncEngine {
   }
 
   private scheduleRetry(): void {
+    // the retry after a cold launch's first failure is the short one, and does not count toward the backoff
+    const cold = this.coldRetryNext;
+    this.coldRetryNext = false;
     if (this.stopped || !this.visible()) return;
-    const delay = backoffDelay(this.attempt, this.random);
-    this.attempt += 1;
+    const delay = cold ? COLD_RETRY_MS : backoffDelay(this.attempt, this.random);
+    if (!cold) this.attempt += 1;
     this.retryTimer = this.timers.setTimeout(() => {
       this.retryTimer = undefined;
       void this.trigger('retry');
@@ -340,7 +358,13 @@ export class SyncEngine {
     } catch (err) {
       const kind = classify(err);
       if (kind === 'error') console.warn('[sync] pass failed:', message(err));
-      this.set({ lastError: message(err), ...(kind === 'unreachable' ? { reachability: 'unreachable' as const } : {}) });
+      // OFFLINE-BANNER-1: a launch's first failed probe is 'connecting', and gets one short retry before 'unreachable'
+      const cold = kind === 'unreachable' && this.deps.coldRetry === true && !this.reached && !this.coldSpent;
+      if (cold) {
+        this.coldSpent = true;
+        this.coldRetryNext = true;
+      }
+      this.set({ lastError: message(err), ...(kind === 'unreachable' ? { reachability: cold ? ('connecting' as const) : ('unreachable' as const) } : {}) });
       return kind;
     } finally {
       if (store !== undefined) await this.refresh(store).catch(() => undefined);
@@ -355,6 +379,7 @@ export class SyncEngine {
     const status = await bounded(this.timeoutSignal(PROBE_TIMEOUT_MS), (signal) => this.deps.sync.status({}, { signal }));
     const rtt = Math.min(Math.max(this.clock.monoMs() - sent, 0), PROBE_TIMEOUT_MS);
     if (!isCanonicalVersion(status.serverNowIso)) throw new ProtocolError(`unreadable server_now_iso: ${JSON.stringify(status.serverNowIso)}`);
+    this.reached = true;
     this.set({ reachability: 'reachable' });
     await store.onStatus(status, rtt);
   }

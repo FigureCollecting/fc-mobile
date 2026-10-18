@@ -1856,11 +1856,9 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     expect(cam(host).y).toBeGreaterThan(wallY);
     utils.rerender(view({ swipe: 'pan', view: 'cabinet' }));
     expect(cam(host).y).toBe(opened.y);
-    // the photo slides up and down in the wall view (the cabinet view, fitted whole, has no room to slide it)
-    utils.rerender(view({ swipe: 'pan', view: 'wall' }));
     drag2(host, 0, 40);
     expect(Number(host.dataset.panY)).toBeGreaterThan(0);
-    utils.rerender(view({ swipe: 'pan', view: 'cabinet' }));
+    utils.rerender(view({ swipe: 'pan', view: 'wall' }));
     expect(host.dataset.panY).toBe('0');
   }, 30_000);
 });

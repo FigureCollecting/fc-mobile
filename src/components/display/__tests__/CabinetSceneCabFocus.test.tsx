@@ -93,12 +93,16 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
     expect(cameraOf(host)).toEqual(want);
   });
 
-  it('Next cabinet after a slide of the photo (pan mode): the slide is gone', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'pan' });
+  it('Next cabinet after a slide of the photo (pan mode, sideways and up/down): the slide is gone', () => {
+    const { host } = scene(MANY, { view: 'cabinet', swipe: 'pan' }, { width: 443, height: 418 });
+    next();
     drag(host, -90);
+    drag(host, 0, 120);
     expect(host.dataset.pan).toBe('-90');
+    expect(Number(host.dataset.panY)).toBeGreaterThan(0);
     next();
     expect(host.dataset.pan).toBe('0');
+    expect(host.dataset.panY).toBe('0');
   });
 
   it('Prev cabinet snaps the same way', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
-import { fireEvent, screen, waitFor, within } from '@testing-library/preact';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 // Fake PhotoSwipe capturing options + event handlers, so we can assert the
@@ -7,7 +7,8 @@ import userEvent from '@testing-library/user-event';
 const instances: FakePswp[] = [];
 class FakePswp {
   options: any;
-  handlers: Record<string, () => void> = {};
+  handlers: Record<string, (payload?: any) => void> = {};
+  updateSize = vi.fn();
   currIndex: number;
   initialized = false;
   destroyed = false;
@@ -16,7 +17,7 @@ class FakePswp {
     this.currIndex = options.index ?? 0;
     instances.push(this);
   }
-  on(event: string, cb: () => void) {
+  on(event: string, cb: (payload?: any) => void) {
     this.handlers[event] = cb;
   }
   init() {
@@ -38,7 +39,8 @@ class FakePswp {
 vi.mock('photoswipe', () => ({ default: FakePswp }));
 vi.mock('photoswipe/style.css', () => ({}));
 
-import { FigureViewer } from '../FigureViewer';
+import { FigureViewer, fitSlideToPicture } from '../FigureViewer';
+import { RAIL_INSET_PX, RAIL_WIDTH_PX } from '../../ui/SideRail';
 import { renderWithProviders, flushAll } from '../../../test/testUtils';
 import { FIXTURE_FIGURES, FIXTURE_META } from '../../../dev-fixtures/fixtures';
 
@@ -128,6 +130,205 @@ describe('FigureViewer (Display D)', () => {
     await flushAll();
     expect(await screen.findByText('Madoka Kaname')).toBeInTheDocument();
     expect(screen.getByText('4 of 7')).toBeInTheDocument();
+  });
+
+  it('CARD-FLICKER-1: a swipe to a figure whose card is taller stands the sheet on its low detent in the same frame, never a frame at the old one', async () => {
+    // jsdom lays nothing out: a sheet is 200 px and 40 more per field row, its summary the top 120 px
+    const rows = (el: HTMLElement) => el.querySelectorAll('.figure-viewer-sheet__row').length;
+    const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('figure-viewer-sheet') ? 200 + 40 * rows(this) : 0;
+    });
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 120 : 0 } as DOMRect;
+    });
+    onTestFinished(() => {
+      height.mockRestore();
+      rect.mockRestore();
+    });
+    const longer = { ...FIXTURE_FIGURES[1]!, note: 'A note.', version: 'Limited', materials: 'PVC, ABS' };
+    renderWithProviders(<FigureViewer figures={[FIXTURE_FIGURES[0]!, longer]} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    const sheet = document.body.querySelector<HTMLElement>('.figure-viewer-sheet')!;
+    const low = () => `translateY(${200 + 40 * rows(sheet) - 120}px)`;
+    // opened on the summary: its detent is the sheet's height less the summary's 120 px
+    await waitFor(() => expect(sheet.style.transform).toBe(low()));
+    const before = rows(sheet);
+    act(() => instances[0]!.swipeTo(1));
+    expect(rows(sheet)).toBeGreaterThan(before);
+    // written already, before framer-motion's next frame would write it
+    expect(sheet.style.transform).toBe(low());
+    // and back to the shorter card
+    act(() => instances[0]!.swipeTo(0));
+    expect(sheet.style.transform).toBe(low());
+  });
+
+  // SIDE-RAIL-1 (Ross 10-18): the figure card's sections on a right rail, above its sheet
+  describe('the right rail: the card\'s sections, stacked icon over label, beside the photo and above the sheet', () => {
+    const local = (f: (typeof FIGURE_FIXTURES)[number]) => ({ ...f, imageUrl: undefined, local: { headId: 'h1', kind: 'owned', sync: 'known', asOf: null } }) as never;
+    const FIGURE_FIXTURES = FIXTURE_FIGURES;
+
+    it('carries Details and Copies, a rail of the figure sections inside the sheet so it rides above the sheet\'s top edge', () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      const rail = document.body.querySelector('.figure-viewer-sheet .side-rail')!;
+      expect(rail).not.toBeNull();
+      expect(rail.getAttribute('aria-label')).toBe('Figure sections');
+      expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Copies']);
+    });
+
+    it('Details does what the handle does: it takes the sheet up to all of its fields and back to the summary', async () => {
+      const user = userEvent.setup();
+      // jsdom lays nothing out: a 400 px sheet whose handle and summary take its top 120 px (two detents)
+      const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('figure-viewer-sheet') ? 400 : 0;
+      });
+      const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 120 : 0 } as DOMRect;
+      });
+      onTestFinished(() => {
+        height.mockRestore();
+        rect.mockRestore();
+      });
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={1} onClose={() => {}} />);
+      const sheet = document.body.querySelector('.figure-viewer-sheet')!;
+      const details = screen.getByRole('button', { name: 'Details' });
+      expect(sheet.getAttribute('data-detent')).toBe('summary');
+      expect(details).not.toHaveAttribute('aria-current');
+      await user.click(details);
+      expect(sheet.getAttribute('data-detent')).toBe('all');
+      expect(details).toHaveAttribute('aria-current', 'true');
+      await user.click(details);
+      expect(sheet.getAttribute('data-detent')).toBe('summary');
+      expect(details).not.toHaveAttribute('aria-current');
+    });
+
+    it('Copies closes the viewer and opens the figure\'s full page, as "Copies and actions" does', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      const { currentPath } = renderWithProviders(<FigureViewer figures={[local(FIGURE_FIXTURES[0]!)]} index={0} onClose={onClose} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      await user.click(screen.getByRole('button', { name: 'Copies' }));
+      expect(instances[0]!.destroyed).toBe(true);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(currentPath()).toBe('/figure/h1');
+    });
+
+    it('a figure with no local item has no copies to open: Copies is disabled', () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      expect(screen.getByRole('button', { name: 'Copies' })).toBeDisabled();
+    });
+
+    it('the photo leaves the rail\'s room on its right: the rail\'s width and its 24 px inset, and a little more', async () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      const { right } = instances[0]!.options.paddingFn();
+      expect(right).toBe(RAIL_INSET_PX + RAIL_WIDTH_PX + 8);
+    });
+
+    it('the rail sits 24 px in from the edge, above the sheet, and the sheet leaves it room above; the prev/next arrows keep above the rail\'s places', () => {
+      renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
+      const css = Array.from(document.querySelectorAll('style')).map((st) => st.textContent ?? '').join('\n');
+      expect(css).toMatch(/\.figure-viewer-sheet__rail\s*\{[^}]*right:\s*calc\(24px \+ var\(--safe-area-right/);
+      expect(css).toMatch(/\.figure-viewer-sheet__rail\s*\{[^}]*bottom:\s*calc\(100% \+ 12px\)/);
+      // the sheet stops short of the top by the rail's room, so the rail is never pushed off the screen
+      expect(css).toMatch(/\.figure-viewer-sheet\s*\{[^}]*max-height:\s*min\(80dvh, calc\(100dvh - var\(--rail-room, 0px\)\)\)/);
+      // PhotoSwipe's arrows are moved up, clear of the rail
+      expect(css).toMatch(/\.pswp \.pswp__button--arrow\s*\{[^}]*top:\s*28%/);
+    });
+  });
+
+  // STRETCH-FIX (Ross 10-18, Fold8 cover: "She's stretched")
+  describe('the photo is laid out in its own shape, whole, above the sheet', () => {
+    const picture = (naturalWidth: number, naturalHeight: number) => {
+      const img = document.createElement('img');
+      Object.defineProperty(img, 'naturalWidth', { value: naturalWidth });
+      Object.defineProperty(img, 'naturalHeight', { value: naturalHeight });
+      return img;
+    };
+    const slideOf = (width: number, height: number) => ({ width, height, calculateSize: vi.fn(), zoomAndPanToInitial: vi.fn(), applyCurrentZoomPan: vi.fn(), updateContentSize: vi.fn() });
+    const contentOf = (element: HTMLElement | undefined, width: number, height: number) => ({ element, width, height, data: { width, height } });
+
+    it('a photo of another shape than the app guessed for it is laid out in the photo\'s own: the slide, its content and its data take the natural size, and the slide is sized again', () => {
+      const content = contentOf(picture(540, 960), 600, 800);
+      const slide = slideOf(600, 800);
+      fitSlideToPicture(content, slide);
+      expect([content.width, content.height, content.data.width, content.data.height, slide.width, slide.height]).toEqual([540, 960, 540, 960, 540, 960]);
+      expect(slide.calculateSize).toHaveBeenCalledOnce();
+      expect(slide.zoomAndPanToInitial).toHaveBeenCalledOnce();
+      expect(slide.applyCurrentZoomPan).toHaveBeenCalledOnce();
+      expect(slide.updateContentSize).toHaveBeenCalledWith(true);
+    });
+
+    it('leaves a slide whose declared shape is the photo\'s (a fixture, a figure whose size was known) alone', () => {
+      const content = contentOf(picture(550, 800), 550, 800);
+      const slide = slideOf(550, 800);
+      fitSlideToPicture(content, slide);
+      expect(slide.calculateSize).not.toHaveBeenCalled();
+      // within a tenth of a percent is the same shape (a rounded size)
+      const rounded = contentOf(picture(1101, 1600), 550, 800);
+      fitSlideToPicture(rounded, slide);
+      expect(slide.calculateSize).not.toHaveBeenCalled();
+    });
+
+    it('leaves a slide that has no picture (a plate, a failed load, an image with no size yet) alone', () => {
+      const slide = slideOf(600, 800);
+      fitSlideToPicture(contentOf(document.createElement('div'), 600, 800), slide);
+      fitSlideToPicture(contentOf(undefined, 600, 800), slide);
+      fitSlideToPicture(contentOf(picture(0, 0), 600, 800), slide);
+      expect(slide.calculateSize).not.toHaveBeenCalled();
+    });
+
+    it('lays every slide out once its picture has loaded', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      const content = contentOf(picture(900, 600), 550, 800);
+      const slide = slideOf(550, 800);
+      instances[0]!.handlers['loadComplete']!({ content, slide });
+      expect([slide.width, slide.height]).toEqual([900, 600]);
+    });
+
+    it('reserves what the sheet covers at its summary for the photo, so it stands above the sheet and not under it', async () => {
+      // jsdom lays nothing out: a 400 px sheet whose handle and summary take its top 120 px (the summary detent: 120 px of it show)
+      const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('figure-viewer-sheet') ? 400 : 0;
+      });
+      const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 120 : 0 } as DOMRect;
+      });
+      onTestFinished(() => {
+        height.mockRestore();
+        rect.mockRestore();
+      });
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      expect(instances[0]!.options.paddingFn()).toEqual({ top: 0, left: 0, right: RAIL_INSET_PX + RAIL_WIDTH_PX + 8, bottom: 120 });
+    });
+
+    it('reserves nothing before the sheet is there, and the whole sheet when it has no lower detent', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      // jsdom: a sheet of no height at all
+      expect(instances[0]!.options.paddingFn().bottom).toBe(0);
+      const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('figure-viewer-sheet') ? 90 : 0;
+      });
+      const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+        return { top: 0, bottom: this.classList.contains('figure-viewer-sheet__summary') ? 90 : 0 } as DOMRect;
+      });
+      onTestFinished(() => {
+        height.mockRestore();
+        rect.mockRestore();
+      });
+      // 90 px of sheet that is all summary: one detent, all of it shows
+      expect(instances[0]!.options.paddingFn().bottom).toBe(90);
+    });
+
+    it('fits the photo above the new card\'s sheet when the figure changes (another card is another height)', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      instances[0]!.updateSize.mockClear();
+      act(() => instances[0]!.swipeTo(1));
+      expect(instances[0]!.updateSize).toHaveBeenCalledWith(true);
+    });
   });
 
   it('every field is in the sheet from the start; its handle toggles it between the summary and all of them (SHEETS-FB1 6)', async () => {

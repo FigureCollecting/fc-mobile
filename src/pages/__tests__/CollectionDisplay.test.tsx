@@ -120,10 +120,57 @@ describe('Collection page (rebuilt display layer)', () => {
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     await user.click(screen.getByRole('button', { name: 'View' }));
-    await user.click(await screen.findByRole('radio', { name: 'Pan the wall' }));
-    await user.click(screen.getByRole('radio', { name: 'One cabinet' }));
-    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-swipe="pan"][data-view="cabinet"]')).not.toBeNull());
-    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ swipe: 'pan', view: 'cabinet' });
+    await user.click(await screen.findByRole('radio', { name: 'One cabinet' }));
+    // the swipe mode is not in this card any more (CAM1)
+    expect(screen.queryByRole('radio', { name: 'Pan the wall' })).toBeNull();
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-view="cabinet"]')).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ view: 'cabinet' });
+  });
+
+  it('CAM1: the header\'s swipe menu sets the swipe mode, kept on this device; the tiles have no such button', async () => {
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(container.querySelector('.cabinet-scene[data-swipe="camera"]')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: /^Swipe, Move the camera/ }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'Pan the wall' }));
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-swipe="pan"]')).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ swipe: 'pan' });
+    expect(screen.getByRole('button', { name: /^Swipe, Pan the wall/ })).toBeInTheDocument();
+    unmount();
+    renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
+  });
+
+  it('CAM1: the swipe menu is usable while the picture is zoomed: it stands outside the zoom layer, and picking a mode there sets it (a new mode starts the picture at 1x, PINCH-1)', async () => {
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    const scene = container.querySelector('.cabinet-scene') as HTMLElement;
+    const zoomK = () => (JSON.parse(scene.dataset.zoom!) as { k: number }).k;
+    // two fingers spread: about 2x
+    const at = (id: number, x: number) => ({ pointerId: id, clientX: x, clientY: 260, button: 0 });
+    fireEvent.pointerDown(scene, at(11, 180));
+    fireEvent.pointerDown(scene, at(12, 260));
+    for (const t of [0.5, 1]) {
+      fireEvent.pointerMove(scene, at(11, 180 - 40 * t));
+      fireEvent.pointerMove(scene, at(12, 260 + 40 * t));
+    }
+    fireEvent.pointerUp(scene, at(11, 140));
+    fireEvent.pointerUp(scene, at(12, 300));
+    expect(zoomK()).toBeGreaterThan(1);
+    const button = screen.getByRole('button', { name: /^Swipe/ });
+    expect(scene.contains(button)).toBe(false);
+    expect(button).toBeEnabled();
+    await user.click(button);
+    const menu = screen.getByRole('menu', { name: 'Swipe modes' });
+    expect(scene.contains(menu)).toBe(false);
+    await user.click(screen.getByRole('menuitemradio', { name: 'Pan the wall' }));
+    await waitFor(() => expect(scene.dataset.swipe).toBe('pan'));
+    expect(zoomK()).toBe(1);
   });
 
   it('CARD-REFRESH-1: a pull down on the collection refetches the cards past the 24 h TTL (the engine rate-limits it), where it used to run a plain sync', async () => {

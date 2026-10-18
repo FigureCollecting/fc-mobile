@@ -43,13 +43,28 @@ function sizeOf(figure: Figure): string | undefined {
 }
 
 /**
+ * What "Copies and actions" does for this figure: the full page of its local item, in the place of the viewer's or pane's
+ * history entry (Back from it returns to the collection), after `onBeforeOpen` (a full-screen viewer closes itself first);
+ * null for a figure with no local item.
+ */
+export function useCopiesAction(figure: Figure, onBeforeOpen?: () => void): (() => void) | null {
+  const [, setLocation] = useLocation();
+  const local = (figure as Shown).local;
+  if (local === undefined) return null;
+  return () => {
+    onBeforeOpen?.();
+    setLocation(`/figure/${local.headId}`, { replace: true });
+  };
+}
+
+/**
  * The figure's data block: its summary (name, position counter, badges, the way to its copies) and every
  * field it has, all at once (SHEETS-FB1: nothing hangs on tapping a handle). Shared between the full-screen
  * viewer's pull-up sheet (Display D, < 640px), which peeks at the summary and pulls up to the rest, and the
  * Fold-open dual-pane (>= 640px, Display D'), which shows it all.
  */
 export function FigureDetailContent({ figure, index, total, onBeforeOpen }: FigureDetailContentProps) {
-  const [, setLocation] = useLocation();
+  const openCopies = useCopiesAction(figure, onBeforeOpen);
   // The local store's state of the item; fixture figures have none.
   const local = (figure as Shown).local;
   const quantity = figure.quantity ?? 1;
@@ -73,12 +88,8 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
         {local !== undefined && <SyncBadge sync={local.sync} asOf={local.asOf} id={`viewer-sync-${figure._id}`} />}
       </div>
 
-      {local !== undefined && (
-        <button type="button" class="figure-viewer-sheet__open" onClick={() => {
-            onBeforeOpen?.();
-            // in the place of the viewer's or pane's history entry: Back from it returns to the collection
-            setLocation(`/figure/${local.headId}`, { replace: true });
-          }}>
+      {openCopies !== null && (
+        <button type="button" class="figure-viewer-sheet__open" onClick={openCopies}>
           Copies and actions
         </button>
       )}

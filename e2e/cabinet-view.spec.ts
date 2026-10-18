@@ -176,7 +176,7 @@ async function framedBottomPx(page: Page, view: 'wall' | 'cabinet' | 'shelf'): P
 
 type View = 'wall' | 'cabinet' | 'shelf';
 
-/** Open the case in `view`; the shelf view frames shelf 1 (the top's band may not fit, the camera steps back only 3 in, CC4b). */
+/** Open the case in `view`; the shelf view frames shelf 1 (the top step, shelf 0, frames its band up to the ceiling, TOP1). */
 async function openFramed(page: Page, size: { width: number; height: number }, view: View) {
   await openCase(page, size, '&fx=3', { view });
   if (view === 'shelf') {
@@ -1073,7 +1073,7 @@ test('a swipe opens nothing; the next tap does', async ({ page }) => {
   await expect(page.locator('.pswp')).toBeVisible();
 });
 
-test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; the View card switches the swipe', async ({ page }) => {
+test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; the swipe is switched in the header, not the View card (CAM1)', async ({ page }) => {
   await openCase(page, FOLD8[0]);
   const tabs = page.locator('.case-tabs');
   const add = (await page.locator('.tab-bar__add').boundingBox())!;
@@ -1088,8 +1088,15 @@ test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; the View ca
   const dock = (await tabs.locator('[data-tab="dock"]').boundingBox())!;
   expect(Math.abs(dock.x + dock.width / 2 - (add.x + add.width / 2))).toBeLessThanOrEqual(1);
 
+  // CAM1: the View card no longer holds the swipe mode; the header's Swipe button and its menu do
   await page.getByRole('button', { name: 'View' }).click();
-  await page.getByRole('radio', { name: 'Pan the wall' }).click();
+  await expect(page.locator('.bottom-sheet')).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Pan the wall' })).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: 'Move the camera' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+  await page.getByRole('button', { name: /^Swipe/ }).click();
+  await page.getByRole('menuitemradio', { name: 'Pan the wall' }).click();
   await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-swipe', 'pan');
   expect(JSON.parse((await page.evaluate(() => localStorage.getItem('fc-case-prefs')))!).swipe).toBe('pan');
 });
@@ -1106,7 +1113,7 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
     expect.soft(shown.y + shown.height, 'the card ends above the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
     expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
     const choices = card.locator('label.case-card__choice');
-    // three views, the cabinet walls, the two swipes
+    // three views and the cabinet walls (the swipe mode is in the header: CAM1)
     expect(await choices.count()).toBeGreaterThanOrEqual(7);
     const missed: string[] = [];
     for (const choice of await choices.all()) {

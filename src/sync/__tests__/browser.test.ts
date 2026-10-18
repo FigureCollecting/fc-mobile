@@ -146,7 +146,8 @@ describe('createBrowserSync', () => {
     const { db } = await freshDb();
     const s = session(db);
     const { engine, dispose } = createBrowserSync({ session: s });
-    await vi.waitFor(() => expect(engine.state.value.reachability).toBe('unreachable'));
+    // no server answers: the app's engine reads its first failure as a cold launch still connecting (OFFLINE-BANNER-1)
+    await vi.waitFor(() => expect(engine.state.value.reachability).toBe('connecting'));
     expect(String(s.fetch.mock.calls[0]![0])).toBe('/api/coordinator.v1.SyncService/Status');
     dispose();
   });

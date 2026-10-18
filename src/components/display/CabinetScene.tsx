@@ -6,7 +6,8 @@
  * never stretched or padded to the screen; the sides, the usable top and the
  * legs show; wide screens show several cabinets. Ross 2026-10-09: clear,
  * see-through glass (CC13), neighbours drawn true (CC4a), the camera steps
- * back at a cabinet's top (CC4b), and a sideways swipe either walks the
+ * back at a cabinet's top (CC4b; TOP1 10-18: the top step shows up to the
+ * ceiling instead), and a sideways swipe either walks the
  * camera or pans the picture, a toggle kept per device (CC4, CC14).
  *
  * The world is authored in CSS px at 1 px per mm (x right, y down = -world
@@ -57,6 +58,7 @@ import {
   roomBox,
   settlePan,
   settleWalk,
+  shelfSteps,
   swipeCamera,
   walkStops,
   wallPages,
@@ -1132,17 +1134,33 @@ export function CabinetScene({
     e.preventDefault();
   };
 
+  // TOP1 (Ross 10-18): an arrow press in the one-shelf view snaps to the straight-on view that shows that whole shelf of the
+  // focus cabinet: the walk, the pan, the lift and the zoom a drag or a pinch left are gone. Only the arrows do it; a drag
+  // or a pinch still moves the picture as the swipe mode says, from there.
+  const snapShelf = () => {
+    setWalkX(null);
+    setPan(0);
+    setLift(0);
+    setPanY(0);
+    if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
+  };
   const goCabinet = (to: number) => {
     setFocus(Math.max(0, Math.min(lastIndex, to)));
     setWalkX(null);
     setPan(0);
+    if (prefs.view === 'shelf') snapShelf();
   };
   const goPage = (step: number) => {
     const target = pages[Math.max(0, Math.min(pages.length - 1, pageIdx + step))];
     goCabinet(target[0]);
   };
-  const shelfCount = wall.cabinets[focusIdx].profile.surfaces.length - (wall.cabinets[focusIdx].profile.top.usable ? 0 : 1);
+  // SHELF-STEPS-1: the steps are the wall's levels, as the shelf camera is (shelfSteps), not the focus cabinet's own surfaces
+  const shelfCount = useMemo(() => shelfSteps(framingInput), [framingInput]);
   const shelfIdx = Math.min(shelf, shelfCount - 1);
+  const goShelf = (to: number) => {
+    setShelf(to);
+    snapShelf();
+  };
 
   // --- figures
   const draws: { draw: FigureDraw; cab: number }[] = [];
@@ -1329,14 +1347,14 @@ export function CabinetScene({
         </button>
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
-            <button type="button" aria-label="Shelf above" disabled={shelfIdx <= 0} onClick={() => setShelf(Math.max(0, shelfIdx - 1))}>
+            <button type="button" aria-label="Shelf above" disabled={shelfIdx <= 0} onClick={() => goShelf(Math.max(0, shelfIdx - 1))}>
               ˄
             </button>
             <button
               type="button"
               aria-label="Shelf below"
               disabled={shelfIdx >= shelfCount - 1}
-              onClick={() => setShelf(Math.min(shelfCount - 1, shelfIdx + 1))}
+              onClick={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))}
             >
               ˅
             </button>

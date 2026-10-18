@@ -31,6 +31,8 @@ export interface SheetDriver {
   settle(y: number): void;
   /** Halt any animation where the card stands. */
   stop(): void;
+  /** Put it there now AND in the page now, before the next paint: the card's contents or size just changed. */
+  jump(y: number): void;
 }
 
 export interface SheetDragConfig {
@@ -46,6 +48,8 @@ export interface SheetDragConfig {
 export interface SheetDragController {
   /** Settle on a detent (the last if out of range). */
   settleTo(index: number): void;
+  /** The card's contents changed: back on the detent it rests on, measured anew, in the page before the next paint (CARD-FLICKER-1). */
+  refit(): void;
   detach(): void;
 }
 
@@ -224,15 +228,16 @@ export function attachSheetDrag(
     e.stopPropagation();
   };
 
-  // a turn of the phone, or new contents: back on its detent where that moved, at once
-  const onResize = () => {
+  // a turn of the phone, or new contents: back on its detent where that moved, at once and on the screen in that same frame
+  const refit = () => {
     if (hold !== null || restIndex === null) return;
     const y = config.detents()[restIndex];
     if (Math.abs(y - restY) < 0.5) return;
     restY = y;
     driver.stop();
-    driver.set(y);
+    driver.jump(y);
   };
+  const onResize = refit;
   const resized = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
   resized?.observe(sheet);
 
@@ -250,6 +255,7 @@ export function attachSheetDrag(
 
   return {
     settleTo,
+    refit,
     detach() {
       sheet.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('resize', onResize);

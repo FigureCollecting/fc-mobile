@@ -1,6 +1,6 @@
 // ADDR-1: the image of each figure in the collection for the case view, online and offline: owned,
 // ordered and wished, owned first (FB-QUICK, Ross 10-16: his Ordered and Wished stood as plates).
-// Signed in and in reach (the browser online AND the sync engine not finding the server unreachable),
+// Signed in and in reach (the browser online AND the sync engine's probe having been answered),
 // the caches are brought to the kept figures (src/media/keptImages.ts: their lists replaced, their primary images and masks
 // fetched, everything else evicted, a withheld address recorded); out of reach, or when that sync
 // fails, what the last one kept stands and nothing more is asked. A figure answers the image the last
@@ -75,7 +75,10 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const session = localSession.value;
   const phase = useAuthPhase();
   const online = useOnlineStatus().value;
-  const reachable = online && session?.engine.state.value.reachability !== 'unreachable';
+  // STALE-CONTENT: in reach is the server having ANSWERED, not merely not having failed: before the first probe (a cold launch,
+  // the radio warming) a sync would fail, and its answer would stand as fresh for ten minutes after the connection came
+  // back. The key changes when the server is reached, so the sync runs then, once, and again after any outage.
+  const reachable = online && session?.engine.state.value.reachability === 'reachable';
   const keptHeads = useCallback(
     (s: Snapshot): string[] => [...new Set(KEPT_KINDS.flatMap((kind) => s.figures.filter((f) => f.local.kind === kind).map((f) => f.local.headId).sort()))],
     [],
@@ -114,7 +117,9 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
             tellKeptSync(client, 'stopped');
           }
           if (signal.aborted) throw err;
-          // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
+          // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands, shown, but a
+          // sync that failed is no answer to keep fresh: partial, so it syncs again once the server is reached (STALE-CONTENT).
+          incomplete = true;
         } finally {
           shown.stop();
         }

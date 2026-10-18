@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import { motion } from 'framer-motion';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type PhotoSwipe from 'photoswipe';
 import { getDisplayMeta } from './displayMeta';
-import { FigureDetailContent } from './FigureDetailContent';
+import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
+import { FigureRail, readySections } from './figureSections';
+import { RAIL_INSET_PX, RAIL_WIDTH_PX, railHeightPx } from '../ui/SideRail';
 import { Style } from '../../styles/Style';
 import { useSheetDrag } from '../ui/useSheetDrag';
 import { useBackToClose } from '../../hooks/useBackToClose';
@@ -15,6 +17,8 @@ const ON_THE_FIGURE = '.pswp__img, .figure-viewer__plate-name, .figure-viewer__p
 /** The sheet's two detents: all of it up, or down to its summary (name, badges, the way to its copies). */
 const ALL = 0;
 const SUMMARY = 1;
+/** SIDE-RAIL-1: the room kept above the rail on top of its own height: the gap above the sheet and the screen's top bar. */
+const RAIL_ROOM_PX = 12 + 64;
 
 /** translateY px of each detent: up, and down by all but its handle and summary. */
 function infoDetents(sheet: HTMLElement): number[] {
@@ -25,6 +29,54 @@ function infoDetents(sheet: HTMLElement): number[] {
   const shown = summary.getBoundingClientRect().bottom - top + body.scrollTop + parseFloat(getComputedStyle(sheet).paddingBottom || '0');
   const down = Math.max(0, sheet.offsetHeight - shown);
   return down > 1 ? [0, down] : [0];
+}
+
+/**
+ * How much of the screen's bottom the sheet covers at its summary detent: the photo is laid out above it, whole (STRETCH-FIX).
+ * Measured from the sheet's own size and detents, not where it stands now, which it is still rising to as the gallery opens.
+ */
+function sheetPeekPx(sheet: HTMLElement | null): number {
+  if (!sheet) return 0;
+  return Math.max(0, sheet.offsetHeight - (infoDetents(sheet)[1] ?? 0));
+}
+
+/** The parts of PhotoSwipe's slide content and slide the fit reads and sets (its types are not exported by path). */
+export interface PictureContent {
+  element: HTMLElement | undefined;
+  width: number;
+  height: number;
+  data: { width?: number; height?: number };
+}
+export interface PictureSlide {
+  width: number;
+  height: number;
+  calculateSize(): void;
+  zoomAndPanToInitial(): void;
+  applyCurrentZoomPan(): void;
+  updateContentSize(force?: boolean): void;
+}
+
+/**
+ * STRETCH-FIX (Ross 10-18, Fold8 cover: "She's stretched"): a figure's display meta carries no real picture size (every
+ * real figure's says 600 x 800), and PhotoSwipe sizes the <img> to the shape it is told, so the real picture was stretched
+ * into that box. Once the picture has loaded, the slide is laid out in the picture's own shape: uniform scale, bars where
+ * its shape differs from the room's. Fixture figures declare their own pictures' sizes and are left alone.
+ */
+export function fitSlideToPicture(content: PictureContent, slide: PictureSlide): void {
+  const img = content.element;
+  if (!(img instanceof HTMLImageElement) || img.naturalWidth === 0 || img.naturalHeight === 0) return;
+  const { naturalWidth: width, naturalHeight: height } = img;
+  if (Math.abs(width / height / (content.width / content.height) - 1) <= 0.001) return;
+  content.width = width;
+  content.height = height;
+  content.data.width = width;
+  content.data.height = height;
+  slide.width = width;
+  slide.height = height;
+  slide.calculateSize();
+  slide.zoomAndPanToInitial();
+  slide.applyCurrentZoomPan();
+  slide.updateContentSize(true);
 }
 
 /**
@@ -61,7 +113,11 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // dragged by its handle and handed off from its body (sheetDrag.ts); it peeks at the summary, never closes
-  const { y, settleTo } = useSheetDrag({ open: true, sheetRef, contentRef: bodyRef, detents: infoDetents, initial: SUMMARY, onSettle: setDetent });
+  const { y, settleTo, refit } = useSheetDrag({ open: true, sheetRef, contentRef: bodyRef, detents: infoDetents, initial: SUMMARY, onSettle: setDetent });
+  // CARD-FLICKER-1: another figure's card measures differently; the sheet is back on its detent before that is painted,
+  // so the card swaps in place (the ResizeObserver comes after layout and framer-motion writes a frame later: the
+  // sheet dropped or rose for a frame between)
+  useLayoutEffect(refit, [current]);
   const pswpRef = useRef<PhotoSwipe | null>(null);
   const closingRef = useRef(false);
   const onCloseRef = useRef(onClose);
@@ -123,6 +179,9 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         initialZoomLevel: 'fit',
         secondaryZoomLevel: 2,
         maxZoomLevel: 4,
+        // the photo stands whole above the Info sheet (STRETCH-FIX), never under it
+        // and left of the section rail: its width, its inset from the edge and a little air (SIDE-RAIL-1)
+        paddingFn: () => ({ top: 0, left: 0, right: RAIL_INSET_PX + RAIL_WIDTH_PX + 8, bottom: sheetPeekPx(sheetRef.current) }),
         // our own X, always shown (SHEETS-FB1 6c), not PhotoSwipe's, which a tap hides
         close: false,
         // a tap off the figure closes; on it, it shows or hides the zoom and arrows as before
@@ -133,6 +192,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
       });
 
       pswp.on('change', () => setCurrent(pswp.currIndex));
+      pswp.on('loadComplete', ({ content, slide }) => fitSlideToPicture(content, slide));
       pswp.on('destroy', () => {
         pswpRef.current = null;
         if (!closingRef.current) {
@@ -157,7 +217,13 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // another figure's card is another height: the photo fits above its sheet's summary
+  useLayoutEffect(() => {
+    pswpRef.current?.updateSize(true);
+  }, [current]);
+
   const figure = figures[current];
+  const openCopies = useCopiesAction(figure ?? ({} as Figure), closeViewer);
   if (!figure) return null;
 
   // Portaled to document.body so it shares a stacking context with PhotoSwipe
@@ -173,7 +239,22 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         <path d="M6 6l12 12" />
       </svg>
     </button>
-    <motion.div class="figure-viewer-sheet" ref={sheetRef} style={{ y }} data-detent={expanded ? 'all' : 'summary'}>
+    <motion.div
+      class="figure-viewer-sheet"
+      ref={sheetRef}
+      style={{ y, '--rail-room': `${railHeightPx(readySections().length) + RAIL_ROOM_PX}px` }}
+      data-detent={expanded ? 'all' : 'summary'}
+    >
+      {/* SIDE-RAIL-1: the figure card's sections on a right rail, riding the sheet's top edge so it is always above it */}
+      <FigureRail
+        class="figure-viewer-sheet__rail"
+        detailsOpen={expanded}
+        onDetails={() => {
+          setDetent(expanded ? SUMMARY : ALL);
+          settleTo(expanded ? SUMMARY : ALL);
+        }}
+        onCopies={openCopies}
+      />
       <button
         class="figure-viewer-sheet__handle"
         type="button"
@@ -206,6 +287,8 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           flex-direction: column;
           max-height: 80vh;
           max-height: 80dvh;
+          /* leaves the rail its room above, so it is never pushed off the top of the screen */
+          max-height: min(80dvh, calc(100dvh - var(--rail-room, 0px)));
           background: color-mix(in srgb, var(--surface-secondary) 92%, transparent);
           backdrop-filter: blur(10px);
           -webkit-backdrop-filter: blur(10px);
@@ -214,6 +297,18 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           box-shadow: var(--shadow-lg);
           /* the handle and the rest of the card are the sheet's to drag; its body scrolls */
           touch-action: none;
+        }
+
+        /* the rail: 24 px in from the edge, just above the sheet's top edge (its own height away from it) */
+        .figure-viewer-sheet__rail {
+          position: absolute;
+          right: calc(24px + var(--safe-area-right, 0px));
+          bottom: calc(100% + 12px);
+        }
+
+        /* PhotoSwipe's prev/next arrows stand higher than its default middle, so they never meet the rail */
+        .pswp .pswp__button--arrow {
+          top: 28%;
         }
 
         .figure-viewer-sheet__handle {

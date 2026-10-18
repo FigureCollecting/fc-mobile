@@ -10,15 +10,17 @@ interface Props {
   open: boolean;
   onClose?: () => void;
   onSettle?: (i: number) => void;
-  expose?: (api: { settleTo: (i: number) => void; y: () => number }) => void;
+  expose?: (api: { settleTo: (i: number) => void; refit: () => void; y: () => number }) => void;
+  /** The card's rest positions, as it now measures; the same two as ever when not given. */
+  detents?: () => number[];
   /** The card stays in the page once closed, as it does while its exit animation runs. */
   leaving?: boolean;
 }
 
-function Card({ open, onClose, onSettle, expose, leaving }: Props) {
+function Card({ open, onClose, onSettle, expose, leaving, detents = () => [0, 200] }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
-  const { y, settleTo } = useSheetDrag({ open, sheetRef, detents: () => [0, 200], initial: 1, onClose, onSettle });
-  expose?.({ settleTo, y: () => y.get() });
+  const { y, settleTo, refit } = useSheetDrag({ open, sheetRef, detents, initial: 1, onClose, onSettle });
+  expose?.({ settleTo, refit, y: () => y.get() });
   return open || leaving ? (
     <motion.div ref={sheetRef} class="card" style={{ y }}>
       <div class="handle">handle</div>
@@ -36,8 +38,38 @@ function drag(el: Element, from: number, to: number) {
 }
 
 describe('useSheetDrag (the real framer-motion)', () => {
+  // CARD-FLICKER-1: framer-motion writes a motion value to the page on its next frame, so a card whose contents just
+  // changed stood a frame at the old translateY (dropped, or risen) before it was put right. A refit, and a resize,
+  // write the new translateY to the page now, before that frame.
+  it('refit: the card stands on its detent measured anew in the page at once, not on the next frame', async () => {
+    let api!: { settleTo: (i: number) => void; refit: () => void; y: () => number };
+    let rest = 200;
+    const { container } = render(<Card open detents={() => [0, rest]} expose={(a) => (api = a)} />);
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    const card = container.querySelector('.card') as HTMLElement;
+    expect(card.style.transform).toBe('translateY(200px)');
+    rest = 320;
+    act(() => api.refit());
+    expect(card.style.transform).toBe('translateY(320px)');
+    expect(api.y()).toBe(320);
+  });
+
+  it('a resize that moves its detent writes it to the page at once too', async () => {
+    let api!: { settleTo: (i: number) => void; refit: () => void; y: () => number };
+    let rest = 200;
+    const { container } = render(<Card open detents={() => [0, rest]} expose={(a) => (api = a)} />);
+    await act(() => new Promise((r) => setTimeout(r, 400)));
+    const card = container.querySelector('.card') as HTMLElement;
+    rest = 260;
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(card.style.transform).toBe('translateY(260px)');
+    expect(api.y()).toBe(260);
+  });
+
   it('opens from below the screen onto its first detent, in one short animation', async () => {
-    let api!: { settleTo: (i: number) => void; y: () => number };
+    let api!: { settleTo: (i: number) => void; refit: () => void; y: () => number };
     const onSettle = vi.fn();
     render(<Card open onSettle={onSettle} expose={(a) => (api = a)} />);
     expect(onSettle).toHaveBeenCalledWith(1);
@@ -59,7 +91,7 @@ describe('useSheetDrag (the real framer-motion)', () => {
   });
 
   it('where it may not close, a drag down rests it on its lowest detent', async () => {
-    let api!: { settleTo: (i: number) => void; y: () => number };
+    let api!: { settleTo: (i: number) => void; refit: () => void; y: () => number };
     const onSettle = vi.fn();
     const { container } = render(<Card open onSettle={onSettle} expose={(a) => (api = a)} />);
     await act(() => new Promise((r) => setTimeout(r, 400)));
@@ -82,7 +114,7 @@ describe('useSheetDrag (the real framer-motion)', () => {
   });
 
   it('closed, it has nothing to settle and listens to nothing', () => {
-    let api!: { settleTo: (i: number) => void; y: () => number };
+    let api!: { settleTo: (i: number) => void; refit: () => void; y: () => number };
     const onSettle = vi.fn();
     render(<Card open={false} onSettle={onSettle} expose={(a) => (api = a)} />);
     api.settleTo(0);

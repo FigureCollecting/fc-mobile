@@ -191,7 +191,7 @@ export function Collection() {
 
   const handleRefresh = useCallback(async () => {
     if (fixtureMode) await fixturesQuery.refetch();
-    else await localSession.peek()?.engine.trigger('manual');
+    else await localSession.peek()?.engine.refreshCards();
   }, [fixtureMode, fixturesQuery]);
 
   const handleSelect = useCallback((figure: Figure, index: number) => {

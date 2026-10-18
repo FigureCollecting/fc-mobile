@@ -126,6 +126,23 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ swipe: 'pan', view: 'cabinet' });
   });
 
+  it('CARD-REFRESH-1: a pull down on the collection refetches the cards past the 24 h TTL (the engine rate-limits it), where it used to run a plain sync', async () => {
+    const r = await localRig();
+    await seedFigures(r, [makeFigure('1')]);
+    const refresh = vi.spyOn(r.engine, 'refreshCards');
+    const plain = vi.spyOn(r.engine, 'trigger');
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    plain.mockClear();
+    const pull = container.querySelector('.pull-to-refresh') as HTMLElement;
+    fireEvent.touchStart(pull, { touches: [{ clientY: 10 }] });
+    fireEvent.touchMove(pull, { touches: [{ clientY: 170 }] });
+    fireEvent.touchEnd(pull);
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    // the one pass it asks for is refreshCards's own: no second, plain one
+    expect(plain.mock.calls.filter(([why]) => why === 'manual')).toHaveLength(1);
+  });
+
   it('the Refine tab opens the filter sheet; Info reopens the last figure tapped', async () => {
     await respondWith([makeFigure('1'), makeFigure('2')]);
     const user = userEvent.setup();

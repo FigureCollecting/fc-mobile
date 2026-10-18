@@ -10,7 +10,8 @@
 //      the cursor at that commit. An unreadable cursor (INVALID_ARGUMENT) replays from '' onto an
 //      empty replica, the outbox untouched;
 //   4. GetProducts, in batches of 200, for the figures the user holds (occ/*/head and uf/* rows)
-//      that have no card or a card older than 24 h.
+//      that have no card, a card older than 24 h, or a card stored under an older CARD_SCHEMA_VERSION.
+//      A pull-to-refresh (refreshCards) makes every card due, at most once per FORCE_REFRESH_MIN_MS.
 // Passes run one at a time on: start, online, offline (so the status reads unreachable at once),
 // visibilitychange to visible, pageshow, 1 s after a local write, a full-jitter backoff (cap 2 s
 // doubling to 5 min) while the page is visible, and, when pollMs is set, every pollMs while the page
@@ -29,6 +30,7 @@ import {
   type SyncEvent,
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
+import { CARD_SCHEMA_VERSION } from '../storage/records';
 import type { UserStore } from '../storage/userStore';
 
 export const DELTA_PAGE = 500;
@@ -38,6 +40,8 @@ export const PROBE_TIMEOUT_MS = 3_000;
 /** Any other call that has not answered by then counts as unreachable; its batch is retried as sent. */
 export const CALL_TIMEOUT_MS = 30_000;
 export const PRODUCT_TTL_MS = 24 * 60 * 60 * 1000;
+/** CARD-REFRESH-1: a pull-to-refresh refetches every card at most this often; a pull inside it is a plain sync. */
+export const FORCE_REFRESH_MIN_MS = 5 * 60 * 1000;
 export const WRITE_DELAY_MS = 1_000;
 export const BACKOFF_MIN_MS = 2_000;
 export const BACKOFF_MAX_MS = 5 * 60 * 1000;
@@ -169,6 +173,9 @@ export class SyncEngine {
   readonly changes: ReadonlySignal<number> = this.#changes;
   private running: Promise<void> | undefined;
   private again = false;
+  /** CARD-REFRESH-1: when a pull-to-refresh last forced the cards (the rate limit), and, while one is owed, when it was asked for. */
+  private forcedAt: number | undefined;
+  private cardsSince: number | undefined;
   private attempt = 0;
   private retryTimer: unknown;
   private writeTimer: unknown;
@@ -227,6 +234,20 @@ export class SyncEngine {
       this.running = undefined;
     });
     return this.running;
+  }
+
+  /**
+   * Pull-to-refresh (CARD-REFRESH-1): a pass that refetches the card of every figure held, whatever its age, not only
+   * those past the 24 h TTL. At most once per FORCE_REFRESH_MIN_MS: a pull inside that is a plain pass. A pass the
+   * network cuts short leaves the rest owed, and the retry fetches only the cards not fetched since the pull.
+   */
+  refreshCards(): Promise<void> {
+    const now = this.clock.wallMs();
+    if (this.forcedAt === undefined || now - this.forcedAt >= FORCE_REFRESH_MIN_MS) {
+      this.forcedAt = now;
+      this.cardsSince = now;
+    }
+    return this.trigger('manual');
   }
 
   /** A local write happened: show it as pending now, sync 1 s later (once for a burst). */
@@ -436,11 +457,16 @@ export class SyncEngine {
     }
     const fetched = new Map<string, number>();
     for (const p of await store.listProducts()) {
+      // a card stored under an older card schema is as good as none: due now, whatever its age (CARD-REFRESH-1)
+      if ((p.card_schema ?? 1) < CARD_SCHEMA_VERSION) continue;
       const ids = [p.head_id, ...p.card.requestedAs.flatMap((r) => (r.ref.case === 'headId' ? [r.ref.value] : []))];
       for (const id of ids) fetched.set(id, Math.max(fetched.get(id) ?? -Infinity, p.fetched_at));
     }
     const now = this.clock.wallMs();
-    const due = [...heads].filter((h) => !(now - (fetched.get(h) ?? -Infinity) < PRODUCT_TTL_MS)).sort();
+    // due: past the TTL; or, after a pull-to-refresh, fetched before it (cards fetched since it are done)
+    const since = this.cardsSince;
+    const fresh = (at: number) => (since === undefined ? now - at < PRODUCT_TTL_MS : at >= since);
+    const due = [...heads].filter((h) => !fresh(fetched.get(h) ?? -Infinity)).sort();
     for (let i = 0; i < due.length; i += PRODUCT_BATCH) {
       const refs = due.slice(i, i + PRODUCT_BATCH).map((value) => ({ ref: { case: 'headId' as const, value } }));
       let pageToken = '';
@@ -454,6 +480,8 @@ export class SyncEngine {
         if (pageToken !== '' && sent.has(pageToken)) throw new ProtocolError(`GetProducts repeated next_page_token ${JSON.stringify(pageToken)}`);
       } while (pageToken !== '');
     }
+    // every card asked for is in: the pull is served, unless a newer one came in meanwhile
+    if (this.cardsSince === since) this.cardsSince = undefined;
   }
 
   // ------------------------------------------------------------ what the UI shows

@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { ufFacetKey } from '@figurecollecting/fc-api-contract';
 import { openLocalDb } from '../../storage/localDb';
-import { SyncEngine } from '../engine';
+import { effect } from '@preact/signals';
+import { COLD_RETRY_MS, SyncEngine, type Reachability } from '../engine';
 import { openStore } from './harness';
 import { ManualTimeouts, ManualTimers, headOf, rig } from './engineSupport';
 
@@ -125,5 +126,93 @@ describe('triggers for an offline-first session', () => {
     stopped.engine.stop();
     await pass;
     expect(stopped.timers.pending.size).toBe(0);
+  });
+});
+
+// OFFLINE-BANNER-1 (Ross 10-18, Fold8, live sha-7d4853e: "when I first launched the phone app it said can't reach
+// server/offline. But then it did."). A cold launch's radio, DNS and TLS are still warming: the first Status probe may
+// time out on a server that is fine. The app's engine (coldRetry) reads 'connecting' for that first failure and retries
+// once, shortly, before it says 'unreachable'; a real outage (a second failure, an outage after it was reached, the
+// offline event) is declared as before.
+describe('OFFLINE-BANNER-1: a cold launch is given one short retry before it reads unreachable', () => {
+  const down = () => ({ kind: 'throw' as const, error: new ConnectError('down', Code.Unavailable) });
+
+  /** Every reachability the state takes, in order, from now on. */
+  function watch(r: Awaited<ReturnType<typeof rig>>) {
+    const seen: Reachability[] = [];
+    const stop = effect(() => {
+      const now = r.engine.state.value.reachability;
+      if (seen.at(-1) !== now) seen.push(now);
+    });
+    return { seen, stop };
+  }
+
+  it('the first failed probe of a launch reads "connecting", and one retry comes after COLD_RETRY_MS, not the backoff', async () => {
+    const r = await rig({ deps: { document: env().doc, coldRetry: true, random: () => 0.9 } });
+    const { seen, stop } = watch(r);
+    r.server.fault('status', down());
+    await r.engine.trigger('start');
+    expect(r.engine.state.value.reachability).toBe('connecting');
+    expect(r.timers.delays()).toEqual([COLD_RETRY_MS]);
+    r.timers.fireAll();
+    await vi.waitFor(() => expect(r.engine.state.value).toMatchObject({ reachability: 'reachable', phase: 'idle', lastError: null }));
+    expect(seen).toEqual(['unknown', 'connecting', 'reachable']);
+    stop();
+  });
+
+  it('a second failure declares it unreachable, and the full-jitter backoff takes over', async () => {
+    const r = await rig({ deps: { document: env().doc, coldRetry: true, random: () => 0.9 } });
+    r.server.fault('status', down(), down());
+    await r.engine.trigger('start');
+    r.timers.fireAll();
+    await vi.waitFor(() => expect(r.engine.state.value.reachability).toBe('unreachable'));
+    await vi.waitFor(() => expect(r.timers.delays()).toEqual([1_800])); // 2 s * 0.9: the backoff, not COLD_RETRY_MS
+  });
+
+  it('once the server has answered, a failure is a real outage: unreachable at once', async () => {
+    const r = await rig({ deps: { document: env().doc, coldRetry: true } });
+    await r.engine.trigger('start');
+    expect(r.engine.state.value.reachability).toBe('reachable');
+    r.server.fault('status', down());
+    await r.engine.trigger('manual');
+    expect(r.engine.state.value.reachability).toBe('unreachable');
+  });
+
+  it('the offline event is not a cold start: the browser says there is no network, so it reads unreachable at once', async () => {
+    const r = await rig({ deps: { document: env().doc, coldRetry: true } });
+    r.server.fault('status', down());
+    await r.engine.trigger('offline');
+    expect(r.engine.state.value.reachability).toBe('unreachable');
+    expect(r.timers.delays()).toEqual([1_000]); // the backoff (2 s * 0.5), not the cold retry
+  });
+
+  it('a hidden page schedules no retry; the next visibility probes again and a failure then is unreachable', async () => {
+    const { doc } = env('hidden');
+    const r = await rig({ deps: { document: doc, coldRetry: true } });
+    r.server.fault('status', down(), down());
+    await r.engine.trigger('start');
+    expect(r.engine.state.value.reachability).toBe('connecting');
+    expect(r.timers.pending.size).toBe(0);
+    await r.engine.trigger('visible');
+    expect(r.engine.state.value.reachability).toBe('unreachable');
+  });
+
+  it('without coldRetry (the engine tests that fail the first probe by hand) the first failure reads unreachable', async () => {
+    const r = await rig({ deps: { document: env().doc } });
+    r.server.fault('status', down());
+    await r.engine.trigger('start');
+    expect(r.engine.state.value.reachability).toBe('unreachable');
+  });
+
+  it('a probe that hangs past its 3 s bound is the first failure too: connecting, then the retry reaches it', async () => {
+    const r = await rig({ deps: { document: env().doc, coldRetry: true } });
+    r.server.fault('status', { kind: 'hang' });
+    const run = r.engine.trigger('start');
+    await vi.waitFor(() => expect(r.timeouts.made.length).toBeGreaterThan(0));
+    r.timeouts.expireAll();
+    await run;
+    expect(r.engine.state.value.reachability).toBe('connecting');
+    r.timers.fireAll();
+    await vi.waitFor(() => expect(r.engine.state.value.reachability).toBe('reachable'));
   });
 });

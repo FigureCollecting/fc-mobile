@@ -80,6 +80,8 @@ export function createBrowserSync(opts: BrowserSyncOptions): BrowserSync {
     catalog: opts.catalog ?? createClient(CatalogService, transport!),
     blocked: () => HELD_STATUSES.has(session.status.peek()),
     pollMs: IDLE_POLL_MS,
+    // a cold launch's first probe may time out while the radio warms (OFFLINE-BANNER-1)
+    coldRetry: true,
     ...(opts.window === undefined ? {} : { window: opts.window }),
     ...(opts.document === undefined ? {} : { document: opts.document }),
   });

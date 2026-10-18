@@ -206,10 +206,12 @@ export function Collection() {
         layout={layout}
         density={density}
         caseView={casePrefs.view}
+        swipe={casePrefs.swipe}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}
         onCaseView={(view) => setCasePrefs({ view })}
+        onSwipe={(swipe) => setCasePrefs({ swipe })}
         onLabels={setLabels}
       />
     </>

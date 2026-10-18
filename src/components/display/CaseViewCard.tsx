@@ -1,9 +1,10 @@
 /**
  * The View tab's card: how the case looks, kept on this device (CC14): the
  * view (whole cabinets, one cabinet, one shelf), which cabinets line the
- * wall, what a sideways swipe does (CC4: walk the camera or pan the wall, a
- * playable toggle so Ross decides hands-on), the room's ceiling (CC9, which
- * limits what may stand on a top) and which side the tabs sit on.
+ * wall, the room's ceiling (CC9, which limits what may stand on a top) and
+ * which side the tabs sit on. What a sideways swipe does (CC4: walk the
+ * camera or pan the wall) moved to the header, beside the display modes
+ * (CAM1, Ross 10-18).
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
  * The card fits above the tab bar and scrolls its body, so a tap reaches
  * every choice on either Fold8 panel (CC5).
@@ -12,17 +13,12 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { Style } from '../../styles/Style';
 import { inchesToMm } from './cabinetProfile';
 import { IN_MM } from './caseCamera';
-import { WALL_PATTERNS, type CasePrefs, type CaseView, type SwipeMode } from './casePrefs';
+import { WALL_PATTERNS, type CasePrefs, type CaseView } from './casePrefs';
 
 const VIEWS: readonly [CaseView, string][] = [
   ['wall', 'Whole cabinets'],
   ['cabinet', 'One cabinet'],
   ['shelf', 'One shelf'],
-];
-
-const SWIPES: readonly [SwipeMode, string][] = [
-  ['camera', 'Move the camera'],
-  ['pan', 'Pan the wall'],
 ];
 
 interface CaseViewCardProps {
@@ -59,16 +55,6 @@ export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardPro
               </label>
             );
           })}
-        </fieldset>
-
-        <fieldset class="case-card__group">
-          <legend>Swipe</legend>
-          {SWIPES.map(([value, label]) => (
-            <label key={value} class="case-card__choice">
-              <input type="radio" name="case-swipe" checked={prefs.swipe === value} onChange={() => onChange({ swipe: value })} />
-              {label}
-            </label>
-          ))}
         </fieldset>
 
         <label class="case-card__ceiling">

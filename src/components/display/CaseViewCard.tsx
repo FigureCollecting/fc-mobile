@@ -5,6 +5,8 @@
  * which side the tabs sit on. What a sideways swipe does (CC4: walk the
  * camera or pan the wall) moved to the header, beside the display modes
  * (CAM1, Ross 10-18).
+ * "Doesn't fit (N)" opens the list of the figures the wall cannot take, whether or not
+ * the case's chip for them is hidden (MISFIT-CHIP-1).
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
  * The card fits above the tab bar and scrolls its body, so a tap reaches
  * every choice on either Fold8 panel (CC5).
@@ -26,9 +28,13 @@ interface CaseViewCardProps {
   prefs: CasePrefs;
   onChange: (patch: Partial<CasePrefs>) => void;
   onClose: () => void;
+  /** MISFIT-CHIP-1: how many figures do not fit the wall; the entry below shows only when some do. */
+  misfitCount?: number;
+  /** Opens the list of them, the chip hidden or not. */
+  onShowMisfits?: () => void;
 }
 
-export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardProps) {
+export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, onShowMisfits }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
   return (
     <BottomSheet open={open} onClose={onClose} snapPoint="fit">
@@ -73,6 +79,12 @@ export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardPro
           />
         </label>
 
+        {misfitCount > 0 && onShowMisfits !== undefined && (
+          <button type="button" class="case-card__misfits" onClick={onShowMisfits}>
+            {`Doesn't fit (${misfitCount})`}
+          </button>
+        )}
+
         <button type="button" class="case-card__swap" onClick={() => onChange({ tabOrder: [...prefs.tabOrder].reverse() })}>
           Swap tab sides
         </button>
@@ -90,5 +102,6 @@ const styles = `
   .case-card__note { color: var(--text-tertiary); font-size: var(--font-xs); }
   .case-card__ceiling { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--font-sm); color: var(--text-primary); }
   .case-card__ceiling input { width: 80px; min-height: 36px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--surface-tertiary); color: var(--text-primary); }
+  .case-card__misfits { align-self: flex-start; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-full); color: var(--brand-400); }
   .case-card__swap { align-self: flex-start; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-full); color: var(--brand-400); }
 `;

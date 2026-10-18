@@ -528,9 +528,15 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   // deeper than any place is wide or deep, turned or not (the top takes 450 x 400)
   const deep = { ...FIXTURE_FIGURES[1], _id: 'deep', name: 'Deep Diorama', dimensions: { heightMm: 200, depthMm: 520 } } as Figure;
 
+  // MISFIT-CHIP-1: the flag is a chip; its list opens on a tap
+  const openFit = (host: HTMLElement) => {
+    fireEvent.click(host.querySelector('.cabinet-scene__misfit') as HTMLElement);
+    return host.querySelector('.cabinet-scene__fit') as HTMLElement;
+  };
+
   it('flags figures that fit nowhere in the active profile, never drawing them', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
-    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    const fit = openFit(host);
     expect(fit.dataset.count).toBe('2');
     expect(fit.textContent).toContain('Tall Statue');
     expect(fit.textContent).toContain('too tall');
@@ -542,6 +548,7 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
 
   it('says what was measured and from what: the reason, the size and where it came from, the most any place takes, and the wall (CASE-FB3b)', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
+    openFit(host);
     const lines = Array.from(host.querySelectorAll('.cabinet-scene__fit li'), (li) => li.textContent);
     expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1351 mm, for the IKEA KLINGSBO glass-door cabinet');
     expect(lines).toContain('Deep Diorama: too deep: 520 mm, labeled; the deepest place takes 400 mm, for the IKEA KLINGSBO glass-door cabinet');
@@ -550,13 +557,14 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   it('a wall of several cabinets names none of them: this wall', () => {
     const giant = { ...FIXTURE_FIGURES[0], _id: 'giant', name: 'Giant', dimensions: { heightMm: 2400 } } as Figure;
     const { host } = scene([...FIXTURE_FIGURES, giant], { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    openFit(host);
     const line = host.querySelector('.cabinet-scene__fit li')!.textContent!;
     expect(line).toMatch(/^Giant: too tall: 2400 mm, labeled; the most any place takes is [\d.]+ mm, for this wall$/);
   });
 
   it('one misfit reads in the singular', () => {
-    const fit = scene([...FIXTURE_FIGURES, tall]).host.querySelector('.cabinet-scene__fit') as HTMLElement;
-    expect(fit.querySelector('summary')?.textContent).toBe('1 figure does not fit');
+    const fit = openFit(scene([...FIXTURE_FIGURES, tall]).host);
+    expect(fit.querySelector('.cabinet-scene__fit-title')?.textContent).toBe('1 figure does not fit');
   });
 
   it('a figure deeper than the shelf it lands on is drawn overhanging and listed', () => {
@@ -565,13 +573,15 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
     const { host } = scene(deepish);
     const over = host.querySelectorAll('.cab-figure--overhang');
     expect(over.length).toBeGreaterThan(0);
-    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    const fit = openFit(host);
     expect(fit.dataset.count).toBe(String(over.length));
     expect(fit.textContent).toContain('too deep for its shelf, it overhangs');
   });
 
   it('no flag when everything fits', () => {
-    expect(scene(FIXTURE_FIGURES).host.querySelector('.cabinet-scene__fit')).toBeNull();
+    const { host } = scene(FIXTURE_FIGURES);
+    expect(host.querySelector('.cabinet-scene__fit')).toBeNull();
+    expect(host.querySelector('.cabinet-scene__misfit')).toBeNull();
   });
 });
 

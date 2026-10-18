@@ -52,6 +52,11 @@ export interface CasePrefs {
   readonly ceilingMm: number;
   /** Left to right; the first two sit left of the raised +, the last two right of it. */
   readonly tabOrder: readonly CaseTab[];
+  /**
+   * MISFIT-CHIP-1: the ids of the figures that did not fit when the do-not-fit chip was dismissed. The chip stays hidden
+   * until a figure NOT in this list misfits; the list is always recallable from the View card.
+   */
+  readonly misfitsDismissed: readonly string[];
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -60,6 +65,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   swipe: 'camera',
   ceilingMm: CEILING_DEFAULT_MM,
   tabOrder: CASE_TABS,
+  misfitsDismissed: [],
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -68,6 +74,10 @@ function isTabOrder(value: unknown): value is readonly CaseTab[] {
     value.length === CASE_TABS.length &&
     CASE_TABS.every((tab) => value.includes(tab))
   );
+}
+
+function isIdList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === 'string');
 }
 
 function parse(raw: string | null): Partial<Record<keyof CasePrefs, unknown>> {
@@ -94,6 +104,7 @@ export function readCasePrefs(): CasePrefs {
     swipe: stored.swipe === 'pan' || stored.swipe === 'camera' ? stored.swipe : d.swipe,
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
     tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
+    misfitsDismissed: isIdList(stored.misfitsDismissed) ? [...stored.misfitsDismissed] : d.misfitsDismissed,
   };
 }
 

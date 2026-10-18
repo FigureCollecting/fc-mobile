@@ -21,6 +21,7 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'camera',
       ceilingMm: 2438.4,
       tabOrder: ['view', 'reserved', 'info', 'refine'],
+      misfitsDismissed: [],
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -32,6 +33,7 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'pan',
       ceilingMm: 2700,
       tabOrder: ['refine', 'info', 'reserved', 'view'],
+      misfitsDismissed: ['fig-a', 'fig-b'],
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -56,6 +58,15 @@ describe('case prefs, kept per device (CC14)', () => {
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
     localStorage.setItem(CASE_PREFS_KEY, '7');
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
+  });
+
+  it('MISFIT-CHIP-1: the dismissed misfits are kept as their ids; anything else falls back to none', () => {
+    writeCasePrefs({ misfitsDismissed: ['a', 'b'] });
+    expect(readCasePrefs().misfitsDismissed).toEqual(['a', 'b']);
+    for (const bad of ['a', 7, null, ['a', 7], [{}], { 0: 'a' }]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ misfitsDismissed: bad }));
+      expect(readCasePrefs().misfitsDismissed, JSON.stringify(bad)).toEqual([]);
+    }
   });
 
   it('a storage that throws reads the defaults and drops writes', () => {

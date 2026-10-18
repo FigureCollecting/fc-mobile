@@ -396,6 +396,20 @@ export function getFixtureFields(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_FIELDS_PARAM) === '1';
 }
 
+const FIXTURE_MISFITS_PARAM = 'fxmisfit';
+const FIXTURE_MISFITS_MAX = 200;
+
+/**
+ * Dev-only: `?fxmisfit=N` adds N figures 3 m tall, too tall for any place of any cabinet, to the fixtures: the case's
+ * do-not-fit chip and its list, at the length Ross's collection has (16 of them; MISFIT-CHIP-1). A count up to 200; off
+ * for anything else.
+ */
+export function getFixtureMisfits(): number {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_MISFITS_PARAM);
+  if (raw === null || !/^\d+$/.test(raw)) return 0;
+  return Math.min(FIXTURE_MISFITS_MAX, Number(raw));
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Each state's badge (sync, and how long ago its data was current; null for none) and count. */
@@ -487,7 +501,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * picture URL (getFixtureUnique), `?fxsync=1` gives each a sync badge and a
  * count (getFixtureSync), `?fxonly=<name>` stands one fixture in every slot
  * (getFixtureOnly), `?fxfields=1` gives every other slot a longer card
- * (getFixtureFields).
+ * (getFixtureFields), `?fxmisfit=N` adds N figures too tall for any cabinet
+ * (getFixtureMisfits).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -498,8 +513,9 @@ export function getFixtureFigures(
   sync = getFixtureSync(),
   only = getFixtureOnly(),
   fields = getFixtureFields(),
+  misfits = getFixtureMisfits(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !misfits) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const [slot, each] of FIXTURE_FIGURES.entries()) {
@@ -511,6 +527,7 @@ export function getFixtureFigures(
       out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }
+  for (let i = 1; i <= misfits; i++) out.push({ ...FIXTURE_FIGURES[0], _id: `fx-misfit-${i}`, name: `Misfit Giant ${i}`, dimensions: { heightMm: 3000 } });
   if (!sync) return out;
   const now = Date.now();
   return out.map((figure, index) => withSync(figure, index, now));

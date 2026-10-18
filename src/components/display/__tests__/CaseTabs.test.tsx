@@ -45,7 +45,7 @@ describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
   });
 });
 
-describe('CaseViewCard (the View tab: view, cabinets, swipe, ceiling, tab sides)', () => {
+describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () => {
   function card() {
     const onChange = vi.fn();
     render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
@@ -70,11 +70,15 @@ describe('CaseViewCard (the View tab: view, cabinets, swipe, ceiling, tab sides)
     expect(onChange).toHaveBeenCalledWith({ pattern: 'ikea-detolf' });
   });
 
-  it('CC4: the swipe either moves the camera or pans the wall', () => {
-    const onChange = card();
-    expect(screen.getByRole('radio', { name: 'Move the camera' })).toBeChecked();
-    fireEvent.click(screen.getByRole('radio', { name: 'Pan the wall' }));
-    expect(onChange).toHaveBeenCalledWith({ swipe: 'pan' });
+  it('CAM1: the swipe mode is not in the View card any more: it lives in the header, beside the display modes', () => {
+    card();
+    expect(screen.queryByText('Swipe')).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Move the camera' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Pan the wall' })).toBeNull();
+    // what stays: the view, the cabinets, the ceiling and the tab sides
+    expect(screen.getAllByRole('radio', { name: /Whole cabinets|One cabinet|One shelf/ })).toHaveLength(3);
+    expect(screen.getByRole('spinbutton', { name: /ceiling/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Swap tab sides' })).toBeInTheDocument();
   });
 
   it('CC5: the card fits its content above the raised + of the tab bar and scrolls its body, never running under the bar', () => {

@@ -3,9 +3,11 @@
    icon, holds it for SPLASH_HANDOVER_MS (300 ms), grows ease-out to its target by SPLASH_GROW_MS (2.2 s) as the
    name below it fades in, holds a beat (SPLASH_HOLD_MS, 300 ms), then the splash fades over SPLASH_FADE_MS (500 ms):
    3 s in all (SPLASH-3, Ross 10-18).
-   The target (the @supports block): the figure's height is about 73 % of the screen's, the name 1.8x the old size and
-   lower, and the figure, the gap and the name stand as ONE group centred in the box between the safe areas (a camera
-   cutout is one), shrunk rather than let it reach an edge. The group lifts by half what hangs below the figure as it
+   The target (the @supports block): the figure's height is 84 % of the window's (--pre-splash-target; Ross's 73 % of the
+   SCREEN, the installed window being 87.5 % of the screen: 83.3 %), the name 1.8x the old size and lower, and the figure,
+   the gap and the name stand as ONE group centred in the box between the safe areas (a camera cutout is one), shrunk
+   rather than let it reach an edge. 90.1 % of the window is out of reach: the group is 1.1375 times the figure's height,
+   102.5 % of the window, so the name would hang past the bottom and the ear tips past the top. The group lifts by half what hangs below the figure as it
    grows, so it ends centred while the figure starts at the centre. */
 .pre-splash {
   /* scripts/generate-brand.mjs writes this from deploy/brandArt.ts splashStartHeight */
@@ -63,10 +65,13 @@
     padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);
     /* the margin kept clear of every safe area */
     --pre-splash-margin: max(2cqh, 8px);
-    /* the figure's height at its target: 72.9 % of the whole screen (Ross's target, measured 10-18); in a box too short or
-       too narrow for the group (figure, gap, name: 1.1375 of it tall, 0.705 of it wide) it shrinks to fit inside the margin */
+    /* the figure's height at its target, as a share of the window's whole height (SP4, Ross 10-18: plan B; 0.844 is the most
+       the group takes with this margin) */
+    --pre-splash-target: 0.84;
+    /* its height: the target, and in a box too short or too narrow for the group (figure, gap, name: 1.1375 of it tall,
+       0.705 of it wide) it shrinks to fit inside the margin */
     --pre-splash-figure: min(
-      calc((100cqh + var(--safe-t) + var(--safe-b)) * 0.729),
+      calc((100cqh + var(--safe-t) + var(--safe-b)) * var(--pre-splash-target)),
       calc((100cqh - 2 * var(--pre-splash-margin)) / 1.1375),
       calc((100cqw - 2 * var(--pre-splash-margin)) / 0.705)
     );

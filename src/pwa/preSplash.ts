@@ -2,7 +2,7 @@
 // painted before any script runs. Its figure starts at the size Android's
 // system splash drew it (deploy/brandArt.ts splashStartHeight) and holds it for
 // SPLASH_HANDOVER_MS, while Chrome fades its own splash out over the first
-// paint, then grows to its target (about 73 % of the screen's height, the name
+// paint, then grows to its target (84 % of the window's height, the name
 // below it, the group centred between the safe areas) and the name fades in,
 // SPLASH_GROW_MS from first paint (src/styles/pre-splash.css). It holds there
 // for SPLASH_HOLD_MS, a beat, and this then fades the splash over SPLASH_FADE_MS:

@@ -152,12 +152,13 @@ describe('the static splash markup', () => {
     expect(keyframes('pre-splash-name')).toBe('from { opacity: 0; } to { opacity: 1; }');
   });
 
-  it("SPLASH-3: the figure's target is 72.9 % of the screen's height (Ross's measured 73 %), shrunk to keep the group inside the safe areas and a margin", () => {
+  it("SPLASH-3: the figure's target is 84 % of the window's height (SP4, plan B), shrunk to keep the group inside the safe areas and a margin", () => {
     expect(supported('.pre-splash')).toContain('container-type: size;');
     for (const side of ['top', 'right', 'bottom', 'left']) expect(supported('.pre-splash')).toContain(`env(safe-area-inset-${side}, 0px)`);
     expect(supported('.pre-splash')).toContain('padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);');
     const target = supported('.pre-splash').match(/--pre-splash-figure: min\((.*)\);/)?.[1] ?? '';
-    expect(target).toContain('(100cqh + var(--safe-t) + var(--safe-b)) * 0.729');
+    expect(supported('.pre-splash')).toContain('--pre-splash-target: 0.84;');
+    expect(target).toContain('(100cqh + var(--safe-t) + var(--safe-b)) * var(--pre-splash-target)');
     expect(target).toContain('(100cqh - 2 * var(--pre-splash-margin)) / 1.1375');
     expect(target).toContain('(100cqw - 2 * var(--pre-splash-margin)) / 0.705');
     expect(supported('.pre-splash__art')).toBe('height: var(--pre-splash-figure);');
@@ -167,8 +168,16 @@ describe('the static splash markup', () => {
     const text = supported('.pre-splash__text');
     expect(text).toContain('font-size: calc(var(--pre-splash-figure) * 0.0775);');
     expect(text).toContain('margin-top: calc(var(--pre-splash-figure) * 0.06);');
-    // at the 701 px Fold8 cover screen: 72.9 % = 511 px figure, the name 39.6 px: 1.8 x 22 px
-    expect(511 * 0.0775).toBeCloseTo(1.8 * 22, 0);
+    // in the 614 px window of the installed Fold8 cover: 84 % = 516 px figure, the name 40 px: 1.8 x 22 px
+    expect(516 * 0.0775).toBeCloseTo(1.8 * 22, 0);
+  });
+
+  it("SPLASH-3: 84 % of the window is what the group allows: 90.1 % (Ross's 73 % of a screen the window is 81 % of) would need 102.5 % of it", () => {
+    // the figure, the gap and the name are 1.1375 of the figure's height; the margin kept clear is 2 % of the box at each end
+    expect(0.84 * 1.1375).toBeLessThanOrEqual(1 - 2 * 0.02);
+    expect(0.901 * 1.1375).toBeGreaterThan(1);
+    // Ross's 72.9 % of the screen is 83.3 % of the installed window (1726 of the screenshot's 1972 px: 87.5 %)
+    expect(0.729 / (1726 / 1972)).toBeCloseTo(0.84, 1);
   });
 
   it("SPLASH-3: the figure, the gap and the name stand as one group centred in the usable box: the group lifts by half of what hangs below the figure as it grows", () => {

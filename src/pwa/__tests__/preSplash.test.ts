@@ -172,7 +172,7 @@ describe('the static splash markup', () => {
     expect(516 * 0.0775).toBeCloseTo(1.8 * 22, 0);
   });
 
-  it("SPLASH-3: 84 % of the window is what the group allows: 90.1 % (Ross's 73 % of a screen the window is 81 % of) would need 102.5 % of it", () => {
+  it("SPLASH-3: 84 % of the window is what the group allows with the name below it: a figure of 90.1 % of the window would need 102.5 % of it", () => {
     // the figure, the gap and the name are 1.1375 of the figure's height; the margin kept clear is 2 % of the box at each end
     expect(0.84 * 1.1375).toBeLessThanOrEqual(1 - 2 * 0.02);
     expect(0.901 * 1.1375).toBeGreaterThan(1);

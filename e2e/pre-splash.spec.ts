@@ -16,8 +16,8 @@ import { parseFigureArt, splashStartHeight } from '../deploy/brandArt';
 // the screenshot's 1972 px) and the 3-button navigation bar (136 px, 48 dp): 1726 px, 87.5 % of the screen, 614 CSS px
 // (measured 10-18 from ~/tmp/splash-3/current-end-1018.jpg, where the old figure stood centred at 49.35 % of the screen).
 // His target, the figure at 72.9 % of the SCREEN, is 83.3 % of that window; the figure, the gap and the name need
-// 1.1375 times the figure's height, so a figure of 90.1 % of the window (the Chrome tab's 81 % read as the window) would
-// need 102.5 % of it and cannot hold its name: the target is 84 % of the window (SP4, plan B).
+// 1.1375 times the figure's height, so a figure of 90.1 % of the window would need 102.5 % of it and cannot hold its name
+// below it: the target is 84 % of the window (SP4, plan B).
 const SCREEN_H = 702;
 const WINDOW = { width: 444, height: 614 };
 const TARGET = { min: 0.82, max: 0.86 };

@@ -7,6 +7,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
+import { SyncEngine } from '../../sync/engine';
 import { useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
@@ -120,6 +121,57 @@ describe('useCollectionImages', () => {
     const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalled());
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('b')));
+  });
+
+  // STALE-CONTENT (Ross 10-18, a cold launch that began "offline": "I had to change the pan mode before it redrew"): an image
+  // sync that failed stood as the answer, fresh for ten minutes, so when the connection came back (or after a later outage)
+  // nothing synced again and the case kept the plates.
+  it('an image sync that failed (the lists could not be had) is not an answer: once the server is reached again, after an outage, it syncs again and the images arrive', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    // the launch: a new engine on the same store, its first probe failing
+    const launch = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal, random: () => 0.5, coldRetry: true });
+    localSession.value = { ...r.session, engine: launch };
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('radio warming', Code.Unavailable) });
+    const lists = create(GetProductImagesResponseSchema, {
+      products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: url('a'), width: 600, height: 800 }] }],
+    });
+    // the first lists call fails (a radio blip), the next ones answer
+    r.clients.getProductImages.mockRejectedValueOnce(new ConnectError('blip', Code.Unavailable)).mockResolvedValue(lists);
+    // the app's own cache settings (src/app.tsx): an answer is kept 30 minutes, and what a query answered is fresh for ten
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(new QueryClient({ defaultOptions: { queries: { gcTime: 30 * 60_000, staleTime: 60_000, refetchOnWindowFocus: false, networkMode: 'always' } } })) });
+    await launch.trigger('start');
+    await act(async () => {
+      r.timers.fireAll();
+      await settle();
+    });
+    await waitFor(() => expect(launch.state.value.reachability).toBe('reachable'));
+    // reached; the first sync's lists call fails: plates
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(result.current.size).toBe(0);
+    // an outage and the way back
+    r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+    await launch.trigger('manual');
+    expect(launch.state.value.reachability).toBe('unreachable');
+    await launch.trigger('manual');
+    expect(launch.state.value.reachability).toBe('reachable');
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks nothing before the server has answered the first probe: an image sync before it would run with the connection still warming', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const launch = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal, random: () => 0.5, coldRetry: true });
+    localSession.value = { ...r.session, engine: launch };
+    expect(launch.state.value.reachability).toBe('unknown');
+    r.clients.getProductImages.mockResolvedValue(create(GetProductImagesResponseSchema, {}));
+    renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await settle();
+    expect(r.clients.getProductImages).not.toHaveBeenCalled();
+    await launch.trigger('start');
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
   });
 
   it('online, but the server out of reach (the sync engine\'s probe failed): asks nothing and shows what was kept with its bytes', async () => {

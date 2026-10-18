@@ -28,7 +28,7 @@ import {
   type StatusResponse,
 } from '@figurecollecting/fc-api-contract';
 import type { LocalDb } from './localDb';
-import type { FacetRecord, FacetValue, OutboxEntry, OutboxState, ProductRecord, SyncMeta } from './records';
+import { CARD_SCHEMA_VERSION, type FacetRecord, type FacetValue, type OutboxEntry, type OutboxState, type ProductRecord, type SyncMeta } from './records';
 import { readTx, runTx, type WriteTx } from './tx';
 import { buildPayload, deviceTimeZone } from '../sync/payload';
 import { emptyFacet, floorOf, isNewer, mergeRemote, show, toFacetValue, type RemoteEvent } from '../sync/facetMerge';
@@ -629,7 +629,7 @@ export class UserStore {
     await runTx(this.db, ['products'], async (tx) => {
       for (const card of cards) {
         const stamps = CARD_TEXTS.map((f) => card[f]?.asOf ?? '').filter(Boolean).sort();
-        await tx.objectStore('products').put({ sub: this.sub, head_id: card.headId, card, as_of: stamps.at(-1) ?? null, fetched_at: fetchedAt });
+        await tx.objectStore('products').put({ sub: this.sub, head_id: card.headId, card, card_schema: CARD_SCHEMA_VERSION, as_of: stamps.at(-1) ?? null, fetched_at: fetchedAt });
       }
     });
   }

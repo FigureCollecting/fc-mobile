@@ -14,6 +14,7 @@ import { AuthRequiredError, ReloadRequiredError } from '../../auth/errors';
 import {
   BACKOFF_MAX_MS,
   BACKOFF_MIN_MS,
+  FORCE_REFRESH_MIN_MS,
   PRODUCT_BATCH,
   PUSH_BATCH,
   SyncEngine,
@@ -21,6 +22,7 @@ import {
   classify,
   type SyncCalls,
 } from '../engine';
+import { CARD_SCHEMA_VERSION } from '../../storage/records';
 import { FakeCoordinator } from './fakeCoordinator';
 import { DEVICE, FakeClock, T0, iso } from './harness';
 import { STAMP, headOf, occOf, rig, seedCopies, serverVersion, uuid } from './engineSupport';
@@ -137,6 +139,146 @@ describe('hydrate: Delta to has_more=false in pages of 500, then GetProducts in 
     await engine.trigger('start');
     expect(getProducts.mock.calls.map((c) => (c[0] as { pageToken: string }).pageToken)).toEqual(['', 'p2']);
     expect((await r.store.listProducts()).map((p) => p.head_id).sort()).toEqual([headOf(0), headOf(1)].sort());
+  });
+});
+
+describe('CARD-REFRESH-1: a card schema version on every cached card, and a pull-to-refresh that forces the cards past the 24 h TTL', () => {
+  const asked = (r: { server: FakeCoordinator }) => r.server.calls.filter((c) => c.rpc === 'getProducts').flatMap((c) => (c.request as { refs: Array<{ ref: { value: string } }> }).refs.map((x) => x.ref.value));
+
+  /** Rewrite a stored card as an older build left it: under another card schema version, or none (the field did not exist). */
+  async function storedUnder(r: Awaited<ReturnType<typeof rig>>, head: string, schema: number | undefined) {
+    const rec = (await r.store.getProduct(head))!;
+    const { card_schema: _gone, ...rest } = rec;
+    await r.db.put('products', schema === undefined ? rest : { ...rest, card_schema: schema });
+  }
+
+  async function cold(heads = 3) {
+    const r = await rig();
+    seedCopies(r.server, heads);
+    r.server.seedProducts(Array.from({ length: heads }, (_, i) => headOf(i)));
+    await r.engine.trigger('start');
+    expect(asked(r)).toHaveLength(heads);
+    return r;
+  }
+
+  it('a card stored under an older card schema counts as due on the next sync, though it was fetched a minute ago; one with no version at all too', async () => {
+    const r = await cold();
+    r.clock.advance(60_000);
+    await storedUnder(r, headOf(0), CARD_SCHEMA_VERSION - 1);
+    await storedUnder(r, headOf(1), undefined);
+    await r.engine.trigger('manual');
+    expect(asked(r).slice(3).sort()).toEqual([headOf(0), headOf(1)].sort());
+    // refetched, they are stored under the current version and no longer due
+    expect((await r.store.listProducts()).map((p) => p.card_schema)).toEqual([CARD_SCHEMA_VERSION, CARD_SCHEMA_VERSION, CARD_SCHEMA_VERSION]);
+    await r.engine.trigger('manual');
+    expect(asked(r)).toHaveLength(5);
+  });
+
+  it('a card at the current version, or from a newer build, is left to the 24 h TTL', async () => {
+    const r = await cold();
+    await storedUnder(r, headOf(0), CARD_SCHEMA_VERSION + 5);
+    r.clock.advance(60_000);
+    await r.engine.trigger('manual');
+    expect(asked(r)).toHaveLength(3);
+  });
+
+  it('a stale card that a merged head answered for is due again, not counted as fetched through its other head', async () => {
+    const r = await rig();
+    seedCopies(r.server, 1);
+    r.server.seedProducts([headOf(99)]);
+    r.server.redirects.set(headOf(0), headOf(99));
+    await r.engine.trigger('start');
+    await storedUnder(r, headOf(99), CARD_SCHEMA_VERSION - 1);
+    await r.engine.trigger('manual');
+    expect(r.server.count('getProducts')).toBe(2);
+  });
+
+  it('pull-to-refresh refetches a card fetched a minute ago, past the 24 h TTL', async () => {
+    const r = await cold();
+    r.clock.advance(60_000);
+    await r.engine.trigger('manual');
+    expect(asked(r)).toHaveLength(3);
+    await r.engine.refreshCards();
+    expect(asked(r).slice(3).sort()).toEqual([headOf(0), headOf(1), headOf(2)]);
+    // the forced pass is one pass: the next plain sync fetches nothing
+    await r.engine.trigger('manual');
+    expect(asked(r)).toHaveLength(6);
+  });
+
+  it('pull-to-refresh is rate-limited: another pull inside FORCE_REFRESH_MIN_MS is a plain sync, the one after it forces again', async () => {
+    const r = await cold();
+    r.clock.advance(60_000);
+    await r.engine.refreshCards();
+    expect(asked(r)).toHaveLength(6);
+    r.clock.advance(FORCE_REFRESH_MIN_MS - 1);
+    await r.engine.refreshCards();
+    expect(asked(r)).toHaveLength(6);
+    expect(r.server.count('status')).toBe(3);
+    r.clock.advance(1);
+    await r.engine.refreshCards();
+    expect(asked(r)).toHaveLength(9);
+  });
+
+  it('a forced refresh the network cut short resumes on the retry with only the cards not fetched since the pull', async () => {
+    const r = await rig();
+    seedCopies(r.server, 250);
+    r.server.seedProducts(Array.from({ length: 250 }, (_, i) => headOf(i)));
+    await r.engine.trigger('start');
+    expect(asked(r)).toHaveLength(250);
+    r.clock.advance(60_000);
+    // the first batch of 200 answers, the second is lost
+    r.server.fault('getProducts', { kind: 'pass' }, { kind: 'throw', error: new ConnectError('gone', Code.Unavailable) });
+    await r.engine.refreshCards();
+    expect(asked(r)).toHaveLength(250 + 200 + 50);
+    expect(r.engine.state.value.lastError).not.toBeNull();
+    await r.engine.trigger('retry');
+    const retried = asked(r).slice(250 + 250);
+    expect(retried).toHaveLength(50);
+    expect(new Set(retried).size).toBe(50);
+    // done: a plain sync afterwards has nothing due
+    await r.engine.trigger('manual');
+    expect(asked(r)).toHaveLength(250 + 250 + 50);
+  });
+
+  it('a pull that lands while the pass is fetching cards is not lost: the pass after it refetches what was fetched before the pull', async () => {
+    let pulled = false;
+    const holder: { r?: Awaited<ReturnType<typeof rig>> } = {};
+    const r = await rig({
+      deps: {
+        catalog: {
+          getProducts: async (req, opts) => {
+            if (!pulled) {
+              pulled = true;
+              void holder.r!.engine.refreshCards();
+            }
+            return holder.r!.server.catalog.getProducts(req, opts);
+          },
+        },
+      },
+    });
+    holder.r = r;
+    pulled = true; // not during the cold start
+    seedCopies(r.server, 3);
+    r.server.seedProducts([headOf(0), headOf(1), headOf(2)]);
+    await r.engine.trigger('start');
+    expect(asked(r)).toHaveLength(3);
+    r.clock.advance(60_000);
+    await storedUnder(r, headOf(0), undefined);
+    pulled = false;
+    await r.engine.trigger('manual');
+    // pass one: the stale card; the pull came in during it, so pass two: the cards fetched before the pull
+    expect(asked(r).slice(3)).toEqual([headOf(0), headOf(1), headOf(2)]);
+    await r.engine.trigger('manual');
+    expect(asked(r)).toHaveLength(6);
+  });
+
+  it('a pull that lands while a pass is running is served by the pass that follows it', async () => {
+    const r = await cold();
+    r.clock.advance(60_000);
+    const first = r.engine.trigger('manual');
+    const pulled = r.engine.refreshCards();
+    await Promise.all([first, pulled]);
+    expect(asked(r).slice(3).sort()).toEqual([headOf(0), headOf(1), headOf(2)]);
   });
 });
 

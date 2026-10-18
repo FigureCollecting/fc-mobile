@@ -3,6 +3,7 @@ import { create } from '@bufbuild/protobuf';
 import { ProductCardSchema, compareVersion, occFacetKey, parseVersion } from '@figurecollecting/fc-api-contract';
 import { LocalWriteError, UnsyncedEditsError, UserStore } from '../userStore';
 import { PayloadInvalidError } from '../../sync/payload';
+import { CARD_SCHEMA_VERSION } from '../records';
 import {
   DAY,
   DEVICE,
@@ -254,6 +255,14 @@ describe('the view over the store', () => {
 });
 
 describe('products', () => {
+  it('CARD-REFRESH-1: stamps each card with the card schema version it was stored under, 2 since the cards gained height, width and depth', async () => {
+    const { db } = await freshDb();
+    const store = await openStore(db, { clock: new FakeClock() });
+    await store.putProducts([create(ProductCardSchema, { headId: HEAD[0] }), create(ProductCardSchema, { headId: HEAD[1] })]);
+    expect(CARD_SCHEMA_VERSION).toBe(2);
+    expect((await store.listProducts()).map((p) => p.card_schema)).toEqual([CARD_SCHEMA_VERSION, CARD_SCHEMA_VERSION]);
+  });
+
   it('keeps each card with its newest as_of and when it was fetched', async () => {
     const { db } = await freshDb();
     const clock = new FakeClock();

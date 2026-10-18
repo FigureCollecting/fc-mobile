@@ -88,10 +88,20 @@ export interface SyncMeta {
   status_at?: number;
 }
 
+/**
+ * The shape of the cards the app caches (CARD-REFRESH-1): a cached card stored under an older version counts as due on the
+ * next sync, whatever its age, so a card that gained fields reaches every device without waiting out the 24 h TTL. Bump it
+ * when the card format gains fields the screens read. 1: the cards before this field existed (a record with none is 1);
+ * 2: cards with height, width and depth (COORD-DIMS-1).
+ */
+export const CARD_SCHEMA_VERSION = 2;
+
 export interface ProductRecord {
   sub: string;
   head_id: string;
   card: ProductCard;
+  /** The CARD_SCHEMA_VERSION the card was stored under; none on a record stored before the field existed (1). */
+  card_schema?: number;
   /** The newest as_of among the card's texts, for the offline-stale badge; null when none carries one. */
   as_of: string | null;
   /** Wall-clock ms when the card was fetched. */

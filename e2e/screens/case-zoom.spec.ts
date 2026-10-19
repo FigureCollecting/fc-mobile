@@ -303,12 +303,15 @@ async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
       const hit = document.elementFromPoint(x, y);
       return !!hit?.closest('.cabinet-scene__frame') && !hit.closest('button, a, details');
     };
-    const reach = 24;
+    // a finger's touch is retargeted to a button within its radius (Blink's touch hit test: the pointer events, then the click,
+    // at the button's centre), so a spot is empty only when no button is within that reach in any direction, diagonals included
+    const reach = 40;
+    const around = [[0, 0], [-reach, 0], [reach, 0], [0, -reach], [0, reach], [-reach, -reach], [reach, -reach], [-reach, reach], [reach, reach]];
     for (let fy = 0.08; fy < 0.95; fy += 0.04) {
       for (let fx = 0.3; fx < 0.75; fx += 0.04) {
         const x = f.x + f.width * fx;
         const y = f.y + f.height * fy;
-        if ([[0, 0], [-reach, 0], [reach, 0], [0, -reach], [0, reach]].every(([dx, dy]) => room(x + dx!, y + dy!))) return { x, y };
+        if (around.every(([dx, dy]) => room(x + dx!, y + dy!))) return { x, y };
       }
     }
     return null;

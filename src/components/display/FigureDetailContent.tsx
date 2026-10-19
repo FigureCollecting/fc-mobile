@@ -4,6 +4,7 @@ import { SyncBadge } from '../sync/SyncBadge';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
 import { Style } from '../../styles/Style';
+import { describeSize } from './sizeBasis';
 
 interface FigureDetailContentProps {
   figure: Figure;
@@ -22,7 +23,8 @@ function fieldsOf(figure: Shown): [string, string][] {
     ['Character', figure.local?.character],
     ['Version', figure.version],
     ['Release', figure.releases?.find((r) => r.date)?.date],
-    ['Size', sizeOf(figure)],
+    // SIZE-BASIS-1: the size the case draws, and what it rests on (the listing's, the scale's, a default, the photo's shape)
+    ['Size', describeSize(figure).line],
     ['Category', figure.category],
     ['Type', figure.classification],
     ['Materials', figure.materials],
@@ -34,12 +36,6 @@ function fieldsOf(figure: Shown): [string, string][] {
     ['Note', figure.note],
   ];
   return rows.filter((r): r is [string, string] => typeof r[1] === 'string' && r[1] !== '');
-}
-
-function sizeOf(figure: Figure): string | undefined {
-  const d = figure.dimensions;
-  const mm = [d?.heightMm, d?.widthMm, d?.depthMm].filter((v): v is number => v !== undefined);
-  return mm.length === 0 ? undefined : `${mm.join(' × ')} mm`;
 }
 
 /**

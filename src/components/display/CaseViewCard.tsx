@@ -30,9 +30,11 @@ interface CaseViewCardProps {
   onClose: () => void;
   /** FIGURES-ONLY-1: "22 goods not shelved", or null when the case leaves nothing off. */
   notShelved?: string | null;
+  /** SIZE-BASIS-1: how many of the case's figures are sized from an estimate (sizeBasis.ts); none or unknown says nothing. */
+  estimatedCount?: number;
 }
 
-export function CaseViewCard({ open, prefs, onChange, onClose, notShelved = null }: CaseViewCardProps) {
+export function CaseViewCard({ open, prefs, onChange, onClose, notShelved = null, estimatedCount = 0 }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
   const clearanceIn = Math.round((prefs.clearanceMm / IN_MM) * 100) / 100;
   return (
@@ -94,6 +96,17 @@ export function CaseViewCard({ open, prefs, onChange, onClose, notShelved = null
           />
         </label>
 
+        {/* SIZE-BASIS-1 (Ross 10-18): outline the figures whose height or width is a guess, and say how many there are */}
+        <div class="case-card__sizes">
+          <label class="case-card__choice">
+            <input type="checkbox" checked={prefs.showEstimated} onChange={() => onChange({ showEstimated: !prefs.showEstimated })} />
+            Show estimated sizes
+          </label>
+          {estimatedCount > 0 && (
+            <p class="case-card__note case-card__estimated">{estimatedCount === 1 ? '1 figure sized from an estimate' : `${estimatedCount} figures sized from estimates`}</p>
+          )}
+        </div>
+
         <button type="button" class="case-card__swap" onClick={() => onChange({ tabOrder: [...prefs.tabOrder].reverse() })}>
           Swap tab sides
         </button>
@@ -113,5 +126,7 @@ const styles = `
   .case-card__note { color: var(--text-tertiary); font-size: var(--font-xs); }
   .case-card__ceiling { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--font-sm); color: var(--text-primary); }
   .case-card__ceiling input { width: 80px; min-height: 36px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--surface-tertiary); color: var(--text-primary); }
+  .case-card__sizes { display: flex; flex-direction: column; gap: var(--space-1); }
+  .case-card__sizes .case-card__note { margin: 0; padding-left: calc(13px + var(--space-2)); }
   .case-card__swap { align-self: flex-start; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-full); color: var(--brand-400); }
 `;

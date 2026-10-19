@@ -20,7 +20,7 @@ const figure = (id: string, productKind?: ProductKind, withLocal = true): Shown 
     ...(withLocal ? { local: productKind === undefined ? {} : { productKind } } : {}),
   }) as Shown;
 
-/** Ross's 559 owned items by MFC category (spine claim attr_key='category'), with the kind the spine derives for each (GOODS1 defaults: Plushes goods, Misc figure). */
+/** Ross's 559 owned items by MFC category (spine claim attr_key='category'), with the kind the spine derives for each (GOODS1 defaults: Plushes goods, Misc goods, as MFC's largest category is keychains, badges and small acrylic). */
 const ROSS: readonly [category: string, count: number, kind: ProductKind][] = [
   ['Prepainted', 521, ProductKind.FIGURE],
   ['On Walls', 14, ProductKind.GOODS],
@@ -29,7 +29,7 @@ const ROSS: readonly [category: string, count: number, kind: ProductKind][] = [
   ['Plushes', 3, ProductKind.GOODS],
   ['Linens', 3, ProductKind.GOODS],
   ['Stationeries', 2, ProductKind.GOODS],
-  ['Misc', 2, ProductKind.FIGURE],
+  ['Misc', 2, ProductKind.GOODS],
   ['Video', 1, ProductKind.MEDIA],
 ];
 
@@ -70,12 +70,12 @@ describe('splitForShelves', () => {
     expect(splitForShelves(list).shelved).toBe(list);
   });
 
-  it('puts every one of Ross\'s categories where the brief says: 536 shelved, 22 goods, 1 media of 559', () => {
+  it('puts every one of Ross\'s categories where the brief says: 534 shelved, 24 goods, 1 media of 559', () => {
     const all = rossCollection();
     expect(all).toHaveLength(559);
     const split = splitForShelves(all);
-    expect(split.shelved).toHaveLength(536);
-    expect(split.goods).toBe(22);
+    expect(split.shelved).toHaveLength(534);
+    expect(split.goods).toBe(24);
     expect(split.media).toBe(1);
     expect(split.shelved.length + split.goods + split.media).toBe(559);
   });

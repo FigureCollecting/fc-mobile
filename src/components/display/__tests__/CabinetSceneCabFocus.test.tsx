@@ -25,6 +25,8 @@ function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, frame = COVER)
 }
 
 const MANY = getFixtureFigures(40);
+/** Three cabinets of the default wall. */
+const FEW = getFixtureFigures(4);
 const button = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement;
 const cameraOf = (host: HTMLElement) => {
   const c = JSON.parse(host.dataset.camera!) as { x: number; y: number; z: number; pitch: number; focalPx: number; width: number; height: number };
@@ -164,14 +166,15 @@ describe('CAB-FOCUS-1 (2): the cabinets either side of the focus are dimmed in t
   });
 
   it('a neighbour on each side gets one: none on the side where the wall ends', () => {
-    const { host } = scene(MANY, { view: 'cabinet' });
-    const last = wallOf(host).length - 1;
-    expect(last).toBeGreaterThan(2);
+    // a wall of three cabinets, two taps from its first to its last (the 40-copy wall is 28 cabinets: 27 renders to its end,
+    // which took 4.5 s on two busy cores and timed out the Node 24 runner at 5 s)
+    const { host } = scene(FEW, { view: 'cabinet' });
+    expect(wallOf(host)).toHaveLength(3);
     expect(sides(host)).toEqual(['right']);
     next();
     expect(sides(host)).toEqual(['left', 'right']);
-    next(last - 1);
-    expect(host.dataset.focus).toBe(String(last));
+    next();
+    expect(host.dataset.focus).toBe('2');
     expect(sides(host)).toEqual(['left']);
   });
 

@@ -188,6 +188,26 @@ function failures(page: Page): Map<string, string> {
   return out;
 }
 
+/**
+ * Waits, up to the expect timeout, until each URL's failure has been reported and matches `error`. The 'requestfailed'
+ * event reaches the test after whatever the page saw of the failure (an image's complete, a fetch's rejection, a worker's
+ * answer), and a loaded runner stretches that gap: a map read the moment the page's signal arrives can still be empty.
+ */
+async function failedWith(failed: Map<string, string>, urls: readonly string[], error: RegExp): Promise<void> {
+  for (const url of urls) await expect.poll(() => failed.get(url), { message: url }).toMatch(error);
+}
+
+test('failedWith waits for a failure reported after the signal it follows, and gives up on one that never comes', async () => {
+  const failed = new Map<string, string>();
+  const late = setTimeout(() => failed.set('http://late.test/a.png', 'net::ERR_BLOCKED_BY_CLIENT'), 300);
+  try {
+    await failedWith(failed, ['http://late.test/a.png'], /^net::ERR_BLOCKED_BY_CLIENT$/);
+  } finally {
+    clearTimeout(late);
+  }
+  await expect(failedWith(failed, ['http://never.test/b.png'], /./)).rejects.toThrow(/never\.test/);
+});
+
 test('the probe images cover every hands-off domain', () => {
   for (const domain of HANDS_OFF_DOMAINS) {
     const hosts = HANDS_OFF_IMAGES.map((u) => new URL(u).hostname);
@@ -216,7 +236,7 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
     const failed = failures(page);
     await loadImages(page, [CANARY]);
     await expect.poll(() => net.hosts).toContain('fc-canary.test');
-    expect(failed.get(CANARY)).toBe('net::ERR_EMPTY_RESPONSE');
+    await failedWith(failed, [CANARY], /^net::ERR_EMPTY_RESPONSE$/);
     net.hosts.length = 0;
   });
 
@@ -251,7 +271,7 @@ test.describe('resolver rules (the network-level net under every Chromium)', () 
 
       await loadImages(page, HANDS_OFF_IMAGES);
       expect(new Set(sentinel.hosts)).toEqual(new Set(['fc-canary.test']));
-      for (const url of HANDS_OFF_IMAGES) expect(failed.get(url), url).toBe('net::ERR_NAME_NOT_RESOLVED');
+      await failedWith(failed, HANDS_OFF_IMAGES, /^net::ERR_NAME_NOT_RESOLVED$/);
     } finally {
       await browser.close();
       await sentinel.close();
@@ -272,7 +292,7 @@ test.describe('the route guard every e2e context gets', () => {
 
     expect(new Set(handsOffBlocked)).toEqual(new Set(HANDS_OFF_IMAGES));
     // Blocked by the client (the route), not a failed lookup (the resolver rules under it).
-    for (const url of HANDS_OFF_IMAGES) expect(failed.get(url), url).toMatch(/^net::ERR_BLOCKED_BY_CLIENT\b/);
+    await failedWith(failed, HANDS_OFF_IMAGES, /^net::ERR_BLOCKED_BY_CLIENT\b/);
     expect(answered).toEqual([]);
     expect(await page.evaluate(() => Array.from(document.images, (img) => img.naturalWidth))).toEqual(HANDS_OFF_IMAGES.map(() => 0));
   });
@@ -394,7 +414,7 @@ test.describe('the route guard every e2e context gets', () => {
 
     expect(answer).toBe('refused');
     expect(handsOffBlocked).toEqual([url]);
-    expect(failed.get(url)).toMatch(/^net::ERR_BLOCKED_BY_CLIENT\b/);
+    await failedWith(failed, [url], /^net::ERR_BLOCKED_BY_CLIENT\b/);
   });
 });
 

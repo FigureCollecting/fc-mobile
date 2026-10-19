@@ -6,6 +6,8 @@ import type PhotoSwipe from 'photoswipe';
 import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
 import { FigureRail, readySections } from './figureSections';
+import { PhotosSheet } from './PhotosSheet';
+import type { LocalFigure } from '../../local/figures';
 import { RAIL_INSET_PX, RAIL_WIDTH_PX, railHeightPx } from '../ui/SideRail';
 import { Style } from '../../styles/Style';
 import { useSheetDrag } from '../ui/useSheetDrag';
@@ -107,6 +109,20 @@ interface FigureViewerProps {
  * image with pinch-zoom and swipe across the current result set (PhotoSwipe,
  * loaded as a lazy chunk), plus the figure's data in a pull-up sheet.
  */
+/** One figure's slide: its photo, or a placeholder plate naming it when it has none (MG-2). */
+function slideOf(f: Figure): { src: string; width: number; height: number; alt: string } | { html: string } {
+  const meta = getDisplayMeta(f);
+  if (!f.imageUrl) {
+    return {
+      // A class, not a style attribute: the CSP blocks inline styles in injected HTML; the text is escaped, it is catalog data.
+      html: `<div class="figure-viewer__no-image"><span class="figure-viewer__plate-name">${escapeHtml(f.name)}</span>${
+        f.manufacturer ? `<span class="figure-viewer__plate-mfr">${escapeHtml(f.manufacturer)}</span>` : ''
+      }</div>`,
+    };
+  }
+  return { src: f.imageUrl, width: meta.width, height: meta.height, alt: f.name };
+}
+
 export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   const [current, setCurrent] = useState(index);
   const [detent, setDetent] = useState(SUMMARY);
@@ -150,24 +166,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
       // unmounted, or closed (its X, Esc, Back) before the gallery's code arrived
       if (cancelled || closingRef.current) return;
 
-      const dataSource = figures.map((f) => {
-        const meta = getDisplayMeta(f);
-        if (!f.imageUrl) {
-          return {
-            // A placeholder plate naming the figure (MG-2). A class, not a style attribute: the CSP
-            // blocks inline styles in injected HTML; the text is escaped, it is catalog data.
-            html: `<div class="figure-viewer__no-image"><span class="figure-viewer__plate-name">${escapeHtml(f.name)}</span>${
-              f.manufacturer ? `<span class="figure-viewer__plate-mfr">${escapeHtml(f.manufacturer)}</span>` : ''
-            }</div>`,
-          };
-        }
-        return {
-          src: f.imageUrl,
-          width: meta.width,
-          height: meta.height,
-          alt: f.name,
-        };
-      });
+      const dataSource = figures.map(slideOf);
 
       const pswp = new PhotoSwipeCtor({
         dataSource,
@@ -223,7 +222,26 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
   }, [current]);
 
   const figure = figures[current];
+  // GALLERY-1: the photo behind the sheet follows a photo the figure takes up while the viewer is open ("Use for me" in the
+  // Photos tab): the slide that stands is rewritten and refreshed, no other. The slides are written once at open otherwise.
+  const shownUrl = useRef<string | undefined>(undefined);
+  const shownFor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!figure) return;
+    // the first look at a figure (the viewer's own, or a swipe to it) is what its slide is written from, the gallery loaded yet or not
+    const first = shownFor.current !== figure._id;
+    const changed = shownUrl.current !== figure.imageUrl;
+    shownFor.current = figure._id;
+    shownUrl.current = figure.imageUrl;
+    const pswp = pswpRef.current;
+    if (first || !changed || !pswp) return;
+    const slides = pswp.options.dataSource as unknown[];
+    slides[current] = slideOf(figure);
+    pswp.refreshSlideContent(current);
+  }, [figure, current]);
   const openCopies = useCopiesAction(figure ?? ({} as Figure), closeViewer);
+  // GALLERY-1: the figure's photos, over the viewer; another figure (a swipe) is another figure's photos
+  const [photosOpen, setPhotosOpen] = useState(false);
   if (!figure) return null;
 
   // Portaled to document.body so it shares a stacking context with PhotoSwipe
@@ -253,6 +271,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           setDetent(expanded ? SUMMARY : ALL);
           settleTo(expanded ? SUMMARY : ALL);
         }}
+        onPhotos={(figure as Partial<LocalFigure>).local === undefined ? null : () => setPhotosOpen(true)}
         onCopies={openCopies}
       />
       <button
@@ -306,9 +325,15 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           bottom: calc(100% + 12px);
         }
 
-        /* PhotoSwipe's prev/next arrows stand higher than its default middle, so they never meet the rail */
+        /* PhotoSwipe's prev/next arrows stand higher than its default middle, and the next arrow stands left of the rail's column
+           (the photo keeps to its left too), so they never meet the rail whatever its height: three sections on a short panel
+           reach the height the two once stayed under (GALLERY-1) */
         .pswp .pswp__button--arrow {
           top: 28%;
+        }
+
+        .pswp .pswp__button--arrow--next {
+          right: ${RAIL_INSET_PX + RAIL_WIDTH_PX + 8}px;
         }
 
         .figure-viewer-sheet__handle {
@@ -379,6 +404,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         }
       `} />
     </motion.div>
+    <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
     </>,
     document.body,
   );

@@ -16,6 +16,7 @@ import { useAuthPhase } from '../local/useLocal';
 import { useOnlineStatus } from './useOnlineStatus';
 import { isMediaUrl } from '../media/address';
 import { keptImage, withheldAmong } from '../media/keptImages';
+import { usePhotoChoices } from '../media/photoChoice';
 import { hearKeptSyncs } from './imageAnswers';
 
 export interface DerivativeImage {
@@ -32,26 +33,29 @@ const asDerivative = (i: { url: string; width: number; height: number } | undefi
 
 export function useProductImage(headId: string | undefined) {
   const session = localSession.value;
+  // GALLERY-1: the photo the user chose for this figure, when its list still names it; the primary otherwise
+  const chosen = usePhotoChoices().get(headId ?? '');
   const phase = useAuthPhase();
   const online = useOnlineStatus().value;
   const reachable = online && session?.engine.state.value.reachability !== 'unreachable';
   return useQuery<DerivativeImage | null>({
-    queryKey: ['local', 'image', headId, reachable],
+    // the key a figure with no choice has always had; a choice adds itself
+    queryKey: chosen === undefined ? ['local', 'image', headId, reachable] : ['local', 'image', headId, reachable, chosen],
     queryFn: async ({ signal, client }) => {
       hearKeptSyncs(client);
-      if (!reachable) return asDerivative(await keptImage(headId!));
+      if (!reachable) return asDerivative(await keptImage(headId!, undefined, chosen === undefined ? undefined : new Map([[headId!, chosen]])));
       let images;
       try {
         const res = await session!.clients.catalog.getProductImages({ headIds: [headId!] }, { signal, timeoutMs: IMAGE_ASK_TIMEOUT_MS });
         images = (res.products.find((p) => p.headId === headId)?.images ?? []).filter((i) => isMediaUrl(i.url));
       } catch {
         // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands.
-        return asDerivative(await keptImage(headId!));
+        return asDerivative(await keptImage(headId!, undefined, chosen === undefined ? undefined : new Map([[headId!, chosen]])));
       }
       // An address the last image sync withheld is not answered until a sync carries it again.
       const withheld = await withheldAmong(images.map((i) => i.url));
       images = images.filter((i) => !withheld.has(i.url));
-      return asDerivative(images.find((i) => i.primary) ?? images[0]);
+      return asDerivative(images.find((i) => i.url === chosen) ?? images.find((i) => i.primary) ?? images[0]);
     },
     enabled: session !== undefined && headId !== undefined && phase === 'signed-in',
     staleTime: 10 * 60_000,

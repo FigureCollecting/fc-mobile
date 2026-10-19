@@ -38,6 +38,7 @@ import { useCallback } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
 import { fetchImageLists, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
+import { usePhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
 
@@ -84,8 +85,12 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     [],
   );
   const heads = useSnapshot(keptHeads).data;
+  // GALLERY-1: the photo the user chose per figure is the one kept and shown; a change of choice for a kept figure is a new
+  // answer (a sync that fetches the chosen photo and its mask), a choice for any other is not
+  const allChoices = usePhotoChoices();
+  const choiceKey = (heads ?? []).filter((h) => allChoices.has(h)).map((h) => `${h}=${allChoices.get(h)}`).join(',');
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
-    queryKey: ['local', 'kept-images', reachable, heads?.join(',') ?? ''],
+    queryKey: ['local', 'kept-images', reachable, heads?.join(',') ?? '', choiceKey],
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
     // replaces it: aborted while it reads the lists, it touches no cache; while it fetches images, the
     // fetches in flight are aborted and no other starts.
@@ -95,11 +100,11 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       let incomplete = false;
       if (reachable && !answersFromKept(client, queryKey)) {
         const shown = showKept(client, queryKey, signal);
-        shown.show(await keptImages(kept));
+        shown.show(await keptImages(kept, undefined, allChoices));
         let read = false;
         try {
           const synced = await duringOwnSync(client, queryKey, () =>
-            syncKeptImages(kept, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal, onListsRead: () => (read = true), onKept: shown.show }),
+            syncKeptImages(kept, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal, onListsRead: () => (read = true), onKept: shown.show, choices: allChoices }),
           );
           void dropImageAnswers(client, queryKey);
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
@@ -124,7 +129,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           shown.stop();
         }
       }
-      const answer = await keptImages(kept);
+      const answer = await keptImages(kept, undefined, allChoices);
       if (incomplete) partial.add(answer);
       return answer;
     },

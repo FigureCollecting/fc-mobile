@@ -15,6 +15,7 @@ import {
   getFixtureUnique,
   getFixtureSync,
   getFixtureFields,
+  getFixtureMisfits,
   getFixtureGoods,
   getFixtureOnly,
   getFixtureImageRef,
@@ -642,6 +643,35 @@ describe('fixture longer cards (?fxfields=1): cards that carry different numbers
   });
 });
 
+describe('?fxmisfit=N: N figures too tall for any place, for the do-not-fit chip and its list (MISFIT-CHIP-1)', () => {
+  afterEach(() => window.history.pushState({}, '', '/'));
+
+  it('absent, zero or not a count: none, and the fixtures come back as they were', () => {
+    for (const query of ['/', '/?fxmisfit=0', '/?fxmisfit=bogus', '/?fxmisfit=-3', '/?fxmisfit=2.5']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureMisfits(), query).toBe(0);
+      expect(getFixtureFigures(), query).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('?fxmisfit=16: sixteen more, each 3 m tall, named and with its own id; the fixtures first, as they were', () => {
+    window.history.pushState({}, '', '/?fxmisfit=16');
+    expect(getFixtureMisfits()).toBe(16);
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length + 16);
+    expect(figures.slice(0, FIXTURE_FIGURES.length)).toEqual(FIXTURE_FIGURES);
+    const giants = figures.slice(FIXTURE_FIGURES.length);
+    expect(new Set(giants.map((g) => g._id)).size).toBe(16);
+    expect(giants.map((g) => g.name)[0]).toBe('Misfit Giant 1');
+    for (const g of giants) expect(g.dimensions?.heightMm).toBe(3000);
+  });
+
+  it('a long list is a count away, up to 200', () => {
+    window.history.pushState({}, '', '/?fxmisfit=500');
+    expect(getFixtureMisfits()).toBe(200);
+  });
+});
+
 describe('fixture goods and media (?fxgoods=1): products the case leaves off its shelves (FIGURES-ONLY-1)', () => {
   afterEach(() => {
     window.history.pushState({}, '', '/');
@@ -673,6 +703,14 @@ describe('fixture goods and media (?fxgoods=1): products the case leaves off its
     ]);
     // nothing else about a figure changes
     figures.forEach((f, i) => expect({ ...f, local: undefined }).toEqual({ ...FIXTURE_FIGURES[i], local: undefined }));
+  });
+
+  it('with ?fxmisfit=N too, the goods and media stand among the fixtures only: a misfit never turns into goods (MISFIT-CHIP-1)', () => {
+    window.history.pushState({}, '', '/?fxgoods=1&fxmisfit=8');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length + 8);
+    expect(figures.slice(0, FIXTURE_FIGURES.length).map(kindOf)).toEqual([undefined, ProductKind.GOODS, undefined, undefined, ProductKind.GOODS, undefined, ProductKind.MEDIA]);
+    expect(figures.slice(FIXTURE_FIGURES.length).map(kindOf)).toEqual(Array(8).fill(undefined));
   });
 
   it('with the multiplier, every copy of those slots is the same kind', () => {

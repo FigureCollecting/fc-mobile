@@ -6,6 +6,8 @@
  * tabs sit on. What a sideways swipe does (CC4: walk the
  * camera or pan the wall) moved to the header, beside the display modes
  * (CAM1, Ross 10-18).
+ * "Doesn't fit (N)" opens the list of the figures the wall cannot take, whether or not
+ * the case's chip for them is hidden (MISFIT-CHIP-1).
  * One quiet line says how many goods and media the case leaves off its shelves (FIGURES-ONLY-1).
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
  * The card fits above the tab bar and scrolls its body, so a tap reaches
@@ -28,13 +30,17 @@ interface CaseViewCardProps {
   prefs: CasePrefs;
   onChange: (patch: Partial<CasePrefs>) => void;
   onClose: () => void;
+  /** MISFIT-CHIP-1: how many figures do not fit the wall; the entry below shows only when some do. */
+  misfitCount?: number;
+  /** Opens the list of them, the chip hidden or not. */
+  onShowMisfits?: () => void;
   /** FIGURES-ONLY-1: "22 goods not shelved", or null when the case leaves nothing off. */
   notShelved?: string | null;
   /** SIZE-BASIS-1: how many of the case's figures are sized from an estimate (sizeBasis.ts); none or unknown says nothing. */
   estimatedCount?: number;
 }
 
-export function CaseViewCard({ open, prefs, onChange, onClose, notShelved = null, estimatedCount = 0 }: CaseViewCardProps) {
+export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, onShowMisfits, notShelved = null, estimatedCount = 0 }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
   const clearanceIn = Math.round((prefs.clearanceMm / IN_MM) * 100) / 100;
   return (
@@ -107,6 +113,12 @@ export function CaseViewCard({ open, prefs, onChange, onClose, notShelved = null
           )}
         </div>
 
+        {misfitCount > 0 && onShowMisfits !== undefined && (
+          <button type="button" class="case-card__misfits" onClick={onShowMisfits}>
+            {`Doesn't fit (${misfitCount})`}
+          </button>
+        )}
+
         <button type="button" class="case-card__swap" onClick={() => onChange({ tabOrder: [...prefs.tabOrder].reverse() })}>
           Swap tab sides
         </button>
@@ -126,6 +138,7 @@ const styles = `
   .case-card__note { color: var(--text-tertiary); font-size: var(--font-xs); }
   .case-card__ceiling { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--font-sm); color: var(--text-primary); }
   .case-card__ceiling input { width: 80px; min-height: 36px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--surface-tertiary); color: var(--text-primary); }
+  .case-card__misfits { align-self: flex-start; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-full); color: var(--brand-400); }
   .case-card__sizes { display: flex; flex-direction: column; gap: var(--space-1); }
   .case-card__sizes .case-card__note { margin: 0; padding-left: calc(13px + var(--space-2)); }
   .case-card__swap { align-self: flex-start; min-height: 36px; padding: 0 var(--space-3); border-radius: var(--radius-full); color: var(--brand-400); }

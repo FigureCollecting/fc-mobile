@@ -528,9 +528,15 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   // deeper than any place is wide or deep, turned or not (the top takes 450 x 400)
   const deep = { ...FIXTURE_FIGURES[1], _id: 'deep', name: 'Deep Diorama', dimensions: { heightMm: 200, depthMm: 520 } } as Figure;
 
+  // MISFIT-CHIP-1: the flag is a chip; its list opens on a tap
+  const openFit = (host: HTMLElement) => {
+    fireEvent.click(host.querySelector('.cabinet-scene__misfit') as HTMLElement);
+    return host.querySelector('.cabinet-scene__fit') as HTMLElement;
+  };
+
   it('flags figures that fit nowhere in the active profile, never drawing them', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
-    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    const fit = openFit(host);
     expect(fit.dataset.count).toBe('2');
     expect(fit.textContent).toContain('Tall Statue');
     expect(fit.textContent).toContain('too tall');
@@ -542,6 +548,7 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
 
   it('says what was measured and from what: the reason, the size and where it came from, the most any place takes, and the wall (CASE-FB3b)', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
+    openFit(host);
     const lines = Array.from(host.querySelectorAll('.cabinet-scene__fit li'), (li) => li.textContent);
     // the 1351 mm tier less the 1 in the prefs keep above a figure (CLEAR-1)
     expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1325.6 mm, for the IKEA KLINGSBO glass-door cabinet');
@@ -551,13 +558,14 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   it('a wall of several cabinets names none of them: this wall', () => {
     const giant = { ...FIXTURE_FIGURES[0], _id: 'giant', name: 'Giant', dimensions: { heightMm: 2400 } } as Figure;
     const { host } = scene([...FIXTURE_FIGURES, giant], { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    openFit(host);
     const line = host.querySelector('.cabinet-scene__fit li')!.textContent!;
     expect(line).toMatch(/^Giant: too tall: 2400 mm, labeled; the most any place takes is [\d.]+ mm, for this wall$/);
   });
 
   it('one misfit reads in the singular', () => {
-    const fit = scene([...FIXTURE_FIGURES, tall]).host.querySelector('.cabinet-scene__fit') as HTMLElement;
-    expect(fit.querySelector('summary')?.textContent).toBe('1 figure does not fit');
+    const fit = openFit(scene([...FIXTURE_FIGURES, tall]).host);
+    expect(fit.querySelector('.cabinet-scene__fit-title')?.textContent).toBe('1 figure does not fit');
   });
 
   it('a figure deeper than the shelf it lands on is drawn overhanging and listed', () => {
@@ -566,13 +574,15 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
     const { host } = scene(deepish);
     const over = host.querySelectorAll('.cab-figure--overhang');
     expect(over.length).toBeGreaterThan(0);
-    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    const fit = openFit(host);
     expect(fit.dataset.count).toBe(String(over.length));
     expect(fit.textContent).toContain('too deep for its shelf, it overhangs');
   });
 
   it('no flag when everything fits', () => {
-    expect(scene(FIXTURE_FIGURES).host.querySelector('.cabinet-scene__fit')).toBeNull();
+    const { host } = scene(FIXTURE_FIGURES);
+    expect(host.querySelector('.cabinet-scene__fit')).toBeNull();
+    expect(host.querySelector('.cabinet-scene__misfit')).toBeNull();
   });
 });
 
@@ -980,11 +990,15 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  // One case per swipe and view, with the file's own heavy-test timeout: each is 15 drags' worth of scene renders cut to 5, and the
+  // wall view is the heavy one (0.56 s here for the camera swipe, 0.14-0.3 s for the others). The pair of whole-view cases took
+  // 0.8-1.0 s here and 3.4-5.2 s on CI's slower runners (4.2 and 5.2 s on one run) against the default 5 s: a 5 s limit on a
+  // test 4-7x slower on a loaded runner, MISFIT-CHIP-1's CI failure
   for (const swipe of ['camera', 'pan'] as const) {
-    it(`every cabinet that draws into the frame is drawn when no more than the cap do, and never more than the cap, however far the ${swipe} swipe goes`, () => {
-      const wall = klingsbos(60);
-      let checked = 0;
-      for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+    for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+      it(`every cabinet that draws into the frame is drawn when no more than the cap do, and never more than the cap, however far the ${swipe} swipe goes: ${v} view`, () => {
+        const wall = klingsbos(60);
+        let checked = 0;
         // some thirty cabinets: the first twenty are checked wherever the swipe goes
         const { host } = scene(getFixtureFigures(120), { swipe, view: v });
         for (const dx of [0, -300, -300, -900, 250, -1200]) {
@@ -1008,10 +1022,10 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
           checked++;
           for (const i of shows) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i}`).toBe(true);
         }
-        cleanup();
-      }
-      expect(checked).toBeGreaterThanOrEqual(8);
-    });
+        // the geometry gives 4-6 positions per view where the first twenty fit the cap and are checked: never none
+        expect(checked).toBeGreaterThanOrEqual(3);
+      }, 60_000);
+    }
   }
 
   it('the frame never shows the fronts of more cabinets than the case draws, in any view, however far either swipe goes (Ross 12:1xC)', () => {

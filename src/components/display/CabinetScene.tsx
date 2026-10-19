@@ -101,6 +101,9 @@ const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 40;
 /** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
 const SHELF_STEPS_PX = 44;
+/** MISFIT-CHIP-1: a finger resting this long (ms) on the do-not-fit chip, and not moving past the slop (px), hides it. */
+export const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP_PX = 8;
 /**
  * CAB-FOCUS-1 (Ross 10-18): how dark the cabinets either side of the focus one are drawn in the one-cabinet view (0 to 1,
  * black over them): light to moderate, to focus the current cabinet where the screen shows neighbours, and to mark the
@@ -759,6 +762,13 @@ export interface CabinetSceneProps {
   frameFallback?: { width: number; height: number };
   /** What the figures are filtered and sorted by (Collection): a new filter starts the picture at 1x (PINCH-1). */
   filterKey?: string;
+  /** MISFIT-CHIP-1: whether the list of the figures that do not fit is open. Its owner (Collection) lets the View card open it; absent, the scene keeps its own. */
+  misfitsOpen?: boolean;
+  onMisfitsOpen?: (open: boolean) => void;
+  /** MISFIT-CHIP-1: how many figures do not fit (for the View card's entry); 0 when the scene goes. */
+  onMisfitCount?: (count: number) => void;
+  /** MISFIT-CHIP-1: where the ids of the dismissed misfits are kept (the case prefs); the scene also keeps them for its own life. */
+  onPrefs?: (patch: Partial<CasePrefs>) => void;
 }
 
 
@@ -799,6 +809,55 @@ function ResetChip({ shown, right, onReset }: { shown: { current: ((zoomed: bool
   );
 }
 
+/** MISFIT-CHIP-1: whether a touch landed on one of the scene's own controls (the do-not-fit chip, its list). */
+const onSceneUi = (target: EventTarget | null): boolean => target instanceof Element && target.closest('[data-scene-ui]') !== null;
+
+/**
+ * MISFIT-CHIP-1: the small do-not-fit chip, bottom left: a warning glyph and the count. A tap opens (or closes) the list;
+ * a long press, still, hides the chip until a figure that was not there misfits.
+ */
+function MisfitChip({ count, open, onToggle, onHide }: { count: number; open: boolean; onToggle: () => void; onHide: () => void }) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const origin = useRef<{ x: number; y: number } | null>(null);
+  const stop = () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    origin.current = null;
+  };
+  useEffect(() => stop, []);
+  return (
+    <button
+      type="button"
+      class="cabinet-scene__misfit"
+      data-scene-ui
+      aria-label={count === 1 ? '1 figure does not fit' : `${count} figures do not fit`}
+      aria-expanded={open}
+      onPointerDown={(e) => {
+        stop();
+        origin.current = { x: e.clientX, y: e.clientY };
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          onHide();
+        }, LONG_PRESS_MS);
+      }}
+      onPointerMove={(e) => {
+        const o = origin.current;
+        if (o !== null && Math.hypot(e.clientX - o.x, e.clientY - o.y) > LONG_PRESS_SLOP_PX) stop();
+      }}
+      onPointerUp={stop}
+      onPointerCancel={stop}
+      onContextMenu={(e) => e.preventDefault()}
+      onClick={onToggle}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+        <path d="M12 3 1.5 21h21L12 3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+        <path d="M12 10v5M12 18.2v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      <span>{count}</span>
+    </button>
+  );
+}
+
 const prefersReducedMotion = (): boolean => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const zoomData = (z: Zoom): string => JSON.stringify({ k: num(z.k), x: num(z.x), y: num(z.y) });
 
@@ -810,6 +869,10 @@ export function CabinetScene({
   imageFor,
   frameFallback = DEFAULT_FRAME,
   filterKey,
+  misfitsOpen,
+  onMisfitsOpen,
+  onMisfitCount,
+  onPrefs,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
@@ -1066,6 +1129,8 @@ export function CabinetScene({
     }
   };
   const onPointerDown = useCallback((e: PointerEvent) => {
+    // MISFIT-CHIP-1: the chip and its list are the scene's controls, not its picture: a touch on them is no gesture of the scene's
+    if (onSceneUi(e.target)) return;
     // a new touch cuts a settling zoom short
     settled();
     if (pinching.current) {
@@ -1191,6 +1256,11 @@ export function CabinetScene({
     setFocus(nearestCabinet(wall, moved.x));
   };
   const onClickCapture = (e: MouseEvent) => {
+    if (onSceneUi(e.target)) {
+      // a tap on a control is its own, whatever a drag left to swallow
+      swallowClick.current = false;
+      return;
+    }
     if (!swallowClick.current) return;
     swallowClick.current = false;
     e.stopPropagation();
@@ -1287,6 +1357,31 @@ export function CabinetScene({
   const flagged = packed.violators.length + overhangs.length;
   // CASE-FB3b: what the list says of each, with what was measured and from what (describeViolator)
   const wallName = pattern.length === 1 ? `the ${pattern[0].name}` : 'this wall';
+
+  // MISFIT-CHIP-1: the do-not-fit chip, and its list. The chip hides when every figure that does not fit is one that was
+  // dismissed (a long press on it, or the list's ×); a figure that was not there brings it back. The list opens from the chip
+  // or from outside (the View card), chip hidden or not.
+  const misfitIds = [...packed.violators.map((v) => v.item.figure._id), ...overhangs.map((d) => d.draw.placed.item.figure._id)];
+  const [ownOpen, setOwnOpen] = useState(false);
+  const [ownDismissed, setOwnDismissed] = useState<readonly string[]>([]);
+  const listOpen = (misfitsOpen ?? ownOpen) && flagged > 0;
+  const setListOpen = (open: boolean) => {
+    setOwnOpen(open);
+    onMisfitsOpen?.(open);
+  };
+  const dismissed = new Set([...prefs.misfitsDismissed, ...ownDismissed]);
+  const chipShown = misfitIds.some((id) => !dismissed.has(id));
+  const dismissMisfits = () => {
+    setOwnDismissed(misfitIds);
+    onPrefs?.({ misfitsDismissed: misfitIds });
+    setListOpen(false);
+  };
+  const countOut = useRef(onMisfitCount);
+  countOut.current = onMisfitCount;
+  useEffect(() => {
+    countOut.current?.(flagged);
+  }, [flagged]);
+  useEffect(() => () => countOut.current?.(0), []);
 
   // the room: its back wall from the floor to the ceiling the View card sets (CASE-FB1 item 3), its floor and ceiling
   const room = roomBox(wall, ceilingMm);
@@ -1430,9 +1525,26 @@ export function CabinetScene({
         )}
       </div>
 
-      {flagged > 0 && (
-        <details class="cabinet-scene__fit" data-count={String(flagged)}>
-          <summary>{flagged === 1 ? '1 figure does not fit' : `${flagged} figures do not fit`}</summary>
+      {flagged > 0 && chipShown && (
+        <MisfitChip
+          count={flagged}
+          open={listOpen}
+          onToggle={() => setListOpen(!listOpen)}
+          onHide={() => {
+            // the chip is gone under the finger: the click its lift-off makes lands on whatever is beneath, never a tap of that
+            swallowClick.current = true;
+            dismissMisfits();
+          }}
+        />
+      )}
+      {listOpen && (
+        <div class="cabinet-scene__fit" data-scene-ui role="region" aria-label="Figures that do not fit" data-count={String(flagged)}>
+          <div class="cabinet-scene__fit-head">
+            <span class="cabinet-scene__fit-title">{flagged === 1 ? '1 figure does not fit' : `${flagged} figures do not fit`}</span>
+            <button type="button" class="cabinet-scene__fit-dismiss" aria-label="Dismiss: hide the chip until another figure does not fit" onClick={dismissMisfits}>
+              ×
+            </button>
+          </div>
           <ul>
             {packed.violators.map((v) => (
               <li key={v.item.figure._id}>
@@ -1445,7 +1557,7 @@ export function CabinetScene({
               </li>
             ))}
           </ul>
-        </details>
+        </div>
       )}
       <Style css={styles} />
     </div>
@@ -1613,20 +1725,47 @@ const styles = `
     font: 600 18px/1 var(--font-sans, system-ui);
   }
   .cabinet-scene__shelves button:disabled { opacity: 0.25; }
+  /* MISFIT-CHIP-1: the do-not-fit chip, bottom left, inset 24 px from the edge (the back swipe's), clear of the raised + at the
+     middle of the tab bar; a warning glyph and the count. A 48 px target round the small chip, as the Reset view chip's */
+  .cabinet-scene__misfit {
+    position: absolute;
+    left: 24px;
+    bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 10px 0 8px;
+    border-radius: var(--radius-full, 9999px);
+    background: rgba(150, 40, 28, 0.92);
+    color: #fff;
+    font: 600 12px/1 var(--font-sans, system-ui);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    pointer-events: auto;
+  }
+  .cabinet-scene__misfit::before { content: ''; position: absolute; inset: -10px -8px; }
+  /* the list: over the lower part of the scene, scrolling inside its own box so any length reads */
   .cabinet-scene__fit {
     position: absolute;
-    left: 8px;
-    top: 8px;
-    max-width: calc(100% - 64px);
-    padding: 4px 8px;
-    border-radius: 8px;
-    background: rgba(120, 30, 20, 0.85);
+    left: 12px;
+    right: 12px;
+    bottom: 56px;
+    max-height: min(60%, 360px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    padding: 6px 10px 8px;
+    border-radius: 10px;
+    background: rgba(70, 22, 16, 0.96);
     color: #fff;
     font: 600 12px/1.3 var(--font-sans, system-ui);
   }
+  .cabinet-scene__fit-head { position: sticky; top: -6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0 4px; background: rgba(70, 22, 16, 0.96); }
+  .cabinet-scene__fit-dismiss { flex: none; width: 32px; height: 32px; border-radius: 9999px; font-size: 20px; line-height: 1; color: #fff; background: rgba(255, 255, 255, 0.14); }
   .cabinet-scene__fit ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
-  /* the fit list keeps clear of the Reset view chip */
-  .cabinet-scene:has(.cabinet-scene__reset) .cabinet-scene__fit { max-width: calc(100% - 160px); }
+  .cabinet-scene__fit li + li { margin-top: 4px; }
   .cabinet-scene__reset {
     position: absolute;
     top: 8px;

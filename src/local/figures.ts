@@ -8,7 +8,7 @@
 // sums them; each uf field shows the live facet with the higher version among those heads (the lower
 // head_id on a tie), and new writes go to that facet's head, or to the card's head when none holds it.
 import type { CollectionStatus, Figure } from '@figurecollecting/fc-shared';
-import { compareVersion, type OccurrenceStatus } from '@figurecollecting/fc-api-contract';
+import { compareVersion, type OccurrenceStatus, type ProductKind } from '@figurecollecting/fc-api-contract';
 import type { FacetRecord, ProductRecord } from '../storage/records';
 import { buildView, effectiveTags, shownCopies, type CopyView, type LocalView } from '../sync/occurrences';
 import { readPayload } from '../sync/payload';
@@ -43,6 +43,11 @@ export interface LocalMeta {
   /** The card's newest as_of: how current its product facts are. */
   factsAsOf: string | null;
   hasCard: boolean;
+  /**
+   * What the card says the product is (FIGURES-ONLY-1: figure, goods or media); absent when it states none, which the
+   * case reads as a figure. Not Figure.category: the Category=Prepainted default chip filters on that one.
+   */
+  productKind?: ProductKind;
   character: string | null;
   series: string | null;
   gtin14s: string[];
@@ -188,6 +193,7 @@ function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[
       ufTarget: { score: uf.score?.head ?? d, note: uf.note?.head ?? d, wishability: uf.wishability?.head ?? d },
     },
   };
+  if (card?.kind !== undefined) figure.local.productKind = card.kind;
   if (COLLECTION_STATUSES.has(kind)) figure.collectionStatus = kind as CollectionStatus;
   if (card?.series?.value) figure.origin = card.series.value;
   if (gtins[0] !== undefined) figure.jan = jan13(gtins[0]);

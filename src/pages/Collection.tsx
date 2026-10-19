@@ -8,6 +8,7 @@ import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
 import { CabinetScene } from '../components/display/CabinetScene';
 import { CaseTabs, type CaseCard } from '../components/display/CaseTabs';
 import { CaseViewCard } from '../components/display/CaseViewCard';
+import { notShelvedLine, splitForShelves } from '../components/display/shelved';
 import { useCasePrefs } from '../components/display/casePrefs';
 import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
@@ -184,6 +185,8 @@ export function Collection() {
     () => sortFigures(applyFilters(scoped, filters), sort, order),
     [scoped, filters, sort, order],
   );
+  // FIGURES-ONLY-1: the case stands figures only; goods and media stay in `visible` (the tiles, Info) and are counted for the View card
+  const onShelves = useMemo(() => splitForShelves(visible), [visible]);
   // PINCH-1: a new filter or sort starts the case's picture at 1x; new data under the same one (an image kept) does not
   const filterKey = useMemo(() => JSON.stringify([filters, sort, order]), [filters, sort, order]);
   const onlyHolding = filters.status.length === 1 ? (filters.status[0] as CollectionTab) : null;
@@ -277,8 +280,8 @@ export function Collection() {
             ) : shownLayout === 'case' ? (
               <div class="page-collection__display page-collection__display--case">
                 <CabinetScene
-                  figures={visible}
-                  onSelect={handleSelect}
+                  figures={onShelves.shelved}
+                  onSelect={(figure) => handleSelect(figure, visible.indexOf(figure))}
                   prefs={casePrefs}
                   labels={labels}
                   imageFor={fixtureMode ? getFixtureImageRef : keptImageFor}
@@ -322,7 +325,13 @@ export function Collection() {
         }}
       />
 
-      <CaseViewCard open={caseCard === 'view'} prefs={casePrefs} onChange={setCasePrefs} onClose={() => setCaseCard(null)} />
+      <CaseViewCard
+        open={caseCard === 'view'}
+        prefs={casePrefs}
+        onChange={setCasePrefs}
+        onClose={() => setCaseCard(null)}
+        notShelved={notShelvedLine(onShelves.goods, onShelves.media)}
+      />
       {/* Back and Esc close the card on top, never the Info pane under it */}
       {caseCard === 'view' && <BackToClose onClose={() => setCaseCard(null)} />}
       {filterOpen && <BackToClose onClose={() => setFilterOpen(false)} />}

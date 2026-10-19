@@ -92,9 +92,10 @@ export interface SyncMeta {
  * The shape of the cards the app caches (CARD-REFRESH-1): a cached card stored under an older version counts as due on the
  * next sync, whatever its age, so a card that gained fields reaches every device without waiting out the 24 h TTL. Bump it
  * when the card format gains fields the screens read. 1: the cards before this field existed (a record with none is 1);
- * 2: cards with height, width and depth (COORD-DIMS-1).
+ * 2: cards with height, width and depth (COORD-DIMS-1); 3: cards with the product kind and the source's category
+ * (FIGURES-ONLY-1), so the case can leave goods off its shelves.
  */
-export const CARD_SCHEMA_VERSION = 2;
+export const CARD_SCHEMA_VERSION = 3;
 
 export interface ProductRecord {
   sub: string;

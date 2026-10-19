@@ -33,6 +33,9 @@ import {
   settlePan,
   frameCentreX,
   pageInView,
+  pageOpensAt,
+  pagerReach,
+  PAGE_AT_MM,
   FLOOR_STRIP_MM,
   CEILING_CLEARANCE_MM,
   clampLift,
@@ -1014,6 +1017,32 @@ describe('close-out 4, ruling 32: Next and Prev always move the picture, from wh
       }
     }
     expect(presses).toBeGreaterThan(50_000);
+  }, 180_000);
+
+  it('PAGER-END: Next is on while any page opens farther along than the picture, Prev while any opens nearer: the last page too, off its centre, and the first', () => {
+    let offLast = 0;
+    let offFirst = 0;
+    let states = 0;
+    for (const { input, wall, at } of cases()) {
+      const pages = wallPages(input);
+      const openings = pages.map((page) => pageOpensAt(input, page));
+      const ends = { first: openings[0], last: openings[openings.length - 1] };
+      // a page as it opens, and every stop a walk settles on, as the scene shows them
+      for (const { focus, x } of [...pages.map((page, p) => ({ focus: page[0], x: openings[p] })), ...walkStops(input).map((s) => ({ focus: s.focus, x: s.x }))]) {
+        const framing = atX(frameCase({ ...input, focus }), x);
+        const reach = pagerReach(pages, wall, framing, 0, ends);
+        const there = pageInView(pages, wall, framing, 0);
+        expect(reach.next, `${at} Next at ${x} (page ${there} of ${pages.length}, openings ${openings.map(Math.round)})`).toBe(openings.some((o) => o > x + PAGE_AT_MM));
+        expect(reach.prev, `${at} Prev at ${x} (page ${there} of ${pages.length})`).toBe(openings.some((o) => o < x - PAGE_AT_MM));
+        // where the old rule (a farther page only) left Next off with the last page's own centre still ahead, and Prev with the first's behind
+        if (there === pages.length - 1 && reach.next) offLast++;
+        if (there === 0 && reach.prev) offFirst++;
+        states++;
+      }
+    }
+    expect(states).toBeGreaterThan(50_000);
+    expect(offLast, 'states that stood short of the last page\'s centre').toBeGreaterThan(0);
+    expect(offFirst, 'states that stood past the first page\'s centre').toBeGreaterThan(0);
   }, 180_000);
 
   it('the frame centre: an unpanned picture centres on its camera; a slid one where the slide brings, the same once retaken farther along', () => {

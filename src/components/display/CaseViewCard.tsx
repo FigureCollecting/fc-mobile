@@ -5,6 +5,7 @@
  * which side the tabs sit on. What a sideways swipe does (CC4: walk the
  * camera or pan the wall) moved to the header, beside the display modes
  * (CAM1, Ross 10-18).
+ * One quiet line says how many goods and media the case leaves off its shelves (FIGURES-ONLY-1).
  * Discontinued cabinets say so and never get a buy link (Ross 2026-10-11).
  * The card fits above the tab bar and scrolls its body, so a tap reaches
  * every choice on either Fold8 panel (CC5).
@@ -26,9 +27,11 @@ interface CaseViewCardProps {
   prefs: CasePrefs;
   onChange: (patch: Partial<CasePrefs>) => void;
   onClose: () => void;
+  /** FIGURES-ONLY-1: "22 goods not shelved", or null when the case leaves nothing off. */
+  notShelved?: string | null;
 }
 
-export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardProps) {
+export function CaseViewCard({ open, prefs, onChange, onClose, notShelved = null }: CaseViewCardProps) {
   const ceilingIn = Math.round((prefs.ceilingMm / IN_MM) * 10) / 10;
   return (
     <BottomSheet open={open} onClose={onClose} snapPoint="fit">
@@ -76,6 +79,8 @@ export function CaseViewCard({ open, prefs, onChange, onClose }: CaseViewCardPro
         <button type="button" class="case-card__swap" onClick={() => onChange({ tabOrder: [...prefs.tabOrder].reverse() })}>
           Swap tab sides
         </button>
+
+        {notShelved !== null && <p class="case-card__note case-card__shelved">{notShelved}</p>}
       </div>
       <Style css={styles} />
     </BottomSheet>

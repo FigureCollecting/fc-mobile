@@ -172,8 +172,9 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
     expect(pan.dataset.panY).not.toBe('0');
   });
 
-  it('only the one-shelf view snaps: in the cabinet view a lifted camera keeps its height through the cabinet arrows', () => {
-    const host = scene(fixtures, { view: 'cabinet', swipe: 'camera' });
+  // CAB-FOCUS-1 (Ross 10-18): the one-cabinet view's arrows snap too (CabinetSceneCabFocus.test.tsx); the wall view's do not
+  it('the shelf and the one-cabinet views snap: in the wall view a lifted camera keeps its height through the arrows', () => {
+    const host = scene(fixtures, { view: 'wall', swipe: 'camera' });
     drag(host, 0, -120);
     const lifted = cameraOf(host).y;
     tapButton('Next cabinet');

@@ -7,7 +7,7 @@ import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../..
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
-import { cabinetBox, clampLift, frameCase, liftForDragMm, lifted, swipeCamera, type Framing } from '../caseFraming';
+import { cabinetBox, frameCase } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, unprojectToPlaneZ, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
@@ -1837,21 +1837,28 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
 
   it('a new swipe mode, view or pattern starts from its own framing: the camera back down, the photo unslid', () => {
     const figures = getFixtureFigures(60);
-    const utils = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
+    const frame = { width: 443, height: 418 };
+    const view = (patch: Partial<CasePrefs>) => <CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frame} />;
+    // the wall view's own opening height (CAB-FOCUS-1: the cabinet view is no longer its camera)
+    const wallOpen = render(view({ swipe: 'camera', view: 'wall' }));
+    const wallY = cam(wallOpen.container.querySelector('.cabinet-scene') as HTMLElement).y;
+    wallOpen.unmount();
+    const utils = render(view({ swipe: 'camera', view: 'cabinet' }));
     const host = utils.container.querySelector('.cabinet-scene') as HTMLElement;
     const opened = cam(host);
+    expect(opened.y).not.toBe(wallY);
     drag2(host, 0, 120);
     expect(cam(host).y).toBeGreaterThan(opened.y);
-    // a new view, the swipe still walking the camera: back down
-    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
-    expect(cam(host).y).toBe(opened.y);
+    // a new view, the swipe still walking the camera: back down, to the wall's own height
+    utils.rerender(view({ swipe: 'camera', view: 'wall' }));
+    expect(cam(host).y).toBe(wallY);
     drag2(host, 0, 120);
-    expect(cam(host).y).toBeGreaterThan(opened.y);
-    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
+    expect(cam(host).y).toBeGreaterThan(wallY);
+    utils.rerender(view({ swipe: 'pan', view: 'cabinet' }));
     expect(cam(host).y).toBe(opened.y);
     drag2(host, 0, 40);
     expect(Number(host.dataset.panY)).toBeGreaterThan(0);
-    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
+    utils.rerender(view({ swipe: 'pan', view: 'wall' }));
     expect(host.dataset.panY).toBe('0');
   }, 30_000);
 });
@@ -1908,47 +1915,27 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
     expect(getComputedStyle(host).getPropertyValue('touch-action')).toBe('none');
   });
 
-  it('camera mode, while a finger raises or lowers the camera: a cabinet drawn keeps its place against a near one, as in a sideways swipe', () => {
-    // the mixed wall in the cabinet view: walked to where a cabinet past one end of those drawn and one at the other
-    // stand nearly as near the frame centre, so that raising or lowering the camera would swap them (found from the
-    // scene's own camera, by the framing it walks and lifts with)
+  // CAB-FOCUS-1 (Ross 10-18): the one-cabinet camera is level, so a lift moves only its height: raising or lowering it never
+  // brings a cabinet nearer the middle than another, and the walk found for the tilted camera that swapped two drawn
+  // cabinets under a lift no longer exists in this view
+  it('camera mode, while a finger raises or lowers the camera: the cabinets drawn stay as they are, through the drag and after it', () => {
     const frame = { width: 443, height: 418 };
     const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'cabinet', swipe: 'camera' }, { frameFallback: frame });
-    const n = (JSON.parse(host.dataset.wall!) as number[][]).length;
-    const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
-    const cap = Number(host.dataset.drawnCap);
-    const camera0 = cameraOf(host);
-    const opened: Framing = { camera: camera0, look: [camera0.x, unprojectToPlaneZ(camera0, frame.width / 2, frame.height / 2, 0)![1], 0], page: [0], drawCap: cap };
-    const pick = (camera: Camera, before: readonly number[] = []) => nearestCabinets({ camera, panPx: 0 }, wall, before, cap);
-    let found: { dx: number; dy: number; held: number[]; fresh: number[] } | null = null;
-    for (let dx = -300; dx >= -1500 && !found; dx--) {
-      const walked = swipeCamera(opened, wall, dx);
-      const held = pick(walked.camera);
-      for (const dy of [150, -150, 80, -80]) {
-        const raised = lifted(walked, clampLift(walked, DEFAULT_CASE_PREFS.ceilingMm, liftForDragMm(walked, dy))).camera;
-        const fresh = pick(raised);
-        if (JSON.stringify(pick(raised, held)) === JSON.stringify(held) && JSON.stringify(fresh) !== JSON.stringify(held)) {
-          found = { dx, dy, held, fresh };
-          break;
-        }
-      }
-    }
-    expect(found, 'a walk where a lift would swap a drawn cabinet').not.toBeNull();
-    const { dx, dy, held, fresh } = found!;
     const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
-    drag(host, dx);
-    expect(drawnNow()).toEqual(held);
-    const before = cameraOf(host);
-    fireEvent.pointerDown(host, { pointerId: 12, clientX: 300, clientY: 300, button: 0 });
-    fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy / 2 });
-    fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
-    expect(cameraOf(host).y).not.toBe(before.y);
-    // the fresh pick for the raised camera differs; what is drawn holds
-    expect(pick(cameraOf(host))).toEqual(fresh);
-    expect(drawnNow()).toEqual(held);
-    // once the drag settles the case culls for the settled picture
-    fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
-    expect(drawnNow()).toEqual(fresh);
+    drag(host, -700);
+    const held = drawnNow();
+    expect(held.length).toBeGreaterThan(0);
+    for (const dy of [150, -150]) {
+      const before = cameraOf(host);
+      fireEvent.pointerDown(host, { pointerId: 12, clientX: 300, clientY: 300, button: 0 });
+      fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy / 2 });
+      fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
+      expect(cameraOf(host).y).not.toBe(before.y);
+      expect(cameraOf(host).x).toBe(before.x);
+      expect(drawnNow()).toEqual(held);
+      fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
+      expect(drawnNow()).toEqual(held);
+    }
   }, 30_000);
 
   for (const drift of [-40, 40]) {

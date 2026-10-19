@@ -70,6 +70,22 @@ describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () =
     expect(onChange).toHaveBeenCalledWith({ pattern: 'ikea-detolf' });
   });
 
+  it('CLEAR-1: the clearance above a figure is set here with the ceiling: inches, 0 to 2 in in quarter inches, 1 in to begin with', () => {
+    const onChange = card();
+    const input = screen.getByRole('spinbutton', { name: /clearance above a figure/i }) as HTMLInputElement;
+    expect(input.value).toBe('1');
+    expect(input).toHaveAttribute('min', '0');
+    expect(input).toHaveAttribute('max', '2');
+    expect(input).toHaveAttribute('step', '0.25');
+    fireEvent.change(input, { target: { value: '0.25' } });
+    expect(onChange).toHaveBeenCalledWith({ clearanceMm: 6.35 });
+    fireEvent.change(input, { target: { value: '2' } });
+    expect(onChange).toHaveBeenLastCalledWith({ clearanceMm: 50.8 });
+    onChange.mockClear();
+    for (const bad of ['3', '-1', '']) fireEvent.change(input, { target: { value: bad } });
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('CAM1: the swipe mode is not in the View card any more: it lives in the header, beside the display modes', () => {
     card();
     expect(screen.queryByText('Swipe')).toBeNull();

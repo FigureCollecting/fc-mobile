@@ -52,6 +52,8 @@ import {
   focusEdgesPx,
   nearestCabinet,
   pageInView,
+  pageOpensAt,
+  pagerReach,
   panFraming,
   panLimitsPx,
   panStops,
@@ -904,6 +906,12 @@ export function CabinetScene({
   // the wall view pages from what the settled picture centres on, after a press, a walk or a pan (close-out 4, ruling 32)
   const still = prefs.swipe === 'pan' ? panFraming(walked, clampPan(pan)) : { framing: walked, panPx: 0 };
   const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx) : focusIdx;
+  // PAGER-END: the first and the last page's openings, so Next stays on short of the last page's centre and Prev past the first's
+  const ends = useMemo(
+    () => (framingInput.view === 'wall' && pages.length > 0 ? { first: pageOpensAt(framingInput, pages[0]), last: pageOpensAt(framingInput, pages[pages.length - 1]) } : null),
+    [framingInput, pages],
+  );
+  const reach = ends !== null ? pagerReach(pages, wall, still.framing, still.panPx, ends) : null;
   const { panPx } = shown;
   const { camera } = shown.framing;
   // CAB-FOCUS-1: in the one-cabinet view, the cabinets either side of the focus one are dimmed, from the edges of its silhouette
@@ -1380,7 +1388,7 @@ export function CabinetScene({
           type="button"
           class="cabinet-scene__step cabinet-scene__step--prev"
           aria-label="Previous cabinet"
-          disabled={prefs.view === 'wall' ? pageIdx <= 0 : focusIdx <= 0}
+          disabled={reach !== null ? !reach.prev : focusIdx <= 0}
           onClick={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
         >
           ‹
@@ -1389,7 +1397,7 @@ export function CabinetScene({
           type="button"
           class="cabinet-scene__step cabinet-scene__step--next"
           aria-label="Next cabinet"
-          disabled={prefs.view === 'wall' ? pageIdx >= pages.length - 1 : focusIdx >= lastIndex}
+          disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
           onClick={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
         >
           ›

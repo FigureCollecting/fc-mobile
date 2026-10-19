@@ -43,6 +43,8 @@ interface Sample {
   text: Box;
   nameOpacity: number;
   nameFontPx: number;
+  /** The figure's growth animation's own clock (ms, its delay included), null when it has none (reduced motion). */
+  animT: number | null;
 }
 interface Record {
   removedAt: number;
@@ -67,7 +69,8 @@ async function watchSplash(page: Page): Promise<Record> {
       const name = document.querySelector('#pre-splash .pre-splash__text');
       if (art === null || name === null) return;
       const style = getComputedStyle(name);
-      w.__splash.samples.push({ t: performance.now(), art: box(art), text: box(name), nameOpacity: Number(style.opacity), nameFontPx: parseFloat(style.fontSize) });
+      const growth = art.getAnimations().find((a) => (a as CSSAnimation).animationName === 'pre-splash-grow');
+      w.__splash.samples.push({ t: performance.now(), art: box(art), text: box(name), nameOpacity: Number(style.opacity), nameFontPx: parseFloat(style.fontSize), animT: growth ? Number(growth.currentTime) : null });
       requestAnimationFrame(frame);
     };
     new MutationObserver(() => {
@@ -106,8 +109,12 @@ test('the figure starts at the system splash\'s size at the window\'s centre, gr
   expect(Math.abs(height(first.art) - START), `first frame ${height(first.art).toFixed(1)} px, the system splash ${START.toFixed(1)} px`).toBeLessThanOrEqual(1);
   expect(Math.abs((first.art.top + first.art.bottom) / 2 - H / 2)).toBeLessThanOrEqual(1);
   expect(first.nameOpacity).toBeLessThan(0.05);
-  // it holds through Chrome's own 300 ms splash fade, then grows smoothly: never smaller than the frame before
-  for (const s of r.samples.filter((s) => at(s) < 280)) expect(Math.abs(height(s.art) - START)).toBeLessThanOrEqual(1);
+  // it holds through Chrome's own 300 ms splash fade (the growth animation's delay, read on the animation's own clock: the
+  // first-paint clock can lag it by tens of ms on a loaded runner, so a frame stamped under 280 ms was already growing),
+  // then grows smoothly: never smaller than the frame before
+  const handover = r.samples.filter((s) => s.animT !== null && s.animT < 299);
+  expect(handover.length, 'frames in the hand-over hold').toBeGreaterThan(0);
+  for (const s of handover) expect(Math.abs(height(s.art) - START), `at ${s.animT} ms of the animation`).toBeLessThanOrEqual(1);
   for (let i = 1; i < r.samples.length; i++) expect(height(r.samples[i]!.art)).toBeGreaterThanOrEqual(height(r.samples[i - 1]!.art) - 0.5);
   const mid = r.samples.find((s) => at(s) >= 1000)!;
   expect(height(mid.art)).toBeGreaterThan(START + 10);

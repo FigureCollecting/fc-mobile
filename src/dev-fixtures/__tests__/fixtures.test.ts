@@ -705,6 +705,14 @@ describe('fixture goods and media (?fxgoods=1): products the case leaves off its
     figures.forEach((f, i) => expect({ ...f, local: undefined }).toEqual({ ...FIXTURE_FIGURES[i], local: undefined }));
   });
 
+  it('with ?fxmisfit=N too, the goods and media stand among the fixtures only: a misfit never turns into goods (MISFIT-CHIP-1)', () => {
+    window.history.pushState({}, '', '/?fxgoods=1&fxmisfit=8');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length + 8);
+    expect(figures.slice(0, FIXTURE_FIGURES.length).map(kindOf)).toEqual([undefined, ProductKind.GOODS, undefined, undefined, ProductKind.GOODS, undefined, ProductKind.MEDIA]);
+    expect(figures.slice(FIXTURE_FIGURES.length).map(kindOf)).toEqual(Array(8).fill(undefined));
+  });
+
   it('with the multiplier, every copy of those slots is the same kind', () => {
     window.history.pushState({}, '', '/?fx=3&fxgoods=1');
     const kinds = getFixtureFigures().map(kindOf);

@@ -824,10 +824,9 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
 
   it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', mixedWallPager(0), 180_000);
 
-  // KNOWN DEFECT, found by CLEAR-1 (the default 1 in clearance gives this wall 24 cabinets): a walk that settles inside the last
-  // page, off its centre (cabinet 20 of the page of 20-23), leaves Next disabled though that page's centre lies farther
-  // right. It held on every earlier wall. When the pager is fixed this expected failure fails: make it the property at 1 in.
-  it.fails('the mixed wall at 1 in clearance: a walk settled inside the last page leaves Next disabled short of its centre (expected failure)', mixedWallPager(25.4), 180_000);
+  // Found by CLEAR-1 (the default 1 in clearance gives this wall 24 cabinets): a walk that settled inside the last page, off its
+  // centre (cabinet 20 of the page of 20-23), left Next disabled though that page's centre lay farther right. Fixed by PAGER-END (#78).
+  it('the mixed wall at 1 in clearance (24 cabinets): after a walk from any page, Next moves the camera on and Prev back, never staying put', mixedWallPager(25.4), 180_000);
 
   it('PAGER-END: Next is off only at or past the last page\'s centre and Prev only at or before the first\'s, wherever a walk settled; a press then opens that page', () => {
     for (const frame of [{ width: 443, height: 344 }, { width: 870, height: 261 }]) {

@@ -980,11 +980,15 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  // One case per swipe and view, with the file's own heavy-test timeout: each is 15 drags' worth of scene renders cut to 5, and the
+  // wall view is the heavy one (0.56 s here for the camera swipe, 0.14-0.3 s for the others). The pair of whole-view cases took
+  // 0.8-1.0 s here and 3.4-5.2 s on CI's slower runners (4.2 and 5.2 s on one run) against the default 5 s: a 5 s limit on a
+  // test 4-7x slower on a loaded runner, MISFIT-CHIP-1's CI failure
   for (const swipe of ['camera', 'pan'] as const) {
-    it(`every cabinet that draws into the frame is drawn when no more than the cap do, and never more than the cap, however far the ${swipe} swipe goes`, () => {
-      const wall = klingsbos(60);
-      let checked = 0;
-      for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+    for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+      it(`every cabinet that draws into the frame is drawn when no more than the cap do, and never more than the cap, however far the ${swipe} swipe goes: ${v} view`, () => {
+        const wall = klingsbos(60);
+        let checked = 0;
         // some thirty cabinets: the first twenty are checked wherever the swipe goes
         const { host } = scene(getFixtureFigures(120), { swipe, view: v });
         for (const dx of [0, -300, -300, -900, 250, -1200]) {
@@ -1008,10 +1012,10 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
           checked++;
           for (const i of shows) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i}`).toBe(true);
         }
-        cleanup();
-      }
-      expect(checked).toBeGreaterThanOrEqual(8);
-    });
+        // the geometry gives 4-6 positions per view where the first twenty fit the cap and are checked: never none
+        expect(checked).toBeGreaterThanOrEqual(3);
+      }, 60_000);
+    }
   }
 
   it('the frame never shows the fronts of more cabinets than the case draws, in any view, however far either swipe goes (Ross 12:1xC)', () => {

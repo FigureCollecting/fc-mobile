@@ -21,6 +21,7 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'camera',
       ceilingMm: 2438.4,
       tabOrder: ['view', 'reserved', 'info', 'refine'],
+      misfitsDismissed: [],
       clearanceMm: 25.4,
       showEstimated: false,
     });
@@ -34,6 +35,7 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'pan',
       ceilingMm: 2700,
       tabOrder: ['refine', 'info', 'reserved', 'view'],
+      misfitsDismissed: ['fig-a', 'fig-b'],
       clearanceMm: 6.35,
       showEstimated: true,
     } as const;
@@ -60,6 +62,15 @@ describe('case prefs, kept per device (CC14)', () => {
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
     localStorage.setItem(CASE_PREFS_KEY, '7');
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
+  });
+
+  it('MISFIT-CHIP-1: the dismissed misfits are kept as their ids; anything else falls back to none', () => {
+    writeCasePrefs({ misfitsDismissed: ['a', 'b'] });
+    expect(readCasePrefs().misfitsDismissed).toEqual(['a', 'b']);
+    for (const bad of ['a', 7, null, ['a', 7], [{}], { 0: 'a' }]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ misfitsDismissed: bad }));
+      expect(readCasePrefs().misfitsDismissed, JSON.stringify(bad)).toEqual([]);
+    }
   });
 
   it('CLEAR-1: the clearance above a figure is kept with the room\'s ceiling: 1 in by default, 0 to 2 in; anything else falls back to the default', () => {

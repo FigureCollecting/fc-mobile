@@ -470,3 +470,55 @@ describe('Collection page (rebuilt display layer)', () => {
     });
   });
 });
+
+describe('MISFIT-CHIP-1: the do-not-fit chip on the case page, its list, and the View card\'s way back to it', () => {
+  afterEach(() => window.history.pushState({}, '', '/'));
+
+  async function openCaseWithMisfits(count: number) {
+    localStorage.setItem('fc-fixture-mode', 'on');
+    window.history.pushState({}, '', `/?layout=case&fxmisfit=${count}`);
+    const user = userEvent.setup();
+    const utils = renderWithProviders(<Collection />, { initialPath: `/?layout=case&fxmisfit=${count}` });
+    await screen.findByRole('button', { name: `${count} figures do not fit` });
+    return { user, ...utils };
+  }
+  const list = () => screen.queryByRole('region', { name: 'Figures that do not fit' });
+
+  it('the chip opens the list; the View card\'s "Doesn\'t fit (N)" opens the same list, chip hidden or not; × hides the chip, stored as ids', async () => {
+    const { user } = await openCaseWithMisfits(16);
+    expect(list()).toBeNull();
+    // the card's entry, with the chip showing: closes the card, opens the list
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(await screen.findByRole('button', { name: "Doesn't fit (16)" }));
+    const l = await screen.findByRole('region', { name: 'Figures that do not fit' });
+    expect(l.querySelectorAll('li')).toHaveLength(16);
+    // Back and Esc close it, as they do a card
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(list()).toBeNull());
+    expect(screen.getByRole('button', { name: '16 figures do not fit' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '16 figures do not fit' }));
+    await screen.findByRole('region', { name: 'Figures that do not fit' });
+    // × on it: the list closes, the chip is gone, the ids kept on this device
+    await user.click(screen.getByRole('button', { name: /^Dismiss/ }));
+    expect(list()).toBeNull();
+    expect(screen.queryByRole('button', { name: '16 figures do not fit' })).toBeNull();
+    const stored = JSON.parse(localStorage.getItem('fc-case-prefs')!) as { misfitsDismissed: string[] };
+    expect(stored.misfitsDismissed).toHaveLength(16);
+    // the card still has the entry: always recallable, the chip hidden
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await user.click(await screen.findByRole('button', { name: "Doesn't fit (16)" }));
+    expect((await screen.findByRole('region', { name: 'Figures that do not fit' })).querySelectorAll('li')).toHaveLength(16);
+  });
+
+  it('no entry in the card, no chip, when every figure fits', async () => {
+    localStorage.setItem('fc-fixture-mode', 'on');
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/?layout=case' });
+    await screen.findByRole('button', { name: 'View' });
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    await screen.findByRole('radio', { name: 'One cabinet' });
+    expect(screen.queryByRole('button', { name: /^Doesn't fit/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /do not fit$/ })).toBeNull();
+  });
+});
+

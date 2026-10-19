@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/preact';
+import { render, screen, fireEvent, cleanup } from '@testing-library/preact';
 import { CaseTabs } from '../CaseTabs';
 import { CaseViewCard } from '../CaseViewCard';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
@@ -68,6 +68,21 @@ describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () =
     expect(screen.queryAllByRole('link')).toHaveLength(0);
     fireEvent.click(screen.getByRole('radio', { name: /^IKEA DETOLF/ }));
     expect(onChange).toHaveBeenCalledWith({ pattern: 'ikea-detolf' });
+  });
+
+  it('MISFIT-CHIP-1: a "Doesn\'t fit (N)" entry opens the list of the figures that do not fit, whether or not the chip is hidden', () => {
+    const onShowMisfits = vi.fn();
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} misfitCount={16} onShowMisfits={onShowMisfits} />);
+    fireEvent.click(screen.getByRole('button', { name: "Doesn't fit (16)" }));
+    expect(onShowMisfits).toHaveBeenCalledTimes(1);
+  });
+
+  it('MISFIT-CHIP-1: no entry when every figure fits', () => {
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} misfitCount={0} onShowMisfits={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /fit \(/ })).toBeNull();
+    cleanup();
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: /fit \(/ })).toBeNull();
   });
 
   // SIZE-BASIS-1 (Ross 10-18): see which sizes are guesses

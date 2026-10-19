@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'preact/hooks';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'preact/hooks';
 import { useQuery } from '@tanstack/react-query';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { SlimHeader } from '../components/layout/SlimHeader';
@@ -129,6 +129,13 @@ export function Collection() {
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [caseCard, setCaseCard] = useState<CaseCard | null>(null);
   const [casePrefs, setCasePrefs] = useCasePrefs();
+  // MISFIT-CHIP-1: the case's do-not-fit list (open or not) and how many figures are in it, for the View card's entry
+  const [misfitsOpen, setMisfitsOpen] = useState(false);
+  const [misfitCount, setMisfitCount] = useState(0);
+  // the list belongs to the case: leaving it for the tiles closes it
+  useEffect(() => {
+    if (layout !== 'case') setMisfitsOpen(false);
+  }, [layout]);
   const online = useOnlineStatus();
   const pageRef = useRef<HTMLDivElement>(null);
   const pageWidth = useElementWidth(pageRef, 360);
@@ -292,6 +299,10 @@ export function Collection() {
                   // LAYOUT-STABLE-1: the real collection's pictures stream in for minutes; the fixtures' never do (?fxsteady=1 for e2e)
                   steadyLayout={!fixtureMode || getFixtureSteady()}
                   imagesComplete={fixtureMode || imagesComplete(collectionImages)}
+                  misfitsOpen={misfitsOpen}
+                  onMisfitsOpen={setMisfitsOpen}
+                  onMisfitCount={setMisfitCount}
+                  onPrefs={setCasePrefs}
                 />
               </div>
             ) : (
@@ -336,11 +347,17 @@ export function Collection() {
         prefs={casePrefs}
         onChange={setCasePrefs}
         onClose={() => setCaseCard(null)}
+        misfitCount={misfitCount}
+        onShowMisfits={() => {
+          setCaseCard(null);
+          setMisfitsOpen(true);
+        }}
         notShelved={notShelvedLine(onShelves.goods, onShelves.media)}
         estimatedCount={estimatedCount}
       />
       {/* Back and Esc close the card on top, never the Info pane under it */}
       {caseCard === 'view' && <BackToClose onClose={() => setCaseCard(null)} />}
+      {misfitsOpen && shownLayout === 'case' && <BackToClose onClose={() => setMisfitsOpen(false)} />}
       {filterOpen && <BackToClose onClose={() => setFilterOpen(false)} />}
 
       <TabbedFilterSheet

@@ -134,6 +134,12 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               right: 0;
               height: 96vh;
               height: 96dvh;
+              /* REFINE-SHEET-1: the card stands DOWN_BY of its height below the window at a detent (the tabs and
+                 buttons at its bottom edge would hang off it): its own bottom padding takes that part, so the
+                 footer ends at the window's bottom edge, above the bottom bar (the footer's padding is its room),
+                 and the contents take what is left, at any window height */
+              --detent-below: 0px;
+              padding-bottom: var(--detent-below);
               background: var(--surface-secondary);
               border-radius: var(--radius-xl) var(--radius-xl) 0 0;
               z-index: 201;
@@ -141,6 +147,9 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               flex-direction: column;
               touch-action: none;
             }
+
+            .detent-sheet[data-detent='half'] { --detent-below: calc(${DOWN_BY.half} * 96dvh); }
+            .detent-sheet[data-detent='full'] { --detent-below: calc(${DOWN_BY.full} * 96dvh); }
 
             .detent-sheet__handle-area {
               display: flex;
@@ -167,12 +176,6 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               touch-action: pan-y;
               overscroll-behavior-y: none;
               padding: 0 var(--space-page);
-              /* at half detent, keep the scroll region clear of the footer */
-            }
-
-            .detent-sheet[data-detent='half'] .detent-sheet__content {
-              max-height: calc(48vh - 110px);
-              flex: 0 1 auto;
             }
 
             /* room for a field to rise to the top of the contents, above the keyboard */
@@ -187,12 +190,6 @@ export function DetentSheet({ open, onClose, children, footer }: DetentSheetProp
               border-top: 1px solid var(--border-subtle);
               background: var(--surface-secondary);
               padding: var(--space-2) var(--space-page) calc(var(--space-2) + var(--safe-area-bottom));
-            }
-
-            /* footer pinned to the VISIBLE bottom at the half detent */
-            .detent-sheet[data-detent='half'] .detent-sheet__footer {
-              position: sticky;
-              top: 0;
             }
           `} />
         </>

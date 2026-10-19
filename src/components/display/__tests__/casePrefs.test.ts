@@ -23,6 +23,7 @@ describe('case prefs, kept per device (CC14)', () => {
       tabOrder: ['view', 'reserved', 'info', 'refine'],
       misfitsDismissed: [],
       clearanceMm: 25.4,
+      showEstimated: false,
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -36,6 +37,7 @@ describe('case prefs, kept per device (CC14)', () => {
       tabOrder: ['refine', 'info', 'reserved', 'view'],
       misfitsDismissed: ['fig-a', 'fig-b'],
       clearanceMm: 6.35,
+      showEstimated: true,
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -116,5 +118,26 @@ describe('wall patterns', () => {
     expect(wallPatternProfiles('ikea-klingsbo+ikea-detolf+open-steel-rack')).toEqual([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
     expect(wallPatternProfiles('open-steel-rack')).toEqual([OPEN_STEEL_RACK]);
     expect(wallPatternProfiles('unknown')).toEqual([IKEA_KLINGSBO]);
+  });
+});
+
+// SIZE-BASIS-1: outline the figures whose height or width is an estimate; off until asked for, kept on the device
+describe('showEstimated (SIZE-BASIS-1)', () => {
+  it('is off by default, and on once asked for and kept', () => {
+    expect(DEFAULT_CASE_PREFS.showEstimated).toBe(false);
+    writeCasePrefs({ showEstimated: true });
+    expect(readCasePrefs().showEstimated).toBe(true);
+    writeCasePrefs({ showEstimated: false });
+    expect(readCasePrefs().showEstimated).toBe(false);
+  });
+
+  it.each([['yes'], [1], [null], [{}], [[true]]])('reads %j as off: only true is on', (bad) => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ showEstimated: bad }));
+    expect(readCasePrefs().showEstimated).toBe(false);
+  });
+
+  it('a record written before it existed reads as off, and keeps the rest', () => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', swipe: 'pan' }));
+    expect(readCasePrefs()).toMatchObject({ view: 'shelf', swipe: 'pan', showEstimated: false });
   });
 });

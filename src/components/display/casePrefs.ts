@@ -59,6 +59,8 @@ export interface CasePrefs {
   readonly misfitsDismissed: readonly string[];
   /** CLEAR-1 (Ross 10-18): the room every compartment keeps above a figure, mm; 1 in to begin with, 0 to 2 in. Kept with the room's ceiling. */
   readonly clearanceMm: number;
+  /** SIZE-BASIS-1 (Ross 10-18): outline the figures whose height or width is an estimate (sizeBasis.ts); off until asked for. */
+  readonly showEstimated: boolean;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -69,6 +71,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   tabOrder: CASE_TABS,
   misfitsDismissed: [],
   clearanceMm: DEFAULT_CLEARANCE_MM,
+  showEstimated: false,
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -109,6 +112,7 @@ export function readCasePrefs(): CasePrefs {
     tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
     misfitsDismissed: isIdList(stored.misfitsDismissed) ? [...stored.misfitsDismissed] : d.misfitsDismissed,
     clearanceMm: typeof stored.clearanceMm === 'number' && stored.clearanceMm >= 0 && stored.clearanceMm <= CLEARANCE_MAX_MM ? stored.clearanceMm : d.clearanceMm,
+    showEstimated: stored.showEstimated === true,
   };
 }
 

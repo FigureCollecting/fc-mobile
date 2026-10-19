@@ -9,6 +9,7 @@ import { CabinetScene } from '../components/display/CabinetScene';
 import { CaseTabs, type CaseCard } from '../components/display/CaseTabs';
 import { CaseViewCard } from '../components/display/CaseViewCard';
 import { notShelvedLine, splitForShelves } from '../components/display/shelved';
+import { countEstimated } from '../components/display/sizeBasis';
 import { useCasePrefs } from '../components/display/casePrefs';
 import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
@@ -194,6 +195,8 @@ export function Collection() {
   );
   // FIGURES-ONLY-1: the case stands figures only; goods and media stay in `visible` (the tiles, Info) and are counted for the View card
   const onShelves = useMemo(() => splitForShelves(visible), [visible]);
+  // SIZE-BASIS-1: how many of the figures the case stands are sized from an estimate (the View card says so)
+  const estimatedCount = useMemo(() => countEstimated(onShelves.shelved), [onShelves]);
   // PINCH-1: a new filter or sort starts the case's picture at 1x; new data under the same one (an image kept) does not
   const filterKey = useMemo(() => JSON.stringify([filters, sort, order]), [filters, sort, order]);
   const onlyHolding = filters.status.length === 1 ? (filters.status[0] as CollectionTab) : null;
@@ -347,6 +350,7 @@ export function Collection() {
           setMisfitsOpen(true);
         }}
         notShelved={notShelvedLine(onShelves.goods, onShelves.media)}
+        estimatedCount={estimatedCount}
       />
       {/* Back and Esc close the card on top, never the Info pane under it */}
       {caseCard === 'view' && <BackToClose onClose={() => setCaseCard(null)} />}

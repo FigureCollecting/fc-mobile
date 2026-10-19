@@ -20,6 +20,10 @@ export interface SeedFigure {
   kind?: ProductKind;
   /** The source's own category name, as the card carries it. */
   category?: string;
+  /** The size the card states (mm); absent = it states none (SIZE-BASIS-1). */
+  size?: { heightMm?: number; widthMm?: number; depthMm?: number };
+  /** The scale the card states ("1/7"). */
+  scale?: string;
 }
 
 const AS_OF = '2026-10-01T09:30:00.000000Z';
@@ -55,6 +59,8 @@ export async function seedFigures(r: LocalRig, figs: SeedFigure[]): Promise<{ he
         ...(f.series === undefined ? {} : { series: { value: f.series, asOf: AS_OF } }),
         ...(f.kind === undefined ? {} : { kind: f.kind }),
         ...(f.category === undefined ? {} : { category: { value: f.category, asOf: AS_OF } }),
+        ...(f.size ?? {}),
+        ...(f.scale === undefined ? {} : { scale: { value: f.scale, asOf: AS_OF } }),
         gtin14s: f.gtin === undefined ? [] : [f.gtin],
       }),
     );

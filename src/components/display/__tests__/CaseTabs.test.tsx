@@ -85,6 +85,39 @@ describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () =
     expect(screen.queryByRole('button', { name: /fit \(/ })).toBeNull();
   });
 
+  // SIZE-BASIS-1 (Ross 10-18): see which sizes are guesses
+  it('SIZE-BASIS-1: "Show estimated sizes" is off to begin with, and turning it on is a patch of the pref', () => {
+    const onChange = card();
+    const box = screen.getByRole('checkbox', { name: 'Show estimated sizes' });
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith({ showEstimated: true });
+  });
+
+  it('SIZE-BASIS-1: it shows on when the pref is on, and turning it off is a patch', () => {
+    const onChange = vi.fn();
+    render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, showEstimated: true }} onChange={onChange} onClose={() => {}} />);
+    const box = screen.getByRole('checkbox', { name: 'Show estimated sizes' });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith({ showEstimated: false });
+  });
+
+  it.each([
+    [22, '22 figures sized from estimates'],
+    [1, '1 figure sized from an estimate'],
+  ])('SIZE-BASIS-1: says how many figures are sized from estimates: %i', (count, line) => {
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} estimatedCount={count} />);
+    expect(screen.getByText(line)).toBeInTheDocument();
+  });
+
+  it('SIZE-BASIS-1: says nothing of it when no figure is sized from an estimate (or the count is not known)', () => {
+    const { rerender } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} estimatedCount={0} />);
+    expect(screen.queryByText(/sized from/)).toBeNull();
+    rerender(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} />);
+    expect(screen.queryByText(/sized from/)).toBeNull();
+  });
+
   it('CLEAR-1: the clearance above a figure is set here with the ceiling: inches, 0 to 2 in in quarter inches, 1 in to begin with', () => {
     const onChange = card();
     const input = screen.getByRole('spinbutton', { name: /clearance above a figure/i }) as HTMLInputElement;

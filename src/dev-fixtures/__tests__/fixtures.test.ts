@@ -15,6 +15,7 @@ import {
   getFixtureUnique,
   getFixtureSync,
   getFixtureFields,
+  getFixtureSteady,
   getFixtureOnly,
   getFixtureImageRef,
   resolveFixtureArt,
@@ -637,5 +638,25 @@ describe('fixture longer cards (?fxfields=1): cards that carry different numbers
     const figures = getFixtureFigures();
     expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
     expect(figures.map((f) => f.note !== undefined)).toEqual(figures.map((_, i) => i % FIXTURE_FIGURES.length % 2 === 1));
+  });
+});
+
+describe('fixture steady layout (?fxsteady=1): the held basis (LAYOUT-STABLE-1) on the fixtures, whose pictures never stream in of themselves', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('off unless asked for: the fixtures are laid out as they were', () => {
+    for (const query of ['/', '/?fxsteady=0', '/?fxsteady=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureSteady(), query).toBe(false);
+    }
+  });
+
+  it('?fxsteady=1 turns it on, whatever else the fixtures are asked for', () => {
+    for (const query of ['/?fxsteady=1', '/?fx=20&fxbranch=masked&fxwidth=none&fxsteady=1']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureSteady(), query).toBe(true);
+    }
   });
 });

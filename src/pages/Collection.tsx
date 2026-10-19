@@ -24,12 +24,12 @@ import type { LocalFigure } from '../local/figures';
 import { FormerList } from '../components/collection/FormerList';
 import { COLLECTION_TABS, useFigureListParams, type CollectionTab, type ListFilters } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { useCollectionImages } from '../hooks/useCollectionImages';
+import { imagesComplete, useCollectionImages } from '../hooks/useCollectionImages';
 import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, holdingOf } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
-import { getFixtureFigures, getFixtureImageRef, isFixtureMode } from '../dev-fixtures/fixtures';
+import { getFixtureFigures, getFixtureImageRef, getFixtureSteady, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
 import { BackToClose } from '../hooks/useBackToClose';
 
@@ -283,6 +283,9 @@ export function Collection() {
                   labels={labels}
                   imageFor={fixtureMode ? getFixtureImageRef : keptImageFor}
                   filterKey={filterKey}
+                  // LAYOUT-STABLE-1: the real collection's pictures stream in for minutes; the fixtures' never do (?fxsteady=1 for e2e)
+                  steadyLayout={!fixtureMode || getFixtureSteady()}
+                  imagesComplete={fixtureMode || imagesComplete(collectionImages)}
                 />
               </div>
             ) : (

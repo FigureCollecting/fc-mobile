@@ -396,6 +396,17 @@ export function getFixtureFields(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_FIELDS_PARAM) === '1';
 }
 
+const FIXTURE_STEADY_PARAM = 'fxsteady';
+
+/**
+ * Dev-only switch for the held layout basis (LAYOUT-STABLE-1): `?fxsteady=1` lays the fixtures out as the real collection is,
+ * from a basis held between the moments layoutBasis.ts names, not by whatever picture was read last. Off for anything else:
+ * the fixtures' pictures never stream in of themselves, so they are laid out as they come.
+ */
+export function getFixtureSteady(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_STEADY_PARAM) === '1';
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Each state's badge (sync, and how long ago its data was current; null for none) and count. */

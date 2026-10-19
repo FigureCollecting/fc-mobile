@@ -36,6 +36,7 @@ import {
   measureCaseFigure,
   packCabinets,
   wallLayout,
+  type CaseFigure,
   type PackedCabinet,
   type PlacedFigure,
   type SurfaceSlot,
@@ -84,10 +85,11 @@ import {
   type Rect,
   type TexelGrid,
 } from './caseCull';
-import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
+import { clearInset, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { useLayoutBasis } from './layoutBasis';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -750,6 +752,25 @@ export interface CabinetSceneProps {
   frameFallback?: { width: number; height: number };
   /** What the figures are filtered and sorted by (Collection): a new filter starts the picture at 1x (PINCH-1). */
   filterKey?: string;
+  /**
+   * LAYOUT-STABLE-1: lay the wall out from a held basis (layoutBasis.ts): nothing drawn until the first layout, a picture
+   * that arrives after it drawn in the place its figure already has (when it fits), the wall laid out again only for an
+   * explicit change or once everything has arrived. Off: laid out by whatever has arrived, as it was (the dev fixtures).
+   */
+  steadyLayout?: boolean;
+  /** The pictures of the collection have all been kept (useCollectionImages): nothing more will stream in. Default true. */
+  imagesComplete?: boolean;
+}
+
+/** A picture whose figure fits the place it was packed in by this much (mm) still draws there: rounding, not a collision. */
+const FIT_SLACK_MM = 0.5;
+
+/** What the case draws for each figure: the shape of the art, its aspect, and the display meta it was measured by. */
+type ArtEntry = { meta: ReturnType<typeof getDisplayMeta>; art: FigureArt; aspect: number };
+/** The inputs the wall is laid out by that arrive as pictures do (layoutBasis.ts). */
+interface PackBasis {
+  arts: readonly ArtEntry[];
+  alpha: ReadonlyMap<string, AlphaMargins>;
 }
 
 
@@ -801,6 +822,8 @@ export function CabinetScene({
   imageFor,
   frameFallback = DEFAULT_FRAME,
   filterKey,
+  steadyLayout = false,
+  imagesComplete = true,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
@@ -810,7 +833,7 @@ export function CabinetScene({
   // a picture that fails to load stands as its plate (ADDR-1), never a blank space
   const images = useBrokenImages();
   // what the case draws for each figure, in the shape it draws it (the image list's own size when it gives one)
-  const arts = useMemo(
+  const liveArts = useMemo<readonly ArtEntry[]>(
     () =>
       figures.map((f) => {
         const meta = getDisplayMeta(f);
@@ -821,20 +844,63 @@ export function CabinetScene({
       }),
     [figures, imageFor, images.broken],
   );
-  const alphaUrls = useMemo(() => [...new Set(arts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [arts]);
+  const alphaUrls = useMemo(() => [...new Set(liveArts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [liveArts]);
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
   // one still being read stands as its plate on its label meanwhile, holding back no other
-  const alpha = useAlphaMarginsOf(alphaUrls);
+  const liveAlpha = useAlphaMarginsOf(alphaUrls);
+
+  // LAYOUT-STABLE-1: the wall is laid out from a basis of the picture inputs, held between the moments layoutBasis.ts names,
+  // not from whatever the last picture changed. Pictures stream in for minutes on a first launch, and the packer is global:
+  // every arrival packed the whole wall again and tens of figures moved at once, again and again.
+  const live = useMemo<PackBasis>(() => ({ arts: liveArts, alpha: liveAlpha }), [liveArts, liveAlpha]);
+  const unmeasured = useMemo(() => alphaUrls.filter((u) => !liveAlpha.has(u)).length, [alphaUrls, liveAlpha]);
+  // an explicit change: the filter or the sort, or a figure added, removed or moved in the list, or cards come in (a figure's
+  // size is its card's: the launch draws what the device has, and the cards that arrive redraw it, once the batch is in)
+  const epoch = useMemo(() => {
+    const cards = figures.filter((f) => (f as { local?: { hasCard?: boolean } }).local?.hasCard === true).length;
+    return `${filterKey ?? ''}#${cards}#${figures.map((f) => f._id).join(',')}`;
+  }, [filterKey, figures]);
+  const settle = useLayoutBasis<PackBasis>({
+    live,
+    pending: unmeasured,
+    settled: imagesComplete && unmeasured === 0,
+    ready: figures.length > 0,
+    epoch,
+    enabled: steadyLayout,
+  });
+  const basis = settle.basis;
 
   const packed = useMemo(() => {
     // each figure is packed by what the case draws for it: its label, or what its cut-out draws at true scale when wider
-    const items = figures.map((f, i) => {
-      const { meta, art, aspect } = arts[i];
-      const drawn = art.alphaUrl ? pictureMargins(art, alpha) : null;
-      return measureCaseFigure(f, i, { ...meta, aspect }, drawn ?? undefined);
-    });
+    // (by the basis: before the first layout nothing is packed, so nothing is drawn twice)
+    const items =
+      basis === null
+        ? []
+        : figures.map((f, i) => {
+            const { meta, art, aspect } = basis.arts[i];
+            const drawn = art.alphaUrl ? pictureMargins(art, basis.alpha) : null;
+            return measureCaseFigure(f, i, { ...meta, aspect }, drawn ?? undefined);
+          });
     return packCabinets(items, pattern, ceilingMm);
-  }, [figures, arts, alpha, pattern, ceilingMm]);
+  }, [figures, basis, pattern, ceilingMm]);
+
+  /**
+   * What a figure draws: its picture as it stands now when that draws within the place the figure was packed in (a picture
+   * that arrived after the layout takes its figure's place, never another's), else what it was packed by. Plates and framed
+   * pictures draw within their footprint always; one still being read draws its plate (figureGeometry).
+   */
+  const drawing = (item: CaseFigure) => {
+    // a figure is placed only once there is a basis (before it nothing is packed), so `item` comes with one
+    const packedBy = basis as PackBasis;
+    const now = liveArts[item.index];
+    const then = packedBy.arts[item.index];
+    const margins = pictureMargins(now.art, liveAlpha);
+    if (now === then) return { art: now.art, aspect: now.aspect, margins };
+    if ((now.art.kind === 'cutout' || now.art.kind === 'masked') && margins !== null && drawnWidthMm(item.heightMm, now.aspect, margins) > item.widthMm + FIT_SLACK_MM) {
+      return { art: then.art, aspect: then.aspect, margins: pictureMargins(then.art, packedBy.alpha) };
+    }
+    return { art: now.art, aspect: now.aspect, margins };
+  };
 
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
@@ -1248,8 +1314,8 @@ export function CabinetScene({
   // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
   const inDrawnBoxes = inDrawn.map(({ cab, draw: fig }) => {
-    const { art, aspect } = arts[fig.placed.item.index];
-    return figureLayerBox(fig, figureGeometry(fig, art, aspect, pictureMargins(art, alpha)), cab);
+    const { art, aspect, margins } = drawing(fig.placed.item);
+    return figureLayerBox(fig, figureGeometry(fig, art, aspect, margins), cab);
   });
   // G1: as many figures as the drawn cabinets hold (each its kind's most), so no cabinet the frame shows stands empty
   const figCap = figureCap(heldCounts, heldKinds, drawnCabs);
@@ -1319,6 +1385,7 @@ export function CabinetScene({
       data-drawn-figures={String(onShow.length)}
       data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
+      data-laid-out={settle.revealed ? '1' : '0'}
       data-zoom={zoomData(zoom.current)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -1354,14 +1421,14 @@ export function CabinetScene({
                 ))}
                 {onShow.map(({ draw: fig }, n) => {
                   const { figure, index } = fig.placed.item;
-                  const { art, aspect } = arts[index];
+                  const { art, aspect, margins } = drawing(fig.placed.item);
                   return (
                     <SceneFigure
                       key={figure._id}
                       draw={fig}
                       art={art}
                       aspect={aspect}
-                      margins={pictureMargins(art, alpha)}
+                      margins={margins}
                       scale={scales[n]}
                       plate={plates[n]}
                       onSelect={() => onSelect(figure, index)}

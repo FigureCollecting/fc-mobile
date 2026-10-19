@@ -42,6 +42,8 @@ import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKe
 import { useOnlineStatus } from './useOnlineStatus';
 
 const EMPTY: ReadonlyMap<string, CachedImage> = new Map();
+/** The answer while a signed-in device's first one is on its way: not complete, whatever it will turn out to hold. */
+const LOADING: ReadonlyMap<string, CachedImage> = new Map();
 /** The holdings whose figures' images are kept, owned first: past MAX_KEPT_FIGURES, the last are left out. */
 const KEPT_KINDS = ['owned', 'ordered', 'wished'] as const;
 /** How often the case view is drawn again with what its sync has kept so far. */
@@ -71,6 +73,13 @@ function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal) {
   };
 }
 
+/**
+ * LAYOUT-STABLE-1: whether this answer is the last the pictures will give: not the first answer still on its way, not one
+ * shown while the sync is fetching (each is partial), and not that of a sync that left an image unfetched. The case lays
+ * its wall out once more when it is, and otherwise after a quiet spell (layoutBasis.ts). Signed out, nothing streams in.
+ */
+export const imagesComplete = (answer: ReadonlyMap<string, CachedImage>): boolean => answer !== LOADING && !partial.has(answer);
+
 export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const session = localSession.value;
   const phase = useAuthPhase();
@@ -84,6 +93,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     [],
   );
   const heads = useSnapshot(keptHeads).data;
+  const signedIn = session !== undefined && phase === 'signed-in';
+  const enabled = signedIn && heads !== undefined;
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: ['local', 'kept-images', reachable, heads?.join(',') ?? ''],
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
@@ -128,9 +139,9 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       if (incomplete) partial.add(answer);
       return answer;
     },
-    enabled: session !== undefined && phase === 'signed-in' && heads !== undefined,
+    enabled,
     staleTime: (q) => (q.state.data !== undefined && partial.has(q.state.data) ? 0 : 10 * 60_000),
     retry: false,
   });
-  return query.data ?? EMPTY;
+  return query.data ?? (signedIn ? LOADING : EMPTY);
 }

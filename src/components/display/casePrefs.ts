@@ -7,7 +7,7 @@
  * One localStorage entry; unreadable or unknown values fall back per field.
  */
 import { useCallback, useState } from 'preact/hooks';
-import { CEILING_DEFAULT_MM } from './cabinetProfile';
+import { CEILING_DEFAULT_MM, CLEARANCE_MAX_MM, DEFAULT_CLEARANCE_MM } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from './cabinetPresets';
 
@@ -52,6 +52,10 @@ export interface CasePrefs {
   readonly ceilingMm: number;
   /** Left to right; the first two sit left of the raised +, the last two right of it. */
   readonly tabOrder: readonly CaseTab[];
+  /** CLEAR-1 (Ross 10-18): the room every compartment keeps above a figure, mm; 1 in to begin with, 0 to 2 in. Kept with the room's ceiling. */
+  readonly clearanceMm: number;
+  /** SIZE-BASIS-1 (Ross 10-18): outline the figures whose height or width is an estimate (sizeBasis.ts); off until asked for. */
+  readonly showEstimated: boolean;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -60,6 +64,8 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   swipe: 'camera',
   ceilingMm: CEILING_DEFAULT_MM,
   tabOrder: CASE_TABS,
+  clearanceMm: DEFAULT_CLEARANCE_MM,
+  showEstimated: false,
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -94,6 +100,8 @@ export function readCasePrefs(): CasePrefs {
     swipe: stored.swipe === 'pan' || stored.swipe === 'camera' ? stored.swipe : d.swipe,
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
     tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
+    clearanceMm: typeof stored.clearanceMm === 'number' && stored.clearanceMm >= 0 && stored.clearanceMm <= CLEARANCE_MAX_MM ? stored.clearanceMm : d.clearanceMm,
+    showEstimated: stored.showEstimated === true,
   };
 }
 

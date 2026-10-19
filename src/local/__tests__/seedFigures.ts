@@ -1,7 +1,7 @@
 // Figures for the screen tests: copies another device wrote (on the fake coordinator) and their
 // product cards, pulled by one engine pass, so the store holds them as known (not pending).
 import { create } from '@bufbuild/protobuf';
-import { ProductCardSchema, SyncOp, occFacetKey, type OccurrenceStatus } from '@figurecollecting/fc-api-contract';
+import { ProductCardSchema, SyncOp, occFacetKey, type OccurrenceStatus, type ProductKind } from '@figurecollecting/fc-api-contract';
 import { T0 } from '../../sync/__tests__/harness';
 import { STAMP, headOf, serverVersion, uuid } from '../../sync/__tests__/engineSupport';
 import type { LocalRig } from './localHarness';
@@ -16,6 +16,14 @@ export interface SeedFigure {
   copies?: number;
   /** The disposal of each copy, with status former. */
   disposal?: Record<string, unknown>;
+  /** What the coordinator says the product is (FIGURES-ONLY-1); absent = it states none. */
+  kind?: ProductKind;
+  /** The source's own category name, as the card carries it. */
+  category?: string;
+  /** The size the card states (mm); absent = it states none (SIZE-BASIS-1). */
+  size?: { heightMm?: number; widthMm?: number; depthMm?: number };
+  /** The scale the card states ("1/7"). */
+  scale?: string;
 }
 
 const AS_OF = '2026-10-01T09:30:00.000000Z';
@@ -49,6 +57,10 @@ export async function seedFigures(r: LocalRig, figs: SeedFigure[]): Promise<{ he
         ...(f.manufacturer === undefined ? {} : { manufacturer: { value: f.manufacturer, asOf: AS_OF } }),
         ...(f.character === undefined ? {} : { character: { value: f.character, asOf: AS_OF } }),
         ...(f.series === undefined ? {} : { series: { value: f.series, asOf: AS_OF } }),
+        ...(f.kind === undefined ? {} : { kind: f.kind }),
+        ...(f.category === undefined ? {} : { category: { value: f.category, asOf: AS_OF } }),
+        ...(f.size ?? {}),
+        ...(f.scale === undefined ? {} : { scale: { value: f.scale, asOf: AS_OF } }),
         gtin14s: f.gtin === undefined ? [] : [f.gtin],
       }),
     );

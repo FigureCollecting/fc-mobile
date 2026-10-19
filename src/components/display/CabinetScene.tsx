@@ -29,7 +29,7 @@ import type { ComponentChildren, JSX } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { Style } from '../../styles/Style';
 import { getDisplayMeta } from './displayMeta';
-import { framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
+import { framingHeadroomMm, sideOverhangMm, withClearance, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
 import {
   FIGURE_GAP_MM,
   describeViolator,
@@ -597,6 +597,12 @@ function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins>
   return { top: read.top, bottom: art.bottomMarginFrac ?? read.bottom, left: read.left, right: read.right };
 }
 
+/** SIZE-BASIS-1: which of a packed figure's height and width is an estimate (sizeBasis.ts says the same of a figure): '' when neither. */
+function sizeEstimated(item: CaseFigure): '' | 'height' | 'width' | 'both' {
+  const width = (item.widthBasis ?? 'labeled') !== 'labeled';
+  return item.heightEstimated ? (width ? 'both' : 'height') : width ? 'width' : '';
+}
+
 /** Where a figure draws (world mm): its picture's box and the tap box it hangs from (SceneFigure). */
 function figureGeometry(draw: FigureDraw, art: FigureArt, aspect: number, margins: PictureMargins | null) {
   const { placed, slot, cx } = draw;
@@ -703,6 +709,8 @@ function SceneFigure({
         data-art={art.kind}
         data-figure-id={item.figure._id}
         data-index={String(item.index)}
+        // SIZE-BASIS-1: what of this figure's size is an estimate: '' (the listing's), 'height', 'width' or 'both'
+        data-size-estimated={sizeEstimated(item)}
         data-grounded={grounded ? '1' : '0'}
         data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
         data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
@@ -828,7 +836,8 @@ export function CabinetScene({
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
   const ceilingMm = prefs.ceilingMm;
-  const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
+  // CLEAR-1: every cabinet keeps the clearance above a figure that the case prefs set
+  const pattern = useMemo(() => wallPatternProfiles(prefs.pattern).map((p) => withClearance(p, prefs.clearanceMm)), [prefs.pattern, prefs.clearanceMm]);
 
   // a picture that fails to load stands as its plate (ADDR-1), never a blank space
   const images = useBrokenImages();
@@ -1386,6 +1395,7 @@ export function CabinetScene({
       data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
       data-laid-out={settle.revealed ? '1' : '0'}
+      data-show-estimated={prefs.showEstimated ? '1' : '0'}
       data-zoom={zoomData(zoom.current)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -1563,6 +1573,12 @@ const styles = `
   .cabinet-scene .cab-shadow {
     background: radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.3) 45%, rgba(0, 0, 0, 0) 72%);
   }
+  /* SIZE-BASIS-1: a figure whose height or width is an estimate, outlined when the View card asks: quiet, dashed, no tap of its own */
+  .cabinet-scene[data-show-estimated='1'] .cab-figure[data-size-estimated]:not([data-size-estimated='']) {
+    outline: 1.5px dashed rgba(255, 193, 7, 0.85);
+    outline-offset: 1px;
+  }
+
   .cabinet-scene .cab-figure {
     pointer-events: auto;
     padding: 0;

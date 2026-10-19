@@ -543,7 +543,8 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   it('says what was measured and from what: the reason, the size and where it came from, the most any place takes, and the wall (CASE-FB3b)', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
     const lines = Array.from(host.querySelectorAll('.cabinet-scene__fit li'), (li) => li.textContent);
-    expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1351 mm, for the IKEA KLINGSBO glass-door cabinet');
+    // the 1351 mm tier less the 1 in the prefs keep above a figure (CLEAR-1)
+    expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1325.6 mm, for the IKEA KLINGSBO glass-door cabinet');
     expect(lines).toContain('Deep Diorama: too deep: 520 mm, labeled; the deepest place takes 400 mm, for the IKEA KLINGSBO glass-door cabinet');
   });
 
@@ -719,8 +720,8 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
   });
 
   /** The mixed wall at a frame: its host, and the cabinets whose body stands whole side to side at the height the frame aims at. */
-  const mixedWall = (frame: { width: number; height: number }) => {
-    const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'wall', swipe: 'camera' }, { frameFallback: frame });
+  const mixedWall = (frame: { width: number; height: number }, clearanceMm = 0) => {
+    const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'wall', swipe: 'camera', clearanceMm }, { frameFallback: frame });
     const n = (JSON.parse(host.dataset.wall!) as number[][]).length;
     expect(n).toBeGreaterThan(8);
     const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
@@ -783,11 +784,11 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     return unprojectToPlaneZ(camera, camera.frame.width / 2 - Number(host.dataset.pan), camera.frame.height / 2, 0)![0];
   };
 
-  it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', () => {
+  const mixedWallPager = (clearanceMm: number) => () => {
     // the Fold8 cover's frame, where the challenger's walk (70 px) then Next went nowhere; the walk and pager property
     // over every pattern, frame and stop is the unit's (caseFraming.test.ts, ruling 32), the open-rotated panel the e2e's
     for (const frame of [{ width: 443, height: 344 }]) {
-      const { host } = mixedWall(frame);
+      const { host } = mixedWall(frame, clearanceMm);
       const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
       const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
       let moves = 0;
@@ -819,7 +820,13 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       expect(moves).toBeGreaterThan(12);
       cleanup();
     }
-  }, 180_000);
+  };
+
+  it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', mixedWallPager(0), 180_000);
+
+  // Found by CLEAR-1 (the default 1 in clearance gives this wall 24 cabinets): a walk that settled inside the last page, off its
+  // centre (cabinet 20 of the page of 20-23), left Next disabled though that page's centre lay farther right. Fixed by PAGER-END (#78).
+  it('the mixed wall at 1 in clearance (24 cabinets): after a walk from any page, Next moves the camera on and Prev back, never staying put', mixedWallPager(25.4), 180_000);
 
   it('PAGER-END: Next is off only at or past the last page\'s centre and Prev only at or before the first\'s, wherever a walk settled; a press then opens that page', () => {
     for (const frame of [{ width: 443, height: 344 }, { width: 870, height: 261 }]) {
@@ -2016,3 +2023,29 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
     });
   }
 });
+
+describe('CLEAR-1: the clearance above a figure, from the case prefs, decides where figures stand', () => {
+  // a Detolf compartment is 396 mm clear at most. Figures of 385 mm stand in the stock compartments with no clearance or a
+  // quarter inch; with 1 in none fits one, and the cabinets take glass shelves out for tiers
+  const figs = (h: number, n = 6) => Array.from({ length: n }, (_, i) => ({ ...FIXTURE_FIGURES[0], _id: `f${i}`, name: `F${i}`, dimensions: { heightMm: h, widthMm: 100, depthMm: 80 } }) as Figure);
+  const removed = (host: HTMLElement) => (JSON.parse(host.dataset.held!) as [number, number, number[]][]).flatMap((h) => h[2]);
+
+  it('0 and 0.25 in: nothing comes out; 1 in: shelves come out for tiers', () => {
+    for (const clearanceMm of [0, 6.35]) {
+      expect(removed(scene(figs(385), { pattern: 'ikea-detolf', clearanceMm }).host), `${clearanceMm}`).toEqual([]);
+      cleanup();
+    }
+    expect(removed(scene(figs(385), { pattern: 'ikea-detolf', clearanceMm: 25.4 }).host).length).toBeGreaterThan(0);
+  });
+
+  it('the default prefs keep 1 in: the same figures, no pref set, take shelves out', () => {
+    expect(removed(scene(figs(385), { pattern: 'ikea-detolf' }).host).length).toBeGreaterThan(0);
+  });
+
+  it('a figure 1 mm over the room a quarter inch leaves does not fit a stock compartment at 0.25 in', () => {
+    expect(removed(scene(figs(396 - 6.35 + 1), { pattern: 'ikea-detolf', clearanceMm: 6.35 }).host).length).toBeGreaterThan(0);
+    cleanup();
+    expect(removed(scene(figs(396 - 6.35), { pattern: 'ikea-detolf', clearanceMm: 6.35 }).host)).toEqual([]);
+  });
+});
+

@@ -255,11 +255,11 @@ describe('the view over the store', () => {
 });
 
 describe('products', () => {
-  it('CARD-REFRESH-1: stamps each card with the card schema version it was stored under, 2 since the cards gained height, width and depth', async () => {
+  it('CARD-REFRESH-1: stamps each card with the card schema version it was stored under, 3 since the cards gained a kind and a category (2: height, width and depth)', async () => {
     const { db } = await freshDb();
     const store = await openStore(db, { clock: new FakeClock() });
     await store.putProducts([create(ProductCardSchema, { headId: HEAD[0] }), create(ProductCardSchema, { headId: HEAD[1] })]);
-    expect(CARD_SCHEMA_VERSION).toBe(2);
+    expect(CARD_SCHEMA_VERSION).toBe(3);
     expect((await store.listProducts()).map((p) => p.card_schema)).toEqual([CARD_SCHEMA_VERSION, CARD_SCHEMA_VERSION]);
   });
 

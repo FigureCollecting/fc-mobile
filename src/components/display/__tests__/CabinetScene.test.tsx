@@ -815,7 +815,8 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
               expect(Math.sign(Number(host.dataset.cameraX) - x), `${at}: ${button.getAttribute('aria-label')} to ${host.dataset.cameraX}`).toBe(sign);
               moves++;
             }
-            // back to this page as it opened: the pages open left to right (a walk within the first page leaves Prev off)
+            // back to this page as it opened: the pages open left to right (PAGER-END: Prev and Next stay on short of the
+            // first and the last page's own centre; a picture left of the first page's centre has Prev off, and Next opens the page after)
             if (prev.disabled && host.dataset.cameraX !== opened) tap(next);
             while (Number(host.dataset.cameraX) > Number(opened) && !prev.disabled) tap(prev);
             while (Number(host.dataset.cameraX) < Number(opened) && !next.disabled) tap(next);
@@ -829,6 +830,49 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       cleanup();
     }
   }, 180_000);
+
+  it('PAGER-END: Next is off only at or past the last page\'s centre and Prev only at or before the first\'s, wherever a walk settled; a press then opens that page', () => {
+    for (const frame of [{ width: 443, height: 344 }, { width: 870, height: 261 }]) {
+      const buttons = () => ({ next: screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement, prev: screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement });
+      let first = 0;
+      let last = 0;
+      {
+        const { host } = mixedWall(frame);
+        const { next } = buttons();
+        first = Number(host.dataset.cameraX);
+        for (let i = 0; i < 80 && !next.disabled; i++) tap(next);
+        last = Number(host.dataset.cameraX);
+        expect(last, `${frame.width}x${frame.height}`).toBeGreaterThan(first);
+        cleanup();
+      }
+      let offLast = 0;
+      let offFirst = 0;
+      for (const dx of [-900, -400, -130, 130, 400, 900]) {
+        for (const from of ['first', 'last'] as const) {
+          const { host } = mixedWall(frame);
+          const { next, prev } = buttons();
+          if (from === 'last') for (let i = 0; i < 80 && !next.disabled; i++) tap(next);
+          drag(host, dx);
+          const x = Number(host.dataset.cameraX);
+          const at = `${frame.width}x${frame.height} from the ${from} page, walk ${dx} to ${x} (first ${first}, last ${last})`;
+          if (from === 'last' && x < last - 1) {
+            expect(next.disabled, `${at}: Next with the last page's centre ahead`).toBe(false);
+            offLast++;
+            tap(next);
+            expect(Number(host.dataset.cameraX) > x, `${at}: Next moves on`).toBe(true);
+          }
+          if (from === 'first' && x > first + 1) {
+            expect(prev.disabled, `${at}: Prev with the first page's centre behind`).toBe(false);
+            offFirst++;
+            tap(prev);
+            expect(Number(host.dataset.cameraX) < x, `${at}: Prev moves back`).toBe(true);
+          }
+          cleanup();
+        }
+      }
+      expect(offLast + offFirst, `${frame.width}x${frame.height}: walks that settled off an end page's centre`).toBeGreaterThan(0);
+    }
+  }, 120_000);
 
   it('the pager answers to the settled picture (close-out 4, ruling 32): mid-swipe, out past the far end, Next and Prev hold until the finger lifts', () => {
     for (const swipe of ['camera', 'pan'] as const) {
@@ -847,6 +891,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
   });
 
   it('pan mode, wall view (close-out 4, ruling 32): the pager pages from where the pan settled, never back past it', () => {
+    let reopened = false;
     for (const frame of [{ width: 657, height: 473 }, { width: 443, height: 344 }]) {
       // (104 copies: 70 KLINGSBOs with CASE-FB2b's shelves out; a wall of 61, 67 or 81 makes the pager miss its last
       // page, as on 086f61c5: a pager unit of its own)
@@ -865,14 +910,23 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       const again = centreX(host);
       tap(prev);
       expect(centreX(host), `${at} Prev after the pan`).toBeLessThan(again);
-      // panned out to the wall's end, the picture is on the last page: Next has nowhere to go
+      // panned out to the wall's end, the picture is on the last page, off its centre where the page is narrower than the
+      // frame (PAGER-END): Next then opens that page's own centre, and from there has nowhere to go
       for (let k = 0; k < 60; k++) drag(host, -400);
+      const flush = centreX(host);
+      if (!next.disabled) {
+        reopened = true;
+        tap(next);
+        expect(host.dataset.pan, `${at} Next from the end`).toBe('0');
+        expect(centreX(host), `${at} Next from the end opens the last page's own centre, ahead of the picture`).toBeGreaterThan(flush);
+      }
       const end = centreX(host);
-      expect(next.disabled, `${at} Next at the end at ${end}`).toBe(true);
+      expect(next.disabled, `${at} Next on the last page at ${end}`).toBe(true);
       tap(prev);
       expect(centreX(host), `${at} Prev from the end`).toBeLessThan(end);
       cleanup();
     }
+    expect(reopened, 'a frame whose last page stands ahead of the pan limit').toBe(true);
   }, 120_000);
 
   for (const view of ['cabinet', 'shelf'] as const) {

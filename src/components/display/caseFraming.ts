@@ -524,6 +524,32 @@ export function pageInView(pages: readonly (readonly number[])[], wall: WallLayo
   return pages.findIndex((p) => p.includes(at));
 }
 
+/** PAGER-END: how close (mm) the picture's centre may stand to the camera x a page opens at and count as there. */
+export const PAGE_AT_MM = 0.5;
+
+/** The camera x a page opens at: its first cabinet pressed (the wall view's framing of it). */
+export function pageOpensAt(input: FramingInput, page: readonly number[]): number {
+  return frameCase({ ...input, view: 'wall', focus: page[0] }).camera.x;
+}
+
+/**
+ * PAGER-END: whether Next and Prev have anywhere to take the picture. A page farther along (nearer) is somewhere; so, at
+ * the last (first) page, is that page's own opening when the picture stands short of (past) it: a walk that settled in
+ * the last page, off its centre, had left Next off with the centre still ahead. `ends`: the camera x the first and the
+ * last page open at (pageOpensAt).
+ */
+export function pagerReach(
+  pages: readonly (readonly number[])[],
+  wall: WallLayout,
+  framing: Framing,
+  panPx: number,
+  ends: { readonly first: number; readonly last: number },
+): { readonly prev: boolean; readonly next: boolean } {
+  const at = pageInView(pages, wall, framing, panPx);
+  const x = frameCentreX(framing, panPx);
+  return { prev: at > 0 || x > ends.first + PAGE_AT_MM, next: at + 1 < pages.length || x < ends.last - PAGE_AT_MM };
+}
+
 /** The framing with the camera, and its aim, moved along the wall to x. */
 export const atX = (framing: Framing, x: number): Framing => ({ ...framing, camera: { ...framing.camera, x }, look: [x, framing.look[1], framing.look[2]] });
 

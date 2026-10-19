@@ -165,11 +165,17 @@ interface Arrangement {
   readonly slots: SurfaceSlot[];
   readonly tiers: readonly number[];
   readonly removed: number;
+  /** Where its highest tier stands (the top of the surface it stands on, mm); 0 when it has none. EYE-1: of equal removals, the highest wins. */
+  readonly tierTopMm: number;
 }
 
 const arrangementCache = new WeakMap<CabinetProfile, Map<number, Arrangement[]>>();
 
-/** Every way `profile` may stand, the stock one first, then each set of lift-out shelves taken out, lower ones first. */
+/**
+ * Every way `profile` may stand, the stock one first, then each set of lift-out shelves taken out: the fewest out first
+ * and, of as many, the one whose tier stands highest first (EYE-1, Ross 10-18: a tall figure's tier is made as high as it
+ * can be, closer to a standing viewpoint; it was the lowest).
+ */
 function arrangements(profile: CabinetProfile, ceilingMm: number): Arrangement[] {
   let byCeiling = arrangementCache.get(profile);
   if (!byCeiling) arrangementCache.set(profile, (byCeiling = new Map()));
@@ -185,9 +191,9 @@ function arrangements(profile: CabinetProfile, ceilingMm: number): Arrangement[]
     const derived = withShelfLayout(profile, { removed, moved: [] });
     const slots = surfaceSlots(derived, ceilingMm);
     const tiers = slots.flatMap((s, k) => (!s.isTop && s.maxHeightMm > stockMax + FIT_EPSILON_MM ? [k] : []));
-    list.push({ profile: derived, slots, tiers, removed: removed.length });
+    list.push({ profile: derived, slots, tiers, removed: removed.length, tierTopMm: Math.max(0, ...tiers.map((k) => slots[k].topMm)) });
   }
-  list.sort((a, b) => a.removed - b.removed);
+  list.sort((a, b) => a.removed - b.removed || b.tierTopMm - a.tierTopMm);
   byCeiling.set(ceilingMm, list);
   return list;
 }
@@ -568,7 +574,7 @@ function placeAll(
     const fair = scored.filter((x) => !scored.some((y) => y !== x && y.tallCap >= x.tallCap && y.glassCap >= x.glassCap && (y.tallCap > x.tallCap || y.glassCap > x.glassCap)));
     const off = (x: (typeof scored)[number]) => Math.abs(x.tallCap / (x.tallCap + x.glassCap) - r);
     const best = Math.min(...fair.map(off));
-    // of the layouts as near: the fewest shelves out, then no top kept unless needed, then the lowest (their order)
+    // of the layouts as near: the fewest shelves out, then no top kept unless needed, then the highest tier (their order, EYE-1)
     const near = fair.filter((x) => off(x) <= best + IN_STEP_SLACK);
     near.sort((x, y) => x.a.removed - y.a.removed || Number(x.keepTop) - Number(y.keepTop));
     return near[0];

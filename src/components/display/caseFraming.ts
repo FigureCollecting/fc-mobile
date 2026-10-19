@@ -4,8 +4,11 @@
  * millimetre world of caseCamera: x along the wall, y up from the floor, z
  * toward the viewer, every cabinet's front at z = 0. Pure maths, no DOM.
  *
- *  - cabinet: one cabinet, feet to headroom, tilted at its middle from the
- *    CC15 start height; its neighbours stay true, wherever they fall (CC4a).
+ *  - cabinet: one cabinet, straight on and level at its middle, the whole of
+ *    it (feet to headroom) in view, fitted by whichever of its height or width
+ *    dictates, the other showing more; each cabinet by its own size, an arrow
+ *    press framing the next (CAB-FOCUS-1, Ross 10-18, replacing the CC15 start
+ *    camera the wall shares); its neighbours stay true, wherever they fall (CC4a).
  *  - wall: the same distance, centred on a PAGE of cabinets: as many side by
  *    side as that distance shows, so wide screens show several.
  *  - shelf: level at one shelf level's band (the band all the wall's cabinets
@@ -417,6 +420,37 @@ function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
   return { camera: at(capDistance(at, Math.max(widthFit, heightFit), cap)), look, page: [focus], drawCap: cap.cap };
 }
 
+/**
+ * CAB-FOCUS-1 (Ross 10-18): the cabinet view, straight on and level at the middle of the focus cabinet (its feet to the top
+ * of what stands on it), as far back as its height or its width needs, whichever dictates, to show the whole cabinet inside
+ * the margins, the other showing more: never a crop. Each cabinet by its own size. The frame is narrowed, as the wall's is
+ * (wallCamera), to the stretch of the fronts the case draws, never the camera stepped in.
+ */
+function frameCabinet(input: FramingInput, focus: number, drawCap: number, cap: WallCap): Framing {
+  const slot = input.wall.cabinets[focus];
+  const b = cabinetBox(slot, headroomOf(input, focus));
+  const look: Vec3 = [slot.centerMm, (b.y0 + b.y1) / 2, 0];
+  const focalPx = lensFocalPx(input.frame, input.lensMm);
+  const m = frameMargins(input.frame);
+  const heightFit = (focalPx * (b.y1 - b.y0)) / 2 / (input.frame.height / 2 - m.y);
+  const widthFit = (focalPx * (b.x1 - b.x0)) / 2 / (input.frame.width / 2 - m.x);
+  // the nearest plane of the box (a splayed foot reaches z1 toward the viewer) is the one that has to fit
+  const z = Math.max(heightFit, widthFit) + b.z1;
+  const width = Math.floor((cap.span * focalPx) / z);
+  const frame = width < input.frame.width ? { width, height: input.frame.height } : input.frame;
+  return { camera: { x: look[0], y: look[1], z, pitch: 0, focalPx, frame }, look, page: [focus], drawCap };
+}
+
+/**
+ * CAB-FOCUS-1: where the focus cabinet's silhouette spans the frame (px from its left edge): the extremes of its box's
+ * corners (splayed feet included) through the camera, wherever it stands. What lies beyond is its neighbours'.
+ */
+export function focusEdgesPx(camera: Camera, slot: WallSlot): { left: number; right: number } {
+  const b = cabinetBox(slot, 0);
+  const xs = boxCorners(b.x0, b.x1, 0, b.y1, b.z0, b.z1).map((c) => project(camera, c).x);
+  return { left: Math.min(...xs), right: Math.max(...xs) };
+}
+
 /** The camera for the view, the focus cabinet and (in the shelf view) its surface. */
 export function frameCase(input: FramingInput): Framing {
   const n = input.wall.cabinets.length;
@@ -425,7 +459,7 @@ export function frameCase(input: FramingInput): Framing {
   const wc = wallCamera(input);
   const cap = wallCap(input, wc.drawCap);
   if (input.view === 'shelf') return withSlide(frameShelf(input, focus, cap), cap);
-  if (input.view === 'cabinet') return withSlide(centredOn(input, wc, [focus]), cap);
+  if (input.view === 'cabinet') return withSlide(frameCabinet(input, focus, wc.drawCap, cap), cap);
   const page = wallPages(input).find((p) => p.includes(focus)) as number[];
   return withSlide(standWhole(centredOn(input, wc, page), input.wall, page), cap);
 }

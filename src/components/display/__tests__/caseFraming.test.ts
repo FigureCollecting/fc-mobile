@@ -10,6 +10,7 @@ import {
   FRAME_CEILING_MAX_MM,
   TOP_BAND_MAX_MM,
   cabinetBox,
+  focusEdgesPx,
   frameCase,
   fullHeightCap,
   PAN_EDGE_TAN_MAX,
@@ -82,52 +83,135 @@ describe('cabinetBox: the part of the room one cabinet fills', () => {
   });
 });
 
-describe('frameCase: one cabinet (CC15 start camera, tilted at the look-at)', () => {
-  it('the Detolf on the cover: look-at 965 mm, camera 52.74 in high, the camera-out-v3 golden 1647.7 mm back, 12.8 deg down', () => {
-    const f = frameCase(input());
-    expect(f.look[1]).toBe(965);
-    expect(f.camera.y / IN_MM).toBeCloseTo(52.74, 2);
-    expect(f.camera.z - f.look[2]).toBeCloseTo(1647.7, 0);
-    expect((f.camera.pitch * 180) / Math.PI).toBeCloseTo(12.8, 1);
-    expect(f.camera.x).toBe(215);
-  });
+describe('CAB-FOCUS-1: the cabinet view frames the whole focus cabinet straight on, fitted by whichever of its height or width dictates (Ross 10-18)', () => {
+  const FRAMES = [COVER, OPEN, { width: 443, height: 701 }, { width: 870, height: 657 }, { width: 616, height: 217 }, { width: 150, height: 800 }];
+  const MIXED = wallLayout(Array.from({ length: 12 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
+  const headroomMm = MIXED.cabinets.map((_, i) => (i % 4 === 1 ? 457.2 : 300));
+  const framed = (frame: { width: number; height: number }, focus: number, wall: WallLayout = MIXED, hr: number[] = headroomMm) =>
+    frameCase({ frame, wall, headroomMm: hr, view: 'cabinet', focus, shelf: 0 });
+  const corners = (b: ReturnType<typeof cabinetBox>, z: readonly number[] = [b.z0, b.z1]) =>
+    [b.x0, b.x1].flatMap((x) => [b.y0, b.y1].flatMap((y) => z.map((zz) => [x, y, zz] as Vec3)));
+  /** How far the cabinet's nearest corners stand inside the frame's margins, across and up and down (negative: outside). */
+  const slack = (f: Framing, focus: number, hr: number[] = headroomMm, wall: WallLayout = MIXED) => {
+    const b = cabinetBox(wall.cabinets[focus], hr[focus]);
+    const m = frameMargins(f.camera.frame);
+    const ps = corners(b, [b.z1]).map((c) => project(f.camera, c));
+    return {
+      x: Math.min(...ps.map((p) => p.x)) - m.x < f.camera.frame.width - m.x - Math.max(...ps.map((p) => p.x)) ? Math.min(...ps.map((p) => p.x)) - m.x : f.camera.frame.width - m.x - Math.max(...ps.map((p) => p.x)),
+      y: Math.min(Math.min(...ps.map((p) => p.y)) - m.y, f.camera.frame.height - m.y - Math.max(...ps.map((p) => p.y))),
+    };
+  };
 
-  it('the KLINGSBO: look-at 1050 mm (half of 1800 + 300), the camera two-thirds of the way to 60 in (53.8 in)', () => {
-    const f = frameCase(input({ wall: wallLayout([IKEA_KLINGSBO]) }));
-    expect(f.look).toEqual([225, 1050, 0]);
-    expect(f.camera.y).toBeCloseTo(startCameraY(1050), 9);
-    expect(f.camera.y / IN_MM).toBeCloseTo(53.84, 2);
-  });
-
-  it('frames the cabinet, feet to headroom, inside the margins, whatever its neighbours', () => {
-    const wall = wallLayout([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
-    for (const focus of [0, 1, 2]) {
-      const f = frameCase(input({ wall, headroomMm: [300, 300, 457.2], focus, frame: OPEN }));
-      const b = cabinetBox(wall.cabinets[focus], [300, 300, 457.2][focus]);
-      for (const x of [b.x0, b.x1]) for (const y of [b.y0, b.y1]) for (const z of [b.z0, b.z1]) {
-        const p = project(f.camera, [x, y, z]);
-        expect(inside(OPEN.width, OPEN.height, p.x, p.y)).toBe(true);
+  it('straight on (no tilt), level with the middle of the cabinet from its feet to the top of what stands on it, centred on it', () => {
+    for (const frame of FRAMES) {
+      for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
+        const f = framed(frame, focus);
+        const b = cabinetBox(MIXED.cabinets[focus], headroomMm[focus]);
+        const at = `${frame.width}x${frame.height} focus ${focus}`;
+        expect(f.camera.pitch, at).toBe(0);
+        expect(f.camera.x, at).toBeCloseTo(MIXED.cabinets[focus].centerMm, 9);
+        expect(f.camera.y, at).toBeCloseTo((b.y0 + b.y1) / 2, 9);
+        expect(f.look, at).toEqual([f.camera.x, f.camera.y, 0]);
+        expect(f.page, at).toEqual([focus]);
       }
-      expect(f.camera.x).toBeCloseTo(wall.cabinets[focus].centerMm, 9);
     }
   });
 
-  it('the camera follows the taller headroom: a tall figure on the top raises the look-at', () => {
-    const low = frameCase(input({ headroomMm: [300] }));
-    const high = frameCase(input({ headroomMm: [609.6] }));
-    expect(high.look[1]).toBeCloseTo((1630 + 609.6) / 2, 9);
-    expect(high.camera.y).toBeGreaterThan(low.camera.y);
+  it('the whole cabinet (its splayed feet, and what stands on it) stands inside the frame\'s margins at every focus and panel: never a crop', () => {
+    for (const frame of FRAMES) {
+      for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
+        const f = framed(frame, focus);
+        for (const c of corners(cabinetBox(MIXED.cabinets[focus], headroomMm[focus]))) {
+          const p = project(f.camera, c);
+          expect(p.depth, `${frame.width}x${frame.height} focus ${focus}`).toBeGreaterThan(0);
+          expect(inside(f.camera.frame.width, f.camera.frame.height, p.x, p.y), `${frame.width}x${frame.height} focus ${focus} corner ${c}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('fitted by whichever dictates: a tall frame by the cabinet\'s width, a wide one by its height, the other showing more', () => {
+    const wall = wallLayout([IKEA_DETOLF]);
+    const narrow = framed({ width: 150, height: 800 }, 0, wall, [300]);
+    expect(slack(narrow, 0, [300], wall).x).toBeCloseTo(0, 3);
+    expect(slack(narrow, 0, [300], wall).y).toBeGreaterThan(5);
+    for (const frame of [OPEN, COVER, { width: 870, height: 657 }]) {
+      const wide = framed(frame, 0, wall, [300]);
+      expect(slack(wide, 0, [300], wall).y, `${frame.width}x${frame.height}`).toBeCloseTo(0, 3);
+      expect(slack(wide, 0, [300], wall).x, `${frame.width}x${frame.height}`).toBeGreaterThan(5);
+    }
+  });
+
+  it('the margin that binds is always met: at every focus and panel one dimension touches it exactly', () => {
+    for (const frame of FRAMES) {
+      for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
+        const k = slack(framed(frame, focus), focus);
+        expect(Math.min(k.x, k.y), `${frame.width}x${frame.height} focus ${focus}`).toBeCloseTo(0, 3);
+      }
+    }
+  });
+
+  it('each cabinet is fitted by its own size: a taller one stands farther back than a shorter, in the same frame', () => {
+    const wall = wallLayout([IKEA_DETOLF, IKEA_KLINGSBO]);
+    const detolf = framed(COVER, 0, wall, [300, 300]);
+    const klingsbo = framed(COVER, 1, wall, [300, 300]);
+    expect(klingsbo.camera.z).toBeGreaterThan(detolf.camera.z);
+  });
+
+  it('the frame keeps its height, and is narrowed (never the camera stepped in) only to the cabinets the case draws', () => {
+    for (const frame of FRAMES) {
+      for (let focus = 0; focus < MIXED.cabinets.length; focus++) {
+        const f = framed(frame, focus);
+        expect(f.camera.frame.height).toBe(frame.height);
+        expect(f.camera.frame.width).toBeLessThanOrEqual(frame.width);
+        expect((f.camera.frame.width * (f.camera.z - 0)) / f.camera.focalPx, `${frame.width}x${frame.height} focus ${focus}`).toBeLessThanOrEqual(capSpanMm(MIXED, f.drawCap) + 1);
+      }
+    }
+  });
+
+  it('a one-cabinet wall frames its one cabinet; an empty wall still throws', () => {
+    const one = wallLayout([IKEA_DETOLF]);
+    expect(framed(COVER, 0, one, [300]).camera.x).toBe(215);
+    expect(() => frameCase({ frame: COVER, wall: wallLayout([]), headroomMm: [], view: 'cabinet', focus: 0, shelf: 0 })).toThrow(RangeError);
   });
 });
 
-describe('frameCase: whole cabinets (as many side by side as the one-cabinet distance shows)', () => {
-  it('a wide screen shows several Detolfs; their page is framed, centred, no farther back than one cabinet needs', () => {
+describe('focusEdgesPx: where the focus cabinet\'s silhouette ends across the frame (the dimming of its neighbours begins there)', () => {
+  const wall = wallLayout([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK, IKEA_DETOLF]);
+  const headroomMm = [300, 300, 300, 300];
+  for (const frame of [COVER, OPEN, { width: 150, height: 800 }]) {
+    it(`${frame.width}x${frame.height}: symmetric about the centred straight-on camera, inside the frame, at each cabinet`, () => {
+      for (let focus = 0; focus < wall.cabinets.length; focus++) {
+        const f = frameCase({ frame, wall, headroomMm, view: 'cabinet', focus, shelf: 0 });
+        const e = focusEdgesPx(f.camera, wall.cabinets[focus]);
+        expect(e.left + e.right, `focus ${focus}`).toBeCloseTo(f.camera.frame.width, 6);
+        expect(e.left, `focus ${focus}`).toBeGreaterThanOrEqual(0);
+        expect(e.right, `focus ${focus}`).toBeLessThanOrEqual(f.camera.frame.width);
+        expect(e.left).toBeLessThan(e.right);
+      }
+    });
+  }
+
+  it('is the extremes of the box\'s corners through the camera, wherever the camera stands (walked off-centre)', () => {
+    const f = frameCase({ frame: OPEN, wall, headroomMm, view: 'cabinet', focus: 1, shelf: 0 });
+    const walked = { ...f.camera, x: f.camera.x + 180 };
+    const b = cabinetBox(wall.cabinets[1], 0);
+    const xs = [b.x0, b.x1].flatMap((x) => [0, b.y1].flatMap((y) => [b.z0, b.z1].map((z) => project(walked, [x, y, z]).x)));
+    const e = focusEdgesPx(walked, wall.cabinets[1]);
+    expect(e.left).toBeCloseTo(Math.min(...xs), 9);
+    expect(e.right).toBeCloseTo(Math.max(...xs), 9);
+  });
+});
+
+describe('frameCase: whole cabinets (the wall view: as many side by side as its one distance shows)', () => {
+  it('a wide screen shows several Detolfs; their page is framed, centred, at the wall view\'s one distance', () => {
     const wall = wallLayout(Array(8).fill(IKEA_DETOLF));
     const headroomMm = Array(8).fill(300);
-    const one = frameCase(input({ wall, headroomMm, frame: OPEN }));
+    const start = frameCase(input({ wall, headroomMm, frame: OPEN, view: 'wall', focus: 0 }));
     const all = frameCase(input({ wall, headroomMm, frame: OPEN, view: 'wall' }));
     expect(all.page.length).toBeGreaterThan(2);
-    expect(all.camera.z - all.look[2]).toBeLessThanOrEqual(one.camera.z - one.look[2] + 1);
+    // the wall view's one distance, whichever page: a page is more cabinets at that distance, never a step back
+    expect(all.camera.z - all.look[2]).toBeCloseTo(start.camera.z - start.look[2], 6);
     const first = wall.cabinets[all.page[0]];
     const last = wall.cabinets[all.page[all.page.length - 1]];
     expect(all.camera.x).toBeCloseTo((first.leftMm + last.rightMm) / 2, 9);
@@ -1190,20 +1274,19 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     return s.depth > 0 && inside(camera.frame.width, camera.frame.height, s.x, s.y, slack);
   };
 
-  it('every view of the wall and the cabinet, at every focus and every stop, stands the camera at one height, distance, tilt and frame: only x moves', () => {
+  // CAB-FOCUS-1 (Ross 10-18): the cabinet view is no longer this camera: it fits each focus cabinet itself, straight on
+  it('the wall view, at every focus and every stop, stands the camera at one height, distance, tilt and frame: only x moves', () => {
     for (const [name, wall, headroomMm] of WALLS) {
       for (const frame of PANELS) {
-        const base: FramingInput = { frame, wall, headroomMm, view: 'cabinet', focus: 0, shelf: 0 };
+        const base: FramingInput = { frame, wall, headroomMm, view: 'wall', focus: 0, shelf: 0 };
         const one = vertical(frameCase(base));
-        for (const view of ['wall', 'cabinet'] as const) {
-          for (let focus = 0; focus < wall.cabinets.length; focus++) {
-            const f = frameCase({ ...base, view, focus });
-            expect(vertical(f), `${name} ${frame.width}x${frame.height} ${view} ${focus}`).toEqual(one);
-          }
-          for (const stop of walkStops({ ...base, view: 'wall' })) {
-            const g = atX(frameCase({ ...base, view: 'wall', focus: stop.focus }), stop.x);
-            expect(vertical(g), `${name} ${frame.width}x${frame.height} stop ${stop.x}`).toEqual(one);
-          }
+        for (let focus = 0; focus < wall.cabinets.length; focus++) {
+          const f = frameCase({ ...base, focus });
+          expect(vertical(f), `${name} ${frame.width}x${frame.height} wall ${focus}`).toEqual(one);
+        }
+        for (const stop of walkStops(base)) {
+          const g = atX(frameCase({ ...base, focus: stop.focus }), stop.x);
+          expect(vertical(g), `${name} ${frame.width}x${frame.height} stop ${stop.x}`).toEqual(one);
         }
       }
     }
@@ -1213,7 +1296,8 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     for (const [name, wall, headroomMm] of WALLS) {
       const top = Math.max(...wall.cabinets.map((c, i) => c.profile.outer.heightMm + headroomMm[i]));
       for (const frame of PANELS) {
-        for (const view of ['wall', 'cabinet'] as const) {
+        // the cabinet view fits its own cabinet whole, straight on (CAB-FOCUS-1): tested with its framing
+        for (const view of ['wall'] as const) {
           for (let focus = 0; focus < wall.cabinets.length; focus += 3) {
             const f = frameCase({ frame, wall, headroomMm, view, focus, shelf: 0 });
             for (const i of f.page) {
@@ -1224,11 +1308,10 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
                 for (const z of [b.z0, b.z1]) {
                   for (const y of [0, top]) {
                     const p = project(f.camera, [x, y, z]);
-                    // floor to top inside the frame's top and bottom margins; side to side too, where the view centres
-                    // on the one cabinet (the wall view opens a page whole across at the height it aims at: wholeCabinets)
+                    // floor to top inside the frame's top and bottom margins (the wall view opens a page whole across at
+                    // the height it aims at: wholeCabinets)
                     expect(p.y, `${at} corner ${x},${y},${z}`).toBeGreaterThanOrEqual(m.y - 1e-3);
                     expect(p.y, `${at} corner ${x},${y},${z}`).toBeLessThanOrEqual(f.camera.frame.height - m.y + 1e-3);
-                    if (view === 'cabinet') expect(insideOf(f.camera, [x, y, z]), `${at} corner ${x},${y},${z}`).toBe(true);
                   }
                 }
               }
@@ -1240,10 +1323,10 @@ describe('CASE-FB1: full height, one height for the whole wall, the room, the ve
     }
   });
 
-  it('the KLINGSBO on the cover: aimed at the middle of the top figures (1050 mm), from the CC15 start height, stepped back to show the floor strip', () => {
+  it('the KLINGSBO wall on the cover: aimed at the middle of the top figures (1050 mm), from the CC15 start height, stepped back to show the floor strip', () => {
     const wall = wallLayout(Array(12).fill(IKEA_KLINGSBO));
-    const f = frameCase({ frame: { width: 443, height: 418 }, wall, headroomMm: Array(12).fill(300), view: 'cabinet', focus: 5, shelf: 0 });
-    expect(f.look).toEqual([wall.cabinets[5].centerMm, 1050, 0]);
+    const f = frameCase({ frame: { width: 443, height: 418 }, wall, headroomMm: Array(12).fill(300), view: 'wall', focus: 5, shelf: 0 });
+    expect(f.look[1]).toBe(1050);
     expect(f.camera.y).toBeCloseTo(startCameraY(1050), 9);
     // the floor strip, the last thing in, binds: it draws on the bottom margin
     const strip = project(f.camera, [wall.cabinets[5].centerMm, 0, 50 + FLOOR_STRIP_MM]);

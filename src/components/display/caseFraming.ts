@@ -371,7 +371,8 @@ export function topBandTopMm(heightMm: number, ceilingMm: number): number {
 
 /** One cabinet's band at a shelf level (reading order, clamped to its lowest): its surface up to the one above, or its top up to the ceiling (topBandTopMm). */
 function levelBand(profile: CabinetProfile, level: number, ceilingMm: number): { lo: number; hi: number } {
-  const slots = surfaceSlots(profile, ceilingMm);
+  // the storage shelf is a level of the shelf view too, though no figure stands on it (CLEAR-1)
+  const slots = surfaceSlots(profile, ceilingMm, true);
   const s = slots[Math.min(Math.max(0, Math.trunc(level)), slots.length - 1)];
   const surface = profile.surfaces[s.surfaceIndex];
   const hi = s.isTop ? topBandTopMm(profile.outer.heightMm, ceilingMm) : profile.surfaces[s.surfaceIndex + 1].topMm;
@@ -392,7 +393,7 @@ function wallBand(input: FramingInput, level: number): { lo: number; hi: number 
  */
 export function shelfSteps(input: FramingInput): number {
   const ceiling = input.ceilingMm ?? CEILING_DEFAULT_MM;
-  let steps = Math.max(1, ...input.wall.cabinets.map((c) => surfaceSlots(c.profile, ceiling).length));
+  let steps = Math.max(1, ...input.wall.cabinets.map((c) => surfaceSlots(c.profile, ceiling, true).length));
   while (steps > 1) {
     const a = wallBand(input, steps - 1);
     const b = wallBand(input, steps - 2);

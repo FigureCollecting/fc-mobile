@@ -22,6 +22,7 @@ describe('case prefs, kept per device (CC14)', () => {
       ceilingMm: 2438.4,
       tabOrder: ['view', 'reserved', 'info', 'refine'],
       misfitsDismissed: [],
+      clearanceMm: 25.4,
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -34,6 +35,7 @@ describe('case prefs, kept per device (CC14)', () => {
       ceilingMm: 2700,
       tabOrder: ['refine', 'info', 'reserved', 'view'],
       misfitsDismissed: ['fig-a', 'fig-b'],
+      clearanceMm: 6.35,
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -66,6 +68,18 @@ describe('case prefs, kept per device (CC14)', () => {
     for (const bad of ['a', 7, null, ['a', 7], [{}], { 0: 'a' }]) {
       localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ misfitsDismissed: bad }));
       expect(readCasePrefs().misfitsDismissed, JSON.stringify(bad)).toEqual([]);
+    }
+  });
+
+  it('CLEAR-1: the clearance above a figure is kept with the room\'s ceiling: 1 in by default, 0 to 2 in; anything else falls back to the default', () => {
+    expect(DEFAULT_CASE_PREFS.clearanceMm).toBe(25.4);
+    for (const mm of [0, 6.35, 25.4, 50.8]) {
+      writeCasePrefs({ clearanceMm: mm });
+      expect(readCasePrefs().clearanceMm, String(mm)).toBe(mm);
+    }
+    for (const bad of [-1, 50.9, 'x', null, Number.NaN, Number.POSITIVE_INFINITY, [1]]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ clearanceMm: bad }));
+      expect(readCasePrefs().clearanceMm, JSON.stringify(bad)).toBe(25.4);
     }
   });
 

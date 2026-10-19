@@ -13,7 +13,7 @@
  * alongside, CC16).
  */
 import type { Figure } from '@figurecollecting/fc-shared';
-import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, adjacencyGapMm, clearHeightsMm, liftOutShelves, sideOverhangMm, topClearanceMm, withShelfLayout } from './cabinetProfile';
+import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, adjacencyGapMm, clearHeightsMm, liftOutShelves, sideOverhangMm, stableLayout, topClearanceMm, withShelfLayout } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT, baseDepth, type BaseDepth } from './caseInterim';
 import type { FigureDisplayMeta } from './displayMeta';
@@ -104,8 +104,11 @@ export interface SurfaceSlot {
   readonly lipZMm: number;
 }
 
-/** The profile's surfaces in reading order: the top (when usable), then the shelves top to bottom. */
-export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILING_DEFAULT_MM): SurfaceSlot[] {
+/**
+ * The profile's surfaces in reading order: the top (when usable), then the shelves top to bottom. A storage shelf (CLEAR-1)
+ * is no place for a figure, so it is left out; the shelf view's levels (`withStorage`) keep it, as it is physically there.
+ */
+export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILING_DEFAULT_MM, withStorage: boolean = false): SurfaceSlot[] {
   const { surfaces } = profile;
   const clear = clearHeightsMm(profile);
   const slots: SurfaceSlot[] = [];
@@ -125,6 +128,7 @@ export function surfaceSlots(profile: CabinetProfile, ceilingMm: number = CEILIN
   const doorWall = profile.rack ? profile.rack.postMm : profile.materials.front === 'glassDoor' ? (profile.glassMm ?? 0) : 0;
   for (let i = last - 1; i >= 0; i--) {
     const s = surfaces[i];
+    if (s.role === 'storage' && !withStorage) continue;
     const onPlate = profile.plate !== undefined && s.plate === true;
     const frontWall = s.outsideDoor ? 0 : doorWall;
     slots.push({
@@ -188,6 +192,8 @@ function arrangements(profile: CabinetProfile, ceilingMm: number): Arrangement[]
     const removed = out.filter((_, b) => mask & (1 << b));
     // a top and one shelf at least (withShelfLayout)
     if (profile.surfaces.length - removed.length < 2) continue;
+    // CLEAR-1: and the posts braced: a rack never goes to fewer than two beams in either half
+    if (!stableLayout(profile, { removed, moved: [] })) continue;
     const derived = withShelfLayout(profile, { removed, moved: [] });
     const slots = surfaceSlots(derived, ceilingMm);
     const tiers = slots.flatMap((s, k) => (!s.isTop && s.maxHeightMm > stockMax + FIT_EPSILON_MM ? [k] : []));

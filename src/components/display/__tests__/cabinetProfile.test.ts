@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
+import { IKEA_DETOLF, OPEN_STEEL_RACK } from '../cabinetPresets';
 import {
   CEILING_DEFAULT_MM,
+  CLEARANCE_MAX_MM,
+  CLEARANCE_STEP_MM,
+  DEFAULT_CLEARANCE_MM,
+  withClearance,
   TOP_CLEARANCE_CAP_MM,
   TOP_HAND_ROOM_MM,
   HEADROOM_MIN_MM,
@@ -572,3 +577,30 @@ describe('footprint, adjacency gap and buy link (Ross 2026-10-11)', () => {
     expect(buyLink(box({ buyUrl: '' }))).toBeNull();
   });
 });
+
+describe('CLEAR-1: the room kept above a figure (Ross 10-18): 1 in by default, 0 to 2 in in quarter inches', () => {
+  it('pins the default, the most and the step as exact decimals', () => {
+    expect(DEFAULT_CLEARANCE_MM).toBe(25.4);
+    expect(CLEARANCE_MAX_MM).toBe(50.8);
+    expect(CLEARANCE_STEP_MM).toBe(6.35);
+  });
+
+  it('takes the clearance off every compartment\'s clear height; none (or 0) leaves the stock ones, the same object', () => {
+    expect(clearHeightsMm(IKEA_DETOLF)).toEqual([396, 387, 387, 378]);
+    expect(withClearance(IKEA_DETOLF, 0)).toBe(IKEA_DETOLF);
+    const inch = withClearance(IKEA_DETOLF, DEFAULT_CLEARANCE_MM);
+    expect(clearHeightsMm(inch).map((c) => Math.round(c * 100) / 100)).toEqual([370.6, 361.6, 361.6, 352.6]);
+    expect(withClearance(IKEA_DETOLF, DEFAULT_CLEARANCE_MM)).toBe(inch);
+    expect(clearHeightsMm(IKEA_DETOLF)).toEqual([396, 387, 387, 378]);
+  });
+
+  it('a compartment with less room than the clearance has none, never a negative one; a surface that meets the next keeps its negative clear height (the profile check reads it)', () => {
+    const squeezed = withClearance({ ...IKEA_DETOLF, surfaces: IKEA_DETOLF.surfaces.map((s, i) => (i === 2 ? { ...s, topMm: IKEA_DETOLF.surfaces[1].topMm + 20 } : s)) }, DEFAULT_CLEARANCE_MM);
+    expect(clearHeightsMm(squeezed)[1]).toBe(0);
+  });
+
+  it('the rack\'s beams are its own undersides: with the 2 in beam each compartment is 6.35 mm shorter than with the old 1.75 in', () => {
+    expect(clearHeightsMm(OPEN_STEEL_RACK)[3]).toBeCloseTo(inchesToMm(72 - 2 - 47), 6);
+  });
+});
+

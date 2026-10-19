@@ -7,7 +7,7 @@
  * One localStorage entry; unreadable or unknown values fall back per field.
  */
 import { useCallback, useState } from 'preact/hooks';
-import { CEILING_DEFAULT_MM } from './cabinetProfile';
+import { CEILING_DEFAULT_MM, CLEARANCE_MAX_MM, DEFAULT_CLEARANCE_MM } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from './cabinetPresets';
 
@@ -57,6 +57,8 @@ export interface CasePrefs {
    * until a figure NOT in this list misfits; the list is always recallable from the View card.
    */
   readonly misfitsDismissed: readonly string[];
+  /** CLEAR-1 (Ross 10-18): the room every compartment keeps above a figure, mm; 1 in to begin with, 0 to 2 in. Kept with the room's ceiling. */
+  readonly clearanceMm: number;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -66,6 +68,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   ceilingMm: CEILING_DEFAULT_MM,
   tabOrder: CASE_TABS,
   misfitsDismissed: [],
+  clearanceMm: DEFAULT_CLEARANCE_MM,
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -105,6 +108,7 @@ export function readCasePrefs(): CasePrefs {
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
     tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
     misfitsDismissed: isIdList(stored.misfitsDismissed) ? [...stored.misfitsDismissed] : d.misfitsDismissed,
+    clearanceMm: typeof stored.clearanceMm === 'number' && stored.clearanceMm >= 0 && stored.clearanceMm <= CLEARANCE_MAX_MM ? stored.clearanceMm : d.clearanceMm,
   };
 }
 

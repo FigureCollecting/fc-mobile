@@ -29,7 +29,7 @@ import type { ComponentChildren, JSX } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { Style } from '../../styles/Style';
 import { getDisplayMeta } from './displayMeta';
-import { framingHeadroomMm, sideOverhangMm, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
+import { framingHeadroomMm, sideOverhangMm, withClearance, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
 import {
   FIGURE_GAP_MM,
   describeViolator,
@@ -868,7 +868,8 @@ export function CabinetScene({
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
   const ceilingMm = prefs.ceilingMm;
-  const pattern = useMemo(() => wallPatternProfiles(prefs.pattern), [prefs.pattern]);
+  // CLEAR-1: every cabinet keeps the clearance above a figure that the case prefs set
+  const pattern = useMemo(() => wallPatternProfiles(prefs.pattern).map((p) => withClearance(p, prefs.clearanceMm)), [prefs.pattern, prefs.clearanceMm]);
 
   // a picture that fails to load stands as its plate (ADDR-1), never a blank space
   const images = useBrokenImages();

@@ -69,7 +69,8 @@ describe('MISFIT-CHIP-1 (1): the red banner is a small chip with a warning glyph
     expect(l.textContent).toContain('16 figures do not fit');
     const lines = Array.from(l.querySelectorAll('li'), (li) => li.textContent!);
     expect(lines).toHaveLength(16);
-    expect(lines[0]).toMatch(/^Tall Statue 0: too tall: 1500 mm, labeled; the most any place takes is 1351 mm, for the IKEA KLINGSBO glass-door cabinet$/);
+    // the 1351 mm tier less the 1 in the prefs keep above a figure (CLEAR-1)
+    expect(lines[0]).toMatch(/^Tall Statue 0: too tall: 1500 mm, labeled; the most any place takes is 1325.6 mm, for the IKEA KLINGSBO glass-door cabinet$/);
     expect(chip(host)!.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(chip(host)!);
     expect(list(host)).toBeNull();

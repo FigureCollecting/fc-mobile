@@ -14,6 +14,7 @@
  * everywhere. Tests use only the synthetic art (VITE_FIXTURE_ART in
  * .env.test), never the git-ignored files.
  */
+import { ProductKind } from '@figurecollecting/fc-api-contract';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { FigureImageRef } from '../components/display/figureArt';
 import type { ItemSync, LocalMeta } from '../local/figures';
@@ -410,6 +411,20 @@ export function getFixtureMisfits(): number {
   return Math.min(FIXTURE_MISFITS_MAX, Number(raw));
 }
 
+const FIXTURE_GOODS_PARAM = 'fxgoods';
+
+/** Fixture slots (of the seven) that stand as goods and as media under `?fxgoods=1`. */
+const GOODS_SLOTS = [1, 4];
+const MEDIA_SLOTS = [6];
+
+/**
+ * Dev-only switch for products the case leaves off its shelves (FIGURES-ONLY-1): `?fxgoods=1` makes Dark Angel Olivia
+ * and Spike Spiegel goods and Ryuko Matoi media, in every copy, as a card carrying a kind would. Off for anything else.
+ */
+export function getFixtureGoods(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_GOODS_PARAM) === '1';
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Each state's badge (sync, and how long ago its data was current; null for none) and count. */
@@ -430,15 +445,14 @@ const SYNC_STATES: { sync: ItemSync; agoMs: number | null; quantity: number }[] 
 ];
 
 /** A fixture as the local store gives it: its id is its head; no copies, card or facets. */
-function withSync(figure: Figure, index: number, now: number): Figure {
-  const state = SYNC_STATES[index % SYNC_STATES.length];
-  const local: LocalMeta = {
+function fixtureLocal(figure: Figure, sync: ItemSync, asOf: string | null): LocalMeta {
+  return {
     headId: figure._id,
     heads: [figure._id],
     kind: figure.collectionStatus as LocalMeta['kind'],
     copies: [],
-    sync: state.sync,
-    asOf: state.agoMs === null ? null : new Date(now - state.agoMs).toISOString(),
+    sync,
+    asOf,
     factsAsOf: null,
     hasCard: false,
     character: null,
@@ -447,7 +461,18 @@ function withSync(figure: Figure, index: number, now: number): Figure {
     uf: {},
     ufTarget: { score: figure._id, note: figure._id, wishability: figure._id },
   };
+}
+
+function withSync(figure: Figure, index: number, now: number): Figure {
+  const state = SYNC_STATES[index % SYNC_STATES.length];
+  const local = fixtureLocal(figure, state.sync, state.agoMs === null ? null : new Date(now - state.agoMs).toISOString());
   return { ...figure, quantity: state.quantity, local } as Figure;
+}
+
+/** A fixture as a card with a kind would make it: the kind rides on whatever local state it already has. */
+function withKind(figure: Figure, kind: ProductKind): Figure {
+  const local = (figure as Figure & { local?: LocalMeta }).local ?? fixtureLocal(figure, 'known', null);
+  return { ...figure, local: { ...local, productKind: kind } } as Figure;
 }
 
 /** A repeated copy's picture at its own URL under ?fxuniq=1. */
@@ -501,8 +526,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * picture URL (getFixtureUnique), `?fxsync=1` gives each a sync badge and a
  * count (getFixtureSync), `?fxonly=<name>` stands one fixture in every slot
  * (getFixtureOnly), `?fxfields=1` gives every other slot a longer card
- * (getFixtureFields), `?fxmisfit=N` adds N figures too tall for any cabinet
- * (getFixtureMisfits).
+ * (getFixtureFields), `?fxgoods=1` makes three of them goods and media (getFixtureGoods),
+ * `?fxmisfit=N` adds N figures too tall for any cabinet (getFixtureMisfits).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -514,8 +539,9 @@ export function getFixtureFigures(
   only = getFixtureOnly(),
   fields = getFixtureFields(),
   misfits = getFixtureMisfits(),
+  goods = getFixtureGoods(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !misfits) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !misfits && !goods) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const [slot, each] of FIXTURE_FIGURES.entries()) {
@@ -527,8 +553,16 @@ export function getFixtureFigures(
       out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }
+  // MISFIT-CHIP-1: the misfits follow the fixtures' own copies; the goods and media slots below stand among those only
+  const own = out.length;
   for (let i = 1; i <= misfits; i++) out.push({ ...FIXTURE_FIGURES[0], _id: `fx-misfit-${i}`, name: `Misfit Giant ${i}`, dimensions: { heightMm: 3000 } });
-  if (!sync) return out;
   const now = Date.now();
-  return out.map((figure, index) => withSync(figure, index, now));
+  const synced = sync ? out.map((figure, index) => withSync(figure, index, now)) : out;
+  if (!goods) return synced;
+  return synced.map((figure, index) => {
+    if (index >= own) return figure;
+    const slot = index % FIXTURE_FIGURES.length;
+    if (GOODS_SLOTS.includes(slot)) return withKind(figure, ProductKind.GOODS);
+    return MEDIA_SLOTS.includes(slot) ? withKind(figure, ProductKind.MEDIA) : figure;
+  });
 }

@@ -49,6 +49,7 @@ import {
   frameCase,
   liftForDragMm,
   lifted,
+  focusEdgesPx,
   nearestCabinet,
   pageInView,
   panFraming,
@@ -97,6 +98,16 @@ const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 40;
 /** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
 const SHELF_STEPS_PX = 44;
+/**
+ * CAB-FOCUS-1 (Ross 10-18): how dark the cabinets either side of the focus one are drawn in the one-cabinet view (0 to 1,
+ * black over them): light to moderate, to focus the current cabinet where the screen shows neighbours, and to mark the
+ * mode. The one value to tune. The room is dark whatever the app's theme (the scene's colours are its own), so the same
+ * black veil serves the dark and the light theme.
+ * Ross 2026-10-18: 60 %, chosen by eye.
+ */
+export const NEIGHBOUR_DIM = 0.6;
+/** A dimming veil reaches this far past the window the frame shows, so a pinch or a sub-pixel slide never shows its edge. */
+const DIM_PAD_PX = 4;
 const DEFAULT_FRAME = { width: 360, height: 480 };
 /**
  * CASE-FB2a (Ross 10-16: "one line height and fairly minimal space around the text"): a name plate is one line of
@@ -461,6 +472,28 @@ function Rack({ slot }: { slot: WallSlot }) {
   );
 }
 
+/**
+ * CAB-FOCUS-1: a flat veil over everything on one side of the focus cabinet's silhouette (its neighbours there), in the
+ * viewport so a pan or a pinch carries it with the picture. It spans only the window the frame shows of that picture
+ * (`window`: the picture's x and y at the frame's edges, which a slide moves), never more: a layer the size of the wall
+ * would blow the case's budget of scene layers. It never takes a touch: a neighbour's figures stay tappable.
+ */
+function NeighbourDim({ side, edge, window }: { side: 'left' | 'right'; edge: number; window: Rect }) {
+  const x0 = window.x0 - DIM_PAD_PX;
+  const x1 = window.x1 + DIM_PAD_PX;
+  const [left, right] = side === 'left' ? [x0, edge] : [edge, x1];
+  if (right <= left) return null;
+  const style = {
+    left: `${fmt(left)}px`,
+    width: `${fmt(right - left)}px`,
+    top: `${fmt(window.y0 - DIM_PAD_PX)}px`,
+    height: `${fmt(window.y1 - window.y0 + 2 * DIM_PAD_PX)}px`,
+    backgroundColor: `rgba(0, 0, 0, ${NEIGHBOUR_DIM})`,
+    pointerEvents: 'none' as const,
+  };
+  return <div class="cabinet-scene__dim" data-side={side} data-edge={fmt(edge)} style={style} />;
+}
+
 function Cabinet({ slot, index }: { slot: WallSlot; index: number }) {
   const p = slot.profile;
   return (
@@ -815,6 +848,9 @@ export function CabinetScene({
   );
 
   const [focus, setFocus] = useState(0);
+  // CAB-FOCUS-1: the cabinet the one-cabinet view's picture was fitted to. null: the focus. A camera-mode walk carries the focus
+  // on to a neighbour (the arrows go on from there) without re-fitting the picture under the finger: only an arrow does.
+  const [framedFocus, setFramedFocus] = useState<number | null>(null);
   const [shelf, setShelf] = useState(0);
   const [walkX, setWalkX] = useState<number | null>(null);
   const [pan, setPan] = useState(0);
@@ -830,12 +866,14 @@ export function CabinetScene({
     setPan(0);
     setLift(0);
     setPanY(0);
+    setFramedFocus(null);
   }, [prefs.view, prefs.pattern, prefs.swipe]);
   // CASE-FB2a (interim, REPACK_ON_FILTER): a new filter or sort packs its figures from the wall's start, and the view
   // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened
   useLayoutEffect(() => {
     if (!REPACK_ON_FILTER) return;
     setFocus(0);
+    setFramedFocus(null);
     setShelf(0);
     setWalkX(null);
     setPan(0);
@@ -845,10 +883,11 @@ export function CabinetScene({
 
   const lastIndex = wall.cabinets.length - 1;
   const focusIdx = Math.min(focus, lastIndex);
+  const framedIdx = framedFocus === null ? focusIdx : Math.min(framedFocus, lastIndex);
   // the framing and the wall's pages hold for a whole swipe: worked out once per view, not at every finger move
   const framingInput = useMemo(
-    () => ({ frame, wall, headroomMm, view: prefs.view, focus: focusIdx, shelf, ceilingMm }),
-    [frame, wall, headroomMm, prefs.view, focusIdx, shelf, ceilingMm],
+    () => ({ frame, wall, headroomMm, view: prefs.view, focus: prefs.view === 'cabinet' ? framedIdx : focusIdx, shelf, ceilingMm }),
+    [frame, wall, headroomMm, prefs.view, focusIdx, framedIdx, shelf, ceilingMm],
   );
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
   const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
@@ -868,10 +907,14 @@ export function CabinetScene({
   const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx) : focusIdx;
   const { panPx } = shown;
   const { camera } = shown.framing;
+  // CAB-FOCUS-1: in the one-cabinet view, the cabinets either side of the focus one are dimmed, from the edges of its silhouette
+  const dimFrom = prefs.view === 'cabinet' ? focusEdgesPx(camera, wall.cabinets[focusIdx]) : null;
   // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
   const [panYMin, panYMax] = panYLimitsPx(shown.framing, wall, ceilingMm);
   const clampPanY = (v: number) => Math.min(panYMax, Math.max(panYMin, v));
   const panYPx = prefs.swipe === 'pan' ? clampPanY(panY + liveDy) : 0;
+  // CAB-FOCUS-1: the picture's x and y the frame shows at its edges (the picture is drawn slid by the pan)
+  const shownWindow: Rect = { x0: -panPx, x1: -panPx + camera.frame.width, y0: -panYPx, y1: -panYPx + camera.frame.height };
 
   // MOB-NAV-2: while a finger swipes, cull for the picture last culled for until it has moved a quarter frame (the
   // half-viewport margin still covers the frame), a cabinet already drawn keeping its place against a small move;
@@ -1126,6 +1169,8 @@ export function CabinetScene({
     const moved = prefs.view === 'wall' ? settleWalk(walked, wall, walkStops(framingInput), dx) : { x: swipeCamera(walked, wall, dx).camera.x };
     if (moved === null) return;
     setWalkX(moved.x);
+    // CAB-FOCUS-1: the one-cabinet picture stays as fitted to the cabinet it was; the focus is the one the walk reached
+    if (prefs.view === 'cabinet') setFramedFocus((f) => f ?? focusIdx);
     setFocus(nearestCabinet(wall, moved.x));
   };
   const onClickCapture = (e: MouseEvent) => {
@@ -1137,8 +1182,9 @@ export function CabinetScene({
 
   // TOP1 (Ross 10-18): an arrow press in the one-shelf view snaps to the straight-on view that shows that whole shelf of the
   // focus cabinet: the walk, the pan, the lift and the zoom a drag or a pinch left are gone. Only the arrows do it; a drag
-  // or a pinch still moves the picture as the swipe mode says, from there.
-  const snapShelf = () => {
+  // or a pinch still moves the picture as the swipe mode says, from there. CAB-FOCUS-1: the one-cabinet view's arrows do
+  // the same, to the straight-on fit of the whole focus cabinet.
+  const snapFrame = () => {
     setWalkX(null);
     setPan(0);
     setLift(0);
@@ -1147,9 +1193,10 @@ export function CabinetScene({
   };
   const goCabinet = (to: number) => {
     setFocus(Math.max(0, Math.min(lastIndex, to)));
+    setFramedFocus(null);
     setWalkX(null);
     setPan(0);
-    if (prefs.view === 'shelf') snapShelf();
+    if (prefs.view === 'shelf' || prefs.view === 'cabinet') snapFrame();
   };
   const goPage = (step: number) => {
     const target = pages[Math.max(0, Math.min(pages.length - 1, pageIdx + step))];
@@ -1160,7 +1207,7 @@ export function CabinetScene({
   const shelfIdx = Math.min(shelf, shelfCount - 1);
   const goShelf = (to: number) => {
     setShelf(to);
-    snapShelf();
+    snapFrame();
   };
 
   // --- figures
@@ -1317,6 +1364,8 @@ export function CabinetScene({
                 })}
               </DrawContext.Provider>
             </div>
+            {dimFrom !== null && focusIdx > 0 && <NeighbourDim side="left" edge={dimFrom.left} window={shownWindow} />}
+            {dimFrom !== null && focusIdx < lastIndex && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
         <ResetChip
@@ -1408,6 +1457,8 @@ const styles = `
   .cabinet-scene__zoom { position: absolute; inset: 0; transform-origin: 0 0; }
   .cabinet-scene__zoom--live { will-change: transform; }
   .cabinet-scene__viewport { position: absolute; inset: 0; perspective-origin: 50% 50%; }
+  /* CAB-FOCUS-1: the dimming over the focus cabinet's neighbours: flat, over the window the frame shows, its box set per render */
+  .cabinet-scene__dim { position: absolute; }
   .cabinet-scene__root { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0 0; transform-style: preserve-3d; }
   .cabinet-scene .cab, .cabinet-scene .part { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-style: preserve-3d; pointer-events: none; }
   .cabinet-scene .q { position: absolute; left: 0; top: 0; transform-origin: 0 0 0; pointer-events: none; box-sizing: border-box; }

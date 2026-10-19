@@ -44,7 +44,8 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    if (Object.keys(p).length > 0) localStorage.setItem('fc-case-prefs', JSON.stringify(p));
+    // the baselines are of the wall as it was packed with no clearance above a figure; the new 1 in default (CLEAR-1) has its own e2e
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ clearanceMm: 0, ...p }));
   }, prefs);
   await page.setViewportSize({ width: size.width, height: size.height });
   await page.goto(`/?layout=case${query}`);

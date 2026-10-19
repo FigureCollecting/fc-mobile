@@ -17,7 +17,8 @@ afterEach(() => cleanup());
 
 const COVER = { width: 443, height: 418 };
 const OPEN = { width: 870, height: 335 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
+// the steps are about the wall's levels, with its figures sized for no clearance above them (CLEAR-1's default would move shelves out)
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, frameFallback = COVER) {
   const { container } = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frameFallback} />);

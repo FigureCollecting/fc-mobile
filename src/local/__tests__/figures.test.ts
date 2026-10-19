@@ -3,7 +3,7 @@
 // facts from the card, and never an image: no figure.imageUrl and no displayMeta, ever (MG-2).
 import { describe, expect, it } from 'vitest';
 import { create, type MessageInitShape } from '@bufbuild/protobuf';
-import { ProductCardSchema, ufFacetKey, type ProductCard } from '@figurecollecting/fc-api-contract';
+import { ProductCardSchema, ProductKind, ufFacetKey, type ProductCard } from '@figurecollecting/fc-api-contract';
 import type { FacetRecord, ProductRecord } from '../../storage/records';
 import { indexFacet } from '../../sync/facetIndex';
 import { C, H, O, STAMP, collection, copy, note, row } from '../../sync/__tests__/viewFixtures';
@@ -66,6 +66,26 @@ describe('buildFigures', () => {
     expect(f!.displayMeta).toBeUndefined();
     expect('imageUrl' in f!).toBe(false);
     expect(f!.local.copies.map((c) => c.occ_id)).toEqual([O[0]]);
+  });
+
+  it('FIGURES-ONLY-1: carries the card\'s product kind on the local meta, and leaves it off when the card states none', () => {
+    const facets = [...copy(O[0], H[0], 'owned'), ...copy(O[1], H[1], 'owned'), ...copy(O[2], H[2], 'owned')];
+    const [towel, figure, video] = buildFigures(
+      inputs(facets, [
+        product(card(H[0], { kind: ProductKind.GOODS, category: { value: 'Linens', asOf: AS_OF } })),
+        product(card(H[1])),
+        product(card(H[2], { kind: ProductKind.MEDIA })),
+      ]),
+    );
+    expect(towel!.local.productKind).toBe(ProductKind.GOODS);
+    expect(video!.local.productKind).toBe(ProductKind.MEDIA);
+    // unknown stays unknown: the key is not there, so nothing reads it as a stated kind
+    expect('productKind' in figure!.local).toBe(false);
+  });
+
+  it('FIGURES-ONLY-1: does not put the card\'s category on Figure.category, which the Category=Prepainted default chip would filter on', () => {
+    const [towel] = buildFigures(inputs(copy(O[0], H[0], 'owned'), [product(card(H[0], { kind: ProductKind.GOODS, category: { value: 'Linens', asOf: AS_OF } }))]));
+    expect(towel!.category).toBeUndefined();
   });
 
   it('stacks the copies of one figure and kind into one item (xN), and keeps each kind its own item', () => {

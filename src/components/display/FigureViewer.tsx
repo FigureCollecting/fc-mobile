@@ -192,6 +192,10 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
 
       pswp.on('change', () => setCurrent(pswp.currIndex));
       pswp.on('loadComplete', ({ content, slide }) => fitSlideToPicture(content, slide));
+      // STRETCH-2: a picture beside the open one (two ahead) loads before PhotoSwipe has a slide for it and says no loadComplete;
+      // the slide made on the swipe took the guessed shape for good. Lay it out as it is set, picture loaded or not (a load still
+      // to come is laid out by loadComplete).
+      pswp.on('afterSetContent', ({ slide }) => fitSlideToPicture(slide.content, slide));
       pswp.on('destroy', () => {
         pswpRef.current = null;
         if (!closingRef.current) {

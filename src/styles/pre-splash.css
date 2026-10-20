@@ -1,7 +1,15 @@
 /* The static splash: painted before any script runs, held and faded once the app mounts (src/pwa/preSplash.ts).
    The figure starts at the size the system splash drew it, at the screen's centre where the system drew the
-   icon, holds it for SPLASH_HANDOVER_MS (300 ms), grows ease-out to full size by SPLASH_GROW_MS (3.5 s) as the
-   name below it fades in, then the splash fades over SPLASH_FADE_MS (500 ms). */
+   icon, holds it for SPLASH_HANDOVER_MS (300 ms), grows ease-out to its target by SPLASH_GROW_MS (2.2 s) as the
+   name below it fades in, holds a beat (SPLASH_HOLD_MS, 300 ms), then the splash fades over SPLASH_FADE_MS (500 ms):
+   3 s in all (SPLASH-3, Ross 10-18).
+   The target (the @supports block): the figure's height is 90.1 % of the window's (--pre-splash-target; SP4: 78.9 % of the
+   SCREEN, the installed window being 87.5 % of the screen), the full name in smaller text close below it (SP5 plan B: 0.063
+   of the figure, 34.9 px in the installed cover window), and the figure, the gap and the name stand as ONE group centred
+   in the box between the safe areas (a camera cutout is one), shrunk rather than let it reach an edge. The group is 1.074
+   times the figure's height, 96.8 % of the window, with a margin of 1.6 % at each end; the name, 16 letters at 9.09 em in
+   the widest fallback face, is 0.573 of the figure wide. The group lifts by half what hangs below the figure as it grows,
+   so it ends centred while the figure starts at the centre. */
 .pre-splash {
   /* scripts/generate-brand.mjs writes this from deploy/brandArt.ts splashStartHeight */
   --pre-splash-start-height: 165.8px; /* brand:splash-start */
@@ -23,7 +31,7 @@
   display: block;
   height: min(46vh, 22rem);
   width: auto;
-  animation: pre-splash-grow 3200ms ease-out 300ms both;
+  animation: pre-splash-grow 1900ms ease-out 300ms both;
 }
 .pre-splash__text {
   position: absolute;
@@ -37,7 +45,7 @@
   font-weight: 700;
   color: #f0f0f0;
   letter-spacing: -0.01em;
-  animation: pre-splash-name 3200ms ease-out 300ms both;
+  animation: pre-splash-name 1900ms ease-out 300ms both;
 }
 @keyframes pre-splash-grow {
   from { height: var(--pre-splash-start-height); }
@@ -46,7 +54,50 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@supports (height: 1cqh) {
+  .pre-splash {
+    /* the box between the safe areas is the container: 100cqh and 100cqw are its height and width */
+    container-type: size;
+    box-sizing: border-box;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);
+    /* the margin kept clear of every safe area */
+    --pre-splash-margin: max(1.6cqh, 8px);
+    /* the figure's height at its target, as a share of the window's whole height (SP4, SP5 plan B, Ross 10-19: 90.1 %, the
+       most the group takes with this margin in the installed Fold8 cover window) */
+    --pre-splash-target: 0.901;
+    /* its height: the target, and in a box too short or too narrow for the group (figure, gap, name: 1.074 of it tall,
+       0.573 of it wide) it shrinks to fit inside the margin */
+    --pre-splash-figure: min(
+      calc((100cqh + var(--safe-t) + var(--safe-b)) * var(--pre-splash-target)),
+      calc((100cqh - 2 * var(--pre-splash-margin)) / 1.074),
+      calc((100cqw - 2 * var(--pre-splash-margin)) / 0.573)
+    );
+  }
+  .pre-splash__stack {
+    animation: pre-splash-lift 1900ms ease-out 300ms both;
+  }
+  .pre-splash__art {
+    height: var(--pre-splash-figure);
+  }
+  .pre-splash__text {
+    margin-top: calc(var(--pre-splash-figure) * 0.011);
+    font-size: calc(var(--pre-splash-figure) * 0.063);
+    line-height: 1;
+  }
+  /* what hangs below the figure (the gap and the name: 0.074 of it) is half of what lifts the group to centre */
+  @keyframes pre-splash-lift {
+    to { transform: translateY(calc(var(--pre-splash-figure) * -0.037)); }
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .pre-splash { transition: none; }
   .pre-splash__art, .pre-splash__text { animation: none; }
+  /* no motion, and the group stands centred where the motion would have ended */
+  @supports (height: 1cqh) {
+    .pre-splash__stack { animation: none; transform: translateY(calc(var(--pre-splash-figure) * -0.037)); }
+  }
 }

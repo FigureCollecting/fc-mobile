@@ -144,7 +144,7 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
   });
 
-  it('CAM1: the swipe menu is usable while the picture is zoomed: it stands outside the zoom layer, and picking a mode there sets it (a new mode starts the picture at 1x, PINCH-1)', async () => {
+  it('CAM1: the swipe menu is usable while the picture is zoomed: it stands outside the zoom layer, and picking a mode there sets it (the zoom stays with the camera, PAN-KEEP-1)', async () => {
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
@@ -170,7 +170,8 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(scene.contains(menu)).toBe(false);
     await user.click(screen.getByRole('menuitemradio', { name: 'Pan the wall' }));
     await waitFor(() => expect(scene.dataset.swipe).toBe('pan'));
-    expect(zoomK()).toBe(1);
+    // PAN-KEEP-1: a mode is not a new picture in the wall view: the zoom stays
+    expect(zoomK()).toBeGreaterThan(1);
   });
 
   it('CARD-REFRESH-1: a pull down on the collection refetches the cards past the 24 h TTL (the engine rate-limits it), where it used to run a plain sync', async () => {

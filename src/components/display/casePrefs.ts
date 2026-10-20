@@ -10,6 +10,7 @@ import { useCallback, useState } from 'preact/hooks';
 import { CEILING_DEFAULT_MM, CLEARANCE_MAX_MM, DEFAULT_CLEARANCE_MM } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from './cabinetPresets';
+import { DEFAULT_WALL, DEFAULT_WALL_CUSTOM, isHexColour, isWallPreset, type WallPreset } from './wallColour';
 
 export const CASE_PREFS_KEY = 'fc-case-prefs';
 
@@ -61,6 +62,10 @@ export interface CasePrefs {
   readonly clearanceMm: number;
   /** SIZE-BASIS-1 (Ross 10-18): outline the figures whose height or width is an estimate (sizeBasis.ts); off until asked for. */
   readonly showEstimated: boolean;
+  /** WALL-COLOUR-1 (Ross 10-20): the back wall's colour: the old slate wall, a preset (each with a dark-theme counterpart) or `wallCustom`. */
+  readonly wall: WallPreset;
+  /** The custom wall colour, #rrggbb (its light-theme colour; the dark one is mixed from it). */
+  readonly wallCustom: string;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -72,6 +77,8 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   misfitsDismissed: [],
   clearanceMm: DEFAULT_CLEARANCE_MM,
   showEstimated: false,
+  wall: DEFAULT_WALL,
+  wallCustom: DEFAULT_WALL_CUSTOM,
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -113,6 +120,8 @@ export function readCasePrefs(): CasePrefs {
     misfitsDismissed: isIdList(stored.misfitsDismissed) ? [...stored.misfitsDismissed] : d.misfitsDismissed,
     clearanceMm: typeof stored.clearanceMm === 'number' && stored.clearanceMm >= 0 && stored.clearanceMm <= CLEARANCE_MAX_MM ? stored.clearanceMm : d.clearanceMm,
     showEstimated: stored.showEstimated === true,
+    wall: isWallPreset(stored.wall) ? stored.wall : d.wall,
+    wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
   };
 }
 

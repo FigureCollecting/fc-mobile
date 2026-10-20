@@ -24,6 +24,8 @@ describe('case prefs, kept per device (CC14)', () => {
       misfitsDismissed: [],
       clearanceMm: 25.4,
       showEstimated: false,
+      wall: 'slate',
+      wallCustom: '#d8d2c4',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -38,6 +40,8 @@ describe('case prefs, kept per device (CC14)', () => {
       misfitsDismissed: ['fig-a', 'fig-b'],
       clearanceMm: 6.35,
       showEstimated: true,
+      wall: 'custom',
+      wallCustom: '#336699',
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -141,3 +145,26 @@ describe('showEstimated (SIZE-BASIS-1)', () => {
     expect(readCasePrefs()).toMatchObject({ view: 'shelf', swipe: 'pan', showEstimated: false });
   });
 });
+
+describe('the back wall colour (WALL-COLOUR-1)', () => {
+  it('is the old slate wall by default, and a choice and a custom colour are kept on the device with the other prefs', () => {
+    expect(readCasePrefs().wall).toBe('slate');
+    writeCasePrefs({ wall: 'cream' });
+    expect(readCasePrefs().wall).toBe('cream');
+    writeCasePrefs({ wall: 'custom', wallCustom: '#AABBCC' });
+    const read = readCasePrefs();
+    expect([read.wall, read.wallCustom]).toEqual(['custom', '#AABBCC']);
+    expect(read.pattern).toBe(DEFAULT_CASE_PREFS.pattern);
+  });
+
+  it('an unknown preset or a colour that is not #rrggbb falls back, field by field; a record from before it existed reads as slate', () => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ wall: 'teal', wallCustom: 'blue', view: 'shelf' }));
+    const read = readCasePrefs();
+    expect([read.wall, read.wallCustom, read.view]).toEqual(['slate', '#d8d2c4', 'shelf']);
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ wall: 'seafoam', wallCustom: 12 }));
+    expect([readCasePrefs().wall, readCasePrefs().wallCustom]).toEqual(['seafoam', '#d8d2c4']);
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'cabinet' }));
+    expect(readCasePrefs().wall).toBe('slate');
+  });
+});
+

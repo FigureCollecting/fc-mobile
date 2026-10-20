@@ -87,6 +87,7 @@ import {
 } from './caseCull';
 import { clearInset, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
+import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useLayoutBasis } from './layoutBasis';
@@ -1474,6 +1475,9 @@ export function CabinetScene({
       aria-label="Display cabinets"
       data-view={prefs.view}
       data-swipe={prefs.swipe}
+      // WALL-COLOUR-1: the back wall's colour (both themes', as custom properties; the slate wall carries none)
+      data-wall-colour={prefs.wall}
+      style={wallStyle(prefs.wall, prefs.wallCustom)}
       data-pattern={prefs.pattern}
       data-focus={String(focusIdx)}
       data-shelf={String(shelfIdx)}
@@ -1672,13 +1676,28 @@ const styles = `
   .cabinet-scene .room-wall { background: linear-gradient(180deg, #2d3037 0%, #23262c 55%, #1a1c21 100%); }
   .cabinet-scene .room-floor { background: linear-gradient(180deg, #121317 0%, #1b1d22 45%, #262930 100%); }
   .cabinet-scene .room-ceiling { background: linear-gradient(0deg, #3a3d44 0%, #2d3037 100%); }
+  /* WALL-COLOUR-1: a chosen wall colour, the one of the app's theme (both are on the scene as custom properties); the floor and
+     the ceiling are mixed from it, so a light wall does not stand over a black floor. The slate wall keeps the rules above. */
+  .cabinet-scene { --wall: var(--wall-dark, #2d3037); }
+  [data-theme='light'] .cabinet-scene { --wall: var(--wall-light, #2d3037); }
+  .cabinet-scene[data-wall-colour]:not([data-wall-colour='slate']) .room-wall {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--wall) 92%, white) 0%, var(--wall) 55%, color-mix(in srgb, var(--wall) 86%, black) 100%);
+  }
+  .cabinet-scene[data-wall-colour]:not([data-wall-colour='slate']) .room-floor {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--wall) 30%, #2a211b) 0%, color-mix(in srgb, var(--wall) 42%, #3a2d24) 100%);
+  }
+  .cabinet-scene[data-wall-colour]:not([data-wall-colour='slate']) .room-ceiling {
+    background: linear-gradient(0deg, color-mix(in srgb, var(--wall) 94%, white) 0%, color-mix(in srgb, var(--wall) 98%, white) 100%);
+  }
   .cabinet-scene .m-steel { background: #1d1e22; }
   .cabinet-scene .m-steel.f-side { background: #131417; }
   .cabinet-scene .m-steel.f-top { background: #2b2d32; }
-  .cabinet-scene .m-steel.f-bottom { background: #0d0e10; }
+  /* WALL-COLOUR-1: an underside is its own material, as the front is (not black: against a wall it could not be told from a gap) */
+  .cabinet-scene .m-steel.f-bottom { background: #1d1e22; }
   .cabinet-scene .m-wood { background: #2f2825; }
   .cabinet-scene .m-wood.f-side { background: #221c1a; }
   .cabinet-scene .m-wood.f-top { background: #3b332f; }
+  .cabinet-scene .m-wood.f-bottom { background: #2f2825; }
   .cabinet-scene .m-rod { background: #747b83; }
   .cabinet-scene .m-board { background: linear-gradient(0deg, #5a4a3a, #47392d); }
   .cabinet-scene .m-mesh {

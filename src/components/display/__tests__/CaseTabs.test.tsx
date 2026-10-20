@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/preact';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/preact';
 import { CaseTabs } from '../CaseTabs';
 import { CaseViewCard } from '../CaseViewCard';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
@@ -45,18 +45,45 @@ describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
   });
 });
 
-describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () => {
+describe('CaseViewCard (the View tab: back wall, cabinets, ceiling, tab sides)', () => {
   function card() {
     const onChange = vi.fn();
     render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
     return onChange;
   }
 
-  it('switches among whole cabinets, one cabinet and one shelf', () => {
+  // VIEWCARD-1 (Ross 10-20): the header's Case menu chooses the view; the card no longer repeats it
+  it('has no View radios: the header chooses whole cabinets, one cabinet or one shelf', () => {
+    card();
+    expect(screen.queryByRole('radio', { name: 'Whole cabinets' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'One cabinet' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'One shelf' })).toBeNull();
+    expect(screen.queryByText('View', { selector: 'legend' })).toBeNull();
+  });
+
+  // WALL-COLOUR-1 (Ross 10-20, WALL1 = a)
+  it('offers the back wall colours: Slate (the old wall), Cream, Off-white, White, Seafoam and a custom colour', () => {
     const onChange = card();
-    expect(screen.getByRole('radio', { name: 'Whole cabinets' })).toBeChecked();
-    fireEvent.click(screen.getByRole('radio', { name: 'One shelf' }));
-    expect(onChange).toHaveBeenCalledWith({ view: 'shelf' });
+    const group = screen.getByRole('group', { name: 'Back wall' });
+    const names = within(group).getAllByRole('radio').map((r) => (r as HTMLInputElement).labels?.[0]?.textContent?.trim());
+    expect(names).toEqual(['Slate', 'Cream', 'Off-white', 'White', 'Seafoam', 'Custom']);
+    expect(within(group).getByRole('radio', { name: 'Slate' })).toBeChecked();
+    fireEvent.click(within(group).getByRole('radio', { name: 'Cream' }));
+    expect(onChange).toHaveBeenCalledWith({ wall: 'cream' });
+    fireEvent.click(within(group).getByRole('radio', { name: 'Seafoam' }));
+    expect(onChange).toHaveBeenLastCalledWith({ wall: 'seafoam' });
+  });
+
+  it('a custom colour: the picker chooses it and picking one selects Custom; the saved choice shows checked', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
+    fireEvent.input(screen.getByLabelText('Custom wall colour'), { target: { value: '#336699' } });
+    expect(onChange).toHaveBeenCalledWith({ wall: 'custom', wallCustom: '#336699' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
+    expect(onChange).toHaveBeenLastCalledWith({ wall: 'custom' });
+    rerender(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, wall: 'custom', wallCustom: '#336699' }} onChange={onChange} onClose={() => {}} />);
+    expect(screen.getByRole('radio', { name: 'Custom' })).toBeChecked();
+    expect((screen.getByLabelText('Custom wall colour') as HTMLInputElement).value).toBe('#336699');
   });
 
   it('lists the three cabinets and the comparison wall, the KLINGSBO first, and offers no buy link', () => {
@@ -139,8 +166,8 @@ describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () =
     expect(screen.queryByText('Swipe')).toBeNull();
     expect(screen.queryByRole('radio', { name: 'Move the camera' })).toBeNull();
     expect(screen.queryByRole('radio', { name: 'Pan the wall' })).toBeNull();
-    // what stays: the view, the cabinets, the ceiling and the tab sides
-    expect(screen.getAllByRole('radio', { name: /Whole cabinets|One cabinet|One shelf/ })).toHaveLength(3);
+    // what stays: the back wall, the cabinets, the ceiling and the tab sides
+    expect(screen.getAllByRole('radio', { name: /^IKEA|rack|KLINGSBO with/ }).length).toBeGreaterThanOrEqual(3);
     expect(screen.getByRole('spinbutton', { name: /ceiling/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Swap tab sides' })).toBeInTheDocument();
   });

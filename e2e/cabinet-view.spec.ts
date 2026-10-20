@@ -549,10 +549,10 @@ for (const widths of ['', 'none', 'narrow'] as const) {
     await openCase(page, size, `&fx=3${widths ? `&fxwidth=${widths}` : ''}`);
     const sceneBox = await page.locator('.cabinet-scene').boundingBox();
     for (const view of ['One cabinet', 'One shelf', 'Whole cabinets', 'One cabinet'] as const) {
-      await page.getByRole('button', { name: 'View' }).click();
-      await page.getByRole('radio', { name: view }).click();
-      await page.locator('.bottom-sheet__backdrop').click({ position: { x: 5, y: 5 } });
-      await expect(page.getByRole('radio', { name: view })).toHaveCount(0);
+      // VIEWCARD-1: the header's Case menu chooses the view (the View card no longer repeats it)
+      await page.getByRole('button', { name: /^Case,/ }).click();
+      await page.getByRole('menuitemradio', { name: view }).click();
+      await expect(page.getByRole('menu', { name: 'Case views' })).toHaveCount(0);
       await settle(page);
       expect(await page.locator('.cabinet-scene').boundingBox()).toEqual(sceneBox);
       await expectNoOverlap(page, view);
@@ -1113,7 +1113,7 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
     expect.soft(shown.y + shown.height, 'the card ends above the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
     expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
     const choices = card.locator('label.case-card__choice');
-    // three views and the cabinet walls (the swipe mode is in the header: CAM1)
+    // the back wall colours and the cabinet walls (the swipe mode and the view are in the header: CAM1, VIEWCARD-1)
     expect(await choices.count()).toBeGreaterThanOrEqual(7);
     const missed: string[] = [];
     for (const choice of await choices.all()) {

@@ -331,6 +331,23 @@ describe('FigureViewer (Display D)', () => {
       expect([slide.width, slide.height]).toEqual([900, 600]);
     });
 
+    // STRETCH-2 (Ross 10-20): PhotoSwipe loads the pictures beside the open one before it has a slide for them and says no
+    // loadComplete for those, so a slide made later (a swipe two figures on) held the guessed shape: laid out when it is set
+    it('lays a slide out when it is made over a picture that loaded before it existed, not only when a load completes', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+      const handler = instances[0]!.handlers['afterSetContent'];
+      expect(handler, 'a handler for the slide being set with its content').toBeTypeOf('function');
+      const slide = { ...slideOf(600, 800), content: contentOf(picture(540, 960), 600, 800) };
+      handler!({ slide });
+      expect([slide.width, slide.height, slide.content.width, slide.content.height]).toEqual([540, 960, 540, 960]);
+      expect(slide.updateContentSize).toHaveBeenCalledWith(true);
+      // a slide whose picture has not loaded yet is left to its loadComplete
+      const waiting = { ...slideOf(600, 800), content: contentOf(picture(0, 0), 600, 800) };
+      handler!({ slide: waiting });
+      expect(waiting.calculateSize).not.toHaveBeenCalled();
+    });
+
     it('reserves what the sheet covers at its summary for the photo, so it stands above the sheet and not under it', async () => {
       // jsdom lays nothing out: a 400 px sheet whose handle and summary take its top 120 px (the summary detent: 120 px of it show)
       const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {

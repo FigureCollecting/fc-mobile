@@ -521,19 +521,33 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
   });
 
-  for (const [what, next] of [
-    ['view', { view: 'shelf' }],
-    ['wall', { pattern: 'ikea-detolf' }],
-    ['swipe mode', { swipe: 'pan' }],
+  // PAN-KEEP-1: the swipe mode is not a new picture (the camera stays across it): the zoom stays too, in the wall and cabinet
+  // views; in the shelf view a mode still starts from the frame at 1x (TOP1)
+  for (const [what, base, next] of [
+    ['view', {}, { view: 'shelf' }],
+    ['wall', {}, { pattern: 'ikea-detolf' }],
+    ['swipe mode in the shelf view', { view: 'shelf' }, { swipe: 'pan' }],
   ] as const) {
     it(`switching the ${what} starts the picture at 1x, at once`, () => {
-      const { host, layer, again } = scene(getFixtureFigures(8), { swipe: 'camera' });
+      const { host, layer, again } = scene(getFixtureFigures(8), { swipe: 'camera', ...base });
       zoomIn(host);
-      again({ prefs: prefs({ swipe: 'camera', ...next }) });
+      again({ prefs: prefs({ swipe: 'camera', ...base, ...next }) });
       expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
       expect(layer.style.transform).toBe('');
       expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
       expect(chip()).toBeNull();
+    });
+  }
+
+  for (const view of ['wall', 'cabinet'] as const) {
+    it(`switching the swipe mode keeps the zoom in the ${view} view`, () => {
+      const { host, again } = scene(getFixtureFigures(8), { swipe: 'camera', view });
+      zoomIn(host);
+      const zoomed = zoomOf(host);
+      expect(zoomed.k).toBeCloseTo(2, 6);
+      again({ prefs: prefs({ swipe: 'pan', view }) });
+      expect(zoomOf(host)).toEqual(zoomed);
+      expect(chip()).not.toBeNull();
     });
   }
 

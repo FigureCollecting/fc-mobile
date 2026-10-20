@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, SHOT_VIEWPORTS } from './caseViewports';
 import { atRest, takesTap } from './sheetRest';
+import { touchPinch } from './touch';
 import { project, unprojectToPlaneZ, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
@@ -1053,6 +1054,89 @@ test('CC4 pan: a sideways swipe slides the drawn wall like a photo; the camera s
   const pan = Number(await page.locator('.cabinet-scene').getAttribute('data-pan'));
   expect(pan).toBeLessThan(-100);
   expect((await fig.boundingBox())!.x).toBeCloseTo(x0 + pan, 0);
+});
+
+// PAN-KEEP-1 (Ross 10-20): choosing Pan the wall used to put the camera back at the default angle. In the wall and cabinet
+// views the camera (its walk, its height, tilt, lens) and the pan now stay across Pan <-> Move the camera; Reset view is the
+// deliberate way back, in either mode; the shelf view keeps its straight-on snap (TOP1). At the Fold8 cover and open panels.
+async function dragBy(page: Page, dx: number, dy: number) {
+  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  const x = scene.x + scene.width / 2;
+  const y = scene.y + scene.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(x + (dx * i) / 6, y + (dy * i) / 6);
+  await page.mouse.up();
+}
+async function chooseSwipe(page: Page, name: 'Pan the wall' | 'Move the camera') {
+  await page.getByRole('button', { name: /^Swipe/ }).click();
+  await page.getByRole('menuitemradio', { name }).click();
+  await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-swipe', name === 'Pan the wall' ? 'pan' : 'camera');
+}
+const sceneState = async (page: Page) => {
+  const scene = page.locator('.cabinet-scene');
+  return { camera: await scene.getAttribute('data-camera'), pan: await scene.getAttribute('data-pan'), panY: await scene.getAttribute('data-pan-y') };
+};
+
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  for (const view of ['wall', 'cabinet'] as const) {
+    test(`PAN-KEEP-1 ${view} ${size.name}: a perspective set in camera mode is kept in pan mode, and Reset view is the way back`, async ({ page }) => {
+      // a wall longer than the frame, so there is wall to pan along on the wide panel too
+      await openCase(page, size, '&fx=24', { view, swipe: 'camera' });
+      const home = await cameraOf(page);
+      await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
+      await dragBy(page, -160, 0);
+      await dragBy(page, 0, -120);
+      const set = await sceneState(page);
+      const moved = await cameraOf(page);
+      expect(moved.x, 'the camera walked').not.toBeCloseTo(home.x, 0);
+      expect(moved.y, 'and rose').not.toBeCloseTo(home.y, 0);
+
+      await chooseSwipe(page, 'Pan the wall');
+      expect(await sceneState(page), 'switching to Pan keeps the camera (position, height, tilt, lens) as it was').toEqual(set);
+      await expect(page.getByRole('button', { name: 'Reset view' }), 'Reset view is visible in pan mode').toBeVisible();
+      // the camera went along the wall: the photo slides back toward its start, or on, whichever way there is wall to show
+      await dragBy(page, 120, 0);
+      let panned = await sceneState(page);
+      if (panned.pan === '0') {
+        await dragBy(page, -240, 0);
+        panned = await sceneState(page);
+      }
+      expect(Number(panned.pan), 'a swipe pans from there').not.toBe(0);
+      expect(panned.camera, 'the pan moves the picture, not the camera').toBe(set.camera);
+
+      await chooseSwipe(page, 'Move the camera');
+      expect(await sceneState(page), 'back in camera mode nothing moves').toEqual(panned);
+
+      await page.getByRole('button', { name: 'Reset view' }).click();
+      await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
+      const back = await cameraOf(page);
+      expect([back.y, back.z, back.pitch, back.focalPx], 'the default angle').toEqual([home.y, home.z, home.pitch, home.focalPx]);
+      expect(await page.locator('.cabinet-scene').getAttribute('data-pan')).toBe('0');
+    });
+  }
+
+  test(`PAN-KEEP-1 ${size.name}: the zoom stays with the camera across a mode switch`, async ({ page }) => {
+    await openCase(page, size, '&fx=6', { view: 'wall', swipe: 'camera' });
+    const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+    const m = { x: f.x + f.width / 2, y: f.y + f.height * 0.55 };
+    await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 40, y: m.y }, { x: m.x + 40, y: m.y });
+    await expect(page.locator('.cabinet-scene__zoom--live')).toHaveCount(0);
+    await expect.poll(async () => JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-zoom'))!).k).toBeGreaterThan(1.2);
+    const zoomed = await page.locator('.cabinet-scene').getAttribute('data-zoom');
+    await chooseSwipe(page, 'Pan the wall');
+    expect(await page.locator('.cabinet-scene').getAttribute('data-zoom')).toBe(zoomed);
+    await expect(page.getByRole('button', { name: 'Reset view' })).toBeVisible();
+  });
+}
+
+test('PAN-KEEP-1 shelf view: choosing a swipe mode there still starts from the straight-on frame (TOP1)', async ({ page }) => {
+  await openCase(page, FOLD8[0], '&fx=6', { view: 'shelf', swipe: 'camera' });
+  const home = await cameraOf(page);
+  await dragBy(page, 0, -120);
+  expect((await cameraOf(page)).y, 'the camera rose').not.toBeCloseTo(home.y, 0);
+  await chooseSwipe(page, 'Pan the wall');
+  expect((await cameraOf(page)).y, 'the frame again').toBeCloseTo(home.y, 0);
 });
 
 test('a swipe opens nothing; the next tap does', async ({ page }) => {

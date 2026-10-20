@@ -182,3 +182,52 @@ test('the next figure\'s photo and a zoomed photo keep their own shape too: fold
   const zoomed = await shown(page, current);
   expect(Math.abs(zoomed.distortion - 1), `zoomed, distortion ${zoomed.distortion.toFixed(3)}x`).toBeLessThanOrEqual(TOLERANCE);
 });
+
+/** Every photo on screen that is forced to a box of another shape (object-fit fill, the default, with a box off its natural aspect by more than 1 %). */
+async function stretchedPhotos(page: Page): Promise<string[]> {
+  return page.evaluate((tolerance) => {
+    const bad: string[] = [];
+    for (const img of Array.from(document.querySelectorAll<HTMLImageElement>('img'))) {
+      const r = img.getBoundingClientRect();
+      if (!img.complete || img.naturalWidth === 0 || r.width < 2 || r.height < 2) continue;
+      if (img.closest('.cabinet-scene')) continue; // the case lays its pictures out by its own 3D geometry
+      if (r.right < 0 || r.left > innerWidth || r.bottom < 0 || r.top > innerHeight) continue;
+      const fit = getComputedStyle(img).objectFit;
+      if (fit !== 'fill' && fit !== '') continue; // contain / cover / scale-down keep the picture's own shape
+      const distortion = r.width / r.height / (img.naturalWidth / img.naturalHeight);
+      if (Math.abs(distortion - 1) > tolerance) bad.push(`${img.className.split(' ')[0] || img.tagName}: ${r.width.toFixed(0)} x ${r.height.toFixed(0)} for a ${img.naturalWidth} x ${img.naturalHeight} picture (${distortion.toFixed(3)}x)`);
+    }
+    return bad;
+  }, TOLERANCE);
+}
+
+// STRETCH-2 (Ross 10-20, live TR3: "photos are still stretched to fill"). PhotoSwipe loads the pictures beside the open one
+// (2 ahead) before it has a slide for them and never says loadComplete for those, so the slide made later, on a swipe, kept the
+// guessed 600 x 800 shape. Swiping past the first neighbour reached it; the case above only went one figure.
+test('every figure a swipe reaches shows its photo in its own shape, however early it loaded: fold8-cover', async ({ page }) => {
+  const cover = FOLD8.find((v) => v.name === 'fold8-cover')!;
+  await openCase(page, cover, SHAPES[1]!);
+  await openFigure(page);
+  const current = '.pswp__item[aria-hidden="false"] img.pswp__img';
+  const counter = page.locator('.figure-viewer-sheet__counter');
+  for (let step = 0; step < 5; step++) {
+    const picture = await shown(page, current);
+    expect(Math.abs(picture.distortion - 1), `slide ${step} after opening, distortion ${picture.distortion.toFixed(3)}x`).toBeLessThanOrEqual(TOLERANCE);
+    expect(await stretchedPhotos(page), `slide ${step}: no photo on screen is stretched`).toEqual([]);
+    const before = await counter.innerText();
+    await page.keyboard.press('ArrowRight');
+    await expect(counter).not.toHaveText(before);
+  }
+});
+
+// the list (rows) on the cover and the open panels: its tiles letter-box a photo, never stretch it
+for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
+  test(`no photo is stretched in the list: ${size.name}`, async ({ page }) => {
+    await openCase(page, size, SHAPES[0]!);
+    await page.goto('/?layout=rows');
+    await page.waitForSelector('.jrows__img');
+    await expect.poll(() => page.locator('.jrows__img').first().evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0), { timeout: 10_000 }).toBe(true);
+    expect(await page.locator('.jrows__img').count()).toBeGreaterThan(0);
+    expect(await stretchedPhotos(page), 'the list').toEqual([]);
+  });
+}

@@ -2063,3 +2063,101 @@ describe('CLEAR-1: the clearance above a figure, from the case prefs, decides wh
   });
 });
 
+// PAN-KEEP-1 (Ross 10-20): switching the swipe mode used to put the camera back at the default angle, so a perspective set in
+// camera mode could not be panned along. The camera, and the pan, now stay across a switch in the wall and cabinet views;
+// Reset view is the way back; the shelf view still starts a mode from its straight-on frame (TOP1).
+describe('CabinetScene: the swipe mode keeps the camera (PAN-KEEP-1)', () => {
+  const cam = (host: HTMLElement) => JSON.parse(host.dataset.camera!) as { x: number; y: number; z: number; pitch: number; focalPx: number };
+  const pt = (host: HTMLElement) => ({ camera: host.dataset.camera, pan: host.dataset.pan, panY: host.dataset.panY });
+  function drag2(el: HTMLElement, dx: number, dy: number) {
+    fireEvent.pointerDown(el, { pointerId: 9, clientX: 200, clientY: 200, button: 0 });
+    for (let k = 1; k <= 4; k++) fireEvent.pointerMove(el, { pointerId: 9, clientX: 200 + (dx * k) / 4, clientY: 200 + (dy * k) / 4 });
+    fireEvent.pointerUp(el, { pointerId: 9, clientX: 200 + dx, clientY: 200 + dy });
+  }
+  const resetChip = () => screen.queryByRole('button', { name: 'Reset view' });
+
+  for (const view of ['wall', 'cabinet'] as const) {
+    it(`${view}: a perspective set in camera mode is the one pan mode starts from, and the camera mode finds the panned picture where it was`, () => {
+      const figs = getFixtureFigures(40);
+      const at = (swipe: 'camera' | 'pan') => <CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ swipe, view })} frameFallback={{ width: 443, height: 454 }} />;
+      const { container, rerender } = render(at('camera'));
+      const host = container.querySelector('.cabinet-scene') as HTMLElement;
+      const home = cam(host);
+      expect(resetChip(), 'nothing to reset at the default view').toBeNull();
+      drag2(host, -300, 0);
+      drag2(host, 0, -200);
+      const set = cam(host);
+      expect(set.x, 'the camera walked').not.toBe(home.x);
+      expect(set.y, 'and rose').not.toBe(home.y);
+      expect(resetChip(), 'a moved camera can be reset').not.toBeNull();
+
+      rerender(at('pan'));
+      expect(host.dataset.swipe).toBe('pan');
+      expect(cam(host), 'the camera, its height and lens are as they were').toEqual(set);
+      drag2(host, -150, 0);
+      const panned = pt(host);
+      expect(Number(panned.pan), 'pan mode slides the picture from there').toBeLessThan(0);
+      expect(cam(host), 'the pan moves the picture, not the camera').toEqual(set);
+      expect(resetChip(), 'Reset view is there in pan mode').not.toBeNull();
+
+      rerender(at('camera'));
+      expect(pt(host), 'back in camera mode nothing moves').toEqual(panned);
+    });
+
+    it(`${view}: Reset view returns the camera and the pan to the default angle`, () => {
+      const figs = getFixtureFigures(40);
+      const at = (swipe: 'camera' | 'pan') => <CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ swipe, view })} frameFallback={{ width: 443, height: 454 }} />;
+      const { container, rerender } = render(at('camera'));
+      const host = container.querySelector('.cabinet-scene') as HTMLElement;
+      const homeCam = cam(host);
+      drag2(host, -300, 0);
+      drag2(host, 0, -200);
+      rerender(at('pan'));
+      drag2(host, -120, 0);
+      expect(Number(host.dataset.pan)).toBeLessThan(0);
+      // a press first: the click a swipe leaves is swallowed until the next press
+      const chip = resetChip()!;
+      fireEvent.pointerDown(chip, { pointerId: 3, clientX: 10, clientY: 10, button: 0 });
+      fireEvent.pointerUp(chip, { pointerId: 3, clientX: 10, clientY: 10 });
+      fireEvent.click(chip);
+      // back to the default angle: height, tilt and lens, and no pan. The walk's x is the camera's place along the wall: the
+      // reset frames the page or cabinet the picture stands at again, it does not jump back to the wall's start.
+      const back = cam(host);
+      expect([back.y, back.z, back.pitch, back.focalPx]).toEqual([homeCam.y, homeCam.z, homeCam.pitch, homeCam.focalPx]);
+      expect([host.dataset.pan, host.dataset.panY]).toEqual(['0', '0']);
+      expect(resetChip()).toBeNull();
+    });
+  }
+
+  it('the shelf view keeps its TOP1 behaviour: a swipe mode chosen there starts from the frame', () => {
+    const figs = getFixtureFigures(40);
+    const at = (swipe: 'camera' | 'pan') => <CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ swipe, view: 'shelf' })} frameFallback={{ width: 443, height: 454 }} />;
+    const { container, rerender } = render(at('camera'));
+    const host = container.querySelector('.cabinet-scene') as HTMLElement;
+    const home = cam(host);
+    drag2(host, 0, -200);
+    expect(cam(host).y, 'the camera rose').not.toBe(home.y);
+    rerender(at('pan'));
+    expect(cam(host).y, 'a mode chosen in the shelf view starts from the frame again').toBe(home.y);
+    drag2(host, -2000, 0);
+    expect(Number(host.dataset.pan)).toBeLessThan(0);
+    rerender(at('camera'));
+    expect(host.dataset.pan).toBe('0');
+  });
+
+  it('a new view or wall still starts from its own framing', () => {
+    const figs = getFixtureFigures(40);
+    const at = (patch: Partial<CasePrefs>) => <CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'wall', ...patch })} frameFallback={{ width: 443, height: 454 }} />;
+    const { container, rerender } = render(at({}));
+    const host = container.querySelector('.cabinet-scene') as HTMLElement;
+    drag2(host, -300, 0);
+    rerender(at({ view: 'cabinet' }));
+    const home = cam(host);
+    drag2(host, -300, 0);
+    expect(cam(host).x).not.toBe(home.x);
+    rerender(at({ view: 'cabinet', pattern: 'ikea-detolf' }));
+    expect(host.dataset.pan).toBe('0');
+    expect(resetChip()).toBeNull();
+  });
+});
+

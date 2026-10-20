@@ -115,3 +115,33 @@ describe('DetentSheet: a field a keyboard types into (SEARCH-1)', () => {
     expect(reopened).not.toHaveAttribute('data-keyboard');
   });
 });
+
+describe('DetentSheet: the footer stands inside the window at each detent (REFINE-SHEET-1)', () => {
+  /** The card's stylesheet as the page holds it. */
+  const sheetCss = (): string =>
+    Array.from(document.querySelectorAll('style'))
+      .map((el) => el.textContent ?? '')
+      .find((text) => text.includes('.detent-sheet__footer')) ?? '';
+
+  it('stands the footer at the window\'s bottom by the part of the card below the window at each detent: 48 % of its height at half, 4 % at full', () => {
+    renderWithProviders(
+      <DetentSheet open onClose={() => {}} footer={<div>foot</div>}>
+        <p>body</p>
+      </DetentSheet>,
+    );
+    const css = sheetCss();
+    expect(css).toMatch(/\.detent-sheet\[data-detent='half'\]\s*\{[^}]*--detent-below:\s*calc\(0\.48 \* 96dvh\)/);
+    expect(css).toMatch(/\.detent-sheet\[data-detent='full'\]\s*\{[^}]*--detent-below:\s*calc\(0\.04 \* 96dvh\)/);
+    expect(css).toMatch(/\.detent-sheet\s*\{[^}]*padding-bottom:\s*var\(--detent-below\)/);
+  });
+
+  it('no longer guesses the half detent\'s room with a fixed 110 px that ignores the window\'s bottom bar', () => {
+    renderWithProviders(
+      <DetentSheet open onClose={() => {}} footer={<div>foot</div>}>
+        <p>body</p>
+      </DetentSheet>,
+    );
+    expect(sheetCss()).not.toContain('110px');
+    expect(sheetCss()).not.toMatch(/max-height:\s*calc\(48vh/);
+  });
+});

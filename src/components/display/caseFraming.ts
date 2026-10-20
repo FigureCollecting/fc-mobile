@@ -4,8 +4,11 @@
  * millimetre world of caseCamera: x along the wall, y up from the floor, z
  * toward the viewer, every cabinet's front at z = 0. Pure maths, no DOM.
  *
- *  - cabinet: one cabinet, feet to headroom, tilted at its middle from the
- *    CC15 start height; its neighbours stay true, wherever they fall (CC4a).
+ *  - cabinet: one cabinet, straight on and level at its middle, the whole of
+ *    it (feet to headroom) in view, fitted by whichever of its height or width
+ *    dictates, the other showing more; each cabinet by its own size, an arrow
+ *    press framing the next (CAB-FOCUS-1, Ross 10-18, replacing the CC15 start
+ *    camera the wall shares); its neighbours stay true, wherever they fall (CC4a).
  *  - wall: the same distance, centred on a PAGE of cabinets: as many side by
  *    side as that distance shows, so wide screens show several.
  *  - shelf: level at one shelf level's band (the band all the wall's cabinets
@@ -368,7 +371,8 @@ export function topBandTopMm(heightMm: number, ceilingMm: number): number {
 
 /** One cabinet's band at a shelf level (reading order, clamped to its lowest): its surface up to the one above, or its top up to the ceiling (topBandTopMm). */
 function levelBand(profile: CabinetProfile, level: number, ceilingMm: number): { lo: number; hi: number } {
-  const slots = surfaceSlots(profile, ceilingMm);
+  // the storage shelf is a level of the shelf view too, though no figure stands on it (CLEAR-1)
+  const slots = surfaceSlots(profile, ceilingMm, true);
   const s = slots[Math.min(Math.max(0, Math.trunc(level)), slots.length - 1)];
   const surface = profile.surfaces[s.surfaceIndex];
   const hi = s.isTop ? topBandTopMm(profile.outer.heightMm, ceilingMm) : profile.surfaces[s.surfaceIndex + 1].topMm;
@@ -389,7 +393,7 @@ function wallBand(input: FramingInput, level: number): { lo: number; hi: number 
  */
 export function shelfSteps(input: FramingInput): number {
   const ceiling = input.ceilingMm ?? CEILING_DEFAULT_MM;
-  let steps = Math.max(1, ...input.wall.cabinets.map((c) => surfaceSlots(c.profile, ceiling).length));
+  let steps = Math.max(1, ...input.wall.cabinets.map((c) => surfaceSlots(c.profile, ceiling, true).length));
   while (steps > 1) {
     const a = wallBand(input, steps - 1);
     const b = wallBand(input, steps - 2);
@@ -417,6 +421,37 @@ function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
   return { camera: at(capDistance(at, Math.max(widthFit, heightFit), cap)), look, page: [focus], drawCap: cap.cap };
 }
 
+/**
+ * CAB-FOCUS-1 (Ross 10-18): the cabinet view, straight on and level at the middle of the focus cabinet (its feet to the top
+ * of what stands on it), as far back as its height or its width needs, whichever dictates, to show the whole cabinet inside
+ * the margins, the other showing more: never a crop. Each cabinet by its own size. The frame is narrowed, as the wall's is
+ * (wallCamera), to the stretch of the fronts the case draws, never the camera stepped in.
+ */
+function frameCabinet(input: FramingInput, focus: number, drawCap: number, cap: WallCap): Framing {
+  const slot = input.wall.cabinets[focus];
+  const b = cabinetBox(slot, headroomOf(input, focus));
+  const look: Vec3 = [slot.centerMm, (b.y0 + b.y1) / 2, 0];
+  const focalPx = lensFocalPx(input.frame, input.lensMm);
+  const m = frameMargins(input.frame);
+  const heightFit = (focalPx * (b.y1 - b.y0)) / 2 / (input.frame.height / 2 - m.y);
+  const widthFit = (focalPx * (b.x1 - b.x0)) / 2 / (input.frame.width / 2 - m.x);
+  // the nearest plane of the box (a splayed foot reaches z1 toward the viewer) is the one that has to fit
+  const z = Math.max(heightFit, widthFit) + b.z1;
+  const width = Math.floor((cap.span * focalPx) / z);
+  const frame = width < input.frame.width ? { width, height: input.frame.height } : input.frame;
+  return { camera: { x: look[0], y: look[1], z, pitch: 0, focalPx, frame }, look, page: [focus], drawCap };
+}
+
+/**
+ * CAB-FOCUS-1: where the focus cabinet's silhouette spans the frame (px from its left edge): the extremes of its box's
+ * corners (splayed feet included) through the camera, wherever it stands. What lies beyond is its neighbours'.
+ */
+export function focusEdgesPx(camera: Camera, slot: WallSlot): { left: number; right: number } {
+  const b = cabinetBox(slot, 0);
+  const xs = boxCorners(b.x0, b.x1, 0, b.y1, b.z0, b.z1).map((c) => project(camera, c).x);
+  return { left: Math.min(...xs), right: Math.max(...xs) };
+}
+
 /** The camera for the view, the focus cabinet and (in the shelf view) its surface. */
 export function frameCase(input: FramingInput): Framing {
   const n = input.wall.cabinets.length;
@@ -425,7 +460,7 @@ export function frameCase(input: FramingInput): Framing {
   const wc = wallCamera(input);
   const cap = wallCap(input, wc.drawCap);
   if (input.view === 'shelf') return withSlide(frameShelf(input, focus, cap), cap);
-  if (input.view === 'cabinet') return withSlide(centredOn(input, wc, [focus]), cap);
+  if (input.view === 'cabinet') return withSlide(frameCabinet(input, focus, wc.drawCap, cap), cap);
   const page = wallPages(input).find((p) => p.includes(focus)) as number[];
   return withSlide(standWhole(centredOn(input, wc, page), input.wall, page), cap);
 }
@@ -488,6 +523,32 @@ export function frameCentreX(framing: Framing, panPx = 0): number {
 export function pageInView(pages: readonly (readonly number[])[], wall: WallLayout, framing: Framing, panPx = 0): number {
   const at = nearestCabinet(wall, frameCentreX(framing, panPx));
   return pages.findIndex((p) => p.includes(at));
+}
+
+/** PAGER-END: how close (mm) the picture's centre may stand to the camera x a page opens at and count as there. */
+export const PAGE_AT_MM = 0.5;
+
+/** The camera x a page opens at: its first cabinet pressed (the wall view's framing of it). */
+export function pageOpensAt(input: FramingInput, page: readonly number[]): number {
+  return frameCase({ ...input, view: 'wall', focus: page[0] }).camera.x;
+}
+
+/**
+ * PAGER-END: whether Next and Prev have anywhere to take the picture. A page farther along (nearer) is somewhere; so, at
+ * the last (first) page, is that page's own opening when the picture stands short of (past) it: a walk that settled in
+ * the last page, off its centre, had left Next off with the centre still ahead. `ends`: the camera x the first and the
+ * last page open at (pageOpensAt).
+ */
+export function pagerReach(
+  pages: readonly (readonly number[])[],
+  wall: WallLayout,
+  framing: Framing,
+  panPx: number,
+  ends: { readonly first: number; readonly last: number },
+): { readonly prev: boolean; readonly next: boolean } {
+  const at = pageInView(pages, wall, framing, panPx);
+  const x = frameCentreX(framing, panPx);
+  return { prev: at > 0 || x > ends.first + PAGE_AT_MM, next: at + 1 < pages.length || x < ends.last - PAGE_AT_MM };
 }
 
 /** The framing with the camera, and its aim, moved along the wall to x. */

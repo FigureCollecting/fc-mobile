@@ -8,7 +8,7 @@ import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine } from '../../sync/engine';
-import { useCollectionImages } from '../useCollectionImages';
+import { imagesComplete, useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
@@ -368,6 +368,49 @@ describe('useCollectionImages', () => {
     expect(second.result.current.get(headOf(0))?.url).toBe(url('a'));
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
     second.unmount();
+  });
+
+  // LAYOUT-STABLE-1: the case lays the wall out once everything has arrived; it must be told when that is.
+  it('imagesComplete: not while the first answer is on its way, nor while the sync is still fetching, and yes for the answer of the sync that ends', async () => {
+    const link = holding(url('c'));
+    storage = link.caches;
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Kept by the last sync' }, { title: 'Fetched by this one' }]);
+    await keep(headOf(0), 'a');
+    const { result, unmount } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    // signed in, nothing answered yet: the pictures are not all in
+    expect(imagesComplete(result.current)).toBe(false);
+    await waitFor(() => expect(result.current.get(headOf(1))).toMatchObject({ url: url('b'), maskUrl: url('c') }), { timeout: 3000 });
+    // an answer shown while the sync is still fetching (its mask is on its way) is partial
+    expect(imagesComplete(result.current)).toBe(false);
+    link.release();
+    await waitFor(() => expect(imagesComplete(result.current)).toBe(true), { timeout: 3000 });
+    expect(result.current.get(headOf(1))?.maskUrl).toBe(url('c'));
+    unmount();
+  });
+
+  it('imagesComplete: never for the answer of a sync that left an image unfetched (the case then lays out after a quiet spell instead)', async () => {
+    storage = fakeCaches(async (req) => (req.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched' }, { title: 'Refused' }]);
+    const client = appClient();
+    const first = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(first.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    expect(imagesComplete(first.result.current)).toBe(false);
+    first.unmount();
+  });
+
+  it('imagesComplete: yes while signed out, where nothing will ever stream in', async () => {
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(imagesComplete(result.current)).toBe(true);
   });
 
   it('answers nothing while signed out', async () => {

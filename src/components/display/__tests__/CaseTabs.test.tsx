@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/preact';
+import { render, screen, fireEvent, cleanup } from '@testing-library/preact';
 import { CaseTabs } from '../CaseTabs';
 import { CaseViewCard } from '../CaseViewCard';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
@@ -68,6 +68,70 @@ describe('CaseViewCard (the View tab: view, cabinets, ceiling, tab sides)', () =
     expect(screen.queryAllByRole('link')).toHaveLength(0);
     fireEvent.click(screen.getByRole('radio', { name: /^IKEA DETOLF/ }));
     expect(onChange).toHaveBeenCalledWith({ pattern: 'ikea-detolf' });
+  });
+
+  it('MISFIT-CHIP-1: a "Doesn\'t fit (N)" entry opens the list of the figures that do not fit, whether or not the chip is hidden', () => {
+    const onShowMisfits = vi.fn();
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} misfitCount={16} onShowMisfits={onShowMisfits} />);
+    fireEvent.click(screen.getByRole('button', { name: "Doesn't fit (16)" }));
+    expect(onShowMisfits).toHaveBeenCalledTimes(1);
+  });
+
+  it('MISFIT-CHIP-1: no entry when every figure fits', () => {
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} misfitCount={0} onShowMisfits={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /fit \(/ })).toBeNull();
+    cleanup();
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: /fit \(/ })).toBeNull();
+  });
+
+  // SIZE-BASIS-1 (Ross 10-18): see which sizes are guesses
+  it('SIZE-BASIS-1: "Show estimated sizes" is off to begin with, and turning it on is a patch of the pref', () => {
+    const onChange = card();
+    const box = screen.getByRole('checkbox', { name: 'Show estimated sizes' });
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith({ showEstimated: true });
+  });
+
+  it('SIZE-BASIS-1: it shows on when the pref is on, and turning it off is a patch', () => {
+    const onChange = vi.fn();
+    render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, showEstimated: true }} onChange={onChange} onClose={() => {}} />);
+    const box = screen.getByRole('checkbox', { name: 'Show estimated sizes' });
+    expect(box).toBeChecked();
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith({ showEstimated: false });
+  });
+
+  it.each([
+    [22, '22 figures sized from estimates'],
+    [1, '1 figure sized from an estimate'],
+  ])('SIZE-BASIS-1: says how many figures are sized from estimates: %i', (count, line) => {
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} estimatedCount={count} />);
+    expect(screen.getByText(line)).toBeInTheDocument();
+  });
+
+  it('SIZE-BASIS-1: says nothing of it when no figure is sized from an estimate (or the count is not known)', () => {
+    const { rerender } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} estimatedCount={0} />);
+    expect(screen.queryByText(/sized from/)).toBeNull();
+    rerender(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={() => {}} onClose={() => {}} />);
+    expect(screen.queryByText(/sized from/)).toBeNull();
+  });
+
+  it('CLEAR-1: the clearance above a figure is set here with the ceiling: inches, 0 to 2 in in quarter inches, 1 in to begin with', () => {
+    const onChange = card();
+    const input = screen.getByRole('spinbutton', { name: /clearance above a figure/i }) as HTMLInputElement;
+    expect(input.value).toBe('1');
+    expect(input).toHaveAttribute('min', '0');
+    expect(input).toHaveAttribute('max', '2');
+    expect(input).toHaveAttribute('step', '0.25');
+    fireEvent.change(input, { target: { value: '0.25' } });
+    expect(onChange).toHaveBeenCalledWith({ clearanceMm: 6.35 });
+    fireEvent.change(input, { target: { value: '2' } });
+    expect(onChange).toHaveBeenLastCalledWith({ clearanceMm: 50.8 });
+    onChange.mockClear();
+    for (const bad of ['3', '-1', '']) fireEvent.change(input, { target: { value: bad } });
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('CAM1: the swipe mode is not in the View card any more: it lives in the header, beside the display modes', () => {

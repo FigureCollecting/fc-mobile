@@ -15,6 +15,9 @@ import {
   getFixtureUnique,
   getFixtureSync,
   getFixtureFields,
+  getFixtureSteady,
+  getFixtureMisfits,
+  getFixtureGoods,
   getFixtureOnly,
   getFixtureImageRef,
   resolveFixtureArt,
@@ -25,6 +28,7 @@ import { measureCaseFigure } from '../../components/display/packCabinets';
 import { formatAsOf } from '../../components/sync/SyncBadge';
 import type { LocalMeta } from '../../local/figures';
 import type { Figure } from '@figurecollecting/fc-shared';
+import { ProductKind } from '@figurecollecting/fc-api-contract';
 
 /** The unfiltered pixels of a PNG this repo's script wrote (one IDAT, filter 0 on every row). */
 function pngPixels(file: string): { width: number; height: number; channels: number; rows: Buffer[] } {
@@ -637,5 +641,114 @@ describe('fixture longer cards (?fxfields=1): cards that carry different numbers
     const figures = getFixtureFigures();
     expect(figures).toHaveLength(FIXTURE_FIGURES.length * 2);
     expect(figures.map((f) => f.note !== undefined)).toEqual(figures.map((_, i) => i % FIXTURE_FIGURES.length % 2 === 1));
+  });
+});
+
+describe('fixture steady layout (?fxsteady=1): the held basis (LAYOUT-STABLE-1) on the fixtures, whose pictures never stream in of themselves', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('off unless asked for: the fixtures are laid out as they were', () => {
+    for (const query of ['/', '/?fxsteady=0', '/?fxsteady=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureSteady(), query).toBe(false);
+    }
+  });
+
+  it('?fxsteady=1 turns it on, whatever else the fixtures are asked for', () => {
+    for (const query of ['/?fxsteady=1', '/?fx=20&fxbranch=masked&fxwidth=none&fxsteady=1']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureSteady(), query).toBe(true);
+    }
+    });
+});
+
+describe('?fxmisfit=N: N figures too tall for any place, for the do-not-fit chip and its list (MISFIT-CHIP-1)', () => {
+  afterEach(() => window.history.pushState({}, '', '/'));
+
+  it('absent, zero or not a count: none, and the fixtures come back as they were', () => {
+    for (const query of ['/', '/?fxmisfit=0', '/?fxmisfit=bogus', '/?fxmisfit=-3', '/?fxmisfit=2.5']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureMisfits(), query).toBe(0);
+      expect(getFixtureFigures(), query).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('?fxmisfit=16: sixteen more, each 3 m tall, named and with its own id; the fixtures first, as they were', () => {
+    window.history.pushState({}, '', '/?fxmisfit=16');
+    expect(getFixtureMisfits()).toBe(16);
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length + 16);
+    expect(figures.slice(0, FIXTURE_FIGURES.length)).toEqual(FIXTURE_FIGURES);
+    const giants = figures.slice(FIXTURE_FIGURES.length);
+    expect(new Set(giants.map((g) => g._id)).size).toBe(16);
+    expect(giants.map((g) => g.name)[0]).toBe('Misfit Giant 1');
+    for (const g of giants) expect(g.dimensions?.heightMm).toBe(3000);
+  });
+
+  it('a long list is a count away, up to 200', () => {
+    window.history.pushState({}, '', '/?fxmisfit=500');
+    expect(getFixtureMisfits()).toBe(200);
+  });
+});
+
+describe('fixture goods and media (?fxgoods=1): products the case leaves off its shelves (FIGURES-ONLY-1)', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  const kindOf = (f: Figure): ProductKind | undefined => (f as Figure & { local?: { productKind?: ProductKind } }).local?.productKind;
+
+  it('off unless asked for: the manifest as it is', () => {
+    for (const query of ['/', '/?fxgoods=0', '/?fxgoods=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixtureGoods(), query).toBe(false);
+      expect(getFixtureFigures(), query).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('?fxgoods=1: Dark Angel Olivia and Spike Spiegel are goods, Ryuko Matoi is media, the other four state no kind', () => {
+    window.history.pushState({}, '', '/?fxgoods=1');
+    expect(getFixtureGoods()).toBe(true);
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    expect(figures.map((f) => [f.name, kindOf(f)])).toEqual([
+      ['Rem', undefined],
+      ['Dark Angel Olivia', ProductKind.GOODS],
+      ['Nendoroid Hatsune Miku', undefined],
+      ['Madoka Kaname', undefined],
+      ['Spike Spiegel', ProductKind.GOODS],
+      ['Hatsune Miku: Deep Sea Girl', undefined],
+      ['Ryuko Matoi', ProductKind.MEDIA],
+    ]);
+    // nothing else about a figure changes
+    figures.forEach((f, i) => expect({ ...f, local: undefined }).toEqual({ ...FIXTURE_FIGURES[i], local: undefined }));
+  });
+
+  it('with ?fxmisfit=N too, the goods and media stand among the fixtures only: a misfit never turns into goods (MISFIT-CHIP-1)', () => {
+    window.history.pushState({}, '', '/?fxgoods=1&fxmisfit=8');
+    const figures = getFixtureFigures();
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length + 8);
+    expect(figures.slice(0, FIXTURE_FIGURES.length).map(kindOf)).toEqual([undefined, ProductKind.GOODS, undefined, undefined, ProductKind.GOODS, undefined, ProductKind.MEDIA]);
+    expect(figures.slice(FIXTURE_FIGURES.length).map(kindOf)).toEqual(Array(8).fill(undefined));
+  });
+
+  it('with the multiplier, every copy of those slots is the same kind', () => {
+    window.history.pushState({}, '', '/?fx=3&fxgoods=1');
+    const kinds = getFixtureFigures().map(kindOf);
+    expect(kinds).toHaveLength(FIXTURE_FIGURES.length * 3);
+    expect(kinds.filter((k) => k === ProductKind.GOODS)).toHaveLength(6);
+    expect(kinds.filter((k) => k === ProductKind.MEDIA)).toHaveLength(3);
+    expect(kinds.filter((k) => k === undefined)).toHaveLength(12);
+  });
+
+  it('combines with ?fxsync=1: the sync badge state stays, the kind rides on it', () => {
+    window.history.pushState({}, '', '/?fxsync=1&fxgoods=1');
+    const [rem, olivia] = getFixtureFigures() as (Figure & { local: LocalMeta })[];
+    expect(rem!.local.sync).toBe('pending');
+    expect(rem!.local.productKind).toBeUndefined();
+    expect(olivia!.local.sync).toBe('offline-stale');
+    expect(olivia!.local.productKind).toBe(ProductKind.GOODS);
   });
 });

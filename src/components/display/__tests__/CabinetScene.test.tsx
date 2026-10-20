@@ -7,7 +7,7 @@ import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../..
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
-import { cabinetBox, clampLift, frameCase, liftForDragMm, lifted, swipeCamera, type Framing } from '../caseFraming';
+import { cabinetBox, frameCase } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, unprojectToPlaneZ, type Camera } from '../caseCamera';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
@@ -528,9 +528,15 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
   // deeper than any place is wide or deep, turned or not (the top takes 450 x 400)
   const deep = { ...FIXTURE_FIGURES[1], _id: 'deep', name: 'Deep Diorama', dimensions: { heightMm: 200, depthMm: 520 } } as Figure;
 
+  // MISFIT-CHIP-1: the flag is a chip; its list opens on a tap
+  const openFit = (host: HTMLElement) => {
+    fireEvent.click(host.querySelector('.cabinet-scene__misfit') as HTMLElement);
+    return host.querySelector('.cabinet-scene__fit') as HTMLElement;
+  };
+
   it('flags figures that fit nowhere in the active profile, never drawing them', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
-    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    const fit = openFit(host);
     expect(fit.dataset.count).toBe('2');
     expect(fit.textContent).toContain('Tall Statue');
     expect(fit.textContent).toContain('too tall');
@@ -542,21 +548,24 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
 
   it('says what was measured and from what: the reason, the size and where it came from, the most any place takes, and the wall (CASE-FB3b)', () => {
     const { host } = scene([...FIXTURE_FIGURES, tall, deep]);
+    openFit(host);
     const lines = Array.from(host.querySelectorAll('.cabinet-scene__fit li'), (li) => li.textContent);
-    expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1351 mm, for the IKEA KLINGSBO glass-door cabinet');
+    // the 1351 mm tier less the 1 in the prefs keep above a figure (CLEAR-1)
+    expect(lines).toContain('Tall Statue: too tall: 1500 mm, labeled; the most any place takes is 1325.6 mm, for the IKEA KLINGSBO glass-door cabinet');
     expect(lines).toContain('Deep Diorama: too deep: 520 mm, labeled; the deepest place takes 400 mm, for the IKEA KLINGSBO glass-door cabinet');
   });
 
   it('a wall of several cabinets names none of them: this wall', () => {
     const giant = { ...FIXTURE_FIGURES[0], _id: 'giant', name: 'Giant', dimensions: { heightMm: 2400 } } as Figure;
     const { host } = scene([...FIXTURE_FIGURES, giant], { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+    openFit(host);
     const line = host.querySelector('.cabinet-scene__fit li')!.textContent!;
     expect(line).toMatch(/^Giant: too tall: 2400 mm, labeled; the most any place takes is [\d.]+ mm, for this wall$/);
   });
 
   it('one misfit reads in the singular', () => {
-    const fit = scene([...FIXTURE_FIGURES, tall]).host.querySelector('.cabinet-scene__fit') as HTMLElement;
-    expect(fit.querySelector('summary')?.textContent).toBe('1 figure does not fit');
+    const fit = openFit(scene([...FIXTURE_FIGURES, tall]).host);
+    expect(fit.querySelector('.cabinet-scene__fit-title')?.textContent).toBe('1 figure does not fit');
   });
 
   it('a figure deeper than the shelf it lands on is drawn overhanging and listed', () => {
@@ -565,13 +574,15 @@ describe('CabinetScene: will it fit (FIT-CHECK)', () => {
     const { host } = scene(deepish);
     const over = host.querySelectorAll('.cab-figure--overhang');
     expect(over.length).toBeGreaterThan(0);
-    const fit = host.querySelector('.cabinet-scene__fit') as HTMLElement;
+    const fit = openFit(host);
     expect(fit.dataset.count).toBe(String(over.length));
     expect(fit.textContent).toContain('too deep for its shelf, it overhangs');
   });
 
   it('no flag when everything fits', () => {
-    expect(scene(FIXTURE_FIGURES).host.querySelector('.cabinet-scene__fit')).toBeNull();
+    const { host } = scene(FIXTURE_FIGURES);
+    expect(host.querySelector('.cabinet-scene__fit')).toBeNull();
+    expect(host.querySelector('.cabinet-scene__misfit')).toBeNull();
   });
 });
 
@@ -719,8 +730,8 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
   });
 
   /** The mixed wall at a frame: its host, and the cabinets whose body stands whole side to side at the height the frame aims at. */
-  const mixedWall = (frame: { width: number; height: number }) => {
-    const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'wall', swipe: 'camera' }, { frameFallback: frame });
+  const mixedWall = (frame: { width: number; height: number }, clearanceMm = 0) => {
+    const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'wall', swipe: 'camera', clearanceMm }, { frameFallback: frame });
     const n = (JSON.parse(host.dataset.wall!) as number[][]).length;
     expect(n).toBeGreaterThan(8);
     const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
@@ -783,11 +794,11 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     return unprojectToPlaneZ(camera, camera.frame.width / 2 - Number(host.dataset.pan), camera.frame.height / 2, 0)![0];
   };
 
-  it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', () => {
+  const mixedWallPager = (clearanceMm: number) => () => {
     // the Fold8 cover's frame, where the challenger's walk (70 px) then Next went nowhere; the walk and pager property
     // over every pattern, frame and stop is the unit's (caseFraming.test.ts, ruling 32), the open-rotated panel the e2e's
     for (const frame of [{ width: 443, height: 344 }]) {
-      const { host } = mixedWall(frame);
+      const { host } = mixedWall(frame, clearanceMm);
       const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
       const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
       let moves = 0;
@@ -805,7 +816,8 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
               expect(Math.sign(Number(host.dataset.cameraX) - x), `${at}: ${button.getAttribute('aria-label')} to ${host.dataset.cameraX}`).toBe(sign);
               moves++;
             }
-            // back to this page as it opened: the pages open left to right (a walk within the first page leaves Prev off)
+            // back to this page as it opened: the pages open left to right (PAGER-END: Prev and Next stay on short of the
+            // first and the last page's own centre; a picture left of the first page's centre has Prev off, and Next opens the page after)
             if (prev.disabled && host.dataset.cameraX !== opened) tap(next);
             while (Number(host.dataset.cameraX) > Number(opened) && !prev.disabled) tap(prev);
             while (Number(host.dataset.cameraX) < Number(opened) && !next.disabled) tap(next);
@@ -818,7 +830,56 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       expect(moves).toBeGreaterThan(12);
       cleanup();
     }
-  }, 180_000);
+  };
+
+  it('the mixed wall (close-out 4, ruling 32): after a walk from any page, Next moves the camera on and Prev back, never staying put', mixedWallPager(0), 180_000);
+
+  // Found by CLEAR-1 (the default 1 in clearance gives this wall 24 cabinets): a walk that settled inside the last page, off its
+  // centre (cabinet 20 of the page of 20-23), left Next disabled though that page's centre lay farther right. Fixed by PAGER-END (#78).
+  it('the mixed wall at 1 in clearance (24 cabinets): after a walk from any page, Next moves the camera on and Prev back, never staying put', mixedWallPager(25.4), 180_000);
+
+  it('PAGER-END: Next is off only at or past the last page\'s centre and Prev only at or before the first\'s, wherever a walk settled; a press then opens that page', () => {
+    for (const frame of [{ width: 443, height: 344 }, { width: 870, height: 261 }]) {
+      const buttons = () => ({ next: screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement, prev: screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement });
+      let first = 0;
+      let last = 0;
+      {
+        const { host } = mixedWall(frame);
+        const { next } = buttons();
+        first = Number(host.dataset.cameraX);
+        for (let i = 0; i < 80 && !next.disabled; i++) tap(next);
+        last = Number(host.dataset.cameraX);
+        expect(last, `${frame.width}x${frame.height}`).toBeGreaterThan(first);
+        cleanup();
+      }
+      let offLast = 0;
+      let offFirst = 0;
+      for (const dx of [-900, -400, -130, 130, 400, 900]) {
+        for (const from of ['first', 'last'] as const) {
+          const { host } = mixedWall(frame);
+          const { next, prev } = buttons();
+          if (from === 'last') for (let i = 0; i < 80 && !next.disabled; i++) tap(next);
+          drag(host, dx);
+          const x = Number(host.dataset.cameraX);
+          const at = `${frame.width}x${frame.height} from the ${from} page, walk ${dx} to ${x} (first ${first}, last ${last})`;
+          if (from === 'last' && x < last - 1) {
+            expect(next.disabled, `${at}: Next with the last page's centre ahead`).toBe(false);
+            offLast++;
+            tap(next);
+            expect(Number(host.dataset.cameraX) > x, `${at}: Next moves on`).toBe(true);
+          }
+          if (from === 'first' && x > first + 1) {
+            expect(prev.disabled, `${at}: Prev with the first page's centre behind`).toBe(false);
+            offFirst++;
+            tap(prev);
+            expect(Number(host.dataset.cameraX) < x, `${at}: Prev moves back`).toBe(true);
+          }
+          cleanup();
+        }
+      }
+      expect(offLast + offFirst, `${frame.width}x${frame.height}: walks that settled off an end page's centre`).toBeGreaterThan(0);
+    }
+  }, 120_000);
 
   it('the pager answers to the settled picture (close-out 4, ruling 32): mid-swipe, out past the far end, Next and Prev hold until the finger lifts', () => {
     for (const swipe of ['camera', 'pan'] as const) {
@@ -837,6 +898,7 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
   });
 
   it('pan mode, wall view (close-out 4, ruling 32): the pager pages from where the pan settled, never back past it', () => {
+    let reopened = false;
     for (const frame of [{ width: 657, height: 473 }, { width: 443, height: 344 }]) {
       // (104 copies: 70 KLINGSBOs with CASE-FB2b's shelves out; a wall of 61, 67 or 81 makes the pager miss its last
       // page, as on 086f61c5: a pager unit of its own)
@@ -855,14 +917,23 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       const again = centreX(host);
       tap(prev);
       expect(centreX(host), `${at} Prev after the pan`).toBeLessThan(again);
-      // panned out to the wall's end, the picture is on the last page: Next has nowhere to go
+      // panned out to the wall's end, the picture is on the last page, off its centre where the page is narrower than the
+      // frame (PAGER-END): Next then opens that page's own centre, and from there has nowhere to go
       for (let k = 0; k < 60; k++) drag(host, -400);
+      const flush = centreX(host);
+      if (!next.disabled) {
+        reopened = true;
+        tap(next);
+        expect(host.dataset.pan, `${at} Next from the end`).toBe('0');
+        expect(centreX(host), `${at} Next from the end opens the last page's own centre, ahead of the picture`).toBeGreaterThan(flush);
+      }
       const end = centreX(host);
-      expect(next.disabled, `${at} Next at the end at ${end}`).toBe(true);
+      expect(next.disabled, `${at} Next on the last page at ${end}`).toBe(true);
       tap(prev);
       expect(centreX(host), `${at} Prev from the end`).toBeLessThan(end);
       cleanup();
     }
+    expect(reopened, 'a frame whose last page stands ahead of the pan limit').toBe(true);
   }, 120_000);
 
   for (const view of ['cabinet', 'shelf'] as const) {
@@ -919,11 +990,15 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  // One case per swipe and view, with the file's own heavy-test timeout: each is 15 drags' worth of scene renders cut to 5, and the
+  // wall view is the heavy one (0.56 s here for the camera swipe, 0.14-0.3 s for the others). The pair of whole-view cases took
+  // 0.8-1.0 s here and 3.4-5.2 s on CI's slower runners (4.2 and 5.2 s on one run) against the default 5 s: a 5 s limit on a
+  // test 4-7x slower on a loaded runner, MISFIT-CHIP-1's CI failure
   for (const swipe of ['camera', 'pan'] as const) {
-    it(`every cabinet that draws into the frame is drawn when no more than the cap do, and never more than the cap, however far the ${swipe} swipe goes`, () => {
-      const wall = klingsbos(60);
-      let checked = 0;
-      for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+    for (const v of ['wall', 'cabinet', 'shelf'] as const) {
+      it(`every cabinet that draws into the frame is drawn when no more than the cap do, and never more than the cap, however far the ${swipe} swipe goes: ${v} view`, () => {
+        const wall = klingsbos(60);
+        let checked = 0;
         // some thirty cabinets: the first twenty are checked wherever the swipe goes
         const { host } = scene(getFixtureFigures(120), { swipe, view: v });
         for (const dx of [0, -300, -300, -900, 250, -1200]) {
@@ -947,10 +1022,10 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
           checked++;
           for (const i of shows) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i}`).toBe(true);
         }
-        cleanup();
-      }
-      expect(checked).toBeGreaterThanOrEqual(8);
-    });
+        // the geometry gives 4-6 positions per view where the first twenty fit the cap and are checked: never none
+        expect(checked).toBeGreaterThanOrEqual(3);
+      }, 60_000);
+    }
   }
 
   it('the frame never shows the fronts of more cabinets than the case draws, in any view, however far either swipe goes (Ross 12:1xC)', () => {
@@ -1837,21 +1912,28 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
 
   it('a new swipe mode, view or pattern starts from its own framing: the camera back down, the photo unslid', () => {
     const figures = getFixtureFigures(60);
-    const utils = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
+    const frame = { width: 443, height: 418 };
+    const view = (patch: Partial<CasePrefs>) => <CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frame} />;
+    // the wall view's own opening height (CAB-FOCUS-1: the cabinet view is no longer its camera)
+    const wallOpen = render(view({ swipe: 'camera', view: 'wall' }));
+    const wallY = cam(wallOpen.container.querySelector('.cabinet-scene') as HTMLElement).y;
+    wallOpen.unmount();
+    const utils = render(view({ swipe: 'camera', view: 'cabinet' }));
     const host = utils.container.querySelector('.cabinet-scene') as HTMLElement;
     const opened = cam(host);
+    expect(opened.y).not.toBe(wallY);
     drag2(host, 0, 120);
     expect(cam(host).y).toBeGreaterThan(opened.y);
-    // a new view, the swipe still walking the camera: back down
-    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'camera', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
-    expect(cam(host).y).toBe(opened.y);
+    // a new view, the swipe still walking the camera: back down, to the wall's own height
+    utils.rerender(view({ swipe: 'camera', view: 'wall' }));
+    expect(cam(host).y).toBe(wallY);
     drag2(host, 0, 120);
-    expect(cam(host).y).toBeGreaterThan(opened.y);
-    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'cabinet' })} frameFallback={{ width: 443, height: 418 }} />);
+    expect(cam(host).y).toBeGreaterThan(wallY);
+    utils.rerender(view({ swipe: 'pan', view: 'cabinet' }));
     expect(cam(host).y).toBe(opened.y);
     drag2(host, 0, 40);
     expect(Number(host.dataset.panY)).toBeGreaterThan(0);
-    utils.rerender(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs({ swipe: 'pan', view: 'wall' })} frameFallback={{ width: 443, height: 418 }} />);
+    utils.rerender(view({ swipe: 'pan', view: 'wall' }));
     expect(host.dataset.panY).toBe('0');
   }, 30_000);
 });
@@ -1908,47 +1990,27 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
     expect(getComputedStyle(host).getPropertyValue('touch-action')).toBe('none');
   });
 
-  it('camera mode, while a finger raises or lowers the camera: a cabinet drawn keeps its place against a near one, as in a sideways swipe', () => {
-    // the mixed wall in the cabinet view: walked to where a cabinet past one end of those drawn and one at the other
-    // stand nearly as near the frame centre, so that raising or lowering the camera would swap them (found from the
-    // scene's own camera, by the framing it walks and lifts with)
+  // CAB-FOCUS-1 (Ross 10-18): the one-cabinet camera is level, so a lift moves only its height: raising or lowering it never
+  // brings a cabinet nearer the middle than another, and the walk found for the tilted camera that swapped two drawn
+  // cabinets under a lift no longer exists in this view
+  it('camera mode, while a finger raises or lowers the camera: the cabinets drawn stay as they are, through the drag and after it', () => {
     const frame = { width: 443, height: 418 };
     const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'cabinet', swipe: 'camera' }, { frameFallback: frame });
-    const n = (JSON.parse(host.dataset.wall!) as number[][]).length;
-    const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
-    const cap = Number(host.dataset.drawnCap);
-    const camera0 = cameraOf(host);
-    const opened: Framing = { camera: camera0, look: [camera0.x, unprojectToPlaneZ(camera0, frame.width / 2, frame.height / 2, 0)![1], 0], page: [0], drawCap: cap };
-    const pick = (camera: Camera, before: readonly number[] = []) => nearestCabinets({ camera, panPx: 0 }, wall, before, cap);
-    let found: { dx: number; dy: number; held: number[]; fresh: number[] } | null = null;
-    for (let dx = -300; dx >= -1500 && !found; dx--) {
-      const walked = swipeCamera(opened, wall, dx);
-      const held = pick(walked.camera);
-      for (const dy of [150, -150, 80, -80]) {
-        const raised = lifted(walked, clampLift(walked, DEFAULT_CASE_PREFS.ceilingMm, liftForDragMm(walked, dy))).camera;
-        const fresh = pick(raised);
-        if (JSON.stringify(pick(raised, held)) === JSON.stringify(held) && JSON.stringify(fresh) !== JSON.stringify(held)) {
-          found = { dx, dy, held, fresh };
-          break;
-        }
-      }
-    }
-    expect(found, 'a walk where a lift would swap a drawn cabinet').not.toBeNull();
-    const { dx, dy, held, fresh } = found!;
     const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
-    drag(host, dx);
-    expect(drawnNow()).toEqual(held);
-    const before = cameraOf(host);
-    fireEvent.pointerDown(host, { pointerId: 12, clientX: 300, clientY: 300, button: 0 });
-    fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy / 2 });
-    fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
-    expect(cameraOf(host).y).not.toBe(before.y);
-    // the fresh pick for the raised camera differs; what is drawn holds
-    expect(pick(cameraOf(host))).toEqual(fresh);
-    expect(drawnNow()).toEqual(held);
-    // once the drag settles the case culls for the settled picture
-    fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
-    expect(drawnNow()).toEqual(fresh);
+    drag(host, -700);
+    const held = drawnNow();
+    expect(held.length).toBeGreaterThan(0);
+    for (const dy of [150, -150]) {
+      const before = cameraOf(host);
+      fireEvent.pointerDown(host, { pointerId: 12, clientX: 300, clientY: 300, button: 0 });
+      fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy / 2 });
+      fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
+      expect(cameraOf(host).y).not.toBe(before.y);
+      expect(cameraOf(host).x).toBe(before.x);
+      expect(drawnNow()).toEqual(held);
+      fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
+      expect(drawnNow()).toEqual(held);
+    }
   }, 30_000);
 
   for (const drift of [-40, 40]) {
@@ -1975,3 +2037,29 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
     });
   }
 });
+
+describe('CLEAR-1: the clearance above a figure, from the case prefs, decides where figures stand', () => {
+  // a Detolf compartment is 396 mm clear at most. Figures of 385 mm stand in the stock compartments with no clearance or a
+  // quarter inch; with 1 in none fits one, and the cabinets take glass shelves out for tiers
+  const figs = (h: number, n = 6) => Array.from({ length: n }, (_, i) => ({ ...FIXTURE_FIGURES[0], _id: `f${i}`, name: `F${i}`, dimensions: { heightMm: h, widthMm: 100, depthMm: 80 } }) as Figure);
+  const removed = (host: HTMLElement) => (JSON.parse(host.dataset.held!) as [number, number, number[]][]).flatMap((h) => h[2]);
+
+  it('0 and 0.25 in: nothing comes out; 1 in: shelves come out for tiers', () => {
+    for (const clearanceMm of [0, 6.35]) {
+      expect(removed(scene(figs(385), { pattern: 'ikea-detolf', clearanceMm }).host), `${clearanceMm}`).toEqual([]);
+      cleanup();
+    }
+    expect(removed(scene(figs(385), { pattern: 'ikea-detolf', clearanceMm: 25.4 }).host).length).toBeGreaterThan(0);
+  });
+
+  it('the default prefs keep 1 in: the same figures, no pref set, take shelves out', () => {
+    expect(removed(scene(figs(385), { pattern: 'ikea-detolf' }).host).length).toBeGreaterThan(0);
+  });
+
+  it('a figure 1 mm over the room a quarter inch leaves does not fit a stock compartment at 0.25 in', () => {
+    expect(removed(scene(figs(396 - 6.35 + 1), { pattern: 'ikea-detolf', clearanceMm: 6.35 }).host).length).toBeGreaterThan(0);
+    cleanup();
+    expect(removed(scene(figs(396 - 6.35), { pattern: 'ikea-detolf', clearanceMm: 6.35 }).host)).toEqual([]);
+  });
+});
+

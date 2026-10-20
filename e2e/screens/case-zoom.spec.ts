@@ -303,12 +303,15 @@ async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
       const hit = document.elementFromPoint(x, y);
       return !!hit?.closest('.cabinet-scene__frame') && !hit.closest('button, a, details');
     };
-    const reach = 24;
+    // a finger's touch is retargeted to a button within its radius (Blink's touch hit test: the pointer events, then the click,
+    // at the button's centre), so a spot is empty only when no button is within that reach in any direction, diagonals included
+    const reach = 40;
+    const around = [[0, 0], [-reach, 0], [reach, 0], [0, -reach], [0, reach], [-reach, -reach], [reach, -reach], [-reach, reach], [reach, reach]];
     for (let fy = 0.08; fy < 0.95; fy += 0.04) {
       for (let fx = 0.3; fx < 0.75; fx += 0.04) {
         const x = f.x + f.width * fx;
         const y = f.y + f.height * fy;
-        if ([[0, 0], [-reach, 0], [reach, 0], [0, -reach], [0, reach]].every(([dx, dy]) => room(x + dx!, y + dy!))) return { x, y };
+        if (around.every(([dx, dy]) => room(x + dx!, y + dy!))) return { x, y };
       }
     }
     return null;
@@ -483,7 +486,7 @@ test('(c) a double-tap on an empty spot and the Reset view chip each return to 1
   expect(inside(c, frame)).toBe(true);
   expect(c.y - frame.y).toBeLessThanOrEqual(12);
   expect(frame.x + frame.width - (c.x + c.width)).toBeLessThanOrEqual(60);
-  for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__step:not(:disabled)', '.cabinet-scene__shelves', '.cabinet-scene__fit summary']) {
+  for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__step:not(:disabled)', '.cabinet-scene__shelves', '.cabinet-scene__misfit']) {
     for (const box of await page.locator(clear).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as Box))) {
       expect(meets(c, box), `the chip meets ${clear}`).toBe(false);
     }

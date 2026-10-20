@@ -15,7 +15,7 @@ import {
 } from '../packCabinets';
 import { UNMATTED_META } from '../displayMeta';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT } from '../caseInterim';
-import { clearHeightsMm, inchesToMm, liftOutShelves, withShelfLayout } from '../cabinetProfile';
+import { DEFAULT_CLEARANCE_MM, clearHeightsMm, inchesToMm, liftOutShelves, stableLayout, withClearance, withShelfLayout } from '../cabinetProfile';
 
 /** The rules before CASE-FB2a and FB2b: tall figures on the first top from the shelf cursor on, no shelf taken out. */
 const AS_BEFORE = { tallOnOpenedTops: false, shelfRemoval: false } as const;
@@ -62,7 +62,8 @@ describe('surfaceSlots', () => {
 
   it('the rack: open frame, interior between the posts', () => {
     const slots = surfaceSlots(OPEN_STEEL_RACK);
-    expect(slots).toHaveLength(5);
+    // the top and the four display beams: the lowest shelf is storage (CLEAR-1)
+    expect(slots).toHaveLength(4);
     expect(slots[1].widthMm).toBeCloseTo(OPEN_STEEL_RACK.interior.widthMm, 6);
     expect(slots[1].frontZMm).toBeCloseTo(-OPEN_STEEL_RACK.rack!.postMm, 6);
   });
@@ -335,8 +336,8 @@ describe("CASE-FB2a: where each surface's lip is drawn, and figures centred in d
     expect(surfaceSlots(IKEA_KLINGSBO).map((s) => s.lipZMm)).toEqual([0, -12, -12, -12, -12, 0, 0]);
     // the Detolf: top, three glass plates 20 mm in, the base board
     expect(surfaceSlots(IKEA_DETOLF).map((s) => s.lipZMm)).toEqual([0, -20, -20, -20, 0]);
-    // the rack: its beams are its fronts
-    expect(surfaceSlots(OPEN_STEEL_RACK).map((s) => s.lipZMm)).toEqual([0, 0, 0, 0, 0]);
+    // the rack: its beams are its fronts (its storage shelf is no place)
+    expect(surfaceSlots(OPEN_STEEL_RACK).map((s) => s.lipZMm)).toEqual([0, 0, 0, 0]);
   });
 
   it('the usable depth starts behind the door, the lip may not: the KLINGSBO floor\'s usable front is 4 mm in, its lip at the front', () => {
@@ -580,7 +581,8 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     expect(cabinets.slice(0, -1).every((c) => glass(c).some((s) => s.items.length > 0))).toBe(true);
   });
 
-  it('Kurumi, over 2 ft: two glass shelves out next to each other, an 805 mm tier', () => {
+  // EYE-1 (Ross 10-18): the pair made highest (803 mm tier; the lowest pair made an 805 mm one)
+  it('Kurumi, over 2 ft: two glass shelves out next to each other, an 803 mm tier', () => {
     const items = [...Array.from({ length: 6 }, (_, i) => item(i, 200, 100)), item(6, 640, 200)];
     const { cabinets, violators } = packCabinets(items, [IKEA_KLINGSBO]);
     expect(violators).toEqual([]);
@@ -588,7 +590,7 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     const removed = c.profile.layout!.removed;
     expect(removed).toHaveLength(2);
     expect(Math.abs(removed[0] - removed[1])).toBe(1);
-    expect(clearHeightsMm(c.profile)).toContain(805);
+    expect(clearHeightsMm(c.profile)).toContain(803);
   });
 
   it('a figure taller than any tier the cabinet can make is too tall: listed, never placed', () => {
@@ -626,8 +628,8 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     expect(violators).toEqual([]);
     expect(cabinets).toHaveLength(1);
     expect(cabinets[0].profile.layout?.removed).toHaveLength(1);
-    // the tier: taller than the rack's tallest stock compartment (590.55 mm)
-    const rackTiers = cabinets[0].surfaces.filter((x) => !x.slot.isTop && x.slot.maxHeightMm > inchesToMm(72 - 1.75 - 47) + 1e-6);
+    // the tier: taller than the rack's tallest stock compartment (584.2 mm, the 2 in beam)
+    const rackTiers = cabinets[0].surfaces.filter((x) => !x.slot.isTop && x.slot.maxHeightMm > inchesToMm(72 - 2 - 47) + 1e-6);
     expect(rackTiers.flatMap((t) => t.items.map((p) => p.item.index))).toEqual([1]);
   });
 
@@ -638,3 +640,128 @@ describe('CASE-FB2b: tall figures in tiers the next cabinet opens by taking shel
     expect(cabinets.flatMap((c) => c.surfaces.filter((s) => s.slot.isTop).flatMap((s) => s.items.map((p) => p.item.index)))).toEqual(expect.arrayContaining([20, 21]));
   });
 });
+
+describe('EYE-1 (Ross 10-18): the tall tier is made highest, closer to a standing viewpoint', () => {
+  /** The lift-out shelves that, taken out alone, leave a compartment this figure stands in. */
+  const doing = (profile: CabinetProfile, fig: CaseFigure) =>
+    liftOutShelves(profile).filter((s) => {
+      if (!stableLayout(profile, { removed: [s], moved: [] })) return false;
+      const derived = withShelfLayout(profile, { removed: [s], moved: [] });
+      return surfaceSlots(derived).some((slot) => !slot.isTop && fig.heightMm <= slot.maxHeightMm && fig.widthMm <= slot.widthMm && fig.depthMm <= slot.depthMm);
+    });
+  const one = (cabinets: ReturnType<typeof packCabinets>['cabinets']) => cabinets.filter((c) => c.profile.layout?.removed.length === 1).map((c) => c.profile.layout!.removed[0]);
+
+  it('the KLINGSBO: more tall figures than its tops hold, one glass shelf out each time, and it is the highest one that makes room', () => {
+    const tall = (i: number) => (i % 2 === 0 ? item(i, 270, 120) : item(i, 425, 160));
+    const items = [...Array.from({ length: 20 }, (_, i) => item(i, 200, 100)), ...Array.from({ length: 10 }, (_, i) => tall(20 + i)), ...Array.from({ length: 16 }, (_, i) => item(30 + i, 200, 100))];
+    const cands = doing(IKEA_KLINGSBO, item(0, 425, 160));
+    expect(cands.length, 'more than one shelf would do').toBeGreaterThan(1);
+    const removed = one(packCabinets(items, [IKEA_KLINGSBO]).cabinets);
+    expect(removed.length).toBeGreaterThan(0);
+    for (const r of removed) expect(r).toBe(Math.max(...cands));
+  });
+
+  it('the Detolf: more tall figures than its top holds, one glass shelf out each time, and it is the highest one that makes room', () => {
+    const tall = (i: number) => (i % 2 === 0 ? item(i, 270, 120) : item(i, 425, 160));
+    const items = [...Array.from({ length: 10 }, (_, i) => item(i, 200, 100)), ...Array.from({ length: 14 }, (_, i) => tall(10 + i)), ...Array.from({ length: 6 }, (_, i) => item(24 + i, 200, 100))];
+    const cands = doing(IKEA_DETOLF, item(0, 425, 160));
+    expect(cands.length, 'more than one shelf would do').toBeGreaterThan(1);
+    const removed = one(packCabinets(items, [IKEA_DETOLF]).cabinets);
+    expect(removed.length).toBeGreaterThan(0);
+    for (const r of removed) expect(r).toBe(Math.max(...cands));
+  });
+
+  it('the rack: a 700 mm figure takes the 24 in beam out, the one beam the storage shelf and the posts\' bracing leave that makes room', () => {
+    // the storage shelf is no place and the upper half keeps two beams: of the beams, only the 12 in and the 24 in may
+    // come out, and the 12 in one makes a compartment on the storage shelf, no place for a figure
+    const cands = doing(OPEN_STEEL_RACK, item(1, 700, 100));
+    expect(cands).toEqual([2]);
+    const removed = one(packCabinets([item(0, 200, 100), item(1, 700, 100)], [OPEN_STEEL_RACK]).cabinets);
+    expect(removed).toEqual([2]);
+  });
+
+  it('fewest shelves out stays the first rule: two out only where one cannot make the room, and then the highest two', () => {
+    // Kurumi, 640 mm: over any one-shelf tier of the KLINGSBO, so two come out, next to each other, the highest pair that does it
+    const kurumi = item(6, 640, 200);
+    const pairs = liftOutShelves(IKEA_KLINGSBO).flatMap((a, i, all) => all.slice(i + 1).map((b) => [a, b] as const)).filter(([a, b]) => {
+      const derived = withShelfLayout(IKEA_KLINGSBO, { removed: [a, b], moved: [] });
+      return surfaceSlots(derived).some((slot) => !slot.isTop && kurumi.heightMm <= slot.maxHeightMm && kurumi.widthMm <= slot.widthMm);
+    });
+    expect(doing(IKEA_KLINGSBO, kurumi)).toEqual([]);
+    expect(pairs.length).toBeGreaterThan(1);
+    const { cabinets } = packCabinets([...Array.from({ length: 6 }, (_, i) => item(i, 200, 100)), kurumi], [IKEA_KLINGSBO]);
+    const c = cabinets.find((x) => x.surfaces.some((sf) => sf.items.some((p) => p.item.index === 6)))!;
+    const removed = c.profile.layout!.removed;
+    expect(removed).toHaveLength(2);
+    const top = pairs.reduce((best, p) => (Math.max(...p) > Math.max(...best) ? p : best));
+    expect([...removed].sort()).toEqual([...top].sort());
+  });
+
+  it('a figure the stock compartments take makes no tier: nothing comes out', () => {
+    for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]) {
+      const { cabinets } = packCabinets([item(0, 150, 100), item(1, 180, 100)], [profile]);
+      expect(cabinets.every((c) => c.profile.layout === undefined), profile.id).toBe(true);
+    }
+  });
+});
+
+describe('CLEAR-1 (Ross 10-18): the rack\'s storage shelf, its bracing, and the clearance kept above a figure', () => {
+  const halves = (p: CabinetProfile) => {
+    const mid = p.outer.heightMm / 2;
+    const lower = p.surfaces.filter((s) => s.topMm <= mid).length;
+    return [lower, p.surfaces.length - lower];
+  };
+
+  it('the storage shelf is no place: the rack\'s slots are its top and the four display beams above it', () => {
+    const slots = surfaceSlots(OPEN_STEEL_RACK);
+    expect(slots.map((s) => s.surfaceIndex)).toEqual([4, 3, 2, 1]);
+    expect(OPEN_STEEL_RACK.surfaces[0].role).toBe('storage');
+  });
+
+  it('no figure is ever packed on the storage shelf, however many there are', () => {
+    const items = Array.from({ length: 60 }, (_, i) => item(i, 150 + (i % 5) * 20, 100));
+    const { cabinets } = packCabinets(items, [OPEN_STEEL_RACK]);
+    expect(cabinets.length).toBeGreaterThan(1);
+    for (const c of cabinets) expect(c.surfaces.filter((s) => s.slot.surfaceIndex === 0 || c.profile.surfaces[s.slot.surfaceIndex]?.role === 'storage')).toEqual([]);
+    expect(cabinets.flatMap((c) => c.surfaces.flatMap((s) => s.items)).length).toBe(60);
+  });
+
+  it('the storage shelf never comes out and the 47 in beam and the top never do: the posts keep two beams in each half, in every layout the packer makes', () => {
+    const mixes = [[700], [700, 650], [700, 700, 720], [610, 640]];
+    for (const tall of mixes) {
+      const items = [...Array.from({ length: 12 }, (_, i) => item(i, 200, 100)), ...tall.map((h, i) => item(20 + i, h, 100))];
+      for (const c of packCabinets(items, [OPEN_STEEL_RACK]).cabinets) {
+        const [lower, upper] = halves(c.profile);
+        expect(lower, JSON.stringify(c.profile.layout)).toBeGreaterThanOrEqual(2);
+        expect(upper, JSON.stringify(c.profile.layout)).toBeGreaterThanOrEqual(2);
+        expect(c.profile.surfaces.some((s) => s.role === 'storage')).toBe(true);
+      }
+    }
+  });
+
+  it('a figure exactly at a compartment\'s old height fails without a shelf out at 1 in, and at 0.25 in; one a quarter inch short passes at 0.25 in, not at 1 in', () => {
+    const tallest = Math.max(...clearHeightsMm(IKEA_DETOLF)); // 396 mm
+    const at = (h: number, clearance: number) => fitCheck(withClearance(IKEA_DETOLF, clearance), item(0, h, 100), undefined, false).verdict;
+    expect(at(tallest, 0)).toBe('fits');
+    expect(at(tallest, DEFAULT_CLEARANCE_MM)).not.toBe('fits');
+    expect(at(tallest, 6.35)).not.toBe('fits');
+    expect(at(tallest - 6.35, 6.35)).toBe('fits');
+    expect(at(tallest - 6.35, DEFAULT_CLEARANCE_MM)).not.toBe('fits');
+  });
+
+  it('changing the clearance changes placement: figures that stand on the Detolf\'s shelves with none need a tier, a top or another cabinet with 1 in', () => {
+    const items = Array.from({ length: 8 }, (_, i) => item(i, 385, 100));
+    const none = packCabinets(items, [IKEA_DETOLF]);
+    const inch = packCabinets(items, [withClearance(IKEA_DETOLF, DEFAULT_CLEARANCE_MM)]);
+    const onShelves = (r: ReturnType<typeof packCabinets>) => r.cabinets.flatMap((c) => c.surfaces.filter((s) => !s.slot.isTop && s.slot.maxHeightMm < 400).flatMap((s) => s.items)).length;
+    expect(onShelves(none)).toBeGreaterThan(0);
+    expect(onShelves(inch)).toBe(0);
+    expect(inch.cabinets.some((c) => (c.profile.layout?.removed.length ?? 0) > 0) || inch.cabinets.length > none.cabinets.length || inch.violators.length > 0).toBe(true);
+  });
+
+  it('the clearance applies to a tier as to a stock compartment: a tier\'s room is its clear height less the clearance', () => {
+    const tier = withShelfLayout(IKEA_DETOLF, { removed: [1], moved: [] });
+    expect(clearHeightsMm(withClearance(tier, DEFAULT_CLEARANCE_MM))[0]).toBeCloseTo(787 - 25.4, 6);
+  });
+});
+

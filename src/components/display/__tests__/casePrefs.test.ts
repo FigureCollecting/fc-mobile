@@ -21,6 +21,9 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'camera',
       ceilingMm: 2438.4,
       tabOrder: ['view', 'reserved', 'info', 'refine'],
+      misfitsDismissed: [],
+      clearanceMm: 25.4,
+      showEstimated: false,
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -32,6 +35,9 @@ describe('case prefs, kept per device (CC14)', () => {
       swipe: 'pan',
       ceilingMm: 2700,
       tabOrder: ['refine', 'info', 'reserved', 'view'],
+      misfitsDismissed: ['fig-a', 'fig-b'],
+      clearanceMm: 6.35,
+      showEstimated: true,
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -56,6 +62,27 @@ describe('case prefs, kept per device (CC14)', () => {
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
     localStorage.setItem(CASE_PREFS_KEY, '7');
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
+  });
+
+  it('MISFIT-CHIP-1: the dismissed misfits are kept as their ids; anything else falls back to none', () => {
+    writeCasePrefs({ misfitsDismissed: ['a', 'b'] });
+    expect(readCasePrefs().misfitsDismissed).toEqual(['a', 'b']);
+    for (const bad of ['a', 7, null, ['a', 7], [{}], { 0: 'a' }]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ misfitsDismissed: bad }));
+      expect(readCasePrefs().misfitsDismissed, JSON.stringify(bad)).toEqual([]);
+    }
+  });
+
+  it('CLEAR-1: the clearance above a figure is kept with the room\'s ceiling: 1 in by default, 0 to 2 in; anything else falls back to the default', () => {
+    expect(DEFAULT_CASE_PREFS.clearanceMm).toBe(25.4);
+    for (const mm of [0, 6.35, 25.4, 50.8]) {
+      writeCasePrefs({ clearanceMm: mm });
+      expect(readCasePrefs().clearanceMm, String(mm)).toBe(mm);
+    }
+    for (const bad of [-1, 50.9, 'x', null, Number.NaN, Number.POSITIVE_INFINITY, [1]]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ clearanceMm: bad }));
+      expect(readCasePrefs().clearanceMm, JSON.stringify(bad)).toBe(25.4);
+    }
   });
 
   it('a storage that throws reads the defaults and drops writes', () => {
@@ -91,5 +118,26 @@ describe('wall patterns', () => {
     expect(wallPatternProfiles('ikea-klingsbo+ikea-detolf+open-steel-rack')).toEqual([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
     expect(wallPatternProfiles('open-steel-rack')).toEqual([OPEN_STEEL_RACK]);
     expect(wallPatternProfiles('unknown')).toEqual([IKEA_KLINGSBO]);
+  });
+});
+
+// SIZE-BASIS-1: outline the figures whose height or width is an estimate; off until asked for, kept on the device
+describe('showEstimated (SIZE-BASIS-1)', () => {
+  it('is off by default, and on once asked for and kept', () => {
+    expect(DEFAULT_CASE_PREFS.showEstimated).toBe(false);
+    writeCasePrefs({ showEstimated: true });
+    expect(readCasePrefs().showEstimated).toBe(true);
+    writeCasePrefs({ showEstimated: false });
+    expect(readCasePrefs().showEstimated).toBe(false);
+  });
+
+  it.each([['yes'], [1], [null], [{}], [[true]]])('reads %j as off: only true is on', (bad) => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ showEstimated: bad }));
+    expect(readCasePrefs().showEstimated).toBe(false);
+  });
+
+  it('a record written before it existed reads as off, and keeps the rest', () => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', swipe: 'pan' }));
+    expect(readCasePrefs()).toMatchObject({ view: 'shelf', swipe: 'pan', showEstimated: false });
   });
 });

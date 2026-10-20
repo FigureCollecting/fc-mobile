@@ -61,7 +61,7 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
       'CharacterSaber',
       'VersionSwimsuit ver.',
       'Release2026-03',
-      'Size250 × 120 mm',
+      'Size250 mm tall · 120 mm wide · depth from the width',
       'CategoryPrepainted',
       'TypeFigures',
       'MaterialsPVC, ABS',
@@ -75,11 +75,26 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
     ]);
   });
 
-  it('a figure with only a name and maker has no field list beyond its badges', () => {
+  it('a figure with only a name and maker has no field list beyond its badges and the size it is drawn at, said to be a default', () => {
     const bare = { _id: 'b', name: 'Bare', manufacturer: 'Kotobukiya', scale: '', origin: '', userId: 'u', createdAt: '', updatedAt: '' } as never;
     const { container } = renderWithProviders(<FigureDetailContent figure={bare} index={0} total={1} />);
     expect(screen.getByText('Kotobukiya')).toBeInTheDocument();
-    expect(container.querySelector('.figure-viewer-sheet__more')).toBeNull();
+    // SIZE-BASIS-1: the one row it has is the size, and it says nothing was given
+    expect(Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).map((r) => (r as Element).textContent)).toEqual([
+      'Size≈ 200 mm · default, no size data · width from the photo · depth from the width',
+    ]);
+  });
+
+  // SIZE-BASIS-1 (Ross 10-18): what the size rests on, for each figure
+  it.each([
+    ['measured', { heightMm: 245, widthMm: 170, depthMm: 190 }, '1/7', '245 × 170 × 190 mm · measured'],
+    ['height from the scale', undefined, '1/7', '≈ 229 mm tall · from scale 1/7 · width from the photo, at most 229 mm (its scale\'s height) · depth from the width'],
+    ['a length', { depthMm: 190 }, '1/8', '≈ 200 mm tall · from scale 1/8 · width from the photo, at most 190 mm (its length) · 190 mm deep'],
+  ])('shows the size and its basis: %s', (_label, dimensions, scale, line) => {
+    const figure = { _id: 's', name: 'Sized', manufacturer: 'Alter', scale, userId: 'u', createdAt: '', updatedAt: '', ...(dimensions === undefined ? {} : { dimensions }) } as never;
+    const { container } = renderWithProviders(<FigureDetailContent figure={figure} index={0} total={1} />);
+    const row = Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).find((r) => (r as Element).textContent?.startsWith('Size')) as Element | undefined;
+    expect(row?.textContent).toBe(`Size${line}`);
   });
 });
 

@@ -17,7 +17,8 @@ afterEach(() => cleanup());
 
 const COVER = { width: 443, height: 418 };
 const OPEN = { width: 870, height: 335 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
+// the steps are about the wall's levels, with its figures sized for no clearance above them (CLEAR-1's default would move shelves out)
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, frameFallback = COVER) {
   const { container } = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frameFallback} />);
@@ -172,8 +173,9 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
     expect(pan.dataset.panY).not.toBe('0');
   });
 
-  it('only the one-shelf view snaps: in the cabinet view a lifted camera keeps its height through the cabinet arrows', () => {
-    const host = scene(fixtures, { view: 'cabinet', swipe: 'camera' });
+  // CAB-FOCUS-1 (Ross 10-18): the one-cabinet view's arrows snap too (CabinetSceneCabFocus.test.tsx); the wall view's do not
+  it('the shelf and the one-cabinet views snap: in the wall view a lifted camera keeps its height through the arrows', () => {
+    const host = scene(fixtures, { view: 'wall', swipe: 'camera' });
     drag(host, 0, -120);
     const lifted = cameraOf(host).y;
     tapButton('Next cabinet');

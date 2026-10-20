@@ -821,16 +821,20 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
  * PINCH-1: the Reset view chip, while the picture is zoomed. It holds whether it shows and hands the scene its
  * setter (`shown`), so it comes and goes as its own render, never the scene's.
  */
-function ResetChip({ shown, right, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; right?: number; onReset: () => void }) {
+function ResetChip({ shown, moved, right, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; right?: number; onReset: () => void }) {
   const [zoomed, setZoomed] = useState(false);
   shown.current = setZoomed;
-  if (!zoomed) return null;
+  // PAN-KEEP-1: also while the camera or the pan is off the default angle: the one deliberate way back
+  if (!zoomed && !moved) return null;
   return (
     <button type="button" class="cabinet-scene__reset" style={right === undefined ? undefined : { right: `${right}px` }} onClick={onReset}>
       Reset view
     </button>
   );
 }
+
+/** PAN-KEEP-1: what starts the picture from its frame again besides the view and the wall: the swipe mode, in the shelf view only (TOP1). */
+const shelfSwipeKey = (prefs: CasePrefs): string => (prefs.view === 'shelf' ? prefs.swipe : '');
 
 /** MISFIT-CHIP-1: whether a touch landed on one of the scene's own controls (the do-not-fit chip, its list). */
 const onSceneUi = (target: EventTarget | null): boolean => target instanceof Element && target.closest('[data-scene-ui]') !== null;
@@ -1010,14 +1014,18 @@ export function CabinetScene({
   const [panY, setPanY] = useState(0);
   const [liveDy, setLiveDy] = useState(0);
 
-  // a new view, wall or swipe mode starts from its own framing
-  useEffect(() => {
+  // a new view or wall starts from its own framing. PAN-KEEP-1: a swipe mode does not, in the wall and cabinet views: the camera
+  // (its walk, its height) and the pan stay across Pan <-> Move the camera, so a perspective set in one is the one the other
+  // works from; Reset view is the way back. The shelf view still starts a mode from its frame (TOP1).
+  const framingKey = shelfSwipeKey(prefs);
+  // (a layout effect: the frame is back before the mode's picture is painted, as the filter's reset below is)
+  useLayoutEffect(() => {
     setWalkX(null);
     setPan(0);
     setLift(0);
     setPanY(0);
     setFramedFocus(null);
-  }, [prefs.view, prefs.pattern, prefs.swipe]);
+  }, [prefs.view, prefs.pattern, framingKey]);
   // CASE-FB2a (interim, REPACK_ON_FILTER): a new filter or sort packs its figures from the wall's start, and the view
   // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened
   useLayoutEffect(() => {
@@ -1045,15 +1053,17 @@ export function CabinetScene({
   // between the floor and the ceiling, and the walk keeps that height
   const along = walkX === null ? base : atX(base, walkX);
   const liftBy = (dy: number) => clampLift(along, ceilingMm, lift + (dy === 0 ? 0 : liftForDragMm(along, dy)));
-  const walked = lifted(along, prefs.swipe === 'camera' ? liftBy(liveDy) : 0);
+  // PAN-KEEP-1: the camera's height holds in pan mode too (a drag there slides the photo; it does not lift)
+  const walked = lifted(along, liftBy(prefs.swipe === 'camera' ? liveDy : 0));
   const swiping = prefs.swipe === 'camera' && liveDx !== 0;
   const framing = swiping ? swipeCamera(walked, wall, liveDx) : walked;
   const [panMin, panMax] = panLimitsPx(framing, wall);
   const clampPan = (v: number) => Math.min(panMax, Math.max(panMin, v));
-  // pan mode: the photo slides, and past its sane extent is retaken farther along (panFraming)
-  const shown = prefs.swipe === 'pan' ? panFraming(framing, clampPan(pan + liveDx)) : { framing, panPx: 0 };
+  // the photo slides (a pan mode drag moves it; a camera mode drag does not, but what was panned stays panned: PAN-KEEP-1), and
+  // past its sane extent is retaken farther along (panFraming)
+  const shown = panFraming(framing, clampPan(pan + (prefs.swipe === 'pan' ? liveDx : 0)));
   // the wall view pages from what the settled picture centres on, after a press, a walk or a pan (close-out 4, ruling 32)
-  const still = prefs.swipe === 'pan' ? panFraming(walked, clampPan(pan)) : { framing: walked, panPx: 0 };
+  const still = panFraming(walked, clampPan(pan));
   const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx) : focusIdx;
   // PAGER-END: the first and the last page's openings, so Next stays on short of the last page's centre and Prev past the first's
   const ends = useMemo(
@@ -1068,7 +1078,7 @@ export function CabinetScene({
   // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
   const [panYMin, panYMax] = panYLimitsPx(shown.framing, wall, ceilingMm);
   const clampPanY = (v: number) => Math.min(panYMax, Math.max(panYMin, v));
-  const panYPx = prefs.swipe === 'pan' ? clampPanY(panY + liveDy) : 0;
+  const panYPx = clampPanY(panY + (prefs.swipe === 'pan' ? liveDy : 0));
   // CAB-FOCUS-1: the picture's x and y the frame shows at its edges (the picture is drawn slid by the pan)
   const shownWindow: Rect = { x0: -panPx, x1: -panPx + camera.frame.width, y0: -panYPx, y1: -panYPx + camera.frame.height };
 
@@ -1179,10 +1189,12 @@ export function CabinetScene({
       settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
     } else if (how !== 'live') setSharp(z);
   }, [settled]);
-  // a new view, wall, swipe mode, filter or frame starts the picture at 1x, at once
+  // a new view, wall, filter or frame starts the picture at 1x, at once; so does a swipe mode in the shelf view, where it starts
+  // from the frame. PAN-KEEP-1: elsewhere the mode is not a new picture, and the zoom (which both modes treat alike: zoomed, one
+  // finger pans the magnified picture) stays with the camera
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-  }, [prefs.view, prefs.pattern, prefs.swipe, filterKey, frame.width, frame.height, showZoom]);
+  }, [prefs.view, prefs.pattern, framingKey, filterKey, frame.width, frame.height, showZoom]);
   const toFrame = (x: number, y: number): Point => {
     const r = frameRef.current!.getBoundingClientRect();
     return { x: x - r.left, y: y - r.top };
@@ -1560,9 +1572,17 @@ export function CabinetScene({
         </div>
         <ResetChip
           shown={showChip}
+          moved={walkX !== null || lift !== 0 || pan !== 0 || panY !== 0 || framedFocus !== null}
           // the frame's top corner, clear of the tab bar and the cards; in the shelf view, of the shelf steps
           right={prefs.view === 'shelf' ? Math.max(8, SHELF_STEPS_PX - side) : undefined}
-          onReset={() => showZoom(UNZOOMED, 'settle')}
+          onReset={() => {
+            showZoom(UNZOOMED, 'settle');
+            setWalkX(null);
+            setPan(0);
+            setLift(0);
+            setPanY(0);
+            setFramedFocus(null);
+          }}
         />
       </div>
 

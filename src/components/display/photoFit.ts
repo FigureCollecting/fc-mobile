@@ -1,4 +1,4 @@
-import { signal } from '@preact/signals';
+import { useEffect, useState } from 'preact/hooks';
 
 // FIT1 (Ross 10-19): when a figure's width is LISTED, the listing wins over its photo: the cut-out is scaled uniformly to fit
 // inside the listed box (packCabinets measureCaseFigure). A photo whose figure, at the figure's height, is more than
@@ -26,5 +26,26 @@ export function photoFitOf(photoWidthMm: number, listedWidthMm: number): PhotoFi
 export const photoFitNote = (fit: PhotoFit): string =>
   fit.dir === 'wider' ? `photo ${fit.pct} % wider than listed: drawn to the listing` : `photo ${fit.pct} % narrower than listed: drawn at the listed height`;
 
-/** The flags of the figures the case draws now, by figure id (CabinetScene publishes them; the Info card reads them). */
-export const photoFits = signal<ReadonlyMap<string, PhotoFit>>(new Map());
+// The flags of the figures the case draws now, by figure id: CabinetScene sets them, the Info card reads them. A plain store with
+// a hook, not a signal: importing @preact/signals installs its re-render skipping into everything that imports it, and the
+// packer's import graph is no place for that.
+let flags: ReadonlyMap<string, PhotoFit> = new Map();
+const listeners = new Set<() => void>();
+
+export const getPhotoFits = (): ReadonlyMap<string, PhotoFit> => flags;
+
+export function setPhotoFits(next: ReadonlyMap<string, PhotoFit>): void {
+  flags = next;
+  for (const l of [...listeners]) l();
+}
+
+/** One figure's flag, kept current: the Info card re-renders when the case flags or unflags it. */
+export function usePhotoFit(figureId: string): PhotoFit | undefined {
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    const l = () => redraw((n) => n + 1);
+    listeners.add(l);
+    return () => void listeners.delete(l);
+  }, []);
+  return flags.get(figureId);
+}

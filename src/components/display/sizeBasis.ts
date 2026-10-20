@@ -34,7 +34,7 @@ export interface SizeBasis {
 const positive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 const mm = (v: number): number => Math.round(v);
 
-/** `photoFit`: what the case flagged of this figure's photo against its listed width (photoFits), said at the end of the line. */
+/** `photoFit`: what the case flagged of this figure's photo against its listed width (getPhotoFits), said at the end of the line. */
 export function describeSize(figure: Figure, photoFit?: PhotoFit): SizeBasis {
   const d = figure.dimensions;
   const resolved = resolveHeightMm(figure);

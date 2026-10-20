@@ -90,7 +90,7 @@ import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useLayoutBasis } from './layoutBasis';
-import { photoFits } from './photoFit';
+import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -963,10 +963,8 @@ export function CabinetScene({
   // FIT1: the figures whose photo is over 15 % off their listed width, for the Info card's Size row; gone with the case
   useEffect(() => {
     const flagged = new Map(measured.flatMap((m) => (m.photoFit ? [[m.figure._id, m.photoFit] as const] : [])));
-    photoFits.value = flagged;
-    return () => {
-      photoFits.value = new Map();
-    };
+    setPhotoFits(flagged);
+    return () => setPhotoFits(new Map());
   }, [measured]);
 
   /**

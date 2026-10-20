@@ -1,6 +1,6 @@
 // FIT1 (Ross 10-19): a listed width wins over the photo. The case draws a cut-out wider than its listing smaller, to fit it, and
 // flags a photo more than 15 % off the listed width: the figure's button says so (data-photo-fit) and the Info card's Size row
-// reads the same flag (photoFits), which goes with the case.
+// reads the same flag (usePhotoFit), which goes with the case.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
@@ -8,7 +8,7 @@ import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import type { FigureImageRef } from '../figureArt';
 import type { AlphaMargins } from '../alphaMargin';
-import { photoFits } from '../photoFit';
+import { getPhotoFits, setPhotoFits } from '../photoFit';
 
 /** What the canvas read of each picture's alpha says, by URL. */
 const measured = vi.hoisted(() => ({ margins: new Map<string, { top: number; bottom: number; left: number; right: number }>(), last: null as null | { key: string; map: Map<string, unknown> } }));
@@ -32,7 +32,7 @@ afterEach(() => {
   cleanup();
   measured.margins.clear();
   measured.last = null;
-  photoFits.value = new Map();
+  setPhotoFits(new Map());
 });
 
 const figure = (id: string, dimensions?: Figure['dimensions']): Figure =>
@@ -79,11 +79,11 @@ describe('CabinetScene: a listed width wins over the photo (FIT1)', () => {
 
   it('publishes the flags for the Info card, and takes them away with the case', () => {
     const { unmount } = scene();
-    expect([...photoFits.value]).toEqual([
+    expect([...getPhotoFits()]).toEqual([
       ['megumi', { dir: 'wider', pct: 23 }],
       ['narrow', { dir: 'narrower', pct: 21 }],
     ]);
     unmount();
-    expect(photoFits.value.size).toBe(0);
+    expect(getPhotoFits().size).toBe(0);
   });
 });

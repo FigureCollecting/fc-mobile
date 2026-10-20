@@ -1,11 +1,11 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { screen, within } from '@testing-library/preact';
+import { act, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { FigureDetailContent } from '../FigureDetailContent';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
-import { photoFits } from '../photoFit';
+import { setPhotoFits } from '../photoFit';
 
 describe('FigureDetailContent (shared between the viewer sheet and the Fold dual-pane)', () => {
   it('shows the figure name, position counter, and badges', () => {
@@ -132,17 +132,26 @@ describe('FigureDetailContent on a local figure (WK-15)', () => {
     const sizeRow = (container: HTMLElement) =>
       (Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).find((r) => (r as Element).textContent?.startsWith('Size')) as Element).textContent;
     afterEach(() => {
-      photoFits.value = new Map();
+      setPhotoFits(new Map());
     });
 
     it('the case has flagged the figure: the row says by how much and that it is drawn to the listing', () => {
-      photoFits.value = new Map([['megumi', { dir: 'wider', pct: 23 }]]);
+      setPhotoFits(new Map([['megumi', { dir: 'wider', pct: 23 }]]));
       const { container } = renderWithProviders(<FigureDetailContent figure={megumi} index={0} total={1} />);
       expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured · photo 23 % wider than listed: drawn to the listing');
     });
 
+    it('an Info card already open follows the case: the note appears when the photo is flagged and goes when it is not', () => {
+      const { container } = renderWithProviders(<FigureDetailContent figure={megumi} index={0} total={1} />);
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured');
+      act(() => setPhotoFits(new Map([['megumi', { dir: 'narrower', pct: 18 }]])));
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured · photo 18 % narrower than listed: drawn at the listed height');
+      act(() => setPhotoFits(new Map()));
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured');
+    });
+
     it('a figure the case did not flag (or flagged another): the row as it was', () => {
-      photoFits.value = new Map([['someone-else', { dir: 'narrower', pct: 30 }]]);
+      setPhotoFits(new Map([['someone-else', { dir: 'narrower', pct: 30 }]]));
       const { container } = renderWithProviders(<FigureDetailContent figure={megumi} index={0} total={1} />);
       expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured');
     });

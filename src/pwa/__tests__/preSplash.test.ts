@@ -152,39 +152,43 @@ describe('the static splash markup', () => {
     expect(keyframes('pre-splash-name')).toBe('from { opacity: 0; } to { opacity: 1; }');
   });
 
-  it("SPLASH-3: the figure's target is 84 % of the window's height (SP4, plan B), shrunk to keep the group inside the safe areas and a margin", () => {
+  it("SPLASH-3: the figure's target is 90.1 % of the window's height (SP4, SP5 plan B), shrunk to keep the group inside the safe areas and a margin", () => {
     expect(supported('.pre-splash')).toContain('container-type: size;');
     for (const side of ['top', 'right', 'bottom', 'left']) expect(supported('.pre-splash')).toContain(`env(safe-area-inset-${side}, 0px)`);
     expect(supported('.pre-splash')).toContain('padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);');
     const target = supported('.pre-splash').match(/--pre-splash-figure: min\((.*)\);/)?.[1] ?? '';
-    expect(supported('.pre-splash')).toContain('--pre-splash-target: 0.84;');
+    expect(supported('.pre-splash')).toContain('--pre-splash-target: 0.901;');
+    expect(supported('.pre-splash')).toContain('--pre-splash-margin: max(1.6cqh, 8px);');
     expect(target).toContain('(100cqh + var(--safe-t) + var(--safe-b)) * var(--pre-splash-target)');
-    expect(target).toContain('(100cqh - 2 * var(--pre-splash-margin)) / 1.1375');
-    expect(target).toContain('(100cqw - 2 * var(--pre-splash-margin)) / 0.705');
+    expect(target).toContain('(100cqh - 2 * var(--pre-splash-margin)) / 1.074');
+    expect(target).toContain('(100cqw - 2 * var(--pre-splash-margin)) / 0.573');
     expect(supported('.pre-splash__art')).toBe('height: var(--pre-splash-figure);');
   });
 
-  it('SPLASH-3: the name is 1.8x the old size (22 px to 0.0775 of the figure, 39.6 px at the target) and lower, a gap of 6 % of the figure below it', () => {
+  it('SP5 plan B: the name is smaller (0.063 of the figure, 34.9 px at the target in the installed cover window) and close below it, a gap of 1.1 % of the figure', () => {
     const text = supported('.pre-splash__text');
-    expect(text).toContain('font-size: calc(var(--pre-splash-figure) * 0.0775);');
-    expect(text).toContain('margin-top: calc(var(--pre-splash-figure) * 0.06);');
-    // in the 614 px window of the installed Fold8 cover: 84 % = 516 px figure, the name 40 px: 1.8 x 22 px
-    expect(516 * 0.0775).toBeCloseTo(1.8 * 22, 0);
+    expect(text).toContain('font-size: calc(var(--pre-splash-figure) * 0.063);');
+    expect(text).toContain('margin-top: calc(var(--pre-splash-figure) * 0.011);');
+    // in the 614 px window of the installed Fold8 cover: 90.1 % = 553 px figure, the name 34.9 px (the 40 px it was at 84 %)
+    expect(0.901 * 614 * 0.063).toBeCloseTo(34.9, 1);
+    expect(0.84 * 614 * 0.0775).toBeGreaterThan(0.901 * 614 * 0.063);
   });
 
-  it("SPLASH-3: 84 % of the window is what the group allows with the name below it: a figure of 90.1 % of the window would need 102.5 % of it", () => {
-    // the figure, the gap and the name are 1.1375 of the figure's height; the margin kept clear is 2 % of the box at each end
-    expect(0.84 * 1.1375).toBeLessThanOrEqual(1 - 2 * 0.02);
-    expect(0.901 * 1.1375).toBeGreaterThan(1);
-    // Ross's 72.9 % of the screen is 83.3 % of the installed window (1726 of the screenshot's 1972 px: 87.5 %)
-    expect(0.729 / (1726 / 1972)).toBeCloseTo(0.84, 1);
+  it("SP5 plan B: a figure of 90.1 % of the window holds the smaller name below it: the group is 1.074 of the figure, 96.8 % of the window, a margin of 1.6 % at each end", () => {
+    // the figure, the gap (0.011) and the name (0.063): the margin kept clear is 1.6 % of the box at each end
+    expect(1 + 0.011 + 0.063).toBeCloseTo(1.074, 9);
+    expect(0.901 * 1.074).toBeLessThanOrEqual(1 - 2 * 0.016);
+    // the full name, 16 letters at 9.09 em in the widest fallback face (bold DejaVu), is 0.573 of the figure wide
+    expect(9.09 * 0.063).toBeCloseTo(0.573, 3);
+    // 90.1 % of the installed window (1726 of the screenshot's 1972 px: 87.5 %) is 78.9 % of the screen
+    expect(0.901 * (1726 / 1972)).toBeCloseTo(0.789, 3);
   });
 
   it("SPLASH-3: the figure, the gap and the name stand as one group centred in the usable box: the group lifts by half of what hangs below the figure as it grows", () => {
-    // gap 0.06 + the name 0.0775 of the figure hang below it: half of 0.1375 is 0.06875
+    // gap 0.011 + the name 0.063 of the figure hang below it: half of 0.074 is 0.037
     expect(supported('.pre-splash__stack')).toContain(`animation: pre-splash-lift ${growth};`);
-    expect(css).toMatch(/@keyframes pre-splash-lift \{\s*to \{ transform: translateY\(calc\(var\(--pre-splash-figure\) \* -0\.06875\)\); \}/);
-    expect((0.06 + 0.0775) / 2).toBeCloseTo(0.06875, 9);
+    expect(css).toMatch(/@keyframes pre-splash-lift \{\s*to \{ transform: translateY\(calc\(var\(--pre-splash-figure\) \* -0\.037\)\); \}/);
+    expect((0.011 + 0.063) / 2).toBeCloseTo(0.037, 9);
   });
 
   it("grows the figure about the screen's centre, where the system splash drew the icon: the name sits below it, out of the flow", () => {
@@ -197,7 +201,7 @@ describe('the static splash markup', () => {
     const reduced = css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/)?.[1]?.replace(/\s+/g, ' ') ?? '';
     expect(reduced).toContain('.pre-splash { transition: none; }');
     expect(reduced).toContain('.pre-splash__art, .pre-splash__text { animation: none; }');
-    expect(reduced).toContain('.pre-splash__stack { animation: none; transform: translateY(calc(var(--pre-splash-figure) * -0.06875)); }');
+    expect(reduced).toContain('.pre-splash__stack { animation: none; transform: translateY(calc(var(--pre-splash-figure) * -0.037)); }');
   });
 
   it('shows the figure silhouette above the name, painted from the HTML itself', () => {

@@ -5,8 +5,9 @@ import { parseFigureArt, splashStartHeight } from '../deploy/brandArt';
 
 // The static splash (index.html) shows the figure over the name from the first paint. SPLASH-3 (Ross 10-18): the
 // figure starts at the size Android's system splash drew it (deploy/brandArt.ts splashStartHeight), holds it while
-// Chrome fades its own splash, grows ease-out to the near full-frame target (84 % of the window's height, the name
-// 1.8x and lower below it, the figure, the gap and the name centred as one group inside the safe areas), holds a
+// Chrome fades its own splash, grows ease-out to the near full-frame target (90.1 % of the window's height, the full
+// name "FigureCollecting" in smaller text close below it, the figure, the gap and the name centred as one group inside
+// the safe areas: SP5 plan B), holds a
 // beat, and the splash then fades for 0.5 s: 3 s in all (SPLASH_MIN_MS). With reduced motion it stands at the target
 // for the same time and goes at once. The fixtures fail any test on a CSP violation, so the inline art and the
 // keyframes are also proven allowed by the shipped policy. At the Fold8's cover screen as the installed app has it,
@@ -15,12 +16,14 @@ import { parseFigureArt, splashStartHeight } from '../deploy/brandArt';
 // The window: Ross's installed app on the cover screen (444 x 702 CSS px) draws its splash between the status bar (110 of
 // the screenshot's 1972 px) and the 3-button navigation bar (136 px, 48 dp): 1726 px, 87.5 % of the screen, 614 CSS px
 // (measured 10-18 from ~/tmp/splash-3/current-end-1018.jpg, where the old figure stood centred at 49.35 % of the screen).
-// His target, the figure at 72.9 % of the SCREEN, is 83.3 % of that window; the figure, the gap and the name need
-// 1.1375 times the figure's height, so a figure of 90.1 % of the window would need 102.5 % of it and cannot hold its name
-// below it: the target is 84 % of the window (SP4, plan B).
+// The figure at 90.1 % of that window is 78.9 % of the SCREEN (SP4); the figure, the gap and the name need 1.074 times
+// the figure's height, 96.8 % of the window, a margin of 1.6 % at each end (SP5 plan B: the name is 0.063 of the figure,
+// 34.9 px here, where it was 40 px at 84 %).
 const SCREEN_H = 702;
 const WINDOW = { width: 444, height: 614 };
-const TARGET = { min: 0.82, max: 0.86 };
+const TARGET = { min: 0.89, max: 0.91 };
+/** The name's size as a share of the figure's height: 0.063. */
+const NAME_SHARE = { min: 0.06, max: 0.066 };
 test.use({ serviceWorkers: 'block', viewport: WINDOW });
 
 const START = splashStartHeight(parseFigureArt(readFileSync(new URL('../src/assets/brand/final-E.svg', import.meta.url), 'utf8')));
@@ -99,7 +102,7 @@ const height = (b: Box) => b.bottom - b.top;
 /** The frames where the figure has reached its target and not yet begun to fade: the beat it holds. */
 const held = (r: Record) => r.samples.filter((s) => s.t - r.firstPaint >= GROW_MS + 100 && s.t - r.firstPaint <= GROW_MS + HOLD_MS - 50);
 
-test('the figure starts at the system splash\'s size at the window\'s centre, grows to 84 % of the window\'s height, holds a beat and fades: gone at 3 s', async ({ page }) => {
+test('the figure starts at the system splash\'s size at the window\'s centre, grows to 90.1 % of the window\'s height, holds a beat and fades: gone at 3 s', async ({ page }) => {
   const r = await watchSplash(page);
   const H = page.viewportSize()!.height;
   const at = (s: Sample) => s.t - r.firstPaint;
@@ -119,25 +122,30 @@ test('the figure starts at the system splash\'s size at the window\'s centre, gr
   const mid = r.samples.find((s) => at(s) >= 1000)!;
   expect(height(mid.art)).toBeGreaterThan(START + 10);
   expect(height(mid.art)).toBeLessThan(0.7 * H);
-  // the beat at the target: the silhouette 82-86 % of the window's height (Ross's 70-76 % of the screen's), its top just
+  // the beat at the target: the silhouette 89-91 % of the window's height (78.9 % of the screen's), its top just
   // below the window's, the name whole inside it
   const beat = held(r);
   expect(beat.length, 'frames in the beat').toBeGreaterThan(3);
   for (const s of beat) {
     expect(height(s.art) / H, 'the silhouette\'s share of the window\'s height').toBeGreaterThanOrEqual(TARGET.min);
     expect(height(s.art) / H).toBeLessThanOrEqual(TARGET.max);
-    expect(height(s.art) / SCREEN_H, 'and of the screen\'s').toBeGreaterThanOrEqual(0.7);
-    expect(height(s.art) / SCREEN_H).toBeLessThanOrEqual(0.76);
+    expect(height(s.art) / SCREEN_H, 'and of the screen\'s').toBeGreaterThanOrEqual(0.77);
+    expect(height(s.art) / SCREEN_H).toBeLessThanOrEqual(0.8);
     expect(s.art.top / H, 'its top').toBeGreaterThanOrEqual(0.01);
     expect(s.art.top / H).toBeLessThanOrEqual(0.04);
     expect(s.text.bottom, 'the name stays inside the window').toBeLessThanOrEqual(H - 4);
     expect(s.nameOpacity).toBeGreaterThan(0.99);
   }
-  // the name: about 1.8x the old 22 px, and below the figure
+  // the name: smaller than at 84 % (40 px), 0.063 of the figure, close below it, the whole name inside the window's width
   const name = beat[0]!;
-  expect(name.nameFontPx, 'the name\'s size').toBeGreaterThanOrEqual(1.7 * 22);
-  expect(name.nameFontPx).toBeLessThanOrEqual(1.9 * 22);
+  expect(name.nameFontPx / height(name.art), 'the name\'s size as a share of the figure\'s').toBeGreaterThanOrEqual(NAME_SHARE.min);
+  expect(name.nameFontPx / height(name.art)).toBeLessThanOrEqual(NAME_SHARE.max);
+  expect(name.nameFontPx, 'smaller than the 40 px of the 84 % splash').toBeLessThan(40);
   expect(name.text.top).toBeGreaterThan(name.art.bottom);
+  expect(name.text.top - name.art.bottom, 'close below the figure').toBeLessThan(0.03 * height(name.art));
+  const W = page.viewportSize()!.width;
+  expect(name.text.left, 'the name inside the width, a margin each side').toBeGreaterThanOrEqual(8);
+  expect(name.text.right).toBeLessThanOrEqual(W - 8);
   // the figure, the gap and the name are one group, centred: the margin above it and below it differ by under 2 % of the height
   const group = { top: name.art.top, bottom: name.text.bottom };
   expect(Math.abs(group.top - (H - group.bottom)) / H, 'margin above vs below the group').toBeLessThan(0.02);
@@ -178,7 +186,7 @@ for (const layout of LAYOUTS) {
       expect(Math.abs(group.top - top - (H - bottom - group.bottom)) / H, 'above vs below').toBeLessThan(0.02);
       expect(Math.abs(group.left - left - (W - right - group.right)) / W, 'left vs right').toBeLessThan(0.02);
     }
-    // never above 86 % of the window's height either
+    // never above 91 % of the window's height either
     expect(height(beat[0]!.art) / H).toBeLessThanOrEqual(TARGET.max);
   });
 }

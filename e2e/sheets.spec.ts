@@ -58,6 +58,20 @@ async function openFigure(page: Page) {
 
 const top = async (sheet: Locator) => (await sheet.boundingBox())!.y;
 
+/**
+ * How far apart the Info card's two detents stand (FigureViewer's infoDetents): a drag past half of it crosses to the other.
+ * The rail's room above the sheet grows with its sections (GALLERY-1: three on the short panel), so on a short panel the
+ * card's detents stand close, and a drag meant to settle back must be short against them.
+ */
+const infoDetentSpacing = (page: Page) =>
+  page.evaluate(() => {
+    const sheet = document.querySelector<HTMLElement>('.figure-viewer-sheet')!;
+    const summary = sheet.querySelector('.figure-viewer-sheet__summary')!;
+    const body = sheet.querySelector('.figure-viewer-sheet__body') as HTMLElement;
+    const shown = summary.getBoundingClientRect().bottom - sheet.getBoundingClientRect().top + body.scrollTop + parseFloat(getComputedStyle(sheet).paddingBottom || '0');
+    return Math.max(0, sheet.offsetHeight - shown);
+  });
+
 interface Card {
   name: 'View' | 'Refine' | 'Info';
   sheet: string;
@@ -109,10 +123,12 @@ for (const size of FOLD8) {
       await openCase(page, size);
       const sheet = await openCard(page, card);
       const rest = await top(sheet);
+      // a drag that should settle back stays under a third of the way to the other detent (40 px where they stand far apart)
+      const handleDy = card.name === 'Info' ? Math.sign(card.handleDy) * Math.min(Math.abs(card.handleDy), Math.max(6, Math.floor((await infoDetentSpacing(page)) / 3))) : card.handleDy;
       await swipeContents(page, card);
       // no wait: the handle takes the card wherever the settle has it, then the card moves with the finger
       const grip = await centre(page.locator(card.handle));
-      const way = Math.sign(card.handleDy);
+      const way = Math.sign(handleDy);
       const finger = await touchDown(page, grip.x, grip.y);
       // past Chromium's touch slop (it holds back a finger's first moves on a scroller), so the card is taken by now
       // whether the finger landed on the handle or, the card still settling, just below it on the contents
@@ -120,18 +136,18 @@ for (const size of FOLD8) {
       // the card is drawn a frame after it moves: read it with the finger still
       await page.waitForTimeout(50);
       const taken = await top(sheet);
-      await finger.to(grip.x, grip.y + card.handleDy, 4, 16);
+      await finger.to(grip.x, grip.y + handleDy, 4, 16);
       await page.waitForTimeout(50);
       const held = await top(sheet);
       await finger.end();
-      const travel = card.handleDy - way * 20;
+      const travel = handleDy - way * 20;
       expect.soft(Math.abs(held - taken - travel), `the card follows the finger ${travel} px (from ${taken} to ${held})`).toBeLessThanOrEqual(2);
       const released = Date.now();
       await page.waitForTimeout(400 - (Date.now() - released));
       const at400 = await top(sheet);
       await page.waitForTimeout(500);
       expect(Math.abs((await top(sheet)) - at400), 'at rest by 400 ms').toBeLessThanOrEqual(0.5);
-      expect(Math.abs(at400 - rest), `a 40 px handle drag settles back on the detent it left (rest ${rest}, now ${at400})`).toBeLessThanOrEqual(1);
+      expect(Math.abs(at400 - rest), `a ${Math.abs(handleDy)} px handle drag settles back on the detent it left (rest ${rest}, now ${at400})`).toBeLessThanOrEqual(1);
     });
   }
 }

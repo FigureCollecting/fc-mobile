@@ -26,7 +26,7 @@ import { withheldAmong, type CachedImage } from '../media/keptImages';
 /** The channel every document of the app hears another's completed sync on: one name across builds (so still 'owned'). */
 export const OWNED_SYNC_CHANNEL = 'fc-owned-images';
 
-const isImageAnswer = (key: QueryKey): boolean => key[0] === 'local' && (key[1] === 'kept-images' || key[1] === 'image');
+const isImageAnswer = (key: QueryKey): boolean => key[0] === 'local' && (key[1] === 'kept-images' || key[1] === 'image' || key[1] === 'photos');
 const channels = new WeakMap<QueryClient, BroadcastChannel>();
 /** Per QueryClient, the case views (query hashes) told to answer again from what another document's sync kept. */
 const toldOfSync = new WeakMap<QueryClient, Set<string>>();
@@ -35,16 +35,24 @@ const inOwnSync = new WeakMap<QueryClient, Set<{ hash: string }>>();
 /** What a document tells the others of its sync once it read the lists: it completed with every image fetched, or it ended any other way (stopped). */
 export type KeptSyncEnd = 'synced' | 'stopped';
 
-/** The addresses an image answer names: the figure page's image; each of the case view's images and masks. */
+/** The addresses an image answer names: the figure page's image; each of its photos and their masks (GALLERY-1); each of the case view's images and masks. */
 function addressesIn(key: QueryKey, data: unknown): string[] {
   if (data === undefined || data === null) return [];
   if (key[1] === 'image') return [(data as { url: string }).url];
+  if (key[1] === 'photos') return (data as CachedImage[]).flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
   return [...(data as ReadonlyMap<string, CachedImage>).values()].flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
 }
 
 /** The answer without a withheld address: the figure page's is the plate; the case view loses a figure whose image is withheld, and a withheld mask. */
 function without(key: QueryKey, data: unknown, withheld: ReadonlySet<string>): unknown {
   if (key[1] === 'image') return null;
+  if (key[1] === 'photos') {
+    return (data as CachedImage[]).filter((i) => !withheld.has(i.url)).map((i) => {
+      if (i.maskUrl === undefined || !withheld.has(i.maskUrl)) return i;
+      const { maskUrl: _withheld, ...rest } = i;
+      return rest;
+    });
+  }
   const out = new Map<string, CachedImage>();
   for (const [head, image] of data as ReadonlyMap<string, CachedImage>) {
     if (withheld.has(image.url)) continue;

@@ -291,18 +291,21 @@ describe('measureCaseFigure', () => {
     expect(m.heightEstimated).toBe(true);
   });
 
-  describe("with the picture's alpha known (cut-out and masked art): packed by what it draws, never narrower", () => {
+  describe("with the picture's alpha known (cut-out and masked art): packed by what it draws; a listed width wins over it (FIT1)", () => {
     // a picture as wide as it is tall, a third clear above the figure and a tenth on each side: at 200 mm the figure draws 240 mm wide
     const drawn = { top: 1 / 3, bottom: 0, left: 0.1, right: 0.1 };
     const square = { ...UNMATTED_META, aspect: 1 };
 
-    it('a label narrower than the figure draws: the drawn width (the real cut-outs: Madoka 86 mm labelled, 155 mm drawn)', () => {
+    it('a label narrower than the figure draws (the real cut-outs: Madoka 86 mm labelled, 155 mm drawn): the label wins, the figure drawn smaller to fit it (FIT1)', () => {
       const m = measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 120 } }), 0, square, drawn);
-      expect(m.widthMm).toBeCloseTo(240, 9);
+      expect(m.widthMm).toBe(120);
+      expect(m.heightMm).toBeCloseTo(100, 9);
     });
 
-    it('a label wider than the figure draws: the label (its base, its pose)', () => {
-      expect(measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 300 } }), 0, square, drawn).widthMm).toBe(300);
+    it('a label wider than the figure draws: the label (its base, its pose), the figure at its listed height', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 300 } }), 0, square, drawn);
+      expect(m.widthMm).toBe(300);
+      expect(m.heightMm).toBe(200);
     });
 
     it('no label: the drawn width, not the picture at its height', () => {
@@ -322,6 +325,89 @@ describe('measureCaseFigure', () => {
       const none = { top: 0, bottom: 0, left: 0.6, right: 0.6 };
       expect(measureCaseFigure(fig({ dimensions: { heightMm: 200, widthMm: 120 } }), 0, square, none).widthMm).toBe(120);
       expect(measureCaseFigure(fig({ dimensions: { heightMm: 200 } }), 0, square, none).widthMm).toBeCloseTo(200, 9);
+    });
+  });
+
+  // FIT1 (Ross 10-19): a LISTED width wins over the photo. The cut-out is scaled uniformly to fit inside the listed box (no
+  // stretch: the binding dimension decides), where it was drawn as wide as its photo said when that was wider than the
+  // listing (Kato Megumi a8df0a43: listed H360 W227, drawn 280 wide). A mismatch over 15 % between the photo's width at the
+  // figure's height and the listed width is flagged (photoFit), on both sides.
+  describe('FIT1: a listed width wins over the photo; a mismatch over 15 % is flagged', () => {
+    const none = { top: 0, bottom: 0, left: 0, right: 0 };
+    /** A picture whose figure fills it, wide enough to draw `mm` wide at `at` mm tall. */
+    const drawing = (mm: number, at: number) => ({ ...UNMATTED_META, aspect: mm / at });
+
+    it('Kato Megumi (listed H360 W227, her photo 280 wide at 360): drawn 227 wide, 23 % less tall, uniformly; flagged 23 % wider', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 227 } }), 0, drawing(280, 360), none);
+      expect(m.widthMm).toBe(227);
+      expect(m.heightMm).toBeCloseTo((360 * 227) / 280, 9);
+      // not stretched: the picture keeps its shape at the new height
+      expect(m.billboardWidthMm / m.heightMm).toBeCloseTo(280 / 360, 9);
+      expect(m.billboardWidthMm).toBeCloseTo(227, 9);
+      expect(m.photoFit).toEqual({ dir: 'wider', pct: 23 });
+      expect(m.heightEstimated).toBe(false);
+    });
+
+    it('a photo narrower than the listing: drawn at the listed height (it binds), the width the label, flagged narrower', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 227 } }), 0, drawing(180, 360), none);
+      expect(m.heightMm).toBe(360);
+      expect(m.widthMm).toBe(227);
+      expect(m.billboardWidthMm).toBeCloseTo(180, 9);
+      expect(m.photoFit).toEqual({ dir: 'narrower', pct: 21 });
+    });
+
+    it.each([
+      ['14 % wider', 227 * 1.14, undefined],
+      ['16 % wider', 227 * 1.16, { dir: 'wider', pct: 16 }],
+      ['14 % narrower', 227 * 0.86, undefined],
+      ['16 % narrower', 227 * 0.84, { dir: 'narrower', pct: 16 }],
+    ])('the flag is over 15 %%, both sides: %s', (_name, photoMm, flag) => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 227 } }), 0, drawing(photoMm, 360), none);
+      expect(m.photoFit).toEqual(flag);
+    });
+
+    it('exactly 15 % is not flagged', () => {
+      expect(measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 200 } }), 0, drawing(230, 360), none).photoFit).toBeUndefined();
+    });
+
+    it('a photo a little wider than the listing (under 15 %) is still drawn to the listing, unflagged', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 227 } }), 0, drawing(250, 360), none);
+      expect(m.widthMm).toBe(227);
+      expect(m.heightMm).toBeCloseTo((360 * 227) / 250, 9);
+      expect(m.photoFit).toBeUndefined();
+    });
+
+    it('the figure the photo draws, not the whole picture: clear margins do not count as wide', () => {
+      // the picture is 300 wide at 360 but its figure fills only 60 % of that: 180, narrower than the 227 listed
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 227 } }), 0, drawing(300, 360), { top: 0, bottom: 0, left: 0.2, right: 0.2 });
+      expect(m.heightMm).toBe(360);
+      expect(m.widthMm).toBe(227);
+      expect(m.photoFit).toEqual({ dir: 'narrower', pct: 21 });
+    });
+
+    it('no listed width: unchanged, whatever the photo says (the photo is all there is)', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360 } }), 0, drawing(280, 360), none);
+      expect(m.heightMm).toBe(360);
+      expect(m.widthMm).toBeCloseTo(280, 9);
+      expect(m.photoFit).toBeUndefined();
+      const bare = measureCaseFigure(fig({}), 0, drawing(150, DEFAULT_FIGURE_HEIGHT_MM), none);
+      expect(bare.heightMm).toBe(DEFAULT_FIGURE_HEIGHT_MM);
+      expect(bare.photoFit).toBeUndefined();
+    });
+
+    it('the picture not read yet (no alpha): unchanged, the listing as the footprint, no flag', () => {
+      const m = measureCaseFigure(fig({ dimensions: { heightMm: 360, widthMm: 227 } }), 0, drawing(280, 360));
+      expect(m.heightMm).toBe(360);
+      expect(m.widthMm).toBe(227);
+      expect(m.photoFit).toBeUndefined();
+    });
+
+    it('a listed width with an estimated height: the measurement still wins over the photo, with no flag (the height is a guess)', () => {
+      const m = measureCaseFigure(fig({ scale: '1/8', dimensions: { widthMm: 227 } }), 0, drawing(280, 200), none);
+      expect(m.heightEstimated).toBe(true);
+      expect(m.widthMm).toBe(227);
+      expect(m.heightMm).toBeCloseTo((200 * 227) / 280, 9);
+      expect(m.photoFit).toBeUndefined();
     });
   });
 

@@ -18,6 +18,7 @@ import type { CabinetProfile } from './cabinetProfile';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT, baseDepth, type BaseDepth } from './caseInterim';
 import type { FigureDisplayMeta } from './displayMeta';
 import { drawnWidthMm, type PictureMargins } from './figureArt';
+import { photoFitOf, type PhotoFit } from './photoFit';
 import { DEPTH_WIDTH_RATIO, MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm, resolveWidthCap } from './sizeResolution';
 
 /** Space left between neighbours on a surface. */
@@ -40,6 +41,8 @@ export interface CaseFigure {
   readonly heightEstimated: boolean;
   /** Where widthMm comes from (CASE-FB3b); absent = labeled. */
   readonly widthBasis?: WidthBasis;
+  /** FIT1: the photo's figure is over 15 % wider or narrower than the listed width (a listed height too, a read cut-out). */
+  readonly photoFit?: PhotoFit;
   /** Stood turned on its shelf (CASE-FB3b): widthMm and depthMm are its footprint's sides the other way round. */
   readonly turned?: boolean;
 }
@@ -73,6 +76,19 @@ export function measureCaseFigure(figure: Figure, index: number, meta: FigureDis
     heightMm = (heightMm * cap.capMm) / pictureWidth(heightMm);
     capped = true;
   }
+  // FIT1 (Ross 10-19): a listed width wins over the photo. The cut-out's figure is scaled uniformly (no stretch: the binding
+  // dimension decides) to fit inside the listed box: when it draws wider than the listing at this height, the height follows
+  // the width down. It never grows to a wider listing: a narrower photo stays at its height, the label the footprint. Only
+  // a read cut-out (the figure it draws, not the whole picture) says what the photo is, and only with the height listed
+  // is its width a fair test of the listing (at an estimated height it is a guess against a guess).
+  let photoFit: PhotoFit | undefined;
+  if (drawn && hasLabelledWidth) {
+    const photoWidth = pictureWidth(heightMm);
+    if (positive(photoWidth)) {
+      if (!heightEstimated) photoFit = photoFitOf(photoWidth, labelledWidth);
+      if (photoWidth > labelledWidth) heightMm = (heightMm * labelledWidth) / photoWidth;
+    }
+  }
   const billboardWidthMm = meta.aspect * heightMm;
   const drawnWidth = drawn ? drawnWidthMm(heightMm, meta.aspect, drawn) : 0;
   const widthMm = hasLabelledWidth ? Math.max(labelledWidth, drawnWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
@@ -80,7 +96,7 @@ export function measureCaseFigure(figure: Figure, index: number, meta: FigureDis
   const labelledDepth = figure.dimensions?.depthMm;
   // a capped width gives a depth in Ross's ratio of its own, not of the picture's
   const depthMm = !positive(labelledDepth) && cap && capped ? DEPTH_WIDTH_RATIO * widthMm : resolveDepthMm(figure, meta, heightMm).depthMm;
-  return { figure, index, heightMm, widthMm, billboardWidthMm, depthMm, heightEstimated, widthBasis };
+  return { figure, index, heightMm, widthMm, billboardWidthMm, depthMm, heightEstimated, widthBasis, ...(photoFit ? { photoFit } : {}) };
 }
 
 /** One display surface as the packer and the renderer see it. */

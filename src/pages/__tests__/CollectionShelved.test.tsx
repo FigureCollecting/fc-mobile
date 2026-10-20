@@ -123,7 +123,7 @@ describe('the case shelves figures only', () => {
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'A Prepainted' });
     await user.click(screen.getByRole('button', { name: 'View' }));
-    await screen.findByRole('group', { name: 'Back wall' });
+    await screen.findByRole('group', { name: 'Wall' });
     expect(screen.queryByText(/not shelved/)).toBeNull();
   });
 

@@ -1,6 +1,6 @@
 /**
  * The View tab's card: how the case looks, kept on this device (CC14): the
- * back wall's colour (WALL-COLOUR-1), which cabinets line the
+ * wall's colour (WALL-COLOUR-1), which cabinets line the
  * wall, the room's ceiling (CC9, which limits what may stand on a top), the
  * clearance every compartment keeps above a figure (CLEAR-1) and which side the
  * tabs sit on. What a sideways swipe does (CC4: walk the
@@ -43,7 +43,7 @@ export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, 
     <BottomSheet open={open} onClose={onClose} snapPoint="fit">
       <div class="case-card">
         <fieldset class="case-card__group">
-          <legend>Back wall</legend>
+          <legend>Wall</legend>
           {WALL_PRESETS.map((p) => (
             <label key={p.id} class="case-card__choice">
               <input type="radio" name="case-wall" checked={prefs.wall === p.id} onChange={() => onChange({ wall: p.id })} />

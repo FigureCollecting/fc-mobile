@@ -57,6 +57,6 @@ test('with no goods or media in the collection the View card says nothing about 
   await page.goto('/?layout=case');
   await page.waitForSelector('button.cab-figure');
   await page.getByRole('button', { name: 'View' }).click();
-  await expect(page.getByRole('group', { name: 'Back wall' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Wall', exact: true })).toBeVisible();
   await expect(page.getByText(/not shelved/)).toHaveCount(0);
 });

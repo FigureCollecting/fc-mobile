@@ -61,15 +61,15 @@ describe('CaseViewCard (the View tab: back wall, cabinets, ceiling, tab sides)',
     expect(screen.queryByText('View', { selector: 'legend' })).toBeNull();
   });
 
-  // WALL-COLOUR-1 (Ross 10-20, WALL1 = a)
-  it('offers the back wall colours: Slate (the old wall), Cream, Off-white, White, Seafoam and a custom colour', () => {
+  // WALL-COLOUR-1 (Ross 10-20, WALL1 = a): the group is called Wall
+  it('offers the wall colours: Cream (the default), Off-white, White, Seafoam and a custom colour', () => {
     const onChange = card();
-    const group = screen.getByRole('group', { name: 'Back wall' });
+    const group = screen.getByRole('group', { name: 'Wall' });
     const names = within(group).getAllByRole('radio').map((r) => (r as HTMLInputElement).labels?.[0]?.textContent?.trim());
-    expect(names).toEqual(['Slate', 'Cream', 'Off-white', 'White', 'Seafoam', 'Custom']);
-    expect(within(group).getByRole('radio', { name: 'Slate' })).toBeChecked();
-    fireEvent.click(within(group).getByRole('radio', { name: 'Cream' }));
-    expect(onChange).toHaveBeenCalledWith({ wall: 'cream' });
+    expect(names).toEqual(['Cream', 'Off-white', 'White', 'Seafoam', 'Custom']);
+    expect(within(group).getByRole('radio', { name: 'Cream' })).toBeChecked();
+    fireEvent.click(within(group).getByRole('radio', { name: 'White' }));
+    expect(onChange).toHaveBeenCalledWith({ wall: 'white' });
     fireEvent.click(within(group).getByRole('radio', { name: 'Seafoam' }));
     expect(onChange).toHaveBeenLastCalledWith({ wall: 'seafoam' });
   });

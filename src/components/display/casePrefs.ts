@@ -62,7 +62,7 @@ export interface CasePrefs {
   readonly clearanceMm: number;
   /** SIZE-BASIS-1 (Ross 10-18): outline the figures whose height or width is an estimate (sizeBasis.ts); off until asked for. */
   readonly showEstimated: boolean;
-  /** WALL-COLOUR-1 (Ross 10-20): the back wall's colour: the old slate wall, a preset (each with a dark-theme counterpart) or `wallCustom`. */
+  /** WALL-COLOUR-1 (Ross 10-20): the wall's colour: a preset (Cream by default; each with a dark-theme counterpart) or `wallCustom`. */
   readonly wall: WallPreset;
   /** The custom wall colour, #rrggbb (its light-theme colour; the dark one is mixed from it). */
   readonly wallCustom: string;

@@ -120,12 +120,12 @@ describe('Collection page (rebuilt display layer)', () => {
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     await user.click(screen.getByRole('button', { name: 'View' }));
-    await user.click(await screen.findByRole('radio', { name: 'Cream' }));
+    await user.click(await screen.findByRole('radio', { name: 'White' }));
     // the swipe mode is not in this card any more (CAM1), nor the view (VIEWCARD-1: the header's Case menu)
     expect(screen.queryByRole('radio', { name: 'Pan the wall' })).toBeNull();
     expect(screen.queryByRole('radio', { name: 'One cabinet' })).toBeNull();
-    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-wall-colour="cream"]')).not.toBeNull());
-    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ wall: 'cream' });
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-wall-colour="white"]')).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ wall: 'white' });
   });
 
   it('CAM1: the header\'s swipe menu sets the swipe mode, kept on this device; the tiles have no such button', async () => {
@@ -517,7 +517,7 @@ describe('MISFIT-CHIP-1: the do-not-fit chip on the case page, its list, and the
     renderWithProviders(<Collection />, { initialPath: '/?layout=case' });
     await screen.findByRole('button', { name: 'View' });
     await user.click(screen.getByRole('button', { name: 'View' }));
-    await screen.findByRole('group', { name: 'Back wall' });
+    await screen.findByRole('group', { name: 'Wall' });
     expect(screen.queryByRole('button', { name: /^Doesn't fit/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /do not fit$/ })).toBeNull();
   });

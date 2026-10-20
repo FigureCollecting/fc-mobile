@@ -3,42 +3,77 @@ import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { parseFigureArt, splashStartHeight } from '../deploy/brandArt';
 
-// The static splash (index.html) shows the figure over the name from the first paint. The figure starts at
-// the size Android's system splash drew it (deploy/brandArt.ts splashStartHeight), holds it while Chrome
-// fades its own splash, grows ease-out to full size by 3.5 s as the name fades in, and the splash then
-// fades for 0.5 s: 4 s in all (SPLASH_MIN_MS). With reduced motion it stands at full size for 3.5 s and
-// goes at once. The fixtures fail any test on a CSP violation, so the inline art and the keyframes are
-// also proven allowed by the shipped policy. At the Fold8 cover panel.
-test.use({ serviceWorkers: 'block', viewport: { width: 444, height: 701 } });
+// The static splash (index.html) shows the figure over the name from the first paint. SPLASH-3 (Ross 10-18): the
+// figure starts at the size Android's system splash drew it (deploy/brandArt.ts splashStartHeight), holds it while
+// Chrome fades its own splash, grows ease-out to the near full-frame target (90.1 % of the window's height, the full
+// name "FigureCollecting" in smaller text close below it, the figure, the gap and the name centred as one group inside
+// the safe areas: SP5 plan B), holds a
+// beat, and the splash then fades for 0.5 s: 3 s in all (SPLASH_MIN_MS). With reduced motion it stands at the target
+// for the same time and goes at once. The fixtures fail any test on a CSP violation, so the inline art and the
+// keyframes are also proven allowed by the shipped policy. At the Fold8's cover screen as the installed app has it,
+// and the four layouts below.
+//
+// The window: Ross's installed app on the cover screen (444 x 702 CSS px) draws its splash between the status bar (110 of
+// the screenshot's 1972 px) and the 3-button navigation bar (136 px, 48 dp): 1726 px, 87.5 % of the screen, 614 CSS px
+// (measured 10-18 from ~/tmp/splash-3/current-end-1018.jpg, where the old figure stood centred at 49.35 % of the screen).
+// The figure at 90.1 % of that window is 78.9 % of the SCREEN (SP4); the figure, the gap and the name need 1.074 times
+// the figure's height, 96.8 % of the window, a margin of 1.6 % at each end (SP5 plan B: the name is 0.063 of the figure,
+// 34.9 px here, where it was 40 px at 84 %).
+const SCREEN_H = 702;
+const WINDOW = { width: 444, height: 614 };
+const TARGET = { min: 0.89, max: 0.91 };
+/** The name's size as a share of the figure's height: 0.063. */
+const NAME_SHARE = { min: 0.06, max: 0.066 };
+test.use({ serviceWorkers: 'block', viewport: WINDOW });
 
 const START = splashStartHeight(parseFigureArt(readFileSync(new URL('../src/assets/brand/final-E.svg', import.meta.url), 'utf8')));
 
+/** From first paint: the figure full size, the beat it holds there, the fade, and the splash gone (src/pwa/preSplash.ts). */
+const GROW_MS = 2200;
+const HOLD_MS = 300;
+const FADE_MS = 500;
+const TOTAL_MS = GROW_MS + HOLD_MS + FADE_MS;
+
+interface Box {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
 interface Sample {
   t: number;
-  height: number;
-  centreY: number;
+  art: Box;
+  text: Box;
   nameOpacity: number;
+  nameFontPx: number;
+  /** The figure's growth animation's own clock (ms, its delay included), null when it has none (reduced motion). */
+  animT: number | null;
 }
 interface Record {
   removedAt: number;
   mountedAt: number;
+  hiddenAt: number | undefined;
   firstPaint: number;
-  hiddenClass: boolean;
   samples: Sample[];
 }
 
-/** Loads the app, recording the figure's height, its centre and the name's opacity every frame until the splash goes. */
+/** Loads the app, recording the figure's and the name's boxes (and the name's opacity) every frame until the splash goes. */
 async function watchSplash(page: Page): Promise<Record> {
   await page.addInitScript(() => {
-    const w = window as unknown as { __splash: { removedAt?: number; mountedAt?: number; hiddenClass: boolean; samples: unknown[] } };
-    w.__splash = { hiddenClass: false, samples: [] };
+    const w = window as unknown as { __splash: { removedAt?: number; mountedAt?: number; hiddenAt?: number; samples: unknown[] } };
+    w.__splash = { samples: [] };
     let seen = false;
+    const box = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+    };
     const frame = () => {
       const art = document.querySelector('#pre-splash .pre-splash__art');
       const name = document.querySelector('#pre-splash .pre-splash__text');
       if (art === null || name === null) return;
-      const box = art.getBoundingClientRect();
-      w.__splash.samples.push({ t: performance.now(), height: box.height, centreY: box.top + box.height / 2, nameOpacity: Number(getComputedStyle(name).opacity) });
+      const style = getComputedStyle(name);
+      const growth = art.getAnimations().find((a) => (a as CSSAnimation).animationName === 'pre-splash-grow');
+      w.__splash.samples.push({ t: performance.now(), art: box(art), text: box(name), nameOpacity: Number(style.opacity), nameFontPx: parseFloat(style.fontSize), animT: growth ? Number(growth.currentTime) : null });
       requestAnimationFrame(frame);
     };
     new MutationObserver(() => {
@@ -47,7 +82,7 @@ async function watchSplash(page: Page): Promise<Record> {
         seen = true;
         requestAnimationFrame(frame);
       }
-      if (splash?.classList.contains('pre-splash--hidden')) w.__splash.hiddenClass = true;
+      if (splash?.classList.contains('pre-splash--hidden') && w.__splash.hiddenAt === undefined) w.__splash.hiddenAt = performance.now();
       if (splash === null && seen && w.__splash.removedAt === undefined) w.__splash.removedAt = performance.now();
       if (w.__splash.mountedAt === undefined && (document.getElementById('app')?.childElementCount ?? 0) > 0) w.__splash.mountedAt = performance.now();
     }).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
@@ -63,46 +98,114 @@ async function watchSplash(page: Page): Promise<Record> {
   }));
 }
 
-const fullHeight = (page: Page) => Math.min(0.46 * page.viewportSize()!.height, 22 * 16);
+const height = (b: Box) => b.bottom - b.top;
+/** The frames where the figure has reached its target and not yet begun to fade: the beat it holds. */
+const held = (r: Record) => r.samples.filter((s) => s.t - r.firstPaint >= GROW_MS + 100 && s.t - r.firstPaint <= GROW_MS + HOLD_MS - 50);
 
-test("the figure starts at the system splash's size at the screen's centre, grows to full size by 3.5 s as the name fades in, and the splash is gone at 4 s", async ({ page }) => {
+test('the figure starts at the system splash\'s size at the window\'s centre, grows to 90.1 % of the window\'s height, holds a beat and fades: gone at 3 s', async ({ page }) => {
   const r = await watchSplash(page);
+  const H = page.viewportSize()!.height;
   const at = (s: Sample) => s.t - r.firstPaint;
   const first = r.samples[0]!;
   // the first frame: the system splash's figure, centred where the system drew the icon
   expect(at(first), 'a frame from the start').toBeLessThan(250);
-  expect(Math.abs(first.height - START), `first frame ${first.height.toFixed(1)} px, the system splash ${START.toFixed(1)} px`).toBeLessThanOrEqual(1);
-  expect(Math.abs(first.centreY - page.viewportSize()!.height / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(height(first.art) - START), `first frame ${height(first.art).toFixed(1)} px, the system splash ${START.toFixed(1)} px`).toBeLessThanOrEqual(1);
+  expect(Math.abs((first.art.top + first.art.bottom) / 2 - H / 2)).toBeLessThanOrEqual(1);
   expect(first.nameOpacity).toBeLessThan(0.05);
-  // it holds through Chrome's own 300 ms splash fade, then grows smoothly: never smaller than the frame before
-  for (const s of r.samples.filter((s) => at(s) < 280)) expect(Math.abs(s.height - START)).toBeLessThanOrEqual(1);
-  for (let i = 1; i < r.samples.length; i++) expect(r.samples[i]!.height).toBeGreaterThanOrEqual(r.samples[i - 1]!.height - 0.5);
-  const mid = r.samples.find((s) => at(s) >= 1500)!;
-  expect(mid.height).toBeGreaterThan(START + 10);
-  expect(mid.height).toBeLessThan(fullHeight(page) - 1);
-  // full size and the whole name by 3.5 s, still centred
-  const grown = r.samples.filter((s) => at(s) >= 3550);
-  expect(grown.length, 'frames after the growth').toBeGreaterThan(0);
-  for (const s of grown) {
-    expect(Math.abs(s.height - fullHeight(page))).toBeLessThanOrEqual(1);
-    expect(Math.abs(s.centreY - page.viewportSize()!.height / 2)).toBeLessThanOrEqual(1);
+  // it holds through Chrome's own 300 ms splash fade (the growth animation's delay, read on the animation's own clock: the
+  // first-paint clock can lag it by tens of ms on a loaded runner, so a frame stamped under 280 ms was already growing),
+  // then grows smoothly: never smaller than the frame before
+  const handover = r.samples.filter((s) => s.animT !== null && s.animT < 299);
+  expect(handover.length, 'frames in the hand-over hold').toBeGreaterThan(0);
+  for (const s of handover) expect(Math.abs(height(s.art) - START), `at ${s.animT} ms of the animation`).toBeLessThanOrEqual(1);
+  for (let i = 1; i < r.samples.length; i++) expect(height(r.samples[i]!.art)).toBeGreaterThanOrEqual(height(r.samples[i - 1]!.art) - 0.5);
+  const mid = r.samples.find((s) => at(s) >= 1000)!;
+  expect(height(mid.art)).toBeGreaterThan(START + 10);
+  expect(height(mid.art)).toBeLessThan(0.7 * H);
+  // the beat at the target: the silhouette 89-91 % of the window's height (78.9 % of the screen's), its top just
+  // below the window's, the name whole inside it
+  const beat = held(r);
+  expect(beat.length, 'frames in the beat').toBeGreaterThan(3);
+  for (const s of beat) {
+    expect(height(s.art) / H, 'the silhouette\'s share of the window\'s height').toBeGreaterThanOrEqual(TARGET.min);
+    expect(height(s.art) / H).toBeLessThanOrEqual(TARGET.max);
+    expect(height(s.art) / SCREEN_H, 'and of the screen\'s').toBeGreaterThanOrEqual(0.77);
+    expect(height(s.art) / SCREEN_H).toBeLessThanOrEqual(0.8);
+    expect(s.art.top / H, 'its top').toBeGreaterThanOrEqual(0.01);
+    expect(s.art.top / H).toBeLessThanOrEqual(0.04);
+    expect(s.text.bottom, 'the name stays inside the window').toBeLessThanOrEqual(H - 4);
     expect(s.nameOpacity).toBeGreaterThan(0.99);
   }
-  // 4 s from first paint, and no longer than it has to: the fade starts at 3.5 s, or on mount if that came later
-  expect(r.hiddenClass).toBe(true);
-  expect(r.removedAt - r.firstPaint).toBeGreaterThanOrEqual(4000 - 50);
-  expect(r.removedAt - Math.max(r.firstPaint + 3500, r.mountedAt)).toBeLessThanOrEqual(500 + 250);
+  // the name: smaller than at 84 % (40 px), 0.063 of the figure, close below it, the whole name inside the window's width
+  const name = beat[0]!;
+  expect(name.nameFontPx / height(name.art), 'the name\'s size as a share of the figure\'s').toBeGreaterThanOrEqual(NAME_SHARE.min);
+  expect(name.nameFontPx / height(name.art)).toBeLessThanOrEqual(NAME_SHARE.max);
+  expect(name.nameFontPx, 'smaller than the 40 px of the 84 % splash').toBeLessThan(40);
+  expect(name.text.top).toBeGreaterThan(name.art.bottom);
+  expect(name.text.top - name.art.bottom, 'close below the figure').toBeLessThan(0.03 * height(name.art));
+  const W = page.viewportSize()!.width;
+  expect(name.text.left, 'the name inside the width, a margin each side').toBeGreaterThanOrEqual(8);
+  expect(name.text.right).toBeLessThanOrEqual(W - 8);
+  // the figure, the gap and the name are one group, centred: the margin above it and below it differ by under 2 % of the height
+  const group = { top: name.art.top, bottom: name.text.bottom };
+  expect(Math.abs(group.top - (H - group.bottom)) / H, 'margin above vs below the group').toBeLessThan(0.02);
+  // 3 s from first paint: it holds the beat, then fades, and no longer than it has to
+  expect(r.hiddenAt! - r.firstPaint, 'the fade starts after the beat').toBeGreaterThanOrEqual(GROW_MS + HOLD_MS - 50);
+  expect(r.removedAt - r.firstPaint).toBeGreaterThanOrEqual(TOTAL_MS - 50);
+  expect(r.removedAt - Math.max(r.firstPaint + GROW_MS + HOLD_MS, r.mountedAt)).toBeLessThanOrEqual(FADE_MS + 250);
 });
 
-test('with reduced motion the figure stands at full size with its name for 3.5 s, then goes at once', async ({ page }) => {
+// SPLASH-3: every Fold8 layout, folded or open, portrait or landscape: the group stays inside the safe areas (a punch-hole
+// cutout is one) with a margin, centred in what is left, and the ear tips never reach the cutout. Chromium's own
+// safe-area override stands in for the cutout the phone reports.
+const LAYOUTS = [
+  { name: 'cover portrait', viewport: { width: 444, height: 702 }, insets: { top: 40, bottom: 24, left: 0, right: 0 } },
+  { name: 'open portrait', viewport: { width: 658, height: 871 }, insets: { top: 44, bottom: 24, left: 0, right: 0 } },
+  { name: 'open landscape, cutout on the left', viewport: { width: 871, height: 658 }, insets: { top: 0, bottom: 24, left: 48, right: 0 } },
+  { name: 'open landscape, cutout on the right', viewport: { width: 871, height: 658 }, insets: { top: 0, bottom: 24, left: 0, right: 48 } },
+];
+
+for (const layout of LAYOUTS) {
+  test(`the group stands inside the safe areas, centred, with its top clear of the cutout: ${layout.name}`, async ({ page }) => {
+    await page.setViewportSize(layout.viewport);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: layout.insets });
+    const r = await watchSplash(page);
+    const { width: W, height: H } = layout.viewport;
+    const { top, bottom, left, right } = layout.insets;
+    const beat = held(r);
+    expect(beat.length, 'frames in the beat').toBeGreaterThan(3);
+    for (const s of beat) {
+      const group = { top: s.art.top, bottom: s.text.bottom, left: Math.min(s.art.left, s.text.left), right: Math.max(s.art.right, s.text.right) };
+      // no overlap with any safe-area edge, a margin to spare
+      expect(group.top, 'below the top inset (the ear tips clear of the cutout)').toBeGreaterThanOrEqual(top + 4);
+      expect(group.bottom, 'above the bottom inset').toBeLessThanOrEqual(H - bottom - 4);
+      expect(group.left, 'right of the left inset').toBeGreaterThanOrEqual(left + 4);
+      expect(group.right, 'left of the right inset').toBeLessThanOrEqual(W - right - 4);
+      // centred in the usable box, within 2 % of the height (and of the width across)
+      expect(Math.abs(group.top - top - (H - bottom - group.bottom)) / H, 'above vs below').toBeLessThan(0.02);
+      expect(Math.abs(group.left - left - (W - right - group.right)) / W, 'left vs right').toBeLessThan(0.02);
+    }
+    // never above 91 % of the window's height either
+    expect(height(beat[0]!.art) / H).toBeLessThanOrEqual(TARGET.max);
+  });
+}
+
+test('with reduced motion the figure stands at the target with its name for the same 2.5 s, then goes at once', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const r = await watchSplash(page);
+  const H = page.viewportSize()!.height;
   expect(r.samples.length).toBeGreaterThan(0);
+  const first = r.samples[0]!;
   for (const s of r.samples) {
-    expect(Math.abs(s.height - fullHeight(page)), 'no growth').toBeLessThanOrEqual(1);
+    expect(Math.abs(height(s.art) - height(first.art)), 'no growth').toBeLessThanOrEqual(1);
     expect(s.nameOpacity).toBeGreaterThan(0.99);
   }
-  expect(r.hiddenClass, 'no fade').toBe(false);
-  expect(r.removedAt - r.firstPaint).toBeGreaterThanOrEqual(3500 - 50);
-  expect(r.removedAt - Math.max(r.firstPaint + 3500, r.mountedAt)).toBeLessThanOrEqual(250);
+  expect(height(first.art) / H).toBeGreaterThanOrEqual(TARGET.min);
+  expect(height(first.art) / H).toBeLessThanOrEqual(TARGET.max);
+  const group = { top: first.art.top, bottom: first.text.bottom };
+  expect(Math.abs(group.top - (H - group.bottom)) / H, 'centred as a group even without the motion').toBeLessThan(0.02);
+  expect(r.hiddenAt, 'no fade').toBeUndefined();
+  expect(r.removedAt - r.firstPaint).toBeGreaterThanOrEqual(GROW_MS + HOLD_MS - 50);
+  expect(r.removedAt - Math.max(r.firstPaint + GROW_MS + HOLD_MS, r.mountedAt)).toBeLessThanOrEqual(250);
 });

@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { screen, within } from '@testing-library/preact';
+import { afterEach, describe, it, expect } from 'vitest';
+import { act, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { FigureDetailContent } from '../FigureDetailContent';
 import { renderWithProviders } from '../../../test/testUtils';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
+import { setPhotoFits } from '../photoFit';
 
 describe('FigureDetailContent (shared between the viewer sheet and the Fold dual-pane)', () => {
   it('shows the figure name, position counter, and badges', () => {
@@ -124,5 +125,35 @@ describe('FigureDetailContent on a local figure (WK-15)', () => {
   it('offers no detail link for a fixture figure', () => {
     renderWithProviders(<FigureDetailContent figure={FIXTURE_FIGURES[0]!} index={0} total={7} />);
     expect(screen.queryByRole('button', { name: 'Copies and actions' })).toBeNull();
+  });
+
+  describe('FIT1: the Size row says when the photo disagrees with the listed width', () => {
+    const megumi = { _id: 'megumi', name: 'Kato Megumi', manufacturer: 'M', scale: '', userId: 'u', createdAt: '', updatedAt: '', dimensions: { heightMm: 360, widthMm: 227, depthMm: 160 } } as never;
+    const sizeRow = (container: HTMLElement) =>
+      (Array.from(container.querySelectorAll('.figure-viewer-sheet__row')).find((r) => (r as Element).textContent?.startsWith('Size')) as Element).textContent;
+    afterEach(() => {
+      setPhotoFits(new Map());
+    });
+
+    it('the case has flagged the figure: the row says by how much and that it is drawn to the listing', () => {
+      setPhotoFits(new Map([['megumi', { dir: 'wider', pct: 23 }]]));
+      const { container } = renderWithProviders(<FigureDetailContent figure={megumi} index={0} total={1} />);
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured · photo 23 % wider than listed: drawn to the listing');
+    });
+
+    it('an Info card already open follows the case: the note appears when the photo is flagged and goes when it is not', () => {
+      const { container } = renderWithProviders(<FigureDetailContent figure={megumi} index={0} total={1} />);
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured');
+      act(() => setPhotoFits(new Map([['megumi', { dir: 'narrower', pct: 18 }]])));
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured · photo 18 % narrower than listed: drawn at the listed height');
+      act(() => setPhotoFits(new Map()));
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured');
+    });
+
+    it('a figure the case did not flag (or flagged another): the row as it was', () => {
+      setPhotoFits(new Map([['someone-else', { dir: 'narrower', pct: 30 }]]));
+      const { container } = renderWithProviders(<FigureDetailContent figure={megumi} index={0} total={1} />);
+      expect(sizeRow(container)).toBe('Size360 × 227 × 160 mm · measured');
+    });
   });
 });

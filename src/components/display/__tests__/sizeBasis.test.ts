@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { countEstimated, describeSize } from '../sizeBasis';
+import { photoFitNote } from '../photoFit';
 import { DEFAULT_FIGURE_HEIGHT_MM } from '../packCabinets';
 import { MAX_PLAUSIBLE_HEIGHT_MM } from '../sizeResolution';
 
@@ -96,5 +97,31 @@ describe('countEstimated', () => {
     const figures = [fig(dims(245, 170, 190)), fig(dims(245)), fig({ scale: '1/7' }), fig(), fig(dims(245, 170))];
     expect(countEstimated(figures)).toBe(3);
     expect(countEstimated([])).toBe(0);
+  });
+});
+
+describe('FIT1: a photo more than 15 % off the listed width is said so in the Size row', () => {
+  it('wider than listed: says by how much and that it is drawn to the listing', () => {
+    const s = describeSize(fig(dims(360, 227, 160)), { dir: 'wider', pct: 23 });
+    expect(s.line).toBe('360 × 227 × 160 mm · measured · photo 23 % wider than listed: drawn to the listing');
+    expect(s.photoFit).toEqual({ dir: 'wider', pct: 23 });
+    // the size is still the listing's: nothing in it is an estimate
+    expect(s.estimated).toBe(false);
+  });
+
+  it('narrower than listed: says it is drawn at the listed height', () => {
+    expect(describeSize(fig(dims(360, 227)), { dir: 'narrower', pct: 21 }).line).toBe(
+      '360 mm tall · 227 mm wide · depth from the width · photo 21 % narrower than listed: drawn at the listed height',
+    );
+  });
+
+  it('no flag: the line as it was, and no photoFit', () => {
+    const s = describeSize(fig(dims(360, 227, 160)));
+    expect(s.line).toBe('360 × 227 × 160 mm · measured');
+    expect(s.photoFit).toBeUndefined();
+  });
+
+  it('the wording lives with the flag', () => {
+    expect(photoFitNote({ dir: 'wider', pct: 16 })).toBe('photo 16 % wider than listed: drawn to the listing');
   });
 });

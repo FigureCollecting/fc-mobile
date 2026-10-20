@@ -90,6 +90,7 @@ import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useLayoutBasis } from './layoutBasis';
+import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -714,6 +715,8 @@ function SceneFigure({
         data-index={String(item.index)}
         // SIZE-BASIS-1: what of this figure's size is an estimate: '' (the listing's), 'height', 'width' or 'both'
         data-size-estimated={sizeEstimated(item)}
+        // FIT1: the photo is over 15 % off the listed width: 'wider:23', 'narrower:18'
+        data-photo-fit={item.photoFit ? `${item.photoFit.dir}:${item.photoFit.pct}` : undefined}
         data-grounded={grounded ? '1' : '0'}
         data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
         data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
@@ -942,19 +945,27 @@ export function CabinetScene({
   });
   const basis = settle.basis;
 
-  const packed = useMemo(() => {
-    // each figure is packed by what the case draws for it: its label, or what its cut-out draws at true scale when wider
-    // (by the basis: before the first layout nothing is packed, so nothing is drawn twice)
-    const items =
+  // each figure is measured by what the case draws for it: its listed size when it has one (a cut-out wider than its listed
+  // width is drawn smaller to fit it, FIT1), else what its cut-out draws at true scale (by the basis: before the first layout
+  // nothing is measured, so nothing is drawn twice)
+  const measured = useMemo(
+    () =>
       basis === null
         ? []
         : figures.map((f, i) => {
             const { meta, art, aspect } = basis.arts[i];
             const drawn = art.alphaUrl ? pictureMargins(art, basis.alpha) : null;
             return measureCaseFigure(f, i, { ...meta, aspect }, drawn ?? undefined);
-          });
-    return packCabinets(items, pattern, ceilingMm);
-  }, [figures, basis, pattern, ceilingMm]);
+          }),
+    [figures, basis],
+  );
+  const packed = useMemo(() => packCabinets(measured, pattern, ceilingMm), [measured, pattern, ceilingMm]);
+  // FIT1: the figures whose photo is over 15 % off their listed width, for the Info card's Size row; gone with the case
+  useEffect(() => {
+    const flagged = new Map(measured.flatMap((m) => (m.photoFit ? [[m.figure._id, m.photoFit] as const] : [])));
+    setPhotoFits(flagged);
+    return () => setPhotoFits(new Map());
+  }, [measured]);
 
   /**
    * What a figure draws: its picture as it stands now when that draws within the place the figure was packed in (a picture

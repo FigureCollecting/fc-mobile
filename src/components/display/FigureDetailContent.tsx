@@ -4,6 +4,7 @@ import { SyncBadge } from '../sync/SyncBadge';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
 import { Style } from '../../styles/Style';
+import { usePhotoFit, type PhotoFit } from './photoFit';
 import { describeSize } from './sizeBasis';
 
 interface FigureDetailContentProps {
@@ -17,14 +18,14 @@ interface FigureDetailContentProps {
 type Shown = Figure & { local?: Pick<LocalMeta, 'headId' | 'kind' | 'sync' | 'asOf'> & Partial<Pick<LocalMeta, 'character'>> };
 
 /** Every field the figure has beyond the summary's badges (maker, scale, status, count), in reading order, as [label, value]; the ones it lacks are left out. */
-function fieldsOf(figure: Shown): [string, string][] {
+function fieldsOf(figure: Shown, photoFit?: PhotoFit): [string, string][] {
   const rows: [string, string | null | undefined][] = [
     ['Origin', figure.origin],
     ['Character', figure.local?.character],
     ['Version', figure.version],
     ['Release', figure.releases?.find((r) => r.date)?.date],
     // SIZE-BASIS-1: the size the case draws, and what it rests on (the listing's, the scale's, a default, the photo's shape)
-    ['Size', describeSize(figure).line],
+    ['Size', describeSize(figure, photoFit).line],
     ['Category', figure.category],
     ['Type', figure.classification],
     ['Materials', figure.materials],
@@ -64,7 +65,7 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
   // The local store's state of the item; fixture figures have none.
   const local = (figure as Shown).local;
   const quantity = figure.quantity ?? 1;
-  const fields = fieldsOf(figure as Shown);
+  const fields = fieldsOf(figure as Shown, usePhotoFit(figure._id));
 
   return (
     <>

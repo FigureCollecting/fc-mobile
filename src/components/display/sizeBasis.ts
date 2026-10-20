@@ -9,6 +9,7 @@
 // A figure is "sized from an estimate" when its height or its width is not the listing's. Its depth is not counted.
 import type { Figure } from '@figurecollecting/fc-shared';
 import { DEFAULT_FIGURE_HEIGHT_MM } from './packCabinets';
+import { photoFitNote, type PhotoFit } from './photoFit';
 import { MAX_PLAUSIBLE_HEIGHT_MM, resolveHeightMm, resolveWidthCap, type WidthCapBasis } from './sizeResolution';
 
 export type HeightBasis = 'labeled' | 'scale' | 'default';
@@ -24,6 +25,8 @@ export interface SizeBasis {
   depthBasis: 'labeled' | 'width';
   /** The height or the width is not the listing's. */
   estimated: boolean;
+  /** FIT1: the photo is over 15 % off the listed width (the case's flag, when it has one). */
+  photoFit?: PhotoFit;
   /** The Info card's line. */
   line: string;
 }
@@ -31,7 +34,8 @@ export interface SizeBasis {
 const positive = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 const mm = (v: number): number => Math.round(v);
 
-export function describeSize(figure: Figure): SizeBasis {
+/** `photoFit`: what the case flagged of this figure's photo against its listed width (photoFits), said at the end of the line. */
+export function describeSize(figure: Figure, photoFit?: PhotoFit): SizeBasis {
   const d = figure.dimensions;
   const resolved = resolveHeightMm(figure);
   const heightBasis: HeightBasis = resolved === null ? 'default' : resolved.source === 'labeled' ? 'labeled' : 'scale';
@@ -63,6 +67,7 @@ export function describeSize(figure: Figure): SizeBasis {
     const depth = depthBasis === 'labeled' ? `${mm(d!.depthMm!)} mm deep` : 'depth from the width';
     line = [height, width, depth].join(' · ');
   }
+  if (photoFit) line = `${line} · ${photoFitNote(photoFit)}`;
   return {
     heightMm: mm(heightMm),
     heightBasis,
@@ -70,6 +75,7 @@ export function describeSize(figure: Figure): SizeBasis {
     ...(widthBasis === 'photo' && cap !== null ? { widthCapMm: mm(cap.capMm), widthCapOf: cap.basis } : {}),
     depthBasis,
     estimated,
+    ...(photoFit ? { photoFit } : {}),
     line,
   };
 }

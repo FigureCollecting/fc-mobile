@@ -4,6 +4,7 @@ import { SyncBadge } from '../sync/SyncBadge';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { StatusBadge } from '../ui/StatusBadge';
 import { Style } from '../../styles/Style';
+import { photoFits } from './photoFit';
 import { describeSize } from './sizeBasis';
 
 interface FigureDetailContentProps {
@@ -24,7 +25,7 @@ function fieldsOf(figure: Shown): [string, string][] {
     ['Version', figure.version],
     ['Release', figure.releases?.find((r) => r.date)?.date],
     // SIZE-BASIS-1: the size the case draws, and what it rests on (the listing's, the scale's, a default, the photo's shape)
-    ['Size', describeSize(figure).line],
+    ['Size', describeSize(figure, photoFits.value.get(figure._id)).line],
     ['Category', figure.category],
     ['Type', figure.classification],
     ['Materials', figure.materials],

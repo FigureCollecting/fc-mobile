@@ -18,6 +18,9 @@ import {
   getFixtureSteady,
   getFixtureMisfits,
   getFixtureGoods,
+  getFixturePhotos,
+  fixturePhotos,
+  FIXTURE_SUB,
   getFixtureOnly,
   getFixtureImageRef,
   resolveFixtureArt,
@@ -750,5 +753,38 @@ describe('fixture goods and media (?fxgoods=1): products the case leaves off its
     expect(rem!.local.productKind).toBeUndefined();
     expect(olivia!.local.sync).toBe('offline-stale');
     expect(olivia!.local.productKind).toBe(ProductKind.GOODS);
+  });
+});
+
+describe('fixture photos (?fxphotos=1): a local item and three photos each, for the figure card\'s Photos tab (GALLERY-1)', () => {
+  afterEach(() => {
+    window.history.pushState({}, '', '/');
+  });
+
+  it('off unless asked for: the fixtures are as they were, with no local item', () => {
+    for (const query of ['/', '/?fxphotos=0', '/?fxphotos=bogus']) {
+      window.history.pushState({}, '', query);
+      expect(getFixturePhotos(), query).toBe(false);
+      expect(getFixtureFigures(), query).toBe(FIXTURE_FIGURES);
+    }
+  });
+
+  it('?fxphotos=1 gives every figure a local item (its id its head), two of its copies for every third figure, and changes nothing else', () => {
+    window.history.pushState({}, '', '/?fxphotos=1');
+    expect(getFixturePhotos()).toBe(true);
+    const figures = getFixtureFigures() as (Figure & { local: LocalMeta })[];
+    expect(figures).toHaveLength(FIXTURE_FIGURES.length);
+    figures.forEach((f, i) => {
+      expect(f.local.headId).toBe(f._id);
+      expect(f.local.copies, f._id).toHaveLength(i % 3 === 1 ? 2 : 1);
+      expect({ ...f, local: undefined }).toEqual({ ...FIXTURE_FIGURES[i], local: undefined });
+    });
+  });
+
+  it('every figure has the same three photos, on the public image address: the default with a mask, a plain one, a second with a mask', () => {
+    const photos = fixturePhotos();
+    expect(photos.map((p) => [p.primary, p.maskUrl !== undefined])).toEqual([[true, true], [false, false], [false, true]]);
+    for (const p of photos) expect(p.url).toMatch(/^https:\/\/images\.figurecollecting\.com\/d\/[0-9a-f]{64}$/);
+    expect(FIXTURE_SUB).toBe('fixture-user');
   });
 });

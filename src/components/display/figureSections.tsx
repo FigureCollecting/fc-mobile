@@ -3,9 +3,9 @@ import { SideRail, type RailItem } from '../ui/SideRail';
 
 /**
  * SIDE-RAIL-1 (Ross 10-18): the figure (Info) card's sections stand on one right rail, the same in the full-screen
- * viewer's sheet and the Fold-open pane. The registry fixes their order and their slots: Photos (GAL1) and Stores
- * (prices by store, after ER-1b) have theirs and no content yet, so they are not drawn until `ready` says their content
- * is there; Details and Copies are the card's today.
+ * viewer's sheet and the Fold-open pane. The registry fixes their order and their slots: Stores (prices by store, after
+ * ER-1b) has its slot and no content yet, so it is not drawn until `ready` says its content is there; Details and Copies
+ * are the card's today, and Photos (GAL1) opens the figure's photos (GALLERY-1).
  */
 export interface FigureSection {
   id: 'details' | 'photos' | 'copies' | 'stores';
@@ -16,7 +16,7 @@ export interface FigureSection {
 
 export const FIGURE_SECTIONS: readonly FigureSection[] = [
   { id: 'details', label: 'Details', ready: true },
-  { id: 'photos', label: 'Photos', ready: false },
+  { id: 'photos', label: 'Photos', ready: true },
   { id: 'copies', label: 'Copies', ready: true },
   { id: 'stores', label: 'Stores', ready: false },
 ];
@@ -32,6 +32,13 @@ const ICONS: Partial<Record<FigureSection['id'], ComponentChildren>> = {
       <path d="M4 5.5h12M4 10h12M4 14.5h7" />
     </svg>
   ),
+  photos: (
+    <svg {...ICON}>
+      <rect x="3.5" y="5.5" width="13" height="10" rx="1.5" />
+      <circle cx="10" cy="10.5" r="2.6" />
+      <path d="M7.5 5.5l.8-1.5h3.4l.8 1.5" />
+    </svg>
+  ),
   copies: (
     <svg {...ICON}>
       <rect x="7" y="7" width="9" height="9" rx="1.5" />
@@ -44,13 +51,15 @@ interface FigureRailProps {
   /** Its fields show (the sheet at all of its detent, or the pane). */
   detailsOpen: boolean;
   onDetails: () => void;
+  /** GALLERY-1: opens the figure's photos; null for a figure with no local item (no product to list photos of). */
+  onPhotos: (() => void) | null;
   /** The figure's way to its full page (copies and actions); null for a figure with no local item. */
   onCopies: (() => void) | null;
   class?: string;
 }
 
-export function FigureRail({ detailsOpen, onDetails, onCopies, class: className }: FigureRailProps) {
-  const items: RailItem[] = readySections().map((s) => ({ id: s.id, label: s.label, icon: ICONS[s.id], disabled: s.id === 'copies' && onCopies === null }));
+export function FigureRail({ detailsOpen, onDetails, onPhotos, onCopies, class: className }: FigureRailProps) {
+  const items: RailItem[] = readySections().map((s) => ({ id: s.id, label: s.label, icon: ICONS[s.id], disabled: (s.id === 'copies' && onCopies === null) || (s.id === 'photos' && onPhotos === null) }));
   return (
     <SideRail
       label="Figure sections"
@@ -59,6 +68,7 @@ export function FigureRail({ detailsOpen, onDetails, onCopies, class: className 
       current={detailsOpen ? 'details' : null}
       onSelect={(id) => {
         if (id === 'details') onDetails();
+        else if (id === 'photos') onPhotos?.();
         else if (id === 'copies') onCopies?.();
       }}
     />

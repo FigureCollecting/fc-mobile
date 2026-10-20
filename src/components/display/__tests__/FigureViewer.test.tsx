@@ -9,6 +9,7 @@ class FakePswp {
   options: any;
   handlers: Record<string, (payload?: any) => void> = {};
   updateSize = vi.fn();
+  refreshSlideContent = vi.fn();
   currIndex: number;
   initialized = false;
   destroyed = false;
@@ -49,6 +50,50 @@ beforeEach(() => {
 });
 
 describe('FigureViewer (Display D)', () => {
+  // GALLERY-1: the rail's Photos opens the figure's photos over the viewer; a figure with no local item has none to open
+  it('Photos is disabled for a figure with no local item, and opens the figure\'s photos over the viewer for one that has it', async () => {
+    const user = userEvent.setup();
+    const bare = renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Photos' })).toBeDisabled();
+    bare.unmount();
+    const local = FIXTURE_FIGURES.map((f) => ({ ...f, local: { headId: 'h9', kind: 'owned', sync: 'known', asOf: null, copies: [] } })) as never;
+    renderWithProviders(<FigureViewer figures={local} index={0} onClose={() => {}} />);
+    await user.click(screen.getByRole('button', { name: 'Photos' }));
+    expect(await screen.findByRole('dialog', { name: 'Photos' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close photos' }));
+    expect(screen.queryByRole('dialog', { name: 'Photos' })).toBeNull();
+  });
+
+  // GALLERY-1: "Use for me" in the Photos tab changes the photo the card's figure shows; the photo behind the sheet follows
+  // it at once, in the slide that stands, and no other is refreshed for nothing
+  it('shows the photo a figure takes up after the viewer opened: its slide is rewritten and refreshed, once, and only the current one', async () => {
+    const { rerender } = renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const pswp = instances[0]!;
+    expect(pswp.refreshSlideContent).not.toHaveBeenCalled();
+    const taken = FIXTURE_FIGURES.map((f, i) => (i === 1 ? { ...f, imageUrl: 'https://images.figurecollecting.com/d/' + 'b'.repeat(64) } : { ...f, imageUrl: f.imageUrl + '?other' }));
+    rerender(<FigureViewer figures={taken} index={1} onClose={() => {}} />);
+    await waitFor(() => expect(pswp.refreshSlideContent).toHaveBeenCalledTimes(1));
+    expect(pswp.refreshSlideContent).toHaveBeenCalledWith(1);
+    expect(pswp.options.dataSource[1].src).toBe('https://images.figurecollecting.com/d/' + 'b'.repeat(64));
+    // the figures beside it kept the slides they opened with
+    expect(pswp.options.dataSource[0].src).toBe(FIXTURE_FIGURES[0].imageUrl);
+    // the same photo again: nothing to refresh
+    rerender(<FigureViewer figures={[...taken]} index={1} onClose={() => {}} />);
+    expect(pswp.refreshSlideContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a figure\'s plate when its photo goes (a withdrawn image), in the slide that stands', async () => {
+    const { rerender } = renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    const pswp = instances[0]!;
+    rerender(<FigureViewer figures={FIXTURE_FIGURES.map((f, i) => (i === 0 ? { ...f, imageUrl: undefined } : f))} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(pswp.refreshSlideContent).toHaveBeenCalledWith(0));
+    expect(pswp.options.dataSource[0].html).toContain('figure-viewer__no-image');
+    expect(pswp.options.dataSource[0].src).toBeUndefined();
+  });
+
   it('opens photoswipe over the whole result set with native uncropped dimensions', async () => {
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={2} onClose={() => {}} />);
     await waitFor(() => expect(instances).toHaveLength(1));
@@ -167,12 +212,12 @@ describe('FigureViewer (Display D)', () => {
     const local = (f: (typeof FIGURE_FIXTURES)[number]) => ({ ...f, imageUrl: undefined, local: { headId: 'h1', kind: 'owned', sync: 'known', asOf: null } }) as never;
     const FIGURE_FIXTURES = FIXTURE_FIGURES;
 
-    it('carries Details and Copies, a rail of the figure sections inside the sheet so it rides above the sheet\'s top edge', () => {
+    it('carries Details, Photos and Copies, a rail of the figure sections inside the sheet so it rides above the sheet\'s top edge', () => {
       renderWithProviders(<FigureViewer figures={FIGURE_FIXTURES} index={0} onClose={() => {}} />);
       const rail = document.body.querySelector('.figure-viewer-sheet .side-rail')!;
       expect(rail).not.toBeNull();
       expect(rail.getAttribute('aria-label')).toBe('Figure sections');
-      expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Copies']);
+      expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Photos', 'Copies']);
     });
 
     it('Details does what the handle does: it takes the sheet up to all of its fields and back to the summary', async () => {

@@ -56,8 +56,8 @@ async function checkRail(page: Page, size: { width: number; height: number }, ra
   expect(r.y, 'on the screen').toBeGreaterThanOrEqual(0);
   expect(r.y + r.height).toBeLessThanOrEqual(size.height);
   const buttons = rail.getByRole('button');
-  await expect(buttons).toHaveText(['Details', 'Copies']);
-  for (let i = 0; i < 2; i++) {
+  await expect(buttons).toHaveText(['Details', 'Photos', 'Copies']);
+  for (let i = 0; i < 3; i++) {
     const b = buttons.nth(i);
     const icon = await box(b.locator('svg'));
     const label = await box(b.locator('.side-rail__label'));

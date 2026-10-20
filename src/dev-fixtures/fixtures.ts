@@ -18,6 +18,7 @@ import { ProductKind } from '@figurecollecting/fc-api-contract';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { FigureImageRef } from '../components/display/figureArt';
 import type { ItemSync, LocalMeta } from '../local/figures';
+import type { CachedImage } from '../media/keptImages';
 
 /**
  * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
@@ -436,6 +437,31 @@ export function getFixtureGoods(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_GOODS_PARAM) === '1';
 }
 
+const FIXTURE_PHOTOS_PARAM = 'fxphotos';
+
+/** The user the fixtures' photo choices are kept for: the fixtures have no session. */
+export const FIXTURE_SUB = 'fixture-user';
+
+/**
+ * Dev-only switch for the figure card's Photos tab (GALLERY-1): `?fxphotos=1` gives every fixture a local item (its id its
+ * head; two copies for every third figure, so the tab can say a pick is for all of them) and every figure the three photos
+ * fixturePhotos names. Off for anything else.
+ */
+export function getFixturePhotos(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_PHOTOS_PARAM) === '1';
+}
+
+const hex = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
+
+/** A fixture figure's photos under ?fxphotos=1, on the public image address (the e2e answers them with a synthetic picture): the default with a mask, a plain one, a second with a mask. */
+export function fixturePhotos(): CachedImage[] {
+  return [
+    { url: hex('a'), width: 600, height: 800, role: 'gallery', primary: true, maskUrl: hex('d') },
+    { url: hex('b'), width: 600, height: 800, role: 'gallery', primary: false },
+    { url: hex('c'), width: 500, height: 800, role: 'gallery', primary: false, maskUrl: hex('e') },
+  ];
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Each state's badge (sync, and how long ago its data was current; null for none) and count. */
@@ -537,8 +563,8 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * picture URL (getFixtureUnique), `?fxsync=1` gives each a sync badge and a
  * count (getFixtureSync), `?fxonly=<name>` stands one fixture in every slot
  * (getFixtureOnly), `?fxfields=1` gives every other slot a longer card
- * (getFixtureFields), `?fxgoods=1` makes three of them goods and media (getFixtureGoods),
- * `?fxmisfit=N` adds N figures too tall for any cabinet (getFixtureMisfits).
+ * (getFixtureFields), `?fxgoods=1` makes three of them goods and media (getFixtureGoods), `?fxphotos=1` gives each a local
+ * item and three photos (getFixturePhotos), `?fxmisfit=N` adds N figures too tall for any cabinet (getFixtureMisfits).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -551,8 +577,9 @@ export function getFixtureFigures(
   fields = getFixtureFields(),
   misfits = getFixtureMisfits(),
   goods = getFixtureGoods(),
+  photos = getFixturePhotos(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !misfits && !goods) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !misfits && !goods && !photos) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const [slot, each] of FIXTURE_FIGURES.entries()) {
@@ -569,11 +596,20 @@ export function getFixtureFigures(
   for (let i = 1; i <= misfits; i++) out.push({ ...FIXTURE_FIGURES[0], _id: `fx-misfit-${i}`, name: `Misfit Giant ${i}`, dimensions: { heightMm: 3000 } });
   const now = Date.now();
   const synced = sync ? out.map((figure, index) => withSync(figure, index, now)) : out;
-  if (!goods) return synced;
-  return synced.map((figure, index) => {
+  const kinded = !goods
+    ? synced
+    : synced.map((figure, index) => {
+        if (index >= own) return figure;
+        const slot = index % FIXTURE_FIGURES.length;
+        if (GOODS_SLOTS.includes(slot)) return withKind(figure, ProductKind.GOODS);
+        return MEDIA_SLOTS.includes(slot) ? withKind(figure, ProductKind.MEDIA) : figure;
+      });
+  if (!photos) return kinded;
+  // a local item each, its id its head: what the figure card's Photos tab needs to list a product's photos
+  return kinded.map((figure, index) => {
     if (index >= own) return figure;
-    const slot = index % FIXTURE_FIGURES.length;
-    if (GOODS_SLOTS.includes(slot)) return withKind(figure, ProductKind.GOODS);
-    return MEDIA_SLOTS.includes(slot) ? withKind(figure, ProductKind.MEDIA) : figure;
+    const local = (figure as Figure & { local?: LocalMeta }).local ?? fixtureLocal(figure, 'known', null);
+    const copies = Array.from({ length: index % 3 === 1 ? 2 : 1 }, (_, c) => ({ occ_id: `${figure._id}-copy-${c}` })) as unknown as LocalMeta['copies'];
+    return { ...figure, local: { ...local, copies } } as Figure;
   });
 }

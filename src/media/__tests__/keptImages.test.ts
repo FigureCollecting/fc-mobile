@@ -22,6 +22,7 @@ import {
   keptImages,
   primaryImage,
   recallImages,
+  shownImage,
   rememberImages,
   syncKeptImages,
   toCachedImages,
@@ -78,6 +79,92 @@ describe('primaryImage', () => {
     expect(primaryImage([a, b])).toBe(b);
     expect(primaryImage([a])).toBe(a);
     expect(primaryImage([])).toBeUndefined();
+  });
+});
+
+// GALLERY-1 (Ross 10-18): the photo a user chose to display for a figure. One address a figure; the rest of this module
+// keeps and answers "the image to show", so the choice changes nothing but which image that is.
+describe('shownImage', () => {
+  const a = { url: url('a'), width: 1, height: 1, role: 'gallery', primary: false } satisfies CachedImage;
+  const b = { ...a, url: url('b'), primary: true };
+  const c = { ...a, url: url('c') };
+
+  it('is the chosen image when the list has it, the primary otherwise: a choice the list no longer names is no choice', () => {
+    expect(shownImage([a, b, c], url('c'))).toBe(c);
+    expect(shownImage([a, b, c], url('d'))).toBe(b);
+    expect(shownImage([a, b, c], undefined)).toBe(b);
+    expect(shownImage([a], url('z'))).toBe(a);
+    expect(shownImage([], url('a'))).toBeUndefined();
+  });
+});
+
+describe('a chosen photo', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const owned = async (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  const choose = (head: string, c: string) => new Map([[head, url(c)]]);
+
+  it('is kept with its mask beside the primary and its mask, and the third image is not', async () => {
+    const storage = device();
+    const fetchLists = lists({ h1: [img('a', { primary: true, mask: mask('e') }), img('b', { mask: mask('f') }), img('c')] });
+    await syncKeptImages(['h1'], fetchLists, { storage, choices: choose('h1', 'b') });
+    // the primary stays so the figure keeps its photo until the chosen one is here, and the chosen one comes with its mask
+    expect(await owned(storage)).toEqual([url('a'), url('b'), url('e'), url('f')].sort());
+  });
+
+  it('is what keptImages answers once its bytes are here; the primary till then', async () => {
+    const storage = device();
+    const fetchLists = lists({ h1: [img('a', { primary: true, mask: mask('e') }), img('b', { mask: mask('f') })] });
+    await syncKeptImages(['h1'], fetchLists, { storage });
+    expect((await keptImages(['h1'], storage, choose('h1', 'b'))).get('h1')?.url).toBe(url('a'));
+    await syncKeptImages(['h1'], fetchLists, { storage, choices: choose('h1', 'b') });
+    expect(await keptImages(['h1'], storage, choose('h1', 'b'))).toEqual(new Map([['h1', expect.objectContaining({ url: url('b'), maskUrl: url('f') })]]));
+    // forgotten, the default photo again
+    expect((await keptImages(['h1'], storage)).get('h1')?.url).toBe(url('a'));
+    expect((await keptImage('h1', storage, choose('h1', 'b')))?.url).toBe(url('b'));
+  });
+
+  it('is told to onKept as the photo the figure shows: the primary until the chosen bytes land, then the chosen one', async () => {
+    let release!: () => void;
+    const released = new Promise<void>((res) => (release = res));
+    const storage = device(async (r) => {
+      if (r.url === url('b')) await released;
+      return new Response('img');
+    });
+    const fetchLists = lists({ h1: [img('a', { primary: true }), img('b')] });
+    await syncKeptImages(['h1'], fetchLists, { storage });
+    const told: string[] = [];
+    const onKept = (kept: ReadonlyMap<string, CachedImage>) => told.push([...kept].map(([h, i]) => `${h} ${i.url.slice(-1)}`).join(','));
+    await (await storage.open(OWNED_MEDIA_CACHE)).delete(url('b'));
+    const sync = syncKeptImages(['h1'], fetchLists, { storage, concurrency: 1, onKept, choices: choose('h1', 'b') });
+    await vi.waitFor(() => expect(told).toEqual(['h1 a']));
+    release();
+    await sync;
+    expect(told.at(-1)).toBe('h1 b');
+  });
+
+  it('is ignored when the fresh list no longer names it (taken down, or never there): the figure shows its primary', async () => {
+    const storage = device();
+    const fetchLists = lists({ h1: [img('a', { primary: true })] });
+    await syncKeptImages(['h1'], fetchLists, { storage, choices: choose('h1', 'z') });
+    expect(await owned(storage)).toEqual([url('a')]);
+    expect((await keptImages(['h1'], storage, choose('h1', 'z'))).get('h1')?.url).toBe(url('a'));
+  });
+
+  it('a withheld chosen photo is never answered: the figure shows its primary', async () => {
+    const storage = device();
+    await syncKeptImages(['h1'], lists({ h1: [img('a', { primary: true }), img('b')] }), { storage, choices: choose('h1', 'b') });
+    expect((await keptImages(['h1'], storage, choose('h1', 'b'))).get('h1')?.url).toBe(url('b'));
+    // a later fresh list withholds the chosen photo
+    await syncKeptImages(['h1'], lists({ h1: [img('a', { primary: true })] }), { storage, choices: choose('h1', 'b') });
+    expect((await keptImages(['h1'], storage, choose('h1', 'b'))).get('h1')?.url).toBe(url('a'));
+  });
+
+  it('is a choice for another figure, or none: nothing about the others changes', async () => {
+    const storage = device();
+    const fetchLists = lists({ h1: [img('a', { primary: true }), img('b')], h2: [img('c', { primary: true }), img('d')] });
+    await syncKeptImages(['h1', 'h2'], fetchLists, { storage, choices: choose('h1', 'b') });
+    expect(await owned(storage)).toEqual([url('a'), url('b'), url('c')].sort());
   });
 });
 

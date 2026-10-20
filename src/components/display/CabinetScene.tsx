@@ -36,6 +36,7 @@ import {
   measureCaseFigure,
   packCabinets,
   wallLayout,
+  type CaseFigure,
   type PackedCabinet,
   type PlacedFigure,
   type SurfaceSlot,
@@ -84,10 +85,11 @@ import {
   type Rect,
   type TexelGrid,
 } from './caseCull';
-import { clearInset, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
+import { clearInset, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { useLayoutBasis } from './layoutBasis';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -100,6 +102,9 @@ const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 40;
 /** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
 const SHELF_STEPS_PX = 44;
+/** MISFIT-CHIP-1: a finger resting this long (ms) on the do-not-fit chip, and not moving past the slop (px), hides it. */
+export const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP_PX = 8;
 /**
  * CAB-FOCUS-1 (Ross 10-18): how dark the cabinets either side of the focus one are drawn in the one-cabinet view (0 to 1,
  * black over them): light to moderate, to focus the current cabinet where the screen shows neighbours, and to mark the
@@ -595,6 +600,12 @@ function pictureMargins(art: FigureArt, alpha: ReadonlyMap<string, AlphaMargins>
   return { top: read.top, bottom: art.bottomMarginFrac ?? read.bottom, left: read.left, right: read.right };
 }
 
+/** SIZE-BASIS-1: which of a packed figure's height and width is an estimate (sizeBasis.ts says the same of a figure): '' when neither. */
+function sizeEstimated(item: CaseFigure): '' | 'height' | 'width' | 'both' {
+  const width = (item.widthBasis ?? 'labeled') !== 'labeled';
+  return item.heightEstimated ? (width ? 'both' : 'height') : width ? 'width' : '';
+}
+
 /** Where a figure draws (world mm): its picture's box and the tap box it hangs from (SceneFigure). */
 function figureGeometry(draw: FigureDraw, art: FigureArt, aspect: number, margins: PictureMargins | null) {
   const { placed, slot, cx } = draw;
@@ -701,6 +712,8 @@ function SceneFigure({
         data-art={art.kind}
         data-figure-id={item.figure._id}
         data-index={String(item.index)}
+        // SIZE-BASIS-1: what of this figure's size is an estimate: '' (the listing's), 'height', 'width' or 'both'
+        data-size-estimated={sizeEstimated(item)}
         data-grounded={grounded ? '1' : '0'}
         data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
         data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
@@ -750,6 +763,32 @@ export interface CabinetSceneProps {
   frameFallback?: { width: number; height: number };
   /** What the figures are filtered and sorted by (Collection): a new filter starts the picture at 1x (PINCH-1). */
   filterKey?: string;
+  /** MISFIT-CHIP-1: whether the list of the figures that do not fit is open. Its owner (Collection) lets the View card open it; absent, the scene keeps its own. */
+  misfitsOpen?: boolean;
+  onMisfitsOpen?: (open: boolean) => void;
+  /** MISFIT-CHIP-1: how many figures do not fit (for the View card's entry); 0 when the scene goes. */
+  onMisfitCount?: (count: number) => void;
+  /** MISFIT-CHIP-1: where the ids of the dismissed misfits are kept (the case prefs); the scene also keeps them for its own life. */
+  onPrefs?: (patch: Partial<CasePrefs>) => void;
+  /**
+   * LAYOUT-STABLE-1: lay the wall out from a held basis (layoutBasis.ts): nothing drawn until the first layout, a picture
+   * that arrives after it drawn in the place its figure already has (when it fits), the wall laid out again only for an
+   * explicit change or once everything has arrived. Off: laid out by whatever has arrived, as it was (the dev fixtures).
+   */
+  steadyLayout?: boolean;
+  /** The pictures of the collection have all been kept (useCollectionImages): nothing more will stream in. Default true. */
+  imagesComplete?: boolean;
+}
+
+/** A picture whose figure fits the place it was packed in by this much (mm) still draws there: rounding, not a collision. */
+const FIT_SLACK_MM = 0.5;
+
+/** What the case draws for each figure: the shape of the art, its aspect, and the display meta it was measured by. */
+type ArtEntry = { meta: ReturnType<typeof getDisplayMeta>; art: FigureArt; aspect: number };
+/** The inputs the wall is laid out by that arrive as pictures do (layoutBasis.ts). */
+interface PackBasis {
+  arts: readonly ArtEntry[];
+  alpha: ReadonlyMap<string, AlphaMargins>;
 }
 
 
@@ -790,6 +829,55 @@ function ResetChip({ shown, right, onReset }: { shown: { current: ((zoomed: bool
   );
 }
 
+/** MISFIT-CHIP-1: whether a touch landed on one of the scene's own controls (the do-not-fit chip, its list). */
+const onSceneUi = (target: EventTarget | null): boolean => target instanceof Element && target.closest('[data-scene-ui]') !== null;
+
+/**
+ * MISFIT-CHIP-1: the small do-not-fit chip, bottom left: a warning glyph and the count. A tap opens (or closes) the list;
+ * a long press, still, hides the chip until a figure that was not there misfits.
+ */
+function MisfitChip({ count, open, onToggle, onHide }: { count: number; open: boolean; onToggle: () => void; onHide: () => void }) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const origin = useRef<{ x: number; y: number } | null>(null);
+  const stop = () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    origin.current = null;
+  };
+  useEffect(() => stop, []);
+  return (
+    <button
+      type="button"
+      class="cabinet-scene__misfit"
+      data-scene-ui
+      aria-label={count === 1 ? '1 figure does not fit' : `${count} figures do not fit`}
+      aria-expanded={open}
+      onPointerDown={(e) => {
+        stop();
+        origin.current = { x: e.clientX, y: e.clientY };
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          onHide();
+        }, LONG_PRESS_MS);
+      }}
+      onPointerMove={(e) => {
+        const o = origin.current;
+        if (o !== null && Math.hypot(e.clientX - o.x, e.clientY - o.y) > LONG_PRESS_SLOP_PX) stop();
+      }}
+      onPointerUp={stop}
+      onPointerCancel={stop}
+      onContextMenu={(e) => e.preventDefault()}
+      onClick={onToggle}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+        <path d="M12 3 1.5 21h21L12 3Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+        <path d="M12 10v5M12 18.2v.1" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      <span>{count}</span>
+    </button>
+  );
+}
+
 const prefersReducedMotion = (): boolean => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 const zoomData = (z: Zoom): string => JSON.stringify({ k: num(z.k), x: num(z.x), y: num(z.y) });
 
@@ -801,6 +889,12 @@ export function CabinetScene({
   imageFor,
   frameFallback = DEFAULT_FRAME,
   filterKey,
+  steadyLayout = false,
+  imagesComplete = true,
+  misfitsOpen,
+  onMisfitsOpen,
+  onMisfitCount,
+  onPrefs,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
@@ -811,7 +905,7 @@ export function CabinetScene({
   // a picture that fails to load stands as its plate (ADDR-1), never a blank space
   const images = useBrokenImages();
   // what the case draws for each figure, in the shape it draws it (the image list's own size when it gives one)
-  const arts = useMemo(
+  const liveArts = useMemo<readonly ArtEntry[]>(
     () =>
       figures.map((f) => {
         const meta = getDisplayMeta(f);
@@ -822,20 +916,63 @@ export function CabinetScene({
       }),
     [figures, imageFor, images.broken],
   );
-  const alphaUrls = useMemo(() => [...new Set(arts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [arts]);
+  const alphaUrls = useMemo(() => [...new Set(liveArts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [liveArts]);
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
   // one still being read stands as its plate on its label meanwhile, holding back no other
-  const alpha = useAlphaMarginsOf(alphaUrls);
+  const liveAlpha = useAlphaMarginsOf(alphaUrls);
+
+  // LAYOUT-STABLE-1: the wall is laid out from a basis of the picture inputs, held between the moments layoutBasis.ts names,
+  // not from whatever the last picture changed. Pictures stream in for minutes on a first launch, and the packer is global:
+  // every arrival packed the whole wall again and tens of figures moved at once, again and again.
+  const live = useMemo<PackBasis>(() => ({ arts: liveArts, alpha: liveAlpha }), [liveArts, liveAlpha]);
+  const unmeasured = useMemo(() => alphaUrls.filter((u) => !liveAlpha.has(u)).length, [alphaUrls, liveAlpha]);
+  // an explicit change: the filter or the sort, or a figure added, removed or moved in the list, or cards come in (a figure's
+  // size is its card's: the launch draws what the device has, and the cards that arrive redraw it, once the batch is in)
+  const epoch = useMemo(() => {
+    const cards = figures.filter((f) => (f as { local?: { hasCard?: boolean } }).local?.hasCard === true).length;
+    return `${filterKey ?? ''}#${cards}#${figures.map((f) => f._id).join(',')}`;
+  }, [filterKey, figures]);
+  const settle = useLayoutBasis<PackBasis>({
+    live,
+    pending: unmeasured,
+    settled: imagesComplete && unmeasured === 0,
+    ready: figures.length > 0,
+    epoch,
+    enabled: steadyLayout,
+  });
+  const basis = settle.basis;
 
   const packed = useMemo(() => {
     // each figure is packed by what the case draws for it: its label, or what its cut-out draws at true scale when wider
-    const items = figures.map((f, i) => {
-      const { meta, art, aspect } = arts[i];
-      const drawn = art.alphaUrl ? pictureMargins(art, alpha) : null;
-      return measureCaseFigure(f, i, { ...meta, aspect }, drawn ?? undefined);
-    });
+    // (by the basis: before the first layout nothing is packed, so nothing is drawn twice)
+    const items =
+      basis === null
+        ? []
+        : figures.map((f, i) => {
+            const { meta, art, aspect } = basis.arts[i];
+            const drawn = art.alphaUrl ? pictureMargins(art, basis.alpha) : null;
+            return measureCaseFigure(f, i, { ...meta, aspect }, drawn ?? undefined);
+          });
     return packCabinets(items, pattern, ceilingMm);
-  }, [figures, arts, alpha, pattern, ceilingMm]);
+  }, [figures, basis, pattern, ceilingMm]);
+
+  /**
+   * What a figure draws: its picture as it stands now when that draws within the place the figure was packed in (a picture
+   * that arrived after the layout takes its figure's place, never another's), else what it was packed by. Plates and framed
+   * pictures draw within their footprint always; one still being read draws its plate (figureGeometry).
+   */
+  const drawing = (item: CaseFigure) => {
+    // a figure is placed only once there is a basis (before it nothing is packed), so `item` comes with one
+    const packedBy = basis as PackBasis;
+    const now = liveArts[item.index];
+    const then = packedBy.arts[item.index];
+    const margins = pictureMargins(now.art, liveAlpha);
+    if (now === then) return { art: now.art, aspect: now.aspect, margins };
+    if ((now.art.kind === 'cutout' || now.art.kind === 'masked') && margins !== null && drawnWidthMm(item.heightMm, now.aspect, margins) > item.widthMm + FIT_SLACK_MM) {
+      return { art: then.art, aspect: then.aspect, margins: pictureMargins(then.art, packedBy.alpha) };
+    }
+    return { art: now.art, aspect: now.aspect, margins };
+  };
 
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
@@ -1057,6 +1194,8 @@ export function CabinetScene({
     }
   };
   const onPointerDown = useCallback((e: PointerEvent) => {
+    // MISFIT-CHIP-1: the chip and its list are the scene's controls, not its picture: a touch on them is no gesture of the scene's
+    if (onSceneUi(e.target)) return;
     // a new touch cuts a settling zoom short
     settled();
     if (pinching.current) {
@@ -1182,6 +1321,11 @@ export function CabinetScene({
     setFocus(nearestCabinet(wall, moved.x));
   };
   const onClickCapture = (e: MouseEvent) => {
+    if (onSceneUi(e.target)) {
+      // a tap on a control is its own, whatever a drag left to swallow
+      swallowClick.current = false;
+      return;
+    }
     if (!swallowClick.current) return;
     swallowClick.current = false;
     e.stopPropagation();
@@ -1249,8 +1393,8 @@ export function CabinetScene({
   // and no board of its cabinet hides it from the camera
   const inDrawn = draws.filter((d) => drawnCabs.includes(d.cab));
   const inDrawnBoxes = inDrawn.map(({ cab, draw: fig }) => {
-    const { art, aspect } = arts[fig.placed.item.index];
-    return figureLayerBox(fig, figureGeometry(fig, art, aspect, pictureMargins(art, alpha)), cab);
+    const { art, aspect, margins } = drawing(fig.placed.item);
+    return figureLayerBox(fig, figureGeometry(fig, art, aspect, margins), cab);
   });
   // G1: as many figures as the drawn cabinets hold (each its kind's most), so no cabinet the frame shows stands empty
   const figCap = figureCap(heldCounts, heldKinds, drawnCabs);
@@ -1278,6 +1422,31 @@ export function CabinetScene({
   const flagged = packed.violators.length + overhangs.length;
   // CASE-FB3b: what the list says of each, with what was measured and from what (describeViolator)
   const wallName = pattern.length === 1 ? `the ${pattern[0].name}` : 'this wall';
+
+  // MISFIT-CHIP-1: the do-not-fit chip, and its list. The chip hides when every figure that does not fit is one that was
+  // dismissed (a long press on it, or the list's ×); a figure that was not there brings it back. The list opens from the chip
+  // or from outside (the View card), chip hidden or not.
+  const misfitIds = [...packed.violators.map((v) => v.item.figure._id), ...overhangs.map((d) => d.draw.placed.item.figure._id)];
+  const [ownOpen, setOwnOpen] = useState(false);
+  const [ownDismissed, setOwnDismissed] = useState<readonly string[]>([]);
+  const listOpen = (misfitsOpen ?? ownOpen) && flagged > 0;
+  const setListOpen = (open: boolean) => {
+    setOwnOpen(open);
+    onMisfitsOpen?.(open);
+  };
+  const dismissed = new Set([...prefs.misfitsDismissed, ...ownDismissed]);
+  const chipShown = misfitIds.some((id) => !dismissed.has(id));
+  const dismissMisfits = () => {
+    setOwnDismissed(misfitIds);
+    onPrefs?.({ misfitsDismissed: misfitIds });
+    setListOpen(false);
+  };
+  const countOut = useRef(onMisfitCount);
+  countOut.current = onMisfitCount;
+  useEffect(() => {
+    countOut.current?.(flagged);
+  }, [flagged]);
+  useEffect(() => () => countOut.current?.(0), []);
 
   // the room: its back wall from the floor to the ceiling the View card sets (CASE-FB1 item 3), its floor and ceiling
   const room = roomBox(wall, ceilingMm);
@@ -1320,6 +1489,8 @@ export function CabinetScene({
       data-drawn-figures={String(onShow.length)}
       data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
+      data-laid-out={settle.revealed ? '1' : '0'}
+      data-show-estimated={prefs.showEstimated ? '1' : '0'}
       data-zoom={zoomData(zoom.current)}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -1355,14 +1526,14 @@ export function CabinetScene({
                 ))}
                 {onShow.map(({ draw: fig }, n) => {
                   const { figure, index } = fig.placed.item;
-                  const { art, aspect } = arts[index];
+                  const { art, aspect, margins } = drawing(fig.placed.item);
                   return (
                     <SceneFigure
                       key={figure._id}
                       draw={fig}
                       art={art}
                       aspect={aspect}
-                      margins={pictureMargins(art, alpha)}
+                      margins={margins}
                       scale={scales[n]}
                       plate={plates[n]}
                       onSelect={() => onSelect(figure, index)}
@@ -1420,9 +1591,26 @@ export function CabinetScene({
         )}
       </div>
 
-      {flagged > 0 && (
-        <details class="cabinet-scene__fit" data-count={String(flagged)}>
-          <summary>{flagged === 1 ? '1 figure does not fit' : `${flagged} figures do not fit`}</summary>
+      {flagged > 0 && chipShown && (
+        <MisfitChip
+          count={flagged}
+          open={listOpen}
+          onToggle={() => setListOpen(!listOpen)}
+          onHide={() => {
+            // the chip is gone under the finger: the click its lift-off makes lands on whatever is beneath, never a tap of that
+            swallowClick.current = true;
+            dismissMisfits();
+          }}
+        />
+      )}
+      {listOpen && (
+        <div class="cabinet-scene__fit" data-scene-ui role="region" aria-label="Figures that do not fit" data-count={String(flagged)}>
+          <div class="cabinet-scene__fit-head">
+            <span class="cabinet-scene__fit-title">{flagged === 1 ? '1 figure does not fit' : `${flagged} figures do not fit`}</span>
+            <button type="button" class="cabinet-scene__fit-dismiss" aria-label="Dismiss: hide the chip until another figure does not fit" onClick={dismissMisfits}>
+              ×
+            </button>
+          </div>
           <ul>
             {packed.violators.map((v) => (
               <li key={v.item.figure._id}>
@@ -1435,7 +1623,7 @@ export function CabinetScene({
               </li>
             ))}
           </ul>
-        </details>
+        </div>
       )}
       <Style css={styles} />
     </div>
@@ -1497,6 +1685,12 @@ const styles = `
   .cabinet-scene .cab-shadow {
     background: radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.3) 45%, rgba(0, 0, 0, 0) 72%);
   }
+  /* SIZE-BASIS-1: a figure whose height or width is an estimate, outlined when the View card asks: quiet, dashed, no tap of its own */
+  .cabinet-scene[data-show-estimated='1'] .cab-figure[data-size-estimated]:not([data-size-estimated='']) {
+    outline: 1.5px dashed rgba(255, 193, 7, 0.85);
+    outline-offset: 1px;
+  }
+
   .cabinet-scene .cab-figure {
     pointer-events: auto;
     padding: 0;
@@ -1597,20 +1791,47 @@ const styles = `
     font: 600 18px/1 var(--font-sans, system-ui);
   }
   .cabinet-scene__shelves button:disabled { opacity: 0.25; }
+  /* MISFIT-CHIP-1: the do-not-fit chip, bottom left, inset 24 px from the edge (the back swipe's), clear of the raised + at the
+     middle of the tab bar; a warning glyph and the count. A 48 px target round the small chip, as the Reset view chip's */
+  .cabinet-scene__misfit {
+    position: absolute;
+    left: 24px;
+    bottom: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 10px 0 8px;
+    border-radius: var(--radius-full, 9999px);
+    background: rgba(150, 40, 28, 0.92);
+    color: #fff;
+    font: 600 12px/1 var(--font-sans, system-ui);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    pointer-events: auto;
+  }
+  .cabinet-scene__misfit::before { content: ''; position: absolute; inset: -10px -8px; }
+  /* the list: over the lower part of the scene, scrolling inside its own box so any length reads */
   .cabinet-scene__fit {
     position: absolute;
-    left: 8px;
-    top: 8px;
-    max-width: calc(100% - 64px);
-    padding: 4px 8px;
-    border-radius: 8px;
-    background: rgba(120, 30, 20, 0.85);
+    left: 12px;
+    right: 12px;
+    bottom: 56px;
+    max-height: min(60%, 360px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    padding: 6px 10px 8px;
+    border-radius: 10px;
+    background: rgba(70, 22, 16, 0.96);
     color: #fff;
     font: 600 12px/1.3 var(--font-sans, system-ui);
   }
+  .cabinet-scene__fit-head { position: sticky; top: -6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0 4px; background: rgba(70, 22, 16, 0.96); }
+  .cabinet-scene__fit-dismiss { flex: none; width: 32px; height: 32px; border-radius: 9999px; font-size: 20px; line-height: 1; color: #fff; background: rgba(255, 255, 255, 0.14); }
   .cabinet-scene__fit ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
-  /* the fit list keeps clear of the Reset view chip */
-  .cabinet-scene:has(.cabinet-scene__reset) .cabinet-scene__fit { max-width: calc(100% - 160px); }
+  .cabinet-scene__fit li + li { margin-top: 4px; }
   .cabinet-scene__reset {
     position: absolute;
     top: 8px;

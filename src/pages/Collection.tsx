@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'preact/hooks';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'preact/hooks';
 import { useQuery } from '@tanstack/react-query';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { SlimHeader } from '../components/layout/SlimHeader';
@@ -9,6 +9,7 @@ import { CabinetScene } from '../components/display/CabinetScene';
 import { CaseTabs, type CaseCard } from '../components/display/CaseTabs';
 import { CaseViewCard } from '../components/display/CaseViewCard';
 import { notShelvedLine, splitForShelves } from '../components/display/shelved';
+import { countEstimated } from '../components/display/sizeBasis';
 import { useCasePrefs } from '../components/display/casePrefs';
 import { JustifiedRows } from '../components/display/JustifiedRows';
 import { BrandWatermark } from '../components/brand/BrandWatermark';
@@ -25,12 +26,12 @@ import type { LocalFigure } from '../local/figures';
 import { FormerList } from '../components/collection/FormerList';
 import { COLLECTION_TABS, useFigureListParams, type CollectionTab, type ListFilters } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { useCollectionImages } from '../hooks/useCollectionImages';
+import { imagesComplete, useCollectionImages } from '../hooks/useCollectionImages';
 import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, holdingOf } from '../utils/facets';
 import { sortFigures } from '../utils/sortFigures';
-import { getFixtureFigures, getFixtureImageRef, isFixtureMode } from '../dev-fixtures/fixtures';
+import { getFixtureFigures, getFixtureImageRef, getFixtureSteady, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
 import { BackToClose } from '../hooks/useBackToClose';
 
@@ -128,6 +129,13 @@ export function Collection() {
   const [lastOpenedId, setLastOpenedId] = useState<string | null>(null);
   const [caseCard, setCaseCard] = useState<CaseCard | null>(null);
   const [casePrefs, setCasePrefs] = useCasePrefs();
+  // MISFIT-CHIP-1: the case's do-not-fit list (open or not) and how many figures are in it, for the View card's entry
+  const [misfitsOpen, setMisfitsOpen] = useState(false);
+  const [misfitCount, setMisfitCount] = useState(0);
+  // the list belongs to the case: leaving it for the tiles closes it
+  useEffect(() => {
+    if (layout !== 'case') setMisfitsOpen(false);
+  }, [layout]);
   const online = useOnlineStatus();
   const pageRef = useRef<HTMLDivElement>(null);
   const pageWidth = useElementWidth(pageRef, 360);
@@ -187,6 +195,8 @@ export function Collection() {
   );
   // FIGURES-ONLY-1: the case stands figures only; goods and media stay in `visible` (the tiles, Info) and are counted for the View card
   const onShelves = useMemo(() => splitForShelves(visible), [visible]);
+  // SIZE-BASIS-1: how many of the figures the case stands are sized from an estimate (the View card says so)
+  const estimatedCount = useMemo(() => countEstimated(onShelves.shelved), [onShelves]);
   // PINCH-1: a new filter or sort starts the case's picture at 1x; new data under the same one (an image kept) does not
   const filterKey = useMemo(() => JSON.stringify([filters, sort, order]), [filters, sort, order]);
   const onlyHolding = filters.status.length === 1 ? (filters.status[0] as CollectionTab) : null;
@@ -286,6 +296,13 @@ export function Collection() {
                   labels={labels}
                   imageFor={fixtureMode ? getFixtureImageRef : keptImageFor}
                   filterKey={filterKey}
+                  // LAYOUT-STABLE-1: the real collection's pictures stream in for minutes; the fixtures' never do (?fxsteady=1 for e2e)
+                  steadyLayout={!fixtureMode || getFixtureSteady()}
+                  imagesComplete={fixtureMode || imagesComplete(collectionImages)}
+                  misfitsOpen={misfitsOpen}
+                  onMisfitsOpen={setMisfitsOpen}
+                  onMisfitCount={setMisfitCount}
+                  onPrefs={setCasePrefs}
                 />
               </div>
             ) : (
@@ -330,10 +347,17 @@ export function Collection() {
         prefs={casePrefs}
         onChange={setCasePrefs}
         onClose={() => setCaseCard(null)}
+        misfitCount={misfitCount}
+        onShowMisfits={() => {
+          setCaseCard(null);
+          setMisfitsOpen(true);
+        }}
         notShelved={notShelvedLine(onShelves.goods, onShelves.media)}
+        estimatedCount={estimatedCount}
       />
       {/* Back and Esc close the card on top, never the Info pane under it */}
       {caseCard === 'view' && <BackToClose onClose={() => setCaseCard(null)} />}
+      {misfitsOpen && shownLayout === 'case' && <BackToClose onClose={() => setMisfitsOpen(false)} />}
       {filterOpen && <BackToClose onClose={() => setFilterOpen(false)} />}
 
       <TabbedFilterSheet

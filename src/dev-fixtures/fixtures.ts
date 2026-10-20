@@ -398,6 +398,31 @@ export function getFixtureFields(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_FIELDS_PARAM) === '1';
 }
 
+const FIXTURE_STEADY_PARAM = 'fxsteady';
+
+/**
+ * Dev-only switch for the held layout basis (LAYOUT-STABLE-1): `?fxsteady=1` lays the fixtures out as the real collection is,
+ * from a basis held between the moments layoutBasis.ts names, not by whatever picture was read last. Off for anything else:
+ * the fixtures' pictures never stream in of themselves, so they are laid out as they come.
+ */
+export function getFixtureSteady(): boolean {
+  return new URLSearchParams(location.search).get(FIXTURE_STEADY_PARAM) === '1';
+}
+
+const FIXTURE_MISFITS_PARAM = 'fxmisfit';
+const FIXTURE_MISFITS_MAX = 200;
+
+/**
+ * Dev-only: `?fxmisfit=N` adds N figures 3 m tall, too tall for any place of any cabinet, to the fixtures: the case's
+ * do-not-fit chip and its list, at the length Ross's collection has (16 of them; MISFIT-CHIP-1). A count up to 200; off
+ * for anything else.
+ */
+export function getFixtureMisfits(): number {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_MISFITS_PARAM);
+  if (raw === null || !/^\d+$/.test(raw)) return 0;
+  return Math.min(FIXTURE_MISFITS_MAX, Number(raw));
+}
+
 const FIXTURE_GOODS_PARAM = 'fxgoods';
 
 /** Fixture slots (of the seven) that stand as goods and as media under `?fxgoods=1`. */
@@ -539,7 +564,7 @@ export function getFixtureImageRef(figure: Figure): FigureImageRef | undefined {
  * count (getFixtureSync), `?fxonly=<name>` stands one fixture in every slot
  * (getFixtureOnly), `?fxfields=1` gives every other slot a longer card
  * (getFixtureFields), `?fxgoods=1` makes three of them goods and media (getFixtureGoods), `?fxphotos=1` gives each a local
- * item and three photos (getFixturePhotos).
+ * item and three photos (getFixturePhotos), `?fxmisfit=N` adds N figures too tall for any cabinet (getFixtureMisfits).
  */
 export function getFixtureFigures(
   multiplier = getFixtureMultiplier(),
@@ -550,10 +575,11 @@ export function getFixtureFigures(
   sync = getFixtureSync(),
   only = getFixtureOnly(),
   fields = getFixtureFields(),
+  misfits = getFixtureMisfits(),
   goods = getFixtureGoods(),
   photos = getFixturePhotos(),
 ): Figure[] {
-  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !goods && !photos) return FIXTURE_FIGURES;
+  if (multiplier <= 1 && branch === 'matted' && widths === 'labelled' && !asym && !sync && !only && !fields && !misfits && !goods && !photos) return FIXTURE_FIGURES;
   const out: Figure[] = [];
   for (let copy = 1; copy <= Math.max(1, multiplier); copy++) {
     for (const [slot, each] of FIXTURE_FIGURES.entries()) {
@@ -565,11 +591,15 @@ export function getFixtureFigures(
       out.push(unique ? { ...figure, imageUrl: copyUrl(figure.imageUrl, figure._id, unique) } : figure);
     }
   }
+  // MISFIT-CHIP-1: the misfits follow the fixtures' own copies; the goods and media slots below stand among those only
+  const own = out.length;
+  for (let i = 1; i <= misfits; i++) out.push({ ...FIXTURE_FIGURES[0], _id: `fx-misfit-${i}`, name: `Misfit Giant ${i}`, dimensions: { heightMm: 3000 } });
   const now = Date.now();
   const synced = sync ? out.map((figure, index) => withSync(figure, index, now)) : out;
   const kinded = !goods
     ? synced
     : synced.map((figure, index) => {
+        if (index >= own) return figure;
         const slot = index % FIXTURE_FIGURES.length;
         if (GOODS_SLOTS.includes(slot)) return withKind(figure, ProductKind.GOODS);
         return MEDIA_SLOTS.includes(slot) ? withKind(figure, ProductKind.MEDIA) : figure;
@@ -577,6 +607,7 @@ export function getFixtureFigures(
   if (!photos) return kinded;
   // a local item each, its id its head: what the figure card's Photos tab needs to list a product's photos
   return kinded.map((figure, index) => {
+    if (index >= own) return figure;
     const local = (figure as Figure & { local?: LocalMeta }).local ?? fixtureLocal(figure, 'known', null);
     const copies = Array.from({ length: index % 3 === 1 ? 2 : 1 }, (_, c) => ({ occ_id: `${figure._id}-copy-${c}` })) as unknown as LocalMeta['copies'];
     return { ...figure, local: { ...local, copies } } as Figure;

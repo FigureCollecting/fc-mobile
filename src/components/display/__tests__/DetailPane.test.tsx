@@ -68,16 +68,32 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
   });
 
   // SIDE-RAIL-1 (Ross 10-18): the same rail of the figure card's sections, at the pane's right edge
-  it('carries the figure sections on a right rail: Details and Copies, 24 px in, the pane leaving it room', () => {
+  it('carries the figure sections on a right rail: Details, Photos and Copies, 24 px in, the pane leaving it room', () => {
     const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
     const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
     const rail = container.querySelector('.detail-pane .side-rail') as HTMLElement;
     expect(rail.getAttribute('aria-label')).toBe('Figure sections');
-    expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Copies']);
+    expect(Array.from(rail.querySelectorAll('button')).map((b) => b.textContent)).toEqual(['Details', 'Photos', 'Copies']);
     expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-current', 'true');
     const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent ?? '').join('\n');
     expect(css).toMatch(/\.detail-pane__rail\s*\{[^}]*right:\s*calc\(24px \+ var\(--safe-area-right/);
     expect(css).toMatch(/\.detail-pane\s*\{[^}]*padding-right:\s*calc\(24px \+ 60px \+ 8px/);
+  });
+
+  // GALLERY-1: Photos opens the figure's photos over the pane
+  it('Photos opens the figure\'s photos; a figure with no local item has none, so the tab is disabled', async () => {
+    const user = userEvent.setup();
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const bare = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Photos' })).toBeDisabled();
+    bare.unmount();
+    const local = { ...rem, local: { headId: 'h9', kind: 'owned', sync: 'known', asOf: null, copies: [] } } as never;
+    renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);
+    expect(screen.queryByRole('dialog', { name: 'Photos' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Photos' }));
+    expect(await screen.findByRole('dialog', { name: 'Photos' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close photos' }));
+    expect(screen.queryByRole('dialog', { name: 'Photos' })).toBeNull();
   });
 
   it('Copies opens the figure\'s full page; a figure with no local item has none to open', async () => {

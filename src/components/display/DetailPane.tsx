@@ -1,7 +1,9 @@
-import { useRef } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
 import { FigureRail } from './figureSections';
+import { PhotosSheet } from './PhotosSheet';
+import type { LocalFigure } from '../../local/figures';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 import { useBackToClose } from '../../hooks/useBackToClose';
@@ -28,6 +30,8 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
   const imageUrl = images.broken(figure.imageUrl) ? undefined : figure.imageUrl;
   const pane = useRef<HTMLElement>(null);
   const openCopies = useCopiesAction(figure);
+  // GALLERY-1: the figure's photos, over the pane
+  const [photosOpen, setPhotosOpen] = useState(false);
   return (
     <aside class="detail-pane" ref={pane}>
       <button class="detail-pane__close" type="button" onClick={onClose} aria-label="Close detail">
@@ -43,6 +47,7 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
           class="detail-pane__rail"
           detailsOpen
           onDetails={() => pane.current?.querySelector('.figure-viewer-sheet__more')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
+          onPhotos={(figure as Partial<LocalFigure>).local === undefined ? null : () => setPhotosOpen(true)}
           onCopies={openCopies}
         />
       </div>
@@ -56,6 +61,8 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
       <div class="detail-pane__content">
         <FigureDetailContent figure={figure} index={index} total={total} />
       </div>
+
+      <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
 
       <Style css={`
         .detail-pane {

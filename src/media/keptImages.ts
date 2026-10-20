@@ -53,6 +53,7 @@
 // suite: src/sw.ts says why); an opaque answer cannot be copied and goes as it is.
 import type { ProductImage } from '@figurecollecting/fc-api-contract';
 import { isMediaUrl } from './address';
+import type { PhotoChoices } from './photoChoice';
 
 /** The kept bytes. Named when only owned figures were kept; unchanged, so what a device kept stays valid. */
 export const OWNED_MEDIA_CACHE = 'fc-owned-media-v1';
@@ -138,6 +139,21 @@ export function primaryImage(list: readonly CachedImage[]): CachedImage | undefi
   return list.find((i) => i.primary) ?? list[0];
 }
 
+/**
+ * GALLERY-1: the image to show for a figure whose user may have chosen one (photoChoice.ts): the chosen image while the
+ * list names it, else the primary. A choice the list no longer names (taken down, or never there) is no choice.
+ */
+export function shownImage(list: readonly CachedImage[], choice?: string): CachedImage | undefined {
+  return (choice === undefined ? undefined : list.find((i) => i.url === choice)) ?? primaryImage(list);
+}
+
+/** Where a figure's shown image stands in line to be answered: the chosen one first, the primary (what it showed before) after it. */
+const answerable = (list: readonly CachedImage[], choice: string | undefined): CachedImage[] => {
+  const first = shownImage(list, choice);
+  const primary = primaryImage(list);
+  return first === undefined ? [] : primary === undefined || primary === first ? [first] : [first, primary];
+};
+
 const browserCaches = (): CacheStorage | undefined => (typeof caches === 'undefined' ? undefined : caches);
 // The origin answers Vary: Origin; an <img crossorigin> stores its request with an Origin, so a bare
 // address finds (or deletes) it only ignoring Vary. The bytes are content-addressed: one per address.
@@ -181,8 +197,14 @@ export async function recallImages(headId: string, storage: CacheStorage | undef
  * sync between its record and its list replacement): the figure is drawn as its plate, or without
  * that mask. Reads only the figures that have a kept list, so a collection with no image costs two
  * cache calls, and the withheld record in two however many figures it answers.
+ * GALLERY-1: a figure whose user chose a photo answers it once its bytes are here, and the primary until then (or when the
+ * chosen one is withheld), so a choice never leaves the figure as its plate while the chosen photo comes.
  */
-export async function keptImages(heads: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<Map<string, CachedImage>> {
+export async function keptImages(
+  heads: readonly string[],
+  storage: CacheStorage | undefined = browserCaches(),
+  choices?: PhotoChoices,
+): Promise<Map<string, CachedImage>> {
   const out = new Map<string, CachedImage>();
   if (storage === undefined) return out;
   const records = await storage.open(IMAGE_LISTS_CACHE);
@@ -192,19 +214,21 @@ export async function keptImages(heads: readonly string[], storage: CacheStorage
   const media = await storage.open(OWNED_MEDIA_CACHE);
   const withheld = new Set((await (await storage.open(WITHHELD_CACHE)).keys()).map((k) => addressOfWithheldKey(k.url)));
   for (const head of wanted) {
-    const image = primaryImage((await readList(records, head)) ?? []);
-    if (image === undefined || withheld.has(image.url) || (await media.match(image.url, IGNORE_VARY)) === undefined) continue;
-    if (image.maskUrl !== undefined && withheld.has(image.maskUrl)) {
-      const { maskUrl: _withheld, ...rest } = image;
-      out.set(head, rest);
-    } else out.set(head, image);
+    for (const image of answerable((await readList(records, head)) ?? [], choices?.get(head))) {
+      if (withheld.has(image.url) || (await media.match(image.url, IGNORE_VARY)) === undefined) continue;
+      if (image.maskUrl !== undefined && withheld.has(image.maskUrl)) {
+        const { maskUrl: _withheld, ...rest } = image;
+        out.set(head, rest);
+      } else out.set(head, image);
+      break;
+    }
   }
   return out;
 }
 
 /** One figure's kept image (keptImages). */
-export async function keptImage(headId: string, storage: CacheStorage | undefined = browserCaches()): Promise<CachedImage | undefined> {
-  return (await keptImages([headId], storage)).get(headId);
+export async function keptImage(headId: string, storage: CacheStorage | undefined = browserCaches(), choices?: PhotoChoices): Promise<CachedImage | undefined> {
+  return (await keptImages([headId], storage, choices)).get(headId);
 }
 
 /** The addresses among these that a sync withheld and no later sync carried again. */
@@ -251,6 +275,8 @@ export async function fetchImageLists(client: ImageListClient, heads: readonly s
 
 interface SyncOptions {
   storage?: CacheStorage | undefined;
+  /** GALLERY-1: the photo the user chose per figure (photoChoice.ts): kept with its mask beside the primary, and shown once its bytes are here. */
+  choices?: PhotoChoices;
   max?: number;
   concurrency?: number;
   signal?: AbortSignal;
@@ -363,12 +389,15 @@ async function bringToKept(
   const fresh = new Set<string>();
   for (const head of heads) {
     const list = toCachedImages(lists.get(head) ?? []);
-    const primary = primaryImage(list);
-    if (primary === undefined) continue;
+    const shown = answerable(list, options.choices?.get(head));
+    if (shown.length === 0) continue;
     for (const u of addressesOf(list)) fresh.add(u);
     kept.set(head, list);
-    keep.add(primary.url);
-    if (primary.maskUrl !== undefined) keep.add(primary.maskUrl);
+    // the chosen photo and the primary it replaces (shown till the chosen one is here), each with its mask
+    for (const image of shown) {
+      keep.add(image.url);
+      if (image.maskUrl !== undefined) keep.add(image.maskUrl);
+    }
   }
 
   // Withheld: an address the kept list of a figure still kept named and no fresh list carries. It is
@@ -452,8 +481,8 @@ async function bringToKept(
     if (options.onKept === undefined) return;
     const now = new Map<string, CachedImage>();
     for (const [head, list] of kept) {
-      const primary = primaryImage(list)!;
-      if (have.has(primary.url)) now.set(head, primary);
+      const image = answerable(list, options.choices?.get(head)).find((i) => have.has(i.url));
+      if (image !== undefined) now.set(head, image);
     }
     options.onKept(now);
   };

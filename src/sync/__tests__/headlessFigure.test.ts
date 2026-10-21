@@ -59,13 +59,10 @@ describe('a copy on a head the spine does not know', () => {
     expect(known.map((x) => x.local.hasCard)).toEqual([true, true]);
   });
 
-  it('is asked about again on the next sync, since no card ever lands for it', async () => {
+  it('is not asked about again on the next sync: the catalogue said it matches nothing, and that is remembered', async () => {
     const { r } = await syncedWithOneUnknownHead();
     await r.engine.trigger('manual');
-    const asks = r.server.calls
-      .filter((c) => c.rpc === 'getProducts')
-      .map((c) => (c.request as { refs: Array<{ ref: { value: string } }> }).refs.map((x) => x.ref.value));
-    expect(asks).toEqual([expect.arrayContaining([headOf(UNKNOWN)]), [headOf(UNKNOWN)]]);
+    expect(r.server.count('getProducts')).toBe(1);
   });
 
   it('is shown under its label (the name the importer wrote), not as an untitled figure', async () => {

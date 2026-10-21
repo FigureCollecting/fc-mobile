@@ -13,6 +13,8 @@ import occOrigin from '@figurecollecting/fc-api-contract/schemas/occ-origin.sche
 import ufScore from '@figurecollecting/fc-api-contract/schemas/uf-score.schema.json?raw';
 import ufNote from '@figurecollecting/fc-api-contract/schemas/uf-note.schema.json?raw';
 import ufWishability from '@figurecollecting/fc-api-contract/schemas/uf-wishability.schema.json?raw';
+import ufLabel from '@figurecollecting/fc-api-contract/schemas/uf-label.schema.json?raw';
+import ufRefs from '@figurecollecting/fc-api-contract/schemas/uf-refs.schema.json?raw';
 import ufTag from '@figurecollecting/fc-api-contract/schemas/uf-tag.schema.json?raw';
 import ufKtag from '@figurecollecting/fc-api-contract/schemas/uf-ktag.schema.json?raw';
 import collName from '@figurecollecting/fc-api-contract/schemas/coll-name.schema.json?raw';
@@ -37,6 +39,8 @@ const USER: Record<UserFacetFamily, string> = {
   'uf/score': ufScore,
   'uf/note': ufNote,
   'uf/wishability': ufWishability,
+  'uf/label': ufLabel,
+  'uf/refs': ufRefs,
   'uf/tag': ufTag,
   'uf/ktag': ufKtag,
   'coll/name': collName,

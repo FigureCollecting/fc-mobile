@@ -626,11 +626,39 @@ export class UserStore {
 
   async putProducts(cards: ProductCard[]): Promise<void> {
     const fetchedAt = this.clock.wallMs();
-    await runTx(this.db, ['products'], async (tx) => {
+    await runTx(this.db, ['products', 'sync_meta'], async (tx) => {
+      const resolved = new Set<string>();
       for (const card of cards) {
         const stamps = CARD_TEXTS.map((f) => card[f]?.asOf ?? '').filter(Boolean).sort();
         await tx.objectStore('products').put({ sub: this.sub, head_id: card.headId, card, card_schema: CARD_SCHEMA_VERSION, as_of: stamps.at(-1) ?? null, fetched_at: fetchedAt });
+        resolved.add(card.headId);
+        for (const r of card.requestedAs) if (r.ref.case === 'headId') resolved.add(r.ref.value);
       }
+      // A head a card now answers for is no longer one the catalogue does not know.
+      const meta = (await tx.objectStore('sync_meta').get(this.sub))!;
+      const held = meta.unresolved;
+      if (held !== undefined && [...resolved].some((h) => h in held)) {
+        meta.unresolved = Object.fromEntries(Object.entries(held).filter(([h]) => !resolved.has(h)));
+        await tx.objectStore('sync_meta').put(meta);
+      }
+    });
+  }
+
+  /**
+   * Remember that the catalogue answered `heads` unresolved, now, and forget every remembered head not in `keep` (a head no
+   * copy or figure fact names any more). Nothing is written when the memory would not change.
+   */
+  async rememberUnresolved(heads: readonly string[], keep: ReadonlySet<string>): Promise<void> {
+    const at = this.clock.wallMs();
+    await runTx(this.db, ['sync_meta'], async (tx) => {
+      const meta = (await tx.objectStore('sync_meta').get(this.sub))!;
+      const held = meta.unresolved ?? {};
+      const next: Record<string, number> = Object.fromEntries(Object.entries(held).filter(([h]) => keep.has(h)));
+      for (const h of heads) next[h] = at;
+      const same = Object.keys(next).length === Object.keys(held).length && Object.entries(next).every(([h, v]) => held[h] === v);
+      if (same) return;
+      meta.unresolved = next;
+      await tx.objectStore('sync_meta').put(meta);
     });
   }
 

@@ -6,7 +6,7 @@ import { act, fireEvent, renderHook, screen, waitFor, within } from '@testing-li
 import { Code, ConnectError } from '@connectrpc/connect';
 import userEvent from '@testing-library/user-event';
 import { create } from '@bufbuild/protobuf';
-import { GetProductImagesResponseSchema, ProductCardSchema, ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { GetProductImagesResponseSchema, ProductCardSchema, SyncOp, occFacetKey, ufFacetKey } from '@figurecollecting/fc-api-contract';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 
@@ -15,7 +15,8 @@ import { renderWithProviders } from '../../test/testUtils';
 import { localRig, type LocalRig } from '../../local/__tests__/localHarness';
 import { seedFigures, type SeedFigure } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
-import { headOf } from '../../sync/__tests__/engineSupport';
+import { STAMP, headOf, serverVersion } from '../../sync/__tests__/engineSupport';
+import { T0 } from '../../sync/__tests__/harness';
 import { shownCopies } from '../../sync/occurrences';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { fakeCaches } from '../../test/fakeCaches';
@@ -51,6 +52,40 @@ describe('FigureDetail page', () => {
     await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledWith({ headIds: [headOf(0)] }, expect.anything()));
     expect(document.querySelector('img')).toBeNull();
     expect(document.querySelector('.figure-detail__plate')).toHaveTextContent('Hatsune Miku: Deep Sea Girl');
+  });
+
+  it('GK2-IMPORT-2: a figure the catalogue has no product for shows its label and its copies, and says it is the user\'s own entry', async () => {
+    const r = await open([{ title: '', label: { name: 'Yor Forger', maker: 'Atlas Studio', scale: '1/6', edition: 'Luxury ver' } }]);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Yor Forger (Luxury ver)');
+    expect(screen.getByText('Atlas Studio', { selector: '.figure-detail__manufacturer' })).toBeInTheDocument();
+    expect(screen.getByText('Not in the catalogue: your own entry.')).toBeInTheDocument();
+    expect(screen.queryByText(/arrive with the next sync/)).toBeNull();
+    expect(await statuses(r)).toEqual(['owned']);
+  });
+
+  it('GK2-IMPORT-2: a card that carries no as_of stamp says its facts are of unknown date', async () => {
+    const r = await localRig();
+    r.server.write([
+      { facetKey: occFacetKey('a0000001-0000-4000-8000-000000000001', 'head'), version: serverVersion(T0 - 60_000, 1), op: SyncOp.UPSERT, payload: JSON.stringify({ head_id: headOf(0), ...STAMP }) },
+      { facetKey: occFacetKey('a0000001-0000-4000-8000-000000000001', 'status'), version: serverVersion(T0 - 60_000, 2), op: SyncOp.UPSERT, payload: JSON.stringify({ status: 'owned', ...STAMP }) },
+    ]);
+    r.server.products.set(headOf(0), create(ProductCardSchema, { headId: headOf(0), requestedAs: [{ ref: { case: 'headId', value: headOf(0) } }], title: { value: 'Unstamped' } }));
+    await r.engine.trigger('manual');
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.getByText('Facts of unknown date')).toBeInTheDocument();
+  });
+
+  it('GK2-IMPORT-2: a figure with neither card nor label still says its details arrive', async () => {
+    const r = await localRig();
+    r.server.write([
+      { facetKey: occFacetKey('a0000001-0000-4000-8000-000000000001', 'head'), version: serverVersion(T0 - 60_000, 1), op: SyncOp.UPSERT, payload: JSON.stringify({ head_id: headOf(0), ...STAMP }) },
+      { facetKey: occFacetKey('a0000001-0000-4000-8000-000000000001', 'status'), version: serverVersion(T0 - 60_000, 2), op: SyncOp.UPSERT, payload: JSON.stringify({ status: 'owned', ...STAMP }) },
+    ]);
+    await r.engine.trigger('manual');
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.getByText('Details arrive with the next sync.')).toBeInTheDocument();
   });
 
   it('shows a derivative only when GetProductImages returns one', async () => {

@@ -29,7 +29,9 @@ const KEYWORDS = new Set([
   'minimum',
   'maximum',
   'items',
+  'minItems',
   'maxItems',
+  'uniqueItems',
   'if',
   'then',
   'else',
@@ -38,6 +40,9 @@ const TYPES = new Set(['object', 'string', 'integer', 'array', 'boolean']);
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** JSON text with object keys in order, so two equal values spell the same whatever order they were written in. */
+const canonical = (v: unknown): string =>
+  Array.isArray(v) ? `[${v.map(canonical).join(',')}]` : isObject(v) ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}` : JSON.stringify(v);
 const codePoints = (s: string): number => [...s].length;
 
 function typeOk(type: string, v: unknown): boolean {
@@ -122,6 +127,14 @@ export function compileSchema(schema: Schema, path = '$'): Check {
   if ('maximum' in schema) {
     const max = num(schema, 'maximum');
     checks.push((v) => (typeof v !== 'number' || v <= max ? null : `${path}: above ${max}`));
+  }
+  if ('minItems' in schema) {
+    const min = num(schema, 'minItems');
+    checks.push((v) => (!Array.isArray(v) || v.length >= min ? null : `${path}: fewer than ${min} items`));
+  }
+  if ('uniqueItems' in schema) {
+    if (typeof schema.uniqueItems !== 'boolean') throw new SchemaError('uniqueItems is not a boolean');
+    if (schema.uniqueItems) checks.push((v) => (!Array.isArray(v) || new Set(v.map(canonical)).size === v.length ? null : `${path}: duplicate items`));
   }
   if ('maxItems' in schema) {
     const max = num(schema, 'maxItems');

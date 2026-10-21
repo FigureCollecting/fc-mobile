@@ -1,7 +1,7 @@
 // Figures for the screen tests: copies another device wrote (on the fake coordinator) and their
 // product cards, pulled by one engine pass, so the store holds them as known (not pending).
 import { create } from '@bufbuild/protobuf';
-import { ProductCardSchema, SyncOp, occFacetKey, type OccurrenceStatus, type ProductKind } from '@figurecollecting/fc-api-contract';
+import { ProductCardSchema, SyncOp, occFacetKey, ufFacetKey, type OccurrenceStatus, type ProductKind } from '@figurecollecting/fc-api-contract';
 import { T0 } from '../../sync/__tests__/harness';
 import { STAMP, headOf, serverVersion, uuid } from '../../sync/__tests__/engineSupport';
 import type { LocalRig } from './localHarness';
@@ -24,6 +24,8 @@ export interface SeedFigure {
   size?: { heightMm?: number; widthMm?: number; depthMm?: number };
   /** The scale the card states ("1/7"). */
   scale?: string;
+  /** A figure the catalogue has no product for: no card is seeded, a uf/label facet is written. */
+  label?: Record<string, unknown>;
 }
 
 const AS_OF = '2026-10-01T09:30:00.000000Z';
@@ -48,6 +50,10 @@ export async function seedFigures(r: LocalRig, figs: SeedFigure[]): Promise<{ he
       }
     }
     occs.push(mine);
+    if (f.label !== undefined) {
+      events.push({ facetKey: ufFacetKey(head, 'label'), version: serverVersion(T0 - 60_000, ++counter), op: SyncOp.UPSERT, payload: JSON.stringify({ ...f.label, ...STAMP }) });
+      return;
+    }
     r.server.products.set(
       head,
       create(ProductCardSchema, {

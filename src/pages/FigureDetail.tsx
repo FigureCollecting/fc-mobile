@@ -165,7 +165,7 @@ export function FigureDetail() {
             {figure.collectionStatus && <StatusBadge status={figure.collectionStatus} size="md" />}
             <SyncBadge sync={local.sync} asOf={local.asOf} id={`sync-${figure._id}`} />
           </div>
-          <p class="figure-detail__as-of">{local.hasCard ? `Facts ${local.factsAsOf === null ? 'of unknown date' : formatAsOf(local.factsAsOf)}` : 'Details arrive with the next sync.'}</p>
+          <p class="figure-detail__as-of">{local.hasCard ? `Facts ${local.factsAsOf === null ? 'of unknown date' : formatAsOf(local.factsAsOf)}` : local.label === undefined ? 'Details arrive with the next sync.' : 'Not in the catalogue: your own entry.'}</p>
         </div>
 
         {facts.some(([, v]) => v !== '') && (

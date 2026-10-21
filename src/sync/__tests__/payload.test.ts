@@ -8,6 +8,8 @@ import occTag from '@figurecollecting/fc-api-contract/schemas/occ-tag.schema.jso
 import ufScore from '@figurecollecting/fc-api-contract/schemas/uf-score.schema.json?raw';
 import ufNote from '@figurecollecting/fc-api-contract/schemas/uf-note.schema.json?raw';
 import ufWishability from '@figurecollecting/fc-api-contract/schemas/uf-wishability.schema.json?raw';
+import ufLabel from '@figurecollecting/fc-api-contract/schemas/uf-label.schema.json?raw';
+import ufRefs from '@figurecollecting/fc-api-contract/schemas/uf-refs.schema.json?raw';
 import ufTag from '@figurecollecting/fc-api-contract/schemas/uf-tag.schema.json?raw';
 import ufKtag from '@figurecollecting/fc-api-contract/schemas/uf-ktag.schema.json?raw';
 import collName from '@figurecollecting/fc-api-contract/schemas/coll-name.schema.json?raw';
@@ -27,6 +29,8 @@ const SHIPPED: Record<UserFacetFamily, string> = {
   'uf/score': ufScore,
   'uf/note': ufNote,
   'uf/wishability': ufWishability,
+  'uf/label': ufLabel,
+  'uf/refs': ufRefs,
   'uf/tag': ufTag,
   'uf/ktag': ufKtag,
   'coll/name': collName,
@@ -49,6 +53,8 @@ const SAMPLES: Record<UserFacetFamily, Record<string, unknown>> = {
   'uf/score': { score: 9 },
   'uf/note': { note: 'boxed, shelf 2' },
   'uf/wishability': { wishability: 5 },
+  'uf/label': { name: 'Yor Forger', maker: 'Atlas Studio', series: 'Spy x Family', scale: '1/6', edition: 'Luxury ver' },
+  'uf/refs': { links: [{ url: 'https://www.gkloot.com/_p16584.html', label: 'GKLoot' }, { url: 'https://a.example/x?y=1' }] },
   'uf/tag': {},
   'uf/ktag': {},
   'coll/name': { name: 'Shelf 2' },

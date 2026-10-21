@@ -25,6 +25,15 @@ export interface UfValue<T> {
   editedAt: string | null;
 }
 
+/** What a figure the catalogue has no product for is shown as (uf/{head}/label, 0.6.0). */
+export interface FigureLabel {
+  name: string;
+  maker?: string;
+  series?: string;
+  scale?: string;
+  edition?: string;
+}
+
 export interface LocalMeta {
   /** The figure as displayed: its card's head, or the copies' head before a card arrives. */
   headId: string;
@@ -52,6 +61,8 @@ export interface LocalMeta {
   series: string | null;
   gtin14s: string[];
   uf: { score?: UfValue<number>; note?: UfValue<string>; wishability?: UfValue<number> };
+  /** The figure's label, shown only while it has no card: a card always wins, and the label is kept, hidden. */
+  label?: FigureLabel;
   /** Where a new write of each uf field goes. */
   ufTarget: Record<UfField, string>;
 }
@@ -92,6 +103,7 @@ interface Model {
   pendingOcc: Set<string>;
   pendingHead: Set<string>;
   uf: Map<string, LocalMeta['uf']>;
+  labels: Map<string, FigureLabel>;
   statusAt: Map<string, string>;
   stale: boolean;
   syncedAt: string | null;
@@ -118,6 +130,7 @@ function model(input: FigureInputs, built?: LocalView): Model {
   const pendingOcc = new Set<string>();
   const pendingHead = new Set<string>();
   const uf = new Map<string, LocalMeta['uf']>();
+  const labels = new Map<string, FigureLabel>();
   const statusAt = new Map<string, string>();
   for (const rec of input.facets) {
     if (rec.occ_id !== undefined) {
@@ -132,6 +145,12 @@ function model(input: FigureInputs, built?: LocalView): Model {
     addHead(rec.head_id);
     const d = display(rec.head_id);
     if (rec.pending_id !== null) pendingHead.add(d);
+    if (rec.family === 'uf/label') {
+      // One facet per head, and a label only shows while the head has no card (so no merged heads): nothing to order.
+      const label = rec.value?.op === 'upsert' ? readPayload('uf/label', rec.value.payload) : undefined;
+      if (label !== undefined) labels.set(d, label as unknown as FigureLabel);
+      continue;
+    }
     const field = rec.family.slice(3) as UfField;
     if (!UF_FIELDS.includes(field) || rec.value?.op !== 'upsert') continue;
     const payload = readPayload(rec.family, rec.value.payload);
@@ -152,8 +171,11 @@ function model(input: FigureInputs, built?: LocalView): Model {
   const view = built ?? buildView(input.facets as FacetRecord[]);
   for (const c of view.copies) if (c.head_id !== null) addHead(c.head_id);
   const syncedAt = input.syncedAt === undefined || input.syncedAt === null ? null : new Date(input.syncedAt).toISOString();
-  return { view, display, product: (d) => byId.get(d), heads, pendingOcc, pendingHead, uf, statusAt, stale: input.stale, syncedAt, sub: input.sub };
+  return { view, display, product: (d) => byId.get(d), heads, pendingOcc, pendingHead, uf, labels, statusAt, stale: input.stale, syncedAt, sub: input.sub };
 }
+
+/** The name a label shows: its title, with its edition in parentheses when it has one. */
+const labelName = (label: FigureLabel): string => (label.edition === undefined ? label.name : `${label.name} (${label.edition})`);
 
 function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[], counted: CopyView[]): LocalFigure {
   const product = m.product(d);
@@ -167,12 +189,14 @@ function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[
   const dims = { heightMm: card?.heightMm, widthMm: card?.widthMm, depthMm: card?.depthMm };
   const hasDims = Object.values(dims).some((v) => v !== undefined);
   const gtins = card?.gtin14s ?? [];
+  // The label stands in for a card the catalogue does not have: a card always wins.
+  const label = card === undefined ? m.labels.get(d) : undefined;
 
   const figure: LocalFigure = {
     _id: d,
-    name: cardName(card),
-    manufacturer: card?.manufacturer?.value ?? '',
-    scale: card?.scale?.value ?? '',
+    name: label === undefined ? cardName(card) : labelName(label),
+    manufacturer: card?.manufacturer?.value ?? label?.maker ?? '',
+    scale: card?.scale?.value ?? label?.scale ?? '',
     userId: m.sub,
     createdAt: newest,
     updatedAt: newest,
@@ -193,9 +217,11 @@ function toFigure(m: Model, d: string, kind: OccurrenceStatus, copies: CopyView[
       ufTarget: { score: uf.score?.head ?? d, note: uf.note?.head ?? d, wishability: uf.wishability?.head ?? d },
     },
   };
+  if (label !== undefined) figure.local.label = label;
   if (card?.kind !== undefined) figure.local.productKind = card.kind;
   if (COLLECTION_STATUSES.has(kind)) figure.collectionStatus = kind as CollectionStatus;
   if (card?.series?.value) figure.origin = card.series.value;
+  else if (label?.series !== undefined) figure.origin = label.series;
   if (gtins[0] !== undefined) figure.jan = jan13(gtins[0]);
   if (hasDims) figure.dimensions = Object.fromEntries(Object.entries(dims).filter(([, v]) => v !== undefined));
   if (card?.releaseYm?.value) figure.releases = [{ date: card.releaseYm.value }];

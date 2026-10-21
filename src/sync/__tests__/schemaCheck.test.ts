@@ -76,6 +76,21 @@ describe('compileSchema: the keywords the contract schemas use', () => {
     expect(compileSchema({ items: { type: 'string' } })(['a', 2])).toBe('$[]: not string');
   });
 
+  it('checks minItems, and uniqueItems by value whatever the key order (uf/refs)', () => {
+    expect(ok({ minItems: 1 }, [1])).toBe(true);
+    expect(ok({ minItems: 1 }, [])).toBe(false);
+    expect(ok({ minItems: 1 }, 'x')).toBe(true);
+    expect(ok({ uniqueItems: true }, [1, 2])).toBe(true);
+    expect(ok({ uniqueItems: true }, [1, 1])).toBe(false);
+    expect(ok({ uniqueItems: true }, [{ a: 1, b: 2 }, { b: 2, a: 1 }])).toBe(false);
+    expect(ok({ uniqueItems: true }, [{ a: 1 }, { a: 2 }, [1], [1, 2]])).toBe(true);
+    expect(ok({ uniqueItems: false }, [1, 1])).toBe(true);
+    expect(ok({ uniqueItems: true }, 'x')).toBe(true);
+    expect(compileSchema({ uniqueItems: true })([1, 1])).toBe('$: duplicate items');
+    expect(compileSchema({ minItems: 2 })([1])).toBe('$: fewer than 2 items');
+    expect(() => compileSchema({ uniqueItems: 'yes' })).toThrow('uniqueItems is not a boolean');
+  });
+
   it('runs then when if holds and else when it does not', () => {
     const s: Schema = {
       properties: { choice: { enum: ['keep', 'per_copy'] } },

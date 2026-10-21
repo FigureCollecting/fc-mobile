@@ -19,7 +19,7 @@ const NOMINAL_CHARACTER_HEIGHT_MM = 1600;
  */
 export const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
 
-export type HeightSource = 'labeled' | 'width-photo' | 'scale-estimate';
+export type HeightSource = 'labeled' | 'width-photo' | 'length' | 'scale-estimate';
 
 export interface ResolvedHeight {
   /** Physical height in mm, resolved via the fallback tree. */
@@ -47,8 +47,9 @@ function parseScaleFraction(scale: string | undefined): number | null {
  *      draws per mm of its height): the height at which the picture is the listed width. A MEASURED width and the photo's
  *      proportions beat a nominal character height, and a laying figure listed by its length (the spine reads an mfc L
  *      with no H and no W as the width) must not be stood up to the scale's height.
- *   3. scale fraction (e.g. "1/7") x nominal 1600mm character height.
- *   4. null — the caller falls back to a default height (packCabinets'
+ *   3. SIZE-L3: a lone listed length (below): the height of the figure placed by the photo.
+ *   4. scale fraction (e.g. "1/7") x nominal 1600mm character height.
+ *   5. null — the caller falls back to a default height (packCabinets'
  *      DEFAULT_FIGURE_HEIGHT_MM, flagged as estimated), since there's no
  *      physical signal left to estimate from.
  */
@@ -61,11 +62,40 @@ export function resolveHeightMm(figure: Figure, photoWidthPerMm?: number): Resol
   if (isPositiveFinite(width) && isPositiveFinite(photoWidthPerMm)) {
     return { heightMm: width / photoWidthPerMm, source: 'width-photo' };
   }
+  const lone = resolveLoneLength(figure, photoWidthPerMm);
+  if (lone) return { heightMm: lone.heightMm, source: 'length' };
   const fraction = parseScaleFraction(figure.scale);
   if (fraction) {
     return { heightMm: fraction * NOMINAL_CHARACTER_HEIGHT_MM, source: 'scale-estimate' };
   }
   return null;
+}
+
+/** A lone length placed on the figure: which way it lies, and the figure's height and width that follow from it. */
+export interface LoneLength {
+  /** The side the listed length is: a lying figure's width, a standing figure's height. */
+  longest: 'height' | 'width';
+  lengthMm: number;
+  heightMm: number;
+  widthMm: number;
+}
+
+/**
+ * SIZE-L3 (desk SIZE-L3): an mfc "L" with no H and no W arrives as the depth (the spine keeps MFC's W/L/H reading) and is the
+ * figure's LONGEST extent: the width of a figure lying down, the height of one standing. The picture says which: a wide one
+ * (at least as wide as it is tall, `photoWidthPerMm` >= 1) is a figure lying, so the length is the width and the height
+ * follows from the picture's proportions; a tall one is standing, so the length is the height and the width follows. The
+ * scale's nominal height is ignored either way. null with a listed height or width (the length is then a depth), with no
+ * length, or with no picture shape to place it by.
+ */
+export function resolveLoneLength(figure: Figure, photoWidthPerMm?: number): LoneLength | null {
+  const d = figure.dimensions;
+  if (isPositiveFinite(d?.heightMm) || isPositiveFinite(d?.widthMm)) return null;
+  const length = d?.depthMm;
+  if (!isPositiveFinite(length) || !isPositiveFinite(photoWidthPerMm)) return null;
+  return photoWidthPerMm >= 1
+    ? { longest: 'width', lengthMm: length, widthMm: length, heightMm: length / photoWidthPerMm }
+    : { longest: 'height', lengthMm: length, heightMm: length, widthMm: length * photoWidthPerMm };
 }
 
 export type WidthCapBasis = 'length' | 'scale';

@@ -26,7 +26,7 @@ describe('resolveHeightMm: a labeled width and the photo give the height', () =>
 
   it('no width: the scale\'s nominal height, as before', () => {
     expect(resolveHeightMm(listed({}, '1/7'), 0.375)?.source).toBe('scale-estimate');
-    expect(resolveHeightMm(listed({ depthMm: 240 }, '1/7'), 0.375)?.source).toBe('scale-estimate');
+    // a lone length (SIZE-L3) is placed by the photo, not the scale: sizeL3.test.ts
   });
 
   it('no picture shape to go by (none, zero, negative, not a number): the scale, then nothing', () => {

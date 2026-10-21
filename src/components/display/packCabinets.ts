@@ -60,13 +60,14 @@ const positive = (v: unknown): v is number => typeof v === 'number' && Number.is
  * neighbour (a real cut-out can draw far wider than its label).
  */
 export function measureCaseFigure(figure: Figure, index: number, meta: FigureDisplayMeta, drawn?: PictureMargins): CaseFigure {
-  const resolved = resolveHeightMm(figure);
+  // what the picture draws as wide at a height: a cut-out's clear part once read, else the whole picture
+  const pictureWidth = (h: number) => (drawn ? drawnWidthMm(h, meta.aspect, drawn) : meta.aspect * h);
+  // SIZE-L1: with a width listed and no height, the height at which the picture is that wide (resolveHeightMm)
+  const resolved = resolveHeightMm(figure, pictureWidth(1));
   const heightEstimated = resolved?.source !== 'labeled';
   let heightMm = Math.min(resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
   const labelledWidth = figure.dimensions?.widthMm;
   const hasLabelledWidth = positive(labelledWidth);
-  // what the picture draws as wide at a height: a cut-out's clear part once read, else the whole picture
-  const pictureWidth = (h: number) => (drawn ? drawnWidthMm(h, meta.aspect, drawn) : meta.aspect * h);
   // CASE-FB3b: a height only an estimate gives gives way to what the labels support of the width (a labeled length, else
   // the scale's nominal height): a lying figure's wide picture at the 200 mm default was 400-700 mm. The picture is then
   // drawn no wider than the footprint it is packed by. A labeled height stands: the picture is what it is
@@ -91,7 +92,8 @@ export function measureCaseFigure(figure: Figure, index: number, meta: FigureDis
   }
   const billboardWidthMm = meta.aspect * heightMm;
   const drawnWidth = drawn ? drawnWidthMm(heightMm, meta.aspect, drawn) : 0;
-  const widthMm = hasLabelledWidth ? Math.max(labelledWidth, drawnWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
+  // (a height derived from the listed width draws the picture exactly that wide: float noise must not read as a wider picture)
+  const widthMm = hasLabelledWidth ? (drawnWidth > labelledWidth * (1 + 1e-9) ? drawnWidth : labelledWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
   const widthBasis: WidthBasis = hasLabelledWidth ? 'labeled' : cap && capped ? cap.basis : 'photo';
   const labelledDepth = figure.dimensions?.depthMm;
   // a capped width gives a depth in Ross's ratio of its own, not of the picture's

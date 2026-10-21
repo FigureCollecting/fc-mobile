@@ -55,10 +55,10 @@ describe('describeSize: what each size rests on', () => {
     expect(s.widthCapOf).toBeUndefined();
   });
 
-  it('a labelled width beside an estimated height: the width is measured and the figure is still estimated', () => {
+  it('a labelled width beside an estimated height: the width is measured, the height rests on the photo (SIZE-L1, not the scale), and the figure is still estimated', () => {
     const s = describeSize(fig({ scale: '1/7', ...dims(undefined, 150) }));
-    expect(s.line).toBe('≈ 229 mm tall · from scale 1/7 · 150 mm wide · depth from the width');
-    expect([s.heightBasis, s.widthBasis, s.estimated]).toEqual(['scale', 'labeled', true]);
+    expect(s.line).toBe('height from the listed width and the photo · 150 mm wide · depth from the width');
+    expect([s.heightBasis, s.widthBasis, s.estimated]).toEqual(['photo', 'labeled', true]);
   });
 
   it.each([

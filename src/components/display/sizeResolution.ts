@@ -19,7 +19,7 @@ const NOMINAL_CHARACTER_HEIGHT_MM = 1600;
  */
 export const MAX_PLAUSIBLE_HEIGHT_MM = 2500;
 
-export type HeightSource = 'labeled' | 'scale-estimate';
+export type HeightSource = 'labeled' | 'width-photo' | 'scale-estimate';
 
 export interface ResolvedHeight {
   /** Physical height in mm, resolved via the fallback tree. */
@@ -43,15 +43,23 @@ function parseScaleFraction(scale: string | undefined): number | null {
  * this fallback tree must degrade gracefully instead of assuming a field
  * is present:
  *   1. labeled heightMm, if present and sane (finite, > 0).
- *   2. scale fraction (e.g. "1/7") x nominal 1600mm character height.
- *   3. null — the caller falls back to a default height (packCabinets'
+ *   2. SIZE-L1 (Ross 10-20, desk (a)): a labeled widthMm and the picture's shape (`photoWidthPerMm`, the width the picture
+ *      draws per mm of its height): the height at which the picture is the listed width. A MEASURED width and the photo's
+ *      proportions beat a nominal character height, and a laying figure listed by its length (the spine reads an mfc L
+ *      with no H and no W as the width) must not be stood up to the scale's height.
+ *   3. scale fraction (e.g. "1/7") x nominal 1600mm character height.
+ *   4. null — the caller falls back to a default height (packCabinets'
  *      DEFAULT_FIGURE_HEIGHT_MM, flagged as estimated), since there's no
  *      physical signal left to estimate from.
  */
-export function resolveHeightMm(figure: Figure): ResolvedHeight | null {
+export function resolveHeightMm(figure: Figure, photoWidthPerMm?: number): ResolvedHeight | null {
   const labeled = figure.dimensions?.heightMm;
   if (typeof labeled === 'number' && Number.isFinite(labeled) && labeled > 0) {
     return { heightMm: labeled, source: 'labeled' };
+  }
+  const width = figure.dimensions?.widthMm;
+  if (isPositiveFinite(width) && isPositiveFinite(photoWidthPerMm)) {
+    return { heightMm: width / photoWidthPerMm, source: 'width-photo' };
   }
   const fraction = parseScaleFraction(figure.scale);
   if (fraction) {

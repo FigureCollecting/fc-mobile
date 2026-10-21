@@ -51,6 +51,23 @@ describe('the negative cache of unresolved heads', () => {
     expect(r.server.count('getProducts')).toBe(1);
   });
 
+  it('asks 41 labelled heads once per TTL, not once per pass (Ross\'s 41 text-only holdings)', async () => {
+    const r = await rig();
+    const FIRST = 20;
+    for (let i = 0; i < 41; i++) holdCopy(r, FIRST + i, FIRST + i, 1000 + i * 10);
+    const heads = Array.from({ length: 41 }, (_, i) => headOf(FIRST + i)).sort();
+    await r.engine.trigger('start');
+    for (let pass = 0; pass < 5; pass++) await r.engine.trigger('manual');
+    expect(asks(r)).toEqual([heads]);
+    r.clock.advance(UNRESOLVED_TTL_MS - 1);
+    for (let pass = 0; pass < 3; pass++) await r.engine.trigger('manual');
+    expect(asks(r)).toHaveLength(1);
+    r.clock.advance(1);
+    for (let pass = 0; pass < 5; pass++) await r.engine.trigger('manual');
+    expect(asks(r)).toEqual([heads, heads]);
+    expect(await unresolved(r)).toEqual(heads);
+  });
+
   it('still refetches the known heads\' cards at their own 24 h TTL, without the remembered ones', async () => {
     const r = await held();
     r.clock.advance(PRODUCT_TTL_MS);

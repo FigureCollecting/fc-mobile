@@ -73,8 +73,8 @@ export function measureCaseFigure(listing: Figure, index: number, meta: FigureDi
   const resolved = resolveHeightMm(figure, pictureWidth(1), read.dropped.some((d) => d.axis === 'height'));
   // SIZE-L3: a lone length is the figure's longest side, placed by the photo; it is then neither a width cap nor a depth
   const lone = resolveLoneLength(figure, pictureWidth(1));
-  // (a height read from a listed length is an inference, not a measurement)
-  const heightEstimated = resolved?.source !== 'labeled' || read.placed === 'standing';
+  // (a height read from a listed length, or from a listing read as centimetres, is an inference, not a measurement)
+  const heightEstimated = resolved?.source !== 'labeled' || read.placed === 'standing' || read.cm.length > 0;
   let heightMm = Math.min(resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
   const labelledWidth = figure.dimensions?.widthMm;
   const hasLabelledWidth = positive(labelledWidth);

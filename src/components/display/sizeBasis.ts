@@ -66,9 +66,9 @@ export function describeSize(listing: Figure, photoFit?: PhotoFit, aspect?: numb
   const widthBasis: SizeBasis['widthBasis'] = read.placed === 'lying' ? 'length' : positive(d?.widthMm) ? 'labeled' : lone?.longest === 'width' ? 'length' : 'photo';
   const depthBasis = positive(d?.depthMm) && !lone && !loneUnplaced ? 'labeled' : 'width';
   const cap = heightBasis !== 'labeled' && !lone && !loneUnplaced ? resolveWidthCap(figure) : null;
-  const estimated = heightBasis !== 'labeled' || widthBasis !== 'labeled';
+  const estimated = heightBasis !== 'labeled' || widthBasis !== 'labeled' || read.cm.length > 0;
 
-  const allListed = heightBasis === 'labeled' && widthBasis === 'labeled' && depthBasis === 'labeled' && resolved!.heightMm <= MAX_PLAUSIBLE_HEIGHT_MM;
+  const allListed = heightBasis === 'labeled' && widthBasis === 'labeled' && depthBasis === 'labeled' && resolved!.heightMm <= MAX_PLAUSIBLE_HEIGHT_MM && read.cm.length === 0;
   let line: string;
   if (allListed) {
     line = `${mm(resolved!.heightMm)} × ${mm(d!.widthMm!)} × ${mm(d!.depthMm!)} mm · measured`;
@@ -104,7 +104,9 @@ export function describeSize(listing: Figure, photoFit?: PhotoFit, aspect?: numb
     const depth = depthBasis === 'labeled' ? `${mm(d!.depthMm!)} mm deep` : 'depth from the width';
     // a listed axis too small to be real, said last: what was listed and that it was not used
     const ignored = read.dropped.map((x) => `listed ${x.axis} of ${mm(x.mm)} mm ignored`);
-    line = [height, width, depth, ...ignored].filter((part): part is string => part !== null).join(' · ');
+    // a listing whose every axis was under 20 mm, read as centimetres: each listed value and what it was read as
+    const asCm = read.cm.length === 0 ? [] : [`listed in mm but read as cm (${read.cm.map((x) => `${x.mm} → ${mm(x.mm * 10)} mm`).join(', ')})`];
+    line = [height, width, depth, ...ignored, ...asCm].filter((part): part is string => part !== null).join(' · ');
   }
   if (photoFit) line = `${line} · ${photoFitNote(photoFit)}`;
   return {

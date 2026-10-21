@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { ProductKind } from '@figurecollecting/fc-api-contract';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { UNMATTED_META } from '../displayMeta';
-import { DEPTH_WIDTH_RATIO, SQUARE_PHOTO_TOLERANCE, TINY_AXIS_MM, readListedSize, resolveHeightMm } from '../sizeResolution';
+import { CM_READ_BELOW_MM, DEPTH_WIDTH_RATIO, SQUARE_PHOTO_TOLERANCE, TINY_AXIS_MM, readListedSize, resolveHeightMm } from '../sizeResolution';
 import { measureCaseFigure } from '../packCabinets';
 import { describeSize } from '../sizeBasis';
 
@@ -85,7 +85,8 @@ describe('readListedSize: the tiny-axis rule', () => {
   });
 
   it('5 mm is kept, 4.99 is not; each axis alike', () => {
-    expect(readListedSize(figure({ heightMm: 5, widthMm: 5, depthMm: 5 }), 0.75).dropped).toEqual([]);
+    expect(readListedSize(figure({ heightMm: 5, widthMm: 300, depthMm: 300 }), 0.75).dropped).toEqual([]);
+    expect(readListedSize(figure({ heightMm: 300, widthMm: 5, depthMm: 300 }), 0.75).dropped).toEqual([]);
     expect(readListedSize(figure({ heightMm: 4.99, widthMm: 4.99, depthMm: 4.99 }), 0.75).dropped.map((d) => d.axis)).toEqual(['height', 'width', 'depth']);
   });
 
@@ -106,6 +107,67 @@ describe('readListedSize: the tiny-axis rule', () => {
     const r = readListedSize(figure({ widthMm: 300, depthMm: 2 }), 0.5);
     expect(r.placed).toBeUndefined();
     expect(r.figure.dimensions).toEqual({ widthMm: 300 });
+  });
+});
+
+describe('readListedSize: a listing whose every axis is under 20 mm is read as centimetres (Zuko, Toph and the like)', () => {
+  it('Zuko 3797841 and Toph Beifong 3797875 (H6 W3 D4): 60 x 30 x 40 mm, and it says what was read as what', () => {
+    expect(CM_READ_BELOW_MM).toBe(20);
+    const r = readListedSize(figure({ heightMm: 6, widthMm: 3, depthMm: 4 }), 0.75);
+    expect(r.figure.dimensions).toEqual({ heightMm: 60, widthMm: 30, depthMm: 40 });
+    expect(r.cm).toEqual([{ axis: 'height', mm: 6 }, { axis: 'width', mm: 3 }, { axis: 'depth', mm: 4 }]);
+    expect(r.dropped).toEqual([]);
+  });
+
+  it('the figures the catalogue lists this way: Madoka 15 x 8 x 8, Gojira 12, Pochita 13 x 14 x 14, a 1/12 trading 10', () => {
+    expect(readListedSize(figure({ heightMm: 15, widthMm: 8, depthMm: 8 })).figure.dimensions).toEqual({ heightMm: 150, widthMm: 80, depthMm: 80 });
+    expect(readListedSize(figure({ heightMm: 12 })).figure.dimensions).toEqual({ heightMm: 120 });
+    expect(readListedSize(figure({ heightMm: 13, widthMm: 14, depthMm: 14 })).figure.dimensions).toEqual({ heightMm: 130, widthMm: 140, depthMm: 140 });
+    expect(readListedSize(figure({ heightMm: 10 }, '1/12')).figure.dimensions).toEqual({ heightMm: 100 });
+  });
+
+  it('only when EVERY listed axis is under 20 mm: one at 20 or more is a real size, and the tiny axes beside it are dropped', () => {
+    const r = readListedSize(figure({ heightMm: 19.99, widthMm: 8 }));
+    expect(r.figure.dimensions).toEqual({ heightMm: 199.9, widthMm: 80 });
+    const real = readListedSize(figure({ heightMm: 20, widthMm: 3 }));
+    expect(real.cm).toEqual([]);
+    expect(real.figure.dimensions).toEqual({ heightMm: 20 });
+    expect(real.dropped).toEqual([{ axis: 'width', mm: 3 }]);
+  });
+
+  it('not for the placeholder: a listing whose largest axis is under 5 mm (an H1, a 1 x 1 x 1, Varang 3 x 2 x 2) is MFC\'s unknown, so it is dropped, not read as cm', () => {
+    for (const dims of [{ heightMm: 1 }, { heightMm: 1, widthMm: 1, depthMm: 1 }, { heightMm: 3, widthMm: 2, depthMm: 2 }, { heightMm: 4.99 }]) {
+      const r = readListedSize(figure(dims));
+      expect(r.cm, JSON.stringify(dims)).toEqual([]);
+      expect(r.figure.dimensions).toEqual({});
+      expect(r.dropped.length).toBe(Object.keys(dims).length);
+    }
+  });
+
+  it('only on a FIGURE: goods, media and a card with no kind are read as listed', () => {
+    for (const kind of [ProductKind.GOODS, ProductKind.MEDIA, undefined]) {
+      const f = listed({ heightMm: 6, widthMm: 3, depthMm: 4 }, '', kind);
+      expect(readListedSize(f, 0.75).figure).toBe(f);
+    }
+  });
+
+  it('is read before a W and a longer L are placed: the scaled values are the ones placed', () => {
+    const r = readListedSize(figure({ widthMm: 8, depthMm: 12 }), 0.5);
+    expect(r.placed).toBe('standing');
+    expect(r.figure.dimensions).toEqual({ heightMm: 120, widthMm: 80 });
+  });
+
+  it('measureCaseFigure: Zuko is 60 x 30 x 40 mm, an inference, not a measurement', () => {
+    const m = measureCaseFigure(figure({ heightMm: 6, widthMm: 3, depthMm: 4 }), 0, meta(0.75));
+    expect([m.heightMm, m.widthMm, m.depthMm]).toEqual([60, 30, 40]);
+    expect(m.heightEstimated).toBe(true);
+  });
+
+  it('describeSize says what was read as what, and never calls it measured', () => {
+    const zuko = describeSize(figure({ heightMm: 6, widthMm: 3, depthMm: 4 }), undefined, 0.75);
+    expect(zuko.line).toBe('60 mm tall · 30 mm wide · 40 mm deep · listed in mm but read as cm (6 → 60 mm, 3 → 30 mm, 4 → 40 mm)');
+    expect(zuko.estimated).toBe(true);
+    expect(describeSize(figure({ heightMm: 12 }), undefined, 0.75).line).toBe('120 mm tall · width from the photo · depth from the width · listed in mm but read as cm (12 → 120 mm)');
   });
 });
 

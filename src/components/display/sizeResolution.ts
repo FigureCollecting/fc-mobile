@@ -95,11 +95,20 @@ export const TINY_AXIS_MM = 5;
  */
 export const SQUARE_PHOTO_TOLERANCE = 0.05;
 
+/**
+ * SIZE-L2 (Ross, via the lead 10-21): on a FIGURE whose EVERY listed axis is under this many mm, the listing is read as
+ * centimetres (x10): Zuko and Toph Beifong are listed 6 x 3 x 4. Only with an axis of at least TINY_AXIS_MM among them: a listing
+ * whose largest axis is under that (an H1, a 1 x 1 x 1) is MFC's unknown, not a cm.
+ */
+export const CM_READ_BELOW_MM = 20;
+
 export interface ListedSize {
   /** The figure as the rest of the resolution reads it: tiny axes gone, a W and a longer L placed. The same object when neither applies. */
   figure: Figure;
   /** Axes listed under TINY_AXIS_MM on a FIGURE, and what was listed. */
   dropped: readonly { axis: Axis; mm: number }[];
+  /** Axes read as centimetres (the listing's every axis was under CM_READ_BELOW_MM), and what was listed in mm. */
+  cm: readonly { axis: Axis; mm: number }[];
   /** A listed W and a longer L with no H, placed by the photo: a tall picture is standing (L the height), a wide one lying (L the width). */
   placed?: 'standing' | 'lying';
 }
@@ -109,7 +118,8 @@ const AXIS_KEY = { height: 'heightMm', width: 'widthMm', depth: 'depthMm' } as c
 
 /**
  * SIZE-L2 (Ross, via the lead 10-21). What the listing says, before the height, width and depth are resolved:
- *   1. the tiny-axis rule: on a FIGURE (a card whose kind is FIGURE; goods, media and a card that states none keep theirs) an axis
+ *   0. a FIGURE whose every listed axis is under CM_READ_BELOW_MM (and the largest at least TINY_AXIS_MM) is read as centimetres.
+ *   1. otherwise the tiny-axis rule: on a FIGURE (a card whose kind is FIGURE; goods, media and a card that states none keep theirs) an axis
  *      under TINY_AXIS_MM is dropped, so it is estimated like a missing one.
  *   2. a listed W and a LONGER L (the spine keeps them as the width and the depth) with no listed H: the photo decides. A tall
  *      picture is a standing figure: height = L, width = W. A wide one is lying: width = L, depth = W. A square one keeps the
@@ -120,15 +130,26 @@ const AXIS_KEY = { height: 'heightMm', width: 'widthMm', depth: 'depthMm' } as c
  */
 export function readListedSize(figure: Figure, photoWidthPerMm?: number): ListedSize {
   const d = figure.dimensions;
-  if (!d) return { figure, dropped: [] };
+  if (!d) return { figure, dropped: [], cm: [] };
   const dims: { heightMm?: number; widthMm?: number; depthMm?: number } = { ...d };
   const dropped: { axis: Axis; mm: number }[] = [];
+  const cm: { axis: Axis; mm: number }[] = [];
   if ((figure as { local?: { productKind?: ProductKind } }).local?.productKind === ProductKind.FIGURE) {
-    for (const axis of AXES) {
-      const v = d[AXIS_KEY[axis]];
-      if (isPositiveFinite(v) && v < TINY_AXIS_MM) {
-        delete dims[AXIS_KEY[axis]];
-        dropped.push({ axis, mm: v });
+    const listedAxes = AXES.filter((axis) => isPositiveFinite(d[AXIS_KEY[axis]]));
+    const largest = Math.max(0, ...listedAxes.map((axis) => d[AXIS_KEY[axis]] as number));
+    if (listedAxes.length > 0 && largest >= TINY_AXIS_MM && listedAxes.every((axis) => (d[AXIS_KEY[axis]] as number) < CM_READ_BELOW_MM)) {
+      for (const axis of listedAxes) {
+        const v = d[AXIS_KEY[axis]] as number;
+        dims[AXIS_KEY[axis]] = Number((v * 10).toFixed(6));
+        cm.push({ axis, mm: v });
+      }
+    } else {
+      for (const axis of AXES) {
+        const v = d[AXIS_KEY[axis]];
+        if (isPositiveFinite(v) && v < TINY_AXIS_MM) {
+          delete dims[AXIS_KEY[axis]];
+          dropped.push({ axis, mm: v });
+        }
       }
     }
   }
@@ -143,8 +164,8 @@ export function readListedSize(figure: Figure, photoWidthPerMm?: number): Listed
       placedDims = { widthMm: dims.depthMm, depthMm: dims.widthMm };
     }
   }
-  if (dropped.length === 0 && placed === undefined) return { figure, dropped };
-  return { figure: { ...figure, dimensions: placedDims }, dropped, ...(placed ? { placed } : {}) };
+  if (dropped.length === 0 && cm.length === 0 && placed === undefined) return { figure, dropped, cm };
+  return { figure: { ...figure, dimensions: placedDims }, dropped, cm, ...(placed ? { placed } : {}) };
 }
 
 /** A lone length placed on the figure: which way it lies, and the figure's height and width that follow from it. */

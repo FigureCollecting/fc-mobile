@@ -40,6 +40,12 @@ export const PROBE_TIMEOUT_MS = 3_000;
 /** Any other call that has not answered by then counts as unreachable; its batch is retried as sent. */
 export const CALL_TIMEOUT_MS = 30_000;
 export const PRODUCT_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a labelled head (uf/label: a figure no store lists) the catalogue answered `unresolved` is left alone
+ * (GK2-IMPORT-2): asking every pass finds nothing new. Long, since such a head rarely gains a product; a pull-to-refresh
+ * asks anyway. An unlabelled head the catalogue does not know is never remembered (see hydrateProducts).
+ */
+export const UNRESOLVED_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** CARD-REFRESH-1: a pull-to-refresh refetches every card at most this often; a pull inside it is a plain sync. */
 export const FORCE_REFRESH_MIN_MS = 5 * 60 * 1000;
 export const WRITE_DELAY_MS = 1_000;
@@ -477,8 +483,11 @@ export class SyncEngine {
 
   private async hydrateProducts(store: UserStore): Promise<void> {
     const heads = new Set<string>();
+    // heads under a live uf/label: minted by the writer for a figure the catalogue is expected not to know
+    const labelled = new Set<string>();
     for (const rec of await store.listFacets()) {
       if (rec.head_id !== undefined && (rec.family === 'occ/head' || rec.family?.startsWith('uf/') === true)) heads.add(rec.head_id);
+      if (rec.head_id !== undefined && rec.family === 'uf/label' && rec.value?.op === 'upsert') labelled.add(rec.head_id);
     }
     const fetched = new Map<string, number>();
     for (const p of await store.listProducts()) {
@@ -490,8 +499,15 @@ export class SyncEngine {
     const now = this.clock.wallMs();
     // due: past the TTL; or, after a pull-to-refresh, fetched before it (cards fetched since it are done)
     const since = this.cardsSince;
-    const fresh = (at: number) => (since === undefined ? now - at < PRODUCT_TTL_MS : at >= since);
-    const due = [...heads].filter((h) => !fresh(fetched.get(h) ?? -Infinity)).sort();
+    const fresh = (at: number, ttl: number) => (since === undefined ? now - at < ttl : at >= since);
+    const remembered = (await store.getMeta()).unresolved ?? {};
+    // a head with a card is fresh by the card's age; one without is fresh while the catalogue's "no product" is recent
+    const isFresh = (h: string): boolean => {
+      const card = fetched.get(h);
+      return card !== undefined ? fresh(card, PRODUCT_TTL_MS) : fresh(remembered[h] ?? -Infinity, UNRESOLVED_TTL_MS);
+    };
+    const due = [...heads].filter((h) => !isFresh(h)).sort();
+    const answeredUnresolved = new Set<string>();
     for (let i = 0; i < due.length; i += PRODUCT_BATCH) {
       const refs = due.slice(i, i + PRODUCT_BATCH).map((value) => ({ ref: { case: 'headId' as const, value } }));
       let pageToken = '';
@@ -501,10 +517,16 @@ export class SyncEngine {
         sent.add(pageToken);
         const page = await this.call((signal) => this.deps.catalog.getProducts({ refs, pageToken }, { signal }));
         await store.putProducts(page.products);
+        for (const u of page.unresolved) if (u.ref.case === 'headId') answeredUnresolved.add(u.ref.value);
         pageToken = page.nextPageToken;
         if (pageToken !== '' && sent.has(pageToken)) throw new ProtocolError(`GetProducts repeated next_page_token ${JSON.stringify(pageToken)}`);
       } while (pageToken !== '');
     }
+    // What the catalogue has no product for is remembered only for a labelled head, which is expected not to be there. Any
+    // other head may be a real product whose card is not served yet: it is asked again every pass, so its card lands at once.
+    // A head no longer labelled is forgotten: one write, after the cards.
+    const unknown = [...answeredUnresolved].filter((h) => labelled.has(h));
+    if (unknown.length > 0 || Object.keys(remembered).some((h) => !labelled.has(h))) await store.rememberUnresolved(unknown, labelled);
     // every card asked for is in: the pull is served, unless a newer one came in meanwhile
     if (this.cardsSince === since) this.cardsSince = undefined;
   }

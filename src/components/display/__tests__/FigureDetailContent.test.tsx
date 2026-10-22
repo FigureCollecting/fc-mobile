@@ -90,7 +90,7 @@ describe('FigureDetailContent (shared between the viewer sheet and the Fold dual
   it.each([
     ['measured', { heightMm: 245, widthMm: 170, depthMm: 190 }, '1/7', '245 × 170 × 190 mm · measured'],
     ['height from the scale', undefined, '1/7', '≈ 229 mm tall · from scale 1/7 · width from the photo, at most 229 mm (its scale\'s height) · depth from the width'],
-    ['a length', { depthMm: 190 }, '1/8', '≈ 200 mm tall · from scale 1/8 · width from the photo, at most 190 mm (its length) · 190 mm deep'],
+    ['a length (SIZE-L3: the longest side, placed by the photo; the card has no picture shape)', { depthMm: 190 }, '1/8', 'size from the listed length and the photo · depth from the width'],
   ])('shows the size and its basis: %s', (_label, dimensions, scale, line) => {
     const figure = { _id: 's', name: 'Sized', manufacturer: 'Alter', scale, userId: 'u', createdAt: '', updatedAt: '', ...(dimensions === undefined ? {} : { dimensions }) } as never;
     const { container } = renderWithProviders(<FigureDetailContent figure={figure} index={0} total={1} />);

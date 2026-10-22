@@ -27,7 +27,8 @@ describe('what a width the labels do not give is capped at', () => {
     // Boa Hancock: L=150 only; no height, no scale: the 200 mm default height at a 2.6 aspect read 520 mm wide
     const boa = measure(fig('Boa Hancock', { depthMm: 150 }), 2.6);
     expect(boa.widthMm).toBeCloseTo(150, 9);
-    expect(boa.depthMm).toBe(150);
+    // SIZE-L3: the length is the width of a lying figure; the footprint's depth is Ross's ratio of it (it was the length itself)
+    expect(boa.depthMm).toBeCloseTo(0.65 * 150, 9);
     expect(boa.heightMm).toBeCloseTo(150 / 2.6, 9);
     expect(boa.heightEstimated).toBe(true);
     expect(boa.billboardWidthMm).toBeCloseTo(150, 9);
@@ -154,8 +155,8 @@ describe('the twelve figures of the 10-17 list: each lands somewhere or is liste
     expect(at.get('Tokisaki Kurumi (wide)')).toMatchObject({ top: false });
     expect(at.get('Re:Zero Emilia - Puck 1/7 (Pulchra)')).toMatchObject({ top: false });
     expect(at.get('Zuikaku')).toMatchObject({ top: false, turned: true });
-    // 380 mm of length and depth: wider than the glass, within the top (450 x 400)
-    expect(at.get('Yoko Littner')).toMatchObject({ top: true });
+    // 380 mm wide (the length is her width; her depth is no longer the length, 247 mm in Ross's ratio): wider than the glass, so a tier or the top
+    expect(at.get('Yoko Littner')).toMatchObject({ kind: 'ikea-klingsbo' });
     // 407 mm wide, labeled height: its picture's width, over the glass and within the top
     expect(at.get('Kirigiri Kyoko')).toMatchObject({ top: true });
   });

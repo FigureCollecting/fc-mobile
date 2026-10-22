@@ -37,10 +37,10 @@ describe('describeSize: what each size rests on', () => {
     expect([s.heightBasis, s.heightMm, s.widthCapOf, s.widthCapMm, s.estimated]).toEqual(['scale', 229, 'scale', 229, true]);
   });
 
-  it('a scale and a labelled length (MFC\'s L lands in depth): the width is held to the length', () => {
+  it('a scale and a labelled length (MFC\'s L lands in depth): the longest side, placed by the photo (SIZE-L3); the scale is ignored', () => {
     const s = describeSize(fig({ scale: '1/8', ...dims(undefined, undefined, 190) }));
-    expect(s.line).toBe('≈ 200 mm tall · from scale 1/8 · width from the photo, at most 190 mm (its length) · 190 mm deep');
-    expect(s.widthCapOf).toBe('length');
+    expect(s.line).toBe('size from the listed length and the photo · depth from the width');
+    expect(s.widthCapOf).toBeUndefined();
   });
 
   it('nothing at all: the default height, said to be a default', () => {
@@ -55,10 +55,10 @@ describe('describeSize: what each size rests on', () => {
     expect(s.widthCapOf).toBeUndefined();
   });
 
-  it('a labelled width beside an estimated height: the width is measured and the figure is still estimated', () => {
+  it('a labelled width beside an estimated height: the width is measured, the height rests on the photo (SIZE-L1, not the scale), and the figure is still estimated', () => {
     const s = describeSize(fig({ scale: '1/7', ...dims(undefined, 150) }));
-    expect(s.line).toBe('≈ 229 mm tall · from scale 1/7 · 150 mm wide · depth from the width');
-    expect([s.heightBasis, s.widthBasis, s.estimated]).toEqual(['scale', 'labeled', true]);
+    expect(s.line).toBe('height from the listed width and the photo · 150 mm wide · depth from the width');
+    expect([s.heightBasis, s.widthBasis, s.estimated]).toEqual(['photo', 'labeled', true]);
   });
 
   it.each([

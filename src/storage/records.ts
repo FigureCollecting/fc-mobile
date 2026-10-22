@@ -86,6 +86,12 @@ export interface SyncMeta {
   server_cursor?: string;
   pending_review?: number;
   status_at?: number;
+  /**
+   * Labelled heads (uf/label) the catalogue answered `unresolved` (it has no product for them: a figure held under a head the
+   * importer minted), by the wall-clock ms it said so. The engine does not ask again until UNRESOLVED_TTL_MS passes, a pull-to-refresh, or a
+   * card for the head arrives (putProducts forgets it). None on a meta stored before the field existed.
+   */
+  unresolved?: Record<string, number>;
 }
 
 /**

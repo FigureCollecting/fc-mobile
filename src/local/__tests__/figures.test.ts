@@ -106,6 +106,44 @@ describe('buildFigures', () => {
     expect(f!.releases).toBeUndefined();
   });
 
+  describe('uf/label: a figure the catalogue has no product for (GK2-IMPORT-2)', () => {
+    const labelRow = (head: string, fields: Record<string, unknown> | null) => row(ufFacetKey(head, 'label'), fields);
+
+    it('names a figure with no card by its label, and takes its maker, series and scale from it', () => {
+      const facets = [...copy(O[0], H[0], 'owned'), labelRow(H[0], { name: 'Yor Forger', maker: 'Atlas Studio', series: 'Spy x Family', scale: '1/6' })];
+      const [f] = buildFigures(inputs(facets));
+      expect(f).toMatchObject({ _id: H[0], name: 'Yor Forger', manufacturer: 'Atlas Studio', origin: 'Spy x Family', scale: '1/6', local: { hasCard: false, label: { name: 'Yor Forger', maker: 'Atlas Studio' } } });
+    });
+
+    it('adds the edition to the name, in parentheses', () => {
+      const [f] = buildFigures(inputs([...copy(O[0], H[0], 'owned'), labelRow(H[0], { name: 'Jackie Chan', edition: '+ bonus face' })]));
+      expect(f!.name).toBe('Jackie Chan (+ bonus face)');
+      expect(f!.manufacturer).toBe('');
+      expect(f!.origin).toBeUndefined();
+    });
+
+    it('lets a card win: the label is kept, and nothing of it shows', () => {
+      const facets = [...copy(O[0], H[0], 'owned'), labelRow(H[0], { name: 'My name for it', maker: 'Mine', scale: '1/1' })];
+      const [f] = buildFigures(inputs(facets, [product(card(H[0]))]));
+      expect(f).toMatchObject({ name: 'Figure 1b4e', manufacturer: 'Good Smile Company', scale: '1/7', local: { hasCard: true } });
+      expect(f!.local.label).toBeUndefined();
+    });
+
+    it('ignores a tombstoned label, and one it cannot read (an empty name): the placeholder stays', () => {
+      expect(buildFigures(inputs([...copy(O[0], H[0], 'owned'), labelRow(H[0], null)]))[0]!.name).toBe('Untitled figure');
+      expect(buildFigures(inputs([...copy(O[0], H[0], 'owned'), labelRow(H[0], { name: '' })]))[0]!.name).toBe('Untitled figure');
+    });
+
+    it('makes no figure out of a label alone: a figure needs a copy', () => {
+      expect(buildFigures(inputs([labelRow(H[0], { name: 'Nobody holds me' })]))).toEqual([]);
+    });
+
+    it('shows each head its own label', () => {
+      const facets = [...copy(O[0], H[0], 'owned'), ...copy(O[1], H[1], 'ordered'), labelRow(H[0], { name: 'A' }), labelRow(H[1], { name: 'B' })];
+      expect(buildFigures(inputs(facets)).map((f) => [f._id, f.name])).toEqual([[H[0], 'A'], [H[1], 'B']]);
+    });
+  });
+
   it('names a figure whose card has no title by its character, then maker and scale, before "Untitled figure"', () => {
     const facets = [...copy(O[0], H[0], 'owned'), ...copy(O[1], H[1], 'owned')];
     const untitledCard = (head: string, extra: Record<string, unknown>) => card(head, { title: undefined, ...extra });

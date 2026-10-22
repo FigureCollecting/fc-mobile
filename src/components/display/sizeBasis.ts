@@ -13,7 +13,7 @@
 import type { Figure } from '@figurecollecting/fc-shared';
 import { DEFAULT_FIGURE_HEIGHT_MM } from './packCabinets';
 import { photoFitNote, type PhotoFit } from './photoFit';
-import { MAX_PLAUSIBLE_HEIGHT_MM, resolveHeightMm, resolveLoneLength, resolveWidthCap, type WidthCapBasis } from './sizeResolution';
+import { MAX_PLAUSIBLE_HEIGHT_MM, readListedSize, resolveHeightMm, resolveLoneLength, resolveWidthCap, type WidthCapBasis } from './sizeResolution';
 
 export type HeightBasis = 'labeled' | 'length' | 'photo' | 'scale' | 'default';
 
@@ -42,25 +42,33 @@ const mm = (v: number): number => Math.round(v);
  * `aspect`: the picture's width over its height, when the caller has it; a listed width with no listed height is then said with the
  * height it gives, else without a number (the basis is the same).
  */
-export function describeSize(figure: Figure, photoFit?: PhotoFit, aspect?: number): SizeBasis {
+export function describeSize(listing: Figure, photoFit?: PhotoFit, aspect?: number): SizeBasis {
+  // SIZE-L2: the listing as read (tiny axes dropped on a figure, a W and a longer L placed by the photo), as measureCaseFigure reads it
+  const read = readListedSize(listing, aspect);
+  const figure = read.figure;
   const d = figure.dimensions;
   const widthListed = positive(d?.widthMm);
-  const resolved = resolveHeightMm(figure, aspect);
+  const droppedHeight = read.dropped.some((x) => x.axis === 'height');
+  const resolved = resolveHeightMm(figure, aspect, droppedHeight);
   // SIZE-L1: a listed width and no listed height rests on the photo, with or without the picture's shape in hand
   const photoBasis = widthListed && !positive(d?.heightMm);
   // SIZE-L3: a lone length is the longest side; which one the picture says, or, without its shape, not guessed
   const lone = resolveLoneLength(figure, aspect);
   const loneUnplaced = !lone && !widthListed && !positive(d?.heightMm) && positive(d?.depthMm);
-  const heightBasis: HeightBasis = lone
-    ? (lone.longest === 'height' ? 'length' : 'photo')
-    : loneUnplaced || photoBasis ? 'photo' : resolved === null ? 'default' : resolved.source === 'labeled' ? 'labeled' : 'scale';
+  const heightBasis: HeightBasis = read.placed === 'standing'
+    ? 'length'
+    : lone
+      ? (lone.longest === 'height' ? 'length' : 'photo')
+      : droppedHeight && resolved?.source === 'scale-estimate'
+        ? 'scale'
+        : loneUnplaced || photoBasis ? 'photo' : resolved === null ? 'default' : resolved.source === 'labeled' ? 'labeled' : 'scale';
   const heightMm = Math.min(lone?.heightMm ?? resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
-  const widthBasis: SizeBasis['widthBasis'] = positive(d?.widthMm) ? 'labeled' : lone?.longest === 'width' ? 'length' : 'photo';
+  const widthBasis: SizeBasis['widthBasis'] = read.placed === 'lying' ? 'length' : positive(d?.widthMm) ? 'labeled' : lone?.longest === 'width' ? 'length' : 'photo';
   const depthBasis = positive(d?.depthMm) && !lone && !loneUnplaced ? 'labeled' : 'width';
   const cap = heightBasis !== 'labeled' && !lone && !loneUnplaced ? resolveWidthCap(figure) : null;
-  const estimated = heightBasis !== 'labeled' || widthBasis !== 'labeled';
+  const estimated = heightBasis !== 'labeled' || widthBasis !== 'labeled' || read.cm.length > 0;
 
-  const allListed = heightBasis === 'labeled' && widthBasis === 'labeled' && depthBasis === 'labeled' && resolved!.heightMm <= MAX_PLAUSIBLE_HEIGHT_MM;
+  const allListed = heightBasis === 'labeled' && widthBasis === 'labeled' && depthBasis === 'labeled' && resolved!.heightMm <= MAX_PLAUSIBLE_HEIGHT_MM && read.cm.length === 0;
   let line: string;
   if (allListed) {
     line = `${mm(resolved!.heightMm)} × ${mm(d!.widthMm!)} × ${mm(d!.depthMm!)} mm · measured`;
@@ -68,7 +76,7 @@ export function describeSize(figure: Figure, photoFit?: PhotoFit, aspect?: numbe
     const height =
       loneUnplaced
         ? 'size from the listed length and the photo'
-        : lone?.longest === 'height'
+        : lone?.longest === 'height' || read.placed === 'standing'
           ? `${mm(heightMm)} mm tall · from the listed length`
           : lone?.longest === 'width'
             ? `≈ ${mm(heightMm)} mm tall · from the photo`
@@ -87,14 +95,18 @@ export function describeSize(figure: Figure, photoFit?: PhotoFit, aspect?: numbe
       widthBasis === 'labeled'
         ? `${mm(d!.widthMm!)} mm wide`
         : widthBasis === 'length'
-          ? `${mm(lone!.widthMm)} mm wide (the listed length)`
+          ? `${mm(lone?.widthMm ?? d!.widthMm!)} mm wide (the listed length)`
         : loneUnplaced
           ? null
         : cap === null
           ? 'width from the photo'
           : `width from the photo, at most ${mm(cap.capMm)} mm (${cap.basis === 'length' ? 'its length' : "its scale's height"})`;
     const depth = depthBasis === 'labeled' ? `${mm(d!.depthMm!)} mm deep` : 'depth from the width';
-    line = [height, width, depth].filter((part): part is string => part !== null).join(' · ');
+    // a listed axis too small to be real, said last: what was listed and that it was not used
+    const ignored = read.dropped.map((x) => `listed ${x.axis} of ${mm(x.mm)} mm ignored`);
+    // a listing whose every axis was under 20 mm, read as centimetres: each listed value and what it was read as
+    const asCm = read.cm.length === 0 ? [] : [`listed in mm but read as cm (${read.cm.map((x) => `${x.mm} → ${mm(x.mm * 10)} mm`).join(', ')})`];
+    line = [height, width, depth, ...ignored, ...asCm].filter((part): part is string => part !== null).join(' · ');
   }
   if (photoFit) line = `${line} · ${photoFitNote(photoFit)}`;
   return {

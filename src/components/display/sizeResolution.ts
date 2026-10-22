@@ -1,3 +1,4 @@
+import { ProductKind } from '@figurecollecting/fc-api-contract';
 import type { Figure } from '@figurecollecting/fc-shared';
 import type { FigureDisplayMeta } from './displayMeta';
 
@@ -53,12 +54,20 @@ function parseScaleFraction(scale: string | undefined): number | null {
  *      DEFAULT_FIGURE_HEIGHT_MM, flagged as estimated), since there's no
  *      physical signal left to estimate from.
  */
-export function resolveHeightMm(figure: Figure, photoWidthPerMm?: number): ResolvedHeight | null {
+export function resolveHeightMm(figure: Figure, photoWidthPerMm?: number, smallerEstimate = false): ResolvedHeight | null {
   const labeled = figure.dimensions?.heightMm;
   if (typeof labeled === 'number' && Number.isFinite(labeled) && labeled > 0) {
     return { heightMm: labeled, source: 'labeled' };
   }
   const width = figure.dimensions?.widthMm;
+  // SIZE-L2: a listed height that was too small to be real (readListedSize) leaves two estimates, the photo's and the scale's;
+  // Ross: "best guess erring on the smallish side", so the smaller stands
+  if (smallerEstimate && isPositiveFinite(width) && isPositiveFinite(photoWidthPerMm)) {
+    const fromPhoto = width / photoWidthPerMm;
+    const fraction = parseScaleFraction(figure.scale);
+    if (fraction && fraction * NOMINAL_CHARACTER_HEIGHT_MM < fromPhoto) return { heightMm: fraction * NOMINAL_CHARACTER_HEIGHT_MM, source: 'scale-estimate' };
+    return { heightMm: fromPhoto, source: 'width-photo' };
+  }
   if (isPositiveFinite(width) && isPositiveFinite(photoWidthPerMm)) {
     return { heightMm: width / photoWidthPerMm, source: 'width-photo' };
   }
@@ -69,6 +78,94 @@ export function resolveHeightMm(figure: Figure, photoWidthPerMm?: number): Resol
     return { heightMm: fraction * NOMINAL_CHARACTER_HEIGHT_MM, source: 'scale-estimate' };
   }
   return null;
+}
+
+/** An axis of the listed size. */
+export type Axis = 'height' | 'width' | 'depth';
+
+/**
+ * SIZE-L2 (Ross): on a FIGURE an axis listed under this many mm is not a measurement (MFC writes an unknown as 1): it is read as
+ * missing and estimated. Goods, which really are this thin, keep theirs.
+ */
+export const TINY_AXIS_MM = 5;
+
+/**
+ * SIZE-L2: a picture within this share of as wide as tall is "square". Among mfc listings with a W and a longer L and no H, 5 % is
+ * what gives the 5 wide / 13 square the desk counted (19 tall here against its 16).
+ */
+export const SQUARE_PHOTO_TOLERANCE = 0.05;
+
+/**
+ * SIZE-L2 (Ross, via the lead 10-21): on a FIGURE whose EVERY listed axis is under this many mm, the listing is read as
+ * centimetres (x10): Zuko and Toph Beifong are listed 6 x 3 x 4. Only with an axis of at least TINY_AXIS_MM among them: a listing
+ * whose largest axis is under that (an H1, a 1 x 1 x 1) is MFC's unknown, not a cm.
+ */
+export const CM_READ_BELOW_MM = 20;
+
+export interface ListedSize {
+  /** The figure as the rest of the resolution reads it: tiny axes gone, a W and a longer L placed. The same object when neither applies. */
+  figure: Figure;
+  /** Axes listed under TINY_AXIS_MM on a FIGURE, and what was listed. */
+  dropped: readonly { axis: Axis; mm: number }[];
+  /** Axes read as centimetres (the listing's every axis was under CM_READ_BELOW_MM), and what was listed in mm. */
+  cm: readonly { axis: Axis; mm: number }[];
+  /** A listed W and a longer L with no H, placed by the photo: a tall picture is standing (L the height), a wide one lying (L the width). */
+  placed?: 'standing' | 'lying';
+}
+
+const AXES: readonly Axis[] = ['height', 'width', 'depth'];
+const AXIS_KEY = { height: 'heightMm', width: 'widthMm', depth: 'depthMm' } as const;
+
+/**
+ * SIZE-L2 (Ross, via the lead 10-21). What the listing says, before the height, width and depth are resolved:
+ *   0. a FIGURE whose every listed axis is under CM_READ_BELOW_MM (and the largest at least TINY_AXIS_MM) is read as centimetres.
+ *   1. otherwise the tiny-axis rule: on a FIGURE (a card whose kind is FIGURE; goods, media and a card that states none keep theirs) an axis
+ *      under TINY_AXIS_MM is dropped, so it is estimated like a missing one.
+ *   2. a listed W and a LONGER L (the spine keeps them as the width and the depth) with no listed H: the photo decides. A tall
+ *      picture is a standing figure: height = L, width = W. A wide one is lying: width = L, depth = W. A square one keeps the
+ *      listing. L is not taken as the width unconditionally (the spine's "larger = width"): among such listings the photos are
+ *      mostly tall. An L no longer than W already reads as a footprint and keeps its reading. A height dropped as tiny was
+ *      listed, so it never makes a W+L of what is beside it.
+ * `photoWidthPerMm` is the picture's width per mm of its height; without it nothing is placed.
+ */
+export function readListedSize(figure: Figure, photoWidthPerMm?: number): ListedSize {
+  const d = figure.dimensions;
+  if (!d) return { figure, dropped: [], cm: [] };
+  const dims: { heightMm?: number; widthMm?: number; depthMm?: number } = { ...d };
+  const dropped: { axis: Axis; mm: number }[] = [];
+  const cm: { axis: Axis; mm: number }[] = [];
+  if ((figure as { local?: { productKind?: ProductKind } }).local?.productKind === ProductKind.FIGURE) {
+    const listedAxes = AXES.filter((axis) => isPositiveFinite(d[AXIS_KEY[axis]]));
+    const largest = Math.max(0, ...listedAxes.map((axis) => d[AXIS_KEY[axis]] as number));
+    if (listedAxes.length > 0 && largest >= TINY_AXIS_MM && listedAxes.every((axis) => (d[AXIS_KEY[axis]] as number) < CM_READ_BELOW_MM)) {
+      for (const axis of listedAxes) {
+        const v = d[AXIS_KEY[axis]] as number;
+        dims[AXIS_KEY[axis]] = Number((v * 10).toFixed(6));
+        cm.push({ axis, mm: v });
+      }
+    } else {
+      for (const axis of AXES) {
+        const v = d[AXIS_KEY[axis]];
+        if (isPositiveFinite(v) && v < TINY_AXIS_MM) {
+          delete dims[AXIS_KEY[axis]];
+          dropped.push({ axis, mm: v });
+        }
+      }
+    }
+  }
+  let placed: ListedSize['placed'];
+  let placedDims = dims;
+  if (!isPositiveFinite(d.heightMm) && isPositiveFinite(dims.widthMm) && isPositiveFinite(dims.depthMm) && dims.depthMm > dims.widthMm && isPositiveFinite(photoWidthPerMm)) {
+    if (photoWidthPerMm < 1 - SQUARE_PHOTO_TOLERANCE) {
+      placed = 'standing';
+      placedDims = { heightMm: dims.depthMm, widthMm: dims.widthMm };
+    } else if (photoWidthPerMm > 1 + SQUARE_PHOTO_TOLERANCE) {
+      placed = 'lying';
+      placedDims = { widthMm: dims.depthMm, depthMm: dims.widthMm };
+    }
+  }
+  if (dropped.length === 0 && cm.length === 0 && placed === undefined) return { figure, dropped, cm };
+  return { figure: { ...figure, dimensions: placedDims }, dropped, cm, ...(placed ? { placed } : {}) };
 }
 
 /** A lone length placed on the figure: which way it lies, and the figure's height and width that follow from it. */

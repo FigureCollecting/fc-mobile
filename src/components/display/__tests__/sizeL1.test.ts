@@ -68,9 +68,14 @@ describe('measureCaseFigure: the real listings (L became the width in the spine)
     });
   }
 
-  it('Ikaruga 1354992 (W450 D900, no H): the listed width and the photo, the depth as listed', () => {
+  it('Ikaruga 1354992 (W450 D900, no H) on its real square photo: the listed width and the photo, the depth as listed', () => {
+    const m = measureCaseFigure(listed({ widthMm: 450, depthMm: 900 }), 0, meta(1));
+    expect([m.heightMm, m.widthMm, m.depthMm]).toEqual([450, 450, 900]);
+  });
+
+  it('...on a wide photo SIZE-L2 lies it down instead (sizeL2.test.ts): the longer L is the width, the listed W the depth', () => {
     const m = measureCaseFigure(listed({ widthMm: 450, depthMm: 900 }), 0, meta(2));
-    expect([m.heightMm, m.widthMm, m.depthMm]).toEqual([225, 450, 900]);
+    expect([m.heightMm, m.widthMm, m.depthMm]).toEqual([450, 900, 450]);
   });
 
   it('a labeled height is never replaced: H and W listed give H and W', () => {

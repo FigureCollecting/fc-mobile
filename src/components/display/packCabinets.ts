@@ -19,7 +19,7 @@ import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT, baseDepth, type BaseDe
 import type { FigureDisplayMeta } from './displayMeta';
 import { drawnWidthMm, type PictureMargins } from './figureArt';
 import { photoFitOf, type PhotoFit } from './photoFit';
-import { DEPTH_WIDTH_RATIO, MAX_PLAUSIBLE_HEIGHT_MM, resolveDepthMm, resolveHeightMm, resolveLoneLength, resolveWidthCap } from './sizeResolution';
+import { DEPTH_WIDTH_RATIO, MAX_PLAUSIBLE_HEIGHT_MM, readListedSize, resolveDepthMm, resolveHeightMm, resolveLoneLength, resolveWidthCap } from './sizeResolution';
 
 /** Space left between neighbours on a surface. */
 export const FIGURE_GAP_MM = 10;
@@ -41,6 +41,8 @@ export interface CaseFigure {
   readonly heightEstimated: boolean;
   /** Where widthMm comes from (CASE-FB3b); absent = labeled. */
   readonly widthBasis?: WidthBasis;
+  /** The depth is Ross's ratio of the width, not a listed one (a listed depth that was too small to be real counts as none). */
+  readonly depthFromWidth?: boolean;
   /** FIT1: the photo's figure is over 15 % wider or narrower than the listed width (a listed height too, a read cut-out). */
   readonly photoFit?: PhotoFit;
   /** Stood turned on its shelf (CASE-FB3b): widthMm and depthMm are its footprint's sides the other way round. */
@@ -59,14 +61,20 @@ const positive = (v: unknown): v is number => typeof v === 'number' && Number.is
  * by what it draws when it has no label, so it never reaches over a
  * neighbour (a real cut-out can draw far wider than its label).
  */
-export function measureCaseFigure(figure: Figure, index: number, meta: FigureDisplayMeta, drawn?: PictureMargins): CaseFigure {
+export function measureCaseFigure(listing: Figure, index: number, meta: FigureDisplayMeta, drawn?: PictureMargins): CaseFigure {
   // what the picture draws as wide at a height: a cut-out's clear part once read, else the whole picture
   const pictureWidth = (h: number) => (drawn ? drawnWidthMm(h, meta.aspect, drawn) : meta.aspect * h);
-  // SIZE-L1: with a width listed and no height, the height at which the picture is that wide (resolveHeightMm)
-  const resolved = resolveHeightMm(figure, pictureWidth(1));
+  // SIZE-L2: the listing as read before anything is resolved: tiny axes dropped on a figure, a W and a longer L placed by the
+  // photo. `figure` below is that reading; the CaseFigure keeps the listing's own figure
+  const read = readListedSize(listing, pictureWidth(1));
+  const figure = read.figure;
+  // SIZE-L1: with a width listed and no height, the height at which the picture is that wide (resolveHeightMm); a height dropped
+  // as tiny takes the smaller of that and the scale's
+  const resolved = resolveHeightMm(figure, pictureWidth(1), read.dropped.some((d) => d.axis === 'height'));
   // SIZE-L3: a lone length is the figure's longest side, placed by the photo; it is then neither a width cap nor a depth
   const lone = resolveLoneLength(figure, pictureWidth(1));
-  const heightEstimated = resolved?.source !== 'labeled';
+  // (a height read from a listed length, or from a listing read as centimetres, is an inference, not a measurement)
+  const heightEstimated = resolved?.source !== 'labeled' || read.placed === 'standing' || read.cm.length > 0;
   let heightMm = Math.min(resolved?.heightMm ?? DEFAULT_FIGURE_HEIGHT_MM, MAX_PLAUSIBLE_HEIGHT_MM);
   const labelledWidth = figure.dimensions?.widthMm;
   const hasLabelledWidth = positive(labelledWidth);
@@ -96,7 +104,7 @@ export function measureCaseFigure(figure: Figure, index: number, meta: FigureDis
   const drawnWidth = drawn ? drawnWidthMm(heightMm, meta.aspect, drawn) : 0;
   // (a height derived from the listed width draws the picture exactly that wide: float noise must not read as a wider picture)
   const widthMm = hasLabelledWidth ? (drawnWidth > labelledWidth * (1 + 1e-9) ? drawnWidth : labelledWidth) : positive(drawnWidth) ? drawnWidth : billboardWidthMm;
-  const widthBasis: WidthBasis = hasLabelledWidth ? 'labeled' : lone ? (lone.longest === 'width' ? 'length' : 'photo') : cap && capped ? cap.basis : 'photo';
+  const widthBasis: WidthBasis = read.placed === 'lying' ? 'length' : hasLabelledWidth ? 'labeled' : lone ? (lone.longest === 'width' ? 'length' : 'photo') : cap && capped ? cap.basis : 'photo';
   const labelledDepth = figure.dimensions?.depthMm;
   // a capped width gives a depth in Ross's ratio of its own, not of the picture's
   const depthMm = !positive(labelledDepth) && cap && capped
@@ -104,7 +112,7 @@ export function measureCaseFigure(figure: Figure, index: number, meta: FigureDis
     : lone
       ? resolveDepthMm({ ...figure, dimensions: { ...figure.dimensions, depthMm: undefined } }, meta, heightMm).depthMm
       : resolveDepthMm(figure, meta, heightMm).depthMm;
-  return { figure, index, heightMm, widthMm, billboardWidthMm, depthMm, heightEstimated, widthBasis, ...(photoFit ? { photoFit } : {}) };
+  return { figure: listing, index, heightMm, widthMm, billboardWidthMm, depthMm, heightEstimated, widthBasis, ...(photoFit ? { photoFit } : {}), ...(positive(labelledDepth) ? {} : { depthFromWidth: true }) };
 }
 
 /** One display surface as the packer and the renderer see it. */
@@ -375,7 +383,7 @@ export function describeViolator(v: Violator, pattern: readonly CabinetProfile[]
       basis === 'labeled' ? ', labeled' : basis === 'photo' ? " from the photo's shape, no labeled width" : basis === 'length' ? ', capped at its labeled length' : " capped at its scale's height";
     return `too wide: ${mm(item.widthMm)}${how}; ${limit('the widest place takes')}`;
   }
-  const how = positive(item.figure.dimensions?.depthMm) ? ', labeled' : ' estimated from its width';
+  const how = item.depthFromWidth ?? !positive(item.figure.dimensions?.depthMm) ? ' estimated from its width' : ', labeled';
   return `too deep: ${mm(item.depthMm)}${how}; ${limit('the deepest place takes')}`;
 }
 

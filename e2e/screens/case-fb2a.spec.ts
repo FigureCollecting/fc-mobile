@@ -87,6 +87,9 @@ const camera = async (page: Page) => JSON.parse((await scene(page).getAttribute(
 
 /** Every figure drawn is grounded on its read picture, and where they stand no longer changes. */
 async function settled(page: Page): Promise<Placed[]> {
+  // LAYOUT-FINAL: the wall laid out by every picture its sync keeps, so the full layout compared before and after a filter is
+  // the same one, not one the tidy-up packed again in between
+  await expect(scene(page)).toHaveAttribute('data-layout-final', '1', { timeout: 180_000 });
   let last = '';
   await expect
     .poll(

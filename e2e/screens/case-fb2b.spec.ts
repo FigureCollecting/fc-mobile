@@ -78,6 +78,9 @@ async function seen(page: Page): Promise<CabinetSeen> {
 
 /** Every figure drawn is grounded on its read picture, and the wall no longer changes. */
 async function settled(page: Page): Promise<void> {
+  // LAYOUT-FINAL: the wall the case settles on, laid out by every picture its sync keeps; until then the one tidy-up can pack
+  // it again mid-walk, under a data-held already read (192 cabinets became 150 partway along the walk on the stack)
+  await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-layout-final', '1', { timeout: 180_000 });
   let last = '';
   await expect
     .poll(
@@ -215,6 +218,7 @@ test('(c) the open panel pages the wall view to its end, each page drawing figur
     await expect(scene).not.toHaveAttribute('data-focus', focus!);
   }
   testInfo.annotations.push({ type: 'paged', description: JSON.stringify({ pages: pages + 1, cabinets: wall.length }) });
+  expect(JSON.parse((await scene.getAttribute('data-wall'))!).length, 'the wall paged is the one data-held was read from').toBe(wall.length);
   await shot(page, testInfo, 'fb2b-last-page');
   expect(faults).toEqual([]);
   expect(oneShot, 'a cabinet with one shelf out holding a 1/6 and a 1/4').toBe(true);

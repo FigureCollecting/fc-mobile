@@ -215,7 +215,9 @@ async function openCase(context: BrowserContext, page: Page): Promise<void> {
   await expect
     .poll(() => page.evaluate(async (name) => (await (await caches.open(name)).keys()).length, OWNED_MEDIA_CACHE), { timeout: 180_000, message: 'every image kept' })
     .toBeGreaterThanOrEqual(kept);
-  // packed for good: the same cabinets three reads running, two seconds apart
+  // LAYOUT-FINAL: laid out by every picture once all are read too (kept is not yet read), then the same cabinets three reads
+  // running, two seconds apart
+  await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-layout-final', '1', { timeout: 180_000 });
   const walls: number[] = [];
   await expect
     .poll(

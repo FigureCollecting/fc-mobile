@@ -197,6 +197,8 @@ async function openCase(context: BrowserContext, page: Page): Promise<void> {
  * at the open panel), and a pinch measured across a re-pack misplaces every figure.
  */
 async function settledWall(page: Page): Promise<void> {
+  // LAYOUT-FINAL: the wall laid out by every picture its sync keeps; a still second alone can pass before the tidy-up
+  await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-layout-final', '1', { timeout: 180_000 });
   const signature = () =>
     page.locator('.cabinet-scene').evaluate(async (scene) => {
       const read = () => {

@@ -1517,6 +1517,7 @@ export function CabinetScene({
       data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
       data-laid-out={settle.revealed ? '1' : '0'}
+      data-layout-final={settle.final ? '1' : '0'}
       data-show-estimated={prefs.showEstimated ? '1' : '0'}
       data-zoom={zoomData(zoom.current)}
       onPointerDown={onPointerDown}

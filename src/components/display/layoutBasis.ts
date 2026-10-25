@@ -44,7 +44,11 @@ interface Taken<T> {
   from: T;
 }
 
-export function useLayoutBasis<T>(input: BasisInput<T>): { basis: T | null; revealed: boolean } {
+/**
+ * `final` (LAYOUT-FINAL): the basis held is the one the layout settles on: everything has arrived and the basis was taken
+ * from it. Until then the wall may yet be packed again under whoever reads it.
+ */
+export function useLayoutBasis<T>(input: BasisInput<T>): { basis: T | null; revealed: boolean; final: boolean } {
   const { live, pending, settled, ready, epoch, enabled = true } = input;
   const held = useRef<Taken<T> | null>(null);
   const [, redraw] = useState(0);
@@ -92,6 +96,6 @@ export function useLayoutBasis<T>(input: BasisInput<T>): { basis: T | null; reve
     return () => clearTimeout(timer);
   }, [enabled, dirty, settled, live]);
 
-  if (!enabled) return { basis: live, revealed: true };
-  return { basis: held.current === null ? null : held.current.value, revealed };
+  if (!enabled) return { basis: live, revealed: true, final: true };
+  return { basis: held.current === null ? null : held.current.value, revealed, final: revealed && settled && !dirty };
 }

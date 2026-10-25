@@ -32,6 +32,9 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
   const handleTouchStart = useCallback((e: TouchEvent) => {
     const container = containerRef.current;
     if (!container || container.scrollTop > 0 || refreshing) return;
+    // NAV-PTR-1: a touch on what owns its drags (the case scene: a finger moving down raises its camera) is never a pull;
+    // a touch keeps its target to its end, so where it starts decides
+    if ((e.target as Element | null)?.closest?.('[data-own-gestures]')) return;
 
     startY.current = e.touches[0].clientY;
     pulling.current = true;
@@ -116,6 +119,8 @@ export function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
           height: 100%;
           overflow-y: auto;
           -webkit-overflow-scrolling: touch;
+          /* NAV-PTR-1: a scroll past its top is not handed on to the browser's own pull-to-refresh */
+          overscroll-behavior-y: contain;
         }
 
         .pull-to-refresh__indicator {

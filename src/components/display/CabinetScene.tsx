@@ -1485,6 +1485,8 @@ export function CabinetScene({
       class="cabinet-scene"
       role="region"
       aria-label="Display cabinets"
+      // NAV-PTR-1: every drag on the scene is its own (a finger moving down raises the camera): never a pull to refresh
+      data-own-gestures
       data-view={prefs.view}
       data-swipe={prefs.swipe}
       // WALL-COLOUR-1: the wall's colour (both themes', as custom properties)

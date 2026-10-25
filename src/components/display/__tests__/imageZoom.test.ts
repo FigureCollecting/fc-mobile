@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { UNZOOMED, clampImageZoom, containBox, imageZoomTransform, panImageZoom, pinchImageZoom, zoomAtPoint } from '../imageZoom';
+import { FACE_ANCHOR, UNZOOMED, anchorOffset, clampImageZoom, containBox, faceZoom, imageZoomTransform, panImageZoom, pinchImageZoom, zoomAtPoint, zoomToPoint } from '../imageZoom';
 
 const SQUARE = { width: 400, height: 400 };
 const PORTRAIT = { width: 600, height: 900 };
@@ -91,5 +91,87 @@ describe('imageZoomTransform', () => {
   it('none at 1x; a translate and a scale about the top-left otherwise', () => {
     expect(imageZoomTransform(UNZOOMED)).toBe('');
     expect(imageZoomTransform({ k: 2, x: -10, y: -20 })).toBe('translate(-10px, -20px) scale(2)');
+  });
+});
+
+// CARD-VIEW-1 part 2 (Ross 10-25: "should favor zooming card view towards 1/3 from top and midpoint horizontally of image")
+describe('the face anchor: the first zoom step centres half across and a third down the PICTURE, held so it still fills the frame', () => {
+  const FRAME = { width: 400, height: 600 };
+  /** Where the picture's anchor shows, for a zoomed picture `size` whose top-left is at `at`. */
+  const anchorAt = (at: { x: number; y: number }, size: { width: number; height: number }) => ({ x: at.x + size.width * FACE_ANCHOR.x, y: at.y + size.height * FACE_ANCHOR.y });
+
+  it('is half across and a third down', () => {
+    expect(FACE_ANCHOR).toEqual({ x: 0.5, y: 1 / 3 });
+  });
+
+  it('portrait: the face stands in the middle of the frame', () => {
+    const size = { width: 800, height: 1200 };
+    const at = anchorOffset(FRAME, size);
+    expect(at).toEqual({ x: -200, y: -100 });
+    expect(anchorAt(at, size)).toEqual({ x: 200, y: 300 });
+  });
+
+  it('landscape: across, the face in the middle; down, the picture held at its top, where the face cannot come to the middle without a bar', () => {
+    const size = { width: 1600, height: 800 };
+    const at = anchorOffset(FRAME, size);
+    expect(at.x).toBe(-600);
+    expect(at.y).toBe(0);
+    expect(anchorAt(at, size).x).toBe(200);
+  });
+
+  it('a tiny picture, still smaller than the frame zoomed: centred, never pushed to the face', () => {
+    expect(anchorOffset(FRAME, { width: 100, height: 150 })).toEqual({ x: 150, y: 225 });
+  });
+
+  it('held at the bottom as well as the top: a face anchor low on a picture just taller than the frame never opens a bar below it', () => {
+    expect(anchorOffset(FRAME, { width: 400, height: 640 }, { x: 0.5, y: 0.95 }).y).toBe(-40);
+  });
+
+  it('letterboxed: the anchor is the picture\'s, not the frame\'s (a square picture in a tall frame, at 3x)', () => {
+    // 600 x 600 in 400 x 800: laid out 400 x 400 at y = 200; at 3x 1200 x 1200
+    const tall = { width: 400, height: 800 };
+    const z = faceZoom(tall, { width: 600, height: 600 }, 3);
+    const box = containBox(tall, { width: 600, height: 600 });
+    // the picture's own third, not the frame's third (y = 266.7, inside the bar above it), stands in the middle
+    expect((box.y + box.height / 3) * z.k + z.y).toBeCloseTo(400);
+    expect((box.x + box.width / 2) * z.k + z.x).toBeCloseTo(200);
+    expect(z).toEqual({ k: 3, x: -400, y: -600 });
+  });
+
+  it('letterboxed portrait in a square frame (the figure page), at 2x: the face in the middle', () => {
+    const z = faceZoom(SQUARE, PORTRAIT, 2);
+    expect(z.k).toBe(2);
+    expect(z.x).toBeCloseTo(-200);
+    expect(z.y).toBeCloseTo(-66.667, 2);
+    const box = containBox(SQUARE, PORTRAIT);
+    expect((box.x + box.width / 2) * 2 + z.x).toBeCloseTo(200);
+    expect((box.y + box.height / 3) * 2 + z.y).toBeCloseTo(200);
+  });
+
+  it('letterboxed landscape in a square frame: the picture fills across and is centred down (it is the frame\'s height at 2x)', () => {
+    expect(faceZoom(SQUARE, LANDSCAPE, 2)).toEqual({ k: 2, x: -200, y: -200 });
+  });
+
+  it('agrees with the clamp: a face zoom is already held to the frame', () => {
+    for (const natural of [PORTRAIT, LANDSCAPE, SQUARE, { width: 50, height: 400 }]) {
+      const z = faceZoom(SQUARE, natural, 2);
+      const held = clampImageZoom(z, SQUARE, natural);
+      expect(held.x).toBeCloseTo(z.x);
+      expect(held.y).toBeCloseTo(z.y);
+    }
+  });
+});
+
+describe('zoomToPoint: the still point that takes a zoom from one pan to another (PhotoSwipe\'s zoomTo keeps one point still)', () => {
+  it('a zoom from 1x at pan (10, 20) to 2x landing at (-100, -50) keeps (120, 90) still', () => {
+    const p = zoomToPoint({ x: 10, y: 20 }, { x: -100, y: -50 }, 1, 2)!;
+    expect(p).toEqual({ x: 120, y: 90 });
+    // PhotoSwipe's own formula lands it there: (pan - p) * k2 / k1 + p
+    expect((10 - p.x) * 2 + p.x).toBe(-100);
+    expect((20 - p.y) * 2 + p.y).toBe(-50);
+  });
+
+  it('no zoom step (the same level), no point', () => {
+    expect(zoomToPoint({ x: 0, y: 0 }, { x: 5, y: 5 }, 2, 2)).toBeNull();
   });
 });

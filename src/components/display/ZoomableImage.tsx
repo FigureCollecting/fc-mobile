@@ -3,13 +3,15 @@
  * not (the side pane, the figure page), the way the full-screen viewer's does: a pinch about the fingers, a double-tap
  * at the point tapped (again: back to whole), one finger panning the zoomed picture, a visible zoom control at the
  * picture's bottom-right (low and right, clear of the notification shade: feedback-no-frequent-controls-at-top) and the
- * viewer's `z` key. Whole, a drag is the page's (it scrolls); the maths is imageZoom.ts.
+ * viewer's `z` key; the control and the key start at the face (FACE_ANCHOR). Whole, a drag is the page's (it scrolls);
+ * the maths is imageZoom.ts.
  */
 import { useRef, useState } from 'preact/hooks';
 import { Style } from '../../styles/Style';
 import {
   IMAGE_ZOOM_STEP,
   UNZOOMED,
+  faceZoom,
   imageZoomTransform,
   panImageZoom,
   pinchImageZoom,
@@ -65,10 +67,10 @@ export function ZoomableImage({ src, alt, frameClass = '', imgClass = '', onErro
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
-  /** The zoom control and the `z` key: one step in, or back to whole. */
+  /** The zoom control and the `z` key: one step in, centred on the face (faceZoom, CARD-VIEW-1 part 2), or back to whole. */
   const toggle = () => {
     const { frame, natural } = measure();
-    setZoom(isZoomed(latest.current) ? UNZOOMED : zoomAtPoint(UNZOOMED, { x: frame.width / 2, y: frame.height / 2 }, IMAGE_ZOOM_STEP, frame, natural));
+    setZoom(isZoomed(latest.current) ? UNZOOMED : faceZoom(frame, natural, IMAGE_ZOOM_STEP));
   };
 
   // the fingers down on the picture (client px); the pinch of the first two; one finger's press; the last tap

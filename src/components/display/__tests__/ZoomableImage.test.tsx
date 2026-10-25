@@ -55,6 +55,23 @@ describe('ZoomableImage (CARD-VIEW-1: a card picture that zooms)', () => {
     expect(zoomOf(frame).k).toBe(1);
   });
 
+  // CARD-VIEW-1 part 2 (Ross 10-25): the control and the key start at the face, half across and a third down the picture
+  it('the zoom control and the z key first zoom in on the face: half across and a third down the picture, in the middle', async () => {
+    const user = userEvent.setup();
+    render(<ZoomableImage src="/a.png" alt="Rem" />);
+    // a 600 x 900 portrait in the 400 x 400 frame: laid out 266.7 x 400 at x = 66.7
+    const { frame } = laidOut({ width: 600, height: 900 });
+    await user.click(screen.getByRole('button', { name: 'Zoom in' }));
+    let z = zoomOf(frame);
+    expect(z.k).toBe(2);
+    expect((66.667 + 266.667 / 2) * 2 + z.x).toBeCloseTo(200, 1);
+    expect((400 / 3) * 2 + z.y).toBeCloseTo(200, 1);
+    await user.click(screen.getByRole('button', { name: 'Zoom out' }));
+    fireEvent.keyDown(frame, { key: 'z' });
+    z = zoomOf(frame);
+    expect(z).toEqual({ k: 2, x: -200, y: -66.667 });
+  });
+
   it('a double-tap zooms in at the point tapped, and a second one zooms back out', () => {
     render(<ZoomableImage src="/a.png" alt="Rem" />);
     const { frame } = laidOut();

@@ -98,6 +98,44 @@ export function settleImageZoom(z: ImageZoom, frame: Size, natural: Size): Image
   return z.k < IMAGE_ZOOM_SNAP ? UNZOOMED : clampImageZoom(z, frame, natural);
 }
 
+/**
+ * CARD-VIEW-1 part 2 (Ross 10-25: "more often than not, you want to start zoomed in around the face/upper ... favor zooming
+ * card view towards 1/3 from top and midpoint horizontally of image"): where a zoom with no point of its own (the zoom
+ * control, the `z` key) first centres: half across and a third down the PICTURE, never the frame or its bars. A pinch or a
+ * double-tap zooms at its own point.
+ */
+export const FACE_ANCHOR: Point = { x: 0.5, y: 1 / 3 };
+
+/**
+ * One axis: where the zoomed picture's leading edge stands so its point at fraction `f` is at the middle of a frame `area`
+ * long, held so the picture still fills the frame (no bar opens at either end); a picture no longer than the frame is centred.
+ */
+export function anchorEdge(area: number, size: number, f: number): number {
+  return holdEdge(area / 2 - f * size, area, size);
+}
+
+/** The zoomed picture's top-left in the frame (`picture` its zoomed size) that brings its anchor to the frame's middle, held (anchorEdge). */
+export function anchorOffset(frame: Size, picture: Size, anchor: Point = FACE_ANCHOR): Point {
+  return { x: anchorEdge(frame.width, picture.width, anchor.x), y: anchorEdge(frame.height, picture.height, anchor.y) };
+}
+
+/** The zoom at k that brings the anchor of the picture laid out whole in the frame (containBox) to the frame's middle, held. */
+export function faceZoom(frame: Size, natural: Size, k: number, anchor: Point = FACE_ANCHOR): ImageZoom {
+  const box = containBox(frame, natural);
+  const at = anchorOffset(frame, { width: box.width * k, height: box.height * k }, anchor);
+  return { k, x: at.x - box.x * k, y: at.y - box.y * k };
+}
+
+/**
+ * PhotoSwipe's zoomTo zooms about a point it keeps still: the pan it lands at is (pan - point) * k2 / k1 + point. The point
+ * that takes a zoom from k1 at pan `from` to k2 at pan `to`; null when there is no zoom step to take (k1 = k2).
+ */
+export function zoomToPoint(from: Point, to: Point, k1: number, k2: number): Point | null {
+  const f = k2 / k1;
+  if (Math.abs(1 - f) < 1e-9) return null;
+  return { x: (to.x - from.x * f) / (1 - f), y: (to.y - from.y * f) / (1 - f) };
+}
+
 /** The picture's CSS transform (its transform-origin the frame's top-left); none at 1x. */
 export function imageZoomTransform(z: ImageZoom): string {
   return z.k === 1 && z.x === 0 && z.y === 0 ? '' : `translate(${z.x}px, ${z.y}px) scale(${z.k})`;

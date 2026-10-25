@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { atRest } from './sheetRest';
 import { touchTap } from './touch';
+import { FACE_ANCHOR, anchorOffset, faceZoom } from '../src/components/display/imageZoom';
 
 /**
  * CARD-VIEW-1 (Ross 10-25, Fold8): "not every card view had zoom available nor an x to close card view". Every figure card
@@ -119,3 +120,51 @@ for (const layout of ['case', 'rows'] as const) {
     await expect(pane).toHaveCount(0);
   });
 }
+
+// CARD-VIEW-1 part 2 (Ross 10-25: "rather than start by zooming to the pic's middle, should favor zooming card view towards 1/3 from
+// top and midpoint horizontally of image"): the zoom control's first step, read off the zoomed picture's transform
+test(`the viewer's zoom control zooms in on the face: half across and a third down the picture, in the middle of its room: ${COVER.name}`, async ({ page }) => {
+  await openCollection(page, COVER, 'case');
+  await openFigure(page, 'case');
+  const current = page.locator('.pswp__item[aria-hidden="false"] img.pswp__img');
+  await atRest(current);
+  await atRest(page.locator('.figure-viewer-sheet'));
+  // the whole picture stands in the middle of its room (the viewport less the sheet below and the rail at the right, from the top-left)
+  const whole = await box(current);
+  const room = { width: 2 * whole.x + whole.width, height: 2 * whole.y + whole.height };
+  await page.locator('.pswp__button--zoom').click();
+  await atRest(current);
+  const zoomed = await box(current);
+  expect(zoomed.width / whole.width, 'one step: the secondary level').toBeGreaterThan(1.5);
+  const at = anchorOffset(room, { width: zoomed.width, height: zoomed.height });
+  expect(Math.abs(zoomed.x - at.x), `left ${zoomed.x.toFixed(1)}, the face anchor puts it at ${at.x.toFixed(1)}`).toBeLessThanOrEqual(2);
+  expect(Math.abs(zoomed.y - at.y), `top ${zoomed.y.toFixed(1)}, the face anchor puts it at ${at.y.toFixed(1)}`).toBeLessThanOrEqual(2);
+  // a portrait figure zoomed past its room's height: its third down, not its middle, is what stands in the room's middle
+  if (zoomed.height > room.height && at.y < 0 && at.y > room.height - zoomed.height) {
+    expect(Math.abs(zoomed.y + zoomed.height * FACE_ANCHOR.y - room.height / 2)).toBeLessThanOrEqual(2);
+  }
+});
+
+test(`the pane's zoom control zooms in on the face; its transform is the face anchor's: ${OPEN.name}`, async ({ page }) => {
+  await openCollection(page, OPEN, 'case');
+  await openFigure(page, 'case');
+  const frame = page.locator('.detail-pane .zoomable');
+  const img = frame.locator('img');
+  await expect.poll(() => img.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+  const natural = await img.evaluate((el) => ({ width: (el as HTMLImageElement).naturalWidth, height: (el as HTMLImageElement).naturalHeight }));
+  const f = await box(frame);
+  await page.locator('.detail-pane').getByRole('button', { name: 'Zoom in' }).tap();
+  await expect(frame).toHaveAttribute('data-zoomed', '1');
+  const expected = faceZoom({ width: f.width, height: f.height }, natural, 2);
+  const z = JSON.parse((await frame.getAttribute('data-zoom'))!) as { k: number; x: number; y: number };
+  expect(z.k).toBe(2);
+  expect(z.x).toBeCloseTo(expected.x, 0);
+  expect(z.y).toBeCloseTo(expected.y, 0);
+  // matrix(k, 0, 0, k, x, y), once its 200 ms glide is over
+  const matrix = async () => (await img.evaluate((el) => getComputedStyle(el).transform)).match(/matrix\(([^)]+)\)/)?.[1]?.split(',').map(Number) ?? [1];
+  await expect.poll(async () => (await matrix())[0], { timeout: 3000 }).toBeCloseTo(2, 3);
+  const m = await matrix();
+  expect(m[0]).toBeCloseTo(2, 3);
+  expect(m[4]).toBeCloseTo(expected.x, 0);
+  expect(m[5]).toBeCloseTo(expected.y, 0);
+});

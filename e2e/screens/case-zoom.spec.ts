@@ -7,7 +7,7 @@
 //       the size, its neighbours pushed out from it; 4x at most; the camera never moves;
 //   (b) zoomed, one finger pans the magnified picture up to its edges and never walks the wall or changes cabinets;
 //   (c) a double-tap on an empty spot and the Reset view chip each return to 1x, animated about 200 ms (frames, not a CSS transition)
-//       (at once with reduced motion); the chip sits in the frame's top corner, clear of the tab bar and the tabs;
+//       (at once with reduced motion); the chip sits at the scene's lower right (NAV-PTR-1), clear of the tab bar and the tabs;
 //       a double-tap at 1x zooms 2x at that point;
 //   (d) zoomed, a tap on a figure opens THAT figure, where at 1x the same spot showed something else;
 //   (e) a filter picked in Refine, or leaving the case and coming back, starts at 1x;
@@ -480,14 +480,17 @@ test('(c) a double-tap on an empty spot and the Reset view chip each return to 1
   expect(await page.locator('.cabinet-scene__zoom').evaluate((layer) => getComputedStyle(layer).transitionDuration), 'no CSS transition on the layer (CASE-FB3a)').toBe('0s');
   await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
 
-  // the chip: in the frame's top corner, clear of the tab bar, the pull-up tabs and the cabinet steps
+  // the chip, NAV-PTR-1 (Ross 10-25: small and low, never a frequent control at the top): a button of 44 px at most in the
+  // scene's lower quarter, 24 px in from its right side, clear of the tab bar, the pull-up tabs and the cabinet steps
   await pinchAbout(page, mid, 40, 100);
   const chip = page.getByRole('button', { name: 'Reset view' });
   await expect(chip).toBeVisible();
   const c = (await chip.boundingBox())!;
-  expect(inside(c, frame)).toBe(true);
-  expect(c.y - frame.y).toBeLessThanOrEqual(12);
-  expect(frame.x + frame.width - (c.x + c.width)).toBeLessThanOrEqual(60);
+  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  expect(inside(c, scene)).toBe(true);
+  expect(Math.max(c.width, c.height)).toBeLessThanOrEqual(44);
+  expect(c.y + c.height / 2).toBeGreaterThanOrEqual(scene.y + scene.height * 0.75);
+  expect(Math.abs(scene.x + scene.width - (c.x + c.width) - 24)).toBeLessThanOrEqual(2);
   for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__step:not(:disabled)', '.cabinet-scene__shelves', '.cabinet-scene__misfit']) {
     for (const box of await page.locator(clear).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as Box))) {
       expect(meets(c, box), `the chip meets ${clear}`).toBe(false);

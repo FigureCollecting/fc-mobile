@@ -152,6 +152,8 @@ export function AppShell() {
           overflow-y: auto;
           overflow-x: hidden;
           -webkit-overflow-scrolling: touch;
+          /* NAV-PTR-1: a drag down at its top (the header, over the case) is not handed on to the browser's own pull-to-refresh */
+          overscroll-behavior-y: contain;
           padding-bottom: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
         }
 

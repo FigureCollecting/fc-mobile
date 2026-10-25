@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { decodePng } from './paintCheck';
 import { touchSwipe } from './touch';
+import { watchPull } from './pullWatch';
 
 /**
  * CASE-FB3a item 3 (Ross 10-17 11:10, his Fold8 open and turned: "if going to room top, display cuts ... you have to
@@ -60,12 +61,18 @@ async function openRack(page: Page, size: { width: number; height: number }, swi
 /** Drag down (raising the camera, or sliding the photo down) until nothing moves any more. */
 async function toTop(page: Page): Promise<void> {
   const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+  const seen = await watchPull(page);
   let last = '';
   for (let i = 0; i < 16; i++) {
     await touchSwipe(page, f.x + f.width / 2, f.y + f.height * 0.2, 0, f.height * 0.6, 8, 16);
     await settle(page);
     const now = JSON.stringify(await camera(page));
-    if (now === last) return;
+    if (now === last) {
+      // NAV-PTR-1: the down-swipes are the case's, never a pull to refresh
+      await expect(page.locator('.pull-to-refresh__spinner--active')).toHaveCount(0);
+      expect(await seen(), 'no pull to refresh on the way up').toEqual({ tallestPx: 0, refreshed: false });
+      return;
+    }
     last = now;
   }
   throw new Error('the picture never stopped rising');

@@ -192,6 +192,36 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(plain.mock.calls.filter(([why]) => why === 'manual')).toHaveLength(1);
   });
 
+  // NAV-PTR-1 (Ross 10-25: "dragging to pan/move to a higher vantage point, it would activate refresh"): a finger moving
+  // down on the case raises its camera (or slides its photo); the pull-to-refresh round the case never takes it
+  it('NAV-PTR-1: a drag down on the case scene is never a pull to refresh', async () => {
+    const r = await localRig();
+    await seedFigures(r, [makeFigure('1')]);
+    const refresh = vi.spyOn(r.engine, 'refreshCards');
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    const scene = container.querySelector('.cabinet-scene') as HTMLElement;
+    fireEvent.touchStart(scene, { touches: [{ clientY: 10 }] });
+    fireEvent.touchMove(scene, { touches: [{ clientY: 200 }] });
+    expect((container.querySelector('.pull-to-refresh__indicator') as HTMLElement).style.height, 'nothing pulled down over the case').toBe('0px');
+    fireEvent.touchEnd(scene);
+    await new Promise((done) => setTimeout(done, 50));
+    expect(refresh).not.toHaveBeenCalled();
+    expect(container.querySelector('.pull-to-refresh__spinner--active')).toBeNull();
+  });
+
+  it('NAV-PTR-1: the tiles keep their pull to refresh: the same pull on a tile refetches the cards', async () => {
+    const r = await localRig();
+    await seedFigures(r, [makeFigure('1')]);
+    const refresh = vi.spyOn(r.engine, 'refreshCards');
+    renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    const tile = await screen.findByRole('button', { name: 'Figure 1' });
+    fireEvent.touchStart(tile, { touches: [{ clientY: 10 }] });
+    fireEvent.touchMove(tile, { touches: [{ clientY: 200 }] });
+    fireEvent.touchEnd(tile);
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
+
   it('the Refine tab opens the filter sheet; Info reopens the last figure tapped', async () => {
     await respondWith([makeFigure('1'), makeFigure('2')]);
     const user = userEvent.setup();

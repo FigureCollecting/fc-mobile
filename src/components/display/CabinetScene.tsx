@@ -102,8 +102,11 @@ export const ZOOM_SETTLE_MS = 200;
 /** Two taps on the room this close in time (ms) and place (CSS px) are a double-tap. */
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 40;
-/** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
-const SHELF_STEPS_PX = 44;
+/**
+ * NAV-PTR-1: Reset view shows once a drag has moved the picture this far (CSS px: a raise of the camera by what moves
+ * the picture this far, or a slide of the photo), or while zoomed; never for a walk or a wobble of the thumb.
+ */
+const RESET_PX = 24;
 /** MISFIT-CHIP-1: a finger resting this long (ms) on the do-not-fit chip, and not moving past the slop (px), hides it. */
 export const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP_PX = 8;
@@ -822,14 +825,85 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
  * PINCH-1: the Reset view chip, while the picture is zoomed. It holds whether it shows and hands the scene its
  * setter (`shown`), so it comes and goes as its own render, never the scene's.
  */
-function ResetChip({ shown, moved, right, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; right?: number; onReset: () => void }) {
+function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; onReset: () => void }) {
   const [zoomed, setZoomed] = useState(false);
   shown.current = setZoomed;
   // PAN-KEEP-1: also while the camera or the pan is off the default angle: the one deliberate way back
   if (!zoomed && !moved) return null;
+  // NAV-PTR-1: a small button (a ⟲ over a short label), a scene control (a press on it is no gesture of the scene's)
   return (
-    <button type="button" class="cabinet-scene__reset" style={right === undefined ? undefined : { right: `${right}px` }} onClick={onReset}>
-      Reset view
+    <button type="button" class="cabinet-scene__reset" aria-label="Reset view" title="Reset view" data-scene-ui onClick={onReset}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+      </svg>
+      <span>Reset</span>
+    </button>
+  );
+}
+
+/** NAV-PTR-1: a click this soon (ms) after an arrow stepped on its pointerup, or let a drag go to the scene, is that press's own click: ignored. */
+const STEP_CLICK_MS = 600;
+
+/** Where a press of the scene begins (client px), and its pointer. */
+type PressStart = { pointerId: number; clientX: number; clientY: number };
+
+const inBox = (el: Element, at: { clientX: number; clientY: number }): boolean => {
+  const r = el.getBoundingClientRect();
+  return at.clientX >= r.left && at.clientX <= r.right && at.clientY >= r.top && at.clientY <= r.bottom;
+};
+
+/**
+ * NAV-PTR-1 (Ross 10-25, "arrow movements weren't working"): an arrow (‹ › ˄ ˅) steps on the pointerup of a primary
+ * press that began on it, the pointer still inside its box and the arrow enabled: a thumb that travels a few px still
+ * steps, where Chrome makes no click past its tap slop. The click that tap then makes is ignored; any other click (the
+ * keyboard's, a script's) steps. A press that leaves the arrow as a drag (out of its box, SWIPE_START_PX or more from
+ * where it began) is the scene's from there (`onDrag`, from where it began): a walk started at the edge walks.
+ */
+function StepButton({ cls, label, disabled, onStep, onDrag, children }: { cls?: string; label: string; disabled: boolean; onStep: () => void; onDrag: (start: PressStart) => void; children: ComponentChildren }) {
+  const pressed = useRef<PressStart | null>(null);
+  const quietUntil = useRef(0);
+  const onPointerMove = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+    const p = pressed.current;
+    if (p === null || p.pointerId !== e.pointerId) return;
+    if (Math.max(Math.abs(e.clientX - p.clientX), Math.abs(e.clientY - p.clientY)) < SWIPE_START_PX || inBox(e.currentTarget, e)) return;
+    pressed.current = null;
+    quietUntil.current = Date.now() + STEP_CLICK_MS;
+    // the scene takes the press before this move reaches it (bubbling on to the scene's host)
+    onDrag(p);
+  };
+  const onPointerUp = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+    const own = pressed.current?.pointerId === e.pointerId;
+    pressed.current = null;
+    const b = e.currentTarget;
+    if (!own || b.disabled || !inBox(b, e)) return;
+    quietUntil.current = Date.now() + STEP_CLICK_MS;
+    onStep();
+  };
+  const onClick = () => {
+    if (Date.now() < quietUntil.current) {
+      quietUntil.current = 0;
+      return;
+    }
+    onStep();
+  };
+  return (
+    <button
+      type="button"
+      class={cls}
+      aria-label={label}
+      disabled={disabled}
+      onPointerDown={(e) => {
+        pressed.current = e.button === 0 ? { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY } : null;
+      }}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => {
+        pressed.current = null;
+      }}
+      onClick={onClick}
+    >
+      {children}
     </button>
   );
 }
@@ -1220,6 +1294,10 @@ export function CabinetScene({
   const onPointerDown = useCallback((e: PointerEvent) => {
     // MISFIT-CHIP-1: the chip and its list are the scene's controls, not its picture: a touch on them is no gesture of the scene's
     if (onSceneUi(e.target)) return;
+    startPress(e);
+  }, []);
+  // a finger down on the scene; or, NAV-PTR-1, one that began on an arrow and left it as a drag, from where it began
+  const startPress = (e: PressStart) => {
     // a new touch cuts a settling zoom short
     settled();
     if (pinching.current) {
@@ -1246,7 +1324,7 @@ export function CabinetScene({
     press.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null, zoom: isZoomed(zoom.current) ? zoom.current : null, pinched: false };
     // a touch swipe makes no click: whatever it left to swallow ends with the next press
     swallowClick.current = false;
-  }, []);
+  };
   const onPointerMove = useCallback((e: PointerEvent) => {
     if (!fingers.current.has(e.pointerId)) return;
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1485,6 +1563,8 @@ export function CabinetScene({
       class="cabinet-scene"
       role="region"
       aria-label="Display cabinets"
+      // NAV-PTR-1: every drag on the scene is its own (a finger moving down raises the camera): never a pull to refresh
+      data-own-gestures
       data-view={prefs.view}
       data-swipe={prefs.swipe}
       // WALL-COLOUR-1: the wall's colour (both themes', as custom properties)
@@ -1575,54 +1655,51 @@ export function CabinetScene({
             {dimFrom !== null && focusIdx < lastIndex && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
-        <ResetChip
-          shown={showChip}
-          moved={walkX !== null || lift !== 0 || pan !== 0 || panY !== 0 || framedFocus !== null}
-          // the frame's top corner, clear of the tab bar and the cards; in the shelf view, of the shelf steps
-          right={prefs.view === 'shelf' ? Math.max(8, SHELF_STEPS_PX - side) : undefined}
-          onReset={() => {
-            showZoom(UNZOOMED, 'settle');
-            setWalkX(null);
-            setPan(0);
-            setLift(0);
-            setPanY(0);
-            setFramedFocus(null);
-          }}
-        />
       </div>
 
-      <div class="cabinet-scene__nav">
-        <button
-          type="button"
-          class="cabinet-scene__step cabinet-scene__step--prev"
-          aria-label="Previous cabinet"
+      <ResetChip
+        shown={showChip}
+        // NAV-PTR-1: zoomed, or raised or slid at least RESET_PX of picture travel (the raise in screen terms, in every view);
+        // a walk is navigation, not a view off its angle
+        moved={Math.abs(lift) >= Math.abs(liftForDragMm(along, RESET_PX)) || Math.abs(pan) >= RESET_PX || Math.abs(panY) >= RESET_PX}
+        onReset={() => {
+          showZoom(UNZOOMED, 'settle');
+          setWalkX(null);
+          setPan(0);
+          setLift(0);
+          setPanY(0);
+          setFramedFocus(null);
+        }}
+      />
+
+      {/* NAV-PTR-1: the arrows are the scene's controls, not its picture: a press on one is no gesture of the scene's */}
+      <div class="cabinet-scene__nav" data-scene-ui>
+        <StepButton
+          cls="cabinet-scene__step cabinet-scene__step--prev"
+          label="Previous cabinet"
           disabled={reach !== null ? !reach.prev : focusIdx <= 0}
-          onClick={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+          onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+          onDrag={startPress}
         >
           ‹
-        </button>
-        <button
-          type="button"
-          class="cabinet-scene__step cabinet-scene__step--next"
-          aria-label="Next cabinet"
+        </StepButton>
+        <StepButton
+          cls="cabinet-scene__step cabinet-scene__step--next"
+          label="Next cabinet"
           disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
-          onClick={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+          onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+          onDrag={startPress}
         >
           ›
-        </button>
+        </StepButton>
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
-            <button type="button" aria-label="Shelf above" disabled={shelfIdx <= 0} onClick={() => goShelf(Math.max(0, shelfIdx - 1))}>
+            <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))} onDrag={startPress}>
               ˄
-            </button>
-            <button
-              type="button"
-              aria-label="Shelf below"
-              disabled={shelfIdx >= shelfCount - 1}
-              onClick={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))}
-            >
+            </StepButton>
+            <StepButton label="Shelf below" disabled={shelfIdx >= shelfCount - 1} onStep={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))} onDrag={startPress}>
               ˅
-            </button>
+            </StepButton>
           </div>
         )}
       </div>
@@ -1886,19 +1963,27 @@ const styles = `
   .cabinet-scene__fit-dismiss { flex: none; width: 32px; height: 32px; border-radius: 9999px; font-size: 20px; line-height: 1; color: #fff; background: rgba(255, 255, 255, 0.14); }
   .cabinet-scene__fit ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
   .cabinet-scene__fit li + li { margin-top: 4px; }
+  /* NAV-PTR-1: Reset view, bottom right, inset 24 px from the edge (the misfit chip's mirror), never at the top: a small
+     button, a glyph over a short label at the app's smallest size */
   .cabinet-scene__reset {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--radius-full, 9999px);
+    right: 24px;
+    bottom: 16px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 0;
+    border-radius: 10px;
     background: rgba(0, 0, 0, 0.6);
     color: #fff;
-    font: 600 var(--font-sm, 13px)/1 var(--font-sans, system-ui);
+    font: 600 var(--font-2xs)/1 var(--font-sans, system-ui);
     white-space: nowrap;
     pointer-events: auto;
   }
-  /* a 48 px target (--touch-min) round the small chip */
-  .cabinet-scene__reset::before { content: ''; position: absolute; inset: -8px; }
+  /* a 48 px target (--touch-min) round the 40 px button */
+  .cabinet-scene__reset::before { content: ''; position: absolute; inset: -4px; }
 `;

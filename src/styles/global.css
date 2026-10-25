@@ -12,6 +12,8 @@ html {
   height: 100%;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+  /* NAV-PTR-1: no browser pull-to-refresh on the root scroller (the -y longhand: a desktop's horizontal swipe back stays) */
+  overscroll-behavior-y: none;
 }
 
 body {

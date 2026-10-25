@@ -842,6 +842,55 @@ function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: bool
   );
 }
 
+/** NAV-PTR-1: a click this soon (ms) after an arrow stepped on its pointerup is that tap's own click: ignored. */
+const STEP_CLICK_MS = 600;
+
+/**
+ * NAV-PTR-1 (Ross 10-25, "arrow movements weren't working"): an arrow (‹ › ˄ ˅) steps on the pointerup of a primary
+ * press that began on it, the pointer still inside its box and the arrow enabled: a thumb that travels a few px still
+ * steps, where Chrome makes no click past its tap slop. The click that tap then makes is ignored; any other click (the
+ * keyboard's, a script's) steps.
+ */
+function StepButton({ cls, label, disabled, onStep, children }: { cls?: string; label: string; disabled: boolean; onStep: () => void; children: ComponentChildren }) {
+  const pressed = useRef<number | null>(null);
+  const steppedAt = useRef(-Infinity);
+  const onPointerUp = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+    const own = pressed.current === e.pointerId;
+    pressed.current = null;
+    const b = e.currentTarget;
+    if (!own || b.disabled) return;
+    const r = b.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+    steppedAt.current = Date.now();
+    onStep();
+  };
+  const onClick = () => {
+    if (Date.now() - steppedAt.current < STEP_CLICK_MS) {
+      steppedAt.current = -Infinity;
+      return;
+    }
+    onStep();
+  };
+  return (
+    <button
+      type="button"
+      class={cls}
+      aria-label={label}
+      disabled={disabled}
+      onPointerDown={(e) => {
+        pressed.current = e.button === 0 ? e.pointerId : null;
+      }}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => {
+        pressed.current = null;
+      }}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
 /** PAN-KEEP-1: what starts the picture from its frame again besides the view and the wall: the swipe mode, in the shelf view only (TOP1). */
 const shelfSwipeKey = (prefs: CasePrefs): string => (prefs.view === 'shelf' ? prefs.swipe : '');
 
@@ -1602,38 +1651,32 @@ export function CabinetScene({
         }}
       />
 
-      <div class="cabinet-scene__nav">
-        <button
-          type="button"
-          class="cabinet-scene__step cabinet-scene__step--prev"
-          aria-label="Previous cabinet"
+      {/* NAV-PTR-1: the arrows are the scene's controls, not its picture: a press on one is no gesture of the scene's */}
+      <div class="cabinet-scene__nav" data-scene-ui>
+        <StepButton
+          cls="cabinet-scene__step cabinet-scene__step--prev"
+          label="Previous cabinet"
           disabled={reach !== null ? !reach.prev : focusIdx <= 0}
-          onClick={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+          onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
         >
           ‹
-        </button>
-        <button
-          type="button"
-          class="cabinet-scene__step cabinet-scene__step--next"
-          aria-label="Next cabinet"
+        </StepButton>
+        <StepButton
+          cls="cabinet-scene__step cabinet-scene__step--next"
+          label="Next cabinet"
           disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
-          onClick={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+          onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
         >
           ›
-        </button>
+        </StepButton>
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
-            <button type="button" aria-label="Shelf above" disabled={shelfIdx <= 0} onClick={() => goShelf(Math.max(0, shelfIdx - 1))}>
+            <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))}>
               ˄
-            </button>
-            <button
-              type="button"
-              aria-label="Shelf below"
-              disabled={shelfIdx >= shelfCount - 1}
-              onClick={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))}
-            >
+            </StepButton>
+            <StepButton label="Shelf below" disabled={shelfIdx >= shelfCount - 1} onStep={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))}>
               ˅
-            </button>
+            </StepButton>
           </div>
         )}
       </div>

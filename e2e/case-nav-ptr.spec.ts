@@ -121,6 +121,30 @@ test('NAV-PTR-1 fold8-cover: a walk shows no Reset view; a 200 px raise shows a 
   expect(Math.abs(s.x + s.width - (b.x + b.width) - 24), "24 px in from the scene's right").toBeLessThanOrEqual(2);
 });
 
+// NAV-PTR-1 (Ross 10-25: "arrow movements weren't working"): a press on an arrow was also the scene's, so a thumb that
+// travelled 8 px lifted the camera instead, and Chrome makes no click past its own tap slop; an arrow now steps on its pointerup
+for (const panel of FOLD8) {
+  test(`NAV-PTR-1 ${panel.name}: a tap on Next whose finger travels 10 px pages on once, and a tap on Previous comes back`, async ({ page }) => {
+    await openCase(page, panel, 'camera');
+    const next = page.locator('.cabinet-scene__step--next');
+    await expect(next).toBeEnabled();
+    const b = (await next.boundingBox())!;
+    const at = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    const before = await sceneState(page);
+    const finger = await touchDown(page, at.x, at.y);
+    await finger.to(at.x, at.y + 10, 4, 16);
+    await finger.end();
+    await settle(page);
+    const after = await sceneState(page);
+    expect(after.x, 'the page advanced').toBeGreaterThan(before.x);
+    expect(after.y, 'the camera did not rise').toBe(before.y);
+    // one step, not two: a plain tap on Previous is back where the wall opened
+    await page.locator('.cabinet-scene__step--prev').tap();
+    await settle(page);
+    expect((await sceneState(page)).x, 'back at the first page').toBe(before.x);
+  });
+}
+
 test("NAV-PTR-1: the page asks the browser for no pull-to-refresh of its own (the CSS shipped; headless Chromium has no browser refresh to show)", async ({ page }) => {
   await openCase(page, FOLD8[0], 'camera');
   const css = await page.evaluate(() => ({

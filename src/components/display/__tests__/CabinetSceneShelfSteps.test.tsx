@@ -182,3 +182,109 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
     expect(cameraOf(host).y).toBe(lifted);
   });
 });
+
+// NAV-PTR-1 (Ross 10-25: "arrow movements weren't working"): a press on an arrow was also a press of the scene, so a thumb
+// that travelled 8 px made it a lift or a walk and its click was swallowed (and Chrome makes no click past its own tap
+// slop). An arrow now steps on the pointerup of a press that began on it, inside its box; the click that tap makes is
+// ignored; a click with no pointerup before it (the keyboard's) steps.
+describe('NAV-PTR-1: a tap on an arrow always steps, once', () => {
+  const wall = () => scene(getFixtureFigures(40), { view: 'wall', swipe: 'camera' });
+  /** The arrow's box on the screen (jsdom lays nothing out): 32 x 48 px at (400, 180). */
+  const boxed = (name: string) => {
+    const b = button(name);
+    vi.spyOn(b, 'getBoundingClientRect').mockReturnValue({ x: 400, y: 180, left: 400, top: 180, right: 432, bottom: 228, width: 32, height: 48, toJSON: () => ({}) } as DOMRect);
+    return b;
+  };
+  /** A finger's tap on the arrow that travels `dy` px before it lifts, and the click the browser then makes of it. */
+  function tapWithTravel(name: string, dy: number, click = true) {
+    const b = boxed(name);
+    down(b, 5, { x: 416, y: 195 });
+    move(b, 5, { x: 416, y: 195 + dy });
+    up(b, 5, { x: 416, y: 195 + dy });
+    if (click) fireEvent.click(b, { detail: 1 });
+  }
+  /** Where one press of Next and two take the wall view's camera: plain clicks on a fresh scene. */
+  const opens = () => {
+    const host = wall();
+    const next = button('Next cabinet');
+    fireEvent.click(next);
+    const once = host.dataset.cameraX;
+    fireEvent.click(next);
+    const twice = host.dataset.cameraX;
+    cleanup();
+    return { once, twice };
+  };
+  afterEach(() => vi.restoreAllMocks());
+
+  it('wall view: a tap on Next whose finger travels 10 px pages on exactly once, and the camera does not rise', () => {
+    const { once, twice } = opens();
+    expect(twice, 'a second step would show').not.toBe(once);
+    const host = wall();
+    const y = cameraOf(host).y;
+    tapWithTravel('Next cabinet', 10);
+    expect(host.dataset.cameraX, "the next page's opening, once").toBe(once);
+    expect(cameraOf(host).y, 'no lift').toBe(y);
+  });
+
+  it('it steps on the pointerup alone (Chrome makes no click past its tap slop); Previous does the same', () => {
+    const { once } = opens();
+    const host = wall();
+    const start = host.dataset.cameraX;
+    tapWithTravel('Next cabinet', 10, false);
+    expect(host.dataset.cameraX).toBe(once);
+    tapWithTravel('Previous cabinet', -10, false);
+    expect(host.dataset.cameraX).toBe(start);
+  });
+
+  it('a keyboard press (a click with no pointer) steps once', () => {
+    const { once } = opens();
+    const host = wall();
+    fireEvent.click(button('Next cabinet'), { detail: 0 });
+    expect(host.dataset.cameraX).toBe(once);
+  });
+
+  it('a click well after the tap is a press of its own and steps again', () => {
+    const { once, twice } = opens();
+    const host = wall();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+    tapWithTravel('Next cabinet', 0, false);
+    expect(host.dataset.cameraX).toBe(once);
+    now.mockReturnValue(10_599);
+    fireEvent.click(button('Next cabinet'), { detail: 1 });
+    expect(host.dataset.cameraX, "that tap's own click: ignored").toBe(once);
+    now.mockReturnValue(11_300);
+    fireEvent.click(button('Next cabinet'), { detail: 0 });
+    expect(host.dataset.cameraX).toBe(twice);
+  });
+
+  it('no step for a finger lifted off the arrow, a press that was cancelled, a press begun elsewhere or another mouse button', () => {
+    const host = wall();
+    const start = host.dataset.cameraX;
+    const next = boxed('Next cabinet');
+    // lifted outside its box
+    down(next, 5, { x: 416, y: 195 });
+    up(next, 5, { x: 416, y: 260 });
+    // cancelled (the browser took the touch)
+    down(next, 6, { x: 416, y: 195 });
+    fireEvent.pointerCancel(next, { pointerId: 6 });
+    up(next, 6, { x: 416, y: 195 });
+    // another finger's lift-off
+    down(next, 7, { x: 416, y: 195 });
+    up(next, 8, { x: 416, y: 195 });
+    // the right mouse button
+    fireEvent.pointerDown(next, { pointerId: 9, clientX: 416, clientY: 195, button: 2 });
+    fireEvent.pointerUp(next, { pointerId: 9, clientX: 416, clientY: 195, button: 2 });
+    expect(host.dataset.cameraX).toBe(start);
+  });
+
+  it('shelf view: Shelf below and Shelf above step on a tap that travels, once each; a disabled one does nothing', () => {
+    const host = scene(getFixtureFigures(8), { view: 'shelf', swipe: 'camera' });
+    const straight = host.dataset.camera;
+    tapWithTravel('Shelf above', 10);
+    expect([host.dataset.shelf, host.dataset.camera], 'Shelf above is disabled on the top step').toEqual(['0', straight]);
+    tapWithTravel('Shelf below', 10);
+    expect(host.dataset.shelf).toBe('1');
+    tapWithTravel('Shelf above', -10);
+    expect([host.dataset.shelf, host.dataset.camera]).toEqual(['0', straight]);
+  });
+});

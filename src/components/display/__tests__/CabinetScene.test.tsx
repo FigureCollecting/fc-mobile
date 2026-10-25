@@ -2129,6 +2129,98 @@ describe('CabinetScene: the swipe mode keeps the camera (PAN-KEEP-1)', () => {
     });
   }
 
+  // NAV-PTR-1 (Ross 10-25: "Reset view appears too easily (and/or too largely)"): a walk is navigation, not a view off its
+  // angle, and a wobble under 24 px of picture travel is no move. Zoomed, or raised or slid past that, it shows: small, low
+  describe('NAV-PTR-1: Reset view shows only once the view is really off its angle, small and low', () => {
+    const open = (patch: Partial<CasePrefs> = {}) =>
+      render(<CabinetScene figures={getFixtureFigures(40)} onSelect={vi.fn()} prefs={prefs({ view: 'wall', swipe: 'camera', ...patch })} frameFallback={{ width: 443, height: 454 }} />).container.querySelector(
+        '.cabinet-scene',
+      ) as HTMLElement;
+    const styleText = () => Array.from(document.querySelectorAll('style')).map((x) => x.textContent ?? '').join('\n');
+
+    for (const view of ['wall', 'cabinet'] as const) {
+      it(`${view} view, camera mode: a walk moves the camera and shows no Reset view`, () => {
+        const host = open({ view });
+        const x = host.dataset.cameraX;
+        drag2(host, -300, 0);
+        expect(host.dataset.cameraX, 'the camera walked').not.toBe(x);
+        expect(resetChip()).toBeNull();
+      });
+    }
+
+    it('camera mode: a lift under 24 px of picture travel shows none; a lift of 200 px shows it', () => {
+      const host = open();
+      const y = cam(host).y;
+      drag2(host, 0, 10);
+      expect(cam(host).y, 'the 10 px did raise the camera').not.toBe(y);
+      expect(resetChip()).toBeNull();
+      drag2(host, 0, 200);
+      expect(resetChip()).not.toBeNull();
+    });
+
+    it('pan mode: a slide under 24 px shows none; past it, sideways or up and down, it shows', () => {
+      // the one-cabinet view slides the photo by the finger's px (the wall view's settles on stops)
+      const host = open({ view: 'cabinet', swipe: 'pan' });
+      drag2(host, -12, 0);
+      expect(host.dataset.pan, 'the photo slid 12 px').toBe('-12');
+      expect(resetChip()).toBeNull();
+      drag2(host, -60, 0);
+      expect(resetChip()).not.toBeNull();
+      cleanup();
+      const upDown = open({ view: 'cabinet', swipe: 'pan' });
+      drag2(upDown, 0, 12);
+      expect(upDown.dataset.panY, 'the photo slid 12 px down').toBe('12');
+      expect(resetChip()).toBeNull();
+      drag2(upDown, 0, 60);
+      expect(resetChip()).not.toBeNull();
+    });
+
+    it('zoomed: Reset view shows', () => {
+      const host = open();
+      fireEvent.pointerDown(host, { pointerId: 11, clientX: 180, clientY: 260, button: 0 });
+      fireEvent.pointerDown(host, { pointerId: 12, clientX: 260, clientY: 260, button: 0 });
+      fireEvent.pointerMove(host, { pointerId: 11, clientX: 140, clientY: 260 });
+      fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 260 });
+      fireEvent.pointerUp(host, { pointerId: 11, clientX: 140, clientY: 260 });
+      fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 260 });
+      expect((JSON.parse(host.dataset.zoom!) as { k: number }).k).toBeGreaterThan(1);
+      expect(resetChip()).not.toBeNull();
+    });
+
+    it("is a small button low at the scene's right, outside the camera's frame: a ⟲ glyph over \"Reset\", named Reset view", () => {
+      const host = open({ view: 'shelf' });
+      drag2(host, 0, 200);
+      const reset = resetChip()!;
+      expect(reset.parentElement, "in the scene, not the camera's frame").toBe(host);
+      expect(reset.getAttribute('title')).toBe('Reset view');
+      expect(reset.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+      expect(reset.textContent).toBe('Reset');
+      expect(reset.getAttribute('style'), 'no offset of its own in the shelf view').toBeNull();
+      const rule = /\.cabinet-scene__reset\s*\{([^}]*)\}/.exec(styleText())?.[1] ?? '';
+      expect(rule).toMatch(/right:\s*24px/);
+      expect(rule).toMatch(/bottom:\s*16px/);
+      expect(rule).toMatch(/width:\s*40px/);
+      expect(rule).toMatch(/height:\s*40px/);
+      expect(rule).toMatch(/var\(--font-2xs/);
+      expect(rule).not.toMatch(/\btop:/);
+    });
+
+    it('a drag that starts on it is no gesture of the scene, and its tap resets', () => {
+      const host = open();
+      // raised part of the way, so a drag up or down from there would move the camera again
+      drag2(host, 0, 60);
+      const raised = cam(host).y;
+      const reset = resetChip()!;
+      fireEvent.pointerDown(reset, { pointerId: 4, clientX: 400, clientY: 400, button: 0 });
+      fireEvent.pointerMove(reset, { pointerId: 4, clientX: 400, clientY: 300 });
+      fireEvent.pointerUp(reset, { pointerId: 4, clientX: 400, clientY: 300 });
+      expect(cam(host).y, 'the camera did not move').toBe(raised);
+      fireEvent.click(reset);
+      expect(resetChip()).toBeNull();
+      expect(cam(host).y, 'back at the default height').not.toBe(raised);
+    });
+  });
+
   it('the shelf view keeps its TOP1 behaviour: a swipe mode chosen there starts from the frame', () => {
     const figs = getFixtureFigures(40);
     const at = (swipe: 'camera' | 'pan') => <CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ swipe, view: 'shelf' })} frameFallback={{ width: 443, height: 454 }} />;

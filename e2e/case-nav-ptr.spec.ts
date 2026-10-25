@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { touchDown } from './touch';
+import { touchDown, touchSwipe } from './touch';
 import { watchPull } from './pullWatch';
 
 /**
@@ -98,6 +98,28 @@ for (const panel of FOLD8) {
     expect((await sceneState(page)).x, 'the camera walked').not.toBe(before.x);
   });
 }
+
+// NAV-PTR-1 (Ross 10-25: "Reset view appears too easily (and/or too largely)"): a walk is navigation and shows none; a
+// real raise of the camera shows a small button low at the right, in thumb reach (the misfit chip's mirror)
+test('NAV-PTR-1 fold8-cover: a walk shows no Reset view; a 200 px raise shows a small one, low at the right', async ({ page }) => {
+  await openCase(page, FOLD8.find((v) => v.name === 'fold8-cover')!, 'camera');
+  const f = await frameBox(page);
+  const x = (await sceneState(page)).x;
+  await touchSwipe(page, f.x + f.width * 0.8, f.y + f.height * 0.5, -f.width * 0.6, 0);
+  await settle(page);
+  expect((await sceneState(page)).x, 'the camera walked').not.toBe(x);
+  await expect(page.locator('.cabinet-scene__reset'), 'no Reset view after a walk').toHaveCount(0);
+  await touchSwipe(page, f.x + f.width / 2, f.y + f.height * 0.2, 0, 200);
+  await settle(page);
+  const reset = page.locator('.cabinet-scene__reset');
+  await expect(reset, 'Reset view after a raise').toHaveCount(1);
+  const b = (await reset.boundingBox())!;
+  const s = (await page.locator('.cabinet-scene').boundingBox())!;
+  expect(b.width, 'small').toBeLessThanOrEqual(44);
+  expect(b.height, 'small').toBeLessThanOrEqual(44);
+  expect(b.y + b.height / 2, "in the scene's lower quarter").toBeGreaterThan(s.y + s.height * 0.75);
+  expect(Math.abs(s.x + s.width - (b.x + b.width) - 24), "24 px in from the scene's right").toBeLessThanOrEqual(2);
+});
 
 test("NAV-PTR-1: the page asks the browser for no pull-to-refresh of its own (the CSS shipped; headless Chromium has no browser refresh to show)", async ({ page }) => {
   await openCase(page, FOLD8[0], 'camera');

@@ -102,8 +102,11 @@ export const ZOOM_SETTLE_MS = 200;
 /** Two taps on the room this close in time (ms) and place (CSS px) are a double-tap. */
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 40;
-/** The shelf steps' column at the scene's right edge, with a gap: the Reset view chip keeps left of it. */
-const SHELF_STEPS_PX = 44;
+/**
+ * NAV-PTR-1: Reset view shows once a drag has moved the picture this far (CSS px: a raise of the camera by what moves
+ * the picture this far, or a slide of the photo), or while zoomed; never for a walk or a wobble of the thumb.
+ */
+const RESET_PX = 24;
 /** MISFIT-CHIP-1: a finger resting this long (ms) on the do-not-fit chip, and not moving past the slop (px), hides it. */
 export const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP_PX = 8;
@@ -822,14 +825,19 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
  * PINCH-1: the Reset view chip, while the picture is zoomed. It holds whether it shows and hands the scene its
  * setter (`shown`), so it comes and goes as its own render, never the scene's.
  */
-function ResetChip({ shown, moved, right, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; right?: number; onReset: () => void }) {
+function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; onReset: () => void }) {
   const [zoomed, setZoomed] = useState(false);
   shown.current = setZoomed;
   // PAN-KEEP-1: also while the camera or the pan is off the default angle: the one deliberate way back
   if (!zoomed && !moved) return null;
+  // NAV-PTR-1: a small button (a ⟲ over a short label), a scene control (a press on it is no gesture of the scene's)
   return (
-    <button type="button" class="cabinet-scene__reset" style={right === undefined ? undefined : { right: `${right}px` }} onClick={onReset}>
-      Reset view
+    <button type="button" class="cabinet-scene__reset" aria-label="Reset view" title="Reset view" data-scene-ui onClick={onReset}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+      </svg>
+      <span>Reset</span>
     </button>
   );
 }
@@ -1577,21 +1585,22 @@ export function CabinetScene({
             {dimFrom !== null && focusIdx < lastIndex && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
-        <ResetChip
-          shown={showChip}
-          moved={walkX !== null || lift !== 0 || pan !== 0 || panY !== 0 || framedFocus !== null}
-          // the frame's top corner, clear of the tab bar and the cards; in the shelf view, of the shelf steps
-          right={prefs.view === 'shelf' ? Math.max(8, SHELF_STEPS_PX - side) : undefined}
-          onReset={() => {
-            showZoom(UNZOOMED, 'settle');
-            setWalkX(null);
-            setPan(0);
-            setLift(0);
-            setPanY(0);
-            setFramedFocus(null);
-          }}
-        />
       </div>
+
+      <ResetChip
+        shown={showChip}
+        // NAV-PTR-1: zoomed, or raised or slid at least RESET_PX of picture travel (the raise in screen terms, in every view);
+        // a walk is navigation, not a view off its angle
+        moved={Math.abs(lift) >= Math.abs(liftForDragMm(along, RESET_PX)) || Math.abs(pan) >= RESET_PX || Math.abs(panY) >= RESET_PX}
+        onReset={() => {
+          showZoom(UNZOOMED, 'settle');
+          setWalkX(null);
+          setPan(0);
+          setLift(0);
+          setPanY(0);
+          setFramedFocus(null);
+        }}
+      />
 
       <div class="cabinet-scene__nav">
         <button
@@ -1888,19 +1897,27 @@ const styles = `
   .cabinet-scene__fit-dismiss { flex: none; width: 32px; height: 32px; border-radius: 9999px; font-size: 20px; line-height: 1; color: #fff; background: rgba(255, 255, 255, 0.14); }
   .cabinet-scene__fit ul { margin: 4px 0 0; padding-left: 16px; font-weight: 500; }
   .cabinet-scene__fit li + li { margin-top: 4px; }
+  /* NAV-PTR-1: Reset view, bottom right, inset 24 px from the edge (the misfit chip's mirror), never at the top: a small
+     button, a glyph over a short label at the app's smallest size */
   .cabinet-scene__reset {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    height: 32px;
-    padding: 0 12px;
-    border-radius: var(--radius-full, 9999px);
+    right: 24px;
+    bottom: 16px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 0;
+    border-radius: 10px;
     background: rgba(0, 0, 0, 0.6);
     color: #fff;
-    font: 600 var(--font-sm, 13px)/1 var(--font-sans, system-ui);
+    font: 600 var(--font-2xs)/1 var(--font-sans, system-ui);
     white-space: nowrap;
     pointer-events: auto;
   }
-  /* a 48 px target (--touch-min) round the small chip */
-  .cabinet-scene__reset::before { content: ''; position: absolute; inset: -8px; }
+  /* a 48 px target (--touch-min) round the 40 px button */
+  .cabinet-scene__reset::before { content: ''; position: absolute; inset: -4px; }
 `;

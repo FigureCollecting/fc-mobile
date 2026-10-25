@@ -42,6 +42,19 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     expect(container.querySelector('.detail-pane__image')).toBeNull();
   });
 
+  // CARD-VIEW-1 (Ross 10-25: "not every card view had zoom available"): the pane's picture zooms as the viewer's does
+  it('its picture zooms: a visible zoom control, and its X stays at the top-right', async () => {
+    const user = userEvent.setup();
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    const frame = container.querySelector('.detail-pane .zoomable') as HTMLElement;
+    expect(frame).not.toBeNull();
+    expect(frame.querySelector('img.detail-pane__image')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(JSON.parse(frame.dataset.zoom!).k).toBe(2);
+    expect(screen.getByRole('button', { name: 'Close detail' })).toBeVisible();
+  });
+
   it('calls onClose when the close button is tapped', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

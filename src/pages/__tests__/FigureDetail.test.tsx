@@ -103,6 +103,37 @@ describe('FigureDetail page', () => {
     expect(img).toHaveAttribute('crossorigin', 'anonymous');
   });
 
+  // CARD-VIEW-1 (Ross 10-25: "not every card view had zoom available nor an x to close card view")
+  it('its picture zooms, and an X at the picture\'s top-right closes the page as Back does', async () => {
+    const user = userEvent.setup();
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, {
+        products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: `https://images.figurecollecting.com/d/${'a'.repeat(64)}` }] }],
+      }),
+    );
+    await seedFigures(r, [MIKU]);
+    // a page it came from, so Back has somewhere to go
+    window.history.pushState(null, '', window.location.href);
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    const img = await screen.findByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
+    const frame = img.closest('.zoomable') as HTMLElement;
+    expect(frame.closest('.figure-detail__hero')).not.toBeNull();
+    await user.click(within(frame).getByRole('button', { name: 'Zoom in' }));
+    expect(JSON.parse(frame.dataset.zoom!).k).toBe(2);
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    const x = within(document.querySelector('.figure-detail__hero') as HTMLElement).getByRole('button', { name: 'Close' });
+    await user.click(x);
+    expect(back).toHaveBeenCalledTimes(1);
+    back.mockRestore();
+  });
+
+  it('the plate has no zoom (no picture), and the X is there all the same', async () => {
+    await open([MIKU]);
+    expect(screen.queryByRole('button', { name: 'Zoom in' })).toBeNull();
+    expect(within(document.querySelector('.figure-detail__hero') as HTMLElement).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
   it('shows no image from anywhere but the public image address (ADDR-1)', async () => {
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(

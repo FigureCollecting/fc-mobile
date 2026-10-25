@@ -19,6 +19,7 @@ import { showToast } from '../stores/toast';
 import type { Disposal } from '../storage/userStore';
 import { Style } from '../styles/Style';
 import { useBrokenImages } from '../hooks/useBrokenImages';
+import { ZoomableImage } from '../components/display/ZoomableImage';
 
 function SkeletonDetail() {
   return (
@@ -146,8 +147,15 @@ export function FigureDetail() {
         <button class="figure-detail__back-btn figure-detail__back-btn--floating" onClick={handleBack} aria-label="Go back" type="button">
           <BackIcon />
         </button>
+        {/* CARD-VIEW-1: the X every figure card has, where the viewer's and the pane's stand; it closes the page as Back does */}
+        <button class="figure-detail__close" onClick={handleBack} aria-label="Close" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M18 6L6 18" />
+            <path d="M6 6l12 12" />
+          </svg>
+        </button>
         {image.data && !images.broken(image.data.url) ? (
-          <img class="figure-detail__image" src={image.data.url} alt={figure.name} crossOrigin="anonymous" onError={() => images.failed(image.data!.url)} />
+          <ZoomableImage frameClass="figure-detail__zoom" imgClass="figure-detail__image" src={image.data.url} alt={figure.name} onError={() => images.failed(image.data!.url)} />
         ) : (
           // The placeholder plate (MG-2): no derivative, so no image of any kind.
           <div class="figure-detail__plate" aria-hidden="true">
@@ -314,10 +322,32 @@ const styles = `
     color: var(--text-tertiary);
   }
 
+  .figure-detail__zoom {
+    width: 100%;
+    height: 100%;
+  }
+
   .figure-detail__image {
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+
+  .figure-detail__close {
+    position: absolute;
+    top: var(--safe-area-top);
+    right: var(--space-2);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--touch-min);
+    height: var(--touch-min);
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: var(--radius-full);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 
   .figure-detail__as-of {

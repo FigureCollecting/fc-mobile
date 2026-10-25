@@ -562,6 +562,21 @@ describe('FigureViewer (Display D)', () => {
     });
   });
 
+  // CARD-VIEW-1 part 3: Go to goes to the figure the viewer shows now, after any flip through the result set
+  it('Go to goes to the figure shown now: the tapped one, or the one a swipe brought', async () => {
+    const user = userEvent.setup();
+    const goTo = vi.fn();
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} goTo={goTo} goToBlocked={(f) => (f._id === FIXTURE_FIGURES[3]!._id ? 'Not on a shelf' : null)} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    expect(goTo).toHaveBeenLastCalledWith(FIXTURE_FIGURES[1]);
+    act(() => instances[0]!.swipeTo(2));
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    expect(goTo).toHaveBeenLastCalledWith(FIXTURE_FIGURES[2]);
+    act(() => instances[0]!.swipeTo(3));
+    expect(screen.getByRole('button', { name: 'Go to' })).toBeDisabled();
+  });
+
   it('reports close when photoswipe is dismissed', async () => {
     const onClose = vi.fn();
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);

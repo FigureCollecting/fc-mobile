@@ -91,6 +91,7 @@ import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useLayoutBasis } from './layoutBasis';
+import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -785,6 +786,15 @@ export interface CabinetSceneProps {
   steadyLayout?: boolean;
   /** The pictures of the collection have all been kept (useCollectionImages): nothing more will stream in. Default true. */
   imagesComplete?: boolean;
+  /**
+   * CARD-VIEW-1: a card's Go to: frame this figure (goToFigure, caseGoTo.ts) once the wall is laid out; a new seq is a new
+   * request. Its owner (Collection) puts the case in the one-shelf view with it.
+   */
+  goTo?: { figureId: string; seq: number } | null;
+  /** The request was taken up: found on a shelf and framed, or on none. */
+  onWentTo?: (figureId: string, found: boolean) => void;
+  /** CARD-VIEW-1: the figures the wall stands on no shelf (they do not fit), once laid out, so a card can say Go to has nowhere to go. */
+  onUnplaced?: (ids: ReadonlySet<string>) => void;
 }
 
 /** A picture whose figure fits the place it was packed in by this much (mm) still draws there: rounding, not a collision. */
@@ -977,6 +987,9 @@ export function CabinetScene({
   onMisfitsOpen,
   onMisfitCount,
   onPrefs,
+  goTo = null,
+  onWentTo,
+  onUnplaced,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frame = useFrame(hostRef, frameFallback);
@@ -1270,6 +1283,38 @@ export function CabinetScene({
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
   }, [prefs.view, prefs.pattern, framingKey, filterKey, frame.width, frame.height, showZoom]);
+
+  // CARD-VIEW-1: Go to. The wall is laid out (every figure in the place it keeps); a request is taken up once, after the resets
+  // above (a layout effect declared after them: a new view's reset never undoes it), to the framing goToFigure gives
+  const laidOut = figures.length > 0 && basis !== null && (steadyLayout ? settle.revealed : unmeasured === 0);
+  const goToScene = useMemo<GoToScene>(() => ({ frame, wall, cabinets, headroomMm, ceilingMm }), [frame, wall, cabinets, headroomMm, ceilingMm]);
+  const wentTo = useRef<number | null>(null);
+  const wentOut = useRef(onWentTo);
+  wentOut.current = onWentTo;
+  useLayoutEffect(() => {
+    if (goTo === null || goTo.seq === wentTo.current || !laidOut) return;
+    wentTo.current = goTo.seq;
+    const target = goToFigure(goTo.figureId, goToScene);
+    if (target !== null) {
+      setFocus(target.focus);
+      setFramedFocus(null);
+      setShelf(target.shelf);
+      setWalkX(target.walkX);
+      setPan(0);
+      setLift(0);
+      setPanY(0);
+      if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
+    }
+    wentOut.current?.(goTo.figureId, target !== null);
+  }, [goTo, laidOut, goToScene, showZoom]);
+  const unplacedOut = useRef(onUnplaced);
+  unplacedOut.current = onUnplaced;
+  const unplacedKey = laidOut ? packed.violators.map((v) => v.item.figure._id).join('\n') : null;
+  // as the layout commits: a switch to the tiles right after it still leaves its owner what it found
+  useLayoutEffect(() => {
+    if (unplacedKey === null) return;
+    unplacedOut.current?.(new Set(unplacedKey === '' ? [] : unplacedKey.split('\n')));
+  }, [unplacedKey]);
   const toFrame = (x: number, y: number): Point => {
     const r = frameRef.current!.getBoundingClientRect();
     return { x: x - r.left, y: y - r.top };

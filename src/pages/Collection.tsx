@@ -34,6 +34,8 @@ import { sortFigures } from '../utils/sortFigures';
 import { getFixtureFigures, getFixtureImageRef, getFixtureSteady, isFixtureMode } from '../dev-fixtures/fixtures';
 import { Style } from '../styles/Style';
 import { BackToClose } from '../hooks/useBackToClose';
+import { GO_TO_FORMER, GO_TO_NOT_SHELVED, GO_TO_NO_FIT, takeGoToRequest } from '../components/display/goToRequest';
+import { showToast } from '../stores/toast';
 
 /** Fold-open near-square threshold: at or above this container width, the
  *  figure detail opens as a right-hand pane instead of a full-screen
@@ -92,6 +94,7 @@ const EMPTY_TAB: Record<string, string> = {
 /** The fixtures hold no default: every holding shows until Refine picks some. */
 const NO_HOLDINGS: readonly CollectionTab[] = [];
 const NO_FILTERS: ListFilters = { status: [], mfr: [], dist: [], scale: [], origin: [], cat: [], type: [], tag: [] };
+const NONE: ReadonlySet<string> = new Set();
 
 /** Each holding's count over a figure list (the fixtures, which the local store does not count). */
 function countHoldings(figures: Figure[]): Record<CollectionTab, number> {
@@ -212,6 +215,51 @@ export function Collection() {
     setLastOpenedId(figure._id);
   }, []);
 
+  // CARD-VIEW-1 part 3 (Ross 10-25): a card's Go to. Whether the card covers the shelving is the state that already chooses
+  // the card: beside the case (the pane, showDetailPane) it stays open; over it (the full-screen viewer, every layout where
+  // the pane is not beside it) it closes first. Then the case, in its one-shelf view, frames the figure (CabinetScene's goTo).
+  const showDetailPane = dualPane && viewerIndex !== null && !!visible[viewerIndex];
+  const [goTo, setGoTo] = useState<{ figureId: string; seq: number } | null>(null);
+  const goToSeq = useRef(0);
+  const goToCase = (figure: Figure) => {
+    if (!showDetailPane) setViewerIndex(null);
+    if (layout !== 'case') setLayout('case');
+    if (casePrefs.view !== 'shelf') setCasePrefs({ view: 'shelf' });
+    setGoTo({ figureId: figure._id, seq: ++goToSeq.current });
+  };
+  // the figures the case stood on no shelf as it last laid them out (kept while the tiles show), and the ones it never shelves
+  const [unplaced, setUnplaced] = useState<ReadonlySet<string>>(NONE);
+  const shelvedIds = useMemo(() => new Set(onShelves.shelved.map((f) => f._id)), [onShelves]);
+  const goToBlocked = (figure: Figure): string | null => {
+    if (holdingOf(figure) === 'former') return GO_TO_FORMER;
+    if (!shelvedIds.has(figure._id)) return GO_TO_NOT_SHELVED;
+    return unplaced.has(figure._id) ? GO_TO_NO_FIT : null;
+  };
+  // Go to from the figure page (search, Copies and actions): taken up once, here, when the collection is loaded. A holding
+  // Refine leaves out is added so the figure shows; one hidden by its other filters is said so
+  const pendingGoTo = useRef<string | null | undefined>(undefined);
+  if (pendingGoTo.current === undefined) pendingGoTo.current = takeGoToRequest();
+  useEffect(() => {
+    const id = pendingGoTo.current;
+    if (!id || isLoading) return;
+    const shown = visible.find((f) => f._id === id);
+    if (shown) {
+      pendingGoTo.current = null;
+      goToCase(shown);
+      return;
+    }
+    const anywhere = figures.find((f) => f._id === id);
+    const holding = anywhere === undefined ? null : (holdingOf(anywhere) as CollectionTab);
+    if (holding !== null && holding !== 'former' && filters.status.length > 0 && !filters.status.includes(holding)) {
+      setFilters({ ...filters, status: [...filters.status, holding] });
+      return;
+    }
+    pendingGoTo.current = null;
+    showToast(anywhere === undefined ? 'That figure is not in your collection' : holding === 'former' ? GO_TO_FORMER : 'Refine hides that figure: clear its filters to go to it');
+    // goToCase reads this render's state; the request is taken up once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, visible, figures, filters]);
+
   // No Select until a selection can do something (BULK-1: move to a cabinet or shelf, change status, mark arrived).
   const headerActions = (
     <>
@@ -268,7 +316,6 @@ export function Collection() {
     );
   }
 
-  const showDetailPane = dualPane && viewerIndex !== null && !!visible[viewerIndex];
   const shownLayout = layout;
   const emptyText = fixtureMode ? EMPTY_TAB['owned'] : onlyHolding !== null ? EMPTY_TAB[onlyHolding] : 'Nothing here yet.';
 
@@ -303,6 +350,12 @@ export function Collection() {
                   onMisfitsOpen={setMisfitsOpen}
                   onMisfitCount={setMisfitCount}
                   onPrefs={setCasePrefs}
+                  goTo={goTo}
+                  onWentTo={(_id, found) => {
+                    setGoTo(null);
+                    if (!found) showToast(GO_TO_NO_FIT);
+                  }}
+                  onUnplaced={setUnplaced}
                 />
               </div>
             ) : (
@@ -325,6 +378,8 @@ export function Collection() {
             index={viewerIndex}
             total={visible.length}
             onClose={() => setViewerIndex(null)}
+            goTo={goToCase}
+            goToBlocked={goToBlocked}
           />
         )}
       </div>
@@ -380,6 +435,8 @@ export function Collection() {
           figures={visible}
           index={viewerIndex}
           onClose={() => setViewerIndex(null)}
+          goTo={goToCase}
+          goToBlocked={goToBlocked}
         />
       )}
 

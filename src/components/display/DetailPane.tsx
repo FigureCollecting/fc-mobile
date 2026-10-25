@@ -14,6 +14,10 @@ interface DetailPaneProps {
   index: number;
   total: number;
   onClose: () => void;
+  /** CARD-VIEW-1: Go to for its figure (beside the case: the pane stays open). */
+  goTo?: (figure: Figure) => void;
+  /** Why Go to has nowhere to go for a figure, or null. */
+  goToBlocked?: (figure: Figure) => string | null;
 }
 
 /**
@@ -24,7 +28,7 @@ interface DetailPaneProps {
  * interactive alongside it. Its picture zooms in place (CARD-VIEW-1,
  * ZoomableImage), as the full-screen viewer's does.
  */
-export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
+export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }: DetailPaneProps) {
   // An image that fails to load is drawn as the placeholder (ADDR-1), never a blank box.
   const images = useBrokenImages();
   // Back and Esc close it too (SHEETS-FB1 6c), unless a card is open over it: they close the one on top
@@ -61,7 +65,7 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
       )}
 
       <div class="detail-pane__content">
-        <FigureDetailContent figure={figure} index={index} total={total} />
+        <FigureDetailContent figure={figure} index={index} total={total} goTo={goTo && { go: () => goTo(figure), blocked: goToBlocked?.(figure) ?? null }} />
       </div>
 
       <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />

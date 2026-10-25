@@ -6,7 +6,7 @@ import { act, fireEvent, renderHook, screen, waitFor, within } from '@testing-li
 import { Code, ConnectError } from '@connectrpc/connect';
 import userEvent from '@testing-library/user-event';
 import { create } from '@bufbuild/protobuf';
-import { GetProductImagesResponseSchema, ProductCardSchema, SyncOp, occFacetKey, ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { GetProductImagesResponseSchema, ProductCardSchema, ProductKind, SyncOp, occFacetKey, ufFacetKey } from '@figurecollecting/fc-api-contract';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 
@@ -21,6 +21,7 @@ import { shownCopies } from '../../sync/occurrences';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { fakeCaches } from '../../test/fakeCaches';
 import { OWNED_MEDIA_CACHE, rememberImages } from '../../media/keptImages';
+import { takeGoToRequest } from '../../components/display/goToRequest';
 
 afterEach(() => {
   localSession.value = undefined;
@@ -132,6 +133,29 @@ describe('FigureDetail page', () => {
     await open([MIKU]);
     expect(screen.queryByRole('button', { name: 'Zoom in' })).toBeNull();
     expect(within(document.querySelector('.figure-detail__hero') as HTMLElement).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
+  // CARD-VIEW-1 part 3: the figure page has no shelving behind it: Go to leaves it for the case, which goes to the figure
+  it('Go to, in the action bar with Edit and Delete, asks the case to go to the figure and leaves for it', async () => {
+    const user = userEvent.setup();
+    await localRig().then(async (r) => seedFigures(r, [MIKU]));
+    const { currentPath } = renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await screen.findByRole('heading', { level: 1 });
+    const bar = document.querySelector('.figure-detail__action-bar') as HTMLElement;
+    const goTo = within(bar).getByRole('button', { name: 'Go to' });
+    expect(goTo.querySelector('svg')).not.toBeNull();
+    expect(within(bar).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    await user.click(goTo);
+    expect(currentPath()).toBe('/');
+    expect(takeGoToRequest()).toBe(headOf(0));
+  });
+
+  it('a goods item, or one no longer owned, is on no shelf: Go to is disabled and says why', async () => {
+    await open([{ ...MIKU, kind: ProductKind.GOODS }]);
+    const goTo = screen.getByRole('button', { name: 'Go to' });
+    expect(goTo).toBeDisabled();
+    expect(goTo).toHaveAccessibleDescription('Goods and media are not shelved');
+    expect(takeGoToRequest()).toBeNull();
   });
 
   it('shows no image from anywhere but the public image address (ADDR-1)', async () => {

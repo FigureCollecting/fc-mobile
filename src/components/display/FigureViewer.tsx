@@ -142,6 +142,10 @@ interface FigureViewerProps {
   /** Index of the tapped figure within the result set. */
   index: number;
   onClose: () => void;
+  /** CARD-VIEW-1: Go to for the figure shown now (Collection closes this viewer first: it covers the shelving). */
+  goTo?: (figure: Figure) => void;
+  /** Why Go to has nowhere to go for a figure, or null. */
+  goToBlocked?: (figure: Figure) => string | null;
 }
 
 /**
@@ -163,7 +167,7 @@ function slideOf(f: Figure): { src: string; width: number; height: number; alt: 
   return { src: f.imageUrl, width: meta.width, height: meta.height, alt: f.name };
 }
 
-export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
+export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: FigureViewerProps) {
   const [current, setCurrent] = useState(index);
   const [detent, setDetent] = useState(SUMMARY);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -341,6 +345,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           index={current}
           total={figures.length}
           onBeforeOpen={closeViewer}
+          goTo={goTo && { go: () => goTo(figure), blocked: goToBlocked?.(figure) ?? null }}
         />
       </div>
 

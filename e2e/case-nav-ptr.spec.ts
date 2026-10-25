@@ -143,6 +143,31 @@ for (const panel of FOLD8) {
     await settle(page);
     expect((await sceneState(page)).x, 'back at the first page').toBe(before.x);
   });
+
+  // a walk started at the edge, on the arrow, leaves it as a drag: the scene's, as if it had started there
+  test(`NAV-PTR-1 ${panel.name}: a swipe that starts on Next walks the wall as the same swipe on the scene does`, async ({ page }) => {
+    await openCase(page, panel, 'camera');
+    const f = await frameBox(page);
+    const swipeFrom = async (x: number, y: number) => {
+      const finger = await touchDown(page, x, y);
+      await finger.to(x - f.width * 0.6, y, 8, 16);
+      await finger.end();
+      await settle(page);
+      return sceneState(page);
+    };
+    const start = await sceneState(page);
+    const b = (await page.locator('.cabinet-scene__step--next').boundingBox())!;
+    const fromScene = await swipeFrom(b.x - 24, b.y + b.height / 2);
+    expect(fromScene.x, 'a swipe on the scene walks').toBeGreaterThan(start.x);
+    await page.reload();
+    await page.waitForSelector('button.cab-figure');
+    // the splash takes the touches until it goes
+    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
+    await settle(page, 800);
+    expect((await sceneState(page)).x).toBe(start.x);
+    const fromArrow = await swipeFrom(b.x + b.width / 2, b.y + b.height / 2);
+    expect(fromArrow, 'walked, as from the scene').toEqual(fromScene);
+  });
 }
 
 test("NAV-PTR-1: the page asks the browser for no pull-to-refresh of its own (the CSS shipped; headless Chromium has no browser refresh to show)", async ({ page }) => {

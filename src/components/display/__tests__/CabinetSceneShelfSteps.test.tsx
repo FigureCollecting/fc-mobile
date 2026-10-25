@@ -268,8 +268,9 @@ describe('NAV-PTR-1: a tap on an arrow always steps, once', () => {
     down(next, 6, { x: 416, y: 195 });
     fireEvent.pointerCancel(next, { pointerId: 6 });
     up(next, 6, { x: 416, y: 195 });
-    // another finger's lift-off
+    // another finger's move and lift-off
     down(next, 7, { x: 416, y: 195 });
+    move(next, 8, { x: 300, y: 195 });
     up(next, 8, { x: 416, y: 195 });
     // the right mouse button
     fireEvent.pointerDown(next, { pointerId: 9, clientX: 416, clientY: 195, button: 2 });
@@ -286,5 +287,75 @@ describe('NAV-PTR-1: a tap on an arrow always steps, once', () => {
     expect(host.dataset.shelf).toBe('1');
     tapWithTravel('Shelf above', -10);
     expect([host.dataset.shelf, host.dataset.camera]).toEqual(['0', straight]);
+  });
+
+  // NAV-PTR-1 (the hand-off): a swipe that starts on an arrow (a thumb starting a walk at the edge) is the scene's once it
+  // leaves the arrow as a drag: it walks, lifts or pans as the same drag on the scene would, and steps nothing
+  /** A finger down at (416, 195), on the arrow's box when `el` is a boxed arrow, moved by (dx, dy) in two moves, and lifted. */
+  function dragFrom(el: Element, dx: number, dy: number) {
+    down(el, 5, { x: 416, y: 195 });
+    move(el, 5, { x: 416 + dx / 2, y: 195 + dy / 2 });
+    move(el, 5, { x: 416 + dx, y: 195 + dy });
+    up(el, 5, { x: 416 + dx, y: 195 + dy });
+  }
+
+  it('a swipe that starts on Next and leaves it walks the wall as the same swipe on the scene does, and does not step', () => {
+    const { once } = opens();
+    const plain = wall();
+    const start = plain.dataset.cameraX;
+    dragFrom(plain, -60, 0);
+    const walked = plain.dataset.cameraX;
+    expect(walked, 'a 60 px swipe on the scene walks').not.toBe(start);
+    cleanup();
+    const host = wall();
+    dragFrom(boxed('Next cabinet'), -60, 0);
+    expect(host.dataset.cameraX, 'walked, as from the scene').toBe(walked);
+    expect(host.dataset.cameraX, 'not a step').not.toBe(once);
+  });
+
+  it('a drag down that starts on Next lifts the camera as the same drag on the scene does, and does not step', () => {
+    const plain = wall();
+    const x = plain.dataset.cameraX;
+    const y = cameraOf(plain).y;
+    dragFrom(plain, 0, 60);
+    const lifted = plain.dataset.camera;
+    expect(cameraOf(plain).y, 'a 60 px drag down on the scene lifts').not.toBe(y);
+    cleanup();
+    const host = wall();
+    dragFrom(boxed('Next cabinet'), 0, 60);
+    expect(host.dataset.camera, 'lifted, as from the scene').toBe(lifted);
+    expect(host.dataset.cameraX, 'not a step').toBe(x);
+  });
+
+  it('zoomed: a swipe that starts on Next pans the magnified picture as the same swipe on the scene does', () => {
+    const zoomed = () => {
+      const host = wall();
+      pinchOut(host);
+      expect(zoomK(host)).toBeGreaterThan(1);
+      return host;
+    };
+    const plain = zoomed();
+    const before = plain.dataset.zoom;
+    dragFrom(plain, -60, 0);
+    const panned = plain.dataset.zoom;
+    expect(panned, 'a 60 px swipe on the scene pans the magnified picture').not.toBe(before);
+    cleanup();
+    const host = zoomed();
+    const camera = host.dataset.camera;
+    dragFrom(boxed('Next cabinet'), -60, 0);
+    expect(host.dataset.zoom).toBe(panned);
+    expect(host.dataset.camera, 'no walk, no step').toBe(camera);
+  });
+
+  it('a drag off Next and back over it steps nothing, its click included', () => {
+    const host = wall();
+    const start = host.dataset.cameraX;
+    const next = boxed('Next cabinet');
+    down(next, 5, { x: 416, y: 195 });
+    move(next, 5, { x: 380, y: 195 });
+    move(next, 5, { x: 416, y: 195 });
+    up(next, 5, { x: 416, y: 195 });
+    fireEvent.click(next, { detail: 1 });
+    expect(host.dataset.cameraX).toBe(start);
   });
 });

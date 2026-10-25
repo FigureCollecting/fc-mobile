@@ -56,8 +56,6 @@ const ORIGIN_HEADERS = {
 };
 /** Where a box is compared on screen: within this many CSS px (a touch lands on device pixels). */
 const NEAR_PX = 3;
-/** NAV-PTR-1: a swipe that must drag the scene starts at least this far (CSS px) in from the frame's sides, clear of the step arrows. */
-const CLEAR_OF_STEPS_PX = 48;
 
 let state: StackState;
 let stack: StackClient;
@@ -432,14 +430,12 @@ test('(b) zoomed, one finger pans the magnified picture to its edges and never w
   expect(z1.k).toBe(z0.k);
   expect(z1.x - z0.x).toBeCloseTo(-120, 0);
   expect(z1.y).toBeCloseTo(z0.y, 0);
-  // far right, then far down: the picture's corners stop at the frame's. NAV-PTR-1 (Ross 10-25): a press on a step arrow
-  // (32 px wide, 4 px in from the scene's sides, at mid-height) is the arrow's and never drags, so the sideways swipes
-  // start CLEAR_OF_STEPS_PX in from the frame's sides
-  for (let i = 0; i < 4; i++) await touchSwipe(page, frame.x + CLEAR_OF_STEPS_PX, mid.y, frame.width * 0.8, 0);
+  // far right, then far down: the picture's corners stop at the frame's
+  for (let i = 0; i < 4; i++) await touchSwipe(page, frame.x + 30, mid.y, frame.width * 0.8, 0);
   for (let i = 0; i < 4; i++) await touchSwipe(page, mid.x, frame.y + 30, 0, frame.height * 0.8);
   expect(await zoomOf(page)).toEqual({ k: z0.k, x: 0, y: 0 });
   // far left and up
-  for (let i = 0; i < 6; i++) await touchSwipe(page, frame.x + frame.width - CLEAR_OF_STEPS_PX, mid.y, -frame.width * 0.8, 0);
+  for (let i = 0; i < 6; i++) await touchSwipe(page, frame.x + frame.width - 30, mid.y, -frame.width * 0.8, 0);
   for (let i = 0; i < 6; i++) await touchSwipe(page, mid.x, frame.y + frame.height - 30, 0, -frame.height * 0.8);
   const end = await zoomOf(page);
   expect(end.x).toBeCloseTo(frame.width * (1 - z0.k), 0);

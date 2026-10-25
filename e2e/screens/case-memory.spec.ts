@@ -75,11 +75,6 @@ const GROWTH = 0.1;
 const WARM_UP = 3;
 /** A finger's swipe across this share of the frame: about 7 cabinets on the open panel, 3 on the cover. */
 const SWIPE_SHARE = 0.85;
-/**
- * NAV-PTR-1 (Ross 10-25): a press on a step arrow (32 px wide, 4 px in from the scene's sides, at mid-height) is the
- * arrow's and never drags the scene, so a swipe starts at least this far (CSS px) in from the frame's sides.
- */
-const CLEAR_OF_STEPS_PX = 48;
 /** A cut-out is drawn when hiding its art changes at least this share of its box on screen (e2e/screens/case-images). */
 const MIN_DRAWN_SHARE = 0.05;
 /** A control is drawn when this share of its pixels is off its background (e2e/screens/case-chrome). */
@@ -334,7 +329,7 @@ const settle = (page: Page) => page.evaluate(() => new Promise((r) => requestAni
 /** One finger across SWIPE_SHARE of the frame: from its right to its left walks right (dir 1), the other way left. */
 async function walk(page: Page, dir: 1 | -1): Promise<void> {
   const f = await frameBox(page);
-  const x = Math.min(f.x + f.width - CLEAR_OF_STEPS_PX, Math.max(f.x + CLEAR_OF_STEPS_PX, f.x + f.width * (0.5 + (dir * SWIPE_SHARE) / 2)));
+  const x = f.x + f.width * (0.5 + (dir * SWIPE_SHARE) / 2);
   await touchSwipe(page, x, f.y + f.height * 0.5, -dir * f.width * SWIPE_SHARE, 0, 10, 16);
   await settle(page);
 }

@@ -842,31 +842,47 @@ function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: bool
   );
 }
 
-/** NAV-PTR-1: a click this soon (ms) after an arrow stepped on its pointerup is that tap's own click: ignored. */
+/** NAV-PTR-1: a click this soon (ms) after an arrow stepped on its pointerup, or let a drag go to the scene, is that press's own click: ignored. */
 const STEP_CLICK_MS = 600;
+
+/** Where a press of the scene begins (client px), and its pointer. */
+type PressStart = { pointerId: number; clientX: number; clientY: number };
+
+const inBox = (el: Element, at: { clientX: number; clientY: number }): boolean => {
+  const r = el.getBoundingClientRect();
+  return at.clientX >= r.left && at.clientX <= r.right && at.clientY >= r.top && at.clientY <= r.bottom;
+};
 
 /**
  * NAV-PTR-1 (Ross 10-25, "arrow movements weren't working"): an arrow (‹ › ˄ ˅) steps on the pointerup of a primary
  * press that began on it, the pointer still inside its box and the arrow enabled: a thumb that travels a few px still
  * steps, where Chrome makes no click past its tap slop. The click that tap then makes is ignored; any other click (the
- * keyboard's, a script's) steps.
+ * keyboard's, a script's) steps. A press that leaves the arrow as a drag (out of its box, SWIPE_START_PX or more from
+ * where it began) is the scene's from there (`onDrag`, from where it began): a walk started at the edge walks.
  */
-function StepButton({ cls, label, disabled, onStep, children }: { cls?: string; label: string; disabled: boolean; onStep: () => void; children: ComponentChildren }) {
-  const pressed = useRef<number | null>(null);
-  const steppedAt = useRef(-Infinity);
+function StepButton({ cls, label, disabled, onStep, onDrag, children }: { cls?: string; label: string; disabled: boolean; onStep: () => void; onDrag: (start: PressStart) => void; children: ComponentChildren }) {
+  const pressed = useRef<PressStart | null>(null);
+  const quietUntil = useRef(0);
+  const onPointerMove = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+    const p = pressed.current;
+    if (p === null || p.pointerId !== e.pointerId) return;
+    if (Math.max(Math.abs(e.clientX - p.clientX), Math.abs(e.clientY - p.clientY)) < SWIPE_START_PX || inBox(e.currentTarget, e)) return;
+    pressed.current = null;
+    quietUntil.current = Date.now() + STEP_CLICK_MS;
+    // the scene takes the press before this move reaches it (bubbling on to the scene's host)
+    onDrag(p);
+  };
   const onPointerUp = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
-    const own = pressed.current === e.pointerId;
+    const own = pressed.current?.pointerId === e.pointerId;
     pressed.current = null;
     const b = e.currentTarget;
-    if (!own || b.disabled) return;
-    const r = b.getBoundingClientRect();
-    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
-    steppedAt.current = Date.now();
+    if (!own || b.disabled || !inBox(b, e)) return;
+    quietUntil.current = Date.now() + STEP_CLICK_MS;
     onStep();
   };
   const onClick = () => {
-    if (Date.now() - steppedAt.current < STEP_CLICK_MS) {
-      steppedAt.current = -Infinity;
+    if (Date.now() < quietUntil.current) {
+      quietUntil.current = 0;
       return;
     }
     onStep();
@@ -878,8 +894,9 @@ function StepButton({ cls, label, disabled, onStep, children }: { cls?: string; 
       aria-label={label}
       disabled={disabled}
       onPointerDown={(e) => {
-        pressed.current = e.button === 0 ? e.pointerId : null;
+        pressed.current = e.button === 0 ? { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY } : null;
       }}
+      onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={() => {
         pressed.current = null;
@@ -1277,6 +1294,10 @@ export function CabinetScene({
   const onPointerDown = useCallback((e: PointerEvent) => {
     // MISFIT-CHIP-1: the chip and its list are the scene's controls, not its picture: a touch on them is no gesture of the scene's
     if (onSceneUi(e.target)) return;
+    startPress(e);
+  }, []);
+  // a finger down on the scene; or, NAV-PTR-1, one that began on an arrow and left it as a drag, from where it began
+  const startPress = (e: PressStart) => {
     // a new touch cuts a settling zoom short
     settled();
     if (pinching.current) {
@@ -1303,7 +1324,7 @@ export function CabinetScene({
     press.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null, zoom: isZoomed(zoom.current) ? zoom.current : null, pinched: false };
     // a touch swipe makes no click: whatever it left to swallow ends with the next press
     swallowClick.current = false;
-  }, []);
+  };
   const onPointerMove = useCallback((e: PointerEvent) => {
     if (!fingers.current.has(e.pointerId)) return;
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1658,6 +1679,7 @@ export function CabinetScene({
           label="Previous cabinet"
           disabled={reach !== null ? !reach.prev : focusIdx <= 0}
           onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+          onDrag={startPress}
         >
           ‹
         </StepButton>
@@ -1666,15 +1688,16 @@ export function CabinetScene({
           label="Next cabinet"
           disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
           onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+          onDrag={startPress}
         >
           ›
         </StepButton>
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
-            <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))}>
+            <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))} onDrag={startPress}>
               ˄
             </StepButton>
-            <StepButton label="Shelf below" disabled={shelfIdx >= shelfCount - 1} onStep={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))}>
+            <StepButton label="Shelf below" disabled={shelfIdx >= shelfCount - 1} onStep={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))} onDrag={startPress}>
               ˅
             </StepButton>
           </div>

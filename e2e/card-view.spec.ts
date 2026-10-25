@@ -52,6 +52,22 @@ async function openFigure(page: Page, layout: 'case' | 'rows') {
 
 const box = async (l: Locator) => (await l.boundingBox())!;
 
+/**
+ * How tall a target a control is: from 30 px above its middle to 30 px below, the px a tap there lands on it (its hit area
+ * included), brought to the middle of the screen first (the tiles' pane runs on under the pull-up tabs).
+ */
+async function targetHeight(control: Locator): Promise<number> {
+  return control.evaluate((el) => {
+    el.scrollIntoView({ block: 'center' });
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const mid = r.top + r.height / 2;
+    let hit = 0;
+    for (let dy = -30; dy <= 30; dy++) if (el.contains(document.elementFromPoint(x, mid + dy))) hit++;
+    return hit;
+  });
+}
+
 for (const layout of ['case', 'rows'] as const) {
   test(`the viewer (cover panel), opened from the ${layout === 'case' ? 'case' : 'tiles'}: its X closes it, and its picture zooms by a visible control: ${COVER.name}`, async ({ page }) => {
     await openCollection(page, COVER, layout);
@@ -209,8 +225,7 @@ test(`Go to over the shelving (the viewer): it closes the card, and the case fra
   }
   const goTo = sheet.getByRole('button', { name: 'Go to' });
   await expect(goTo).toBeEnabled();
-  const box48 = await box(goTo);
-  expect(box48.height, 'a 48 px target').toBeGreaterThanOrEqual(48);
+  expect(await targetHeight(goTo), 'a 48 px target').toBeGreaterThanOrEqual(48);
   const id = (await goTo.getAttribute('data-figure-id'))!;
   await goTo.tap();
   await expect(page.locator('.pswp')).toHaveCount(0);
@@ -230,7 +245,7 @@ test(`Go to beside the shelving (the pane, opened from the tiles): the card stay
   await expect(pane).toBeVisible();
   const name = await pane.locator('.figure-viewer-sheet__name').innerText();
   const goTo = pane.getByRole('button', { name: 'Go to' });
-  expect((await box(goTo)).height).toBeGreaterThanOrEqual(48);
+  expect(await targetHeight(goTo), 'a 48 px target').toBeGreaterThanOrEqual(48);
   const id = (await goTo.getAttribute('data-figure-id'))!;
   await goTo.tap();
   const at = await expectFramed(page, id);

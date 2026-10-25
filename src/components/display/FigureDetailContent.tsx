@@ -104,35 +104,36 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen, goTo }
         {figure.collectionStatus && <StatusBadge status={figure.collectionStatus} size="sm" />}
         {quantity > 1 && <span class="figure-viewer-sheet__count">×{quantity}</span>}
         {local !== undefined && <SyncBadge sync={local.sync} asOf={local.asOf} id={`viewer-sync-${figure._id}`} />}
+        {/* the card's actions, on the badges' line where they fit and on their own below where not, together either way: the
+            summary stays short enough to peek on the sideways cover (CARD-VIEW-1) */}
+        {(goTo !== undefined || openCopies !== null) && (
+          <div class="figure-viewer-sheet__actions">
+            {goTo !== undefined && (
+              <button
+                type="button"
+                class="figure-viewer-sheet__goto"
+                data-figure-id={figure._id}
+                disabled={goTo.blocked !== null}
+                aria-describedby={goTo.blocked === null ? undefined : `goto-why-${figure._id}`}
+                onClick={goTo.go}
+              >
+                <GoToIcon />
+                Go to
+              </button>
+            )}
+            {openCopies !== null && (
+              <button type="button" class="figure-viewer-sheet__open" onClick={openCopies}>
+                Copies and actions
+              </button>
+            )}
+            {goTo !== undefined && goTo.blocked !== null && (
+              <span id={`goto-why-${figure._id}`} class="figure-viewer-sheet__goto-why">
+                {goTo.blocked}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-
-      {(goTo !== undefined || openCopies !== null) && (
-        <div class="figure-viewer-sheet__actions">
-          {goTo !== undefined && (
-            <button
-              type="button"
-              class="figure-viewer-sheet__goto"
-              data-figure-id={figure._id}
-              disabled={goTo.blocked !== null}
-              aria-describedby={goTo.blocked === null ? undefined : `goto-why-${figure._id}`}
-              onClick={goTo.go}
-            >
-              <GoToIcon />
-              Go to
-            </button>
-          )}
-          {openCopies !== null && (
-            <button type="button" class="figure-viewer-sheet__open" onClick={openCopies}>
-              Copies and actions
-            </button>
-          )}
-          {goTo !== undefined && goTo.blocked !== null && (
-            <span id={`goto-why-${figure._id}`} class="figure-viewer-sheet__goto-why">
-              {goTo.blocked}
-            </span>
-          )}
-        </div>
-      )}
       </div>
 
       {fields.length > 0 && (
@@ -153,26 +154,36 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen, goTo }
           color: var(--brand-400);
         }
 
-        /* the card's actions, one row: Go to (CARD-VIEW-1, a thumb's height) and the way to its copies */
+        /* the card's actions, one row: Go to (CARD-VIEW-1) and the way to its copies */
         .figure-viewer-sheet__actions {
           display: flex;
           flex-wrap: wrap;
           align-items: center;
           gap: var(--space-2);
-          margin-top: var(--space-2);
         }
 
+        /* drawn as tall as Copies and actions; its target is a thumb's 48 px (6 px more above and below, where only text is) */
         .figure-viewer-sheet__goto {
+          position: relative;
           display: inline-flex;
           align-items: center;
           gap: 6px;
-          min-height: 48px;
+          min-height: 36px;
           padding: 0 var(--space-3);
           border-radius: var(--radius-full);
           background: var(--surface-tertiary);
           color: var(--brand-400);
           font-size: var(--font-sm);
           font-weight: var(--font-weight-semibold);
+        }
+
+        .figure-viewer-sheet__goto::after {
+          content: '';
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: -6px;
+          bottom: -6px;
         }
 
         .figure-viewer-sheet__goto:disabled {

@@ -135,7 +135,11 @@ describe('FigureDetailContent on a local figure (WK-15)', () => {
       const row = button.closest('.figure-viewer-sheet__actions')!;
       expect(within(row as HTMLElement).getByRole('button', { name: 'Copies and actions' })).toBeInTheDocument();
       const css = Array.from(document.querySelectorAll('style')).map((st) => st.textContent ?? '').join('\n');
-      expect(css).toMatch(/\.figure-viewer-sheet__goto\s*\{[^}]*min-height:\s*48px/);
+      // a 48 px target: drawn 36 px tall (as Copies and actions), its hit area 6 px more above and below
+      expect(css).toMatch(/\.figure-viewer-sheet__goto\s*\{[^}]*min-height:\s*36px/);
+      expect(css).toMatch(/\.figure-viewer-sheet__goto::after\s*\{[^}]*top:\s*-6px;[^}]*bottom:\s*-6px/);
+      // on the badges' line, beside Copies and actions
+      expect(row.closest('.figure-viewer-sheet__badges')).not.toBeNull();
       await user.click(button);
       expect(go).toHaveBeenCalledTimes(1);
     });

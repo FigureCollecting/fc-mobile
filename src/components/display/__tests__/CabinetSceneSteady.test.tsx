@@ -168,6 +168,28 @@ describe('CabinetScene, steadyLayout: after the first layout the wall holds', ()
   });
 });
 
+// LAYOUT-FINAL: the scene says when the wall it holds is the one it settles on, so an e2e walk can start on that wall
+describe('CabinetScene, steadyLayout: data-layout-final', () => {
+  it('reads 0 while the wall is laid out from what has arrived so far, and 1 once the tidy-up has laid it out by everything', () => {
+    const { container, rerender } = render(<CabinetScene {...props({ imageFor: listFor(new Set()), imagesComplete: false })} />);
+    expect(host(container).dataset.layoutFinal).toBe('0');
+    wait(REVEAL_MAX_MS);
+    expect(host(container).dataset.laidOut).toBe('1');
+    expect(host(container).dataset.layoutFinal).toBe('0');
+    for (const f of FIGURES) measured.margins.set(maskOf(f), NARROW);
+    const imageFor = listFor(new Set(FIGURES.map((f) => f._id)));
+    rerender(<CabinetScene {...props({ imageFor, imagesComplete: false })} />);
+    expect(host(container).dataset.layoutFinal).toBe('0');
+    rerender(<CabinetScene {...props({ imageFor, imagesComplete: true })} />);
+    expect(host(container).dataset.layoutFinal).toBe('1');
+  });
+
+  it('reads 1 from the start when steadyLayout is off: the wall is always laid out by what it has', () => {
+    const { container } = render(<CabinetScene {...props({ imageFor: listFor(new Set()), imagesComplete: false, steadyLayout: undefined })} />);
+    expect(host(container).dataset.layoutFinal).toBe('1');
+  });
+});
+
 describe('CabinetScene, steadyLayout: cards (a figure is as tall as its card says)', () => {
   const withCard = (f: Figure, heightMm: number, hasCard: boolean) => ({ ...f, dimensions: { heightMm }, local: { hasCard } }) as unknown as Figure;
   const uncarded = FIGURES.map((f) => withCard(f, 200, false));

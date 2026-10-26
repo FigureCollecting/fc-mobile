@@ -14,20 +14,20 @@ const SCREENS = [
     decorator: 'collection',
   },
   {
-    title: 'Price Intelligence',
+    title: 'Search and Scan',
     description:
-      'Monitor prices across 14+ sites worldwide. Get alerts when prices drop on your wishlist.',
-    decorator: 'prices',
+      'Search your collection and the catalog by name, maker, character, series or JAN, or look up a figure by its barcode.',
+    decorator: 'search',
   },
   {
-    title: 'Sync with MFC',
+    title: 'Import from MFC',
     description:
-      'Import your MyFigureCollection data instantly. Keep everything in sync automatically.',
+      'Choose the CSV you export from MyFigureCollection and see what was added, moved or left unchanged.',
     decorator: 'sync',
   },
   {
     title: 'Get Started',
-    description: 'Create your free account or sign in to get started.',
+    description: 'Create an account or sign in to get started.',
     decorator: 'start',
   },
 ] as const;
@@ -174,15 +174,11 @@ function DecorativeElement({ type }: { type: string }) {
           </div>
         </div>
       );
-    case 'prices':
+    case 'search':
       return (
-        <div class="decor-prices">
-          <div class="decor-prices__bar decor-prices__bar--1" />
-          <div class="decor-prices__bar decor-prices__bar--2" />
-          <div class="decor-prices__bar decor-prices__bar--3" />
-          <div class="decor-prices__bar decor-prices__bar--4" />
-          <div class="decor-prices__bar decor-prices__bar--5" />
-          <div class="decor-prices__line" />
+        <div class="decor-search">
+          <div class="decor-search__lens" />
+          <div class="decor-search__handle" />
         </div>
       );
     case 'sync':
@@ -391,65 +387,41 @@ const styles = `
     50% { opacity: 1; transform: scale(1.04); }
   }
 
-  /* ── Decorative: Price Chart ── */
+  /* ── Decorative: Search Lens ── */
 
-  .decor-prices {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    height: 140px;
+  .decor-search {
     position: relative;
-    padding-bottom: 2px;
+    width: 140px;
+    height: 140px;
+    animation: decor-search-sweep 3s ease-in-out infinite;
   }
 
-  .decor-prices__bar {
-    width: 24px;
-    border-radius: 4px 4px 0 0;
-    animation: decor-grow 2s ease-in-out infinite;
-  }
-
-  .decor-prices__bar--1 {
-    height: 50%;
-    background: var(--surface-tertiary);
-    animation-delay: 0s;
-  }
-
-  .decor-prices__bar--2 {
-    height: 70%;
-    background: var(--surface-tertiary);
-    animation-delay: 0.1s;
-  }
-
-  .decor-prices__bar--3 {
-    height: 40%;
-    background: var(--brand-500);
-    animation-delay: 0.2s;
-  }
-
-  .decor-prices__bar--4 {
-    height: 85%;
-    background: var(--accent-success);
-    animation-delay: 0.3s;
-  }
-
-  .decor-prices__bar--5 {
-    height: 60%;
-    background: var(--surface-tertiary);
-    animation-delay: 0.4s;
-  }
-
-  .decor-prices__line {
+  .decor-search__lens {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: var(--border-subtle);
+    top: 8px;
+    left: 8px;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 8px solid var(--brand-500);
+    background: linear-gradient(135deg, var(--surface-tertiary), transparent);
   }
 
-  @keyframes decor-grow {
-    0%, 100% { transform: scaleY(1); }
-    50% { transform: scaleY(1.1); }
+  .decor-search__handle {
+    position: absolute;
+    top: 92px;
+    left: 82px;
+    width: 52px;
+    height: 12px;
+    border-radius: 6px;
+    background: var(--brand-400);
+    transform: rotate(45deg);
+    transform-origin: left center;
+  }
+
+  @keyframes decor-search-sweep {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(6px, 4px); }
   }
 
   /* ── Decorative: Sync Rings ── */

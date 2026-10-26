@@ -17,6 +17,7 @@ vi.mock('../../sync/browser', async () => {
 });
 
 import { Onboarding } from '../Onboarding';
+import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 import { App } from '../../app';
 import { renderWithProviders } from '../../test/testUtils';
 
@@ -86,5 +87,39 @@ describe('Onboarding page', () => {
       expect(localStorage.getItem('onboarding_complete')).toBe('1');
       view.unmount();
     }
+  });
+
+  describe('claims', () => {
+    // With VITE_ENABLE_LEGACY_SCREENS unset, these features are off or redirect to the collection
+    // (src/config/features.ts), so no slide may promise them. "export from MFC" is fine: that is MFC's export.
+    const GATED = /price|alert|notif|push|export (your|to|as)|calendar|analytics|DNA|watchlist|automatic|\bfree\b|worldwide|\d+\+ sites/i;
+
+    async function slideTexts() {
+      const user = userEvent.setup();
+      renderWithProviders(<Onboarding onComplete={() => {}} />, { initialPath: '/' });
+      const texts: string[] = [];
+      const dots = screen.getAllByRole('tab');
+      for (const dot of dots) {
+        await user.click(dot);
+        await waitFor(() => expect(dot).toHaveAttribute('aria-selected', 'true'));
+        texts.push(screen.getAllByRole('heading', { level: 1 }).map((h) => `${h.textContent} ${h.nextElementSibling?.textContent ?? ''}`).join(' '));
+      }
+      return texts;
+    }
+
+    it('promises no feature that is off with the legacy screens flag unset', async () => {
+      expect(LEGACY_SCREENS_ENABLED).toBe(false);
+      const texts = await slideTexts();
+      expect(texts).toHaveLength(4);
+      for (const text of texts) expect(text).not.toMatch(GATED);
+    });
+
+    it('describes what the live app does: search and barcode lookup, and importing an MFC export', async () => {
+      const [, search, mfc] = await slideTexts();
+      expect(search).toMatch(/search/i);
+      expect(search).toMatch(/barcode/i);
+      expect(mfc).toMatch(/import/i);
+      expect(mfc).toMatch(/export/i);
+    });
   });
 });

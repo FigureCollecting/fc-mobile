@@ -42,6 +42,33 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     expect(container.querySelector('.detail-pane__image')).toBeNull();
   });
 
+  // CARD-VIEW-1 (Ross 10-25: "not every card view had zoom available"): the pane's picture zooms as the viewer's does
+  it('its picture zooms: a visible zoom control, and its X stays at the top-right', async () => {
+    const user = userEvent.setup();
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const { container } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={() => {}} />);
+    const frame = container.querySelector('.detail-pane .zoomable') as HTMLElement;
+    expect(frame).not.toBeNull();
+    expect(frame.querySelector('img.detail-pane__image')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(JSON.parse(frame.dataset.zoom!).k).toBe(2);
+    expect(screen.getByRole('button', { name: 'Close detail' })).toBeVisible();
+  });
+
+  // CARD-VIEW-1 part 3: the pane's card carries Go to; going leaves the pane open (its host decides: Collection)
+  it('carries Go to for the figure it shows, and its reason when it has nowhere to go', async () => {
+    const user = userEvent.setup();
+    const goTo = vi.fn();
+    const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+    const onClose = vi.fn();
+    const { rerender } = renderWithProviders(<DetailPane figure={rem} index={0} total={7} onClose={onClose} goTo={goTo} goToBlocked={() => null} />);
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    expect(goTo).toHaveBeenCalledWith(rem);
+    expect(onClose).not.toHaveBeenCalled();
+    rerender(<DetailPane figure={rem} index={0} total={7} onClose={onClose} goTo={goTo} goToBlocked={() => 'Not on a shelf'} />);
+    expect(screen.getByRole('button', { name: 'Go to' })).toBeDisabled();
+  });
+
   it('calls onClose when the close button is tapped', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

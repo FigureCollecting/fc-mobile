@@ -502,6 +502,81 @@ describe('FigureViewer (Display D)', () => {
     expect(visited).toEqual(['/figure/h1']);
   });
 
+  // CARD-VIEW-1 part 2 (Ross 10-25: "more often than not, you want to start zoomed in around the face/upper"): PhotoSwipe's zoom
+  // control and its z key both call pswp.toggleZoom() with no point; a double-tap or a click calls the slide's with its point
+  describe('the zoom control and the z key start at the face', () => {
+    /** A slide laid out whole (fit 0.5) in a 400 x 600 pan area offset (0, 10) in the viewport: a 600 x 1000 picture, 300 x 500 at 1x. */
+    function slide(currZoomLevel = 0.5) {
+      return {
+        currZoomLevel,
+        zoomLevels: { initial: 0.5, secondary: 2, min: 0.5, max: 4 },
+        width: 600,
+        height: 1000,
+        pan: { x: 50, y: 60 },
+        panAreaSize: { x: 400, y: 600 },
+        bounds: { center: { x: 50, y: 60 } },
+        zoomTo: vi.fn(),
+        toggleZoom: vi.fn(),
+      };
+    }
+
+    it('the gallery\'s toggleZoom (its control, its z key) zooms the current slide in centred half across and a third down the picture', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances).toHaveLength(1));
+      const pswp = instances[0] as FakePswp & { currSlide?: ReturnType<typeof slide>; toggleZoom: () => void };
+      const s = slide();
+      pswp.currSlide = s;
+      pswp.toggleZoom();
+      expect(s.toggleZoom).not.toHaveBeenCalled();
+      expect(s.zoomTo).toHaveBeenCalledTimes(1);
+      const [level, point] = s.zoomTo.mock.calls[0] as [number, { x: number; y: number }];
+      expect(level).toBe(2);
+      // PhotoSwipe keeps `point` still: the pan it lands at is (pan - point) * 2 / 0.5 + point
+      const landed = { x: (s.pan.x - point.x) * 4 + point.x, y: (s.pan.y - point.y) * 4 + point.y };
+      // 1200 x 2000 at 2x in the 400 x 600 area at (0, 10): the face (600, 666.7) in the area's middle (200, 310)
+      expect(landed.x + 1200 / 2).toBeCloseTo(200);
+      expect(landed.y + 2000 / 3).toBeCloseTo(310);
+    });
+
+    it('zoomed in, the control zooms back out as before; a gallery with no slide does nothing', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances).toHaveLength(1));
+      const pswp = instances[0] as FakePswp & { currSlide?: ReturnType<typeof slide>; toggleZoom: () => void };
+      pswp.toggleZoom();
+      const s = slide(2);
+      pswp.currSlide = s;
+      pswp.toggleZoom();
+      expect(s.toggleZoom).toHaveBeenCalledTimes(1);
+      expect(s.zoomTo).not.toHaveBeenCalled();
+    });
+
+    it('a slide that cannot zoom further (secondary = initial) toggles as PhotoSwipe does', async () => {
+      renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+      await waitFor(() => expect(instances).toHaveLength(1));
+      const pswp = instances[0] as FakePswp & { currSlide?: ReturnType<typeof slide>; toggleZoom: () => void };
+      const s = { ...slide(), zoomLevels: { initial: 0.5, secondary: 0.5, min: 0.5, max: 4 } };
+      pswp.currSlide = s;
+      pswp.toggleZoom();
+      expect(s.toggleZoom).toHaveBeenCalledTimes(1);
+      expect(s.zoomTo).not.toHaveBeenCalled();
+    });
+  });
+
+  // CARD-VIEW-1 part 3: Go to goes to the figure the viewer shows now, after any flip through the result set
+  it('Go to goes to the figure shown now: the tapped one, or the one a swipe brought', async () => {
+    const user = userEvent.setup();
+    const goTo = vi.fn();
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={1} onClose={() => {}} goTo={goTo} goToBlocked={(f) => (f._id === FIXTURE_FIGURES[3]!._id ? 'Not on a shelf' : null)} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    expect(goTo).toHaveBeenLastCalledWith(FIXTURE_FIGURES[1]);
+    act(() => instances[0]!.swipeTo(2));
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    expect(goTo).toHaveBeenLastCalledWith(FIXTURE_FIGURES[2]);
+    act(() => instances[0]!.swipeTo(3));
+    expect(screen.getByRole('button', { name: 'Go to' })).toBeDisabled();
+  });
+
   it('reports close when photoswipe is dismissed', async () => {
     const onClose = vi.fn();
     renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={onClose} />);

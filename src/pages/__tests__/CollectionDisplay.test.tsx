@@ -31,7 +31,9 @@ import { localRig } from '../../local/__tests__/localHarness';
 import { seedFigures, type SeedFigure } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { create } from '@bufbuild/protobuf';
-import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
+import { GetProductImagesResponseSchema, ProductKind } from '@figurecollecting/fc-api-contract';
+import { requestGoTo, takeGoToRequest } from '../../components/display/goToRequest';
+import { toasts } from '../../stores/toast';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches } from '../../test/fakeCaches';
 
@@ -500,6 +502,125 @@ describe('Collection page (rebuilt display layer)', () => {
       expect(container.querySelector('.detail-pane')).toBeNull();
       expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
     });
+  });
+});
+
+// CARD-VIEW-1 part 3 (Ross 10-25): "If shelving isn't visible behind (like cover screen), that go to tap should close that view,
+// too. Otherwise, if on tablet/pc/fold where card is alongside, just takes you to it but doesn't close that view by default."
+describe('Go to on a figure card (CARD-VIEW-1)', () => {
+  const caseScene = (container: HTMLElement) => container.querySelector('.cabinet-scene') as HTMLElement | null;
+
+  it('over the shelving (the full-screen viewer, below 640 px): Go to closes the card and frames the figure\'s shelf in the one-shelf view', async () => {
+    mockPageWidth(400);
+    await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 2' });
+    expect(caseScene(container)!.dataset.view).toBe('wall');
+    await user.click(drawnPart('Figure 2'));
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    // the card is gone, the case stands in the one-shelf view, on the figure's shelf
+    await waitFor(() => expect(document.querySelector('.figure-viewer-sheet')).toBeNull());
+    expect(caseScene(container)!.dataset.view).toBe('shelf');
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!).view).toBe('shelf');
+    expect(screen.getByRole('button', { name: 'Figure 2' })).toBeInTheDocument();
+  });
+
+  it('beside the shelving (the pane, at 640 px and over): Go to frames the figure and leaves the card open', async () => {
+    mockPageWidth(700);
+    await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 2' });
+    await user.click(drawnPart('Figure 2'));
+    await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    await waitFor(() => expect(caseScene(container)!.dataset.view).toBe('shelf'));
+    expect(container.querySelector('.detail-pane')).not.toBeNull();
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+  });
+
+  it('from the tiles: Go to switches to the case first', async () => {
+    mockPageWidth(700);
+    await respondWith([makeFigure('1'), makeFigure('2')]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(caseScene(container)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Figure 1' }));
+    await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Go to' }));
+    await waitFor(() => expect(caseScene(container)).not.toBeNull());
+    expect(caseScene(container)!.dataset.view).toBe('shelf');
+    expect(container.querySelector('.jrows')).toBeNull();
+    expect(container.querySelector('.detail-pane')).not.toBeNull();
+  });
+
+  it('a figure the case cannot stand (too tall for any shelf): Go to is disabled and says why, from the tiles too', async () => {
+    mockPageWidth(700);
+    await respondWith([makeFigure('1'), makeFigure('2', { size: { heightMm: 4000 } })]);
+    const user = userEvent.setup();
+    const { container, navigate } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    // the case does not draw it; the tiles do, and what the case found is kept
+    navigate('/?layout=rows');
+    await waitFor(() => expect(container.querySelector('.jrows')).not.toBeNull());
+    await user.click(await screen.findByRole('button', { name: 'Figure 2' }));
+    await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
+    const goTo = screen.getByRole('button', { name: 'Go to' });
+    expect(goTo).toBeDisabled();
+    expect(goTo).toHaveAccessibleDescription("Doesn't fit the case");
+    // one that fits goes
+    await user.click(screen.getByRole('button', { name: 'Figure 1' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Go to' })).toBeEnabled());
+  });
+});
+
+describe('Go to from the figure page (search, Copies and actions): the collection takes it up', () => {
+  afterEach(() => {
+    takeGoToRequest();
+  });
+
+  it('a goods item the case never shelves: Go to is disabled and says why', async () => {
+    mockPageWidth(700);
+    await respondWith([makeFigure('1'), makeFigure('2', { category: 'Prepainted', kind: ProductKind.GOODS })]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await user.click(await screen.findByRole('button', { name: 'Figure 2' }));
+    await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'Go to' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Go to' })).toHaveAccessibleDescription('Goods and media are not shelved');
+  });
+
+  it('a request made on the figure page: the case opens in the one-shelf view on that figure', async () => {
+    mockPageWidth(400);
+    await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
+    requestGoTo(headOf(2));
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await waitFor(() => expect(container.querySelector('.cabinet-scene')?.getAttribute('data-view')).toBe('shelf'));
+    expect(await screen.findByRole('button', { name: 'Figure 3' })).toBeInTheDocument();
+    expect(takeGoToRequest()).toBeNull();
+  });
+
+  it('a request for a wished figure the holdings hide: they widen to show it, then the case goes to it', async () => {
+    mockPageWidth(400);
+    await respondWith([makeFigure('1'), makeFigure('2', { status: 'wished' })]);
+    requestGoTo(headOf(1));
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await waitFor(() => expect(container.querySelector('.cabinet-scene')?.getAttribute('data-view')).toBe('shelf'));
+    expect(await screen.findByRole('button', { name: 'Figure 2' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
+  });
+
+  it('a request for a figure Refine hides past its holdings, or one not in the collection: it says so and stays put', async () => {
+    mockPageWidth(400);
+    await respondWith([makeFigure('1', { manufacturer: 'Alter' }), makeFigure('2', { manufacturer: 'Kotobukiya' })]);
+    requestGoTo(headOf(1));
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/?mfr=Alter' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    await waitFor(() => expect(toasts.value.map((t) => t.message)).toContain('Refine hides that figure: clear its filters to go to it'));
+    expect(container.querySelector('.cabinet-scene')!.getAttribute('data-view')).toBe('wall');
   });
 });
 

@@ -6,7 +6,7 @@ import { act, fireEvent, renderHook, screen, waitFor, within } from '@testing-li
 import { Code, ConnectError } from '@connectrpc/connect';
 import userEvent from '@testing-library/user-event';
 import { create } from '@bufbuild/protobuf';
-import { GetProductImagesResponseSchema, ProductCardSchema, SyncOp, occFacetKey, ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { GetProductImagesResponseSchema, ProductCardSchema, ProductKind, SyncOp, occFacetKey, ufFacetKey } from '@figurecollecting/fc-api-contract';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 
@@ -21,6 +21,7 @@ import { shownCopies } from '../../sync/occurrences';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { fakeCaches } from '../../test/fakeCaches';
 import { OWNED_MEDIA_CACHE, rememberImages } from '../../media/keptImages';
+import { takeGoToRequest } from '../../components/display/goToRequest';
 
 afterEach(() => {
   localSession.value = undefined;
@@ -101,6 +102,60 @@ describe('FigureDetail page', () => {
     expect(img).toHaveAttribute('src', `https://images.figurecollecting.com/d/${'a'.repeat(64)}`);
     // A CORS request, so the service worker can keep it and the case view can read its pixels.
     expect(img).toHaveAttribute('crossorigin', 'anonymous');
+  });
+
+  // CARD-VIEW-1 (Ross 10-25: "not every card view had zoom available nor an x to close card view")
+  it('its picture zooms, and an X at the picture\'s top-right closes the page as Back does', async () => {
+    const user = userEvent.setup();
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, {
+        products: [{ headId: headOf(0), images: [{ derivativeId: 'a'.repeat(64), primary: true, url: `https://images.figurecollecting.com/d/${'a'.repeat(64)}` }] }],
+      }),
+    );
+    await seedFigures(r, [MIKU]);
+    // a page it came from, so Back has somewhere to go
+    window.history.pushState(null, '', window.location.href);
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    const img = await screen.findByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
+    const frame = img.closest('.zoomable') as HTMLElement;
+    expect(frame.closest('.figure-detail__hero')).not.toBeNull();
+    await user.click(within(frame).getByRole('button', { name: 'Zoom in' }));
+    expect(JSON.parse(frame.dataset.zoom!).k).toBe(2);
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {});
+    const x = within(document.querySelector('.figure-detail__hero') as HTMLElement).getByRole('button', { name: 'Close' });
+    await user.click(x);
+    expect(back).toHaveBeenCalledTimes(1);
+    back.mockRestore();
+  });
+
+  it('the plate has no zoom (no picture), and the X is there all the same', async () => {
+    await open([MIKU]);
+    expect(screen.queryByRole('button', { name: 'Zoom in' })).toBeNull();
+    expect(within(document.querySelector('.figure-detail__hero') as HTMLElement).getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
+  // CARD-VIEW-1 part 3: the figure page has no shelving behind it: Go to leaves it for the case, which goes to the figure
+  it('Go to, in the action bar with Edit and Delete, asks the case to go to the figure and leaves for it', async () => {
+    const user = userEvent.setup();
+    await localRig().then(async (r) => seedFigures(r, [MIKU]));
+    const { currentPath } = renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await screen.findByRole('heading', { level: 1 });
+    const bar = document.querySelector('.figure-detail__action-bar') as HTMLElement;
+    const goTo = within(bar).getByRole('button', { name: 'Go to' });
+    expect(goTo.querySelector('svg')).not.toBeNull();
+    expect(within(bar).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    await user.click(goTo);
+    expect(currentPath()).toBe('/');
+    expect(takeGoToRequest()).toBe(headOf(0));
+  });
+
+  it('a goods item, or one no longer owned, is on no shelf: Go to is disabled and says why', async () => {
+    await open([{ ...MIKU, kind: ProductKind.GOODS }]);
+    const goTo = screen.getByRole('button', { name: 'Go to' });
+    expect(goTo).toBeDisabled();
+    expect(goTo).toHaveAccessibleDescription('Goods and media are not shelved');
+    expect(takeGoToRequest()).toBeNull();
   });
 
   it('shows no image from anywhere but the public image address (ADDR-1)', async () => {

@@ -7,22 +7,28 @@ import type { LocalFigure } from '../../local/figures';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 import { useBackToClose } from '../../hooks/useBackToClose';
+import { ZoomableImage } from './ZoomableImage';
 
 interface DetailPaneProps {
   figure: Figure;
   index: number;
   total: number;
   onClose: () => void;
+  /** CARD-VIEW-1: Go to for its figure (beside the case: the pane stays open). */
+  goTo?: (figure: Figure) => void;
+  /** Why Go to has nowhere to go for a figure, or null. */
+  goToBlocked?: (figure: Figure) => string | null;
 }
 
 /**
  * Fold-open dual-pane detail (>= 640px container width): the SAME
  * FigureDetailContent used by the full-screen viewer's pull-up sheet,
  * hosted as a static right-hand pane instead of a PhotoSwipe takeover — no
- * pinch-zoom, no fullscreen overlay. The grid condenses left and stays
- * visible and interactive alongside it.
+ * fullscreen overlay. The grid condenses left and stays visible and
+ * interactive alongside it. Its picture zooms in place (CARD-VIEW-1,
+ * ZoomableImage), as the full-screen viewer's does.
  */
-export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
+export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }: DetailPaneProps) {
   // An image that fails to load is drawn as the placeholder (ADDR-1), never a blank box.
   const images = useBrokenImages();
   // Back and Esc close it too (SHEETS-FB1 6c), unless a card is open over it: they close the one on top
@@ -53,13 +59,13 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
       </div>
 
       {imageUrl ? (
-        <img class="detail-pane__image" src={imageUrl} alt={figure.name} crossOrigin="anonymous" onError={() => images.failed(imageUrl)} />
+        <ZoomableImage frameClass="detail-pane__frame" imgClass="detail-pane__image" src={imageUrl} alt={figure.name} onError={() => images.failed(imageUrl)} />
       ) : (
         <div class="detail-pane__placeholder" aria-hidden="true" />
       )}
 
       <div class="detail-pane__content">
-        <FigureDetailContent figure={figure} index={index} total={total} />
+        <FigureDetailContent figure={figure} index={index} total={total} goTo={goTo && { go: () => goTo(figure), blocked: goToBlocked?.(figure) ?? null }} />
       </div>
 
       <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
@@ -109,12 +115,18 @@ export function DetailPane({ figure, index, total, onClose }: DetailPaneProps) {
           color: var(--text-secondary);
         }
 
-        .detail-pane__image {
+        /* the picture's box: as wide as the pane, as tall as the picture at that width, at most 55 % of the pane (one
+           flex line, so the picture is stretched to the line the max-height clamps, and laid out whole in it) */
+        .detail-pane__frame {
           width: 100%;
           max-height: 55%;
-          object-fit: contain;
           background: var(--surface-tertiary);
           flex-shrink: 0;
+        }
+
+        .detail-pane__image {
+          width: 100%;
+          object-fit: contain;
         }
 
         .detail-pane__placeholder {

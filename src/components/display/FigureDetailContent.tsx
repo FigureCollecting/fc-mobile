@@ -7,12 +7,33 @@ import { Style } from '../../styles/Style';
 import { usePhotoFit, type PhotoFit } from './photoFit';
 import { describeSize } from './sizeBasis';
 
+/** CARD-VIEW-1 part 3: the card's Go to, as its host offers it. */
+export interface GoToAction {
+  /** Takes the case to the figure (Collection decides whether the card closes first). */
+  go: () => void;
+  /** Why it has nowhere to go (the figure is on no shelf), or null. */
+  blocked: string | null;
+}
+
 interface FigureDetailContentProps {
   figure: Figure;
   index: number;
   total: number;
   /** Runs before the full detail opens: a full-screen viewer closes itself first. */
   onBeforeOpen?: () => void;
+  /** Go to, beside Copies and actions; absent: none. */
+  goTo?: GoToAction;
+}
+
+/** Go to's icon: a target, the case's figure at its middle. */
+export function GoToIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="7" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    </svg>
+  );
 }
 
 type Shown = Figure & { local?: Pick<LocalMeta, 'headId' | 'kind' | 'sync' | 'asOf'> & Partial<Pick<LocalMeta, 'character'>> };
@@ -60,7 +81,7 @@ export function useCopiesAction(figure: Figure, onBeforeOpen?: () => void): (() 
  * viewer's pull-up sheet (Display D, < 640px), which peeks at the summary and pulls up to the rest, and the
  * Fold-open dual-pane (>= 640px, Display D'), which shows it all.
  */
-export function FigureDetailContent({ figure, index, total, onBeforeOpen }: FigureDetailContentProps) {
+export function FigureDetailContent({ figure, index, total, onBeforeOpen, goTo }: FigureDetailContentProps) {
   const openCopies = useCopiesAction(figure, onBeforeOpen);
   // The local store's state of the item; fixture figures have none.
   const local = (figure as Shown).local;
@@ -83,13 +104,36 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
         {figure.collectionStatus && <StatusBadge status={figure.collectionStatus} size="sm" />}
         {quantity > 1 && <span class="figure-viewer-sheet__count">×{quantity}</span>}
         {local !== undefined && <SyncBadge sync={local.sync} asOf={local.asOf} id={`viewer-sync-${figure._id}`} />}
+        {/* the card's actions, on the badges' line where they fit and on their own below where not, together either way: the
+            summary stays short enough to peek on the sideways cover (CARD-VIEW-1) */}
+        {(goTo !== undefined || openCopies !== null) && (
+          <div class="figure-viewer-sheet__actions">
+            {goTo !== undefined && (
+              <button
+                type="button"
+                class="figure-viewer-sheet__goto"
+                data-figure-id={figure._id}
+                disabled={goTo.blocked !== null}
+                aria-describedby={goTo.blocked === null ? undefined : `goto-why-${figure._id}`}
+                onClick={goTo.go}
+              >
+                <GoToIcon />
+                Go to
+              </button>
+            )}
+            {openCopies !== null && (
+              <button type="button" class="figure-viewer-sheet__open" onClick={openCopies}>
+                Copies and actions
+              </button>
+            )}
+            {goTo !== undefined && goTo.blocked !== null && (
+              <span id={`goto-why-${figure._id}`} class="figure-viewer-sheet__goto-why">
+                {goTo.blocked}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-
-      {openCopies !== null && (
-        <button type="button" class="figure-viewer-sheet__open" onClick={openCopies}>
-          Copies and actions
-        </button>
-      )}
       </div>
 
       {fields.length > 0 && (
@@ -110,8 +154,49 @@ export function FigureDetailContent({ figure, index, total, onBeforeOpen }: Figu
           color: var(--brand-400);
         }
 
+        /* the card's actions, one row: Go to (CARD-VIEW-1) and the way to its copies */
+        .figure-viewer-sheet__actions {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        /* drawn as tall as Copies and actions; its target is a thumb's 48 px (6 px more above and below, where only text is) */
+        .figure-viewer-sheet__goto {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-height: 36px;
+          padding: 0 var(--space-3);
+          border-radius: var(--radius-full);
+          background: var(--surface-tertiary);
+          color: var(--brand-400);
+          font-size: var(--font-sm);
+          font-weight: var(--font-weight-semibold);
+        }
+
+        .figure-viewer-sheet__goto::after {
+          content: '';
+          position: absolute;
+          left: 0;
+          right: 0;
+          top: -6px;
+          bottom: -6px;
+        }
+
+        .figure-viewer-sheet__goto:disabled {
+          color: var(--text-tertiary);
+          opacity: 0.7;
+        }
+
+        .figure-viewer-sheet__goto-why {
+          font-size: var(--font-xs);
+          color: var(--text-tertiary);
+        }
+
         .figure-viewer-sheet__open {
-          margin-top: var(--space-2);
           min-height: 36px;
           padding: 0 var(--space-3);
           border-radius: var(--radius-full);

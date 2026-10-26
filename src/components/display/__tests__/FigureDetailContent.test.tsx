@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { act, screen, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
@@ -120,6 +120,46 @@ describe('FigureDetailContent on a local figure (WK-15)', () => {
     expect(screen.getByText('Pending')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Copies and actions' }));
     expect(currentPath()).toBe('/figure/h1');
+  });
+
+  // CARD-VIEW-1 part 3 (Ross 10-25: "a go to button on card view"): in the card's action row, icon and text, a thumb's height
+  describe('Go to', () => {
+    it('stands in the row with the card\'s other actions, labelled "Go to" with its icon, and goes when tapped', async () => {
+      const user = userEvent.setup();
+      const go = vi.fn();
+      renderWithProviders(<FigureDetailContent figure={local} index={0} total={1} goTo={{ go, blocked: null }} />);
+      const button = screen.getByRole('button', { name: 'Go to' });
+      expect(button).toBeEnabled();
+      expect(button.querySelector('svg')).not.toBeNull();
+      expect(button.textContent).toBe('Go to');
+      const row = button.closest('.figure-viewer-sheet__actions')!;
+      expect(within(row as HTMLElement).getByRole('button', { name: 'Copies and actions' })).toBeInTheDocument();
+      const css = Array.from(document.querySelectorAll('style')).map((st) => st.textContent ?? '').join('\n');
+      // a 48 px target: drawn 36 px tall (as Copies and actions), its hit area 6 px more above and below
+      expect(css).toMatch(/\.figure-viewer-sheet__goto\s*\{[^}]*min-height:\s*36px/);
+      expect(css).toMatch(/\.figure-viewer-sheet__goto::after\s*\{[^}]*top:\s*-6px;[^}]*bottom:\s*-6px/);
+      // on the badges' line, beside Copies and actions
+      expect(row.closest('.figure-viewer-sheet__badges')).not.toBeNull();
+      await user.click(button);
+      expect(go).toHaveBeenCalledTimes(1);
+    });
+
+    it('a figure on no shelf: Go to is disabled and says why, in a few words', async () => {
+      const user = userEvent.setup();
+      const go = vi.fn();
+      renderWithProviders(<FigureDetailContent figure={FIXTURE_FIGURES[0]!} index={0} total={7} goTo={{ go, blocked: 'Doesn\'t fit the case' }} />);
+      const button = screen.getByRole('button', { name: 'Go to' });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleDescription('Doesn\'t fit the case');
+      expect(screen.getByText('Doesn\'t fit the case')).toBeVisible();
+      await user.click(button);
+      expect(go).not.toHaveBeenCalled();
+    });
+
+    it('no Go to where its host offers none', () => {
+      renderWithProviders(<FigureDetailContent figure={FIXTURE_FIGURES[0]!} index={0} total={7} />);
+      expect(screen.queryByRole('button', { name: 'Go to' })).toBeNull();
+    });
   });
 
   it('offers no detail link for a fixture figure', () => {

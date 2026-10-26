@@ -19,6 +19,10 @@ import { showToast } from '../stores/toast';
 import type { Disposal } from '../storage/userStore';
 import { Style } from '../styles/Style';
 import { useBrokenImages } from '../hooks/useBrokenImages';
+import { ZoomableImage } from '../components/display/ZoomableImage';
+import { GoToIcon } from '../components/display/FigureDetailContent';
+import { GO_TO_FORMER, GO_TO_NOT_SHELVED, requestGoTo } from '../components/display/goToRequest';
+import { splitForShelves } from '../components/display/shelved';
 
 function SkeletonDetail() {
   return (
@@ -121,6 +125,8 @@ export function FigureDetail() {
   }
 
   const local = figure.local;
+  // CARD-VIEW-1: a figure the case never shelves has nowhere to go
+  const goToBlocked = local.kind === 'former' ? GO_TO_FORMER : splitForShelves([figure]).shelved.length === 0 ? GO_TO_NOT_SHELVED : null;
   const movingKind = moving === null ? undefined : local.copies.find((c) => c.occ_id === moving[0])?.status;
   const moveTargets: MoveTarget[] = collections
     .filter((c) => c.kind !== 'former' && !(c.coll_id === 'default' && c.kind === movingKind))
@@ -146,8 +152,15 @@ export function FigureDetail() {
         <button class="figure-detail__back-btn figure-detail__back-btn--floating" onClick={handleBack} aria-label="Go back" type="button">
           <BackIcon />
         </button>
+        {/* CARD-VIEW-1: the X every figure card has, where the viewer's and the pane's stand; it closes the page as Back does */}
+        <button class="figure-detail__close" onClick={handleBack} aria-label="Close" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M18 6L6 18" />
+            <path d="M6 6l12 12" />
+          </svg>
+        </button>
         {image.data && !images.broken(image.data.url) ? (
-          <img class="figure-detail__image" src={image.data.url} alt={figure.name} crossOrigin="anonymous" onError={() => images.failed(image.data!.url)} />
+          <ZoomableImage frameClass="figure-detail__zoom" imgClass="figure-detail__image" src={image.data.url} alt={figure.name} onError={() => images.failed(image.data!.url)} />
         ) : (
           // The placeholder plate (MG-2): no derivative, so no image of any kind.
           <div class="figure-detail__plate" aria-hidden="true">
@@ -225,6 +238,27 @@ export function FigureDetail() {
       </div>
 
       <div class="figure-detail__action-bar">
+        {/* CARD-VIEW-1: no shelving behind this page: Go to leaves it for the case, which goes to the figure (Collection) */}
+        <div class="figure-detail__goto">
+          <button
+            class="figure-detail__action-btn figure-detail__action-btn--goto"
+            type="button"
+            disabled={goToBlocked !== null}
+            aria-describedby={goToBlocked === null ? undefined : 'figure-detail-goto-why'}
+            onClick={() => {
+              requestGoTo(figure._id);
+              setLocation('/', { replace: true });
+            }}
+          >
+            <GoToIcon />
+            <span>Go to</span>
+          </button>
+          {goToBlocked !== null && (
+            <span id="figure-detail-goto-why" class="figure-detail__goto-why">
+              {goToBlocked}
+            </span>
+          )}
+        </div>
         <button class="figure-detail__action-btn" type="button" onClick={() => setEditOpen(true)}>
           <span>Edit</span>
         </button>
@@ -314,10 +348,32 @@ const styles = `
     color: var(--text-tertiary);
   }
 
+  .figure-detail__zoom {
+    width: 100%;
+    height: 100%;
+  }
+
   .figure-detail__image {
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+
+  .figure-detail__close {
+    position: absolute;
+    top: var(--safe-area-top);
+    right: var(--space-2);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--touch-min);
+    height: var(--touch-min);
+    color: var(--text-primary);
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: var(--radius-full);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
   }
 
   .figure-detail__as-of {
@@ -553,5 +609,25 @@ const styles = `
 
   .figure-detail__action-btn--danger:active {
     color: var(--accent-danger);
+  }
+
+  .figure-detail__goto {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .figure-detail__action-btn--goto {
+    min-height: 48px;
+    color: var(--brand-400);
+  }
+
+  .figure-detail__action-btn--goto:disabled {
+    color: var(--text-tertiary);
+  }
+
+  .figure-detail__goto-why {
+    font-size: var(--font-2xs);
+    color: var(--text-tertiary);
   }
 `;

@@ -12,6 +12,7 @@ import { RAIL_INSET_PX, RAIL_WIDTH_PX, railHeightPx } from '../ui/SideRail';
 import { Style } from '../../styles/Style';
 import { useSheetDrag } from '../ui/useSheetDrag';
 import { useBackToClose } from '../../hooks/useBackToClose';
+import { anchorOffset, zoomToPoint } from './imageZoom';
 
 /** What a tap may land on and still be on the figure: its picture, or its placeholder plate's words. */
 const ON_THE_FIGURE = '.pswp__img, .figure-viewer__plate-name, .figure-viewer__plate-mfr';
@@ -81,6 +82,45 @@ export function fitSlideToPicture(content: PictureContent, slide: PictureSlide):
   slide.updateContentSize(true);
 }
 
+/** The parts of PhotoSwipe's slide the face zoom reads and drives. */
+export interface ZoomSlide {
+  currZoomLevel: number;
+  zoomLevels: { initial: number; secondary: number; min: number; max: number };
+  /** The picture's size at zoom level 1. */
+  width: number;
+  height: number;
+  /** Where its top-left stands in the viewport. */
+  pan: { x: number; y: number };
+  /** The room it is laid out in: the viewport less PhotoSwipe's padding. */
+  panAreaSize: { x: number; y: number };
+  bounds: { center: { x: number; y: number } };
+  zoomTo(destZoomLevel: number, centerPoint?: { x: number; y: number }, transitionDuration?: number | false): void;
+  toggleZoom(centerPoint?: { x: number; y: number }): void;
+}
+
+/**
+ * CARD-VIEW-1 part 2 (Ross 10-25: "more often than not, you want to start zoomed in around the face/upper"): PhotoSwipe's
+ * zoom control and its `z` key call toggleZoom with no point, which zoomed in at the middle of the screen. Whole, the slide
+ * zooms in to its secondary level centred on the face instead: half across and a third down the picture (FACE_ANCHOR), held
+ * so it still fills its room (anchorOffset; PhotoSwipe's own bounds hold it the same way). Zoomed, or with no step to take,
+ * it toggles as PhotoSwipe does. A double-tap or a click zooms at its own point (the slide's toggleZoom, never this).
+ */
+export function zoomToFace(slide: ZoomSlide, duration?: number | false): void {
+  const { currZoomLevel: from, zoomLevels } = slide;
+  const to = Math.min(zoomLevels.max, Math.max(zoomLevels.min, zoomLevels.secondary));
+  if (from !== zoomLevels.initial) return slide.toggleZoom();
+  // PhotoSwipe stands the whole picture at the middle of its room, rounded: the room's offset in the viewport (its padding)
+  const room = { width: slide.panAreaSize.x, height: slide.panAreaSize.y };
+  const pad = {
+    x: slide.bounds.center.x - Math.round((room.width - slide.width * from) / 2),
+    y: slide.bounds.center.y - Math.round((room.height - slide.height * from) / 2),
+  };
+  const at = anchorOffset(room, { width: slide.width * to, height: slide.height * to });
+  const point = zoomToPoint(slide.pan, { x: pad.x + at.x, y: pad.y + at.y }, from, to);
+  if (point === null) return slide.toggleZoom();
+  slide.zoomTo(to, point, duration);
+}
+
 /**
  * PhotoSwipe's destroy() only closes a gallery whose opening animation has finished; one still
  * opening keeps its element and listeners. Take them down here either way.
@@ -102,6 +142,10 @@ interface FigureViewerProps {
   /** Index of the tapped figure within the result set. */
   index: number;
   onClose: () => void;
+  /** CARD-VIEW-1: Go to for the figure shown now (Collection closes this viewer first: it covers the shelving). */
+  goTo?: (figure: Figure) => void;
+  /** Why Go to has nowhere to go for a figure, or null. */
+  goToBlocked?: (figure: Figure) => string | null;
 }
 
 /**
@@ -123,7 +167,7 @@ function slideOf(f: Figure): { src: string; width: number; height: number; alt: 
   return { src: f.imageUrl, width: meta.width, height: meta.height, alt: f.name };
 }
 
-export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
+export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: FigureViewerProps) {
   const [current, setCurrent] = useState(index);
   const [detent, setDetent] = useState(SUMMARY);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -190,6 +234,11 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
         },
       });
 
+      // CARD-VIEW-1 part 2: its zoom control and its z key (toggleZoom, no point) start at the face; a double-tap keeps its point
+      pswp.toggleZoom = () => {
+        const slide = pswp.currSlide;
+        if (slide) zoomToFace(slide as unknown as ZoomSlide, pswp.options.zoomAnimationDuration);
+      };
       pswp.on('change', () => setCurrent(pswp.currIndex));
       pswp.on('loadComplete', ({ content, slide }) => fitSlideToPicture(content, slide));
       // STRETCH-2: a picture beside the open one (two ahead) loads before PhotoSwipe has a slide for it and says no loadComplete;
@@ -296,6 +345,7 @@ export function FigureViewer({ figures, index, onClose }: FigureViewerProps) {
           index={current}
           total={figures.length}
           onBeforeOpen={closeViewer}
+          goTo={goTo && { go: () => goTo(figure), blocked: goToBlocked?.(figure) ?? null }}
         />
       </div>
 

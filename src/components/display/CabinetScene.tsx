@@ -79,6 +79,7 @@ import {
   figureCap,
   figureScales,
   figuresToDraw,
+  freeTexelScale,
   nearestCabinets,
   opaqueBoards,
   stickyPose,
@@ -1243,8 +1244,11 @@ export function CabinetScene({
       ),
     [wall],
   );
-  // NAV-1A: a turned camera's nearest point in view, over the wall and a cabinet's reach past its ends
-  const s = texelScale(camera, span, free ? [wall.leftMm - 1000, wall.rightMm + 1000] : undefined);
+  // NAV-1A (a), Ross 10-28: turned, the Free camera's scene keeps its unturned view's px per mm (a cabinet beside the eye
+  // never sharpens it); what the turned view itself would ask (its nearest point in view, over the wall and a cabinet's
+  // reach past its ends) is published beside it
+  const s = free ? freeTexelScale(camera, span) : texelScale(camera, span);
+  const asked = free && camera.yaw ? texelScale(camera, span, [wall.leftMm - 1000, wall.rightMm + 1000]) : null;
   // a photo slid up or down draws, in the unslid picture, the rows the slide brings into the frame
   const rect = cullRect(camera.frame);
   const draw: Draw = { view: cull, rect: { ...rect, y0: rect.y0 - panYPx, y1: rect.y1 - panYPx }, s };
@@ -1680,6 +1684,31 @@ export function CabinetScene({
     lookMode: prefs.swipe === 'pan',
     lookHoldMs: lookHoldMs(),
     reducedMotion: prefersReducedMotion(),
+    // NAV-1A (b): what a look projects the scene's cost from: the figures as this render draws them, listed only when asked
+    budget: {
+      span,
+      wall,
+      fronts,
+      cap: base.drawCap,
+      counts: heldCounts,
+      kinds: heldKinds,
+      boards: (cab) => opaqueBoards(wall.cabinets[cab]),
+      figures: () =>
+        draws.map(({ cab, draw: fig }) => {
+          const { art, aspect, margins } = drawing(fig.placed.item);
+          const g = figureGeometry(fig, art, aspect, margins);
+          return { ...figureLayerBox(fig, g, cab), tapMm: g.tapW, plate: labels ? plateOf(fig) : null };
+        }),
+      room: [
+        [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, -room.y1, 0]],
+        [[room.x0, 0, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
+        [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
+        [[room.x0, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
+        [[room.x1, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
+      ],
+      roomFacePx: ROOM_GRID.u * ROOM_GRID.v,
+      viewportPx: window.innerWidth * window.innerHeight,
+    },
   };
   const cone = free ? coneOf(camera, wall, fronts) : null;
   useLayoutEffect(() => {
@@ -1722,6 +1751,7 @@ export function CabinetScene({
       data-cone={cone ? JSON.stringify({ soft: num((cone.soft * 180) / Math.PI), hard: num((cone.hard * 180) / Math.PI) }) : undefined}
       data-room={JSON.stringify({ ceilingMm: num(room.y1), zBack: num(room.zBack) })}
       data-px-per-mm={String(s)}
+      data-turned-px-per-mm={asked === null ? undefined : String(asked)}
       data-cull-x={String(cull.camera.x)}
       data-cull-pan={String(cull.panPx)}
       data-wall={wallBoxes}

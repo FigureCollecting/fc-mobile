@@ -11,6 +11,7 @@ import {
   byFrameCentre,
   cullRect,
   faceInView,
+  freeTexelScale,
   frustum,
   nearestCabinets,
   stickyPose,
@@ -161,6 +162,31 @@ describe('texelScale under yaw: the px per mm the screen shows the cabinets\' ro
   it('turned toward nothing of the room: the coarsest', () => {
     const camera = level({ yaw: 30 * DEG, x: WALL.rightMm + 30_000 });
     expect(texelScale(camera, span, [WALL.leftMm, WALL.rightMm])).toBe(1 / 64);
+  });
+});
+
+describe('freeTexelScale (NAV-1A a, Ross 10-28): turned, the scene holds the px per mm of this eye\'s unturned view', () => {
+  const span = { y0: 0, y1: 2300, z0: -420, z1: 60 };
+  const framing = frameCase({ frame: OPEN, wall: WALL, headroomMm: WALL.cabinets.map(() => 300), view: 'wall', focus: 20, shelf: 0, level: true }).camera;
+  // turned along the fronts: the cabinet beside the eye is near, and what the turned frame shows asks for a sharper scene
+  const turned = { ...framing, yaw: 40 * DEG };
+
+  it('turned toward a near cabinet: the unturned view\'s (the framing\'s, for a pose the turn alone moved), never what the turned view asks', () => {
+    const asked = texelScale(turned, span, [WALL.leftMm - 1000, WALL.rightMm + 1000]);
+    const held = freeTexelScale(turned, span);
+    expect(asked).toBeGreaterThan(texelScale(framing, span));
+    expect(held).toBe(texelScale(framing, span));
+    for (const yaw of [-50, -1, 1e-9, 0.5, 30]) expect(freeTexelScale({ ...turned, yaw: yaw * DEG }, span)).toBe(texelScale(framing, span));
+    // a level MOVE (truck and pedestal) never changes it: the opening's, wherever along and up the wall the eye went
+    expect(freeTexelScale({ ...turned, x: framing.x + 3000, y: framing.y + 400 }, span)).toBe(texelScale(framing, span));
+  });
+
+  it('unturned (back at the framing, or no yaw at all), today\'s: texelScale at this eye; a pitch is today\'s rule too', () => {
+    expect(freeTexelScale(framing, span)).toBe(texelScale(framing, span));
+    expect(freeTexelScale({ ...framing, yaw: undefined }, span)).toBe(texelScale(framing, span));
+    const down = { ...framing, pitch: 20 * DEG };
+    expect(freeTexelScale(down, span)).toBe(texelScale(down, span));
+    expect(freeTexelScale({ ...down, yaw: 30 * DEG }, span)).toBe(texelScale(down, span));
   });
 });
 

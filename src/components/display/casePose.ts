@@ -60,6 +60,21 @@ export function look(pose: Pose, a0: number, b0: number, a1: number, b1: number)
   return { ...pose, yaw: pose.yaw + (Math.atan(a0) - Math.atan(a1)), pitch: pose.pitch + (Math.atan(b1) - Math.atan(b0)) };
 }
 
+/** One side of a look's yaw cone (radians, >= 0): where a turn rests (soft) and where its rubber band ends (hard). */
+export interface YawSide {
+  readonly soft: number;
+  readonly hard: number;
+}
+
+/** A look's yaw cone: the realism cone either way, and a side the GPU budget moved in (budgetCone), where it did. */
+export interface YawCone extends YawSide {
+  readonly left?: YawSide;
+  readonly right?: YawSide;
+}
+
+/** NAV-1A (b): how close budgetCone finds the last yaw that fits (radians). */
+export const BUDGET_YAW_STEP = 0.25 * DEG;
+
 /** Rulings S8: how far the eye may turn either way. `classicCapRad`: the drawn-cabinet cap (yawCapRad), in Classic. */
 export function yawLimits(hFovRad: number, classicCapRad?: number): { soft: number; hard: number } {
   let soft = Math.min(45 * DEG, Math.max(20 * DEG, 70 * DEG - hFovRad / 2));
@@ -85,24 +100,63 @@ export function cone(raw: number, lo: number, hi: number, hardLo: number, hardHi
 }
 
 /**
- * A look from `start` (look's bearings) through both cones: the yaw's (yawLimits) and the pitch's (PITCH). A look that
- * begins past a limit (the limits narrowed since: a fold, a walk under the Classic cap) is held where it began, never
- * pulled back.
+ * A look from `start` (look's bearings) through both cones: the yaw's (yawLimits, a side budgetCone moved in kept to)
+ * and the pitch's (PITCH). A look that begins past a limit (the limits narrowed since: a fold, a walk under the Classic
+ * cap) is held where it began, never pulled back.
  */
-export function turn(start: Pose, a0: number, b0: number, a1: number, b1: number, limits: { soft: number; hard: number }): { committed: Pose; shown: Pose; past: boolean } {
+export function turn(start: Pose, a0: number, b0: number, a1: number, b1: number, limits: YawCone): { committed: Pose; shown: Pose; past: boolean } {
   const raw = look(start, a0, b0, a1, b1);
   const side = (at: number, lo: number, hi: number, hardLo: number, hardHi: number, value: number) => {
     const l = Math.min(lo, at);
     const h = Math.max(hi, at);
     return cone(value, l, h, Math.min(hardLo, l), Math.max(hardHi, h));
   };
-  const yaw = side(start.yaw, -limits.soft, limits.soft, -limits.hard, limits.hard, raw.yaw);
+  const l = limits.left ?? limits;
+  const r = limits.right ?? limits;
+  const yaw = side(start.yaw, -l.soft, r.soft, -l.hard, r.hard, raw.yaw);
   const pitch = side(start.pitch, -PITCH.upSoft, PITCH.downSoft, -PITCH.upHard, PITCH.downHard, raw.pitch);
   return {
     committed: { ...start, yaw: yaw.committed, pitch: pitch.committed },
     shown: { ...start, yaw: yaw.shown, pitch: pitch.shown },
     past: yaw.past || pitch.past,
   };
+}
+
+/**
+ * NAV-1A (b), Ross 10-28: one side of the cone kept to `fit`, the last yaw that way whose scene fits the GPU budget: at
+ * or past the hard limit, the side as it is; inside it, the cone's band moved in to end at `fit` (its soft limit as far
+ * inside it as the cone's is inside its hard one, never past straight), so the turn stops there with the cone's ease.
+ */
+export function budgetSide(cone: YawSide, fit: number): YawSide {
+  if (fit >= cone.hard) return cone;
+  const hard = Math.max(0, fit);
+  return { soft: Math.max(0, hard - (cone.hard - cone.soft)), hard };
+}
+
+/**
+ * NAV-1A (b), Ross 10-28: a look's yaw cone kept to the GPU budget, a safety net under the held sharpness (a). Each way,
+ * where the scene at the hard limit `fits` (its projected layers within the ceiling) the side is the realism cone's and
+ * no other yaw is asked; else the last yaw that fits is found by halving, from where the turn starts (straight ahead for
+ * a look turned the other way) out to the hard limit, to BUDGET_YAW_STEP, and the side ends there (budgetSide). A start
+ * that does not fit goes no further that way; one already past the hard limit is turn's to hold. The cost is taken to
+ * rise steadily with the turn between the two.
+ */
+export function budgetCone(cone: YawSide, startYaw: number, fits: (yaw: number) => boolean): YawCone {
+  const side = (sign: 1 | -1): YawSide | undefined => {
+    let lo = Math.max(0, sign * startYaw);
+    if (lo >= cone.hard || fits(sign * cone.hard)) return undefined;
+    if (!fits(sign * lo)) return budgetSide(cone, lo);
+    let hi = cone.hard;
+    while (hi - lo > BUDGET_YAW_STEP) {
+      const mid = (lo + hi) / 2;
+      if (fits(sign * mid)) lo = mid;
+      else hi = mid;
+    }
+    return budgetSide(cone, lo);
+  };
+  const right = side(1);
+  const left = side(-1);
+  return { soft: cone.soft, hard: cone.hard, ...(left ? { left } : {}), ...(right ? { right } : {}) };
 }
 
 /** Spec 1.5: the shown value `elapsedMs` into its ease (out, cubic) back from `from` to the committed `to`. */

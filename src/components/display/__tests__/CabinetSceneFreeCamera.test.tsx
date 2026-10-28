@@ -1,11 +1,12 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach, onTestFinished } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 import { LOOK_HOLD_MS, PITCH, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
+import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
 import { wallLayout } from '../packCabinets';
 import { IKEA_KLINGSBO } from '../cabinetPresets';
 
@@ -411,5 +412,199 @@ describe('Go to (CARD-VIEW-1) in Free camera', () => {
     expect(onWentTo).toHaveBeenCalledWith('s60', true);
     expect(cam().yaw).toBe(0);
     expect(screen.getByRole('button', { name: 'Figure 60' })).toBeInTheDocument();
+  });
+});
+
+// NAV-1A a+b, Ross 10-28: the GPU budget under a turn. (a) turned, the scene keeps the framing's px per mm; (b) a look
+// whose projected scene would still pass the 3-viewport ceiling stops at the last yaw that fits, eased like the cone.
+type Px = { figures: number; shadows: number; mesh: number; room: number; faces: number };
+type Projected = { vp: number; drawn: number; figures: number; px: Px };
+type Budget = {
+  ceiling: number;
+  /** Published where (b) asked it (the hard limit did not fit): the cost where the look starts. */
+  start: (Projected & { yaw: number }) | null;
+  left: Projected & { hard: number; fit: number | null };
+  right: Projected & { hard: number; fit: number | null };
+  ms: number;
+};
+const total = (px: Px) => px.figures + px.shadows + px.mesh + px.room + px.faces;
+const budget = () => JSON.parse(host().dataset.yawBudget!) as Budget;
+/** A long wall of small figures: a turn along it brings more of them into view than the opening shows. */
+const WIDE = Array.from({ length: 900 }, (_, i): Figure => ({ _id: `w${i}`, name: `Wide ${i}`, dimensions: { heightMm: 90, widthMm: 40 } }) as Figure);
+const pxPerMm = () => Number(host().dataset.pxPerMm);
+
+/** The scene's element px by kind, as jsdom has them (each face's own width x height). */
+function domPx() {
+  const out = { figures: 0, shadows: 0, mesh: 0, room: 0, faces: 0, shadowCount: 0 };
+  for (const el of Array.from(host().querySelectorAll<HTMLElement>('.cabinet-scene__root .q'))) {
+    const px = parseFloat(el.style.width) * parseFloat(el.style.height);
+    if (el.classList.contains('cab-figure') || el.classList.contains('cab-plate')) out.figures += px;
+    else if (el.classList.contains('cab-shadow')) {
+      out.shadows += px;
+      out.shadowCount++;
+    } else if (el.classList.contains('m-mesh')) out.mesh += px;
+    else if (['room-wall', 'room-floor', 'room-ceiling'].some((c) => el.classList.contains(c))) out.room += px;
+    else out.faces += px;
+  }
+  return out;
+}
+
+/** The screen jsdom reports (window.innerWidth x innerHeight), for one test. */
+function screenOf(width: number, height: number) {
+  const w = Object.getOwnPropertyDescriptor(window, 'innerWidth')!;
+  const h = Object.getOwnPropertyDescriptor(window, 'innerHeight')!;
+  Object.defineProperty(window, 'innerWidth', { value: width, configurable: true });
+  Object.defineProperty(window, 'innerHeight', { value: height, configurable: true });
+  return () => {
+    Object.defineProperty(window, 'innerWidth', w);
+    Object.defineProperty(window, 'innerHeight', h);
+  };
+}
+
+/** A look held to the right as far as the finger goes (a right drag across the frame); returns the most yaw shown. */
+function lookRight() {
+  down(1, { x: 440, y: 200 }, { button: 2 });
+  let most = 0;
+  for (let x = 430; x >= 0; x -= 10) {
+    move(1, { x, y: 200 });
+    tick(16);
+    most = Math.max(most, pose().yaw);
+  }
+  return most;
+}
+
+describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
+  it('(a) turned, the scene is drawn at the framing\'s px per mm, below what the turned view asks; back at the framing, today\'s', () => {
+    scene();
+    const framing = pxPerMm();
+    expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
+    // walked in toward the fronts, the cabinet beside the eye near: a turn there asks a sharper scene
+    lookRight();
+    up(1, { x: 0, y: 200 });
+    tick(500);
+    for (let i = 0; i < 3; i++) drag({ x: 200, y: 300 }, { x: 200, y: 300 - 1 }, { steps: 1 });
+    expect(cam().yaw).not.toBe(0);
+    expect(pxPerMm()).toBe(framing);
+    expect(Number(host().dataset.turnedPxPerMm)).toBeGreaterThan(framing);
+    // Reset: the framing, turned straight, at today's px per mm again
+    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+    tick();
+    expect(cam().yaw).toBe(0);
+    expect(pxPerMm()).toBe(framing);
+    expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
+  });
+
+  it('(b) never engages where the turn to the hard limit fits: the full cone, data-yaw-budget with no fit either way', () => {
+    scene();
+    const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
+    const most = lookRight();
+    const b = budget();
+    expect(b.ceiling).toBe(SCENE_CEILING_VIEWPORTS);
+    expect(b.right.fit).toBeNull();
+    expect(b.left.fit).toBeNull();
+    // nothing past the two hard limits was projected for it
+    expect(b.start).toBeNull();
+    expect(b.right.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+    expect(b.right.hard).toBeCloseTo(cone.hard, 4);
+    expect(most / DEG).toBeGreaterThan(cone.soft);
+    up(1, { x: 0, y: 200 });
+    tick(500);
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 1);
+  });
+
+  it('the projection at the pose a look starts from is what the scene draws there, kind by kind, never under it', () => {
+    // a small screen, so the hard limits do not fit and (b) projects the start (the px are the same on any screen)
+    onTestFinished(screenOf(150, 150));
+    scene({}, { labels: true });
+    const dom = domPx();
+    const drawn = Number(host().dataset.drawnCabinets);
+    const figures = Number(host().dataset.drawnFigures);
+    down(1, { x: 300, y: 200 }, { button: 2 });
+    move(1, { x: 280, y: 200 });
+    const start = budget().start!;
+    expect(start.yaw).toBe(0);
+    expect(start.drawn).toBe(drawn);
+    expect(start.figures).toBe(figures);
+    expect(dom.figures).toBeGreaterThan(0);
+    expect(start.px.figures).toBeGreaterThanOrEqual(dom.figures);
+    expect(start.px.figures).toBeLessThan(dom.figures * 1.6);
+    expect(start.px.shadows).toBe(SHADOW_PX * figures);
+    expect(start.px.shadows).toBeGreaterThanOrEqual(dom.shadows);
+    expect(start.px.mesh).toBeGreaterThan(0);
+    expect(start.px.mesh).toBeCloseTo(dom.mesh, -1);
+    expect(start.px.room).toBe(dom.room);
+    expect(start.px.faces).toBe(CABINET_FACES_PX * drawn);
+    expect(start.px.faces).toBeGreaterThanOrEqual(dom.faces);
+    up(1, { x: 280, y: 200 });
+  });
+
+  it('(b) engaged: past the ceiling at the hard limit, the turn stops at the last yaw that fits and eases back to the band\'s soft limit', () => {
+    // read the costs (px, the same on any screen) where the start is projected too, then size the screen so the start fits
+    // and the hard limit right does not
+    const tiny = screenOf(120, 120);
+    scene({}, { figures: WIDE });
+    lookRight();
+    const b0 = budget();
+    up(1, { x: 0, y: 200 });
+    cleanup();
+    tiny();
+    const startPx = total(b0.start!.px);
+    const hardPx = total(b0.right.px);
+    expect(hardPx).toBeGreaterThan(startPx * 1.05);
+    const v = (startPx + hardPx) / 2 / (SCENE_CEILING_VIEWPORTS - CONTROLS_VIEWPORTS);
+    const restore = screenOf(Math.round(Math.sqrt(v)), Math.round(Math.sqrt(v)));
+    try {
+      scene({}, { figures: WIDE });
+      const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
+      const most = lookRight();
+      const b = budget();
+      expect(b.start!.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+      expect(b.right.vp).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
+      expect(b.right.fit).not.toBeNull();
+      expect(b.right.fit!).toBeLessThan(cone.hard);
+      expect(b.right.fit!).toBeGreaterThan(0);
+      // shown never past the last yaw that fits
+      expect(most / DEG).toBeLessThanOrEqual(b.right.fit! + 1e-6);
+      up(1, { x: 0, y: 200 });
+      tick(500);
+      // let go: eased back to the band's soft limit, the cone's band moved in to end at the fit
+      expect(pose().yaw / DEG).toBeCloseTo(Math.max(0, b.right.fit! - (cone.hard - cone.soft)), 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('(b) where nothing past the start fits (a tiny screen), a look turns no further that way', () => {
+    const restore = screenOf(120, 120);
+    try {
+      scene();
+      const most = lookRight();
+      expect(budget().start!.vp).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
+      expect(budget().right.fit).toBe(0);
+      expect(most).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('every wall pattern: a cabinet\'s faces on their grids cost at most CABINET_FACES_PX, the bound the projection takes', () => {
+    for (const pattern of WALL_PATTERNS) {
+      // a frame wide enough that no face is cut: each cabinet's whole set
+      const { unmount } = scene({ pattern: pattern.id }, { frameFallback: { width: 4000, height: 3000 } });
+      const cabs = Array.from(host().querySelectorAll<HTMLElement>('.cab'));
+      expect(cabs.length, pattern.id).toBeGreaterThan(0);
+      for (const cab of cabs) {
+        const px = Array.from(cab.querySelectorAll<HTMLElement>('.q:not(.m-mesh)')).reduce((a, el) => a + parseFloat(el.style.width) * parseFloat(el.style.height), 0);
+        expect(px, `${pattern.id} cabinet ${cab.dataset.index}`).toBeGreaterThan(0);
+        expect(px, `${pattern.id} cabinet ${cab.dataset.index}`).toBeLessThanOrEqual(CABINET_FACES_PX);
+      }
+      unmount();
+    }
+  });
+
+  it('off: no budget published and the px per mm is today\'s', () => {
+    scene({ freeCamera: false });
+    expect(host().hasAttribute('data-yaw-budget')).toBe(false);
+    expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
   });
 });

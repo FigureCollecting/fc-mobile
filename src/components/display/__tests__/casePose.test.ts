@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import {
   ANCHOR_FALLBACK_MM,
   AXIS_UNLOCK_PX,
+  BUDGET_YAW_STEP,
   EYE_MARGIN_MM,
   EYE_MIN_MM,
   LOOK_HOLD_MS,
@@ -10,6 +11,8 @@ import {
   SPRING_MS,
   anchorDepth,
   axisGate,
+  budgetCone,
+  budgetSide,
   capMove,
   cone,
   eyeSpace,
@@ -362,5 +365,122 @@ describe('Reset view (spec 4, rulings X1)', () => {
   });
   it('resets to the framing, turned straight', () => {
     expect(resetTarget({ ...framing, yaw: 0.3 })).toEqual(framing);
+  });
+});
+
+describe('the yaw budget (NAV-1A b, Ross 10-28): a turn stops at the last yaw that fits, eased like the realism cone', () => {
+  const realism = yawLimits(79.1 * DEG);
+  const band = realism.hard - realism.soft;
+
+  it('budgetSide: a fit at or past the hard limit leaves the side as it is; inside it, the band moves in to end there', () => {
+    expect(budgetSide(realism, realism.hard)).toEqual(realism);
+    expect(budgetSide(realism, realism.hard + 0.1)).toEqual(realism);
+    const fit = realism.hard - 3 * DEG;
+    const side = budgetSide(realism, fit);
+    expect(side.hard).toBe(fit);
+    expect(side.soft).toBeCloseTo(fit - band, 12);
+    // a fit inside the band's width: rests straight, the band from there to the fit
+    expect(budgetSide(realism, band / 2)).toEqual({ soft: 0, hard: band / 2 });
+    // nothing fits that way: no turn that way at all
+    expect(budgetSide(realism, 0)).toEqual({ soft: 0, hard: 0 });
+    expect(budgetSide(realism, -0.1)).toEqual({ soft: 0, hard: 0 });
+    // the Classic cap's cone (soft at hard): a stop with no band, as the cone itself has there
+    expect(budgetSide({ soft: 0.5, hard: 0.5 }, 0.3)).toEqual({ soft: 0.3, hard: 0.3 });
+  });
+
+  it('budgetCone: where the turn to the hard limit fits both ways, (b) never engages: the realism cone, no side of its own', () => {
+    const asked: number[] = [];
+    const cone = budgetCone(realism, 0, (yaw) => {
+      asked.push(yaw);
+      return true;
+    });
+    expect(cone).toEqual(realism);
+    expect(cone.left).toBeUndefined();
+    expect(cone.right).toBeUndefined();
+    // only the two hard limits are asked
+    expect(asked).toEqual([realism.hard, -realism.hard]);
+  });
+
+  it('budgetCone: the side past the ceiling ends at the last yaw that fits (within BUDGET_YAW_STEP); the other side keeps the cone', () => {
+    const limit = 37.3 * DEG;
+    const cone = budgetCone(realism, 0, (yaw) => yaw <= limit);
+    expect(cone.left).toBeUndefined();
+    expect(cone.right!.hard).toBeLessThanOrEqual(limit);
+    expect(cone.right!.hard).toBeGreaterThan(limit - BUDGET_YAW_STEP);
+    expect(cone.right!.soft).toBeCloseTo(cone.right!.hard - band, 12);
+    expect([cone.soft, cone.hard]).toEqual([realism.soft, realism.hard]);
+    // and the left, mirrored
+    const left = budgetCone(realism, 0, (yaw) => yaw >= -limit);
+    expect(left.right).toBeUndefined();
+    expect(left.left!.hard).toBeLessThanOrEqual(limit);
+    expect(left.left!.hard).toBeGreaterThan(limit - BUDGET_YAW_STEP);
+  });
+
+  it('the boundary: a projection exactly at the ceiling fits; a hair over it does not', () => {
+    const CEILING = 3;
+    // a projected cost rising with a turn to the right (the dense side), exactly the ceiling at 40 deg
+    const cost = (yaw: number) => 2 + Math.max(0, yaw) / (40 * DEG);
+    const fits = (yaw: number) => cost(yaw) <= CEILING;
+    expect(cost(40 * DEG)).toBe(CEILING);
+    // the hard limit itself exactly at the ceiling: it fits, (b) never engages
+    const at = { soft: 25 * DEG, hard: 40 * DEG };
+    expect(budgetCone(at, 0, fits)).toEqual(at);
+    // a hair past it: (b) engages that way, ending within a step under 40 deg
+    const past = { soft: 25 * DEG, hard: 40 * DEG + 1e-9 };
+    const cone = budgetCone(past, 0, fits);
+    expect(cone.right!.hard).toBeLessThanOrEqual(40 * DEG);
+    expect(cone.right!.hard).toBeGreaterThan(40 * DEG - BUDGET_YAW_STEP);
+    expect(cost(cone.right!.hard)).toBeLessThanOrEqual(CEILING);
+    expect(cone.left).toBeUndefined();
+  });
+
+  it('a look that starts turned searches from where it starts; one that starts where nothing fits goes no further that way', () => {
+    const limit = 30 * DEG;
+    const fits = (yaw: number) => yaw <= limit;
+    const from = budgetCone(realism, 20 * DEG, fits);
+    expect(from.right!.hard).toBeGreaterThan(limit - BUDGET_YAW_STEP);
+    // started past what fits (a walk while turned, say): the side ends where it starts, and turn holds it there
+    const stuck = budgetCone(realism, 35 * DEG, fits);
+    expect(stuck.right!.hard).toBe(35 * DEG);
+    const start: Pose = { x: 0, y: 1000, z: 2000, yaw: 35 * DEG, pitch: 0 };
+    expect(turn(start, 0, 0, -0.5, 0, stuck).shown.yaw).toBe(35 * DEG);
+    expect(turn(start, 0, 0, 0.5, 0, stuck).committed.yaw).toBeLessThan(35 * DEG);
+    // started past the hard limit itself (a fold narrowed the cone): nothing for the budget to move in; turn holds it
+    const beyond = budgetCone(realism, realism.hard + 0.05, () => false);
+    expect(beyond.right).toBeUndefined();
+    expect(budgetCone(realism, realism.hard + 0.05, (yaw) => yaw !== realism.hard).right).toBeUndefined();
+    // a look that starts turned the other way searches this way from straight ahead
+    const asked: number[] = [];
+    budgetCone(realism, -10 * DEG, (yaw) => {
+      asked.push(yaw);
+      return yaw <= limit;
+    });
+    expect(asked.filter((y) => y > 0 && y < realism.hard).every((y) => y > 0)).toBe(true);
+    expect(asked).toContain(0);
+  });
+
+  it('turn keeps to a budgeted side: committed never past its soft limit, shown never at its hard; the other side unchanged', () => {
+    const fit = 33 * DEG;
+    const limits = budgetCone(realism, 0, (yaw) => yaw <= fit);
+    const start: Pose = { x: 0, y: 1000, z: 2000, yaw: 0, pitch: 0 };
+    fc.assert(
+      fc.property(fc.double({ min: -3, max: 3, noNaN: true }), (a1) => {
+        const t = turn(start, 0, 0, a1, 0, limits);
+        expect(t.committed.yaw).toBeLessThanOrEqual(limits.right!.soft);
+        expect(t.shown.yaw).toBeLessThan(limits.right!.hard + 1e-12);
+        expect(t.shown.yaw).toBeLessThanOrEqual(fit);
+        expect(t.committed.yaw).toBeGreaterThanOrEqual(-realism.soft);
+        expect(t.shown.yaw).toBeGreaterThan(-realism.hard);
+      }),
+      { numRuns: 300 },
+    );
+    // far past it: shown approaches the fit, and lets go to the band's soft limit (the cone's ease)
+    const far = turn(start, 0, 0, -3, 0, limits);
+    expect(far.committed.yaw).toBeCloseTo(limits.right!.soft, 12);
+    expect(far.shown.yaw).toBeGreaterThan(fit - 1 * DEG);
+    expect(far.past).toBe(true);
+    // the left side: the realism cone's
+    const left = turn(start, 0, 0, 3, 0, limits);
+    expect(left.committed.yaw).toBeCloseTo(-realism.soft, 12);
   });
 });

@@ -10,7 +10,8 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera } from './caseCamera';
 import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyPose, type CullView } from './caseCull';
-import { SPRING_MS, anchorDepth, axisGate, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose } from './casePose';
+import { SPRING_MS, anchorDepth, axisGate, budgetCone, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
+import { SCENE_CEILING_VIEWPORTS, projector, type BudgetScene, type SceneCost } from './caseBudget';
 import type { WallLayout, WallSlot } from './packCabinets';
 import type { Point } from './caseZoom';
 import { hapticLight } from '../../utils/haptics';
@@ -33,6 +34,8 @@ export interface FreeScene {
   readonly lookMode: boolean;
   readonly lookHoldMs: number;
   readonly reducedMotion: boolean;
+  /** What a look's projected scene is worked out from (NAV-1A b): a look stops where it would pass the ceiling. */
+  readonly budget: BudgetScene;
 }
 
 /** The DOM the writer writes to. */
@@ -68,7 +71,7 @@ interface Gesture {
   last: Point;
   anchor: number;
   unlocked: boolean;
-  limits: { soft: number; hard: number };
+  limits: YawCone;
   crossed: boolean;
   /** The longest stretch of the fronts a MOVE may make the frame show (the Classic cap). */
   span: number;
@@ -96,6 +99,42 @@ export function cameraData(camera: Camera): string {
 /** Rulings S8: the yaw limits at this camera's frame and lens, the Classic cap (yawCapRad at its eye) included. */
 export function coneOf(camera: Camera, wall: WallLayout, fronts: RoomSpan): { soft: number; hard: number } {
   return yawLimits(2 * Math.atan(camera.frame.width / 2 / camera.focalPx), yawCapRad(camera, wall, fronts));
+}
+
+const DEG_PER_RAD = 180 / Math.PI;
+
+/**
+ * NAV-1A (a+b), Ross 10-28: a look's yaw cone, from `start` at this scene: the realism cone (coneOf) kept to the GPU
+ * budget (budgetCone over the scene projected at each yaw asked, at the held px per mm). `publish` hears what was
+ * projected, nothing more worked out for it: each way the hard limit's cost and the last yaw that fits where (b)
+ * engaged; the start's where (b) asked it; and how long the cone took.
+ */
+export function lookCone(scene: FreeScene, start: Pose, publish: (budget: string) => void): YawCone {
+  const t0 = performance.now();
+  const camera = withPose(scene.base, start);
+  const realism = coneOf(camera, scene.wall, scene.fronts);
+  const project = projector(scene.budget);
+  const seen = new Map<number, { vp: number; cost: SceneCost }>();
+  const at = (yaw: number) => {
+    let p = seen.get(yaw);
+    if (p === undefined) {
+      p = project(withPose(scene.base, { ...start, yaw }));
+      seen.set(yaw, p);
+    }
+    return p;
+  };
+  const cone = budgetCone(realism, start.yaw, (yaw) => at(yaw).vp <= SCENE_CEILING_VIEWPORTS);
+  const ms = num(performance.now() - t0);
+  const deg = (r: number) => num(r * DEG_PER_RAD);
+  const shown = (yaw: number) => {
+    const { vp, cost } = at(yaw);
+    const px = { figures: num(cost.figures), shadows: num(cost.shadows), mesh: num(cost.mesh), room: num(cost.room), faces: num(cost.faces) };
+    return { vp: num(vp), drawn: cost.drawn.length, figures: cost.figuresDrawn, px };
+  };
+  const side = (sign: 1 | -1, fit: YawSide | undefined) => ({ hard: deg(realism.hard), ...shown(sign * realism.hard), fit: fit ? deg(fit.hard) : null });
+  const begun = seen.has(start.yaw) ? { yaw: deg(start.yaw), ...shown(start.yaw) } : null;
+  publish(JSON.stringify({ ceiling: SCENE_CEILING_VIEWPORTS, start: begun, left: side(-1, cone.left), right: side(1, cone.right), ms }));
+  return cone;
 }
 
 export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culled: { current: CullView | null }, onRender: () => void) {
@@ -238,7 +277,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       const camera = cameraOf(g.start);
       if (g.armed || g.lookAtOnce) {
         g.mode = 'look';
-        g.limits = coneOf(camera, s.wall, s.fronts);
+        // a drag comes from a pointer on the scene's host
+        g.limits = lookCone(s, g.start, (budget) => (dom.host.current!.dataset.yawBudget = budget));
         // rulings S6: the haptic is the first Look move's, never the arming's
         hapticLight();
       } else {

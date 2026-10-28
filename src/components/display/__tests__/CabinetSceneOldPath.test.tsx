@@ -1,0 +1,108 @@
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
+import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
+import { CabinetScene } from '../CabinetScene';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
+import { __clearAlphaMarginCache } from '../alphaMargin';
+
+// NAV-1A (rulings R0.2): with the Free camera off (absent or false) the case is today's to the byte. The scene's whole DOM is
+// hashed after each step of a script of drags (walk, lift, pan, pan up/down), arrows, a pinch, Reset and a double-tap in
+// every view; the hashes were taken from develop fe967a7's CabinetScene before NAV-1A touched it.
+
+const FRAME = { width: 443, height: 454 };
+type P = { x: number; y: number };
+const down = (el: Element, id: number, p: P) => fireEvent.pointerDown(el, { pointerId: id, clientX: p.x, clientY: p.y, button: 0 });
+const move = (el: Element, id: number, p: P) => fireEvent.pointerMove(el, { pointerId: id, clientX: p.x, clientY: p.y });
+const up = (el: Element, id: number, p: P) => fireEvent.pointerUp(el, { pointerId: id, clientX: p.x, clientY: p.y });
+
+function drag(el: Element, dx: number, dy: number) {
+  down(el, 1, { x: 200, y: 200 });
+  for (const t of [0.25, 0.5, 0.75, 1]) move(el, 1, { x: 200 + dx * t, y: 200 + dy * t });
+  up(el, 1, { x: 200 + dx, y: 200 + dy });
+}
+
+function pinch(el: Element) {
+  down(el, 11, { x: 180, y: 260 });
+  down(el, 12, { x: 260, y: 260 });
+  move(el, 11, { x: 140, y: 260 });
+  move(el, 12, { x: 300, y: 260 });
+  up(el, 11, { x: 140, y: 260 });
+  up(el, 12, { x: 300, y: 260 });
+}
+
+const hash = (el: Element) => createHash('sha256').update(el.outerHTML).digest('hex').slice(0, 16);
+
+beforeEach(() => {
+  __clearAlphaMarginCache();
+  vi.useFakeTimers();
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+function script(patch: Partial<CasePrefs>): string[] {
+  const figures = getFixtureFigures(40);
+  const prefs = (p: Partial<CasePrefs>): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch, ...p });
+  const props = { figures, onSelect: vi.fn(), frameFallback: FRAME };
+  const { container, rerender } = render(<CabinetScene {...props} prefs={prefs({})} />);
+  const host = () => container.querySelector('.cabinet-scene') as HTMLElement;
+  const out: string[] = [];
+  const snap = () => {
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    out.push(hash(host()));
+  };
+  const button = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
+  snap();
+  drag(host(), -140, 0);
+  snap();
+  drag(host(), 0, 60);
+  snap();
+  button('Next cabinet');
+  snap();
+  rerender(<CabinetScene {...props} prefs={prefs({ swipe: 'pan' })} />);
+  drag(host(), 90, 0);
+  snap();
+  drag(host(), 0, -50);
+  snap();
+  rerender(<CabinetScene {...props} prefs={prefs({ view: 'cabinet' })} />);
+  snap();
+  drag(host(), -120, 30);
+  snap();
+  button('Next cabinet');
+  snap();
+  pinch(host());
+  snap();
+  button('Reset view');
+  snap();
+  rerender(<CabinetScene {...props} prefs={prefs({ view: 'shelf' })} />);
+  snap();
+  button('Shelf below');
+  snap();
+  drag(host(), 100, 0);
+  snap();
+  down(host(), 3, { x: 150, y: 150 });
+  up(host(), 3, { x: 150, y: 150 });
+  down(host(), 3, { x: 152, y: 150 });
+  up(host(), 3, { x: 152, y: 150 });
+  snap();
+  return out;
+}
+
+/** develop fe967a7, before NAV-1A. */
+const GOLDEN: string[] = ["29280b89484ccdd0","64dde1cc1281b078","2eed5f783ad79a6d","3235291fc2f1cf0c","5dc3c57afeca5ee0","5dc3c57afeca5ee0","106e60df90159c20","17bcfba9ff40a137","303ac9b9a485ab44","92221f23e4acddd6","a2ec5d7cba8933ef","2d89bd732b2220fc","4e3245832598dfbb","b14dfffd42dd076a","1256f46000ef91f8"];
+
+describe('the old path, Free camera off: the scene\'s DOM is today\'s at every step', () => {
+  it('prefs with no freeCamera', () => {
+    const got = script({});
+    if (process.env.PRINT_GOLDEN) console.log(JSON.stringify(got));
+    expect(got).toEqual(GOLDEN);
+  });
+
+  it('prefs with freeCamera: false', () => {
+    expect(script({ freeCamera: false })).toEqual(GOLDEN);
+  });
+});

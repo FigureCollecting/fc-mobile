@@ -645,7 +645,9 @@ const DENSE = [
   { name: 'spike wall at the 250 cap', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed' },
 ];
 
-type YawBudget = { left: { hard: number; vp: number; fit: number | null }; right: { hard: number; vp: number; fit: number | null }; ms: number };
+type Projected = { vp: number; drawn: number; figures: number };
+type YawSide = { hard: number; fit: number | null; atHard: Projected | null };
+type YawBudget = { start: (Projected & { yaw: number }) | null; left: YawSide; right: YawSide; asked: [number, number][]; ms: number };
 type BudgetRow = {
   yaw: number;
   drawn: number;
@@ -656,7 +658,9 @@ type BudgetRow = {
   s: number;
   asked: number;
   a: boolean;
-  projectedAtHard: number;
+  /** The most any yaw asked that way was projected to cost (viewports), and how many were asked. */
+  peak: number;
+  probes: number;
   b: boolean;
   fit: number | null;
   ms: number;
@@ -665,15 +669,46 @@ type BudgetRow = {
   letGo: number;
 };
 
+const budgetOf = async (page: Page) => JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-yaw-budget'))!) as YawBudget;
+const pxPerMmOf = async (page: Page) => Number(await page.locator('.cabinet-scene').getAttribute('data-px-per-mm'));
+/** The scene's layers re-culled at the pose it holds (the cull lags a turn, stickyPose): a 1 px fold re-culls there. */
+async function freshAt(page: Page, panel: { width: number; height: number }) {
+  await page.setViewportSize({ width: panel.width, height: panel.height + 1 });
+  await settle(page, 400);
+  const fresh = {
+    vp: Number(((await sceneLayerArea(page)).sceneArea / (panel.width * panel.height)).toFixed(3)),
+    drawn: Number(await page.locator('.cabinet-scene').getAttribute('data-drawn-cabinets')),
+    s: await pxPerMmOf(page),
+    asked: Number(await page.locator('.cabinet-scene').getAttribute('data-turned-px-per-mm')),
+  };
+  return fresh;
+}
+async function unfold(page: Page, panel: { width: number; height: number }) {
+  await page.setViewportSize({ width: panel.width, height: panel.height });
+  await settle(page, 400);
+}
+
+/**
+ * NAV-1A (b): the sides of the dense walls where the held sharpness (a) alone would pass the ceiling on the way to the
+ * hard yaw, so the safety net stops the turn; on every other side (a) is enough and the full turn is kept. Measured on
+ * the Fold8's panels: re-culled at the hard yaw with (b) off, only this side passes 3 viewports. `${panel} ${wall} ${side}`.
+ */
+const B_ENGAGES = new Set<string>(['fold8-cover spike wall right']);
+
 for (const panel of FOLD8) {
   for (const wall of DENSE) {
-    // NAV-1A a+b (Ross 10-28): turned, the scene keeps the framing's px per mm (a); where its projected layers would still
-    // pass the ceiling the turn stops at the last yaw that fits (b). Each case says which acted and where the turn ended.
+    // NAV-1A a+b (Ross 10-28): turned, the scene keeps the px per mm in force where the turn left yaw 0 (a); where its
+    // projected layers would still pass the ceiling the turn stops at the last yaw that fits (b). Each case says which
+    // acted and where the turn ended.
     test(`budget ${panel.name}, ${wall.name}: at the hard yaw both ways, scene layers <= 3 viewports, drawn <= cap every frame`, async ({ page }, testInfo) => {
       test.setTimeout(90_000);
       await openFree(page, panel, { query: wall.query });
-      const opening = Number(await page.locator('.cabinet-scene').getAttribute('data-drawn-cap'));
-      const openingS = Number(await page.locator('.cabinet-scene').getAttribute('data-px-per-mm'));
+      const host = page.locator('.cabinet-scene');
+      const opening = Number(await host.getAttribute('data-drawn-cap'));
+      const openingS = await pxPerMmOf(page);
+      // the opening is the panel's own framing, nothing held (no Reset), and its layers are drawn afresh: the projection's check
+      await expect(page.locator('.cabinet-scene__reset')).toHaveCount(0);
+      const openingVp = (await sceneLayerArea(page)).sceneArea / (panel.width * panel.height);
       const cone = await coneOf(page);
       await page.evaluate(() => {
         const host = document.querySelector<HTMLElement>('.cabinet-scene')!;
@@ -687,60 +722,66 @@ for (const panel of FOLD8) {
       const f = await frameBox(page);
       const y = f.y + f.height * 0.2;
       const viewport = panel.width * panel.height;
-      const out: BudgetRow[] = [];
+      const out: (BudgetRow & { side: 'right' | 'left' })[] = [];
+      let startVp = 0;
       // a turn to the right (the finger right to left) and then to the left
       for (const [from, to] of [[f.x + f.width - 3, f.x + 3], [f.x + 3, f.x + f.width - 3]]) {
         const finger = await holdAndSweep(page, { x: from, y }, [{ x: to, y }], { lift: false });
         await settle(page, 400);
         const layers = await sceneLayerArea(page);
-        const host = page.locator('.cabinet-scene');
         const cam = await cameraOf(page);
-        const budget = JSON.parse((await host.getAttribute('data-yaw-budget'))!) as YawBudget;
+        const budget = await budgetOf(page);
         // the finger right to left turns the eye right
-        const side = to < from ? budget.right : budget.left;
-        const row: BudgetRow = {
+        const name = to < from ? 'right' : 'left';
+        const sign = name === 'right' ? 1 : -1;
+        const side = budget[name];
+        if (out.length === 0) startVp = budget.start!.vp;
+        const mine = budget.asked.filter(([yaw]) => sign * yaw > 0);
+        const row: BudgetRow & { side: 'right' | 'left' } = {
+          side: name,
           yaw: Number((cam.yaw! / DEG).toFixed(2)),
           drawn: Number(await host.getAttribute('data-drawn-cabinets')),
           cap: Number(await host.getAttribute('data-drawn-cap')),
           figures: Number(await host.getAttribute('data-drawn-figures')),
           sceneLayers: layers.sceneLayers,
           sceneViewports: Number((layers.sceneArea / viewport).toFixed(3)),
-          // (a): the px per mm drawn at the held pose and what the turned view there asked (read once the scene has rendered
-          // it, below); (b): the projection at the hard limit and the fit, if any
+          // (a): the px per mm drawn at the held pose and what the turned view there asked (read once re-culled, below)
           s: 0,
           asked: 0,
           a: false,
-          projectedAtHard: side.vp,
+          // (b): the yaws asked that way and the most any was projected to cost; the fit, if any
+          peak: Math.max(...mine.map(([, vp]) => vp)),
+          probes: mine.length,
           b: side.fit !== null,
           fit: side.fit,
           ms: budget.ms,
-          // the cull lags the turn (stickyPose): a 1 px fold while held re-culls at the held pose itself, the most a render
-          // there can draw (an image arriving would do the same)
           freshViewports: 0,
           freshDrawn: 0,
           letGo: 0,
         };
-        await page.setViewportSize({ width: panel.width, height: panel.height + 1 });
-        await settle(page, 400);
-        row.freshViewports = Number(((await sceneLayerArea(page)).sceneArea / viewport).toFixed(3));
-        row.freshDrawn = Number(await host.getAttribute('data-drawn-cabinets'));
-        row.s = Number(await host.getAttribute('data-px-per-mm'));
-        row.asked = Number(await host.getAttribute('data-turned-px-per-mm'));
+        const fresh = await freshAt(page, panel);
+        row.freshViewports = fresh.vp;
+        row.freshDrawn = fresh.drawn;
+        row.s = fresh.s;
+        row.asked = fresh.asked;
         row.a = row.asked > row.s;
         await finger.end();
         await settle(page, 400);
         row.letGo = Number((((await cameraOf(page)).yaw ?? 0) / DEG).toFixed(2));
-        await page.setViewportSize({ width: panel.width, height: panel.height });
-        await settle(page, 400);
+        await unfold(page, panel);
         out.push(row);
         await page.locator('.cabinet-scene__reset').tap().catch(() => undefined);
         await settle(page, 400);
       }
       const caps = await page.evaluate(() => (window as unknown as { __caps: [number, number][] }).__caps);
-      const summary = { panel: panel.name, wall: wall.name, openingCap: opening, openingS, cone, held: out, frames: caps.length };
+      const summary = { panel: panel.name, wall: wall.name, openingCap: opening, openingS, openingVp: Number(openingVp.toFixed(3)), startVp, cone, held: out, frames: caps.length };
       await testInfo.attach('budget', { body: JSON.stringify(summary), contentType: 'application/json' });
       console.log(`BUDGET ${JSON.stringify(summary)}`);
       expect(caps.filter(([d, c]) => d > c), 'drawn past the cap').toEqual([]);
+      // the projection at the opening is what the compositor has there, never under it, over by no more than the controls'
+      // allowance it takes on the larger panels
+      expect(startVp).toBeGreaterThanOrEqual(openingVp - 0.02);
+      expect(startVp).toBeLessThanOrEqual(openingVp + 0.35);
       for (const row of out) {
         expect(row.cap).toBeLessThanOrEqual(20);
         expect(row.sceneViewports, `scene layers at yaw ${row.yaw}, viewports of pixels`).toBeLessThanOrEqual(3);
@@ -748,12 +789,73 @@ for (const panel of FOLD8) {
         // (a): turned, never sharper than the opening; what the turned view asks is published beside it
         expect(row.s, `px per mm at yaw ${row.yaw}`).toBe(openingS);
         expect(row.asked, `asked at yaw ${row.yaw}`).toBeGreaterThan(0);
-        // (b): engaged only where the projection at the hard limit passes the ceiling; then the turn never passes the fit, and
-        // otherwise the full turn is kept (past the soft limit toward the hard one)
-        expect(row.b).toBe(row.projectedAtHard > 3);
+        // (b): engaged only on the sides measured to need it; there the turn never passes the fit, and everywhere else
+        // the full turn is kept (past the soft limit toward the hard one)
+        expect(row.b, `(b) on the ${row.side}`).toBe(B_ENGAGES.has(`${panel.name} ${wall.name} ${row.side}`));
         if (row.fit !== null) expect(Math.abs(row.yaw)).toBeLessThanOrEqual(row.fit + 0.01);
         else expect(Math.abs(row.yaw)).toBeGreaterThanOrEqual(cone.soft - 0.01);
       }
+    });
+
+    // NAV-1A a (Ross 10-28, challenge): a move or a pitch made while turned never draws the scene sharper than where the
+    // turn left yaw 0, and the scene stays under the ceiling: one-finger moves toward the fronts while turned, each way,
+    // then one diagonal look (a turn and a pitch together) each way
+    test(`budget ${panel.name}, ${wall.name}: a turned walk and a diagonal look stay <= 3 viewports, never sharper than the opening`, async ({ page }, testInfo) => {
+      test.setTimeout(150_000);
+      // Look arms after a 1 s hold here, so a walk's first move is never late enough to arm it on a loaded host
+      await openFree(page, panel, { query: `${wall.query}&lookhold=1000` });
+      const openingS = await pxPerMmOf(page);
+      const open = await cameraOf(page);
+      const f = await frameBox(page);
+      const y = f.y + f.height * 0.2;
+      const rows: { what: string; yaw: number; pitch: number; dz: number; s: number; vp: number }[] = [];
+      const turnedTo: number[] = [];
+      const record = async (what: string, fresh: { vp: number; s: number }) => {
+        const c = await cameraOf(page);
+        rows.push({ what, yaw: Number(((c.yaw ?? 0) / DEG).toFixed(2)), pitch: Number((c.pitch / DEG).toFixed(2)), dz: Math.round(c.z - open.z), s: fresh.s, vp: fresh.vp });
+      };
+      for (const dir of ['right', 'left'] as const) {
+        const [from, to] = dir === 'right' ? [f.x + f.width - 3, f.x + 3] : [f.x + 3, f.x + f.width - 3];
+        await holdAndSweep(page, { x: from, y }, [{ x: to, y }], { holdMs: 1100 });
+        await settle(page, 500);
+        const turned = Number((((await cameraOf(page)).yaw ?? 0) / DEG).toFixed(2));
+        // turned right, a finger moving right walks the eye toward the fronts (and mirrored)
+        for (let i = 0; i < 2; i++) {
+          const [a, b] = dir === 'right' ? [f.x + 20, f.x + f.width - 20] : [f.x + f.width - 20, f.x + 20];
+          await fingerDrag(page, { x: a, y }, { x: b, y });
+          await settle(page, 400);
+          await record(`walk ${dir} ${i + 1}`, await freshAt(page, panel));
+          turnedTo.push(turned);
+          await unfold(page, panel);
+        }
+        await page.locator('.cabinet-scene__reset').tap().catch(() => undefined);
+        await settle(page, 400);
+      }
+      for (const [what, x0, y0, x1, y1] of [
+        ['look right and up', f.x + f.width - 3, f.y + f.height - 3, f.x + 3, f.y + 3],
+        ['look left and down', f.x + 3, f.y + 3, f.x + f.width - 3, f.y + f.height - 3],
+      ] as const) {
+        const finger = await holdAndSweep(page, { x: x0, y: y0 }, [{ x: x1, y: y1 }], { lift: false, holdMs: 1100 });
+        await settle(page, 400);
+        await record(what, await freshAt(page, panel));
+        await finger.end();
+        await unfold(page, panel);
+        await page.locator('.cabinet-scene__reset').tap().catch(() => undefined);
+        await settle(page, 400);
+      }
+      const summary = { panel: panel.name, wall: wall.name, openingS, rows };
+      await testInfo.attach('turned', { body: JSON.stringify(summary), contentType: 'application/json' });
+      console.log(`TURNED ${JSON.stringify(summary)}`);
+      for (const row of rows) {
+        expect(row.yaw, `${row.what}: turned`).not.toBe(0);
+        expect(row.s, `${row.what}: px per mm`).toBeLessThanOrEqual(openingS);
+        expect(row.vp, `${row.what}: scene layers re-culled, viewports of pixels`).toBeLessThanOrEqual(3);
+      }
+      // each walk kept the turn it began from and went toward the fronts; the looks pitched
+      const walks = rows.filter((r) => r.what.startsWith('walk'));
+      expect(walks.map((r) => r.yaw)).toEqual(turnedTo);
+      for (const r of walks.filter((r) => r.what.endsWith(' 1'))) expect(r.dz, r.what).toBeLessThan(-300);
+      for (const r of rows.filter((r) => r.what.startsWith('look'))) expect(Math.abs(r.pitch), r.what).toBeGreaterThan(5);
     });
   }
 }

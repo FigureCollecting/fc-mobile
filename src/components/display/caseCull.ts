@@ -11,7 +11,7 @@
  * board); every face at the px per mm the screen shows it; and it re-culls
  * on a camera change, the margin absorbing small moves. Pure maths, no DOM.
  */
-import { project, unprojectToPlaneZ, type Camera, type Frame, type Vec3 } from './caseCamera';
+import { castRay, project, rayHitPlane, unprojectToPlaneZ, type Camera, type Frame, type Vec3 } from './caseCamera';
 import type { RoomSpan } from './caseFraming';
 import { sideOverhangMm } from './cabinetProfile';
 import type { WallLayout, WallSlot } from './packCabinets';
@@ -100,19 +100,23 @@ export function cullRect(frame: Frame, margin: number = CULL_MARGIN): Rect {
 
 /**
  * The conditions (each >= 0) for a world point to draw inside `rect`, in front of the near plane: affine in the
- * point, as the camera's frustum planes are planes.
+ * point, as the camera's frustum planes are planes. NAV-1A: a turned camera's offsets are turned first (project).
  */
-function frustum(view: CullView, rect: Rect): ((p: Vec3) => number)[] {
+export function frustum(view: CullView, rect: Rect): ((p: Vec3) => number)[] {
   const { camera, panPx } = view;
   const sin = Math.sin(camera.pitch);
   const cos = Math.cos(camera.pitch);
+  const yaw = camera.yaw;
+  const yc = Math.cos(yaw ?? 0);
+  const ys = Math.sin(yaw ?? 0);
   const f = camera.focalPx;
   const cx = camera.frame.width / 2 + panPx;
   const cy = camera.frame.height / 2;
   const parts = (p: Vec3) => {
-    const dx = p[0] - camera.x;
+    let dx = p[0] - camera.x;
     const dy = p[1] - camera.y;
-    const dz = p[2] - camera.z;
+    let dz = p[2] - camera.z;
+    if (yaw) [dx, dz] = [dx * yc + dz * ys, dz * yc - dx * ys];
     return { dx, up: dy * cos - dz * sin, depth: -dy * sin - dz * cos };
   };
   return [
@@ -156,6 +160,36 @@ export function clipConvex(poly: readonly St[], l: (s: number, t: number) => num
 }
 
 const at = (a: Vec3, u: Vec3, v: Vec3, s: number, t: number): Vec3 => [a[0] + s * u[0] + t * v[0], a[1] + s * u[1] + t * v[1], a[2] + s * u[2] + t * v[2]];
+
+/** NAV-1A: the part of the flat face a + s u + t v that draws inside `rect` in front of the near plane, as world points (its corners); none when nothing does. */
+export function faceInView(view: CullView, a: Vec3, u: Vec3, v: Vec3, rect: Rect): Vec3[] {
+  let poly: St[] = [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1],
+  ];
+  for (const plane of frustum(view, rect)) {
+    const l0 = plane(a);
+    const ls = plane(at(a, u, v, 1, 0)) - l0;
+    const lt = plane(at(a, u, v, 0, 1)) - l0;
+    poly = clipConvex(poly, (s, t) => l0 + s * ls + t * lt);
+    if (poly.length === 0) return [];
+  }
+  return poly.map(([s, t]) => at(a, u, v, s, t));
+}
+
+/** The six faces of the box x0..x1, y0..y1, z0..z1, each a corner and its two sides. */
+export function boxFaces(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number): [Vec3, Vec3, Vec3][] {
+  return [
+    [[x0, y0, z1], [x1 - x0, 0, 0], [0, y1 - y0, 0]],
+    [[x0, y0, z0], [x1 - x0, 0, 0], [0, y1 - y0, 0]],
+    [[x0, y0, z0], [0, 0, z1 - z0], [0, y1 - y0, 0]],
+    [[x1, y0, z0], [0, 0, z1 - z0], [0, y1 - y0, 0]],
+    [[x0, y1, z0], [x1 - x0, 0, 0], [0, 0, z1 - z0]],
+    [[x0, y0, z0], [x1 - x0, 0, 0], [0, 0, z1 - z0]],
+  ];
+}
 
 /**
  * The part of the flat face a + s u + t v that draws inside `rect` in front of the near plane: the face cut by
@@ -251,20 +285,62 @@ export function stickyView(previous: CullView | null, next: CullView, share: num
   return Math.abs(moved) < share * b.frame.width ? previous : next;
 }
 
+/** A turned camera's x reach when texelScale is given none: far past any wall. */
+const REACH_MM = 1e6;
+
 /**
  * The px per mm the faces are drawn at: what the screen shows at the nearest point of `span` (the cabinets'
  * room: floor to headroom, back to the front of their feet), rounded up to a quarter octave so a camera
  * walking the wall keeps it and nothing is drawn coarser than it shows; at most 1 (the world's own mm), at
- * least 1/64.
+ * least 1/64. NAV-1A: a turned camera sees the room nearer at one edge than at the other, so its nearest point
+ * is the nearest the frame and its margin show of the room over `xs` (the wall's reach; not clamped: the figures'
+ * own budget bounds what that costs, rulings S3); none shown, the coarsest.
  */
-export function texelScale(camera: Camera, span: RoomSpan): number {
+export function texelScale(camera: Camera, span: RoomSpan, xs?: readonly [number, number]): number {
   const sin = Math.sin(camera.pitch);
   const cos = Math.cos(camera.pitch);
-  const depths = [span.y0, span.y1].flatMap((y) => [span.z0, span.z1].map((z) => (camera.y - y) * sin + (camera.z - z) * cos));
+  const depths = camera.yaw
+    ? seenDepths(camera, span, xs ?? [camera.x - REACH_MM, camera.x + REACH_MM])
+    : [span.y0, span.y1].flatMap((y) => [span.z0, span.z1].map((z) => (camera.y - y) * sin + (camera.z - z) * cos));
+  if (depths.length === 0) return TEXEL_SCALE_MIN;
   const nearest = Math.max(NEAR_MM, Math.min(...depths));
   const shown = camera.focalPx / nearest;
   if (shown >= 1) return 1;
   return Math.max(TEXEL_SCALE_MIN, 2 ** (Math.ceil(4 * Math.log2(shown)) / 4));
+}
+
+/** The depths of the corners of what the frame and its margin show of the room's box over `xs`. */
+function seenDepths(camera: Camera, span: RoomSpan, xs: readonly [number, number]): number[] {
+  const view = { camera, panPx: 0 };
+  const rect = cullRect(camera.frame);
+  return boxFaces(xs[0], xs[1], span.y0, span.y1, span.z0, span.z1).flatMap(([a, u, v]) => faceInView(view, a, u, v, rect).map((p) => project(camera, p).depth));
+}
+
+/**
+ * NAV-1A, the Free camera's re-cull (rulings S3, spec 6.9): the last cull while each corner of the new frame, cast to
+ * the fronts' plane (or the floor where it misses them), still draws in the old picture inside its cull rect less
+ * `share` of the frame (so the margin still covers the new frame); else the new one. A new lens or frame, or a corner
+ * ray that meets neither plane, re-culls.
+ */
+export function stickyPose(previous: CullView | null, next: CullView, share: number = RECULL_SHARE): CullView {
+  if (previous === null) return next;
+  const a = previous.camera;
+  const b = next.camera;
+  if (a.focalPx !== b.focalPx || a.frame.width !== b.frame.width || a.frame.height !== b.frame.height) return next;
+  const keep = cullRect(a.frame, CULL_MARGIN - share);
+  for (const [sx, sy] of [
+    [0, 0],
+    [b.frame.width, 0],
+    [0, b.frame.height],
+    [b.frame.width, b.frame.height],
+  ]) {
+    const ray = castRay(b, sx, sy);
+    const hit = rayHitPlane(ray, 'z', 0) ?? rayHitPlane(ray, 'y', 0);
+    if (hit === null) return next;
+    const q = project(a, hit.at);
+    if (!(q.depth > NEAR_MM) || q.x < keep.x0 || q.x > keep.x1 || q.y < keep.y0 || q.y > keep.y1) return next;
+  }
+  return previous;
 }
 
 /** An opaque horizontal board: x0..x1 along the wall, z0..z1 back to front, its underside y0 and its top y1. */

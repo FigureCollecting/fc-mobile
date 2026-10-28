@@ -268,6 +268,7 @@ export function Collection() {
         density={density}
         caseView={casePrefs.view}
         swipe={casePrefs.swipe}
+        freeCamera={casePrefs.freeCamera}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}

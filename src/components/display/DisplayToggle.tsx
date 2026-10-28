@@ -14,6 +14,8 @@ interface DisplayToggleProps {
   caseView: CaseView;
   /** What a swipe does in the case (CAM1): pans the wall or moves the camera. */
   swipe?: SwipeMode;
+  /** NAV-1A: the case is on the Free camera trial: the same two modes are Move and Look around. */
+  freeCamera?: boolean;
   /** Nameplate overlay toggle — defaults off. */
   labels?: boolean;
   onLayout: (layout: LayoutMode) => void;
@@ -41,6 +43,11 @@ const SWIPES: readonly SwipeMode[] = ['pan', 'camera'];
 const SWIPE_LABEL: Record<SwipeMode, string> = {
   pan: 'Pan the wall',
   camera: 'Move the camera',
+};
+/** NAV-1A: in Free camera a drag moves the eye ('camera') or turns it ('pan': Look around); nothing migrates. */
+const FREE_SWIPE_LABEL: Record<SwipeMode, string> = {
+  pan: 'Look around',
+  camera: 'Move',
 };
 
 const ICON = {
@@ -126,6 +133,7 @@ export function DisplayToggle({
   density,
   caseView,
   swipe = 'camera',
+  freeCamera = false,
   labels = false,
   onLayout,
   onDensity,
@@ -135,6 +143,7 @@ export function DisplayToggle({
 }: DisplayToggleProps) {
   const [menu, setMenu] = useState<LayoutMode | 'swipe' | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const swipeLabel = freeCamera ? FREE_SWIPE_LABEL : SWIPE_LABEL;
 
   useEffect(() => {
     if (menu === null) return;
@@ -179,7 +188,7 @@ export function DisplayToggle({
     menu === 'case'
       ? CASE_VIEWS.map((v) => [v, CASE_VIEW_LABEL[v], v === caseView, () => onCaseView(v)])
       : menu === 'swipe'
-        ? SWIPES.map((m) => [m, SWIPE_LABEL[m], m === swipe, () => onSwipe?.(m)])
+        ? SWIPES.map((m) => [m, swipeLabel[m], m === swipe, () => onSwipe?.(m)])
         : DENSITIES.map((d) => [d, DENSITY_LABEL[d], d === density, () => onDensity(d)]);
   const menuName = menu === 'case' ? 'Case views' : menu === 'swipe' ? 'Swipe modes' : 'Tiles views';
 
@@ -189,7 +198,7 @@ export function DisplayToggle({
         <button
           class={`display-toggle__swipe ${menu === 'swipe' ? 'display-toggle__swipe--open' : ''}`}
           type="button"
-          aria-label={`Swipe, ${SWIPE_LABEL[swipe]}`}
+          aria-label={`Swipe, ${swipeLabel[swipe]}`}
           aria-haspopup="menu"
           aria-expanded={menu === 'swipe'}
           onClick={() => {

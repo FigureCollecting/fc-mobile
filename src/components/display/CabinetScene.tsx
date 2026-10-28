@@ -817,15 +817,20 @@ interface PackBasis {
 }
 
 
+/** The host's frame (the fallback until it is measured), and whether it has been measured yet. */
 function useFrame(ref: { current: HTMLElement | null }, fallback: { width: number; height: number }) {
   const [frame, setFrame] = useState(fallback);
+  const [measured, setMeasured] = useState(false);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const measure = () => {
       const width = el.clientWidth;
       const height = el.clientHeight;
-      if (width > 0 && height > 0) setFrame((f) => (f.width === width && f.height === height ? f : { width, height }));
+      if (width > 0 && height > 0) {
+        setFrame((f) => (f.width === width && f.height === height ? f : { width, height }));
+        setMeasured(true);
+      }
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -836,7 +841,7 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
       window.removeEventListener('resize', measure);
     };
   }, [ref]);
-  return frame;
+  return { frame, measured };
 }
 
 /**
@@ -1000,7 +1005,7 @@ export function CabinetScene({
   onUnplaced,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const frame = useFrame(hostRef, frameFallback);
+  const { frame, measured: frameMeasured } = useFrame(hostRef, frameFallback);
   const ceilingMm = prefs.ceilingMm;
   // NAV-1A (rulings R0.2): the Free camera trial; off, every line below runs as it did
   const free = prefs.freeCamera === true;
@@ -1187,7 +1192,8 @@ export function CabinetScene({
   // NAV-1A: in Free camera the camera is the pose (on the framing's lens and frame); the pager pages from what its frame
   // centre looks at (rulings S7)
   const camera = free ? fc.camera(base.camera) : shown.framing.camera;
-  if (free && laidOut && fc.held() === null) pinnedAt.current = { width: frame.width, height: frame.height, camera: base.camera };
+  // pinned from the host's first measured size on: the fallback frame a wall laid out on before it is not a fold's
+  if (free && laidOut && frameMeasured && fc.held() === null) pinnedAt.current = { width: frame.width, height: frame.height, camera: base.camera };
   const centre = free ? centreHit(camera, wall) : undefined;
   // the wall view pages from what the settled picture centres on, after a press, a walk or a pan (close-out 4, ruling 32)
   const still = panFraming(walked, clampPan(pan));

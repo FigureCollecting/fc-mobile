@@ -400,6 +400,29 @@ describe('a fold or an unfold keeps the pose (spec 6.6)', () => {
       Object.defineProperty(proto, 'clientHeight', h!);
     }
   });
+
+  it('a wall laid out before the host is measured opens on the measured frame\'s framing, no pose held (no Reset)', () => {
+    // the framed fixtures lay out at once, on the fallback frame; the host's first measured size is not a fold
+    const measured = { width: 870, height: 475 };
+    const { unmount } = scene({}, { frameFallback: measured });
+    const framing = pose();
+    unmount();
+    const proto = Element.prototype;
+    const w = Object.getOwnPropertyDescriptor(proto, 'clientWidth');
+    const h = Object.getOwnPropertyDescriptor(proto, 'clientHeight');
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.classList.contains('cabinet-scene') ? measured.width : 0; } });
+    Object.defineProperty(proto, 'clientHeight', { configurable: true, get(this: HTMLElement) { return this.classList.contains('cabinet-scene') ? measured.height : 0; } });
+    try {
+      scene();
+      tick();
+      expect(cam().width).toBe(870);
+      expect(pose()).toEqual(framing);
+      expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
+    } finally {
+      Object.defineProperty(proto, 'clientWidth', w!);
+      Object.defineProperty(proto, 'clientHeight', h!);
+    }
+  });
 });
 
 describe('Go to (CARD-VIEW-1) in Free camera', () => {

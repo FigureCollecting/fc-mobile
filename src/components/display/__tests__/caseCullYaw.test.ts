@@ -193,6 +193,7 @@ describe('freeTexelScale (NAV-1A a, Ross 10-28): turned, the scene holds the px 
 describe('stickyPose (rulings S3, spec 6.9): keep the last cull while the new frame\'s corners still land well inside it', () => {
   const base = frameCase({ frame: OPEN, wall: WALL, headroomMm: WALL.cabinets.map(() => 300), view: 'wall', focus: 20, shelf: 0, level: true }).camera;
   const view = viewOf(base);
+  const up0 = (): Camera => ({ ...base, pitch: -44 * DEG, z: -300 });
 
   it('none culled yet: the new one; the same camera: the old one', () => {
     expect(stickyPose(null, view)).toBe(view);
@@ -209,8 +210,22 @@ describe('stickyPose (rulings S3, spec 6.9): keep the last cull while the new fr
   });
 
   it('a corner ray that meets neither the fronts nor the floor (past the wall\'s end, behind its fronts, looking up): re-cull', () => {
-    const up = viewOf({ ...base, pitch: -44 * DEG, z: -300, x: WALL.rightMm + 3000 });
+    const up = viewOf({ ...up0(), x: WALL.rightMm + 3000 });
     expect(stickyPose(up, viewOf({ ...up.camera, x: up.camera.x + 1 }))).not.toBe(up);
+  });
+
+  it('the same camera there keeps it: a render at a pose no corner ray finds the fronts from never asks for another', () => {
+    // past the wall's end and behind the fronts' line, turned along it (a turned walk got there): the top corners meet
+    // neither the fronts' plane (behind the eye) nor the floor
+    const along = viewOf({ ...base, x: WALL.leftMm - 2000, z: -145, yaw: 35.6 * DEG });
+    const up = viewOf({ ...up0(), x: WALL.rightMm + 3000 });
+    for (const v of [along, up]) {
+      expect(stickyPose(v, viewOf({ ...v.camera }))).toBe(v);
+      expect(stickyPose(v, viewOf({ ...v.camera, x: v.camera.x + 1 }))).not.toBe(v);
+    }
+    // a yaw left out is a yaw of 0
+    const level0 = viewOf({ ...along.camera, yaw: 0 });
+    expect(stickyPose(level0, viewOf({ ...along.camera, yaw: undefined }))).toBe(level0);
   });
 
   it('a 20 deg look in 0.5 deg steps re-culls a handful of times, not at every step', () => {

@@ -337,6 +337,8 @@ export function stickyPose(previous: CullView | null, next: CullView, share: num
   const a = previous.camera;
   const b = next.camera;
   if (a.focalPx !== b.focalPx || a.frame.width !== b.frame.width || a.frame.height !== b.frame.height) return next;
+  // the same pose keeps it, wherever it stands (a render there never asks for another: no loop where no corner meets a plane)
+  if (a.x === b.x && a.y === b.y && a.z === b.z && (a.yaw ?? 0) === (b.yaw ?? 0) && a.pitch === b.pitch) return previous;
   const keep = cullRect(a.frame, CULL_MARGIN - share);
   for (const [sx, sy] of [
     [0, 0],

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { IKEA_KLINGSBO } from '../cabinetPresets';
-import { castRay, lensFocalPx, project, rayHitPlane, type Camera, type Vec3 } from '../caseCamera';
+import { castRay, lensFocalPx, project, rayHitPlane, type Camera } from '../caseCamera';
 import { frameCase } from '../caseFraming';
 import { wallLayout } from '../packCabinets';
 import {

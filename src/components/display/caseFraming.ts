@@ -41,11 +41,13 @@ import { HEADROOM_MIN_MM, sideOverhangMm, CEILING_DEFAULT_MM, type CabinetProfil
 import {
   IN_MM,
   boxCorners,
+  castRay,
   fitDistance,
   frameMargins,
   lensFocalPx,
   pitchToward,
   project,
+  rayHitPlane,
   startCameraY,
   unprojectToPlaneZ,
   type Camera,
@@ -54,7 +56,7 @@ import {
 } from './caseCamera';
 import { surfaceSlots, type WallLayout, type WallSlot } from './packCabinets';
 import type { CaseView } from './casePrefs';
-import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, NEAR_MM, clipConvex } from './caseCull';
+import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, NEAR_MM, boxFaces, clipConvex, cullRect, faceInView } from './caseCull';
 
 /** TOP1 (Ross 10-18): the most the top step shows above a top surface. Ross gave 72 to 96 in; this is the one value to tune. */
 export const TOP_BAND_MAX_MM = 84 * IN_MM;
@@ -77,6 +79,8 @@ export interface FramingInput {
   readonly shelf: number;
   readonly ceilingMm?: number;
   readonly lensMm?: number;
+  /** NAV-1A (rulings R0.3): Free camera's openings are level: the wall view stands at the wall's half height, not tilted down at it. */
+  readonly level?: boolean;
 }
 
 export interface Framing {
@@ -131,6 +135,12 @@ export function roomSpan(wall: WallLayout, headroomMm: readonly number[]): RoomS
  * all along the wall. null when the frame shows none of it.
  */
 export function seenDepthsMm(camera: Camera, room: RoomSpan): [number, number] | null {
+  if (camera.yaw) {
+    const seen = roomInView(camera, room);
+    if (seen.length === 0) return null;
+    const depths = seen.map((p) => project(camera, p).depth);
+    return [Math.min(...depths), Math.max(...depths)];
+  }
   const sin = Math.sin(camera.pitch);
   const cos = Math.cos(camera.pitch);
   const f = camera.focalPx;
@@ -155,11 +165,39 @@ export function seenDepthsMm(camera: Camera, room: RoomSpan): [number, number] |
   return [Math.min(...depths), Math.max(...depths)];
 }
 
+/** How far along the wall either way a turned camera's view of the room is followed: past it, the stretch is unbounded. */
+const REACH_MM = 1e6;
+
+/**
+ * NAV-1A: what a turned camera's frame shows of the room (its box along the wall, REACH_MM either way of the camera; a
+ * front of no depth is one face): the world corners of each face's part in the frame. A turned camera sees the room
+ * nearer at one edge of the frame than at the other, so its depths and its stretch depend on x.
+ */
+function roomInView(camera: Camera, room: RoomSpan): Vec3[] {
+  const view = { camera, panPx: 0 };
+  const rect = cullRect(camera.frame, 0);
+  const faces = boxFaces(camera.x - REACH_MM, camera.x + REACH_MM, room.y0, room.y1, room.z0, room.z1).filter(([, u, v]) => room.z1 > room.z0 || (u[2] === 0 && v[2] === 0));
+  return faces.flatMap(([a, u, v]) => faceInView(view, a, u, v, rect));
+}
+
+/** The world x a turned camera's frame shows the room between; [-Infinity, Infinity] when it runs to the reach, null when none. */
+function reachOf(camera: Camera, room: RoomSpan): [number, number] | null {
+  const xs = roomInView(camera, room).map((p) => p[0]);
+  if (xs.length === 0) return null;
+  const far = (x: number) => Math.abs(x - camera.x) >= REACH_MM * (1 - 1e-9);
+  return [Math.min(...xs), Math.max(...xs)].map((x) => (far(x) ? Math.sign(x - camera.x) * Infinity : x)) as [number, number];
+}
+
 /**
  * How long a stretch of the wall (mm) the frame (unslid: a slide is capped by capSlidePx) shows any of the room
- * along: at depth d it spans d w / f, over the depths it sees. 0 when it sees none of the room.
+ * along: at depth d it spans d w / f, over the depths it sees. 0 when it sees none of the room. NAV-1A: turned, the
+ * x extent of what it shows (Infinity when that runs out along the wall).
  */
 export function frameSpanMm(camera: Camera, room: RoomSpan): number {
+  if (camera.yaw) {
+    const reach = reachOf(camera, room);
+    return reach === null ? 0 : reach[1] - reach[0];
+  }
   const seen = seenDepthsMm(camera, room);
   if (seen === null) return 0;
   return (camera.frame.width * Math.max(seen[0], seen[1])) / camera.focalPx;
@@ -178,6 +216,44 @@ export function capSpanMm(wall: WallLayout, cap: number = MAX_DRAWN_CABINETS): n
   let span = Infinity;
   for (let i = 0; i + cap < boxes.length; i++) span = Math.min(span, boxes[i + cap].x0 - boxes[i].x1);
   return span - CAP_SLACK_MM;
+}
+
+/** The cabinets' fronts: their plane (z = 0) from the floor to the highest headroom. */
+export function frontsOf(wall: WallLayout, headroomMm: readonly number[]): RoomSpan {
+  const room = roomSpan(wall, headroomMm);
+  return { y0: room.y0, y1: room.y1, z0: 0, z1: 0 };
+}
+
+/**
+ * NAV-1A (rulings S2): the drawn-cabinet cap that follows the frame: the least from `from` (the framing's drawCap) whose
+ * capSpanMm covers the stretch of the fronts the camera, turned as it is, shows (frameSpanMm), at most
+ * DRAWN_CABINETS_LIMIT. Unturned at the framing it is `from`: the same cap, the same memory as the old path.
+ */
+export function frameCap(camera: Camera, wall: WallLayout, fronts: RoomSpan, from: number): number {
+  const stretch = frameSpanMm(camera, fronts);
+  let cap = from;
+  while (cap < DRAWN_CABINETS_LIMIT && capSpanMm(wall, cap) < stretch) cap++;
+  return cap;
+}
+
+/**
+ * NAV-1A (rulings S2), the Classic yaw cap: the largest turn either way at which the stretch of the fronts the camera
+ * (pitch and all) shows stays within capSpanMm(wall, DRAWN_CABINETS_LIMIT), by bisection; a hole past the drawn
+ * cabinets can then never show. 0 where even unturned it shows more; a quarter turn on a wall the limit draws whole.
+ */
+export function yawCapRad(camera: Camera, wall: WallLayout, fronts: RoomSpan): number {
+  const limit = capSpanMm(wall, DRAWN_CABINETS_LIMIT);
+  if (limit === Infinity) return Math.PI / 2;
+  const fits = (yaw: number) => frameSpanMm({ ...camera, yaw }, fronts) <= limit;
+  if (!fits(0)) return 0;
+  let lo = 0;
+  let hi = Math.PI / 2;
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /** What every framing of one wall shares: the cabinets' fronts (floor to the highest headroom), the most cabinets drawn, and the longest stretch of their fronts a frame may show. */
@@ -249,10 +325,11 @@ interface WallCamera {
  * at the lowest the frame shows; raised, the frame shows lower fronts, down to where its bottom row meets the
  * fronts' plane. So: the depth there, never less than the camera's own distance (a level camera).
  */
-function deepestFrontMm(camera: Camera): number {
+export function deepestFrontMm(camera: Camera): number {
   const bottom = unprojectToPlaneZ(camera, camera.frame.width / 2, camera.frame.height, 0);
   const deepest = bottom === null ? Infinity : project(camera, bottom).depth;
-  return Math.max(camera.z * Math.cos(camera.pitch), deepest);
+  // NAV-1A: turned, the fronts straight ahead lie farther along the axis by 1 / cos(yaw)
+  return Math.max(camera.yaw ? (camera.z * Math.cos(camera.pitch)) / Math.cos(camera.yaw) : camera.z * Math.cos(camera.pitch), deepest);
 }
 
 /**
@@ -290,7 +367,8 @@ function capFor(wall: WallLayout, needs: number): number {
 function fullHeightFrame(input: FramingInput): { camera: Camera; lookY: number; needs: number } {
   const top = wallTopMm(input);
   const lookY = top / 2;
-  const camY = startCameraY(lookY);
+  // NAV-1A (rulings R0.3): level at the wall's half height in Free camera; the CC15 start height, tilted at it, otherwise
+  const camY = input.level ? lookY : startCameraY(lookY);
   let distance = 0;
   const fitted = new Set<string>();
   for (const slot of input.wall.cabinets) {
@@ -303,13 +381,13 @@ function fullHeightFrame(input: FramingInput): { camera: Camera; lookY: number; 
       ...boxCorners(b.x0, b.x1, 0, top, b.z0, b.z1),
       [slot.centerMm, 0, b.z1 + FLOOR_STRIP_MM] as Vec3,
     ];
-    distance = Math.max(distance, fitDistance({ frame: input.frame, camY, look: [slot.centerMm, lookY, 0], tilt: true, corners, lensMm: input.lensMm }).distance);
+    distance = Math.max(distance, fitDistance({ frame: input.frame, camY, look: [slot.centerMm, lookY, 0], tilt: !input.level, corners, lensMm: input.lensMm }).distance);
   }
   const camera: Camera = {
     x: 0,
     y: camY,
     z: distance,
-    pitch: pitchToward(camY, distance, lookY, 0),
+    pitch: input.level ? 0 : pitchToward(camY, distance, lookY, 0),
     focalPx: lensFocalPx(input.frame, input.lensMm),
     frame: input.frame,
   };
@@ -520,9 +598,34 @@ export function frameCentreX(framing: Framing, panPx = 0): number {
  * frame centres on, wherever a press opened, a walk settled or a pan slid the picture; so Next opens a page farther
  * along than the picture stands and Prev one nearer, never where it already is or back past it.
  */
-export function pageInView(pages: readonly (readonly number[])[], wall: WallLayout, framing: Framing, panPx = 0): number {
-  const at = nearestCabinet(wall, frameCentreX(framing, panPx));
+export function pageInView(pages: readonly (readonly number[])[], wall: WallLayout, framing: Framing, panPx = 0, centre?: CentreHit): number {
+  const at = centre?.cabinet ?? nearestCabinet(wall, frameCentreX(framing, panPx));
   return pages.findIndex((p) => p.includes(at));
+}
+
+/** NAV-1A (rulings S7): the cabinet the frame centre looks at, and where on the wall it does. */
+export interface CentreHit {
+  readonly cabinet: number;
+  readonly x: number;
+}
+
+/**
+ * NAV-1A (rulings S7): what the frame centre looks at: the cabinet its ray meets on the fronts' plane (between two, or
+ * past the wall's end, the nearest); a ray that never meets that plane in front of the eye (behind the fronts past the
+ * wall's end), the cabinet nearest the eye. Free camera's focus after any move or look: the arrows, Reset and the pager
+ * go on from where you look, not from where you stand.
+ */
+export function centreHit(camera: Camera, wall: WallLayout): CentreHit {
+  const hit = rayHitPlane(castRay(camera, camera.frame.width / 2, camera.frame.height / 2), 'z', 0);
+  if (hit === null) return { cabinet: nearestCabinet(wall, camera.x), x: camera.x };
+  const x = hit.at[0];
+  const on = wall.cabinets.findIndex((c) => x >= c.leftMm && x <= c.rightMm);
+  return { cabinet: on >= 0 ? on : nearestCabinet(wall, x), x };
+}
+
+/** NAV-1A (rulings S7): the cabinet the frame centre looks at (centreHit). */
+export function centreCabinet(camera: Camera, wall: WallLayout): number {
+  return centreHit(camera, wall).cabinet;
 }
 
 /** PAGER-END: how close (mm) the picture's centre may stand to the camera x a page opens at and count as there. */
@@ -545,9 +648,10 @@ export function pagerReach(
   framing: Framing,
   panPx: number,
   ends: { readonly first: number; readonly last: number },
+  centre?: CentreHit,
 ): { readonly prev: boolean; readonly next: boolean } {
-  const at = pageInView(pages, wall, framing, panPx);
-  const x = frameCentreX(framing, panPx);
+  const at = pageInView(pages, wall, framing, panPx, centre);
+  const x = centre?.x ?? frameCentreX(framing, panPx);
   return { prev: at > 0 || x > ends.first + PAGE_AT_MM, next: at + 1 < pages.length || x < ends.last - PAGE_AT_MM };
 }
 
@@ -841,6 +945,11 @@ export interface RoomSpan {
  * hangs past a cabinet's box (pictures' clear margins, plates, shadows).
  */
 export function wallReachMm(camera: Camera, panPx: number, room: RoomSpan, marginMm: number): [number, number] {
+  if (camera.yaw) {
+    // NAV-1A: turned (and never slid), the x extent of what the frame shows of the room
+    const reach = reachOf(camera, room) ?? [camera.x, camera.x];
+    return [reach[0] - marginMm, reach[1] + marginMm];
+  }
   const sin = Math.sin(camera.pitch);
   const cos = Math.cos(camera.pitch);
   const depths = [room.y0, room.y1].flatMap((y) => [room.z0, room.z1].map((z) => (camera.y - y) * sin + (camera.z - z) * cos));

@@ -102,8 +102,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   /** The pose held between gestures; null: the framing's (re-based on a new view, wall pattern or filter, and by the arrows). */
   const held = useRef<Pose | null>(null);
   const gesture = useRef<Gesture | null>(null);
-  /** A look let go past its soft limit easing back (spec 1.5); t0 is its first frame's time (null until that frame). */
-  const spring = useRef<{ from: Pose; to: Pose; t0: number | null } | null>(null);
+  /** A look let go past its soft limit easing back (spec 1.5) over SPRING_MS from t0, the lift (a late first frame catches up). */
+  const spring = useRef<{ from: Pose; to: Pose; t0: number } | null>(null);
   const raf = useRef<number | undefined>(undefined);
 
   const cameraOf = (pose: Pose | null): Camera => (pose === null ? scene.current.base : withPose(scene.current.base, pose));
@@ -113,7 +113,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (g?.mode) return g.shown;
     const sp = spring.current;
     if (sp) {
-      const t = now === undefined || sp.t0 === null ? 0 : now - sp.t0;
+      const t = (now ?? performance.now()) - sp.t0;
       return { ...sp.to, yaw: springBack(sp.from.yaw, sp.to.yaw, t), pitch: springBack(sp.from.pitch, sp.to.pitch, t) };
     }
     return held.current;
@@ -145,8 +145,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const loop = (now: number) => {
     raf.current = undefined;
     const sp = spring.current;
-    if (sp && sp.t0 === null) sp.t0 = now;
-    if (sp && !gesture.current?.mode && now - (sp.t0 as number) >= SPRING_MS) {
+    if (sp && !gesture.current?.mode && now - sp.t0 >= SPRING_MS) {
       spring.current = null;
       write(cameraOf(held.current));
       onRender();
@@ -299,7 +298,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     held.current = g.committed;
     const off = g.shown.yaw !== g.committed.yaw || g.shown.pitch !== g.committed.pitch;
     if (off && !scene.current.reducedMotion) {
-      spring.current = { from: g.shown, to: g.committed, t0: null };
+      spring.current = { from: g.shown, to: g.committed, t0: performance.now() };
       write(cameraOf(g.shown));
       schedule();
     } else write(cameraOf(g.committed));

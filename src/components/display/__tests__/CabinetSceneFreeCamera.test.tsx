@@ -283,6 +283,22 @@ describe('the realism cone (rulings S8)', () => {
     expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 1);
   });
 
+  it('the ease back runs on the clock from the lift: a first frame 220 ms late lands on the soft limit', () => {
+    scene();
+    const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
+    drag({ x: 440, y: 200 }, { x: 0, y: 200 }, { button: 2, steps: 20, lift: false });
+    const queued: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => queued.push(cb));
+    up(1, { x: 0, y: 200 });
+    // a busy phone: no frame for 220 ms after the finger lifts
+    vi.advanceTimersByTime(220);
+    raf.mockRestore();
+    act(() => {
+      for (const cb of queued.splice(0)) cb(performance.now());
+    });
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+  });
+
   it('under reduced motion the shown pose is the committed one at once', () => {
     const real = window.matchMedia;
     window.matchMedia = ((q: string) => ({ ...real(q), matches: q.includes('prefers-reduced-motion: reduce') })) as typeof window.matchMedia;

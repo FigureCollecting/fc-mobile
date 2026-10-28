@@ -442,12 +442,16 @@ describe('Go to (CARD-VIEW-1) in Free camera', () => {
 // whose projected scene would still pass the 3-viewport ceiling stops at the last yaw that fits, eased like the cone.
 type Px = { figures: number; shadows: number; mesh: number; room: number; faces: number };
 type Projected = { vp: number; drawn: number; figures: number; px: Px };
+type Side = { hard: number; fit: number | null; atHard: Projected | null };
 type Budget = {
   ceiling: number;
-  /** Published where (b) asked it (the hard limit did not fit): the cost where the look starts. */
+  /** The cost where the look starts (asked first each way it can turn). */
   start: (Projected & { yaw: number }) | null;
-  left: Projected & { hard: number; fit: number | null };
-  right: Projected & { hard: number; fit: number | null };
+  /** Each way: its hard limit, the cost there where the search got that far, and the last yaw that fits where (b) engaged. */
+  left: Side;
+  right: Side;
+  /** Every yaw asked (deg) with its cost (viewports), in the order asked. */
+  asked: [number, number][];
   ms: number;
 };
 const total = (px: Px) => px.figures + px.shadows + px.mesh + px.room + px.faces;
@@ -517,6 +521,40 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
   });
 
+  it('(a) a move or a pitch made while turned never draws sharper than where the turn left yaw 0; turned straight, today\'s', () => {
+    scene();
+    const opening = pxPerMm();
+    lookRight();
+    up(1, { x: 0, y: 200 });
+    tick(500);
+    const rest = pose();
+    expect(rest.yaw).toBeGreaterThan(0);
+    // turned right, a finger moving right walks the eye toward the fronts
+    let nearest = rest.z;
+    for (let i = 0; i < 4; i++) {
+      drag({ x: 60, y: 300 }, { x: 420, y: 300 });
+      tick(100);
+      nearest = Math.min(nearest, pose().z);
+      expect(pose().yaw).toBe(rest.yaw);
+      expect(pxPerMm(), `move ${i + 1} while turned`).toBeLessThanOrEqual(opening);
+    }
+    expect(nearest).toBeLessThan(rest.z - 300);
+    // a diagonal look from there (turned on and pitched): still never past it
+    drag({ x: 300, y: 100 }, { x: 200, y: 400 }, { button: 2 });
+    tick(500);
+    expect(Math.abs(pose().pitch)).toBeGreaterThan(5 * DEG);
+    expect(pxPerMm(), 'pitched while turned').toBeLessThanOrEqual(opening);
+    // and from the opening, one diagonal look (right and up together)
+    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+    tick();
+    expect(pxPerMm()).toBe(opening);
+    drag({ x: 440, y: 400 }, { x: 0, y: 0 }, { button: 2, steps: 12 });
+    tick(500);
+    expect(pose().yaw).toBeGreaterThan(0);
+    expect(Math.abs(pose().pitch)).toBeGreaterThan(5 * DEG);
+    expect(pxPerMm(), 'one diagonal look').toBeLessThanOrEqual(opening);
+  });
+
   it('(b) never engages where the turn to the hard limit fits: the full cone, data-yaw-budget with no fit either way', () => {
     scene();
     const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
@@ -525,9 +563,12 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect(b.ceiling).toBe(SCENE_CEILING_VIEWPORTS);
     expect(b.right.fit).toBeNull();
     expect(b.left.fit).toBeNull();
-    // nothing past the two hard limits was projected for it
-    expect(b.start).toBeNull();
-    expect(b.right.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+    // the start, then every probe out to each hard limit: all of them fit
+    expect(b.start!.yaw).toBe(0);
+    expect(b.asked.length).toBeGreaterThanOrEqual(2 * Math.ceil(cone.hard / 5) + 1);
+    for (const [yaw, vp] of b.asked) expect(vp, `${yaw} deg`).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+    expect(b.right.atHard!.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+    expect(b.left.atHard!.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
     expect(b.right.hard).toBeCloseTo(cone.hard, 4);
     expect(most / DEG).toBeGreaterThan(cone.soft);
     up(1, { x: 0, y: 200 });
@@ -536,8 +577,6 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
   });
 
   it('the projection at the pose a look starts from is what the scene draws there, kind by kind, never under it', () => {
-    // a small screen, so the hard limits do not fit and (b) projects the start (the px are the same on any screen)
-    onTestFinished(screenOf(150, 150));
     scene({}, { labels: true });
     const dom = domPx();
     const drawn = Number(host().dataset.drawnCabinets);
@@ -558,21 +597,87 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect(start.px.room).toBe(dom.room);
     expect(start.px.faces).toBe(CABINET_FACES_PX * drawn);
     expect(start.px.faces).toBeGreaterThanOrEqual(dom.faces);
+    // over the screen's px (the window's), the controls added
+    expect(start.vp).toBeCloseTo(total(start.px) / (window.innerWidth * window.innerHeight) + CONTROLS_VIEWPORTS, 4);
     up(1, { x: 280, y: 200 });
   });
 
+  it('in every view the projection at the start draws the cabinets and figures the scene draws (the cap is the wall\'s, CF1)', () => {
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      const { unmount } = scene({ view }, { figures: WIDE });
+      const drawn = [Number(host().dataset.drawnCabinets), Number(host().dataset.drawnFigures)];
+      down(1, { x: 300, y: 200 }, { button: 2 });
+      move(1, { x: 290, y: 200 });
+      const start = budget().start!;
+      expect([start.drawn, start.figures], view).toEqual(drawn);
+      up(1, { x: 290, y: 200 });
+      unmount();
+    }
+  });
+
+  it('a turned start is projected as the scene draws it there; a turn\'s projection counts the cabinets and figures it brings in', () => {
+    scene({}, { figures: WIDE });
+    const opening = Number(host().dataset.drawnFigures);
+    lookRight();
+    const first = budget();
+    up(1, { x: 0, y: 200 });
+    tick(500);
+    // resting turned right at the soft limit: drawn afresh there, more of the long wall than the opening drew
+    const restRight = { cabs: Number(host().dataset.drawnCabinets), figures: Number(host().dataset.drawnFigures) };
+    expect(pose().yaw).toBeGreaterThan(0);
+    expect(restRight.figures).toBeGreaterThan(opening);
+    // the turn to the hard limit (past that rest) was projected with the figures of cabinets the opening did not draw
+    expect(first.right.atHard!.figures).toBeGreaterThanOrEqual(restRight.figures);
+    // a look from the rest projects its start as the scene draws it there: the same cabinets, the same figures
+    down(1, { x: 300, y: 200 }, { button: 2 });
+    move(1, { x: 290, y: 200 });
+    const right = budget().start!;
+    expect(right.yaw).toBeGreaterThan(0);
+    expect([right.drawn, right.figures]).toEqual([restRight.cabs, restRight.figures]);
+    up(1, { x: 290, y: 200 });
+    tick(500);
+    // walked in toward the fronts while turned (the frame spans less of them than the opening's cap): the same again
+    drag({ x: 60, y: 300 }, { x: 260, y: 300 });
+    tick(100);
+    const walkedIn = { cabs: Number(host().dataset.drawnCabinets), figures: Number(host().dataset.drawnFigures) };
+    down(1, { x: 300, y: 200 }, { button: 2 });
+    move(1, { x: 290, y: 200 });
+    const inner = budget().start!;
+    expect([inner.drawn, inner.figures]).toEqual([walkedIn.cabs, walkedIn.figures]);
+    up(1, { x: 290, y: 200 });
+    tick(500);
+    // and turned left, past the wall's start (fewer cabinets in view than the opening's cap)
+    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+    tick();
+    down(1, { x: 0, y: 200 }, { button: 2 });
+    for (let x = 10; x <= 440; x += 10) {
+      move(1, { x, y: 200 });
+      tick(16);
+    }
+    up(1, { x: 440, y: 200 });
+    tick(500);
+    expect(pose().yaw).toBeLessThan(0);
+    const restLeft = { cabs: Number(host().dataset.drawnCabinets), figures: Number(host().dataset.drawnFigures) };
+    down(1, { x: 300, y: 200 }, { button: 2 });
+    move(1, { x: 290, y: 200 });
+    const left = budget().start!;
+    expect(left.yaw).toBeLessThan(0);
+    expect([left.drawn, left.figures]).toEqual([restLeft.cabs, restLeft.figures]);
+    up(1, { x: 290, y: 200 });
+  });
+
   it('(b) engaged: past the ceiling at the hard limit, the turn stops at the last yaw that fits and eases back to the band\'s soft limit', () => {
-    // read the costs (px, the same on any screen) where the start is projected too, then size the screen so the start fits
-    // and the hard limit right does not
-    const tiny = screenOf(120, 120);
+    // read the costs (px, the same on any screen) on a screen where every yaw fits, so the search gets to the hard limit,
+    // then size the screen so the start fits and the hard limit right does not
+    const big = screenOf(4000, 4000);
     scene({}, { figures: WIDE });
     lookRight();
     const b0 = budget();
     up(1, { x: 0, y: 200 });
     cleanup();
-    tiny();
+    big();
     const startPx = total(b0.start!.px);
-    const hardPx = total(b0.right.px);
+    const hardPx = total(b0.right.atHard!.px);
     expect(hardPx).toBeGreaterThan(startPx * 1.05);
     const v = (startPx + hardPx) / 2 / (SCENE_CEILING_VIEWPORTS - CONTROLS_VIEWPORTS);
     const restore = screenOf(Math.round(Math.sqrt(v)), Math.round(Math.sqrt(v)));
@@ -582,7 +687,8 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
       const most = lookRight();
       const b = budget();
       expect(b.start!.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
-      expect(b.right.vp).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
+      // a yaw to the right past the ceiling, where the search stopped
+      expect(b.asked.some(([yaw, vp]) => yaw > 0 && vp > SCENE_CEILING_VIEWPORTS)).toBe(true);
       expect(b.right.fit).not.toBeNull();
       expect(b.right.fit!).toBeLessThan(cone.hard);
       expect(b.right.fit!).toBeGreaterThan(0);
@@ -611,6 +717,7 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
   });
 
   it('every wall pattern: a cabinet\'s faces on their grids cost at most CABINET_FACES_PX, the bound the projection takes', () => {
+    let most = 0;
     for (const pattern of WALL_PATTERNS) {
       // a frame wide enough that no face is cut: each cabinet's whole set
       const { unmount } = scene({ pattern: pattern.id }, { frameFallback: { width: 4000, height: 3000 } });
@@ -620,9 +727,81 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
         const px = Array.from(cab.querySelectorAll<HTMLElement>('.q:not(.m-mesh)')).reduce((a, el) => a + parseFloat(el.style.width) * parseFloat(el.style.height), 0);
         expect(px, `${pattern.id} cabinet ${cab.dataset.index}`).toBeGreaterThan(0);
         expect(px, `${pattern.id} cabinet ${cab.dataset.index}`).toBeLessThanOrEqual(CABINET_FACES_PX);
+        most = Math.max(most, px);
       }
       unmount();
     }
+    // and a tight bound: the costliest cabinet takes most of it
+    expect(most).toBeGreaterThan(CABINET_FACES_PX * 0.75);
+  });
+
+  it('a hold that arms Look works the cone out while the finger is still, once the ring has shown: the turn\'s first move waits on none of it', () => {
+    scene();
+    down(1, { x: 300, y: 200 });
+    tick(LOOK_HOLD_MS + 1);
+    // armed, the ring on; the cone not yet (the ring paints first)
+    expect(host().dataset.gesture).toBe('look');
+    expect(host().hasAttribute('data-yaw-budget')).toBe(false);
+    tick(40);
+    expect(budget().start!.yaw).toBe(0);
+    host().removeAttribute('data-yaw-budget');
+    move(1, { x: 280, y: 200 });
+    tick(16);
+    expect(pose().yaw).toBeGreaterThan(0);
+    expect(host().hasAttribute('data-yaw-budget')).toBe(false);
+    up(1, { x: 280, y: 200 });
+    tick(500);
+  });
+
+  it('a turn that starts before the hold\'s cone is worked out, or at once (a right drag), works it out at its first move, once', () => {
+    scene();
+    down(1, { x: 300, y: 200 });
+    tick(LOOK_HOLD_MS + 1);
+    move(1, { x: 280, y: 200 });
+    expect(budget().start!.yaw).toBe(0);
+    host().removeAttribute('data-yaw-budget');
+    tick(100);
+    expect(host().hasAttribute('data-yaw-budget')).toBe(false);
+    up(1, { x: 280, y: 200 });
+    tick(500);
+    host().removeAttribute('data-yaw-budget');
+    down(1, { x: 300, y: 200 }, { button: 2 });
+    tick(LOOK_HOLD_MS + 100);
+    expect(host().hasAttribute('data-yaw-budget')).toBe(false);
+    move(1, { x: 280, y: 200 });
+    expect(budget().start!.yaw).toBeGreaterThan(0);
+    up(1, { x: 280, y: 200 });
+  });
+
+  it('the hold\'s cone is the turn\'s only for the start and the scene it was worked out at: a render between works it out again', () => {
+    const { again } = scene();
+    down(1, { x: 300, y: 200 });
+    tick(LOOK_HOLD_MS + 40);
+    host().removeAttribute('data-yaw-budget');
+    again({}, { labels: true });
+    move(1, { x: 280, y: 200 });
+    expect(budget().start!.yaw).toBe(0);
+    up(1, { x: 280, y: 200 });
+  });
+
+  it('a hold that arms while a let-go eases back works the cone out from where the ease rests, and the turn takes it', () => {
+    window.history.replaceState(null, '', '?lookhold=100');
+    onTestFinished(() => window.history.replaceState(null, '', '/'));
+    scene();
+    lookRight();
+    up(1, { x: 0, y: 200 });
+    // pressed again at once: armed 100 ms on, the ease (200 ms) still running
+    down(1, { x: 300, y: 200 });
+    tick(100 + 40);
+    const armed = budget();
+    expect(armed.start!.yaw).toBeGreaterThan(0);
+    host().removeAttribute('data-yaw-budget');
+    move(1, { x: 290, y: 200 });
+    expect(host().hasAttribute('data-yaw-budget')).toBe(false);
+    // the turn goes on from the rest (the band past it), not from where the ease had got to
+    expect(pose().yaw / DEG).toBeGreaterThan(armed.start!.yaw);
+    expect(pose().yaw / DEG).toBeLessThan(armed.start!.yaw + 1);
+    up(1, { x: 290, y: 200 });
   });
 
   it('off: no budget published and the px per mm is today\'s', () => {

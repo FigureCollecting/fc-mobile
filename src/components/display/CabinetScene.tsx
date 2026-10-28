@@ -1250,10 +1250,10 @@ export function CabinetScene({
       ),
     [wall],
   );
-  // NAV-1A (a), Ross 10-28: turned, the Free camera's scene keeps its unturned view's px per mm (a cabinet beside the eye
-  // never sharpens it); what the turned view itself would ask (its nearest point in view, over the wall and a cabinet's
-  // reach past its ends) is published beside it
-  const s = free ? freeTexelScale(camera, span) : texelScale(camera, span);
+  // NAV-1A (a), Ross 10-28: turned, the Free camera's scene keeps the px per mm in force where the turn left yaw 0 (a
+  // cabinet beside the eye, a move or a pitch while turned never sharpens it); what the turned view itself would ask (its
+  // nearest point in view, over the wall and a cabinet's reach past its ends) is published beside it
+  const s = free ? freeTexelScale(camera, span, fc.unturned(base.camera)) : texelScale(camera, span);
   const asked = free && camera.yaw ? texelScale(camera, span, [wall.leftMm - 1000, wall.rightMm + 1000]) : null;
   // a photo slid up or down draws, in the unslid picture, the rows the slide brings into the frame
   const rect = cullRect(camera.frame);

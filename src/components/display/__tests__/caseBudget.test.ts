@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import type { Camera, Vec3 } from '../caseCamera';
 import { frameCap, frameCase, frontsOf, roomBox } from '../caseFraming';
-import { GRADIENT_GRID, cullRect, figureCap, figuresToDraw, freeTexelScale, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
+import { FIGURE_BUDGET_VIEWPORTS, GRADIENT_GRID, cullRect, figureCap, figuresToDraw, freeTexelScale, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
 import { wallLayout } from '../packCabinets';
 import {
   CABINET_FACES_PX,
@@ -83,7 +83,9 @@ describe('constants', () => {
   it('the 3-viewport ceiling (e2e/case-budget); a shadow is its 16 x 16 grid; the controls and a cabinet\'s other faces, bounds measured', () => {
     expect(SCENE_CEILING_VIEWPORTS).toBe(3);
     expect(SHADOW_PX).toBe(GRADIENT_GRID.u * GRADIENT_GRID.v);
-    expect(CONTROLS_VIEWPORTS).toBeGreaterThan(0.29);
+    // the controls: over the most measured (0.293, the cover at the hard yaw), and a tight bound (no more than 0.35)
+    expect(CONTROLS_VIEWPORTS).toBeGreaterThan(0.293);
+    expect(CONTROLS_VIEWPORTS).toBeLessThanOrEqual(0.35);
     expect(CABINET_FACES_PX).toBeGreaterThanOrEqual(80 * 16);
   });
 });
@@ -148,6 +150,33 @@ describe('sceneCost: the element px of what the cull at a pose draws', () => {
     // what the turned view would have asked for costs more
     const asked = texelScale(camera, SPAN, [WALL.leftMm - 1000, WALL.rightMm + 1000]);
     expect(asked).toBeGreaterThan(s);
+  });
+
+  it('turned after a move toward the fronts, held from where the turn left yaw 0 (a): never the moved eye\'s sharper need', () => {
+    const moved = turned(30, { z: FRAMING.camera.z - 900 });
+    expect(texelScale({ ...moved, yaw: 0 }, SPAN)).toBeGreaterThan(texelScale(FRAMING.camera, SPAN));
+    const held = sceneCost(moved, scene, figures, FRAMING.camera);
+    expect(held.s).toBe(texelScale(FRAMING.camera, SPAN));
+    // no reference known: the moved eye unturned (and so a sharper scene that costs more)
+    const free = sceneCost(moved, scene, figures);
+    expect(free.s).toBe(texelScale({ ...moved, yaw: 0 }, SPAN));
+    expect(free.mesh).toBeGreaterThan(held.mesh);
+    // the projector hands the reference on
+    expect(projector(scene)(moved, FRAMING.camera).cost).toEqual(held);
+  });
+
+  it('where the figures\' budget binds, they cost about it: an octave coarser at a time, never past it but by whole-px rounding', () => {
+    // a close eye (the finest px per mm) over a wall of large figures: at that px per mm they would cost many budgets
+    const big: BudgetFigure[] = WALL.cabinets.flatMap((slot, cab) =>
+      slot.profile.surfaces.flatMap((surface) => [0, 1, 2].map((i) => ({ cab, x0: slot.leftMm + 40 + i * 120, x1: slot.leftMm + 140 + i * 120, y0: surface.topMm, y1: surface.topMm + 200, z: -150, tapMm: 100, plate: null }))),
+    );
+    const near: Camera = { ...FRAMING.camera, z: FRAMING.camera.z - 2000 };
+    const cost = sceneCost(near, sceneOf(big), big);
+    const budget = FIGURE_BUDGET_VIEWPORTS * near.frame.width * near.frame.height;
+    expect(cost.figuresDrawn).toBeGreaterThan(20);
+    expect(cost.figuresDrawn * 100 * 200 * cost.s ** 2).toBeGreaterThan(2 * budget);
+    expect(cost.figures).toBeLessThanOrEqual(budget * 1.1);
+    expect(cost.figures).toBeGreaterThan(budget * 0.6);
   });
 
   it('a figure costs its tap box and its plate at its px per mm, each side rounded up to whole px (a layer\'s size)', () => {

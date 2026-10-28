@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import {
   ANCHOR_FALLBACK_MM,
   AXIS_UNLOCK_PX,
+  BUDGET_PROBE_STEP,
   BUDGET_YAW_STEP,
   EYE_MARGIN_MM,
   EYE_MIN_MM,
@@ -388,17 +389,44 @@ describe('the yaw budget (NAV-1A b, Ross 10-28): a turn stops at the last yaw th
     expect(budgetSide({ soft: 0.5, hard: 0.5 }, 0.3)).toEqual({ soft: 0.3, hard: 0.3 });
   });
 
-  it('budgetCone: where the turn to the hard limit fits both ways, (b) never engages: the realism cone, no side of its own', () => {
+  it('budgetCone: where every yaw it asks fits both ways, (b) never engages: the realism cone, no side of its own', () => {
     const asked: number[] = [];
     const cone = budgetCone(realism, 0, (yaw) => {
-      asked.push(yaw);
+      asked.push(yaw + 0);
       return true;
     });
     expect(cone).toEqual(realism);
     expect(cone.left).toBeUndefined();
     expect(cone.right).toBeUndefined();
-    // only the two hard limits are asked
-    expect(asked).toEqual([realism.hard, -realism.hard]);
+    // each way: the start, then a yaw every BUDGET_PROBE_STEP out to the hard limit, the hard limit last
+    const grid = [0];
+    for (let k = 1; k * BUDGET_PROBE_STEP < realism.hard; k++) grid.push(k * BUDGET_PROBE_STEP);
+    grid.push(realism.hard);
+    expect(BUDGET_PROBE_STEP).toBe(5 * DEG);
+    expect(asked).toEqual([...grid, ...grid.map((y) => -y + 0)]);
+  });
+
+  it('budgetCone: a cost that peaks partway (the hard limit fits): the side ends at the last yaw that fits before the peak', () => {
+    // the turned frame's cost rises to a peak past the ceiling between 22 and 31 deg, then falls back under it
+    const fits = (yaw: number) => yaw < 22 * DEG || yaw > 31 * DEG;
+    expect(fits(realism.hard)).toBe(true);
+    const asked: number[] = [];
+    const cone = budgetCone(realism, 0, (yaw) => {
+      asked.push(yaw);
+      return fits(yaw);
+    });
+    // the grid out to 25 deg, the first that does not fit; then halving between 20 deg (the yaw before it) and it
+    const first = asked.indexOf(5 * BUDGET_PROBE_STEP);
+    expect(first).toBe(5);
+    expect(asked.slice(0, first)).toEqual([0, 1, 2, 3, 4].map((k) => k * BUDGET_PROBE_STEP));
+    const halving = asked.slice(first + 1).filter((y) => y > 0);
+    expect(halving.length).toBeGreaterThan(0);
+    for (const y of halving) expect(y > 4 * BUDGET_PROBE_STEP && y < 5 * BUDGET_PROBE_STEP, `${y / DEG} deg`).toBe(true);
+    expect(cone.right!.hard).toBeLessThan(22 * DEG);
+    expect(cone.right!.hard).toBeGreaterThan(22 * DEG - BUDGET_YAW_STEP);
+    expect(cone.left).toBeUndefined();
+    // a peak narrower than the probe step between two of its yaws is not seen: the grid is the search's resolution
+    expect(budgetCone(realism, 0, (yaw) => yaw < 21 * DEG || yaw > 24 * DEG).right).toBeUndefined();
   });
 
   it('budgetCone: the side past the ceiling ends at the last yaw that fits (within BUDGET_YAW_STEP); the other side keeps the cone', () => {
@@ -455,8 +483,10 @@ describe('the yaw budget (NAV-1A b, Ross 10-28): a turn stops at the last yaw th
       asked.push(yaw);
       return yaw <= limit;
     });
-    expect(asked.filter((y) => y > 0 && y < realism.hard).every((y) => y > 0)).toBe(true);
+    // the right from straight ahead (0, never a yaw between the start and it); the left from the start
     expect(asked).toContain(0);
+    expect(asked.filter((y) => y > -10 * DEG && y < 0)).toEqual([]);
+    expect(asked).toContain(-10 * DEG);
   });
 
   it('turn keeps to a budgeted side: committed never past its soft limit, shown never at its hard; the other side unchanged', () => {

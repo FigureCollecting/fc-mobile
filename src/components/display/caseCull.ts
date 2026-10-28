@@ -310,13 +310,16 @@ export function texelScale(camera: Camera, span: RoomSpan, xs?: readonly [number
 }
 
 /**
- * NAV-1A (a), Ross 10-28: the px per mm the Free camera's scene is drawn at: today's (texelScale) for this eye unturned,
- * whatever its yaw. A turn never sharpens the scene, so a cabinet it brings in beside the eye cannot raise every face and
- * figure in view to its own need (things at the frame's edge near the eye may draw a little soft); back at yaw 0 it is
- * texelScale's exactly. A level MOVE leaves it the opening's (the unturned depth is the fronts' along the camera's z).
+ * NAV-1A (a), Ross 10-28: the px per mm the Free camera's scene is drawn at. Unturned (yaw 0: the framing, or turned
+ * straight anywhere), today's: texelScale at this eye. Turned, held: never above `unturned`'s, the eye where the turn left
+ * yaw 0, and lower where this eye unturned would ask less (walked back). A turn, a move or a pitch made while turned never
+ * sharpens the scene, so a cabinet beside the eye cannot raise every face and figure in view to its own need (things at
+ * the frame's edge near the eye may draw a little soft). With no `unturned`, this eye unturned.
  */
-export function freeTexelScale(camera: Camera, span: RoomSpan): number {
-  return texelScale(camera.yaw ? { ...camera, yaw: 0 } : camera, span);
+export function freeTexelScale(camera: Camera, span: RoomSpan, unturned?: Camera): number {
+  if (!camera.yaw) return texelScale(camera, span);
+  const level = texelScale({ ...camera, yaw: 0 }, span);
+  return unturned === undefined ? level : Math.min(level, texelScale(unturned, span));
 }
 
 /** The depths of the corners of what the frame and its margin show of the room's box over `xs`. */

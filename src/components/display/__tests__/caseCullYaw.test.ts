@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import { IKEA_KLINGSBO } from '../cabinetPresets';
 import { castRay, lensFocalPx, project, rayHitPlane, type Camera } from '../caseCamera';
 import { frameCase } from '../caseFraming';
+import { move, poseOf } from '../casePose';
 import { wallLayout } from '../packCabinets';
 import {
   CULL_MARGIN,
@@ -187,6 +188,28 @@ describe('freeTexelScale (NAV-1A a, Ross 10-28): turned, the scene holds the px 
     const down = { ...framing, pitch: 20 * DEG };
     expect(freeTexelScale(down, span)).toBe(texelScale(down, span));
     expect(freeTexelScale({ ...down, yaw: 30 * DEG }, span)).toBe(texelScale(down, span));
+  });
+
+  it('held from where the turn left yaw 0: a move or a pitch made while turned never raises it; one that needs less lowers it', () => {
+    const opening = texelScale(framing, span);
+    const turned = { ...framing, yaw: 30 * DEG };
+    // a 400 px move while turned 30 deg brings the eye 759 mm nearer the fronts: the level eye there would ask more
+    const p = move(poseOf(turned), 400, 0, 2000, framing.focalPx);
+    const moved = { ...turned, x: p.x, y: p.y, z: p.z };
+    expect(moved.z).toBeLessThan(framing.z - 700);
+    expect(texelScale({ ...moved, yaw: 0 }, span)).toBeGreaterThan(opening);
+    expect(freeTexelScale(moved, span, framing)).toBe(opening);
+    // a pitch either way while turned: never past the opening's, though the level eye pitched asks more one way
+    const pitched = [-40, -20, 20, 40].map((d) => ({ ...turned, pitch: d * DEG }));
+    expect(Math.max(...pitched.map((c) => texelScale({ ...c, yaw: 0 }, span)))).toBeGreaterThan(opening);
+    for (const c of pitched) expect(freeTexelScale(c, span, framing)).toBeLessThanOrEqual(opening);
+    // walked back while turned: the level view there asks less, and the scene draws at that
+    const back = { ...turned, z: framing.z + 3000 };
+    expect(texelScale({ ...back, yaw: 0 }, span)).toBeLessThan(opening);
+    expect(freeTexelScale(back, span, framing)).toBe(texelScale({ ...back, yaw: 0 }, span));
+    // back at yaw 0 (the framing, or turned straight anywhere): today's, the reference plays no part
+    expect(freeTexelScale({ ...moved, yaw: 0 }, span, framing)).toBe(texelScale({ ...moved, yaw: 0 }, span));
+    expect(freeTexelScale(framing, span, back)).toBe(opening);
   });
 });
 

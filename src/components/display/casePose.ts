@@ -74,6 +74,8 @@ export interface YawCone extends YawSide {
 
 /** NAV-1A (b): how close budgetCone finds the last yaw that fits (radians). */
 export const BUDGET_YAW_STEP = 0.25 * DEG;
+/** NAV-1A (b): how far apart the yaws budgetCone asks on its way out to the hard limit are (radians). */
+export const BUDGET_PROBE_STEP = 5 * DEG;
 
 /** Rulings S8: how far the eye may turn either way. `classicCapRad`: the drawn-cabinet cap (yawCapRad), in Classic. */
 export function yawLimits(hFovRad: number, classicCapRad?: number): { soft: number; hard: number } {
@@ -135,18 +137,26 @@ export function budgetSide(cone: YawSide, fit: number): YawSide {
 
 /**
  * NAV-1A (b), Ross 10-28: a look's yaw cone kept to the GPU budget, a safety net under the held sharpness (a). Each way,
- * where the scene at the hard limit `fits` (its projected layers within the ceiling) the side is the realism cone's and
- * no other yaw is asked; else the last yaw that fits is found by halving, from where the turn starts (straight ahead for
- * a look turned the other way) out to the hard limit, to BUDGET_YAW_STEP, and the side ends there (budgetSide). A start
- * that does not fit goes no further that way; one already past the hard limit is turn's to hold. The cost is taken to
- * rise steadily with the turn between the two.
+ * from where the turn starts (straight ahead for a look turned the other way): a start that does not fit goes no further
+ * that way; else the yaws BUDGET_PROBE_STEP apart out to the hard limit are asked in turn, and where every one fits the
+ * side is the realism cone's. At the first that does not (the cost need not rise steadily with the turn: a peak partway
+ * is found though the hard limit fits), the last yaw that fits is found by halving from the yaw before it, to
+ * BUDGET_YAW_STEP, and the side ends there (budgetSide). A peak narrower than the probe step can fall between two yaws
+ * asked. A start already past the hard limit is turn's to hold.
  */
 export function budgetCone(cone: YawSide, startYaw: number, fits: (yaw: number) => boolean): YawCone {
   const side = (sign: 1 | -1): YawSide | undefined => {
-    let lo = Math.max(0, sign * startYaw);
-    if (lo >= cone.hard || fits(sign * cone.hard)) return undefined;
-    if (!fits(sign * lo)) return budgetSide(cone, lo);
-    let hi = cone.hard;
+    const from = Math.max(0, sign * startYaw);
+    if (from >= cone.hard) return undefined;
+    if (!fits(sign * from)) return budgetSide(cone, from);
+    let lo = from;
+    let hi = from;
+    for (let k = 1; hi === from; k++) {
+      const yaw = Math.min(from + k * BUDGET_PROBE_STEP, cone.hard);
+      if (!fits(sign * yaw)) hi = yaw;
+      else if (yaw === cone.hard) return undefined;
+      else lo = yaw;
+    }
     while (hi - lo > BUDGET_YAW_STEP) {
       const mid = (lo + hi) / 2;
       if (fits(sign * mid)) lo = mid;

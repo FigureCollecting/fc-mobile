@@ -645,12 +645,36 @@ const DENSE = [
   { name: 'spike wall at the 250 cap', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed' },
 ];
 
+type YawBudget = { left: { hard: number; vp: number; fit: number | null }; right: { hard: number; vp: number; fit: number | null }; ms: number };
+type BudgetRow = {
+  yaw: number;
+  drawn: number;
+  cap: number;
+  figures: number;
+  sceneLayers: number;
+  sceneViewports: number;
+  s: number;
+  asked: number;
+  a: boolean;
+  projectedAtHard: number;
+  b: boolean;
+  fit: number | null;
+  ms: number;
+  freshViewports: number;
+  freshDrawn: number;
+  letGo: number;
+};
+
 for (const panel of FOLD8) {
   for (const wall of DENSE) {
+    // NAV-1A a+b (Ross 10-28): turned, the scene keeps the framing's px per mm (a); where its projected layers would still
+    // pass the ceiling the turn stops at the last yaw that fits (b). Each case says which acted and where the turn ended.
     test(`budget ${panel.name}, ${wall.name}: at the hard yaw both ways, scene layers <= 3 viewports, drawn <= cap every frame`, async ({ page }, testInfo) => {
       test.setTimeout(90_000);
       await openFree(page, panel, { query: wall.query });
       const opening = Number(await page.locator('.cabinet-scene').getAttribute('data-drawn-cap'));
+      const openingS = Number(await page.locator('.cabinet-scene').getAttribute('data-px-per-mm'));
+      const cone = await coneOf(page);
       await page.evaluate(() => {
         const host = document.querySelector<HTMLElement>('.cabinet-scene')!;
         const seen: [number, number][] = [];
@@ -663,7 +687,7 @@ for (const panel of FOLD8) {
       const f = await frameBox(page);
       const y = f.y + f.height * 0.2;
       const viewport = panel.width * panel.height;
-      const out: Record<string, unknown>[] = [];
+      const out: BudgetRow[] = [];
       // a turn to the right (the finger right to left) and then to the left
       for (const [from, to] of [[f.x + f.width - 3, f.x + 3], [f.x + 3, f.x + f.width - 3]]) {
         const finger = await holdAndSweep(page, { x: from, y }, [{ x: to, y }], { lift: false });
@@ -671,28 +695,64 @@ for (const panel of FOLD8) {
         const layers = await sceneLayerArea(page);
         const host = page.locator('.cabinet-scene');
         const cam = await cameraOf(page);
-        const row = {
+        const budget = JSON.parse((await host.getAttribute('data-yaw-budget'))!) as YawBudget;
+        // the finger right to left turns the eye right
+        const side = to < from ? budget.right : budget.left;
+        const row: BudgetRow = {
           yaw: Number((cam.yaw! / DEG).toFixed(2)),
           drawn: Number(await host.getAttribute('data-drawn-cabinets')),
           cap: Number(await host.getAttribute('data-drawn-cap')),
           figures: Number(await host.getAttribute('data-drawn-figures')),
           sceneLayers: layers.sceneLayers,
           sceneViewports: Number((layers.sceneArea / viewport).toFixed(3)),
+          // (a): the px per mm drawn at the held pose and what the turned view there asked (read once the scene has rendered
+          // it, below); (b): the projection at the hard limit and the fit, if any
+          s: 0,
+          asked: 0,
+          a: false,
+          projectedAtHard: side.vp,
+          b: side.fit !== null,
+          fit: side.fit,
+          ms: budget.ms,
+          // the cull lags the turn (stickyPose): a 1 px fold while held re-culls at the held pose itself, the most a render
+          // there can draw (an image arriving would do the same)
+          freshViewports: 0,
+          freshDrawn: 0,
+          letGo: 0,
         };
-        out.push(row);
+        await page.setViewportSize({ width: panel.width, height: panel.height + 1 });
+        await settle(page, 400);
+        row.freshViewports = Number(((await sceneLayerArea(page)).sceneArea / viewport).toFixed(3));
+        row.freshDrawn = Number(await host.getAttribute('data-drawn-cabinets'));
+        row.s = Number(await host.getAttribute('data-px-per-mm'));
+        row.asked = Number(await host.getAttribute('data-turned-px-per-mm'));
+        row.a = row.asked > row.s;
         await finger.end();
         await settle(page, 400);
+        row.letGo = Number((((await cameraOf(page)).yaw ?? 0) / DEG).toFixed(2));
+        await page.setViewportSize({ width: panel.width, height: panel.height });
+        await settle(page, 400);
+        out.push(row);
         await page.locator('.cabinet-scene__reset').tap().catch(() => undefined);
         await settle(page, 400);
       }
       const caps = await page.evaluate(() => (window as unknown as { __caps: [number, number][] }).__caps);
-      const summary = { panel: panel.name, wall: wall.name, openingCap: opening, held: out, frames: caps.length };
+      const summary = { panel: panel.name, wall: wall.name, openingCap: opening, openingS, cone, held: out, frames: caps.length };
       await testInfo.attach('budget', { body: JSON.stringify(summary), contentType: 'application/json' });
       console.log(`BUDGET ${JSON.stringify(summary)}`);
       expect(caps.filter(([d, c]) => d > c), 'drawn past the cap').toEqual([]);
       for (const row of out) {
         expect(row.cap).toBeLessThanOrEqual(20);
         expect(row.sceneViewports, `scene layers at yaw ${row.yaw}, viewports of pixels`).toBeLessThanOrEqual(3);
+        expect(row.freshViewports, `scene layers re-culled at yaw ${row.yaw}, viewports of pixels`).toBeLessThanOrEqual(3);
+        // (a): turned, never sharper than the opening; what the turned view asks is published beside it
+        expect(row.s, `px per mm at yaw ${row.yaw}`).toBe(openingS);
+        expect(row.asked, `asked at yaw ${row.yaw}`).toBeGreaterThan(0);
+        // (b): engaged only where the projection at the hard limit passes the ceiling; then the turn never passes the fit, and
+        // otherwise the full turn is kept (past the soft limit toward the hard one)
+        expect(row.b).toBe(row.projectedAtHard > 3);
+        if (row.fit !== null) expect(Math.abs(row.yaw)).toBeLessThanOrEqual(row.fit + 0.01);
+        else expect(Math.abs(row.yaw)).toBeGreaterThanOrEqual(cone.soft - 0.01);
       }
     });
   }

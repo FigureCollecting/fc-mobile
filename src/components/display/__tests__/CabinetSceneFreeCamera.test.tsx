@@ -464,6 +464,12 @@ const budget = () => JSON.parse(host().dataset.yawBudget!) as Budget;
 const WIDE = Array.from({ length: 900 }, (_, i): Figure => ({ _id: `w${i}`, name: `Wide ${i}`, dimensions: { heightMm: 90, widthMm: 40 } }) as Figure);
 /** Longer than the case draws at once (DRAWN_CABINETS_LIMIT cabinets): a move there keeps to the Classic cap. */
 const LONG = Array.from({ length: 1300 }, (_, i): Figure => ({ _id: `l${i}`, name: `Long ${i}`, dimensions: { heightMm: 90, widthMm: 40 } }) as Figure);
+/**
+ * A timeout for the tests here that draw a scene at many poses, over and over (Vitest's default is 5 s): under coverage
+ * on CI's runner they took 2.4-6.4 s (one timed out), two to three times as long as on a 2-core local run. 20 s is three
+ * times the slowest.
+ */
+const HEAVY_MS = 20_000;
 const pxPerMm = () => Number(host().dataset.pxPerMm);
 
 /** The scene's element px by kind, as jsdom has them (each face's own width x height). */
@@ -559,7 +565,7 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect(pose().yaw).toBeGreaterThan(0);
     expect(Math.abs(pose().pitch)).toBeGreaterThan(5 * DEG);
     expect(pxPerMm(), 'one diagonal look').toBeLessThanOrEqual(opening);
-  });
+  }, HEAVY_MS);
 
   it('(b) never engages where the turn to the hard limit fits: the full cone, data-yaw-budget with no fit either way', () => {
     scene();
@@ -670,7 +676,7 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect(left.yaw).toBeLessThan(0);
     expect([left.drawn, left.figures]).toEqual([restLeft.cabs, restLeft.figures]);
     up(1, { x: 290, y: 200 });
-  });
+  }, HEAVY_MS);
 
   it('(b) engaged: past the ceiling at the hard limit, the turn stops at the last yaw that fits and eases back to the band\'s soft limit', () => {
     // read the costs (px, the same on any screen) on a screen where every yaw fits, so the search gets to the hard limit,
@@ -707,7 +713,7 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     } finally {
       restore();
     }
-  });
+  }, HEAVY_MS);
 
   it('(b) where nothing past the start fits (a tiny screen), a look turns no further that way', () => {
     const restore = screenOf(120, 120);
@@ -1039,7 +1045,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(begin()).toBe(true);
     expect(everyFrontDrawn(JOG_FULL_PX, 90) + everyFrontDrawn(-JOG_FULL_PX, 90)).toBeGreaterThan(180);
     end();
-  });
+  }, HEAVY_MS);
 
   it('on a wall longer than the case draws at once, the jog keeps to the Classic cap and still goes, every front drawn', () => {
     scene({}, { figures: LONG });

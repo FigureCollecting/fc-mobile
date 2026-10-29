@@ -95,14 +95,18 @@ function script(patch: Partial<CasePrefs>): string[] {
 /** develop fe967a7, before NAV-1A. */
 const GOLDEN: string[] = ["29280b89484ccdd0","64dde1cc1281b078","2eed5f783ad79a6d","3235291fc2f1cf0c","5dc3c57afeca5ee0","5dc3c57afeca5ee0","106e60df90159c20","17bcfba9ff40a137","303ac9b9a485ab44","92221f23e4acddd6","a2ec5d7cba8933ef","2d89bd732b2220fc","4e3245832598dfbb","b14dfffd42dd076a","1256f46000ef91f8"];
 
+// Each step hashes the scene's whole DOM: under coverage on CI's runner the first test took 4.0-4.4 s (Vitest's default
+// is 5 s) and the second about 2.5 s. 20 s, as for the Free camera file's heavy tests
+const SCRIPT_MS = 20_000;
+
 describe('the old path, Free camera off: the scene\'s DOM is today\'s at every step', () => {
   it('prefs with no freeCamera', () => {
     const got = script({});
     if (process.env.PRINT_GOLDEN) console.log(JSON.stringify(got));
     expect(got).toEqual(GOLDEN);
-  });
+  }, SCRIPT_MS);
 
   it('prefs with freeCamera: false', () => {
     expect(script({ freeCamera: false })).toEqual(GOLDEN);
-  });
+  }, SCRIPT_MS);
 });

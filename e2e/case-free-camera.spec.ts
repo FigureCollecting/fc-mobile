@@ -213,15 +213,31 @@ test('hold: the contextmenu a 1,000 ms hold raises is prevented on the scene; th
 const jogButton = (page: Page) => page.locator('.tab-bar__add[data-jog]');
 
 /**
+ * NAV-JOG: `ms` and as many frames as the jog counts in `ms` (a late frame as JOG_MAX_STEP_MS): a loaded runner's frames
+ * come far apart, and the eye goes as far there as on a fast one.
+ */
+const jogHold = (page: Page, ms: number) =>
+  page.evaluate(
+    ({ ms, frames }) =>
+      new Promise<void>((resolve) => {
+        const t0 = performance.now();
+        let n = 0;
+        const onFrame = () => (++n >= frames && performance.now() - t0 >= ms ? resolve() : void requestAnimationFrame(onFrame));
+        requestAnimationFrame(onFrame);
+      }),
+    { ms, frames: Math.ceil(ms / JOG_MAX_STEP_MS) },
+  );
+
+/**
  * NAV-JOG: a thumb down on the bottom-centre button, dragged by (dx, dy) in `steps` moves 16 ms apart, held still
- * `holdMs` (the jog runs on), then lifted unless `lift` is false.
+ * `holdMs` (the jog runs on: jogHold), then lifted unless `lift` is false.
  */
 async function jogBy(page: Page, dx: number, dy: number, { holdMs = 0, steps = 6, lift = true } = {}) {
   const b = (await jogButton(page).boundingBox())!;
   const at = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
   const thumb = await touchDown(page, at.x, at.y);
   await thumb.to(at.x + dx, at.y + dy, steps, 16);
-  if (holdMs > 0) await page.waitForTimeout(holdMs);
+  if (holdMs > 0) await jogHold(page, holdMs);
   if (lift) {
     await thumb.end();
     await settle(page);
@@ -229,13 +245,16 @@ async function jogBy(page: Page, dx: number, dy: number, { holdMs = 0, steps = 6
   return thumb;
 }
 
-/** NAV-JOG: held at full reach `dir`-ward until the eye stops (a wall's end holds it: jogOk), at most `maxMs`; lifted. */
+/**
+ * NAV-JOG: held at full reach `dir`-ward until the eye stops (a wall's end holds it: jogOk), at most `maxMs`; lifted.
+ * Stopped is the same x two frames and 500 ms on: a fixed 500 ms can hold no frame on a loaded runner.
+ */
 async function jogToEnd(page: Page, dir: 1 | -1, maxMs = 40_000) {
   const thumb = await jogBy(page, dir * JOG_FULL_PX, 0, { lift: false });
   const t0 = Date.now();
   let last = NaN;
   for (;;) {
-    await page.waitForTimeout(500);
+    await settle(page, 500);
     const x = (await cameraOf(page)).x;
     if (x === last || Date.now() - t0 > maxMs) break;
     last = x;
@@ -244,24 +263,28 @@ async function jogToEnd(page: Page, dir: 1 | -1, maxMs = 40_000) {
   await settle(page);
 }
 
+/** NAV-JOG: the jog's writes logged since startPoseLog. */
+const loggedJog = async (page: Page) => (await poseLog(page)).writes.filter((x) => x.gesture === 'jog');
+/** The writes a speed is measured over: each on a later frame than the write before it. */
+const framePairs = (w: Write[]) => w.filter((x, i) => i > 0 && x.frame - w[i - 1].frame > 0).length;
+
 /**
  * NAV-JOG: a level jog's speed over the writes logged since startPoseLog, in frame widths a second: picture px at the
  * anchor depth (a level eye's frame centre is on the fronts: its distance, z) over the frame clock's time, each frame
  * counted as the scene counts it (a late one as JOG_MAX_STEP_MS); and by the wall clock, for the record.
  */
 async function jogSpeed(page: Page) {
-  const w = (await poseLog(page)).writes.filter((x) => x.gesture === 'jog');
+  const w = await loggedJog(page);
   let px = 0;
   let ms = 0;
-  let pairs = 0;
   for (let i = 1; i < w.length; i++) {
     const [a, b] = [parse(w[i - 1].camera), parse(w[i].camera)];
     const dt = w[i].frame - w[i - 1].frame;
     if (!(dt > 0)) continue;
     px += ((b.x - a.x) * b.focalPx) / b.z;
     ms += Math.min(dt, JOG_MAX_STEP_MS);
-    pairs++;
   }
+  const pairs = framePairs(w);
   const c = parse(w[w.length - 1].camera);
   const travel = ((c.x - parse(w[0].camera).x) * c.focalPx) / c.z;
   return {
@@ -301,7 +324,7 @@ for (const panel of FOLD8) {
     const half = await jogBy(page, (8 + JOG_FULL_PX) / 2, 0, { holdMs: 600, lift: false });
     await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'jog');
     const held = (await cameraOf(page)).x;
-    await page.waitForTimeout(300);
+    await settle(page, 300);
     const later = (await cameraOf(page)).x;
     expect(later, 'the thumb still, the eye goes on').toBeGreaterThan(held);
     await half.end();
@@ -309,13 +332,16 @@ for (const panel of FOLD8) {
     const halfWay = (await cameraOf(page)).x - start.x;
     expect(halfWay).toBeGreaterThan(0);
     const stopped = await cameraOf(page);
-    await page.waitForTimeout(400);
+    await settle(page, 400);
     expect(await cameraOf(page), 'the lift stopped it').toEqual(stopped);
     await expect(page.locator('.cabinet-scene')).not.toHaveAttribute('data-gesture', /./);
     // full reach: a frame width a second of picture at the anchor depth, each frame by the time since the last
     const thumb = await jogBy(page, JOG_FULL_PX, 0, { lift: false });
     await startPoseLog(page);
+    // held 900 ms and on until enough frames are logged to measure: a loaded runner draws fewer in a fixed window (CI:
+    // 5 in 900 ms on the open panel, frames up to 167 ms apart)
     await page.waitForTimeout(900);
+    await expect.poll(async () => framePairs(await loggedJog(page)), { message: 'frames logged at full reach', timeout: 20_000 }).toBeGreaterThan(5);
     const speed = await jogSpeed(page);
     await thumb.end();
     await settle(page);

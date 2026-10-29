@@ -220,6 +220,13 @@ export function trimFace(view: CullView, a: Vec3, u: Vec3, v: Vec3, rect: Rect):
   return { s0, s1, t0, t1 };
 }
 
+/** Whether the view's frame shows the cabinet's front: feet to top, splayed feet included, on the fronts' plane. */
+export function frontShown(view: CullView, slot: WallSlot): boolean {
+  const feet = sideOverhangMm(slot.profile);
+  const frame = { x0: 0, x1: view.camera.frame.width, y0: 0, y1: view.camera.frame.height };
+  return trimFace(view, [slot.leftMm - feet, 0, 0], [slot.rightMm - slot.leftMm + 2 * feet, 0, 0], [0, slot.profile.outer.heightMm, 0], frame) !== null;
+}
+
 /**
  * The cabinets drawn (by wall index, ascending): at most `cap`, those whose box (floor to top, back to the
  * front of the feet) draws nearest the frame centre: first every one whose front (feet to top, on the front
@@ -239,7 +246,6 @@ export function nearestCabinets(
   const kept = new Set(previous);
   const bonus = hysteresis * camera.frame.width;
   const centre = camera.frame.width / 2;
-  const frame = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
   const ranked = wall.cabinets.map((slot, i) => {
     const p = slot.profile;
     const feet = sideOverhangMm(p);
@@ -255,7 +261,7 @@ export function nearestCabinets(
     if (xs.length === 0) return { i, front: false, shown: false, d: Infinity, mid: Infinity };
     const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
     const shown = x1 >= 0 && x0 <= camera.frame.width;
-    const front = shown && trimFace(view, [slot.leftMm - feet, 0, 0], [slot.rightMm - slot.leftMm + 2 * feet, 0, 0], [0, p.outer.heightMm, 0], frame) !== null;
+    const front = shown && frontShown(view, slot);
     const off = x1 < centre ? centre - x1 : x0 > centre ? x0 - centre : 0;
     return { i, front, shown, d: kept.has(i) ? off - bonus : off, mid: Math.abs((x0 + x1) / 2 - centre) };
   });
@@ -341,7 +347,7 @@ export function stickyPose(previous: CullView | null, next: CullView, share: num
   const b = next.camera;
   if (a.focalPx !== b.focalPx || a.frame.width !== b.frame.width || a.frame.height !== b.frame.height) return next;
   // the same pose keeps it, wherever it stands (a render there never asks for another: no loop where no corner meets a plane)
-  if (a.x === b.x && a.y === b.y && a.z === b.z && (a.yaw ?? 0) === (b.yaw ?? 0) && a.pitch === b.pitch) return previous;
+  if (samePose(a, b)) return previous;
   const keep = cullRect(a.frame, CULL_MARGIN - share);
   for (const [sx, sy] of [
     [0, 0],
@@ -356,6 +362,23 @@ export function stickyPose(previous: CullView | null, next: CullView, share: num
     if (!(q.depth > NEAR_MM) || q.x < keep.x0 || q.x > keep.x1 || q.y < keep.y0 || q.y > keep.y1) return next;
   }
   return previous;
+}
+
+function samePose(a: Camera, b: Camera): boolean {
+  return a.x === b.x && a.y === b.y && a.z === b.z && (a.yaw ?? 0) === (b.yaw ?? 0) && a.pitch === b.pitch;
+}
+
+/**
+ * NAV-JOG: the Free camera's re-cull made whole. The scene draws only the cabinets its frame needs (frameCap), nearest
+ * the cull's centre, so stickyPose's margin alone let a walk of a sixth of a frame, or a look held toward the hard yaw,
+ * show background where a front stood. The last cull while stickyPose keeps it and what it drew (`drawn`) takes in
+ * every cabinet whose front the new frame shows (or the pose is the same); else the new one.
+ */
+export function stickyWhole(previous: CullView | null, next: CullView, wall: WallLayout, drawn: readonly number[], share: number = RECULL_SHARE): CullView {
+  const kept = stickyPose(previous, next, share);
+  if (kept === next || samePose(kept.camera, next.camera)) return kept;
+  const has = new Set(drawn);
+  return wall.cabinets.some((slot, i) => !has.has(i) && frontShown(next, slot)) ? next : kept;
 }
 
 /** An opaque horizontal board: x0..x1 along the wall, z0..z1 back to front, its underside y0 and its top y1. */

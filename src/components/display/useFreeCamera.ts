@@ -2,14 +2,14 @@
  * NAV-1A, the Free camera (trial): the live pose and the gestures that move it (rulings S2, S6, S8; spec 2.1, 2.2, 6).
  * The pose lives in a ref, not in Preact state: while a finger moves it, each animation frame writes the scene root's
  * transform and data-camera directly (the viewport keeps its perspective and never a translate), and the scene renders
- * only when the cull must change (stickyPose) or a gesture ends. One finger drags MOVE the eye (truck and pedestal);
+ * only when the cull must change (stickyWhole) or a gesture ends. One finger drags MOVE the eye (truck and pedestal);
  * held still LOOK_HOLD_MS first, or with the header's Look around, a right or Shift+left mouse drag, they LOOK (yaw and
  * pitch through the realism cone, eased back to its soft limit when let go). A still release is a tap, as today.
  */
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera } from './caseCamera';
 import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
-import { DRAWN_CABINETS_LIMIT, stickyPose, type CullView } from './caseCull';
+import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
 import { SPRING_MS, anchorDepth, axisGate, budgetCone, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling, projector, type BudgetScene, type Projector, type SceneCost } from './caseBudget';
 import type { WallLayout, WallSlot } from './packCabinets';
@@ -24,6 +24,8 @@ export interface FreeScene {
   readonly s: number;
   readonly wall: WallLayout;
   readonly fronts: RoomSpan;
+  /** The cabinets (wall indexes) the last render drew: a move re-culls once the frame shows a front not among them. */
+  readonly drawn: readonly number[];
   /** Every cabinet's box (cabinetBox, its headroom included) and where the eye may be (eyeSpace). */
   readonly boxes: readonly Box[];
   readonly space: Box;
@@ -189,7 +191,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       }
     }
     const next: CullView = { camera, panPx: 0 };
-    if (stickyPose(culled.current, next) !== culled.current) onRender();
+    if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) !== culled.current) onRender();
   };
 
   const loop = (now: number) => {

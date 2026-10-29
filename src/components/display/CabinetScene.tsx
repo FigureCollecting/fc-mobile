@@ -82,7 +82,7 @@ import {
   freeTexelScale,
   nearestCabinets,
   opaqueBoards,
-  stickyPose,
+  stickyWhole,
   stickyView,
   texelScale,
   trimFace,
@@ -1220,9 +1220,10 @@ export function CabinetScene({
   // faces at the px per mm the screen shows the cabinets' room (floor to headroom, back to the front of the feet)
   // at its nearest
   const moving = free ? fc.live() : liveDx !== 0 || liveDy !== 0;
-  const cull = moving ? (free ? stickyPose(culled.current, { camera, panPx }) : stickyView(culled.current, { camera, panPx })) : { camera, panPx };
-  culled.current = cull;
   const chosen = useRef<number[]>([]);
+  // NAV-JOG: the Free camera's sticky cull holds only while what it drew takes in every front the frame shows (stickyWhole)
+  const cull = moving ? (free ? stickyWhole(culled.current, { camera, panPx }, wall, chosen.current) : stickyView(culled.current, { camera, panPx })) : { camera, panPx };
+  culled.current = cull;
   // NAV-1A (rulings S2): in Free camera the cap follows the turned frame, from the framing's up to the limit
   const fronts = useMemo(() => frontsOf(wall, headroomMm), [wall, headroomMm]);
   const drawCap = free ? frameCap(cull.camera, wall, fronts, base.drawCap) : base.drawCap;
@@ -1683,6 +1684,7 @@ export function CabinetScene({
     s,
     wall,
     fronts,
+    drawn: drawnCabs,
     boxes,
     space: eyeSpace(room, ceilingMm),
     zBack: room.zBack,

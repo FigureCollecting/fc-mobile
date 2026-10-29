@@ -1,15 +1,15 @@
 import { writeFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
+import { CASE_VIEWPORTS, FOLD8_DPR, SHOT_VIEWPORTS } from './caseViewports';
 import { touchDown } from './touch';
 import { watchPull } from './pullWatch';
 import { decodePng } from './paintCheck';
 import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
-import { centreHit } from '../src/components/display/caseFraming';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
-import { SPRING_MS } from '../src/components/display/casePose';
+import { JOG_FULL_PX, SPRING_MS } from '../src/components/display/casePose';
+import { CONTROLS_VIEWPORTS } from '../src/components/display/caseBudget';
 
 /**
  * NAV-1A, the Free camera (trial), in Chromium at the Fold8's four panels, fixture mode, the KLINGSBO wall. The browser
@@ -207,23 +207,124 @@ test('hold: the contextmenu a 1,000 ms hold raises is prevented on the scene; th
   expect(prevented).toBe(true);
 });
 
-// --- 13: Next from where you look ---------------------------------------------------------------------------------------
+// --- 13: the arrows retire (NAV-JOG): the bottom-centre button's jog moves the Free camera ---------------------------------
 
-test('after a 20 deg look in the wall view, Next goes to the page after the one the frame centre shows (S7)', async ({ page }) => {
-  await openFree(page, COVER, { swipe: 'pan' });
-  await lookBy(page, 20);
-  const looked = await cameraOf(page);
-  expect(looked.yaw! / DEG).toBeCloseTo(20, 0);
-  const wall = klingsbo((await wallOf(page)).length);
-  const hit = centreHit(looked, wall);
-  const span = (looked.z * looked.frame.width) / looked.focalPx;
-  await page.locator('.cabinet-scene__step--next').tap();
-  await settle(page);
-  const after = await cameraOf(page);
-  expect(after.yaw ?? 0, 'at the framing: straight').toBe(0);
-  // on from the cabinet the look centred, by one page
-  expect(after.x).toBeGreaterThan(hit.x);
-  expect(after.x - hit.x).toBeLessThan(span * 1.5);
+/** The bottom-centre button while a Free camera case offers its jog. */
+const jogButton = (page: Page) => page.locator('.tab-bar__add[data-jog]');
+
+/**
+ * NAV-JOG: a thumb down on the bottom-centre button, dragged by (dx, dy) in `steps` moves 16 ms apart, held still
+ * `holdMs` (the jog runs on), then lifted unless `lift` is false.
+ */
+async function jogBy(page: Page, dx: number, dy: number, { holdMs = 0, steps = 6, lift = true } = {}) {
+  const b = (await jogButton(page).boundingBox())!;
+  const at = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+  const thumb = await touchDown(page, at.x, at.y);
+  await thumb.to(at.x + dx, at.y + dy, steps, 16);
+  if (holdMs > 0) await page.waitForTimeout(holdMs);
+  if (lift) {
+    await thumb.end();
+    await settle(page);
+  }
+  return thumb;
+}
+
+test('NAV-JOG: in Free camera the side arrows are gone and the bottom-centre button is the jog; off, the arrows and the + as they were', async ({ page }) => {
+  await openFree(page, COVER);
+  await expect(page.locator('.cabinet-scene__step--prev, .cabinet-scene__step--next')).toHaveCount(0);
+  await expect(jogButton(page)).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /move the camera/i })).toHaveCount(1);
+  const off = await page.context().newPage();
+  await openFree(off, COVER, { free: false });
+  await expect(off.locator('.cabinet-scene__step--prev')).toHaveCount(1);
+  await expect(off.locator('.cabinet-scene__step--next')).toHaveCount(1);
+  await expect(off.locator('.tab-bar__add[data-jog]')).toHaveCount(0);
+  await expect(off.getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
+  await off.close();
+});
+
+const boxesOf = async (page: Page, selector: string) =>
+  (await page.locator(selector).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as { x: number; y: number; width: number; height: number })));
+const overlaps = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+for (const panel of FOLD8) {
+  test(`NAV-JOG ${panel.name}: held, the eye goes the way the thumb holds it and on while it is still, faster the farther; the lift stops it; a tap opens the menu`, async ({ page }) => {
+    test.setTimeout(90_000);
+    await openFree(page, panel);
+    const url = page.url();
+    const start = await cameraOf(page);
+    // half way to full reach, then full reach, the same time each: the second walks farther
+    const half = await jogBy(page, (8 + JOG_FULL_PX) / 2, 0, { holdMs: 600, lift: false });
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'jog');
+    const held = (await cameraOf(page)).x;
+    await page.waitForTimeout(300);
+    const later = (await cameraOf(page)).x;
+    expect(later, 'the thumb still, the eye goes on').toBeGreaterThan(held);
+    await half.end();
+    await settle(page);
+    const halfWay = (await cameraOf(page)).x - start.x;
+    expect(halfWay).toBeGreaterThan(0);
+    const stopped = await cameraOf(page);
+    await page.waitForTimeout(400);
+    expect(await cameraOf(page), 'the lift stopped it').toEqual(stopped);
+    await expect(page.locator('.cabinet-scene')).not.toHaveAttribute('data-gesture', /./);
+    await jogBy(page, JOG_FULL_PX, 0, { holdMs: 900 });
+    const full = (await cameraOf(page)).x - stopped.x;
+    expect(full / halfWay, 'full reach walks faster than half').toBeGreaterThan(1.5);
+    // up raises the eye; it never turned or pitched
+    const before = await cameraOf(page);
+    await jogBy(page, 0, -JOG_FULL_PX, { holdMs: 400 });
+    const raised = await cameraOf(page);
+    expect(raised.y).toBeGreaterThan(before.y);
+    expect([raised.yaw ?? 0, raised.pitch]).toEqual([0, 0]);
+    // the drags crossed the tab bar and the case tabs: none pressed, nothing opened
+    expect(page.url()).toBe(url);
+    await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    // a quick tap is the menu (the Add sheet); its close is the jog again
+    await settle(page, 400);
+    await jogButton(page).tap();
+    await expect(page.getByText(/import your mfc export/i)).toBeVisible();
+    await page.locator('.bottom-sheet__handle-area').click();
+    await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    await expect(jogButton(page)).toHaveCount(1);
+  });
+}
+
+/**
+ * NAV3-JOG's collision check (Ross: "a if needed, else right to b"): on every Fold8 panel, the browser's and the
+ * installed app's, the jog's button is clear of every tab and case tab, and a thumb's full reach below its centre stays
+ * inside the tab bar, above Android's gesture area. That area is outside the page in Chrome; in an edge-to-edge app the
+ * page pads it (env(safe-area-inset-bottom)), modelled here as a 48 px inset (gesture navigation's 48 dp frame).
+ */
+test('NAV-JOG: on every Fold8 panel the jog is clear of the tabs and the case tabs, and its reach stays above the gesture area', async ({ page }, testInfo) => {
+  test.setTimeout(90_000);
+  await openFree(page, COVER);
+  const rows: { panel: string; inset: number; jog: number[]; reachBottom: number; gestureTop: number; hits: string[] }[] = [];
+  const panels = [...FOLD8, ...SHOT_VIEWPORTS.filter((v) => v.mobile)];
+  for (const panel of panels) {
+    await page.setViewportSize({ width: panel.width, height: panel.height });
+    for (const inset of [0, 48]) {
+      await page.evaluate((px) => document.documentElement.style.setProperty('--safe-area-bottom', `${px}px`), inset);
+      await settle(page, 200);
+      const jog = (await jogButton(page).boundingBox())!;
+      const others = [
+        ...(await boxesOf(page, '.tab-bar__item')).map((b) => ({ b, what: 'tab' })),
+        ...(await boxesOf(page, '.case-tabs__tab')).map((b) => ({ b, what: 'case tab' })),
+      ];
+      const reachBottom = jog.y + jog.height / 2 + JOG_FULL_PX;
+      const gestureTop = panel.height - inset;
+      rows.push({ panel: panel.name, inset, jog: [jog.x, jog.y, jog.width, jog.height].map(Math.round), reachBottom: Math.round(reachBottom), gestureTop, hits: others.filter((o) => overlaps(jog, o.b)).map((o) => o.what) });
+    }
+  }
+  await testInfo.attach('jog-geometry', { body: JSON.stringify(rows), contentType: 'application/json' });
+  console.log(`JOG-GEOMETRY ${JSON.stringify(rows)}`);
+  expect(rows).toHaveLength(panels.length * 2);
+  for (const r of rows) {
+    expect(r.hits, `${r.panel} inset ${r.inset}: the jog over another control`).toEqual([]);
+    expect(r.reachBottom, `${r.panel} inset ${r.inset}: full reach below the jog, above the gesture area`).toBeLessThanOrEqual(r.gestureTop);
+    expect(r.jog[1] + r.jog[3], `${r.panel} inset ${r.inset}: the jog above the gesture area`).toBeLessThanOrEqual(r.gestureTop - 40);
+  }
 });
 
 // --- 15: Reset ----------------------------------------------------------------------------------------------------------
@@ -486,11 +587,12 @@ for (const panel of FOLD8) {
     const sweepEnd = (await poseLog(page)).writes.length;
 
     // the cone: held past the limit, let go there; 250 ms on, the shown yaw is the committed one (the soft limit). From
-    // the middle of the wall (three pages on by the arrows), so a turn either way sees fronts
-    for (let i = 0; i < 3; i++) {
-      await page.locator('.cabinet-scene__step--next').tap();
-      await settle(page, 400);
-    }
+    // the middle of the wall (the jog walks there: NAV-JOG retired the arrows), so a turn either way sees fronts
+    const middle = (first + last) / 2;
+    for (let i = 0; i < 20 && (await cameraOf(page)).x < middle; i++) await jogBy(page, JOG_FULL_PX, 0, { holdMs: 400 });
+    expect((await cameraOf(page)).x).toBeGreaterThanOrEqual(middle);
+    const jogEnd = (await poseLog(page)).writes.length;
+    const jogEndT = await page.evaluate(() => performance.now());
     const shot: { side: string; yaw: number; holes: { count: number; checked: number; at: { x: number; y: number; box: number }[] } }[] = [];
     const settledYaw: number[] = [];
     for (const [from, to, side] of [[left, right, 'left'], [right, left, 'right']] as const) {
@@ -509,7 +611,7 @@ for (const panel of FOLD8) {
 
     const log = await poseLog(page);
     const logPath = testInfo.outputPath('pose-log.json');
-    writeFileSync(logPath, JSON.stringify({ panel: panel.name, cone, frame: f, swipes, walkEnd, sweepEnd, shot, settledYaw, log }));
+    writeFileSync(logPath, JSON.stringify({ panel: panel.name, cone, frame: f, swipes, walkEnd, sweepEnd, jogEnd, shot, settledYaw, log }));
     await testInfo.attach('pose-log', { path: logPath, contentType: 'application/json' });
     // 6: the viewport never slides
     expect(log.translates).toEqual([]);
@@ -530,9 +632,11 @@ for (const panel of FOLD8) {
       const past = (x: Write) => x.frame >= lastUp + SPRING_MS + 16;
       const easedBefore = log.writes.slice(0, i).some((x) => x.t > lastUp && past(x));
       const springing = lastUp > lastDown && turnedOnly && !(past(w) && easedBefore);
-      // a press or a lift (a re-render on release) or an arrow / Reset tap (a re-base, the finger down on a control)
+      // a press or a lift (a re-render on release) or a Reset tap (a re-base, the finger down on a control)
       const tapped = w.t - Math.max(lastUp, lastDown) <= 250;
-      return !fingerMoved && !springing && !tapped;
+      // NAV-JOG: a thumb held still on the jog moves the eye on every frame until it lifts (its finger is down)
+      const jogging = w.gesture === 'jog' && lastDown > lastUp;
+      return !fingerMoved && !springing && !tapped && !jogging;
     });
     expect(
       unprompted.map((w) => ({ ...w, msAfterLift: Math.round(w.t - Math.max(-Infinity, ...ups.filter((t) => t <= w.t))) })),
@@ -606,6 +710,13 @@ for (const panel of FOLD8) {
       expect(s.holes.checked, `fronts in view at yaw ${s.yaw.toFixed(1)}`).toBeGreaterThan(100);
     }
     for (const y of settledYaw) expect(Math.abs(Math.abs(y) - cone.soft), '250 ms after release: at the soft limit').toBeLessThan(1e-3);
+
+    // NAV-JOG: the jog moved the eye only while its thumb was down; it stopped at the lift (nothing written after)
+    const jogWrites = log.writes.slice(sweepEnd, jogEnd).filter((w) => w.gesture === 'jog');
+    expect(jogWrites.length, 'the jog walked').toBeGreaterThan(5);
+    for (const w of jogWrites) expect(w.down, 'a jog write with the thumb down').toBe(true);
+    const lastJogUp = Math.max(...ups.filter((t) => t <= jogEndT));
+    expect(log.writes.slice(sweepEnd, jogEnd).filter((w) => w.t > lastJogUp), 'no write after the jog lifts').toEqual([]);
 
     // 5: the pose at each pointerup of a walk is the pose its last move left (no settle)
     const upsInWalk = log.events.filter((e) => e.type === 'pointerup' && e.t <= (log.writes[walkEnd - 1]?.t ?? 0));
@@ -785,10 +896,12 @@ for (const panel of FOLD8) {
       await testInfo.attach('budget', { body: JSON.stringify(summary), contentType: 'application/json' });
       console.log(`BUDGET ${JSON.stringify(summary)}`);
       expect(caps.filter(([d, c]) => d > c), 'drawn past the cap').toEqual([]);
-      // the projection at the opening is what the compositor has there, never under it, over by no more than the controls'
-      // allowance it takes on the larger panels
+      // the projection at the opening is what the compositor has there, never under it; less the controls' allowance (the
+      // look ring a held look shows), over by no more than 0.1. NAV-JOG: the arrows retired, the opening shows no control
+      // of the scene's own, so the whole allowance is over it (their 0.07-0.13 offset it before); measured: the scene
+      // itself is projected 0.012-0.061 over what the compositor has, the eight cases
       expect(startVp).toBeGreaterThanOrEqual(openingVp - 0.02);
-      expect(startVp).toBeLessThanOrEqual(openingVp + 0.35);
+      expect(startVp - CONTROLS_VIEWPORTS, 'the projected scene less the controls\' allowance').toBeLessThanOrEqual(openingVp + 0.1);
       for (const row of out) {
         expect(row.cap).toBeLessThanOrEqual(20);
         expect(row.sceneViewports, `scene layers at yaw ${row.yaw}, viewports of pixels`).toBeLessThanOrEqual(3);
@@ -863,6 +976,58 @@ for (const panel of FOLD8) {
       expect(walks.map((r) => r.yaw)).toEqual(turnedTo);
       for (const r of walks.filter((r) => r.what.endsWith(' 1'))) expect(r.dz, r.what).toBeLessThan(-300);
       for (const r of rows.filter((r) => r.what.startsWith('look'))) expect(Math.abs(r.pitch), r.what).toBeGreaterThan(5);
+    });
+
+    // NAV-JOG: the jog moves the eye as a drag does, through the same rules: level, along the wall and up; turned, toward
+    // the fronts each way (the px per mm held where the turn left yaw 0). Every pose re-culled: <= 3 viewports, never
+    // sharper than the opening
+    test(`budget ${panel.name}, ${wall.name}: the jog, level and turned, stays <= 3 viewports, never sharper than the opening`, async ({ page }, testInfo) => {
+      test.setTimeout(150_000);
+      await openFree(page, panel, { query: `${wall.query}&lookhold=1000` });
+      const openingS = await pxPerMmOf(page);
+      const open = await cameraOf(page);
+      const f = await frameBox(page);
+      const y = f.y + f.height * 0.2;
+      const rows: { what: string; yaw: number; dx: number; dy: number; dz: number; s: number; vp: number }[] = [];
+      const record = async (what: string, from: Camera) => {
+        const fresh = await freshAt(page, panel);
+        const c = await cameraOf(page);
+        rows.push({ what, yaw: Number(((c.yaw ?? 0) / DEG).toFixed(2)), dx: Math.round(c.x - from.x), dy: Math.round(c.y - from.y), dz: Math.round(c.z - from.z), s: fresh.s, vp: fresh.vp });
+        await unfold(page, panel);
+      };
+      let from = await cameraOf(page);
+      await jogBy(page, JOG_FULL_PX, 0, { holdMs: 1200 });
+      await record('jog right', from);
+      from = await cameraOf(page);
+      await jogBy(page, 0, -JOG_FULL_PX, { holdMs: 600 });
+      await record('jog up', from);
+      await page.locator('.cabinet-scene__reset').tap().catch(() => undefined);
+      await settle(page, 400);
+      for (const dir of ['right', 'left'] as const) {
+        const [x0, x1] = dir === 'right' ? [f.x + f.width - 3, f.x + 3] : [f.x + 3, f.x + f.width - 3];
+        await holdAndSweep(page, { x: x0, y }, [{ x: x1, y }], { holdMs: 1100 });
+        await settle(page, 500);
+        from = await cameraOf(page);
+        // turned right, the jog left walks the eye toward the fronts (and mirrored)
+        await jogBy(page, dir === 'right' ? -JOG_FULL_PX : JOG_FULL_PX, 0, { holdMs: 1200 });
+        await record(`turned ${dir}, jog toward the fronts`, from);
+        await page.locator('.cabinet-scene__reset').tap().catch(() => undefined);
+        await settle(page, 400);
+      }
+      const summary = { panel: panel.name, wall: wall.name, openingS, open: { x: open.x, z: open.z }, rows };
+      await testInfo.attach('jog', { body: JSON.stringify(summary), contentType: 'application/json' });
+      console.log(`JOG-BUDGET ${JSON.stringify(summary)}`);
+      expect(rows).toHaveLength(4);
+      for (const row of rows) {
+        expect(row.s, `${row.what}: px per mm`).toBeLessThanOrEqual(openingS);
+        expect(row.vp, `${row.what}: scene layers re-culled, viewports of pixels`).toBeLessThanOrEqual(3);
+      }
+      expect(rows[0].dx, 'the jog right walked').toBeGreaterThan(100);
+      expect(rows[1].dy, 'the jog up raised the eye').toBeGreaterThan(50);
+      for (const row of rows.slice(2)) {
+        expect(row.yaw, `${row.what}: turned`).not.toBe(0);
+        expect(row.dz, `${row.what}: toward the fronts`).toBeLessThan(0);
+      }
     });
   }
 }

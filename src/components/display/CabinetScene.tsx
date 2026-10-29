@@ -102,6 +102,7 @@ import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
+import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
@@ -1588,6 +1589,26 @@ export function CabinetScene({
     setShelf(to);
     snapFrame();
   };
+  // NAV-JOG (Ross 10-28): while a Free camera case is shown, the bottom-centre button is its jog (the side arrows retire):
+  // a jog drops a magnification first, and its lift leaves the focus on the cabinet the frame centre shows, as a drag's
+  useEffect(() => {
+    if (!free) return;
+    return offerJog({
+      start: () => {
+        if (!fc.jogStart()) return false;
+        if (isZoomed(zoom.current)) showZoom(UNZOOMED, 'still');
+        return true;
+      },
+      aim: fc.jogAim,
+      stop: () => {
+        const left = fc.jogStop();
+        if (left === null) return;
+        const s = freeScene.current!;
+        setFocus(centreCabinet(withPose(s.base, left), s.wall));
+        setFramedFocus(null);
+      },
+    });
+  }, [free]);
 
   // --- figures
   const draws: { draw: FigureDraw; cab: number }[] = [];
@@ -1871,24 +1892,29 @@ export function CabinetScene({
 
       {/* NAV-PTR-1: the arrows are the scene's controls, not its picture: a press on one is no gesture of the scene's */}
       <div class="cabinet-scene__nav" data-scene-ui>
-        <StepButton
-          cls="cabinet-scene__step cabinet-scene__step--prev"
-          label="Previous cabinet"
-          disabled={reach !== null ? !reach.prev : focusIdx <= 0}
-          onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
-          onDrag={startPress}
-        >
-          ‹
-        </StepButton>
-        <StepButton
-          cls="cabinet-scene__step cabinet-scene__step--next"
-          label="Next cabinet"
-          disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
-          onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
-          onDrag={startPress}
-        >
-          ›
-        </StepButton>
+        {/* NAV-JOG: in Free camera the bottom-centre button's jog moves it; the side arrows retire */}
+        {!free && (
+          <StepButton
+            cls="cabinet-scene__step cabinet-scene__step--prev"
+            label="Previous cabinet"
+            disabled={reach !== null ? !reach.prev : focusIdx <= 0}
+            onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+            onDrag={startPress}
+          >
+            ‹
+          </StepButton>
+        )}
+        {!free && (
+          <StepButton
+            cls="cabinet-scene__step cabinet-scene__step--next"
+            label="Next cabinet"
+            disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
+            onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+            onDrag={startPress}
+          >
+            ›
+          </StepButton>
+        )}
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
             <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))} onDrag={startPress}>

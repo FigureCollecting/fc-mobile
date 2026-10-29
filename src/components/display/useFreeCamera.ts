@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera } from './caseCamera';
 import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
-import { SPRING_MS, anchorDepth, axisGate, budgetCone, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
+import { SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling, projector, type BudgetScene, type Projector, type SceneCost } from './caseBudget';
 import type { WallLayout, WallSlot } from './packCabinets';
 import type { Point } from './caseZoom';
@@ -81,6 +81,15 @@ interface Gesture {
   cone?: { start: Pose; scene: FreeScene; limits: YawCone };
 }
 
+/** NAV-JOG: a jog running: the pose it has got to, the thumb's offset, the last frame's time, and a MOVE's depth and cap. */
+interface Jog {
+  pose: Pose;
+  aim: Point;
+  last: number | undefined;
+  readonly anchor: number;
+  readonly span: number;
+}
+
 const num = (v: number): number => {
   const r = Math.round(v * 1e6) / 1e6;
   return Object.is(r, -0) ? 0 : r;
@@ -106,6 +115,17 @@ export function coneOf(camera: Camera, wall: WallLayout, fronts: RoomSpan): { so
 }
 
 const DEG_PER_RAD = 180 / Math.PI;
+
+/** A MOVE's Classic cap from this camera: the longest stretch of the fronts it may make the frame show (Infinity: none). */
+function spanOf(s: FreeScene, camera: Camera): number {
+  const limit = capSpanMm(s.wall, DRAWN_CABINETS_LIMIT);
+  return limit === Infinity ? Infinity : Math.max(limit, frameSpanMm(camera, s.fronts));
+}
+
+/** Where a MOVE from `pose` may stand the eye under that cap (undefined: anywhere). */
+function capOf(s: FreeScene, pose: Pose, span: number): ((p: readonly number[]) => boolean) | undefined {
+  return span === Infinity ? undefined : (p) => frameSpanMm(withPose(s.base, { ...pose, x: p[0], y: p[1], z: p[2] }), s.fronts) <= span;
+}
 
 /**
  * NAV-1A (a+b), Ross 10-28: a look's yaw cone, from `start` at this scene: the realism cone (coneOf) kept to the GPU
@@ -154,6 +174,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   /** NAV-1A (a): where the turn left yaw 0 (the start of the look that left it); turned, the scene's px per mm is held from it. */
   const unturned = useRef<Pose | null>(null);
   const gesture = useRef<Gesture | null>(null);
+  /** NAV-JOG: the bottom-centre button's jog, while a thumb holds it. */
+  const jog = useRef<Jog | null>(null);
   /** A look let go past its soft limit easing back (spec 1.5) over SPRING_MS from t0, the lift (a late first frame catches up). */
   const spring = useRef<{ from: Pose; to: Pose; t0: number } | null>(null);
   const raf = useRef<number | undefined>(undefined);
@@ -163,6 +185,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const drawn = (now?: number): Pose | null => {
     const g = gesture.current;
     if (g?.mode) return g.shown;
+    if (jog.current) return jog.current.pose;
     const sp = spring.current;
     if (sp) {
       const t = (now ?? performance.now()) - sp.t0;
@@ -196,6 +219,25 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
 
   const loop = (now: number) => {
     raf.current = undefined;
+    const j = jog.current;
+    if (j) {
+      // NAV-JOG: a MOVE each frame by the time since the last (jogStep), as a swipe's: slid along the room and the
+      // furniture, within the Classic cap; written only when it moved
+      if (j.last !== undefined) {
+        const s = scene.current;
+        const step = jogStep(j.aim.x, j.aim.y, now - j.last, s.base.frame.width);
+        if (step.x !== 0 || step.y !== 0) {
+          const next = walk(j.pose, -step.x, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, capOf(s, j.pose, j.span));
+          if (next.x !== j.pose.x || next.y !== j.pose.y || next.z !== j.pose.z) {
+            j.pose = next;
+            write(cameraOf(next));
+          }
+        }
+      }
+      j.last = now;
+      raf.current = requestAnimationFrame(loop);
+      return;
+    }
     const sp = spring.current;
     if (sp && !gesture.current?.mode && now - sp.t0 >= SPRING_MS) {
       spring.current = null;
@@ -212,6 +254,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   useEffect(
     () => () => {
       if (raf.current !== undefined) cancelAnimationFrame(raf.current);
+      raf.current = undefined;
+      jog.current = null;
       const g = gesture.current;
       if (g?.timer !== undefined) clearTimeout(g.timer);
     },
@@ -234,7 +278,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     el.style.top = `${at.y}px`;
     el.dataset.on = '';
   };
-  const setGesture = (mode: 'move' | 'look' | null) => {
+  const setGesture = (mode: 'move' | 'look' | 'jog' | null) => {
     const host = dom.host.current;
     if (!host) return;
     if (mode === null) delete host.dataset.gesture;
@@ -243,6 +287,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
 
   /** A finger down on the scene (not on a control, not zoomed, not a pinch): Look arms if it stays still LOOK_HOLD_MS. */
   const press = useCallback((e: FreePress, at: Point) => {
+    // NAV-JOG: while the jog moves the eye, a finger on the scene is no gesture of its own
+    if (jog.current) return;
     const prev = gesture.current;
     if (prev?.timer !== undefined) clearTimeout(prev.timer);
     const s = scene.current;
@@ -314,8 +360,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       } else {
         g.mode = 'move';
         g.anchor = anchorDepth(camera, g.at0.x, g.at0.y, { x0: s.wall.leftMm, x1: s.wall.rightMm }, s.zBack);
-        const limit = capSpanMm(s.wall, DRAWN_CABINETS_LIMIT);
-        g.span = limit === Infinity ? Infinity : Math.max(limit, frameSpanMm(camera, s.fronts));
+        g.span = spanOf(s, camera);
       }
       setGesture(g.mode);
     }
@@ -337,8 +382,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       g.unlocked = gate.unlocked;
       const ddx = gate.x ? at.x - g.last.x : 0;
       const ddy = gate.y ? at.y - g.last.y : 0;
-      const ok = g.span === Infinity ? undefined : (p: readonly number[]) => frameSpanMm(withPose(base, { ...g.committed, x: p[0], y: p[1], z: p[2] }), s.fronts) <= g.span;
-      g.committed = walk(g.committed, ddx, ddy, g.anchor, base.focalPx, s.space, s.boxes, ok);
+      g.committed = walk(g.committed, ddx, ddy, g.anchor, base.focalPx, s.space, s.boxes, capOf(s, g.committed, g.span));
       g.shown = g.committed;
     }
     g.last = at;
@@ -376,6 +420,47 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     return g.committed;
   }, []);
 
+  /**
+   * NAV-JOG: a thumb has started the bottom-centre button's jog: from the pose drawn now (a look easing back, from where
+   * it rests), at the depth the frame centre looks at. Refused (false) while a finger is on the scene or a jog runs.
+   */
+  const jogStart = useCallback((): boolean => {
+    if (gesture.current !== null || jog.current !== null) return false;
+    const s = scene.current;
+    const easing = spring.current;
+    spring.current = null;
+    const pose = held.current ?? poseOf(s.base);
+    const camera = cameraOf(pose);
+    const anchor = anchorDepth(camera, camera.frame.width / 2, camera.frame.height / 2, { x0: s.wall.leftMm, x1: s.wall.rightMm }, s.zBack);
+    jog.current = { pose, aim: { x: 0, y: 0 }, last: undefined, anchor, span: spanOf(s, camera) };
+    setGesture('jog');
+    // a look easing back is done: the jog starts from where it rests (held already)
+    if (easing) write(camera);
+    if (raf.current !== undefined) cancelAnimationFrame(raf.current);
+    raf.current = requestAnimationFrame(loop);
+    return true;
+  }, []);
+
+  /** NAV-JOG: the thumb's offset (px) from where it went down: the way the eye moves, and how fast (jogStep). */
+  const jogAim = useCallback((dxPx: number, dyPx: number) => {
+    if (jog.current) jog.current.aim = { x: dxPx, y: dyPx };
+  }, []);
+
+  /** NAV-JOG: the thumb lifts: the eye stops where the jog got it, held. Returns that pose (null: no jog ran). */
+  const jogStop = useCallback((): Pose | null => {
+    const j = jog.current;
+    if (!j) return null;
+    jog.current = null;
+    // a running jog always has its next frame asked for (jogStart, the loop)
+    cancelAnimationFrame(raf.current!);
+    raf.current = undefined;
+    setGesture(null);
+    held.current = j.pose;
+    write(cameraOf(j.pose));
+    onRender();
+    return j.pose;
+  }, []);
+
   return {
     /** The camera drawn now (the framing's when no pose is held). */
     camera: (base: Camera): Camera => {
@@ -383,7 +468,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       return pose === null ? base : withPose(base, pose);
     },
     /** A gesture moves the pose, or a look let go eases back. */
-    live: (): boolean => gesture.current?.mode != null || spring.current !== null,
+    live: (): boolean => gesture.current?.mode != null || jog.current !== null || spring.current !== null,
     /** A pose held off the framing (null: the framing). */
     held: (): Pose | null => held.current,
     /** NAV-1A (a): the camera where the turn left yaw 0 (freeTexelScale holds a turned scene's px per mm from it). */
@@ -396,6 +481,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     press,
     drag,
     release,
+    jogStart,
+    jogAim,
+    jogStop,
     /** Write the drawn pose to the DOM again (after a render, which may have rewritten it). */
     sync: () => {
       const pose = drawn();

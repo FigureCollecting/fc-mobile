@@ -32,8 +32,8 @@ export function fitsCeiling(vp: number): boolean {
   return vp <= SCENE_CEILING_VIEWPORTS;
 }
 /**
- * The scene's own controls (the arrows, Reset, the look ring), in viewports: measured on the Fold8's four panels at the
- * hard yaw (e2e/case-free-camera's budget, layer by layer), at most 0.293.
+ * The scene's own controls (Reset, the look ring; NAV-JOG retired the Free camera's arrows), in viewports: measured on
+ * the Fold8's four panels at the hard yaw (e2e/case-free-camera's budget, layer by layer), at most 0.293 (the ring).
  */
 export const CONTROLS_VIEWPORTS = 0.3;
 /**

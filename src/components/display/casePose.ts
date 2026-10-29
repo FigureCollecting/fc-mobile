@@ -248,6 +248,33 @@ export function axisGate(axis: 'x' | 'y', unlocked: boolean, dxPx: number, dyPx:
   return { unlocked: open, x: axis === 'x' || open, y: axis === 'y' || open };
 }
 
+/** NAV-JOG (Ross 10-28): a thumb offset (px) on the jog under this moves nothing: a tap's wobble. */
+export const JOG_DEAD_PX = 8;
+/** NAV-JOG: at this offset (px) or more the jog moves at full speed; from the dead zone it grows as the square. */
+export const JOG_FULL_PX = 64;
+/** NAV-JOG: a thumb within this many degrees of an axis moves along that axis only (as a swipe locks to one). */
+export const JOG_SNAP_DEG = 20;
+/** NAV-JOG: full speed slides the picture at the anchor depth by this many frame widths a second. */
+export const JOG_FRAMES_PER_S = 1;
+/** NAV-JOG: a frame later than this (ms) moves as if this long passed: a stalled phone never leaps. */
+export const JOG_MAX_STEP_MS = 100;
+
+/**
+ * NAV-JOG: the picture travel (px at the anchor depth, the way the thumb points) a jog held at (dxPx, dyPx) from where it
+ * went down makes in `dtMs`: none inside JOG_DEAD_PX; up to JOG_FRAMES_PER_S frame widths a second at JOG_FULL_PX, as
+ * the square of the reach between; along one axis when the thumb is within JOG_SNAP_DEG of it.
+ */
+export function jogStep(dxPx: number, dyPx: number, dtMs: number, frameWidthPx: number): { x: number; y: number } {
+  const d = Math.hypot(dxPx, dyPx);
+  if (d <= JOG_DEAD_PX || !(dtMs > 0)) return { x: 0, y: 0 };
+  const reach = Math.min(1, (d - JOG_DEAD_PX) / (JOG_FULL_PX - JOG_DEAD_PX));
+  const px = (reach * reach * JOG_FRAMES_PER_S * frameWidthPx * Math.min(dtMs, JOG_MAX_STEP_MS)) / 1000;
+  const angle = Math.atan2(Math.abs(dyPx), Math.abs(dxPx));
+  if (angle <= JOG_SNAP_DEG * DEG) return { x: Math.sign(dxPx) * px, y: 0 };
+  if (angle >= (90 - JOG_SNAP_DEG) * DEG) return { x: 0, y: Math.sign(dyPx) * px };
+  return { x: (dxPx / d) * px, y: (dyPx / d) * px };
+}
+
 /** Spec 4, rulings X1: Reset view applies once the pose is off its framing by more than a glance: walking never shows it. */
 export function resetApplies(pose: Pose, framing: Pose): boolean {
   return (

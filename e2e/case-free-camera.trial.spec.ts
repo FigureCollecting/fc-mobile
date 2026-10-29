@@ -5,7 +5,7 @@ import { touchDown } from './touch';
 
 /**
  * NAV-1A: a recorded run of the Free camera (trial) for Ross, at the Fold8's four panels: a video of each and a PNG
- * after each step (open, move, raise, a held look, a look held past the limit, let go, Reset), in this test's output
+ * after each step (open, move, raise, a held look, a look held past the limit, let go, Reset, the jog), in this test's output
  * folder. Recorded on request only, never in CI:
  *   NAV_TRIAL=1 npx playwright test e2e/case-free-camera.trial.spec.ts --project=chromium
  */
@@ -33,7 +33,7 @@ async function finger(page: Page, from: { x: number; y: number }, path: { x: num
 }
 
 for (const panel of FOLD8) {
-  test(`recorded trial ${panel.name}: open, move, raise, look (hold), look past the limit, let go, Reset`, async ({ page }, testInfo) => {
+  test(`recorded trial ${panel.name}: open, move, raise, look (hold), look past the limit, let go, Reset, jog`, async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     await page.addInitScript(() => {
       localStorage.setItem('onboarding_complete', '1');
@@ -70,6 +70,15 @@ for (const panel of FOLD8) {
     await page.locator('.cabinet-scene__reset').tap();
     await settle(page);
     await shot('7-reset');
+    // NAV-JOG: the thumb on the bottom-centre button, dragged right and held: the eye walks right until the lift
+    const jog = (await page.locator('.tab-bar__add[data-jog]').boundingBox())!;
+    const thumb = await touchDown(page, jog.x + jog.width / 2, jog.y + jog.height / 2);
+    await thumb.to(jog.x + jog.width / 2 + 48, jog.y + jog.height / 2, 6, 16);
+    await page.waitForTimeout(700);
+    await shot('8-jog-held-right');
+    await thumb.end();
+    await settle(page);
+    await shot('9-jog-let-go');
     console.log(`TRIAL ${panel.name}\n${steps.join('\n')}`);
   });
 }

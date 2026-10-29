@@ -4,12 +4,14 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
-import { LOOK_HOLD_MS, PITCH, yawLimits } from '../casePose';
+import { JOG_FULL_PX, LOOK_HOLD_MS, PITCH, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
+import { useJogStore } from '../../../stores/jog';
 import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
 import { wallLayout } from '../packCabinets';
 import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
 import { frameMargins, project } from '../caseCamera';
+import { DRAWN_CABINETS_LIMIT } from '../caseCull';
 
 // NAV-1A, the Free camera (trial), in the scene: MOVE and LOOK from one finger, the hold that arms Look without swallowing
 // a tap, the realism cone and its ease back, the pose held across a fold, the arrows and Reset from the frame-centre
@@ -345,17 +347,18 @@ describe('the arrows and Reset from where you look (rulings S7, spec 4)', () => 
     expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
   });
 
-  it('after a look in the cabinet view, Next goes on from the cabinet the frame centre shows, at its framing', () => {
+  it('NAV-JOG: the side arrows retire in Free camera (the jog moves it); the shelf view keeps its shelf steps; off, the arrows stay', () => {
     scene({ view: 'cabinet' });
-    expect(host().dataset.focus).toBe('0');
-    drag({ x: 300, y: 200 }, { x: 60, y: 200 }, { button: 2 });
-    tick(500);
-    const looked = Number(host().dataset.focus);
-    expect(looked).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
-    tick();
-    expect(Number(host().dataset.focus)).toBe(looked + 1);
-    expect(cam().yaw).toBe(0);
+    expect(screen.queryByRole('button', { name: 'Next cabinet' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Previous cabinet' })).toBeNull();
+    cleanup();
+    scene({ view: 'shelf' });
+    expect(screen.queryByRole('button', { name: 'Next cabinet' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Shelf below' })).toBeInTheDocument();
+    cleanup();
+    scene({ freeCamera: false });
+    expect(screen.getByRole('button', { name: 'Next cabinet' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous cabinet' })).toBeInTheDocument();
   });
 
   it('the shelf arrows stand it at the shelf\'s framing too', () => {
@@ -459,6 +462,8 @@ const total = (px: Px) => px.figures + px.shadows + px.mesh + px.room + px.faces
 const budget = () => JSON.parse(host().dataset.yawBudget!) as Budget;
 /** A long wall of small figures: a turn along it brings more of them into view than the opening shows. */
 const WIDE = Array.from({ length: 900 }, (_, i): Figure => ({ _id: `w${i}`, name: `Wide ${i}`, dimensions: { heightMm: 90, widthMm: 40 } }) as Figure);
+/** Longer than the case draws at once (DRAWN_CABINETS_LIMIT cabinets): a move there keeps to the Classic cap. */
+const LONG = Array.from({ length: 1300 }, (_, i): Figure => ({ _id: `l${i}`, name: `Long ${i}`, dimensions: { heightMm: 90, widthMm: 40 } }) as Figure);
 const pxPerMm = () => Number(host().dataset.pxPerMm);
 
 /** The scene's element px by kind, as jsdom has them (each face's own width x height). */
@@ -809,6 +814,251 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     scene({ freeCamera: false });
     expect(host().hasAttribute('data-yaw-budget')).toBe(false);
     expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
+  });
+});
+
+// NAV-JOG (Ross 10-28): the bottom-centre button (TabBar) drives the jog the scene offers: held off its centre, the eye
+// moves the way the thumb holds it every frame, faster the farther; the lift stops it where it got. A move like a
+// swipe's: through the room and the furniture, the Classic cap, and turned, the px per mm held where the turn left yaw 0.
+describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-centre button', () => {
+  const jog = () => useJogStore.getState().target!;
+  const frames = (n: number) => {
+    for (let i = 0; i < n; i++) tick(16);
+  };
+  const run = (dx: number, dy: number, n: number) => {
+    act(() => jog().aim(dx, dy));
+    frames(n);
+  };
+  const begin = () => {
+    let ok = false;
+    act(() => {
+      ok = jog().start();
+    });
+    // its first frame only takes the time
+    frames(1);
+    return ok;
+  };
+  const end = () => act(() => jog().stop());
+
+  beforeEach(() => useJogStore.setState({ target: null }));
+
+  it('Free camera offers a jog while it is shown; turned off or gone, it is withdrawn; off, none', () => {
+    const { again, unmount } = scene();
+    expect(useJogStore.getState().target).not.toBeNull();
+    again({ freeCamera: false });
+    expect(useJogStore.getState().target).toBeNull();
+    again({ freeCamera: true });
+    expect(useJogStore.getState().target).not.toBeNull();
+    unmount();
+    expect(useJogStore.getState().target).toBeNull();
+    scene({ freeCamera: false });
+    expect(useJogStore.getState().target).toBeNull();
+  });
+
+  it('held right: the eye trucks right every frame, four times as fast at full reach as half way; the lift stops it there', () => {
+    scene();
+    const before = pose();
+    expect(begin()).toBe(true);
+    expect(host().dataset.gesture).toBe('jog');
+    const x0 = pose().x;
+    run((8 + JOG_FULL_PX) / 2, 0, 10);
+    const half = pose().x - x0;
+    expect(half).toBeGreaterThan(0);
+    const x1 = pose().x;
+    run(JOG_FULL_PX, 0, 10);
+    expect((pose().x - x1) / half).toBeCloseTo(4, 1);
+    // the reach past full is full speed
+    const x2 = pose().x;
+    run(JOG_FULL_PX * 3, 0, 10);
+    expect((pose().x - x2) / half).toBeCloseTo(4, 1);
+    expect([pose().y, pose().z, pose().yaw, pose().pitch]).toEqual([before.y, before.z, 0, 0]);
+    end();
+    const stopped = pose();
+    expect(host().dataset.gesture).toBeUndefined();
+    frames(30);
+    expect(pose()).toEqual(stopped);
+    // the stop holds the pose: a render keeps it
+    fireEvent.pointerDown(host(), { pointerId: 7, clientX: 10, clientY: 10, button: 0 });
+    fireEvent.pointerUp(host(), { pointerId: 7, clientX: 10, clientY: 10 });
+    tick(500);
+    expect(pose()).toEqual(stopped);
+  });
+
+  it('inside the dead zone nothing moves and nothing is written; left moves left', () => {
+    scene();
+    const before = cam();
+    begin();
+    run(5, -5, 20);
+    expect(cam()).toEqual(before);
+    run(-JOG_FULL_PX, 0, 10);
+    expect(pose().x).toBeLessThan(before.x);
+    end();
+  });
+
+  it('up raises the eye, down lowers it, a diagonal does both; never past the ceiling less its clearance', () => {
+    scene();
+    const before = pose();
+    begin();
+    run(0, -JOG_FULL_PX, 10);
+    const raised = pose();
+    expect(raised.y).toBeGreaterThan(before.y);
+    expect(raised.x).toBe(before.x);
+    run(0, JOG_FULL_PX, 20);
+    expect(pose().y).toBeLessThan(raised.y);
+    const low = pose();
+    run(50, -50, 10);
+    expect(pose().x).toBeGreaterThan(low.x);
+    expect(pose().y).toBeGreaterThan(low.y);
+    run(0, -JOG_FULL_PX, 600);
+    expect(cam().y).toBeLessThanOrEqual(DEFAULT_CASE_PREFS.ceilingMm - 50 + 1e-6);
+    end();
+  });
+
+  it('a long jog stops at the end of the room, finite, and the lift leaves the focus on the cabinet the frame centre shows', () => {
+    scene({ view: 'cabinet' });
+    expect(host().dataset.focus).toBe('0');
+    begin();
+    run(JOG_FULL_PX, 0, 3000);
+    const far = pose();
+    run(JOG_FULL_PX, 0, 100);
+    expect(pose().x).toBe(far.x);
+    expect(Number.isFinite(far.x)).toBe(true);
+    end();
+    expect(Number(host().dataset.focus)).toBeGreaterThan(0);
+  });
+
+  /** The cabinets the scene draws, and those whose front the level frame shows (a pixel's grace at either edge). */
+  const drawnCabs = () => new Set(Array.from(document.querySelectorAll<HTMLElement>('.cab')).map((el) => Number(el.dataset.index)));
+  const wallBoxes = () => JSON.parse(host().dataset.wall!) as [number, number, number, number, number][];
+  const frontsShown = (boxes: [number, number, number, number, number][]) => {
+    const c = cam();
+    const camera = { ...c, frame: { width: c.width, height: c.height } };
+    return boxes.flatMap(([x0, x1], i) => (project(camera, [x1, 0, 0]).x > 1 && project(camera, [x0, 0, 0]).x < c.width - 1 ? [i] : []));
+  };
+  /** `n` frames of a jog `dx` each way, every one checked: no front shown but not drawn. How many fronts it checked. */
+  const everyFrontDrawn = (dx: number, n: number) => {
+    const boxes = wallBoxes();
+    let checked = 0;
+    act(() => jog().aim(dx, 0));
+    for (let i = 0; i < n; i++) {
+      tick(16);
+      const has = drawnCabs();
+      const need = frontsShown(boxes);
+      expect(need.filter((k) => !has.has(k)), `fronts shown but not drawn at x ${cam().x.toFixed(0)}`).toEqual([]);
+      checked += need.length;
+    }
+    return checked;
+  };
+
+  it('every frame of a jog draws every cabinet whose front the frame shows (stickyWhole): no background where a front stands', () => {
+    // a long wall: more cabinets than the frame needs drawn
+    scene({}, { figures: WIDE });
+    expect(begin()).toBe(true);
+    expect(everyFrontDrawn(JOG_FULL_PX, 90) + everyFrontDrawn(-JOG_FULL_PX, 90)).toBeGreaterThan(180);
+    end();
+  });
+
+  it('on a wall longer than the case draws at once, the jog keeps to the Classic cap and still goes, every front drawn', () => {
+    scene({}, { figures: LONG });
+    expect(wallBoxes().length).toBeGreaterThan(DRAWN_CABINETS_LIMIT);
+    const x0 = pose().x;
+    expect(begin()).toBe(true);
+    expect(everyFrontDrawn(JOG_FULL_PX, 60)).toBeGreaterThan(60);
+    expect(pose().x).toBeGreaterThan(x0);
+    expect(Number(host().dataset.drawnCap)).toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
+    end();
+  });
+
+  it('a finger on the scene owns the camera: the jog refuses meanwhile; a finger pressed while the jog runs moves nothing of its own', () => {
+    scene();
+    down(1, { x: 200, y: 200 });
+    let ok = true;
+    act(() => {
+      ok = jog().start();
+    });
+    expect(ok).toBe(false);
+    up(1, { x: 200, y: 200 });
+    tick(500);
+    expect(begin()).toBe(true);
+    const at = pose();
+    drag({ x: 300, y: 200 }, { x: 100, y: 200 }, { id: 3 });
+    expect(pose()).toEqual(at);
+    expect(host().dataset.gesture).toBe('jog');
+    // a second start while it runs is refused too
+    act(() => {
+      ok = jog().start();
+    });
+    expect(ok).toBe(false);
+    end();
+  });
+
+  it('turned, a jog keeps the turn and never draws sharper than where the turn left yaw 0 (a)', () => {
+    scene();
+    const opening = pxPerMm();
+    lookRight();
+    up(1, { x: 0, y: 200 });
+    tick(500);
+    const rest = pose();
+    expect(rest.yaw).toBeGreaterThan(0);
+    begin();
+    // turned right, the jog left walks the eye toward the fronts
+    let nearest = rest.z;
+    for (let i = 0; i < 6; i++) {
+      run(-JOG_FULL_PX, 0, 10);
+      nearest = Math.min(nearest, pose().z);
+      expect(pose().yaw).toBe(rest.yaw);
+      expect(pxPerMm(), `jog ${i + 1} while turned`).toBeLessThanOrEqual(opening);
+    }
+    end();
+    expect(nearest).toBeLessThan(rest.z - 100);
+    expect(pxPerMm(), 'let go turned').toBeLessThanOrEqual(opening);
+  });
+
+  it('a jog while a look eases back starts from where the ease rests (the soft limit)', () => {
+    scene();
+    const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
+    drag({ x: 440, y: 200 }, { x: 0, y: 200 }, { button: 2, steps: 20, lift: false });
+    up(1, { x: 0, y: 200 });
+    tick(16);
+    begin();
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+    run(JOG_FULL_PX, 0, 20);
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+    end();
+    tick(500);
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+  });
+
+  it('zoomed, a jog drops the magnification and moves the camera', () => {
+    scene();
+    down(11, { x: 180, y: 260 });
+    down(12, { x: 260, y: 260 });
+    move(11, { x: 140, y: 260 });
+    move(12, { x: 300, y: 260 });
+    up(11, { x: 140, y: 260 });
+    up(12, { x: 300, y: 260 });
+    tick(500);
+    expect(JSON.parse(host().dataset.zoom!).k).toBeGreaterThan(1);
+    const before = pose();
+    begin();
+    expect(JSON.parse(host().dataset.zoom!).k).toBe(1);
+    run(JOG_FULL_PX, 0, 10);
+    end();
+    expect(pose().x).toBeGreaterThan(before.x);
+  });
+
+  it('gone mid-run: no frame runs on, and the withdrawn jog\'s calls do nothing', () => {
+    const { unmount } = scene();
+    begin();
+    const held = jog();
+    act(() => held.aim(JOG_FULL_PX, 0));
+    unmount();
+    const raf = vi.spyOn(window, 'requestAnimationFrame');
+    frames(10);
+    act(() => held.aim(JOG_FULL_PX, 0));
+    act(() => held.stop());
+    expect(raf).not.toHaveBeenCalled();
+    raf.mockRestore();
   });
 });
 

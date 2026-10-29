@@ -8,7 +8,8 @@ import { LOOK_HOLD_MS, PITCH, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
 import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
 import { wallLayout } from '../packCabinets';
-import { IKEA_KLINGSBO } from '../cabinetPresets';
+import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
+import { frameMargins, project } from '../caseCamera';
 
 // NAV-1A, the Free camera (trial), in the scene: MOVE and LOOK from one finger, the hold that arms Look without swallowing
 // a tap, the realism cone and its ease back, the pose held across a fold, the arrows and Reset from the frame-centre
@@ -808,5 +809,47 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     scene({ freeCamera: false });
     expect(host().hasAttribute('data-yaw-budget')).toBe(false);
     expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
+  });
+});
+
+// NAV3-TOP (b), Ross 10-28 ("we can try b I reckon"), a trial with the Free camera: only the one-cabinet view stands back so
+// the tallest figure on a cabinet's top shows whole; the wall view keeps the 24 in crop (raise or look up there).
+describe('NAV3-TOP (b): the one-cabinet view shows the tallest top figure whole; the wall view keeps the crop', () => {
+  const tall = { _id: 'tall', name: 'Tall', dimensions: { heightMm: 700, widthMm: 200 } } as Figure;
+  /** Where the tall figure's head draws in the frame (px from its top), and the frame's top margin. */
+  const head = () => {
+    const w = JSON.parse(host().querySelector<HTMLElement>('.cab-figure[data-figure-id="tall"]')!.dataset.world!) as { x0: number; x1: number; y1: number; z: number };
+    const c = cam();
+    const frame = { width: c.width, height: c.height };
+    return { y: project({ ...c, frame }, [(w.x0 + w.x1) / 2, w.y1, w.z]).y, margin: frameMargins(frame).y, top: w.y1 };
+  };
+
+  it('a 700 mm figure on a Detolf\'s top, the open Fold8: the cabinet view stands back to show it whole; the wall view frames as for one at the cap', () => {
+    const atCap = { ...tall, dimensions: { heightMm: 609.6 - 40, widthMm: 200 } } as Figure;
+    const open = { frameFallback: { width: 870, height: 475 } };
+    const { again } = scene({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { ...open, figures: [tall] });
+    const cabinet = head();
+    expect(cabinet.top).toBeGreaterThan(IKEA_DETOLF.outer.heightMm + 609.6);
+    expect(cabinet.y).toBeGreaterThanOrEqual(cabinet.margin - 1e-6);
+    const stoodBack = cam();
+    again({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { ...open, figures: [atCap] });
+    expect(stoodBack.z).toBeGreaterThan(cam().z);
+    // the wall view: the same camera for either (the crop kept: a figure past the cap is cut at the frame's top)
+    again({ view: 'wall', pattern: IKEA_DETOLF.id }, { ...open, figures: [atCap] });
+    const wallAtCap = cam();
+    again({ view: 'wall', pattern: IKEA_DETOLF.id }, { ...open, figures: [tall] });
+    expect(cam()).toEqual(wallAtCap);
+  });
+
+  it('the cover\'s cabinet view too', () => {
+    scene({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { figures: [tall] });
+    const { y, margin } = head();
+    expect(y).toBeGreaterThanOrEqual(margin - 1e-6);
+  });
+
+  it('off: the cabinet view keeps the crop, as before', () => {
+    scene({ view: 'cabinet', pattern: IKEA_DETOLF.id, freeCamera: false }, { figures: [tall], frameFallback: { width: 870, height: 475 } });
+    const { y, margin } = head();
+    expect(y).toBeLessThan(margin - 1);
   });
 });

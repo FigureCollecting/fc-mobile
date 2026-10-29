@@ -257,6 +257,12 @@ function Part({ cls, children }: { cls: string; children: ComponentChildren }) {
 
 // ------------------------------------------------------------------ cabinets
 
+/** The tallest figure standing on a packed cabinet's top (mm); null: nothing there (framingHeadroomMm). */
+function tallestOnTop(cab: PackedCabinet | null): number | null {
+  const top = cab?.surfaces.find((s) => s.slot.isTop);
+  return top && top.items.length > 0 ? Math.max(...top.items.map((p) => p.heightMm)) : null;
+}
+
 function caseFloor(p: CabinetProfile): CabinetSurface {
   return p.surfaces.find((s) => !s.outsideDoor) ?? p.surfaces[0];
 }
@@ -1096,14 +1102,12 @@ export function CabinetScene({
 
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
-  const headroomMm = useMemo(
-    () =>
-      wall.cabinets.map((slot, i) => {
-        const top = cabinets[i]?.surfaces.find((s) => s.slot.isTop);
-        const tallest = top && top.items.length > 0 ? Math.max(...top.items.map((p) => p.heightMm)) : null;
-        return framingHeadroomMm(slot.profile, tallest, ceilingMm);
-      }),
-    [wall, cabinets, ceilingMm],
+  const headroomMm = useMemo(() => wall.cabinets.map((slot, i) => framingHeadroomMm(slot.profile, tallestOnTop(cabinets[i]), ceilingMm)), [wall, cabinets, ceilingMm]);
+  // NAV3-TOP (b), Ross 10-28, a trial with the Free camera: the one-cabinet view frames each top up to its tallest figure
+  // (no 24 in framing cap), so that figure shows whole there; the wall view keeps headroomMm's crop
+  const topWholeMm = useMemo(
+    () => (free ? wall.cabinets.map((slot, i) => framingHeadroomMm(slot.profile, tallestOnTop(cabinets[i]), ceilingMm, Infinity)) : null),
+    [free, wall, cabinets, ceilingMm],
   );
 
   const [focus, setFocus] = useState(0);
@@ -1149,9 +1153,9 @@ export function CabinetScene({
   const framedIdx = framedFocus === null ? focusIdx : Math.min(framedFocus, lastIndex);
   // the framing and the wall's pages hold for a whole swipe: worked out once per view, not at every finger move
   const framingInput = useMemo(
-    // NAV-1A (rulings R0.3): Free camera's openings are level
-    () => ({ frame, wall, headroomMm, view: prefs.view, focus: prefs.view === 'cabinet' ? framedIdx : focusIdx, shelf, ceilingMm, ...(free ? { level: true } : {}) }),
-    [frame, wall, headroomMm, prefs.view, focusIdx, framedIdx, shelf, ceilingMm, free],
+    // NAV-1A (rulings R0.3): Free camera's openings are level (topWholeMm is Free camera's alone: NAV3-TOP b)
+    () => ({ frame, wall, headroomMm, view: prefs.view, focus: prefs.view === 'cabinet' ? framedIdx : focusIdx, shelf, ceilingMm, ...(topWholeMm ? { level: true, topWholeMm } : {}) }),
+    [frame, wall, headroomMm, prefs.view, focusIdx, framedIdx, shelf, ceilingMm, topWholeMm],
   );
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
   const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);

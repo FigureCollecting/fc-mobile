@@ -81,6 +81,11 @@ export interface FramingInput {
   readonly lensMm?: number;
   /** NAV-1A (rulings R0.3): Free camera's openings are level: the wall view stands at the wall's half height, not tilted down at it. */
   readonly level?: boolean;
+  /**
+   * NAV3-TOP (b), Ross 10-28, a trial: the headroom the one-cabinet view frames above each cabinet (framingHeadroomMm with
+   * no framing cap), so the tallest top figure shows whole there; the wall and shelf views keep headroomMm's crop.
+   */
+  readonly topWholeMm?: readonly number[];
 }
 
 export interface Framing {
@@ -507,7 +512,7 @@ function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
  */
 function frameCabinet(input: FramingInput, focus: number, drawCap: number, cap: WallCap): Framing {
   const slot = input.wall.cabinets[focus];
-  const b = cabinetBox(slot, headroomOf(input, focus));
+  const b = cabinetBox(slot, input.topWholeMm?.[focus] ?? headroomOf(input, focus));
   const look: Vec3 = [slot.centerMm, (b.y0 + b.y1) / 2, 0];
   const focalPx = lensFocalPx(input.frame, input.lensMm);
   const m = frameMargins(input.frame);

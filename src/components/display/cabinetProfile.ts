@@ -340,19 +340,21 @@ export function fitsOnTop(profile: CabinetProfile, figureHeightMm: number, ceili
  * top. top.usable is not read: a top that takes nothing is framed like an
  * empty one. The 24 in cap is the framing's (the room's clearance may be more:
  * the wall camera, measured at up to 24 in of headroom, stays as it was); a
- * figure standing higher is cropped at the frame's top until the camera lifts.
+ * figure standing higher is cropped at the frame's top until the camera lifts. NAV3-TOP (b): the one-cabinet view passes
+ * `capMm` Infinity, so only the clearance binds there.
  */
 export function framingHeadroomMm(
   profile: HasOuterHeight,
   tallestTopFigureMm: number | null,
   ceilingMm: number = CEILING_DEFAULT_MM,
+  capMm: number = TOP_CLEARANCE_CAP_MM,
 ): number {
   let wanted = HEADROOM_MIN_MM;
   if (tallestTopFigureMm !== null) {
     requireFinite(tallestTopFigureMm, 'tallestTopFigureMm');
     wanted = Math.max(HEADROOM_MIN_MM, tallestTopFigureMm + HEADROOM_PAD_MM);
   }
-  return Math.min(TOP_CLEARANCE_CAP_MM, topClearanceMm(profile, ceilingMm), wanted);
+  return Math.min(capMm, topClearanceMm(profile, ceilingMm), wanted);
 }
 
 /** CLEAR-1 (Ross 10-18): the room kept above a figure unless the user sets another: 1 in, up to 2 in in quarter inches. */

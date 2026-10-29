@@ -66,6 +66,11 @@ export interface CasePrefs {
   readonly wall: WallPreset;
   /** The custom wall colour, #rrggbb (its light-theme colour; the dark one is mixed from it). */
   readonly wallCustom: string;
+  /**
+   * NAV-1A (rulings R0.2): the Free camera trial (a camera that turns, walks without snapping and never traps you), per
+   * device. Off (absent) is today's case, to the byte; it is kept only while on.
+   */
+  readonly freeCamera?: boolean;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -122,6 +127,7 @@ export function readCasePrefs(): CasePrefs {
     showEstimated: stored.showEstimated === true,
     wall: isWallPreset(stored.wall) ? stored.wall : d.wall,
     wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
+    ...(stored.freeCamera === true ? { freeCamera: true } : {}),
   };
 }
 

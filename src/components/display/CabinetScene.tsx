@@ -46,8 +46,12 @@ import { cssSceneTransform, type Vec3 } from './caseCamera';
 import {
   atX,
   cabinetBox,
+  centreCabinet,
+  centreHit,
   clampLift,
+  frameCap,
   frameCase,
+  frontsOf,
   liftForDragMm,
   lifted,
   focusEdgesPx,
@@ -75,8 +79,10 @@ import {
   figureCap,
   figureScales,
   figuresToDraw,
+  freeTexelScale,
   nearestCabinets,
   opaqueBoards,
+  stickyWhole,
   stickyView,
   texelScale,
   trimFace,
@@ -94,6 +100,9 @@ import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
+import { LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
+import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
+import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
 /** A sideways move this long (CSS px) turns a press into a swipe; shorter stays a tap. */
@@ -248,6 +257,12 @@ function Part({ cls, children }: { cls: string; children: ComponentChildren }) {
 }
 
 // ------------------------------------------------------------------ cabinets
+
+/** The tallest figure standing on a packed cabinet's top (mm); null: nothing there (framingHeadroomMm). */
+function tallestOnTop(cab: PackedCabinet | null): number | null {
+  const top = cab?.surfaces.find((s) => s.slot.isTop);
+  return top && top.items.length > 0 ? Math.max(...top.items.map((p) => p.heightMm)) : null;
+}
 
 function caseFloor(p: CabinetProfile): CabinetSurface {
   return p.surfaces.find((s) => !s.outsideDoor) ?? p.surfaces[0];
@@ -809,15 +824,20 @@ interface PackBasis {
 }
 
 
+/** The host's frame (the fallback until it is measured), and whether it has been measured yet. */
 function useFrame(ref: { current: HTMLElement | null }, fallback: { width: number; height: number }) {
   const [frame, setFrame] = useState(fallback);
+  const [measured, setMeasured] = useState(false);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const measure = () => {
       const width = el.clientWidth;
       const height = el.clientHeight;
-      if (width > 0 && height > 0) setFrame((f) => (f.width === width && f.height === height ? f : { width, height }));
+      if (width > 0 && height > 0) {
+        setFrame((f) => (f.width === width && f.height === height ? f : { width, height }));
+        setMeasured(true);
+      }
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -828,21 +848,21 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
       window.removeEventListener('resize', measure);
     };
   }, [ref]);
-  return frame;
+  return { frame, measured };
 }
 
 /**
  * PINCH-1: the Reset view chip, while the picture is zoomed. It holds whether it shows and hands the scene its
  * setter (`shown`), so it comes and goes as its own render, never the scene's.
  */
-function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; onReset: () => void }) {
+function ResetChip({ shown, moved, onReset, fade = false }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; onReset: () => void; fade?: boolean }) {
   const [zoomed, setZoomed] = useState(false);
   shown.current = setZoomed;
   // PAN-KEEP-1: also while the camera or the pan is off the default angle: the one deliberate way back
   if (!zoomed && !moved) return null;
   // NAV-PTR-1: a small button (a ⟲ over a short label), a scene control (a press on it is no gesture of the scene's)
   return (
-    <button type="button" class="cabinet-scene__reset" aria-label="Reset view" title="Reset view" data-scene-ui onClick={onReset}>
+    <button type="button" class={fade ? 'cabinet-scene__reset cabinet-scene__reset--fade' : 'cabinet-scene__reset'} aria-label="Reset view" title="Reset view" data-scene-ui onClick={onReset}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
         <path d="M3 3v5h5" />
@@ -992,8 +1012,12 @@ export function CabinetScene({
   onUnplaced,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const frame = useFrame(hostRef, frameFallback);
+  const { frame, measured: frameMeasured } = useFrame(hostRef, frameFallback);
   const ceilingMm = prefs.ceilingMm;
+  // NAV-1A (rulings R0.2): the Free camera trial; off, every line below runs as it did
+  const free = prefs.freeCamera === true;
+  const freeRef = useRef(free);
+  freeRef.current = free;
   // CLEAR-1: every cabinet keeps the clearance above a figure that the case prefs set
   const pattern = useMemo(() => wallPatternProfiles(prefs.pattern).map((p) => withClearance(p, prefs.clearanceMm)), [prefs.pattern, prefs.clearanceMm]);
 
@@ -1079,14 +1103,12 @@ export function CabinetScene({
 
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
-  const headroomMm = useMemo(
-    () =>
-      wall.cabinets.map((slot, i) => {
-        const top = cabinets[i]?.surfaces.find((s) => s.slot.isTop);
-        const tallest = top && top.items.length > 0 ? Math.max(...top.items.map((p) => p.heightMm)) : null;
-        return framingHeadroomMm(slot.profile, tallest, ceilingMm);
-      }),
-    [wall, cabinets, ceilingMm],
+  const headroomMm = useMemo(() => wall.cabinets.map((slot, i) => framingHeadroomMm(slot.profile, tallestOnTop(cabinets[i]), ceilingMm)), [wall, cabinets, ceilingMm]);
+  // NAV3-TOP (b), Ross 10-28, a trial with the Free camera: the one-cabinet view frames each top up to its tallest figure
+  // (no 24 in framing cap), so that figure shows whole there; the wall view keeps headroomMm's crop
+  const topWholeMm = useMemo(
+    () => (free ? wall.cabinets.map((slot, i) => framingHeadroomMm(slot.profile, tallestOnTop(cabinets[i]), ceilingMm, Infinity)) : null),
+    [free, wall, cabinets, ceilingMm],
   );
 
   const [focus, setFocus] = useState(0);
@@ -1132,11 +1154,33 @@ export function CabinetScene({
   const framedIdx = framedFocus === null ? focusIdx : Math.min(framedFocus, lastIndex);
   // the framing and the wall's pages hold for a whole swipe: worked out once per view, not at every finger move
   const framingInput = useMemo(
-    () => ({ frame, wall, headroomMm, view: prefs.view, focus: prefs.view === 'cabinet' ? framedIdx : focusIdx, shelf, ceilingMm }),
-    [frame, wall, headroomMm, prefs.view, focusIdx, framedIdx, shelf, ceilingMm],
+    // NAV-1A (rulings R0.3): Free camera's openings are level (topWholeMm is Free camera's alone: NAV3-TOP b)
+    () => ({ frame, wall, headroomMm, view: prefs.view, focus: prefs.view === 'cabinet' ? framedIdx : focusIdx, shelf, ceilingMm, ...(topWholeMm ? { level: true, topWholeMm } : {}) }),
+    [frame, wall, headroomMm, prefs.view, focusIdx, framedIdx, shelf, ceilingMm, topWholeMm],
   );
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
   const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
+  const culled = useRef<CullView | null>(null);
+  // NAV-1A: the Free camera's pose (a ref, written each frame by its gestures); the scene renders when the cull must change
+  const rootRef = useRef<HTMLDivElement>(null);
+  const ringRef = useRef<HTMLDivElement>(null);
+  const [, setTick] = useState(0);
+  const rerender = useCallback(() => setTick((t) => t + 1), []);
+  const freeScene = useRef<FreeScene | null>(null);
+  const fc = useFreeCamera(freeScene as { current: FreeScene }, { host: hostRef, root: rootRef, ring: ringRef }, culled, rerender);
+  const laidOut = figures.length > 0 && basis !== null && (steadyLayout ? settle.revealed : unmeasured === 0);
+  // a new view, wall pattern or filter starts from its framing (instant in this slice); a fold or unfold keeps the pose (spec 6.6)
+  const rebaseKey = `${prefs.view}|${prefs.pattern}|${REPACK_ON_FILTER ? (filterKey ?? '') : ''}`;
+  const rebasedFor = useRef(rebaseKey);
+  const pinnedAt = useRef<{ width: number; height: number; camera: typeof base.camera } | null>(null);
+  if (free && rebasedFor.current !== rebaseKey) {
+    fc.hold(null);
+    pinnedAt.current = null;
+  }
+  rebasedFor.current = rebaseKey;
+  if (free && fc.held() === null && laidOut && pinnedAt.current !== null && (pinnedAt.current.width !== frame.width || pinnedAt.current.height !== frame.height)) {
+    fc.hold(poseOf(pinnedAt.current.camera));
+  }
   // CASE-FB1: a walk moves the camera along the wall only; an up/down drag (camera mode) raises it and its aim together,
   // between the floor and the ceiling, and the walk keeps that height
   const along = walkX === null ? base : atX(base, walkX);
@@ -1150,17 +1194,22 @@ export function CabinetScene({
   // the photo slides (a pan mode drag moves it; a camera mode drag does not, but what was panned stays panned: PAN-KEEP-1), and
   // past its sane extent is retaken farther along (panFraming)
   const shown = panFraming(framing, clampPan(pan + (prefs.swipe === 'pan' ? liveDx : 0)));
+  // NAV-1A: in Free camera the camera is the pose (on the framing's lens and frame); the pager pages from what its frame
+  // centre looks at (rulings S7)
+  const camera = free ? fc.camera(base.camera) : shown.framing.camera;
+  // pinned from the host's first measured size on: the fallback frame a wall laid out on before it is not a fold's
+  if (free && laidOut && frameMeasured && fc.held() === null) pinnedAt.current = { width: frame.width, height: frame.height, camera: base.camera };
+  const centre = free ? centreHit(camera, wall) : undefined;
   // the wall view pages from what the settled picture centres on, after a press, a walk or a pan (close-out 4, ruling 32)
   const still = panFraming(walked, clampPan(pan));
-  const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx) : focusIdx;
+  const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, still.framing, still.panPx, centre) : focusIdx;
   // PAGER-END: the first and the last page's openings, so Next stays on short of the last page's centre and Prev past the first's
   const ends = useMemo(
     () => (framingInput.view === 'wall' && pages.length > 0 ? { first: pageOpensAt(framingInput, pages[0]), last: pageOpensAt(framingInput, pages[pages.length - 1]) } : null),
     [framingInput, pages],
   );
-  const reach = ends !== null ? pagerReach(pages, wall, still.framing, still.panPx, ends) : null;
+  const reach = ends !== null ? pagerReach(pages, wall, still.framing, still.panPx, ends, centre) : null;
   const { panPx } = shown;
-  const { camera } = shown.framing;
   // CAB-FOCUS-1: in the one-cabinet view, the cabinets either side of the focus one are dimmed, from the edges of its silhouette
   const dimFrom = prefs.view === 'cabinet' ? focusEdgesPx(camera, wall.cabinets[focusIdx]) : null;
   // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
@@ -1175,13 +1224,16 @@ export function CabinetScene({
   // once the swipe settles, cull for the settled picture itself: the drawCap cabinets nearest its centre. Draw the
   // faces at the px per mm the screen shows the cabinets' room (floor to headroom, back to the front of the feet)
   // at its nearest
-  const moving = liveDx !== 0 || liveDy !== 0;
-  const culled = useRef<CullView | null>(null);
-  const cull = moving ? stickyView(culled.current, { camera, panPx }) : { camera, panPx };
-  culled.current = cull;
+  const moving = free ? fc.live() : liveDx !== 0 || liveDy !== 0;
   const chosen = useRef<number[]>([]);
+  // NAV-JOG: the Free camera's sticky cull holds only while what it drew takes in every front the frame shows (stickyWhole)
+  const cull = moving ? (free ? stickyWhole(culled.current, { camera, panPx }, wall, chosen.current) : stickyView(culled.current, { camera, panPx })) : { camera, panPx };
+  culled.current = cull;
+  // NAV-1A (rulings S2): in Free camera the cap follows the turned frame, from the framing's up to the limit
+  const fronts = useMemo(() => frontsOf(wall, headroomMm), [wall, headroomMm]);
+  const drawCap = free ? frameCap(cull.camera, wall, fronts, base.drawCap) : base.drawCap;
   // CF1 (a): as many as the panel's full-height frame shows fronts (wallCamera), the same in every view
-  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : [], base.drawCap);
+  const drawnCabs = nearestCabinets(cull, wall, moving ? chosen.current : [], drawCap);
   chosen.current = drawnCabs;
   const visible = drawnCabs.map((i) => ({ slot: wall.cabinets[i], i }));
   const span = useMemo(
@@ -1204,7 +1256,11 @@ export function CabinetScene({
       ),
     [wall],
   );
-  const s = texelScale(camera, span);
+  // NAV-1A (a), Ross 10-28: turned, the Free camera's scene keeps the px per mm in force where the turn left yaw 0 (a
+  // cabinet beside the eye, a move or a pitch while turned never sharpens it); what the turned view itself would ask (its
+  // nearest point in view, over the wall and a cabinet's reach past its ends) is published beside it
+  const s = free ? freeTexelScale(camera, span, fc.unturned(base.camera)) : texelScale(camera, span);
+  const asked = free && camera.yaw ? texelScale(camera, span, [wall.leftMm - 1000, wall.rightMm + 1000]) : null;
   // a photo slid up or down draws, in the unslid picture, the rows the slide brings into the frame
   const rect = cullRect(camera.frame);
   const draw: Draw = { view: cull, rect: { ...rect, y0: rect.y0 - panYPx, y1: rect.y1 - panYPx }, s };
@@ -1286,7 +1342,6 @@ export function CabinetScene({
 
   // CARD-VIEW-1: Go to. The wall is laid out (every figure in the place it keeps); a request is taken up once, after the resets
   // above (a layout effect declared after them: a new view's reset never undoes it), to the framing goToFigure gives
-  const laidOut = figures.length > 0 && basis !== null && (steadyLayout ? settle.revealed : unmeasured === 0);
   const goToScene = useMemo<GoToScene>(() => ({ frame, wall, cabinets, headroomMm, ceilingMm }), [frame, wall, cabinets, headroomMm, ceilingMm]);
   const wentTo = useRef<number | null>(null);
   const wentOut = useRef(onWentTo);
@@ -1304,6 +1359,8 @@ export function CabinetScene({
       setLift(0);
       setPanY(0);
       if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
+      // NAV-1A: Free camera stands at the framing Go to gives, at once (the animated go-to is slice 1c)
+      if (free) fc.hold(target.walkX === null ? null : poseOf(target.framing.camera));
     }
     wentOut.current?.(goTo.figureId, target !== null);
   }, [goTo, laidOut, goToScene, showZoom]);
@@ -1356,6 +1413,7 @@ export function CabinetScene({
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (p && a) {
       // a second finger: a pinch; the first one's swipe goes back where it started (a two-finger gesture never walks)
+      if (freeRef.current) fc.release(p.id, false);
       press.current = null;
       setLiveDx(0);
       setLiveDy(0);
@@ -1369,6 +1427,8 @@ export function CabinetScene({
     press.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null, zoom: isZoomed(zoom.current) ? zoom.current : null, pinched: false };
     // a touch swipe makes no click: whatever it left to swallow ends with the next press
     swallowClick.current = false;
+    // NAV-1A: one finger on the unzoomed picture: the Free camera's MOVE, or its LOOK after a still hold
+    if (freeRef.current && !isZoomed(zoom.current)) fc.press(e, toFrame(e.clientX, e.clientY));
   };
   const onPointerMove = useCallback((e: PointerEvent) => {
     if (!fingers.current.has(e.pointerId)) return;
@@ -1391,6 +1451,7 @@ export function CabinetScene({
     }
     if (p.axis === null) return;
     if (p.zoom) showZoom(panZoom(p.zoom, dx, dy, picture.current), 'live');
+    else if (freeRef.current) fc.drag(e.pointerId, toFrame(e.clientX, e.clientY), p.axis);
     else if (p.axis === 'x') setLiveDx(dx);
     else setLiveDy(dy);
   }, []);
@@ -1429,6 +1490,8 @@ export function CabinetScene({
     if (!p || p.id !== e.pointerId) return;
     press.current = null;
     if (p.axis === null) {
+      // NAV-1A (rulings S6): a still release is a tap, armed Look or not: the hold swallows nothing
+      if (free) fc.release(e.pointerId, false);
       if (commit && !p.pinched) tapped(e);
       return;
     }
@@ -1438,6 +1501,15 @@ export function CabinetScene({
     swallowClick.current = true;
     if (p.zoom) {
       showZoom(zoom.current, 'still');
+      return;
+    }
+    if (free) {
+      // NAV-1A: the pose is the last live one (no settle, no retake); the arrows and Reset go on from what the frame centre looks at
+      const left = fc.release(e.pointerId, commit);
+      if (left !== null) {
+        setFocus(centreCabinet(withPose(base.camera, left), wall));
+        setFramedFocus(null);
+      }
       return;
     }
     setLiveDx(0);
@@ -1491,6 +1563,11 @@ export function CabinetScene({
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
   };
   const goCabinet = (to: number) => {
+    // NAV-1A: TOP1 as built: an arrow stands the Free camera at the target's framing, at once (the tween is slice 1c)
+    if (free) {
+      fc.hold(null);
+      rerender();
+    }
     setFocus(Math.max(0, Math.min(lastIndex, to)));
     setFramedFocus(null);
     setWalkX(null);
@@ -1505,9 +1582,33 @@ export function CabinetScene({
   const shelfCount = useMemo(() => shelfSteps(framingInput), [framingInput]);
   const shelfIdx = Math.min(shelf, shelfCount - 1);
   const goShelf = (to: number) => {
+    if (free) {
+      fc.hold(null);
+      rerender();
+    }
     setShelf(to);
     snapFrame();
   };
+  // NAV-JOG (Ross 10-28): while a Free camera case is shown, the bottom-centre button is its jog (the side arrows retire):
+  // a jog drops a magnification first, and its lift leaves the focus on the cabinet the frame centre shows, as a drag's
+  useEffect(() => {
+    if (!free) return;
+    return offerJog({
+      start: () => {
+        if (!fc.jogStart()) return false;
+        if (isZoomed(zoom.current)) showZoom(UNZOOMED, 'still');
+        return true;
+      },
+      aim: fc.jogAim,
+      stop: () => {
+        const left = fc.jogStop();
+        if (left === null) return;
+        const s = freeScene.current!;
+        setFocus(centreCabinet(withPose(s.base, left), s.wall));
+        setFramedFocus(null);
+      },
+    });
+  }, [free]);
 
   // --- figures
   const draws: { draw: FigureDraw; cab: number }[] = [];
@@ -1601,6 +1702,51 @@ export function CabinetScene({
   const roomD = room.zFront - room.zBack;
   // the camera's frame is centred in the scene: on a wide panel, these px of the scene on each side are outside it
   const side = (frame.width - camera.frame.width) / 2;
+  // NAV-1A: what the Free camera's gestures move through, for this render
+  const boxes = useMemo(() => wall.cabinets.map((slot, i) => cabinetBox(slot, headroomMm[i])), [wall, headroomMm]);
+  freeScene.current = {
+    base: base.camera,
+    s,
+    wall,
+    fronts,
+    drawn: drawnCabs,
+    boxes,
+    space: eyeSpace(room, ceilingMm),
+    zBack: room.zBack,
+    dimmed: prefs.view === 'cabinet' ? wall.cabinets[focusIdx] : null,
+    lookMode: prefs.swipe === 'pan',
+    lookHoldMs: lookHoldMs(),
+    reducedMotion: prefersReducedMotion(),
+    // NAV-1A (b): what a look projects the scene's cost from: the figures as this render draws them, listed only when asked
+    budget: {
+      span,
+      wall,
+      fronts,
+      cap: base.drawCap,
+      counts: heldCounts,
+      kinds: heldKinds,
+      boards: (cab) => opaqueBoards(wall.cabinets[cab]),
+      figures: () =>
+        draws.map(({ cab, draw: fig }) => {
+          const { art, aspect, margins } = drawing(fig.placed.item);
+          const g = figureGeometry(fig, art, aspect, margins);
+          return { ...figureLayerBox(fig, g, cab), tapMm: g.tapW, plate: labels ? plateOf(fig) : null };
+        }),
+      room: [
+        [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, -room.y1, 0]],
+        [[room.x0, 0, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
+        [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
+        [[room.x0, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
+        [[room.x1, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
+      ],
+      roomFacePx: ROOM_GRID.u * ROOM_GRID.v,
+      viewportPx: window.innerWidth * window.innerHeight,
+    },
+  };
+  const cone = free ? coneOf(camera, wall, fronts) : null;
+  useLayoutEffect(() => {
+    if (freeRef.current) fc.sync();
+  });
 
   return (
     <div
@@ -1619,25 +1765,32 @@ export function CabinetScene({
       data-focus={String(focusIdx)}
       data-shelf={String(shelfIdx)}
       data-camera-x={fmt(camera.x)}
-      data-camera={JSON.stringify({
-        x: num(camera.x),
-        y: num(camera.y),
-        z: num(camera.z),
-        pitch: num(camera.pitch),
-        focalPx: num(camera.focalPx),
-        width: camera.frame.width,
-        height: camera.frame.height,
-      })}
-      data-pan={String(Math.round(panPx))}
-      data-pan-y={String(Math.round(panYPx))}
+      data-camera={
+        free
+          ? cameraData(camera)
+          : JSON.stringify({
+              x: num(camera.x),
+              y: num(camera.y),
+              z: num(camera.z),
+              pitch: num(camera.pitch),
+              focalPx: num(camera.focalPx),
+              width: camera.frame.width,
+              height: camera.frame.height,
+            })
+      }
+      data-pan={free ? undefined : String(Math.round(panPx))}
+      data-pan-y={free ? undefined : String(Math.round(panYPx))}
+      data-free-camera={free ? '1' : undefined}
+      data-cone={cone ? JSON.stringify({ soft: num((cone.soft * 180) / Math.PI), hard: num((cone.hard * 180) / Math.PI) }) : undefined}
       data-room={JSON.stringify({ ceilingMm: num(room.y1), zBack: num(room.zBack) })}
       data-px-per-mm={String(s)}
+      data-turned-px-per-mm={asked === null ? undefined : String(asked)}
       data-cull-x={String(cull.camera.x)}
       data-cull-pan={String(cull.panPx)}
       data-wall={wallBoxes}
       data-held={held}
       data-drawn-cabinets={String(drawnCabs.length)}
-      data-drawn-cap={String(base.drawCap)}
+      data-drawn-cap={String(drawCap)}
       data-drawn-figures={String(onShow.length)}
       data-figure-cap={String(figCap)}
       data-hidden-figures={String(hidden)}
@@ -1650,6 +1803,8 @@ export function CabinetScene({
       onPointerUp={(e) => endPress(e, true)}
       onPointerCancel={(e) => endPress(e, false)}
       onClickCapture={onClickCapture}
+      // NAV-1A: a long press (Look's hold, or longer) never opens the browser's own menu over the scene
+      onContextMenu={free ? (e) => e.preventDefault() : undefined}
       onScroll={(e) => {
         // ruling 33: where a browser cannot clip without a scroll box, a scroll (a button taking focus) is put back
         e.currentTarget.scrollLeft = 0;
@@ -1669,11 +1824,14 @@ export function CabinetScene({
             class="cabinet-scene__viewport"
             style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx || panYPx ? `translate(${panPx}px, ${panYPx}px)` : undefined }}
           >
-            <div class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
+            <div ref={rootRef} class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
               <DrawContext.Provider value={draw}>
                 <Quad cls="room-wall" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />
                 <Quad cls="room-floor" a={[room.x0, 0, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
                 <Quad cls="room-ceiling" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />
+                {/* NAV-1A (rulings S9): the room's side walls, which a look near a wall's end or a walk past it sees */}
+                {free && <Quad cls="room-wall room-side" a={[room.x0, room.y1, room.zBack]} u={[0, 0, roomD]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />}
+                {free && <Quad cls="room-wall room-side" a={[room.x1, room.y1, room.zBack]} u={[0, 0, roomD]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />}
                 {visible.map(({ slot, i }) => (
                   <Cabinet key={`${i}:${slot.profile.id}`} slot={slot} index={i} />
                 ))}
@@ -1700,14 +1858,29 @@ export function CabinetScene({
             {dimFrom !== null && focusIdx < lastIndex && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
+        {free && <div ref={ringRef} class="cabinet-scene__look-ring" aria-hidden="true" />}
       </div>
 
       <ResetChip
         shown={showChip}
         // NAV-PTR-1: zoomed, or raised or slid at least RESET_PX of picture travel (the raise in screen terms, in every view);
         // a walk is navigation, not a view off its angle
-        moved={Math.abs(lift) >= Math.abs(liftForDragMm(along, RESET_PX)) || Math.abs(pan) >= RESET_PX || Math.abs(panY) >= RESET_PX}
+        moved={
+          free
+            ? // NAV-1A (spec 4): off the frame-centre cabinet's framing by more than a glance; never during a gesture
+              !fc.live() && fc.held() !== null && resetApplies(poseOf(camera), poseOf(base.camera))
+            : Math.abs(lift) >= Math.abs(liftForDragMm(along, RESET_PX)) || Math.abs(pan) >= RESET_PX || Math.abs(panY) >= RESET_PX
+        }
+        fade={free}
         onReset={() => {
+          if (free) {
+            // NAV-1A: the frame-centre cabinet's framing, turned straight, at once; the zoom cleared
+            fc.hold(null);
+            showZoom(UNZOOMED, 'still');
+            setFramedFocus(null);
+            rerender();
+            return;
+          }
           showZoom(UNZOOMED, 'settle');
           setWalkX(null);
           setPan(0);
@@ -1719,24 +1892,29 @@ export function CabinetScene({
 
       {/* NAV-PTR-1: the arrows are the scene's controls, not its picture: a press on one is no gesture of the scene's */}
       <div class="cabinet-scene__nav" data-scene-ui>
-        <StepButton
-          cls="cabinet-scene__step cabinet-scene__step--prev"
-          label="Previous cabinet"
-          disabled={reach !== null ? !reach.prev : focusIdx <= 0}
-          onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
-          onDrag={startPress}
-        >
-          ‹
-        </StepButton>
-        <StepButton
-          cls="cabinet-scene__step cabinet-scene__step--next"
-          label="Next cabinet"
-          disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
-          onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
-          onDrag={startPress}
-        >
-          ›
-        </StepButton>
+        {/* NAV-JOG: in Free camera the bottom-centre button's jog moves it; the side arrows retire */}
+        {!free && (
+          <StepButton
+            cls="cabinet-scene__step cabinet-scene__step--prev"
+            label="Previous cabinet"
+            disabled={reach !== null ? !reach.prev : focusIdx <= 0}
+            onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+            onDrag={startPress}
+          >
+            ‹
+          </StepButton>
+        )}
+        {!free && (
+          <StepButton
+            cls="cabinet-scene__step cabinet-scene__step--next"
+            label="Next cabinet"
+            disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
+            onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+            onDrag={startPress}
+          >
+            ›
+          </StepButton>
+        )}
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
             <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))} onDrag={startPress}>
@@ -1784,9 +1962,40 @@ export function CabinetScene({
         </div>
       )}
       <Style css={styles} />
+      {free && <Style css={freeStyles} />}
     </div>
   );
 }
+
+/** NAV-1A: Look's hold, tunable on the device with ?lookhold=200 (100 to 1,000 ms; Ross may try 200 and 300). */
+function lookHoldMs(): number {
+  const v = Number(new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('lookhold'));
+  return Number.isFinite(v) && v >= 100 && v <= 1000 ? v : LOOK_HOLD_MS;
+}
+
+/** NAV-1A: the Free camera's own rules, drawn only while it is on (the old path's sheet is untouched). */
+const freeStyles = `
+  .cabinet-scene[data-free-camera] { -webkit-touch-callout: none; }
+  /* rulings S6: the 28 px ring under a finger that has armed Look, gone when it lifts */
+  .cabinet-scene__look-ring {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    margin: -14px 0 0 -14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+    pointer-events: none;
+    display: none;
+  }
+  .cabinet-scene__look-ring[data-on] { display: block; }
+  /* spec 4: Reset view never during a gesture; it fades in over 400 ms once one ends */
+  .cabinet-scene[data-gesture] .cabinet-scene__reset { visibility: hidden; }
+  .cabinet-scene__reset--fade { animation: cabinet-scene-reset-in 400ms ease-out both; }
+  @keyframes cabinet-scene-reset-in { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .cabinet-scene__reset--fade { animation: none; } }
+`;
 
 // The page sizes the scene (Collection: down to the pull-up tabs); 60vh only where nothing does. Inside the scene
 // root a length is a length in the world at its --s px per mm (texelScale), so every px there is scaled by it.

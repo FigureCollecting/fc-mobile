@@ -34,6 +34,8 @@ export interface Camera {
   readonly z: number;
   /** Radians the camera looks down (positive) or up (negative). */
   readonly pitch: number;
+  /** NAV-1A (Free camera): radians the camera is turned about world y; positive turns right, toward +x. Absent = 0. Roll never exists. */
+  readonly yaw?: number;
   readonly focalPx: number;
   readonly frame: Frame;
 }
@@ -64,11 +66,16 @@ export interface ScreenPoint {
   readonly depth: number;
 }
 
-/** Camera axes: right (1,0,0); up (0, cos p, -sin p); forward (0, -sin p, -cos p). */
+/**
+ * Camera axes, yaw y and pitch p: right (cos y, 0, sin y); up (sin p sin y, cos p, -sin p cos y); forward (cos p sin y,
+ * -sin p, -cos p cos y). The offset is turned about world y first, then tilted as before; at yaw 0 (or none) it is not
+ * touched, so every output is the unturned camera's to the bit.
+ */
 export function project(camera: Camera, p: Vec3): ScreenPoint {
-  const dx = p[0] - camera.x;
+  let dx = p[0] - camera.x;
   const dy = p[1] - camera.y;
-  const dz = p[2] - camera.z;
+  let dz = p[2] - camera.z;
+  if (camera.yaw) [dx, dz] = turned(camera.yaw, dx, dz);
   const sin = Math.sin(camera.pitch);
   const cos = Math.cos(camera.pitch);
   const up = dy * cos - dz * sin;
@@ -80,23 +87,58 @@ export function project(camera: Camera, p: Vec3): ScreenPoint {
   };
 }
 
+/** An offset (dx, dz) in the world as the camera turned `yaw` sees it: its right and back components. */
+function turned(yaw: number, dx: number, dz: number): [number, number] {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return [dx * c + dz * s, dz * c - dx * s];
+}
+
+/** A ray from the eye: origin + t dir, t being the depth along the camera's axis (dir has unit depth). */
+export interface Ray {
+  readonly origin: Vec3;
+  readonly dir: Vec3;
+}
+
+/** The ray through screen (sx, sy): right * a + up * b + forward, a and b the pixel's offsets from the centre over f. */
+export function castRay(camera: Camera, sx: number, sy: number): Ray {
+  const a = (sx - camera.frame.width / 2) / camera.focalPx;
+  const b = (camera.frame.height / 2 - sy) / camera.focalPx;
+  const sin = Math.sin(camera.pitch);
+  const cos = Math.cos(camera.pitch);
+  const dirY = b * cos - sin;
+  // the unturned camera's x and z, which the turn then carries round world y
+  const back = -b * sin - cos;
+  const [dirX, dirZ] = camera.yaw ? turned(-camera.yaw, a, back) : [a, back];
+  return { origin: [camera.x, camera.y, camera.z], dir: [dirX, dirY, dirZ] };
+}
+
+const AXES = { x: 0, y: 1, z: 2 } as const;
+
+/** Where the ray meets the plane `axis` = value in front of the eye (the point, exact on the plane, and its depth t); null when it never does. */
+export function rayHitPlane(ray: Ray, axis: keyof typeof AXES, value: number): { at: Vec3; t: number } | null {
+  const k = AXES[axis];
+  if (Math.abs(ray.dir[k]) < 1e-12) return null;
+  const t = (value - ray.origin[k]) / ray.dir[k];
+  if (!(t > 0)) return null;
+  const at = [0, 1, 2].map((j) => (j === k ? value : ray.origin[j] + ray.dir[j] * t)) as unknown as Vec3;
+  return { at, t };
+}
+
 /**
  * The world point on the plane z = planeZ that draws at screen (sx, sy): the
  * tap hit test's inverse of project. null when the ray through that pixel
  * never meets the plane in front of the camera.
  */
 export function unprojectToPlaneZ(camera: Camera, sx: number, sy: number, planeZ: number): Vec3 | null {
-  const a = (sx - camera.frame.width / 2) / camera.focalPx;
-  const b = (camera.frame.height / 2 - sy) / camera.focalPx;
-  const sin = Math.sin(camera.pitch);
-  const cos = Math.cos(camera.pitch);
-  // ray direction for unit depth: right * a + up * b + forward
-  const dirY = b * cos - sin;
-  const dirZ = -b * sin - cos;
-  if (Math.abs(dirZ) < 1e-12) return null;
-  const t = (planeZ - camera.z) / dirZ;
-  if (!(t > 0)) return null;
-  return [camera.x + a * t, camera.y + dirY * t, planeZ];
+  return rayHitPlane(castRay(camera, sx, sy), 'z', planeZ)?.at ?? null;
+}
+
+/** NAV-1A: the yaw and pitch that aim an eye at a point (pitch positive looks down, yaw positive turns toward +x). */
+export function lookToward(eye: Vec3, point: Vec3): { yaw: number; pitch: number } {
+  const dx = point[0] - eye[0];
+  const dz = point[2] - eye[2];
+  return { yaw: Math.atan2(dx, -dz), pitch: Math.atan2(eye[1] - point[1], Math.hypot(dx, dz)) };
 }
 
 /** The pitch that aims a camera at (lookY, lookZ): positive looks down. */
@@ -181,6 +223,8 @@ export function cssSceneTransform(camera: Camera, pxPerMm: number): string {
   return (
     `translate3d(${frame.width / 2}px, ${frame.height / 2}px, ${camera.focalPx}px) ` +
     `rotateX(${fixed(-deg(camera.pitch), 4)}deg) ` +
+    // NAV-1A: the turn, written only for a turned camera so every unturned string stays as it was
+    (camera.yaw ? `rotateY(${fixed(deg(camera.yaw), 4)}deg) ` : '') +
     `translate3d(${fixed(-camera.x * pxPerMm, 3)}px, ${fixed(camera.y * pxPerMm, 3)}px, ${fixed(-camera.z * pxPerMm, 3)}px)`
   );
 }

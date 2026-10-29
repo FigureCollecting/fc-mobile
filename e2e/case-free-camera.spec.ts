@@ -9,6 +9,7 @@ import { project, type Camera, type Vec3 } from '../src/components/display/caseC
 import { centreHit } from '../src/components/display/caseFraming';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
+import { SPRING_MS } from '../src/components/display/casePose';
 
 /**
  * NAV-1A, the Free camera (trial), in Chromium at the Fold8's four panels, fixture mode, the KLINGSBO wall. The browser
@@ -351,7 +352,8 @@ test.describe('desktop, no touch', () => {
 
 // --- 4, 5, 6, 8, 10: the pose log, the cone, no hole ---------------------------------------------------------------------
 
-type Write = { t: number; camera: string; x: number; y: number; down: boolean; gesture: string | null };
+/** A data-camera write: when (t, performance.now()) and on which frame (the document timeline's time, the rAF clock). */
+type Write = { t: number; frame: number; camera: string; x: number; y: number; down: boolean; gesture: string | null };
 type PointerLog = { t: number; type: string; x: number; y: number; camera: string };
 type PoseLog = { writes: Write[]; events: PointerLog[]; translates: string[] };
 
@@ -378,7 +380,7 @@ async function startPoseLog(page: Page) {
       const camera = host.dataset.camera;
       if (camera === last) return;
       last = camera;
-      log.writes.push({ t: performance.now(), camera, x: finger.x, y: finger.y, down: finger.down, gesture: host.dataset.gesture ?? null });
+      log.writes.push({ t: performance.now(), frame: document.timeline.currentTime, camera, x: finger.x, y: finger.y, down: finger.down, gesture: host.dataset.gesture ?? null });
     }).observe(host, { attributes: true, attributeFilter: ['data-camera'] });
     new MutationObserver(() => {
       if (/translate/.test(viewport.style.transform)) log.translates.push(viewport.style.transform);
@@ -511,7 +513,7 @@ for (const panel of FOLD8) {
     await testInfo.attach('pose-log', { path: logPath, contentType: 'application/json' });
     // 6: the viewport never slides
     expect(log.translates).toEqual([]);
-    // 4: no write with the finger still and no spring running (within 250 ms of a lift)
+    // 4: no write with the finger still and no spring running
     const ups = log.events.filter((e) => e.type === 'pointerup' || e.type === 'pointercancel').map((e) => e.t);
     const downs = log.events.filter((e) => e.type === 'pointerdown').map((e) => e.t);
     const unprompted = log.writes.filter((w, i) => {
@@ -519,10 +521,15 @@ for (const panel of FOLD8) {
       const lastUp = Math.max(-Infinity, ...ups.filter((t) => t <= w.t));
       const lastDown = Math.max(-Infinity, ...downs.filter((t) => t <= w.t));
       const fingerMoved = prev === undefined || prev.x !== w.x || prev.y !== w.y || prev.down !== w.down;
-      // the ease back after a lift past the soft limit: 200 ms from the lift, its last write on the first frame after
-      // (a frame here is up to ~60 ms: four panels' scenes drawn side by side); it turns the eye, never moves it
+      // the ease back after a lift past the soft limit: it turns the eye, never moves it, on the frames until the first one
+      // SPRING_MS or more after the lift, by the frame clock (the rAF's): it writes on those frames and stops. Not by the
+      // wall clock: here a frame's callback runs up to ~65 ms after its own time, ~200 ms with 12 workers, and frames come
+      // 50-430 ms apart (measured with the Long Animation Frames API), so its last write landed 310-321 ms after the
+      // lift. One 60 Hz frame of slack: the scene starts the ease in its pointerup handler, after this log's capture listener
       const turnedOnly = prev !== undefined && (['x', 'y', 'z'] as const).every((k) => parse(prev.camera)[k] === parse(w.camera)[k]);
-      const springing = lastUp > lastDown && w.t - lastUp <= 200 + 100 && turnedOnly;
+      const past = (x: Write) => x.frame >= lastUp + SPRING_MS + 16;
+      const easedBefore = log.writes.slice(0, i).some((x) => x.t > lastUp && past(x));
+      const springing = lastUp > lastDown && turnedOnly && !(past(w) && easedBefore);
       // a press or a lift (a re-render on release) or an arrow / Reset tap (a re-base, the finger down on a control)
       const tapped = w.t - Math.max(lastUp, lastDown) <= 250;
       return !fingerMoved && !springing && !tapped;

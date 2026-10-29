@@ -4,7 +4,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
-import { JOG_FULL_PX, LOOK_HOLD_MS, PITCH, yawLimits } from '../casePose';
+import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, LOOK_HOLD_MS, PITCH, jogStep, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
 import { useJogStore } from '../../../stores/jog';
 import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
@@ -872,8 +872,11 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     run(JOG_FULL_PX * 3, 0, 10);
     expect((pose().x - x2) / half).toBeCloseTo(4, 1);
     expect([pose().y, pose().z, pose().yaw, pose().pitch]).toEqual([before.y, before.z, 0, 0]);
+    const running = pose();
     end();
     const stopped = pose();
+    // the lift holds the pose the jog got to: no snap back to where it began
+    expect(stopped).toEqual(running);
     expect(host().dataset.gesture).toBeUndefined();
     frames(30);
     expect(pose()).toEqual(stopped);
@@ -882,6 +885,50 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     fireEvent.pointerUp(host(), { pointerId: 7, clientX: 10, clientY: 10 });
     tick(500);
     expect(pose()).toEqual(stopped);
+    // the stop let go of the jog: the next starts, from there, and moves
+    expect(begin()).toBe(true);
+    run(JOG_FULL_PX, 0, 5);
+    expect(pose().x).toBeGreaterThan(stopped.x);
+    end();
+  });
+
+  /** The animation frames by hand: each runs every callback asked for at the time given (as a browser's frame does). */
+  const handFrames = () => {
+    const asked = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => (asked.set(++id, cb), id));
+    const caf = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((n) => void asked.delete(n));
+    onTestFinished(() => {
+      raf.mockRestore();
+      caf.mockRestore();
+    });
+    return (t: number) =>
+      act(() => {
+        const due = [...asked.values()];
+        asked.clear();
+        for (const cb of due) cb(t);
+      });
+  };
+
+  it('each frame moves by the time since the last, however uneven (8, 33, 120 ms): a frame width a second at full reach, a late frame as 100 ms', () => {
+    scene();
+    const frameAt = handFrames();
+    const c0 = cam();
+    act(() => {
+      jog().start();
+      jog().aim(JOG_FULL_PX, 0);
+    });
+    // the first frame only takes the time
+    frameAt(1000);
+    expect(cam()).toEqual(c0);
+    let t = 1000;
+    for (const dt of [8, 33, 120]) frameAt((t += dt));
+    // picture travel at the anchor depth: a level eye's frame centre meets the fronts at its distance, z
+    const travelPx = [8, 33, 120].reduce((a, dt) => a + jogStep(JOG_FULL_PX, 0, dt, c0.width).x, 0);
+    expect(travelPx).toBeCloseTo((JOG_FRAMES_PER_S * c0.width * (8 + 33 + JOG_MAX_STEP_MS)) / 1000, 9);
+    expect(cam().x - c0.x).toBeCloseTo((travelPx * c0.z) / c0.focalPx, 3);
+    expect([cam().y, cam().z]).toEqual([c0.y, c0.z]);
+    end();
   });
 
   it('inside the dead zone nothing moves and nothing is written; left moves left', () => {
@@ -914,17 +961,53 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     end();
   });
 
-  it('a long jog stops at the end of the room, finite, and the lift leaves the focus on the cabinet the frame centre shows', () => {
+  /** The wall's ends (mm): its first cabinet's left side and its last's right, their overhangs included (data-wall). */
+  const wallEnds = () => {
+    const boxes = JSON.parse(host().dataset.wall!) as number[][];
+    return { left: Math.min(...boxes.map((b) => b[0])), right: Math.max(...boxes.map((b) => b[1])) };
+  };
+
+  it('a long jog stops where the eye reaches the wall\'s end, never past it (half the frame still shows the wall); there up still goes, and back', () => {
     scene({ view: 'cabinet' });
     expect(host().dataset.focus).toBe('0');
+    const ends = wallEnds();
     begin();
     run(JOG_FULL_PX, 0, 3000);
     const far = pose();
+    // within one frame's step short of the end: 16 ms at a frame width a second, at the anchor depth (the eye's distance)
+    const step = (cam().width * 0.016 * far.z) / cam().focalPx;
+    expect(far.x).toBeLessThanOrEqual(ends.right);
+    expect(far.x).toBeGreaterThan(ends.right - step - 1e-6);
     run(JOG_FULL_PX, 0, 100);
     expect(pose().x).toBe(far.x);
-    expect(Number.isFinite(far.x)).toBe(true);
+    // a diagonal there keeps its rise, not its run
+    run(JOG_FULL_PX, -JOG_FULL_PX, 10);
+    expect(pose().x).toBe(far.x);
+    expect(pose().y).toBeGreaterThan(far.y);
     end();
     expect(Number(host().dataset.focus)).toBeGreaterThan(0);
+    // and back the whole way: the left end holds it as well
+    begin();
+    run(-JOG_FULL_PX, 0, 3000);
+    expect(pose().x).toBeGreaterThanOrEqual(ends.left);
+    expect(pose().x).toBeLessThan(ends.left + step + 1e-6);
+    end();
+  });
+
+  it('an eye a swipe left past the wall\'s end: the jog brings it back, never farther out', () => {
+    // one cabinet: a single swipe walks the eye past its end
+    scene({ view: 'cabinet' }, { figures: FIGURES.slice(0, 2) });
+    const ends = wallEnds();
+    drag({ x: 430, y: 200 }, { x: 20, y: 200 });
+    tick(500);
+    const out = pose();
+    expect(out.x).toBeGreaterThan(ends.right);
+    begin();
+    run(JOG_FULL_PX, 0, 30);
+    expect(pose().x).toBe(out.x);
+    run(-JOG_FULL_PX, 0, 10);
+    expect(pose().x).toBeLessThan(out.x);
+    end();
   });
 
   /** The cabinets the scene draws, and those whose front the level frame shows (a pixel's grace at either edge). */
@@ -968,6 +1051,38 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(Number(host().dataset.drawnCap)).toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
     end();
   });
+
+  it('turned on a wall longer than the case draws at once, a jog backing away keeps to the Classic cap: it stops where a swipe does', () => {
+    const backAway = (how: 'swipe' | 'jog') => {
+      const { unmount } = scene({}, { figures: LONG });
+      lookRight();
+      up(1, { x: 0, y: 200 });
+      tick(500);
+      const rest = pose();
+      if (how === 'swipe') {
+        // turned right, a finger right to left walks the eye back, as far as the cap lets it
+        for (let i = 0; i < 3; i++) {
+          drag({ x: 400, y: 300 }, { x: 40, y: 300 }, { id: 30 + i });
+          tick(100);
+        }
+      } else {
+        begin();
+        run(JOG_FULL_PX, 0, 100);
+        end();
+      }
+      const at = pose();
+      unmount();
+      return { rest, at };
+    };
+    const swipe = backAway('swipe');
+    const jogged = backAway('jog');
+    expect(jogged.rest).toEqual(swipe.rest);
+    expect(swipe.at.z).toBeGreaterThan(swipe.rest.z + 1000);
+    // a swipe's steps are coarse (60 px a move): it stops up to one short of the cap; the jog's finer steps get closer
+    expect(jogged.at.z).toBeGreaterThanOrEqual(swipe.at.z);
+    expect(jogged.at.z - swipe.at.z).toBeLessThan(300);
+    // (the 1,300-figure wall drawn twice: slow under coverage on a loaded host)
+  }, 30_000);
 
   it('a finger on the scene owns the camera: the jog refuses meanwhile; a finger pressed while the jog runs moves nothing of its own', () => {
     scene();

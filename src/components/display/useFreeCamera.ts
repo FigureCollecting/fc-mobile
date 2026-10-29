@@ -128,6 +128,20 @@ function capOf(s: FreeScene, pose: Pose, span: number): ((p: readonly number[]) 
 }
 
 /**
+ * NAV-JOG: where a jog from `pose` may stand the eye: within the Classic cap (capOf), and no farther past the wall's ends
+ * than it is. Inside them, no farther than an end: there the frame centre is on the wall's end, so half the frame still
+ * shows the wall (a held jog never walks off into the empty room; a swipe still may, and the jog brings it back).
+ */
+function jogOk(s: FreeScene, pose: Pose, span: number): (p: readonly number[]) => boolean {
+  const cap = capOf(s, pose, span);
+  const past = (x: number) => Math.max(0, s.wall.leftMm - x, x - s.wall.rightMm);
+  const limit = past(pose.x);
+  return (p) => past(p[0]) <= limit && (cap === undefined || cap(p));
+}
+
+const samePlace = (a: Pose, b: Pose) => a.x === b.x && a.y === b.y && a.z === b.z;
+
+/**
  * NAV-1A (a+b), Ross 10-28: a look's yaw cone, from `start` at this scene: the realism cone (coneOf) kept to the GPU
  * budget (budgetCone over the scene projected at each yaw asked, fitsCeiling). Every yaw is projected at the px per mm
  * the scene would draw it at (a): held from where the turn left yaw 0, this start where it is unturned, else `unturned`.
@@ -222,13 +236,16 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const j = jog.current;
     if (j) {
       // NAV-JOG: a MOVE each frame by the time since the last (jogStep), as a swipe's: slid along the room and the
-      // furniture, within the Classic cap; written only when it moved
+      // furniture, within the Classic cap and the wall's ends (jogOk); written only when it moved
       if (j.last !== undefined) {
         const s = scene.current;
         const step = jogStep(j.aim.x, j.aim.y, now - j.last, s.base.frame.width);
         if (step.x !== 0 || step.y !== 0) {
-          const next = walk(j.pose, -step.x, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, capOf(s, j.pose, j.span));
-          if (next.x !== j.pose.x || next.y !== j.pose.y || next.z !== j.pose.z) {
+          const ok = jogOk(s, j.pose, j.span);
+          let next = walk(j.pose, -step.x, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, ok);
+          // at a wall's end a diagonal keeps its rise
+          if (samePlace(next, j.pose) && step.x !== 0 && step.y !== 0) next = walk(j.pose, 0, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, ok);
+          if (!samePlace(next, j.pose)) {
             j.pose = next;
             write(cameraOf(next));
           }

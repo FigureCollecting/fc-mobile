@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { act, fireEvent, screen } from '@testing-library/preact';
+import { act, createEvent, fireEvent, screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
@@ -163,6 +163,51 @@ describe('TabBar: the jog (NAV-JOG)', () => {
     expect(jogButton().hasAttribute('data-jogging')).toBe(false);
     down(200, 500);
     lift(200, 500);
+    expect(screen.getByText(/import your mfc export/i)).toBeInTheDocument();
+  });
+
+  it('a drag of exactly 8 px is still a tap (the menu); a hair past it is the jog', () => {
+    renderWithProviders(<TabBar />);
+    const t = offered();
+    down(200, 500);
+    move(208, 500);
+    lift(208, 500);
+    expect(t.start).not.toHaveBeenCalled();
+    expect(screen.getByText(/import your mfc export/i)).toBeInTheDocument();
+    down(200, 500);
+    move(208.5, 500);
+    expect(t.start).toHaveBeenCalledTimes(1);
+    lift(208.5, 500);
+  });
+
+  it('another finger lifting while the jog runs is not its lift: the jog runs on until its own thumb lifts', () => {
+    renderWithProviders(<TabBar />);
+    const t = offered();
+    down(200, 500, 1);
+    move(240, 500, 1);
+    expect(t.start).toHaveBeenCalledTimes(1);
+    fireEvent.pointerUp(jogButton(), { pointerId: 2, clientX: 100, clientY: 100 });
+    fireEvent.pointerCancel(jogButton(), { pointerId: 2, clientX: 100, clientY: 100 });
+    expect(t.stop).not.toHaveBeenCalled();
+    expect(jogButton().dataset.jogging).toBe('');
+    move(250, 500, 1);
+    expect(t.aim).toHaveBeenLastCalledWith(50, 0);
+    lift(250, 500, 1);
+    expect(t.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('a touch jog raises no click of its own: a click that comes later (Enter, a switch) is the menu, not swallowed', () => {
+    renderWithProviders(<TabBar />);
+    const t = offered();
+    down(200, 500);
+    move(260, 500);
+    const up = createEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 260, clientY: 500 });
+    fireEvent(jogButton(), up);
+    expect(t.stop).toHaveBeenCalledTimes(1);
+    // no click with the lift (a touch drag raises none); a keyboard's click a second on
+    const later = createEvent.click(jogButton());
+    Object.defineProperty(later, 'timeStamp', { value: up.timeStamp + 1000 });
+    fireEvent(jogButton(), later);
     expect(screen.getByText(/import your mfc export/i)).toBeInTheDocument();
   });
 

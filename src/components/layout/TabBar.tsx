@@ -138,6 +138,11 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 /** NAV-JOG: how far (px) the knob follows the thumb from the button's centre: the jog's reach shown, not its speed. */
 const KNOB_REACH_PX = 16;
+/**
+ * NAV-JOG: a click this soon (ms, by the events' own times) after a jog's lift is that drag's (a mouse raises one with
+ * its up; a touch drag none); a later one is a click of its own (Enter, a switch) and opens the menu.
+ */
+const JOG_CLICK_MS = 100;
 
 /**
  * NAV-JOG (Ross 10-28): the bottom-centre button as the jog on offer. A press that leaves JOG_DEAD_PX starts it (once),
@@ -147,13 +152,14 @@ const KNOB_REACH_PX = 16;
  */
 function useJogDrive(jog: JogTarget | null) {
   const drive = useRef<{ id: number; x0: number; y0: number; target: JogTarget; moved: boolean; on: boolean } | null>(null);
-  const swallowed = useRef(false);
+  /** When (the event's timeStamp) the last drag lifted; null: no drag since the last press or click. */
+  const swallowed = useRef<number | null>(null);
   const knob = useRef<HTMLSpanElement>(null);
   const end = (e: PointerEvent) => {
     const d = drive.current;
     if (!d || d.id !== e.pointerId) return;
     drive.current = null;
-    swallowed.current = d.moved;
+    swallowed.current = d.moved ? e.timeStamp : null;
     delete (e.currentTarget as HTMLElement).dataset.jogging;
     if (knob.current) knob.current.style.transform = '';
     if (d.on) d.target.stop();
@@ -166,7 +172,7 @@ function useJogDrive(jog: JogTarget | null) {
       } catch {
         /* a synthetic pointer cannot be captured */
       }
-      swallowed.current = false;
+      swallowed.current = null;
       drive.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, target: jog, moved: false, on: false };
     },
     onPointerMove: (e: PointerEvent) => {
@@ -191,11 +197,11 @@ function useJogDrive(jog: JogTarget | null) {
     onPointerUp: end,
     onPointerCancel: end,
   };
-  /** Whether the click now is a jog's lift (and so no tap); asked once per click. */
-  const swallow = () => {
-    const was = swallowed.current;
-    swallowed.current = false;
-    return was;
+  /** Whether this click is a jog's lift (and so no tap): it comes within JOG_CLICK_MS of it; asked once per click. */
+  const swallow = (e: MouseEvent) => {
+    const at = swallowed.current;
+    swallowed.current = null;
+    return at !== null && e.timeStamp - at <= JOG_CLICK_MS;
   };
   return { handlers, knob, swallow };
 }
@@ -239,8 +245,8 @@ export function TabBar() {
             data-jog={jog ? '' : undefined}
             // (no jog on offer, a press starts nothing; a drive begun goes on to its lift though the jog is withdrawn)
             {...drive.handlers}
-            onClick={() => {
-              if (drive.swallow()) return;
+            onClick={(e) => {
+              if (drive.swallow(e)) return;
               hapticLight();
               setAddOpen(true);
             }}

@@ -388,6 +388,13 @@ describe('a Push body: no origin_trace on any attempt made while ids may not lea
     expect(pushBodies().at(-1)).toBe(text);
   });
 
+  it('reads a Push body given as a string too', async () => {
+    const { tab, pushBodies } = await pushWorld();
+    setDiagIds(false);
+    await tab.fetch(PUSH_PATH, { method: 'POST', body: `{"clientId":"c1","events":[{"facetKey":"uf/0/note","originTrace":"${TRACES[0]}"}]}` });
+    expect(JSON.parse(pushBodies()[0]!)).toEqual({ clientId: 'c1', events: [{ facetKey: 'uf/0/note' }] });
+  });
+
   it('touches only a Push: another call keeps its body while off', async () => {
     const { tab, bodies } = await pushWorld();
     setDiagIds(false);

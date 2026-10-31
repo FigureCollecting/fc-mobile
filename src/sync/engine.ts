@@ -153,13 +153,13 @@ export function classify(err: unknown): FailureKind {
   return 'error';
 }
 
-// A DOMException is not always an Error (jsdom, some engines): read any message it carries.
 /** A thrown value's class name alone, never its message: safe to log. */
 const errorName = (err: unknown): string => {
   const name: unknown = Object(err).name;
   return typeof name === 'string' ? name : 'unknown';
 };
 
+// A DOMException is not always an Error (jsdom, some engines): read any message it carries.
 const message = (err: unknown): string => {
   const text = (err as { message?: unknown } | null)?.message;
   return typeof text === 'string' ? text : String(err);

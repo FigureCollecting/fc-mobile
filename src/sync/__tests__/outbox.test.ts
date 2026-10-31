@@ -723,22 +723,36 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       it('a clear that keeps failing says so once, with no id or user data in the warning, and still sends none', async () => {
         const { r, old } = await offThenOnUncleared();
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-        let calls = 0;
-        const engine = new SyncEngine({
-          store: async () => r.store,
-          sync: r.server.sync,
-          catalog: r.server.catalog,
-          clock: r.clock,
-          timers: r.timers,
-          timeoutSignal: r.timeouts.signal,
-          localDb: () => (++calls === 1 ? Promise.reject(new DOMException('full', 'QuotaExceededError')) : Promise.reject('not an Error')),
-        });
-        await engine.trigger('manual');
-        await engine.trigger('manual');
-        await expect(engine.clearOriginTraces()).rejects.toBe('not an Error');
-        expect(calls).toBe(3);
+        const failing = (reason: unknown) => {
+          let calls = 0;
+          const engine = new SyncEngine({
+            store: async () => r.store,
+            sync: r.server.sync,
+            catalog: r.server.catalog,
+            clock: r.clock,
+            timers: r.timers,
+            timeoutSignal: r.timeouts.signal,
+            localDb: () => {
+              calls += 1;
+              return Promise.reject(reason);
+            },
+          });
+          return { engine, calls: () => calls };
+        };
+        // The message would be the place for data; only the name is said. A thrown non-Error has none.
+        const quota = failing(new DOMException(`full at ${old}`, 'QuotaExceededError'));
+        await quota.engine.trigger('manual');
+        await quota.engine.trigger('manual');
+        await expect(quota.engine.clearOriginTraces()).rejects.toMatchObject({ name: 'QuotaExceededError' });
+        expect(quota.calls()).toBe(3);
+        const odd = failing(`odd ${old}`);
+        await expect(odd.engine.clearOriginTraces()).rejects.toBe(`odd ${old}`);
+        await expect(odd.engine.clearOriginTraces()).rejects.toBe(`odd ${old}`);
         const said = warn.mock.calls.filter((c) => String(c[0]).includes('diagnostic ids'));
-        expect(said).toEqual([['[sync] the diagnostic ids clear failed (QuotaExceededError); no diagnostic id is sent until it succeeds']]);
+        expect(said).toEqual([
+          ['[sync] the diagnostic ids clear failed (QuotaExceededError); no diagnostic id is sent until it succeeds'],
+          ['[sync] the diagnostic ids clear failed (unknown); no diagnostic id is sent until it succeeds'],
+        ]);
         expect(JSON.stringify(warn.mock.calls)).not.toContain(old);
         expect(pushes(r).flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined]);
         expect(diagIdsClearPending()).toEqual(expect.any(String));

@@ -4,11 +4,28 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
+import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
+
+/** The pictures the scene asks to read, in the order it asks, at each render. */
+const asked = vi.hoisted(() => [] as string[][]);
+vi.mock('../alphaMargin', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../alphaMargin')>();
+  return {
+    ...real,
+    useAlphaMarginsOf: (urls: readonly string[]) => {
+      asked.push([...urls]);
+      return real.useAlphaMarginsOf(urls);
+    },
+  };
+});
 
 // PACK1 (Ross 10-26): the case stands its figures in its own arrangement (series, then scale, then name by default), not
 // in the list's sort; each figure keeps its list index for the tap, and a new arrangement starts the view again
 
-beforeEach(() => __clearAlphaMarginCache());
+beforeEach(() => {
+  __clearAlphaMarginCache();
+  asked.length = 0;
+});
 afterEach(() => cleanup());
 
 const COVER = { width: 443, height: 558 };
@@ -50,7 +67,7 @@ describe('CabinetScene: the case arrangement (PACK1)', () => {
       ['series-name', ['a', 's', 'e', 'r', 'm']],
       ['scale-name', ['s', 'a', 'r', 'm', 'e']],
       ['name', ['a', 'e', 'm', 'r', 's']],
-      ['date-added', ['m', 'e', 'a', 's', 'r']],
+      ['date-added', ['r', 's', 'a', 'e', 'm']],
     ];
     for (const [arrange, ids] of cases) {
       const { host, unmount } = scene({ arrange });
@@ -72,7 +89,7 @@ describe('CabinetScene: the case arrangement (PACK1)', () => {
     expect(order(host)).toEqual(['a', 'e', 'm', 'r', 's']);
     again({ prefs: prefs({ arrange: 'date-added' }) });
     expect(host.dataset.arrange).toBe('date-added');
-    expect(order(host)).toEqual(['m', 'e', 'a', 's', 'r']);
+    expect(order(host)).toEqual(['r', 's', 'a', 'e', 'm']);
   });
 
   it('in the Free camera too', () => {
@@ -115,3 +132,16 @@ describe('CabinetScene: a new arrangement starts the view at the wall\'s start, 
     expect(screen.getByRole('button', { name: 'Figure 01' })).toBeInTheDocument();
   });
 });
+
+describe('CabinetScene: the pictures are read in the order the case stands them', () => {
+  // the case packs again as each picture is read: read in the list's order, the last pictures read could be those the
+  // wall opens with, and the wall moved until the last read (the layout-stable control took 26 s to stand, 14 s before)
+  it('asks for each cut-out in the arrangement, not the list', () => {
+    const figs = getFixtureFigures(1);
+    const byName = [...figs].sort((a, b) => a.name.localeCompare(b.name)).map((f) => f.imageUrl);
+    render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={prefs({ pattern: 'ikea-klingsbo', arrange: 'name' })} frameFallback={COVER} />);
+    expect(asked.at(-1)).toEqual(byName);
+    expect(byName).not.toEqual(figs.map((f) => f.imageUrl));
+  });
+});
+

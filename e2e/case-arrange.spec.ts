@@ -131,7 +131,7 @@ for (const size of FOLD8) {
     // the case stands them otherwise than the list does
     const shown = async () => page.locator('button.cab-figure img').evaluateAll((imgs) => imgs.map((i) => (i as HTMLImageElement).src));
     expect(await shown()).not.toEqual(listed);
-    await arrangeBy(page, 'Date added, newest first');
+    await arrangeBy(page, 'Date added, oldest first');
     await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-arrange', 'date-added');
     expect(await tiles()).toEqual(listed);
     await arrangeBy(page, 'Scale, then series, then name');

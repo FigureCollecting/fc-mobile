@@ -20,7 +20,7 @@ describe('the View card: Arrange by', () => {
       'Series, then name',
       'Scale, then name',
       'Name',
-      'Date added, newest first',
+      'Date added, oldest first',
     ]);
     expect(radios.filter((r) => (r as HTMLInputElement).checked).map((r) => r.closest('label')!.textContent!.trim())).toEqual(['Series, then scale, then name']);
   });
@@ -28,7 +28,7 @@ describe('the View card: Arrange by', () => {
   it('a tap is a patch of the pref; the stored choice is the one shown', () => {
     const onChange = vi.fn();
     const { unmount } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
-    fireEvent.click(within(group()).getByRole('radio', { name: 'Date added, newest first' }));
+    fireEvent.click(within(group()).getByRole('radio', { name: 'Date added, oldest first' }));
     expect(onChange).toHaveBeenCalledWith({ arrange: 'date-added' });
     unmount();
     render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, arrange: 'scale-name' }} onChange={vi.fn()} onClose={() => {}} />);

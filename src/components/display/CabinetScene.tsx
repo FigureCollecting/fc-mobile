@@ -94,7 +94,7 @@ import {
 } from './caseCull';
 import { clearInset, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
-import { arrangeCase } from './caseArrangement';
+import { arrangeOrder } from './caseArrangement';
 import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
@@ -1037,7 +1037,16 @@ export function CabinetScene({
       }),
     [figures, imageFor, images.broken],
   );
-  const alphaUrls = useMemo(() => [...new Set(liveArts.flatMap(({ art }) => (art.alphaUrl ? [art.alphaUrl] : [])))], [liveArts]);
+  // PACK1 (Ross 10-26): the case stands them in its own arrangement, apart from the list's sort, a gap filled only within
+  // a group (each keeps its list index: the tap and the pictures find it by that). The order is the figures' alone: read
+  // once per list and arrangement, not again each time a picture read packs the case
+  const arrangement = useMemo(() => arrangeOrder(figures, prefs.arrange), [figures, prefs.arrange]);
+  // the pictures are read in that order, those the wall opens with first: each read packs the case again, and read in the
+  // list's order the last ones read could stand at the wall's start, moving it until the very last
+  const alphaUrls = useMemo(
+    () => [...new Set(arrangement.order.flatMap((i) => (liveArts[i].art.alphaUrl ? [liveArts[i].art.alphaUrl] : [])))],
+    [liveArts, arrangement],
+  );
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
   // one still being read stands as its plate on its label meanwhile, holding back no other
   const liveAlpha = useAlphaMarginsOf(alphaUrls);
@@ -1077,10 +1086,13 @@ export function CabinetScene({
           }),
     [figures, basis],
   );
-  // PACK1 (Ross 10-26): the case stands them in its own arrangement, apart from the list's sort, a gap filled only within
-  // a group (each keeps its list index: the tap and the pictures find it by that)
-  const arranged = useMemo(() => arrangeCase(measured, prefs.arrange), [measured, prefs.arrange]);
-  const packed = useMemo(() => packCabinets(arranged.items, pattern, ceilingMm, PACK_RULES, arranged.groups), [arranged, pattern, ceilingMm]);
+  const packed = useMemo(
+    () =>
+      measured.length === arrangement.order.length
+        ? packCabinets(arrangement.order.map((i) => measured[i]), pattern, ceilingMm, PACK_RULES, arrangement.groups)
+        : packCabinets(measured, pattern, ceilingMm),
+    [measured, arrangement, pattern, ceilingMm],
+  );
   // FIT1: the figures whose photo is over 15 % off their listed width, for the Info card's Size row; gone with the case
   useEffect(() => {
     const flagged = new Map(measured.flatMap((m) => (m.photoFit ? [[m.figure._id, m.photoFit] as const] : [])));

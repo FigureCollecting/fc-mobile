@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
+import { sortFigures } from '../../../utils/sortFigures';
 import type { Figure } from '@figurecollecting/fc-shared';
 import {
   ARRANGEMENT_LABEL,
@@ -8,6 +10,7 @@ import {
   NON_SCALE,
   UNKNOWN_SERIES,
   arrangeCase,
+  arrangeOrder,
   isCaseArrangement,
   scaleGroupOf,
   seriesGroupOf,
@@ -33,7 +36,7 @@ describe('PACK1: the six case arrangements (Ross 10-26)', () => {
       'Series, then name',
       'Scale, then name',
       'Name',
-      'Date added, newest first',
+      'Date added, oldest first',
     ]);
   });
 
@@ -116,7 +119,8 @@ describe('each order', () => {
       ['scale:4', 'scale:4', 'scale:7', 'scale:7', 'scale:7', 'scale:8', NON_SCALE, NO_SCALE],
     ],
     ['name', ['Archer', 'Élan', 'emilia', 'Miku', 'Nendoroid Miku', 'Ram', 'Rem', 'Saber'], [null, null, null, null, null, null, null, null]],
-    ['date-added', ['Archer', 'emilia', 'Miku', 'Rem', 'Nendoroid Miku', 'Ram', 'Saber', 'Élan'], [null, null, null, null, null, null, null, null]],
+    // as the list's Added sort: the oldest first, one with no time before them all
+    ['date-added', ['Élan', 'Saber', 'Ram', 'Nendoroid Miku', 'Rem', 'Miku', 'emilia', 'Archer'], [null, null, null, null, null, null, null, null]],
   ];
 
   for (const [arrangement, order, groups] of cases) {
@@ -134,7 +138,7 @@ describe('each order', () => {
     for (const i of out.items) expect(before[i.index].figure).toBe(i.figure);
   });
 
-  it('never depends on the list order: any shuffle arranges the same', () => {
+  it('never depends on the list order: any shuffle arranges the same (no two added at once here)', () => {
     const base = list();
     for (const arrangement of CASE_ARRANGEMENTS) {
       const want = names(arrangeCase(items(base), arrangement));
@@ -161,12 +165,36 @@ describe('each order', () => {
     expect(arranged.groups).toEqual(['strasse', 'straße', 'straße']);
   });
 
-  it('date added: one with no time stands after one with a time, whichever the list puts first', () => {
+  it('date added: one with no time stands before one with a time, as in the list, whichever the list puts first', () => {
     next = 0;
-    const dated = fig('B', undefined, '', '2026-01-01T00:00:00Z');
-    const undated = fig('A');
+    const dated = fig('A', undefined, '', '2026-01-01T00:00:00Z');
+    const undated = fig('B');
     expect(names(arrangeCase(items([undated, dated]), 'date-added'))).toEqual(['B', 'A']);
     expect(names(arrangeCase(items([dated, undated]), 'date-added'))).toEqual(['B', 'A']);
+  });
+
+  it('date added: those added at once keep the list order between them, as the list does', () => {
+    next = 0;
+    const at = '2026-01-01T00:00:00Z';
+    const [z, a, m] = [fig('Z', 'S', '1/7', at), fig('A', 'S', '1/7', at), fig('M', 'S', '1/7', '2025-01-01T00:00:00Z')];
+    expect(names(arrangeCase(items([z, a, m]), 'date-added'))).toEqual(['M', 'Z', 'A']);
+    expect(names(arrangeCase(items([a, z, m]), 'date-added'))).toEqual(['M', 'A', 'Z']);
+  });
+
+  it("date added never disagrees with the list's Added sort, whatever the list was sorted by before", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.record({ t: fc.constantFrom('2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z', '2025-12-31T23:59:59Z', '', undefined), n: fc.string() }), { maxLength: 30 }),
+        (specs) => {
+          next = 0;
+          const input = specs.map((s) => ({ ...fig(s.n, 'S', '1/7'), createdAt: s.t }) as Figure);
+          // the list the case is given, sorted by Added (the default): the case's date added stands it as listed
+          const listed = sortFigures(input, 'activity', 'asc');
+          expect(arrangeCase(items(listed), 'date-added').items.map((i) => i.index)).toEqual(listed.map((_, i) => i));
+        },
+      ),
+      { numRuns: 200 },
+    );
   });
 
   it('the same figure twice keeps the list order between them', () => {
@@ -183,5 +211,18 @@ describe('each order', () => {
       expect(() => arrangeCase(items([bare, fig('A', 'S', '1/7', '2026-01-01T00:00:00Z')]), arrangement)).not.toThrow();
     }
     expect(arrangeCase(items([fig('A'), bare]), 'name').items[0].figure._id).toBe('bare');
+  });
+});
+
+describe('arrangeOrder: the arrangement from the figures alone (once per list, not per re-pack)', () => {
+  it('gives the list positions in the arrangement and each one\'s group, as arrangeCase does', () => {
+    next = 0;
+    const figs = [fig('Rem', 'Re:Zero', '1/7', '2026-03-01T00:00:00Z'), fig('Saber', 'Fate', '1/4', ''), fig('Miku', undefined, 'Nendoroid', '2026-01-01T00:00:00Z'), fig('Archer', 'Fate', '1/7', '2026-02-01T00:00:00Z')];
+    for (const arrangement of CASE_ARRANGEMENTS) {
+      const want = arrangeCase(items(figs), arrangement);
+      const got = arrangeOrder(figs, arrangement);
+      expect(got.order.map((i) => figs[i].name), arrangement).toEqual(names(want));
+      expect(got.groups, arrangement).toEqual(want.groups);
+    }
   });
 });

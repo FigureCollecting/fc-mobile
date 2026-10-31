@@ -2,7 +2,7 @@
  * PACK1 (Ross 10-26): the order the case stands its figures in, chosen per device in the View card, apart from the
  * list's sort (Q3 a: until custom layouts, the tiles keep their own sort and the case its arrangement). Six orders:
  * series, then scale, then name (the default); scale, then series, then name; series, then name; scale, then name;
- * name; date added, newest first.
+ * name; date added, oldest first.
  *
  * A group is the first key's value: a series for the series-first orders, a scale for the scale-first ones; name and
  * date added have none, each figure standing alone. The packer fills a gap only with figures of the same group (Q2 a,
@@ -11,7 +11,8 @@
  * Missing values sort after the known ones, as their own group: "Unknown series", "No scale". A scale compares by its
  * ratio, the larger first (1/4 before 1/7); a scale given in words (Nendoroid, prize, non-scale) is the one non-scale
  * group after every ratio. Names and series compare without case or accents, numbers in them as numbers. Date added is
- * the holding's created time (the list's "Added": createdAt), the newest first, those with none last.
+ * the holding's created time in the list's own "Added" order (sortFigures: createdAt, the oldest first, one with none
+ * before them all, those added at once in the list's order), so the two never disagree.
  */
 import type { Figure } from '@figurecollecting/fc-shared';
 
@@ -27,7 +28,7 @@ export const ARRANGEMENT_LABEL: Record<CaseArrangement, string> = {
   'series-name': 'Series, then name',
   'scale-name': 'Scale, then name',
   name: 'Name',
-  'date-added': 'Date added, newest first',
+  'date-added': 'Date added, oldest first',
 };
 
 export function isCaseArrangement(value: unknown): value is CaseArrangement {
@@ -71,57 +72,78 @@ export function scaleGroupOf(figure: Figure): KeyGroup {
   return denominator > 0 ? { key: `scale:${denominator}`, rank: denominator } : { key: NON_SCALE, rank: Number.MAX_VALUE };
 }
 
-type Compare = (a: Figure, b: Figure) => number;
+/** What a figure is arranged by, read once (the sort compares each figure some log n times). */
+interface Keys {
+  readonly series: KeyGroup;
+  readonly scale: KeyGroup;
+  readonly name: string;
+  readonly added: string;
+  readonly id: string;
+}
+const keysOf = (f: Figure): Keys => ({ series: seriesGroupOf(f), scale: scaleGroupOf(f), name: f.name ?? '', added: f.createdAt ?? '', id: f._id });
 
-const bySeries: Compare = (a, b) => {
-  const x = seriesGroupOf(a);
-  const y = seriesGroupOf(b);
-  // (two keys the collator calls equal stay apart, so a group is never split by another)
-  return x.rank - y.rank || collator.compare(x.key, y.key) || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
-};
-const byScale: Compare = (a, b) => {
-  const x = scaleGroupOf(a).rank;
-  const y = scaleGroupOf(b).rank;
-  return x === y ? 0 : x < y ? -1 : 1;
-};
-const byName: Compare = (a, b) => collator.compare(a.name ?? '', b.name ?? '');
-/** The newest first; none (no holding time) last. ISO times compare as strings, as the list's sort does (sortFigures). */
-const byAdded: Compare = (a, b) => {
-  const x = a.createdAt ?? '';
-  const y = b.createdAt ?? '';
-  return x === y ? 0 : x === '' ? 1 : y === '' ? -1 : x > y ? -1 : 1;
-};
-const byId: Compare = (a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0);
+type Compare = (a: Keys, b: Keys) => number;
 
+// (two series keys the collator calls equal stay apart, so a group is never split by another)
+const bySeries: Compare = ({ series: x }, { series: y }) => x.rank - y.rank || collator.compare(x.key, y.key) || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0);
+const byScale: Compare = ({ scale: x }, { scale: y }) => (x.rank === y.rank ? 0 : x.rank < y.rank ? -1 : 1);
+const byName: Compare = (a, b) => collator.compare(a.name, b.name);
+/** The list's "Added" (sortFigures, ascending): ISO times compared as strings, the oldest first, none ('') before them. */
+const byAdded: Compare = (a, b) => (a.added < b.added ? -1 : a.added > b.added ? 1 : 0);
+const byId: Compare = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+/** Each order's keys; a tie past them keeps the list's order (date added: those added at once, as the list does). */
 const KEYS: Record<CaseArrangement, readonly Compare[]> = {
-  'series-scale-name': [bySeries, byScale, byName],
-  'scale-series-name': [byScale, bySeries, byName],
-  'series-name': [bySeries, byName],
-  'scale-name': [byScale, byName],
-  name: [byName],
-  'date-added': [byAdded, byName],
+  'series-scale-name': [bySeries, byScale, byName, byId],
+  'scale-series-name': [byScale, bySeries, byName, byId],
+  'series-name': [bySeries, byName, byId],
+  'scale-name': [byScale, byName, byId],
+  name: [byName, byId],
+  'date-added': [byAdded],
 };
 
 /** The group a figure stands in: the first key's value; null for name and date added (no groups). */
-function groupKeyOf(arrangement: CaseArrangement, figure: Figure): string | null {
-  if (arrangement === 'series-scale-name' || arrangement === 'series-name') return seriesGroupOf(figure).key;
-  if (arrangement === 'scale-series-name' || arrangement === 'scale-name') return scaleGroupOf(figure).key;
+function groupKeyOf(arrangement: CaseArrangement, keys: Keys): string | null {
+  if (arrangement === 'series-scale-name' || arrangement === 'series-name') return keys.series.key;
+  if (arrangement === 'scale-series-name' || arrangement === 'scale-name') return keys.scale.key;
   return null;
+}
+
+/** The positions of `figures` in `arrangement`'s order, a tie past its keys by `listIndex`, and each one's group. */
+function arranged(figures: readonly Figure[], arrangement: CaseArrangement, listIndex: (position: number) => number): { positions: number[]; groups: (string | null)[] } {
+  const keys = figures.map(keysOf);
+  const compares = KEYS[arrangement];
+  const positions = figures
+    .map((_, p) => p)
+    .sort((p, q) => {
+      for (const compare of compares) {
+        const order = compare(keys[p], keys[q]);
+        if (order !== 0) return order;
+      }
+      return listIndex(p) - listIndex(q);
+    });
+  return { positions, groups: positions.map((p) => groupKeyOf(arrangement, keys[p])) };
+}
+
+/**
+ * The list's figures in `arrangement`'s order, as their places in the list (`order`), with the group each stands in:
+ * read from the figures alone, so once per list and arrangement, not again each time a picture read packs the case.
+ */
+export function arrangeOrder(figures: readonly Figure[], arrangement: CaseArrangement): { order: number[]; groups: (string | null)[] } {
+  const { positions, groups } = arranged(figures, arrangement, (p) => p);
+  return { order: positions, groups };
 }
 
 /**
  * The case's figures in `arrangement`'s order, each keeping its list index (the tap's and the pictures' index), with
  * the group each stands in: the first key's value, or null (name and date added: it stands alone). Ties fall to the id,
- * so the list's sort never shows through.
+ * so the list's sort never shows through; date added alone keeps the list's order for those added at once.
  */
 export function arrangeCase<T extends { readonly figure: Figure; readonly index: number }>(items: readonly T[], arrangement: CaseArrangement): { items: T[]; groups: (string | null)[] } {
-  const keys = [...KEYS[arrangement], byId];
-  const sorted = [...items].sort((a, b) => {
-    for (const compare of keys) {
-      const order = compare(a.figure, b.figure);
-      if (order !== 0) return order;
-    }
-    return a.index - b.index;
-  });
-  return { items: sorted, groups: sorted.map((item) => groupKeyOf(arrangement, item.figure)) };
+  const { positions, groups } = arranged(
+    items.map((item) => item.figure),
+    arrangement,
+    (p) => items[p].index,
+  );
+  return { items: positions.map((p) => items[p]), groups };
 }

@@ -3,7 +3,7 @@ import fc from 'fast-check';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import type { CabinetProfile } from '../cabinetProfile';
-import { fitCheck, packCabinets, PACK_RULES, type CaseFigure, type PackResult } from '../packCabinets';
+import { bareCabinets, fitCheck, packCabinets, PACK_RULES, type CaseFigure, type PackResult } from '../packCabinets';
 
 /**
  * PACK1 (Ross 10-26, Q2 a): the case packs in its arrangement's order, and a gap is filled only with figures of the
@@ -173,3 +173,32 @@ describe('PACK1: gaps are filled only within a group', () => {
     );
   });
 });
+
+// CASE-FB2b packs again with more tiers while a cabinet before the last stands with nothing on its shelves. A grouped wall
+// ends with the cabinets opened for tall figures whose group could take no earlier place: no lean changes those, so they
+// are its end, not a bare cabinet within it (seven packings of a grouped wall for nothing, measured 4-6x the list's)
+describe('bare cabinets (CASE-FB2b, PACK1)', () => {
+  const fig0 = item(0, 200);
+  /** A KLINGSBO-like cabinet: its top, one shelf; a figure on the shelf, or only one on the top. */
+  const cab = (onShelf: boolean) => ({ slots: [{ isTop: true }, { isTop: false }], tall: new Set<number>(), rows: onShelf ? [[], [fig0]] : [[fig0], []] });
+
+  it('without groups: every cabinet before the last with nothing on its shelves, the wall\'s end too', () => {
+    expect(bareCabinets([cab(true), cab(false), cab(false), cab(false)], false)).toBe(2);
+    expect(bareCabinets([cab(true), cab(false)], false)).toBe(0);
+  });
+
+  it('grouped: the tall-only cabinets after the last with a shelf figure are the wall\'s end, not bare', () => {
+    expect(bareCabinets([cab(true), cab(true), cab(false), cab(false), cab(false)], true)).toBe(0);
+  });
+
+  it('grouped: a cabinet within the wall with nothing on its shelves is still bare', () => {
+    expect(bareCabinets([cab(true), cab(false), cab(true), cab(false)], true)).toBe(1);
+  });
+
+  it('a tier is no shelf: a cabinet with a figure only in a tier is bare', () => {
+    const tiered = { slots: [{ isTop: true }, { isTop: false }], tall: new Set([1]), rows: [[], [fig0]] };
+    expect(bareCabinets([tiered, cab(true)], true)).toBe(1);
+    expect(bareCabinets([tiered, cab(true)], false)).toBe(1);
+  });
+});
+

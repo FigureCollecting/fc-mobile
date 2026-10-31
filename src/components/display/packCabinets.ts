@@ -450,14 +450,30 @@ export function packCabinets(
   items = items.map((item) => oriented(item, pattern, ceilingMm, rules.shelfRemoval));
   // CASE-FB2b: the first lean that leaves no cabinet before the last with nothing on its shelves, else the fewest such
   let best: { building: Building[]; violators: Violator[]; bare: number } | null = null;
+  const grouped = groups !== undefined && groups.some((g) => g !== null);
   for (const lean of rules.shelfRemoval ? LEANS : [1]) {
     const packed = placeAll(items, pattern, ceilingMm, rules, lean, groups);
-    const bare = packed.building.slice(0, -1).filter((b) => !b.rows.some((row, k) => row.length > 0 && !b.tall.has(k) && !b.slots[k].isTop)).length;
+    const bare = bareCabinets(packed.building, grouped);
     if (best === null || bare < best.bare) best = { ...packed, bare };
     if (bare === 0) break;
   }
   const { building, violators } = best!;
   return { cabinets: assemble(building), violators };
+}
+
+/**
+ * CASE-FB2b: how many cabinets before the last stand with nothing on their shelves (a tier or a top is no shelf).
+ * PACK1: in a grouped packing (`grouped`) the cabinets after the last with a shelf figure hold only the tall figures
+ * whose group could take no earlier place; no lean changes them (each lean was packed for nothing, 4-6x the list's
+ * time), so they are the wall's end, not a bare cabinet within it.
+ */
+export function bareCabinets(
+  building: readonly { readonly slots: readonly { readonly isTop: boolean }[]; readonly tall: ReadonlySet<number>; readonly rows: readonly (readonly unknown[])[] }[],
+  grouped: boolean,
+): number {
+  const shelved = building.map((b) => b.rows.some((row, k) => row.length > 0 && !b.tall.has(k) && !b.slots[k].isTop));
+  const end = grouped ? shelved.lastIndexOf(true) + 1 : building.length - 1;
+  return shelved.slice(0, Math.max(0, end)).filter((s) => !s).length;
 }
 
 /** One packing of `items` (packCabinets), the tall figures still to place counted `lean` times over. */

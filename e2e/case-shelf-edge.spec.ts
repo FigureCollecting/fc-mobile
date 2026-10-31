@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { FOLD8_DPR } from './caseViewports';
 import { decodePng } from './paintCheck';
 import { touchDown } from './touch';
@@ -70,11 +71,11 @@ async function contrast(page: Page, x: number, y0: number, y1: number): Promise<
 for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF]) {
   test(`${profile.id}: each glass shelf's front edge reads as a line at its own height as well as 40 mm off it`, async ({ page }) => {
     test.setTimeout(180_000);
-    await page.addInitScript((pattern) => {
+    await page.addInitScript((prefs) => {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
-      localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'shelf', swipe: 'camera', pattern }));
-    }, profile.id);
+      localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+    }, legacyPrefs({ view: 'shelf', swipe: 'camera', pattern: profile.id }));
     await page.setViewportSize({ width: 657, height: 870 });
     await page.goto('/?layout=case&fx=1&fxonly=spike');
     await page.waitForSelector('.cab', { state: 'attached' });

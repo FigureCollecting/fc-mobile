@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { touchTap } from './touch';
 
@@ -25,6 +26,7 @@ async function openCase(page: Page, size: { width: number; height: number }) {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto('/?layout=case');
   await page.waitForSelector('button.cab-figure');

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_DETOLF } from '../src/components/display/cabinetPresets';
@@ -20,11 +21,11 @@ test.beforeEach(({}, testInfo) => {
 const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 
 async function openShelfView(page: Page, size: { width: number; height: number }) {
-  await page.addInitScript(() => {
+  await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'shelf', swipe: 'camera', pattern: 'ikea-detolf' }));
-  });
+    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+  }, legacyPrefs({ view: 'shelf', swipe: 'camera', pattern: 'ikea-detolf' }));
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=2');
   await page.waitForSelector('button.cab-figure');

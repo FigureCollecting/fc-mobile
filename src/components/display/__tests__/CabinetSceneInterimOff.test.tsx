@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 
 // CASE-FB2a: with the interim re-pack rule switched off (as a saved-layout mode will), a new filter keeps the view.
@@ -12,7 +12,7 @@ afterEach(() => cleanup());
 describe('CASE-FB2a: REPACK_ON_FILTER off', () => {
   it('a new filter keeps the walk and the cabinet in view', () => {
     const many = getFixtureFigures(8);
-    const props = { figures: many, onSelect: vi.fn(), prefs: { ...DEFAULT_CASE_PREFS, view: 'cabinet' as const, swipe: 'camera' as const }, frameFallback: { width: 443, height: 558 } };
+    const props = { figures: many, onSelect: vi.fn(), prefs: { ...LEGACY_PREFS, view: 'cabinet' as const, swipe: 'camera' as const }, frameFallback: { width: 443, height: 558 } };
     const { container, rerender } = render(<CabinetScene {...props} filterKey="all" />);
     const host = container.querySelector('.cabinet-scene') as HTMLElement;
     fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });

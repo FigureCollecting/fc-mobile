@@ -36,6 +36,7 @@ import { requestGoTo, takeGoToRequest } from '../../components/display/goToReque
 import { toasts } from '../../stores/toast';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches } from '../../test/fakeCaches';
+import { storeLegacyCamera } from '../../test/legacyPrefs';
 
 /** The local store holding `figs` (on the local data no figure has an image: MG-2). */
 async function respondWith(figs: SeedFigure[]) {
@@ -131,6 +132,7 @@ describe('Collection page (rebuilt display layer)', () => {
   });
 
   it('CAM1: the header\'s swipe menu sets the swipe mode, kept on this device; the tiles have no such button', async () => {
+    storeLegacyCamera();
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
     const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
@@ -148,6 +150,7 @@ describe('Collection page (rebuilt display layer)', () => {
   });
 
   it('CAM1: the swipe menu is usable while the picture is zoomed: it stands outside the zoom layer, and picking a mode there sets it (the zoom stays with the camera, PAN-KEEP-1)', async () => {
+    storeLegacyCamera();
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });

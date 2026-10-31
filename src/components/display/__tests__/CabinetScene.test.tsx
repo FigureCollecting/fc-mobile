@@ -3,6 +3,7 @@ import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-libra
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LABEL_HEIGHT_MM, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
@@ -22,7 +23,7 @@ afterEach(() => {
   window.history.pushState({}, '', '/');
 });
 
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial<Parameters<typeof CabinetScene>[0]> = {}) {
   const onSelect = vi.fn();

@@ -10,6 +10,7 @@
 // the chrome at all.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures';
+import { legacyPrefs, pinLegacyCamera } from '../legacyCamera';
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
@@ -107,6 +108,7 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+  await pinLegacyCamera(context);
   await stack.edge.clearFaults();
   await stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -301,7 +303,7 @@ test('after the wall is panned far (CC4 pan, 20 swipes of 400 px), the chrome, t
   inks.length = 0;
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await context.addInitScript(() => localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', swipe: 'pan' })));
+  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view: 'wall', swipe: 'pan' }));
   await openApp(page);
   await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 60_000 });
   const scene = page.locator('.cabinet-scene');

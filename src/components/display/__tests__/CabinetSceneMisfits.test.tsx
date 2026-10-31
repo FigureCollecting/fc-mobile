@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, act, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LONG_PRESS_MS, type CabinetSceneProps } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import type { CasePrefs } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
@@ -17,7 +18,7 @@ afterEach(() => {
 });
 
 const COVER = { width: 443, height: 558 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
 /** Too tall for any place of the KLINGSBO (its tallest tier is 1351 mm). */
 const tall = (i: number): Figure => ({ ...FIXTURE_FIGURES[0], _id: `tall-${i}`, name: `Tall Statue ${i}`, dimensions: { heightMm: 1500 } }) as Figure;
 const tallOnes = (n: number, from = 0) => Array.from({ length: n }, (_, i) => tall(from + i));

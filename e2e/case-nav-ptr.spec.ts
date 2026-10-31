@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchSwipe } from './touch';
 import { watchPull } from './pullWatch';
@@ -23,11 +24,11 @@ const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 const settle = (page: Page, ms = 300) => page.evaluate((m) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, m)))), ms);
 
 async function openCase(page: Page, size: { width: number; height: number }, swipe: 'camera' | 'pan') {
-  await page.addInitScript((mode) => {
+  await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', swipe: mode }));
-  }, swipe);
+    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+  }, legacyPrefs({ view: 'wall', swipe }));
   await page.setViewportSize(size);
   // a wall of several pages, so a sideways swipe walks
   await page.goto('/?layout=case&fx=40');

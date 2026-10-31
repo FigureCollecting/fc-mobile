@@ -15,6 +15,7 @@
 // (its picture stood at the middle of the depth); and Ordered after a walk drew none of the 8 (an empty room past the
 // one-cabinet wall, data-focus 3). Ordered from the wall's start was already packed alone, without gaps.
 import { expect, test } from '../fixtures';
+import { pinLegacyCamera } from '../legacyCamera';
 import type { Page, TestInfo } from '@playwright/test';
 import { SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
@@ -39,6 +40,7 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+  await pinLegacyCamera(context);
   await held.stack.edge.clearFaults();
   await held.stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });

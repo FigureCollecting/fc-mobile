@@ -164,6 +164,20 @@ describe('the clear an off owes', () => {
     expect(localStorage.getItem(MARK)).toBeNull();
   });
 
+  it("done for an older stored mark leaves a newer one held in memory (that clear began before this page's off)", () => {
+    m.setDiagIds(false);
+    const older = m.diagIdsClearPending()!;
+    const write = refuse('setItem');
+    m.setDiagIds(false);
+    write.mockRestore();
+    const held = m.diagIdsClearPending()!;
+    expect(held).not.toBe(older);
+    expect(localStorage.getItem(MARK)).toBe(older);
+    m.diagIdsClearDone(older);
+    expect(localStorage.getItem(MARK)).toBeNull();
+    expect(m.diagIdsClearPending()).toBe(held);
+  });
+
   it('storage refuses the marker: it is kept in memory for this page until done', () => {
     refuse('setItem');
     m.setDiagIds(false);

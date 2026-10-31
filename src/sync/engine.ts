@@ -24,17 +24,15 @@
 // head_id), never parsing a key, and never writes the auth status.
 import { signal, type ReadonlySignal } from '@preact/signals';
 import { Code, ConnectError, createContextValues, type CallOptions, type Client } from '@connectrpc/connect';
-import { clone } from '@bufbuild/protobuf';
 import {
-  PushRequestSchema,
   isCanonicalVersion,
   type CatalogService,
   type HlcClock,
-  type PushRequest,
   type SyncEvent,
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
-import { diagIdsClearDone, diagIdsClearPending, diagIdsOn } from '../auth/diagIds';
+import { diagIdsClearDone, diagIdsClearPending } from '../auth/diagIds';
+import { originTracesMayLeave, withoutOriginTraces } from '../auth/originTraceGate';
 import { kActionTrace, newTraceId } from '../auth/trace';
 import type { LocalDb } from '../storage/localDb';
 import { clearOriginTraces } from '../storage/originTraces';
@@ -134,18 +132,6 @@ class ProtocolError extends Error {
   }
 }
 
-/** Whether an id may be on a row that must not go out: the switch is off, or an off's clear has not committed. */
-function owesClear(): boolean {
-  return !diagIdsOn() || diagIdsClearPending() !== undefined;
-}
-
-/** The request with every event's origin_trace taken off: what goes out while the Diagnostic ids switch is off. */
-function withoutOriginTraces(request: PushRequest): PushRequest {
-  const copy = clone(PushRequestSchema, request);
-  for (const event of copy.events) delete event.originTrace;
-  return copy;
-}
-
 /** Full jitter: uniform in [0, min(5 min, 2 s * 2^attempt)). */
 export function backoffDelay(attempt: number, random: () => number): number {
   const cap = Math.min(BACKOFF_MAX_MS, BACKOFF_MIN_MS * 2 ** Math.min(attempt, 30));
@@ -168,6 +154,12 @@ export function classify(err: unknown): FailureKind {
 }
 
 // A DOMException is not always an Error (jsdom, some engines): read any message it carries.
+/** A thrown value's class name alone, never its message: safe to log. */
+const errorName = (err: unknown): string => {
+  const name: unknown = Object(err).name;
+  return typeof name === 'string' ? name : 'unknown';
+};
+
 const message = (err: unknown): string => {
   const text = (err as { message?: unknown } | null)?.message;
   return typeof text === 'string' ? text : String(err);
@@ -224,6 +216,7 @@ export class SyncEngine {
   private stopped = false;
   /** The pass's random trace id: its Status, Push, Delta and GetProducts calls share it, each on its own span. */
   private passTrace: string | undefined;
+  private clearFailureSaid = false;
 
   constructor(deps: SyncEngineDeps) {
     this.deps = deps;
@@ -246,7 +239,7 @@ export class SyncEngine {
     // An off whose clear never committed (Settings before this engine was published, the app closed mid-clear,
     // a failed write) is completed at every start, signed in or not, and before every drain (below), whatever
     // the switch says by then: its marker stays until a clear commits.
-    if (owesClear()) void this.clearOriginTraces().catch(() => undefined);
+    if (!originTracesMayLeave()) void this.clearOriginTraces().catch(() => undefined);
     void this.trigger('start');
   }
 
@@ -326,7 +319,16 @@ export class SyncEngine {
   async clearOriginTraces(): Promise<void> {
     if (this.deps.localDb === undefined) throw new Error('no local database to clear diagnostic ids from');
     const mark = diagIdsClearPending();
-    await clearOriginTraces(await this.deps.localDb());
+    try {
+      await clearOriginTraces(await this.deps.localDb());
+    } catch (err) {
+      // Not silent, and said once: the marker stays and no id goes out until a clear commits.
+      if (!this.clearFailureSaid) {
+        this.clearFailureSaid = true;
+        console.warn(`[sync] the diagnostic ids clear failed (${errorName(err)}); no diagnostic id is sent until it succeeds`);
+      }
+      throw err;
+    }
     if (mark !== undefined) diagIdsClearDone(mark);
   }
 
@@ -466,8 +468,8 @@ export class SyncEngine {
   private async drain(store: UserStore): Promise<void> {
     // While off, or while an off's clear is owed, the idempotent clear runs first. If it fails the drain goes on,
     // and no Push below carries an id: one may still be on a row from before the off.
-    const cleared = owesClear() ? await this.clearOriginTraces().then(() => true, () => false) : true;
-    const strip = () => !cleared || owesClear();
+    const cleared = originTracesMayLeave() || (await this.clearOriginTraces().then(() => true, () => false));
+    const strip = () => !cleared || !originTracesMayLeave();
     let probed = false;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const next = await store.nextBatch(PUSH_BATCH);

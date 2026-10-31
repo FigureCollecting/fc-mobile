@@ -708,6 +708,42 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
         expect(diagIdsClearPending()).toBeUndefined();
       });
 
+      it('the clear fails at the drain: a batch of several events, across groups, goes with no id on any of them', async () => {
+        const { r } = await offThenOnUncleared();
+        await write(r.store, 1, 'note', 'b');
+        await r.store.createCopy(HEAD[2], 'owned');
+        expect((await r.store.listOutbox()).every((e) => isTraceId(e.origin_trace))).toBe(true);
+        const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+        await engine.trigger('manual');
+        const sent = pushes(r).flatMap((p) => p.events.map((e) => e.originTrace));
+        expect(sent).toHaveLength(4);
+        expect(sent).toEqual([undefined, undefined, undefined, undefined]);
+      });
+
+      it('a clear that keeps failing says so once, with no id or user data in the warning, and still sends none', async () => {
+        const { r, old } = await offThenOnUncleared();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        let calls = 0;
+        const engine = new SyncEngine({
+          store: async () => r.store,
+          sync: r.server.sync,
+          catalog: r.server.catalog,
+          clock: r.clock,
+          timers: r.timers,
+          timeoutSignal: r.timeouts.signal,
+          localDb: () => (++calls === 1 ? Promise.reject(new DOMException('full', 'QuotaExceededError')) : Promise.reject('not an Error')),
+        });
+        await engine.trigger('manual');
+        await engine.trigger('manual');
+        await expect(engine.clearOriginTraces()).rejects.toBe('not an Error');
+        expect(calls).toBe(3);
+        const said = warn.mock.calls.filter((c) => String(c[0]).includes('diagnostic ids'));
+        expect(said).toEqual([['[sync] the diagnostic ids clear failed (QuotaExceededError); no diagnostic id is sent until it succeeds']]);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(old);
+        expect(pushes(r).flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined]);
+        expect(diagIdsClearPending()).toEqual(expect.any(String));
+      });
+
       it("this drain's clear fails, and another tab's commits between its freeze and its send: the send still carries no id", async () => {
         const { r } = await offThenOnUncleared();
         // No local database here: this engine's drain-time clear throws.

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import type { FigureImageRef } from '../figureArt';
 import type { AlphaMargins } from '../alphaMargin';
 import { getPhotoFits, setPhotoFits } from '../photoFit';
@@ -49,7 +49,7 @@ const imageFor = (f: Figure): FigureImageRef => ({ url: `/c-${f._id}.png`, maskU
 
 const scene = () => {
   for (const f of FIGURES) measured.margins.set(maskOf(f), FILLS);
-  return render(<CabinetScene figures={FIGURES} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={imageFor} />);
+  return render(<CabinetScene figures={FIGURES} onSelect={vi.fn()} prefs={LEGACY_PREFS} imageFor={imageFor} />);
 };
 const button = (root: ParentNode, name: string) => root.querySelector<HTMLButtonElement>(`button.cab-figure[aria-label="${name}"]`)!;
 const worldHeight = (b: HTMLElement) => {

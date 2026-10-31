@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import type { CasePrefs } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // CARD-VIEW-1 part 3 (Ross 10-25): a card's Go to takes the case to its figure: the one-shelf view (TOP1) of its shelf, in
@@ -12,7 +13,7 @@ beforeEach(() => __clearAlphaMarginCache());
 afterEach(() => cleanup());
 
 const COVER = { width: 443, height: 418 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, pattern: 'ikea-detolf', view: 'shelf', ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, clearanceMm: 0, pattern: 'ikea-detolf', view: 'shelf', ...patch });
 const sized = (i: number, heightMm: number, widthMm: number): Figure => ({ _id: `s${i}`, name: `Figure ${i}`, dimensions: { heightMm, widthMm } }) as Figure;
 const FORTY = Array.from({ length: 40 }, (_, i) => sized(i, 200, 100));
 

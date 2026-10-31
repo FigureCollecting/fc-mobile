@@ -26,7 +26,7 @@ import { getCacheStats } from '../../storage/cacheManager';
 import { Settings } from '../Settings';
 import { renderWithProviders } from '../../test/testUtils';
 import { useAuthStore } from '../../stores/auth';
-import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
+import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsClearPending, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
 import { localSession, type LocalSession } from '../../local/session';
 
 const mockedGetCacheStats = getCacheStats as unknown as ReturnType<typeof vi.fn>;
@@ -308,6 +308,15 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
       await user.click(diagSwitch());
       expect(diagIdsOn()).toBe(true);
       expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+    });
+
+    it('an off tap with no engine to clear leaves the clear owed (the marker), for the next start or sync to complete', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      await user.click(diagSwitch());
+      await user.click(diagSwitch());
+      expect(diagIdsOn()).toBe(true);
+      expect(diagIdsClearPending()).toEqual(expect.any(String));
     });
 
     it('an off tap with no signed-in engine, or a clear that fails, still turns the ids off and throws nothing', async () => {

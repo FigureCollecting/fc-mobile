@@ -226,9 +226,10 @@ export function Settings() {
 
   // Shows what now applies to the next request, and whether this browser kept the choice. Off also
   // takes the ids off every edit on this device not yet answered, any account, signed in or not, a
-  // frozen batch included. If this clear fails or never runs, the engine runs it again at its next
-  // start and before each drain while the switch is off, and no Push carries an id while it is off. An
-  // id stays on a row only if the switch is back on before any of those ran; it then goes out.
+  // frozen batch included. setDiagIds(false) marks that clear as owed, and only a clear that commits
+  // (this one, through the engine) removes the mark. If this clear fails or never runs, the engine
+  // completes it at its next start or sync whatever the switch says by then, and no Push carries an id
+  // while the switch is off or the clear is owed.
   const handleDiagIds = useCallback((v: boolean) => {
     setDiagIds(v);
     setDiagIdsShown(diagIdsOn());

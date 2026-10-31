@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signal } from '@preact/signals';
 import { clone, toBinary } from '@bufbuild/protobuf';
 import { PushRequestSchema, isTraceId, ufFacetKey, type PushRequest } from '@figurecollecting/fc-api-contract';
-import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
+import { diagIdsClearPending, diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { NetworkError } from '../../auth/errors';
 import type { AuthStatus } from '../../auth/statusGate';
 import type { LocalDb } from '../../storage/localDb';
@@ -253,6 +253,22 @@ describe('the off clear, signed out', () => {
     expect(old.every(isTraceId)).toBe(true);
     expect((await sync.engine.read((store) => store.listOutbox())).map((e) => e.outcome)).toEqual(['DUPLICATE', 'APPLIED']);
     sync.dispose();
+  });
+
+  it('an off then on before the next launch, the clear never having run: that start completes it, whatever the switch says', async () => {
+    const { db, server, s, sync } = await leftBehind();
+    sync.dispose();
+    const from = server.calls.length;
+    setDiagIds(false);
+    setDiagIds(true);
+    // The next launch (a reload), signed out and with the switch on: only the marker says a clear is owed.
+    const next = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await vi.waitFor(async () => expect((await db.getAll('outbox')).map((e) => 'origin_trace' in e)).toEqual([false, false, false]));
+    await vi.waitFor(() => expect(diagIdsClearPending()).toBeUndefined());
+    await signIn(s, next);
+    const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+    expect(pushes.flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+    next.dispose();
   });
 
   it("P3 at start: an off whose clear never ran (the app closed first) is enforced by the next start, signed out, on every account's rows", async () => {

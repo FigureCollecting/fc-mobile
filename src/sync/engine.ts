@@ -34,7 +34,7 @@ import {
   type SyncEvent,
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
-import { diagIdsOn } from '../auth/diagIds';
+import { diagIdsClearDone, diagIdsClearPending, diagIdsOn } from '../auth/diagIds';
 import { kActionTrace, newTraceId } from '../auth/trace';
 import type { LocalDb } from '../storage/localDb';
 import { clearOriginTraces } from '../storage/originTraces';
@@ -132,6 +132,11 @@ class ProtocolError extends Error {
     super(message);
     this.name = 'ProtocolError';
   }
+}
+
+/** Whether an id may be on a row that must not go out: the switch is off, or an off's clear has not committed. */
+function owesClear(): boolean {
+  return !diagIdsOn() || diagIdsClearPending() !== undefined;
 }
 
 /** The request with every event's origin_trace taken off: what goes out while the Diagnostic ids switch is off. */
@@ -239,8 +244,9 @@ export class SyncEngine {
     this.deps.window?.addEventListener('pageshow', this.onPageShow);
     this.deps.document?.addEventListener('visibilitychange', this.onVisibility);
     // An off whose clear never committed (Settings before this engine was published, the app closed mid-clear,
-    // a failed write) is enforced at every start, signed in or not, and before every drain (below).
-    if (!diagIdsOn()) void this.clearOriginTraces().catch(() => undefined);
+    // a failed write) is completed at every start, signed in or not, and before every drain (below), whatever
+    // the switch says by then: its marker stays until a clear commits.
+    if (owesClear()) void this.clearOriginTraces().catch(() => undefined);
     void this.trigger('start');
   }
 
@@ -315,10 +321,13 @@ export class SyncEngine {
   /**
    * The Diagnostic ids switch went off: every outbox row on this device, of any account and in any state, a frozen
    * batch included, drops its origin_trace (storage/originTraces.ts). Needs no signed-in user or enrolled store.
+   * Once the clear has committed, the off it was owed for is done (its marker goes); a newer off keeps its own.
    */
   async clearOriginTraces(): Promise<void> {
     if (this.deps.localDb === undefined) throw new Error('no local database to clear diagnostic ids from');
+    const mark = diagIdsClearPending();
     await clearOriginTraces(await this.deps.localDb());
+    if (mark !== undefined) diagIdsClearDone(mark);
   }
 
   /** Read through the signed-in user's store. */
@@ -455,8 +464,10 @@ export class SyncEngine {
   }
 
   private async drain(store: UserStore): Promise<void> {
-    // While off, the idempotent clear runs first. If it fails the drain goes on: no Push below carries an id anyway.
-    if (!diagIdsOn()) await this.clearOriginTraces().catch(() => undefined);
+    // While off, or while an off's clear is owed, the idempotent clear runs first. If it fails the drain goes on,
+    // and no Push below carries an id: one may still be on a row from before the off.
+    const cleared = owesClear() ? await this.clearOriginTraces().then(() => true, () => false) : true;
+    const strip = () => !cleared || owesClear();
     let probed = false;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const next = await store.nextBatch(PUSH_BATCH);
@@ -468,10 +479,10 @@ export class SyncEngine {
         continue;
       }
       probed = false;
-      // The switch is read again at the send: an off after the batch was frozen still sends no id, and the batch
-      // without them is the same batch to the coordinator (C3 leaves origin_trace out of replay identity).
+      // Read again at the send: an off after the batch was frozen still sends no id, and the batch without them
+      // is the same batch to the coordinator (C3 leaves origin_trace out of replay identity).
       const answer = await this.call((signal) =>
-        this.deps.sync.push(diagIdsOn() ? next.batch.request : withoutOriginTraces(next.batch.request), this.options(signal)),
+        this.deps.sync.push(strip() ? withoutOriginTraces(next.batch.request) : next.batch.request, this.options(signal)),
       );
       await store.recordPush(next.batch.clientId, answer);
       // A REJECTED edit owes a fresh Status before the next mint (rule 5); a version_future one is re-minted by it.

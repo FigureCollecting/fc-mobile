@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clone, create, toBinary, toJson } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { PushRequestSchema, isTraceId, type PushRequest, type PushResponse } from '@figurecollecting/fc-api-contract';
-import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
+import { diagIdsClearPending, diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { newTraceId } from '../../auth/trace';
 import { clearOriginTraces } from '../../storage/originTraces';
 import type { OutboxEntry } from '../../storage/records';
@@ -656,6 +656,79 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       await engine.trigger('manual');
       expect(engine.state.value.lastError).toBeNull();
       expect(pushes(r).map((p) => p.events.map((e) => e.originTrace))).toEqual([[undefined]]);
+    });
+
+    describe('an off whose clear did not commit, turned on again before any start or drain', () => {
+      async function offThenOnUncleared() {
+        const r = await rig();
+        await r.engine.write((s) => write(s, 0, 'note', 'before the off'));
+        const old = (await r.store.listOutbox())[0].origin_trace!;
+        expect(isTraceId(old)).toBe(true);
+        // Off with the clear never committing (no engine yet, the app closed, the write failed), then on.
+        setDiagIds(false);
+        setDiagIds(true);
+        expect(diagIdsClearPending()).toEqual(expect.any(String));
+        return { r, old };
+      }
+
+      it('P3 closed: the next drain completes the clear, so no pre-off id goes out; edits after it carry their new ids, and the drain after that clears nothing', async () => {
+        const { r, old } = await offThenOnUncleared();
+        await r.engine.trigger('manual');
+        expect(pushes(r).flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined]);
+        expect(diagIdsClearPending()).toBeUndefined();
+
+        const clear = vi.spyOn(r.engine, 'clearOriginTraces');
+        await r.engine.write((s) => write(s, 1, 'note', 'after'));
+        const fresh = (await r.store.listOutbox())[1].origin_trace!;
+        expect(isTraceId(fresh)).toBe(true);
+        expect(fresh).not.toBe(old);
+        await r.engine.trigger('manual');
+        expect(pushes(r).at(-1)!.events.map((e) => e.originTrace)).toEqual([fresh]);
+        expect(clear).not.toHaveBeenCalled();
+      });
+
+      it('an edit made after the on but before that drain loses its new id to the clear (never sent): the clear is device-wide', async () => {
+        const { r } = await offThenOnUncleared();
+        await r.engine.write((s) => write(s, 1, 'note', 'after the on'));
+        expect(isTraceId((await r.store.listOutbox())[1].origin_trace)).toBe(true);
+        await r.engine.trigger('manual');
+        expect(pushes(r).flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+      });
+
+      it('the clear fails at the drain: no id is sent and the marker stays, then a drain whose clear commits removes it', async () => {
+        const { r } = await offThenOnUncleared();
+        // No local database: the drain-time clear throws, and the pass goes on with the ids stripped.
+        const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+        await engine.trigger('manual');
+        expect(engine.state.value.lastError).toBeNull();
+        expect(pushes(r).flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined]);
+        const mark = diagIdsClearPending();
+        expect(mark).toEqual(expect.any(String));
+        await r.engine.trigger('manual');
+        expect(diagIdsClearPending()).toBeUndefined();
+      });
+
+      it('a clear whose write fails after it began leaves the marker', async () => {
+        const { r } = await offThenOnUncleared();
+        const mark = diagIdsClearPending();
+        vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(() => {
+          throw new DOMException('quota', 'QuotaExceededError');
+        });
+        await expect(r.engine.clearOriginTraces()).rejects.toMatchObject({ name: 'LocalWriteError' });
+        vi.restoreAllMocks();
+        expect(diagIdsClearPending()).toBe(mark);
+        await r.engine.clearOriginTraces();
+        expect(diagIdsClearPending()).toBeUndefined();
+      });
+
+      it('an off tapped again while a clear runs keeps its own marker: that clear began before it', async () => {
+        const { r } = await offThenOnUncleared();
+        const clearing = r.engine.clearOriginTraces();
+        setDiagIds(false);
+        const newer = diagIdsClearPending();
+        await clearing;
+        expect(diagIdsClearPending()).toBe(newer);
+      });
     });
 
     it('P4: off clears a REJECTED version_future edit awaiting its re-mint, and the re-mint after on carries none', async () => {

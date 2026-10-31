@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
+
+// LGMOB: these tests run as a build with diagnostic ids (VITE_DIAG_IDS=true).
+inDiagIdsBuild();
 
 type DiagIds = typeof import('../diagIds');
 

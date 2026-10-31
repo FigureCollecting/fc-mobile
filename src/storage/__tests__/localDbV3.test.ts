@@ -8,6 +8,7 @@ import { UserStore } from '../userStore';
 import { buildView } from '../../sync/occurrences';
 import { FakeCoordinator } from '../../sync/__tests__/fakeCoordinator';
 import { FakeClock, T0 } from '../../sync/__tests__/harness';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 const H0 = '1b4e28ba-2fa1-11d2-883f-0016d3cca427';
 const H1 = '6fa459ea-ee8a-3ca4-894e-db77e160355e';
@@ -225,6 +226,8 @@ describe('the seeded v2 store upgrades to v3', () => {
 // LGMOB M2: queued edits already on a phone when the update lands. No backfill and no schema change:
 // they keep no origin_trace and go out exactly as the build before would have sent them.
 describe('a v3 store queued before origin_trace existed', () => {
+  inDiagIdsBuild();
+
   const NOTE = `uf/${H0}/note`;
   const SCORE = `uf/${H1}/score`;
   const text = (fields: Record<string, unknown>) => JSON.stringify({ ...fields, ...STAMP });

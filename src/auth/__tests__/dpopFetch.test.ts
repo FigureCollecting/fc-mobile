@@ -8,6 +8,7 @@ import { diagIdsClearDone, diagIdsClearPending, diagIdsDefault, setDiagIds } fro
 import { AuthRequiredError, EnrolmentError, NetworkError } from '../errors';
 import { APP_ORIGIN, IDP_ORIGIN, SUB_A } from './fakes';
 import { World, compareInit, compareUrl } from './world';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 describe('DPoP transport fetch', () => {
   it('learns the nonce from its first 401 and reuses it afterwards', async () => {
@@ -159,6 +160,8 @@ describe('DPoP transport fetch', () => {
 });
 
 describe('trace context: a random traceparent on our own API, and nowhere else', () => {
+  inDiagIdsBuild();
+
   const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
   const where = (r: Request): string => `${new URL(r.url).origin}${new URL(r.url).pathname}`;
   const trace = (r: Request | undefined): string | undefined => r?.headers.get('traceparent')?.split('-')[1];
@@ -313,6 +316,8 @@ describe('trace context: a random traceparent on our own API, and nowhere else',
 // LGMOB M2: a Push's origin_trace ids are a body field, not a header. Every attempt reads the rule again, so a
 // call begun while ids could leave sends none on an attempt made after the switch went off or while a clear is owed.
 describe('a Push body: no origin_trace on any attempt made while ids may not leave', () => {
+  inDiagIdsBuild();
+
   const PUSH_PATH = '/api/coordinator.v1.SyncService/Push';
   const TRACES = ['ab'.repeat(16), 'cd'.repeat(16), 'ef'.repeat(16)];
   const request = () =>

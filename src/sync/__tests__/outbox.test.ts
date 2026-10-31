@@ -28,6 +28,7 @@ import {
   token,
   write,
 } from './harness';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 async function send(store: UserStore, max = 100) {
   const next = await store.nextBatch(max);
@@ -36,6 +37,8 @@ async function send(store: UserStore, max = 100) {
 }
 
 describe('(b) a failed send loses nothing', () => {
+  inDiagIdsBuild();
+
   it('keeps all 3 entries recoverable when the transport throws after 1 of 3 sends', async () => {
     const { db } = await freshDb();
     const store = await openStore(db);
@@ -305,6 +308,8 @@ describe('batches', () => {
 });
 
 describe('origin_trace: one random id per user action, kept on its queued edits (LGMOB M2)', () => {
+  inDiagIdsBuild();
+
   afterEach(() => {
     vi.restoreAllMocks();
     setDiagIds(diagIdsDefault());

@@ -417,3 +417,74 @@ describe('FigureDetail page', () => {
     await waitFor(() => expect(r.engine.state.value.pending).toBe(1));
   });
 });
+
+// PHOTOS-FIND-1 (Ross 10-31: "only one picture per figure"): the figure's page has a way to its photos, and its picture says
+// how many there are when there is more than the one shown
+describe('FigureDetail: its photos', () => {
+  const D = 'https://images.figurecollecting.com/d';
+  const photos = (n: number) =>
+    create(GetProductImagesResponseSchema, {
+      products: [
+        {
+          headId: headOf(0),
+          images: Array.from({ length: n }, (_, i) => {
+            const c = 'abcdef'[i]!;
+            return { derivativeId: c.repeat(64), role: 'gallery', primary: i === 0, url: `${D}/${c.repeat(64)}`, width: 600, height: 800 };
+          }),
+        },
+      ],
+    });
+  async function openWith(n: number): Promise<LocalRig> {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(photos(n));
+    await seedFigures(r, [MIKU]);
+    renderWithProviders(<FigureDetail />, { initialPath: `/figure/${headOf(0)}` });
+    await screen.findByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
+    return r;
+  }
+
+  it('Photos in the action bar opens every photo of the figure', async () => {
+    await openWith(4);
+    const user = userEvent.setup();
+    const bar = document.querySelector('.figure-detail__action-bar') as HTMLElement;
+    await user.click(within(bar).getByRole('button', { name: 'Photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    await waitFor(() => expect(within(sheet).getAllByRole('button', { name: /^Photo \d/ })).toHaveLength(4));
+    await user.click(within(sheet).getByRole('button', { name: 'Close photos' }));
+    expect(screen.queryByRole('dialog', { name: 'Photos' })).toBeNull();
+  });
+
+  it('its picture says 4 photos for a figure with four, and a tap opens them', async () => {
+    await openWith(4);
+    const user = userEvent.setup();
+    const chip = await screen.findByRole('button', { name: '4 photos' });
+    expect(chip.closest('.figure-detail__hero')).not.toBeNull();
+    expect(chip).toHaveClass('figure-detail__photos');
+    await user.click(chip);
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    expect(within(sheet).getAllByRole('button', { name: /^Photo \d/ })).toHaveLength(4);
+  });
+
+  // PHOTOS-FIND-1 item 6: the photo picked in the sheet is the page's picture until the sheet closes
+  it('a photo picked in the sheet is the picture behind it; closing puts the figure\'s own back', async () => {
+    await openWith(4);
+    const user = userEvent.setup();
+    const shown = () => screen.getByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' }).getAttribute('src');
+    expect(shown()).toBe(`${D}/${'a'.repeat(64)}`);
+    await user.click(await screen.findByRole('button', { name: '4 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    expect(shown()).toBe(`${D}/${'c'.repeat(64)}`);
+    await user.click(within(sheet).getByRole('button', { name: 'Close photos' }));
+    expect(shown()).toBe(`${D}/${'a'.repeat(64)}`);
+  });
+
+  it('one photo: nothing on the picture, and Photos is still there', async () => {
+    await openWith(1);
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    expect(screen.queryByRole('button', { name: /photos$/ })).toBeNull();
+    expect(within(document.querySelector('.figure-detail__action-bar') as HTMLElement).getByRole('button', { name: 'Photos' })).toBeInTheDocument();
+  });
+});

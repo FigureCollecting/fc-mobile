@@ -96,6 +96,7 @@ export async function rig(opts: { server?: FakeCoordinator; device?: string; dep
   const timeouts = new ManualTimeouts();
   const engine = new SyncEngine({
     store: async () => store,
+    localDb: async () => db,
     sync: server.sync,
     catalog: server.catalog,
     clock,

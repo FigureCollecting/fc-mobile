@@ -215,4 +215,20 @@ describe('trace context: a random traceparent on our own API, and nowhere else',
     expect(Object.keys(proof).sort()).toEqual(['ath', 'htm', 'htu', 'iat', 'jti', 'nonce']);
     expect(proof).toMatchObject({ htm: 'GET', htu: `${APP_ORIGIN}/api/auth/session` });
   });
+
+  it('never follows a redirect, so neither the DPoP proof nor the trace leaves our origin', async () => {
+    const world = await World.create();
+    const handler = world.coord.handler;
+    world.net.route(APP_ORIGIN, async (req) =>
+      new URL(req.url).pathname === '/api/auth/session'
+        ? new Response(null, { status: 302, headers: { location: 'https://images.figurecollecting.com/d/abc.webp' } })
+        : handler(req),
+    );
+    const tab = world.tab();
+    await world.signIn(tab);
+    await expect(tab.fetch('/api/auth/session')).rejects.toBeInstanceOf(NetworkError);
+    expect(world.net.sent.filter((r) => new URL(r.url).origin !== APP_ORIGIN && new URL(r.url).origin !== IDP_ORIGIN)).toEqual([]);
+    const api = world.net.sent.filter((r) => new URL(r.url).origin === APP_ORIGIN);
+    expect(api.map((r) => r.redirect)).toEqual(['error', 'error', 'error']);
+  });
 });

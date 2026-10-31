@@ -70,7 +70,9 @@ export function createDpopFetch(deps: DpopFetchDeps): DpopFetch {
       const sentAt = deps.now();
       let res: Response;
       try {
-        res = await deps.fetch(url.toString(), { ...rest, method, headers });
+        // Never follow a redirect: the proof is bound to this URL, and a followed redirect would
+        // carry it and the trace header to wherever the Location points.
+        res = await deps.fetch(url.toString(), { ...rest, method, headers, redirect: 'error' });
       } catch (err) {
         if (isAbort(err)) throw err;
         throw new NetworkError(err);

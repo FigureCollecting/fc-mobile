@@ -18,7 +18,7 @@ export class FakeNet {
   /** Origins whose requests never answer; they end only when the caller's signal aborts. */
   readonly hanging = new Set<string>();
   readonly calls: string[] = [];
-  /** Every request as it left the page: url and headers. */
+  /** Every request as it left the page: url, headers and redirect mode. */
   readonly sent: Request[] = [];
   private readonly routes = new Map<string, Handler>();
 
@@ -39,8 +39,21 @@ export class FakeNet {
     }
     const handler = this.routes.get(new URL(req.url).origin);
     if (handler === undefined) throw new TypeError('Failed to fetch');
-    return handler(req);
+    return this.redirected(req, await handler(req));
   };
+
+  // A browser's fetch: a 3xx with a Location fails under redirect 'error', and under 'follow' is
+  // fetched again with the request's headers (Authorization dropped cross-origin, as the Fetch
+  // standard does; any other header goes along).
+  private redirected(req: Request, res: Response): Promise<Response> | Response {
+    const location = res.headers.get('location');
+    if (![301, 302, 303, 307, 308].includes(res.status) || location === null || req.redirect === 'manual') return res;
+    if (req.redirect === 'error') throw new TypeError('Failed to fetch');
+    const next = new URL(location, req.url);
+    const headers = new Headers(req.headers);
+    if (next.origin !== new URL(req.url).origin) headers.delete('authorization');
+    return this.fetch(next, { method: res.status === 303 ? 'GET' : req.method, headers, signal: req.signal });
+  }
 }
 
 const b64sha256 = async (text: string): Promise<string> => {

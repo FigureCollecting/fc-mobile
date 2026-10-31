@@ -100,7 +100,7 @@ import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
-import { LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
+import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
 import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -1602,6 +1602,7 @@ export function CabinetScene({
         return true;
       },
       aim: fc.jogAim,
+      max: jogMax(),
       stop: () => {
         const left = fc.jogStop();
         if (left === null) return;
@@ -1718,6 +1719,7 @@ export function CabinetScene({
     dimmed: prefs.view === 'cabinet' ? wall.cabinets[focusIdx] : null,
     lookMode: prefs.swipe === 'pan',
     lookHoldMs: lookHoldMs(),
+    jogMax: jogMax(),
     reducedMotion: prefersReducedMotion(),
     // NAV-1A (b): what a look projects the scene's cost from: the figures as this render draws them, listed only when asked
     budget: {
@@ -1973,6 +1975,12 @@ export function CabinetScene({
 function lookHoldMs(): number {
   const v = Number(new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('lookhold'));
   return Number.isFinite(v) && v >= 100 && v <= 1000 ? v : LOOK_HOLD_MS;
+}
+
+/** NAV-2B: the jog's top speed, tunable on the device with ?jogmax=1.5 (1, the 10-28 jog, to 2; Ross asked 1.5-2x). */
+function jogMax(): number {
+  const v = Number(new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('jogmax'));
+  return v >= 1 && v <= JOG_MAX_X ? v : JOG_MAX_X;
 }
 
 /** NAV-1A: the Free camera's own rules, drawn only while it is on (the old path's sheet is untouched). */

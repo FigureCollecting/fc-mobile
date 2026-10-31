@@ -11,6 +11,8 @@ export interface JogTarget {
   aim(dxPx: number, dyPx: number): void;
   /** The thumb lifts (or the browser takes it): the camera stops where the jog got it. */
   stop(): void;
+  /** NAV-2B: its top speed in the 10-28 jog's (?jogmax=; JOG_MAX_X when absent): where the button's detents tick (jogSpeed). */
+  readonly max?: number;
 }
 
 interface JogState {

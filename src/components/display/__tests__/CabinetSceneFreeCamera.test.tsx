@@ -1224,3 +1224,73 @@ describe('NAV3-TOP (b): the one-cabinet view shows the tallest top figure whole;
     expect(y).toBeLessThan(margin - 1);
   });
 });
+
+// CAB-EDGE-DIM-1 (Ross 10-31, Fold8): in the one-cabinet view, what lies past the wall's end (the bare wall, or empty
+// space) dims as a neighbour does, from the end cabinet's outer edge to the frame's edge, straight on, turned, live and let go.
+describe('CAB-EDGE-DIM-1: the one-cabinet view dims past the wall\'s ends in Free camera', () => {
+  /** A wall of two cabinets: the first and the last. */
+  const FEW = FIGURES.slice(0, 40);
+  const veil = (side: string) => host().querySelector<HTMLElement>(`.cabinet-scene__dim[data-side="${side}"]`);
+  const wallOf = () => JSON.parse(host().dataset.wall!) as [number, number, number, number, number][];
+  /** The focus cabinet's silhouette across the frame, through the camera the scene publishes (its yaw included). */
+  const edges = () => {
+    const [x0, x1, y1, z0, z1] = wallOf()[Number(host().dataset.focus)];
+    const c = cam();
+    const camera = { ...c, frame: { width: c.width, height: c.height } };
+    const xs = [x0, x1].flatMap((x) => [0, y1].flatMap((y) => [z0, z1].map((z) => project(camera, [x, y, z]).x)));
+    return { left: Math.min(...xs), right: Math.max(...xs), width: c.width };
+  };
+  /** A veil's span across the frame (px from its left edge). */
+  const span = (side: string) => {
+    const v = veil(side);
+    expect(v, `a ${side} veil`).not.toBeNull();
+    return { a: parseFloat(v!.style.left), b: parseFloat(v!.style.left) + parseFloat(v!.style.width) };
+  };
+  const coversLeftEnd = () => {
+    const e = edges();
+    expect(e.left).toBeGreaterThan(0);
+    const l = span('left');
+    expect(l.a).toBeLessThanOrEqual(0);
+    expect(l.b).toBeCloseTo(e.left, 1);
+  };
+  const coversRightEnd = () => {
+    const e = edges();
+    expect(e.right).toBeLessThan(e.width);
+    const r = span('right');
+    expect(r.a).toBeCloseTo(e.right, 1);
+    expect(r.b).toBeGreaterThanOrEqual(e.width);
+  };
+
+  it('the first cabinet: from the frame\'s left edge to its outer edge, at the opening and turned toward the end, live and let go', () => {
+    scene({ view: 'cabinet', swipe: 'pan' }, { figures: FEW });
+    expect(host().dataset.focus).toBe('0');
+    coversLeftEnd();
+    // Look around turns at once; a drag right turns the eye left (yaw below 0), toward the wall's first end
+    drag({ x: 200, y: 200 }, { x: 260, y: 200 }, { lift: false });
+    expect(cam().yaw).toBeLessThan(0);
+    coversLeftEnd();
+    up(1, { x: 260, y: 200 });
+    tick(500);
+    expect(cam().yaw).toBeLessThan(0);
+    coversLeftEnd();
+  });
+
+  it('the last cabinet, reached by a walk: from its outer edge to the frame\'s right edge, straight on and turned toward the end, live and let go', () => {
+    const { again } = scene({ view: 'cabinet', swipe: 'camera' }, { figures: FEW });
+    const last = String(wallOf().length - 1);
+    expect(Number(last), 'a wall of more than one cabinet').toBeGreaterThan(0);
+    for (let i = 0; i < 40 && host().dataset.focus !== last; i++) drag({ x: 400, y: 200 }, { x: 60, y: 200 });
+    tick(500);
+    expect(host().dataset.focus).toBe(last);
+    coversRightEnd();
+    again({ swipe: 'pan' });
+    drag({ x: 260, y: 200 }, { x: 200, y: 200 }, { lift: false });
+    expect(cam().yaw).toBeGreaterThan(0);
+    coversRightEnd();
+    up(1, { x: 200, y: 200 });
+    tick(500);
+    expect(cam().yaw).toBeGreaterThan(0);
+    expect(host().dataset.focus).toBe(last);
+    coversRightEnd();
+  });
+});

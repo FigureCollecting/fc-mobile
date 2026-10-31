@@ -1,8 +1,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createContextValues, type UnaryRequest } from '@connectrpc/connect';
-import { kActionTrace, newSpanId, newTraceId, traceInterceptor, traceparent } from '../trace';
+import { createClient, createContextValues, type UnaryRequest } from '@connectrpc/connect';
+import { CompareService } from '@figurecollecting/fc-api-contract';
+import { createCoordinatorTransport } from '../../api/transport';
+import { DIAG_IDS_KEY, setDiagIds } from '../diagIds';
+import { addTraceHeader, kActionTrace, newSpanId, newTraceId, traceInterceptor, traceparent } from '../trace';
+import { APP_ORIGIN } from './fakes';
+import { World } from './world';
 
 const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
 const part = (header: string | null, i: 1 | 2): string => header!.split('-')[i]!;
@@ -92,6 +97,90 @@ describe('the Connect trace interceptor', () => {
     expect(part(a, 1)).toBe(trace);
     expect(part(b, 1)).toBe(trace);
     expect(part(a, 2)).not.toBe(part(b, 2));
+  });
+});
+
+// The Diagnostic ids switch (diagIds.ts) decides at each request: off, neither writer adds one.
+describe('the Diagnostic ids switch', () => {
+  const connectCall = (): string | null => {
+    const req = { header: new Headers(), contextValues: createContextValues().set(kActionTrace, newTraceId()) } as unknown as UnaryRequest;
+    let sent: string | null = null;
+    void traceInterceptor()((r) => {
+      sent = r.header.get('traceparent');
+      return Promise.resolve({} as never);
+    })(req);
+    return sent;
+  };
+  const plainCall = (): string | null => {
+    const headers = new Headers();
+    addTraceHeader(headers, new URL('/api/auth/devices', APP_ORIGIN), APP_ORIGIN);
+    return headers.get('traceparent');
+  };
+
+  it('off: a Connect call has no traceparent, and addTraceHeader adds none to /api/auth/devices', () => {
+    setDiagIds(false);
+    expect(connectCall()).toBeNull();
+    expect(plainCall()).toBeNull();
+  });
+
+  it('on (the default, nothing stored): both carry one', () => {
+    expect(localStorage.getItem(DIAG_IDS_KEY)).toBeNull();
+    expect(connectCall()).toMatch(TRACEPARENT);
+    expect(plainCall()).toMatch(TRACEPARENT);
+  });
+
+  it('applies a switch between two calls at once, whether this tab or another tab made it', () => {
+    const interceptor = traceInterceptor();
+    const send = (): string | null => {
+      const req = { header: new Headers(), contextValues: createContextValues() } as unknown as UnaryRequest;
+      let sent: string | null = null;
+      void interceptor((r) => {
+        sent = r.header.get('traceparent');
+        return Promise.resolve({} as never);
+      })(req);
+      return sent;
+    };
+    expect(send()).toMatch(TRACEPARENT);
+    setDiagIds(false);
+    expect(send()).toBeNull();
+    expect(plainCall()).toBeNull();
+    setDiagIds(true);
+    expect(send()).toMatch(TRACEPARENT);
+    expect(plainCall()).toMatch(TRACEPARENT);
+    localStorage.setItem(DIAG_IDS_KEY, 'off');
+    expect(send()).toBeNull();
+    expect(plainCall()).toBeNull();
+    localStorage.removeItem(DIAG_IDS_KEY);
+    expect(send()).toMatch(TRACEPARENT);
+  });
+
+  it('off, nothing that leaves the page carries one: the enrolment, a Connect call, a plain /api call; on again, the next call does', async () => {
+    setDiagIds(false);
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const client = createClient(CompareService, createCoordinatorTransport(tab.fetch));
+    const req = { seed: { case: 'gtin14' as const, value: '04580416940269' }, nowIso: '2026-09-26T12:00:00Z' };
+    await client.compare(req);
+    await client.compare(req, { contextValues: createContextValues().set(kActionTrace, newTraceId()) });
+    await tab.fetch('/api/auth/session');
+    const api = world.net.sent.filter((r) => new URL(r.url).origin === APP_ORIGIN);
+    expect(api.map((r) => new URL(r.url).pathname)).toEqual([
+      '/api/auth/devices',
+      '/api/auth/devices',
+      '/api/coordinator.v1.CompareService/Compare',
+      '/api/coordinator.v1.CompareService/Compare',
+      '/api/auth/session',
+    ]);
+    expect(world.net.sent.filter((r) => r.headers.has('traceparent'))).toEqual([]);
+
+    setDiagIds(true);
+    const from = world.net.sent.length;
+    await client.compare(req);
+    await tab.fetch('/api/auth/session');
+    const after = world.net.sent.slice(from);
+    expect(after).toHaveLength(2);
+    for (const r of after) expect(r.headers.get('traceparent')).toMatch(TRACEPARENT);
   });
 });
 

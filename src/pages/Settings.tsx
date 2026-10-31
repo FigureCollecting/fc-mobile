@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import { useLocation } from 'wouter';
+import { Link, useLocation } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
 import { Header } from '../components/layout/Header';
 import { BottomSheet } from '../components/ui/BottomSheet';
@@ -14,6 +14,7 @@ import { readStorageStatus, type StorageStatus } from '../pwa/storage';
 import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
 import { Style } from '../styles/Style';
+import { DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
 
 const SYNC_INTERVALS = [
   { value: 'manual', label: 'Manual' },
@@ -40,13 +41,21 @@ function BackButton({ onClick }: { onClick: () => void }) {
 }
 
 /** Toggle switch component */
-function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Toggle({ checked, onChange, disabled, labelledBy, describedBy }: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  labelledBy?: string;
+  describedBy?: string;
+}) {
   return (
     <button
       class={`toggle ${checked ? 'toggle--on' : ''} ${disabled ? 'toggle--disabled' : ''}`}
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
       disabled={disabled}
       onClick={() => { hapticLight(); onChange(!checked); }}
     >
@@ -153,6 +162,10 @@ export function Settings() {
     () => (localStorage.getItem('fc-sync-interval') as SyncInterval) || 'manual',
   );
 
+  // Privacy: the Diagnostic ids choice, read from and written through src/auth/diagIds.ts
+  const [diagIds, setDiagIdsShown] = useState(diagIdsOn);
+  const [diagIdsKept, setDiagIdsKept] = useState(diagIdsSaved);
+
   // Delete account
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
@@ -199,6 +212,14 @@ export function Settings() {
     hapticLight();
     setSyncInterval(val);
     localStorage.setItem('fc-sync-interval', val);
+  }, []);
+
+  // Shows what now applies to the next request, and whether this browser kept the choice. Off has
+  // nothing more to clear until queued edits carry an id of their own (LGMOB M2 adds that call here).
+  const handleDiagIds = useCallback((v: boolean) => {
+    setDiagIds(v);
+    setDiagIdsShown(diagIdsOn());
+    setDiagIdsKept(diagIdsSaved());
   }, []);
 
   // Clear cache
@@ -357,6 +378,26 @@ export function Settings() {
               ))}
             </select>
           </div>
+        </section>
+
+        {/* ── Privacy ── */}
+        <section class="settings__section">
+          <h3 class="settings__section-title">Privacy</h3>
+
+          <div class="settings__row">
+            <span class="settings__label" id="settings-diag-ids">{DIAG_IDS_TEXT.label}</span>
+            <Toggle checked={diagIds} onChange={handleDiagIds} labelledBy="settings-diag-ids" describedBy="settings-diag-ids-desc" />
+          </div>
+          <p class="settings__hint" id="settings-diag-ids-desc">{DIAG_IDS_TEXT.description}</p>
+          <p class="settings__hint">{DIAG_IDS_TEXT.hint}</p>
+          <p class="settings__hint" aria-live="polite">{!diagIdsKept && DIAG_IDS_TEXT.unsaved}</p>
+
+          <Link class="settings__row settings__row--action" href="/privacy">
+            <span class="settings__label">{DIAG_IDS_TEXT.privacyLink}</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </Link>
         </section>
 
         {/* ── About ── */}

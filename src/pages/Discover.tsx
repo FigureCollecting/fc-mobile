@@ -11,6 +11,8 @@ import { useCollection } from '../hooks/useCollection';
 import { useCopyActions } from '../hooks/useFigureMutations';
 import { useBarcodeLookup, BarcodeFormatError } from '../hooks/useBarcodeLookup';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { useSearchThumbs } from '../hooks/useSearchThumbs';
+import { SearchThumb, searchThumbCss } from '../components/ui/SearchThumb';
 import { requireSession } from '../local/session';
 import type { LocalFigure } from '../local/figures';
 import { cardName } from '../local/cardName';
@@ -175,6 +177,9 @@ export function Discover() {
   }, [catalog.view, hits]);
 
   const showResults = hasSearched && hits.length > 0;
+  // SEARCH-THUMB-1: each row's figure as the photo the app shows for it; a search's rows ask the coordinator once, not once a row
+  const localThumbs = useSearchThumbs(showResults ? hits.map((f) => f.local.headId) : []);
+  const catalogThumbs = useSearchThumbs(catalogHits.map((c) => c.headId));
   const showEmpty = hasSearched && !isLoading && hits.length === 0;
   const hasSuggestions = showSuggestions && suggestions.length > 0 && !showResults;
   const lookupError = lookup.error === null ? null : lookup.error instanceof BarcodeFormatError ? lookup.error.message : `Lookup failed: ${lookup.error.message}`;
@@ -256,8 +261,11 @@ export function Discover() {
             {hits.map((f) => (
               <li key={f._id} class="discover-results__item">
                 <button type="button" class="discover-results__open" aria-label={f.name} onClick={() => openFigure(f)}>
-                  <span class="discover-results__name">{f.name}</span>
-                  <span class="discover-results__meta">{[f.manufacturer, heldSummary(held, f.local.headId)].filter(Boolean).join(' · ')}</span>
+                  <SearchThumb thumb={localThumbs.get(f.local.headId)} />
+                  <span class="discover-results__text">
+                    <span class="discover-results__name">{f.name}</span>
+                    <span class="discover-results__meta">{[f.manufacturer, heldSummary(held, f.local.headId)].filter(Boolean).join(' · ')}</span>
+                  </span>
                 </button>
                 <SyncBadge sync={f.local.sync} asOf={f.local.asOf} id={`search-sync-${f._id}`} />
                 <button type="button" class="discover-results__add" onClick={() => setAdding({ headId: f.local.headId, name: f.name })}>
@@ -299,9 +307,12 @@ export function Discover() {
                   return (
                     <li key={card.headId} class="discover-results__item">
                       <div class="discover-results__open">
-                        <span class="discover-results__name">{cardName(card)}</span>
-                        {meta !== '' && <span class="discover-results__meta">{meta}</span>}
-                        {holding !== '' && <span class="discover-results__held">{`In your collection: ${holding}`}</span>}
+                        <SearchThumb thumb={catalogThumbs.get(card.headId)} />
+                        <span class="discover-results__text">
+                          <span class="discover-results__name">{cardName(card)}</span>
+                          {meta !== '' && <span class="discover-results__meta">{meta}</span>}
+                          {holding !== '' && <span class="discover-results__held">{`In your collection: ${holding}`}</span>}
+                        </span>
                       </div>
                       <button type="button" class="discover-results__add" onClick={() => addCopy(card.headId, 'owned', card)}>
                         Add to Owned
@@ -404,10 +415,18 @@ export function Discover() {
           min-width: 0;
           min-height: 44px;
           display: flex;
-          flex-direction: column;
-          align-items: flex-start;
+          align-items: center;
+          gap: var(--space-2);
           text-align: left;
         }
+        .discover-results__text {
+          flex: 1;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        ${searchThumbCss}
         .discover-results__name {
           font-weight: 600;
           color: var(--text-primary);

@@ -2,14 +2,16 @@
  * The case's per-device choices (Ross CC14, 2026-10-09: kept on each device
  * until a contract round syncs them): which cabinets line the wall, the view,
  * what a sideways swipe does (CC4: pan the wall or move the camera, a
- * playable toggle so Ross decides hands-on), the room's ceiling (CC9) and
- * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine).
+ * playable toggle so Ross decides hands-on), the room's ceiling (CC9),
+ * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine) and
+ * the order the case stands its figures in (PACK1).
  * One localStorage entry; unreadable or unknown values fall back per field.
  */
 import { useCallback, useState } from 'preact/hooks';
 import { CEILING_DEFAULT_MM, CLEARANCE_MAX_MM, DEFAULT_CLEARANCE_MM } from './cabinetProfile';
 import type { CabinetProfile } from './cabinetProfile';
 import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from './cabinetPresets';
+import { DEFAULT_CASE_ARRANGEMENT, isCaseArrangement, type CaseArrangement } from './caseArrangement';
 import { DEFAULT_WALL, DEFAULT_WALL_CUSTOM, isHexColour, isWallPreset, type WallPreset } from './wallColour';
 
 export const CASE_PREFS_KEY = 'fc-case-prefs';
@@ -71,6 +73,8 @@ export interface CasePrefs {
    * device. Off (absent) is today's case, to the byte; it is kept only while on.
    */
   readonly freeCamera?: boolean;
+  /** PACK1 (Ross 10-26): the order the case stands its figures in, apart from the list's sort (caseArrangement.ts). */
+  readonly arrange: CaseArrangement;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -84,6 +88,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   showEstimated: false,
   wall: DEFAULT_WALL,
   wallCustom: DEFAULT_WALL_CUSTOM,
+  arrange: DEFAULT_CASE_ARRANGEMENT,
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -128,6 +133,7 @@ export function readCasePrefs(): CasePrefs {
     wall: isWallPreset(stored.wall) ? stored.wall : d.wall,
     wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
     ...(stored.freeCamera === true ? { freeCamera: true } : {}),
+    arrange: isCaseArrangement(stored.arrange) ? stored.arrange : d.arrange,
   };
 }
 

@@ -111,6 +111,9 @@ test('with the held basis no figure changes its place more than once while the p
 });
 
 test('control: the same pictures without it move most figures again and again (the old behaviour)', async ({ page }) => {
+  // the wall may take up to the 60 s stood() allows to stand still: in the case's arrangement (PACK1) it took 31 s on a
+  // busy host, past the default 30 s (22 s in the list's order before it)
+  test.setTimeout(90_000);
   await open(page, '');
   const all = await stood(page, 8_000, 5_000, 60_000);
   const twice = [...moves(all)].filter(([, n]) => n > 1);

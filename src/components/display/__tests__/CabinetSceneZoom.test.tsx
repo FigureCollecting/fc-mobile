@@ -527,6 +527,8 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     ['view', {}, { view: 'shelf' }],
     ['wall', {}, { pattern: 'ikea-detolf' }],
     ['swipe mode in the shelf view', { view: 'shelf' }, { swipe: 'pan' }],
+    // PACK1: a new arrangement of the case, as a new sort
+    ['arrangement', {}, { arrange: 'name' }],
   ] as const) {
     it(`switching the ${what} starts the picture at 1x, at once`, () => {
       const { host, layer, again } = scene(getFixtureFigures(8), { swipe: 'camera', ...base });

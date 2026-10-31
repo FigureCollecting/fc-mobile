@@ -32,6 +32,7 @@ import { getDisplayMeta } from './displayMeta';
 import { framingHeadroomMm, sideOverhangMm, withClearance, type CabinetProfile, type CabinetSurface } from './cabinetProfile';
 import {
   FIGURE_GAP_MM,
+  PACK_RULES,
   describeViolator,
   measureCaseFigure,
   packCabinets,
@@ -93,6 +94,7 @@ import {
 } from './caseCull';
 import { clearInset, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
+import { arrangeCase } from './caseArrangement';
 import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
 import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
@@ -1075,7 +1077,10 @@ export function CabinetScene({
           }),
     [figures, basis],
   );
-  const packed = useMemo(() => packCabinets(measured, pattern, ceilingMm), [measured, pattern, ceilingMm]);
+  // PACK1 (Ross 10-26): the case stands them in its own arrangement, apart from the list's sort, a gap filled only within
+  // a group (each keeps its list index: the tap and the pictures find it by that)
+  const arranged = useMemo(() => arrangeCase(measured, prefs.arrange), [measured, prefs.arrange]);
+  const packed = useMemo(() => packCabinets(arranged.items, pattern, ceilingMm, PACK_RULES, arranged.groups), [arranged, pattern, ceilingMm]);
   // FIT1: the figures whose photo is over 15 % off their listed width, for the Info card's Size row; gone with the case
   useEffect(() => {
     const flagged = new Map(measured.flatMap((m) => (m.photoFit ? [[m.figure._id, m.photoFit] as const] : [])));
@@ -1137,7 +1142,8 @@ export function CabinetScene({
     setFramedFocus(null);
   }, [prefs.view, prefs.pattern, framingKey]);
   // CASE-FB2a (interim, REPACK_ON_FILTER): a new filter or sort packs its figures from the wall's start, and the view
-  // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened
+  // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened.
+  // PACK1: so does a new arrangement of the case
   useLayoutEffect(() => {
     if (!REPACK_ON_FILTER) return;
     setFocus(0);
@@ -1147,7 +1153,7 @@ export function CabinetScene({
     setPan(0);
     setLift(0);
     setPanY(0);
-  }, [filterKey]);
+  }, [filterKey, prefs.arrange]);
 
   const lastIndex = wall.cabinets.length - 1;
   const focusIdx = Math.min(focus, lastIndex);
@@ -1170,7 +1176,7 @@ export function CabinetScene({
   const fc = useFreeCamera(freeScene as { current: FreeScene }, { host: hostRef, root: rootRef, ring: ringRef }, culled, rerender);
   const laidOut = figures.length > 0 && basis !== null && (steadyLayout ? settle.revealed : unmeasured === 0);
   // a new view, wall pattern or filter starts from its framing (instant in this slice); a fold or unfold keeps the pose (spec 6.6)
-  const rebaseKey = `${prefs.view}|${prefs.pattern}|${REPACK_ON_FILTER ? (filterKey ?? '') : ''}`;
+  const rebaseKey = `${prefs.view}|${prefs.pattern}|${REPACK_ON_FILTER ? `${filterKey ?? ''}|${prefs.arrange}` : ''}`;
   const rebasedFor = useRef(rebaseKey);
   const pinnedAt = useRef<{ width: number; height: number; camera: typeof base.camera } | null>(null);
   if (free && rebasedFor.current !== rebaseKey) {
@@ -1333,12 +1339,12 @@ export function CabinetScene({
       settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
     } else if (how !== 'live') setSharp(z);
   }, [settled]);
-  // a new view, wall, filter or frame starts the picture at 1x, at once; so does a swipe mode in the shelf view, where it starts
-  // from the frame. PAN-KEEP-1: elsewhere the mode is not a new picture, and the zoom (which both modes treat alike: zoomed, one
-  // finger pans the magnified picture) stays with the camera
+  // a new view, wall, filter, arrangement (PACK1) or frame starts the picture at 1x, at once; so does a swipe mode in the
+  // shelf view, where it starts from the frame. PAN-KEEP-1: elsewhere the mode is not a new picture, and the zoom (which
+  // both modes treat alike: zoomed, one finger pans the magnified picture) stays with the camera
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-  }, [prefs.view, prefs.pattern, framingKey, filterKey, frame.width, frame.height, showZoom]);
+  }, [prefs.view, prefs.pattern, framingKey, filterKey, prefs.arrange, frame.width, frame.height, showZoom]);
 
   // CARD-VIEW-1: Go to. The wall is laid out (every figure in the place it keeps); a request is taken up once, after the resets
   // above (a layout effect declared after them: a new view's reset never undoes it), to the framing goToFigure gives
@@ -1622,6 +1628,8 @@ export function CabinetScene({
       }
     }
   });
+  // PACK1: the figures each cabinet stands, in reading order (its top first, each surface left to right), for the e2e
+  const order = useMemo(() => JSON.stringify(cabinets.map((c) => (c ? c.surfaces.flatMap((x) => x.items.map((p) => p.item.figure._id)) : []))), [cabinets]);
   // what each cabinet holds, and its kind
   const heldCounts = useMemo(() => cabinets.map((c) => (c ? c.surfaces.reduce((n, x) => n + x.items.length, 0) : 0)), [cabinets]);
   const heldKinds = useMemo(() => wall.cabinets.map((c) => c.profile.id), [wall]);
@@ -1789,6 +1797,8 @@ export function CabinetScene({
       data-cull-pan={String(cull.panPx)}
       data-wall={wallBoxes}
       data-held={held}
+      data-arrange={prefs.arrange}
+      data-order={order}
       data-drawn-cabinets={String(drawnCabs.length)}
       data-drawn-cap={String(drawCap)}
       data-drawn-figures={String(onShow.length)}

@@ -6,7 +6,8 @@
  *
  * Reading order: each cabinet's top first (outside the case, CC9 clearance),
  * then its shelves top to bottom, each left to right. Figures follow the
- * list order; a figure that fits no compartment of its cabinet but fits the
+ * order they are given in (the case's arrangement, PACK1: groups keep to
+ * themselves, packCabinets); a figure that fits no compartment of its cabinet but fits the
  * top goes to the top (design v3, CC9); a figure that fits nowhere is a
  * violator, listed with its reason, never placed. Overflow opens the next
  * cabinet of the wall pattern (the profiles cycle: the Detolf with the rack
@@ -416,6 +417,17 @@ function rowWidth(row: readonly CaseFigure[], extra: CaseFigure): number {
 }
 
 /**
+ * PACK1 (Ross 10-26, Q2 a): `groups`, one per figure in `items`' order (caseArrangement: a series, a scale, or null for a
+ * figure that stands alone). A gap is filled only with figures of the same group: each group starts where the figures
+ * before it left off, and every figure of it stands there or after, in reading order (cabinet by cabinet; in each its
+ * top, then its compartments top to bottom); a shelf figure takes the first place from there with room, so a later figure
+ * of the group fills a gap an earlier one left, and a tall one the earliest tier, else top, from there with room, or one
+ * left empty in the cabinet where its group starts (nothing stands there: no group's gap); else it waits for the next
+ * cabinet, as below. A group one shelf could hold is never split across two: it starts on the room
+ * left on the shelf where the figures before it ended only when all its shelf figures fit there, else on the next shelf;
+ * a group wider than that shelf starts on the room left. A figure that stands alone is placed exactly as without groups.
+ * Without `groups`, the figures are placed in their order by the rules below alone.
+ *
  * `rules` (caseInterim): with tallOnOpenedTops, a figure only a top takes stands on the earliest top of a cabinet the
  * shelves have already opened, else waits for the next one they open, whose top it takes first; those still waiting
  * when the shelf figures are all placed open cabinets at the wall's end. With shelfRemoval (CASE-FB2b), a figure too
@@ -432,13 +444,14 @@ export function packCabinets(
   pattern: readonly CabinetProfile[],
   ceilingMm: number = CEILING_DEFAULT_MM,
   rules: PackRules = PACK_RULES,
+  groups?: readonly (string | null)[],
 ): PackResult {
   if (pattern.length === 0) throw new RangeError('packCabinets needs at least one cabinet profile');
   items = items.map((item) => oriented(item, pattern, ceilingMm, rules.shelfRemoval));
   // CASE-FB2b: the first lean that leaves no cabinet before the last with nothing on its shelves, else the fewest such
   let best: { building: Building[]; violators: Violator[]; bare: number } | null = null;
   for (const lean of rules.shelfRemoval ? LEANS : [1]) {
-    const packed = placeAll(items, pattern, ceilingMm, rules, lean);
+    const packed = placeAll(items, pattern, ceilingMm, rules, lean, groups);
     const bare = packed.building.slice(0, -1).filter((b) => !b.rows.some((row, k) => row.length > 0 && !b.tall.has(k) && !b.slots[k].isTop)).length;
     if (best === null || bare < best.bare) best = { ...packed, bare };
     if (bare === 0) break;
@@ -454,9 +467,17 @@ function placeAll(
   ceilingMm: number,
   rules: PackRules,
   lean: number,
+  groups?: readonly (string | null)[],
 ): { building: Building[]; violators: Violator[] } {
   const building: Building[] = [];
   const violators: Violator[] = [];
+  // PACK1: the figure being placed is of a group, which starts at `mark` (cabinet, place in its reading order)
+  let grouped = false;
+  let mark = { cab: 0, k: 0 };
+  /** Whether place `k` of cabinet `c` is at or after the mark: the only places the group's figures may take. */
+  const fromMark = (c: number, k: number) => !grouped || c > mark.cab || (c === mark.cab && k >= mark.k);
+  /** A tall figure's places: from the mark on, and a tier or top left empty in the mark's cabinet (no group's gap). */
+  const tallFrom = (c: number, k: number) => fromMark(c, k) || (c === mark.cab && building[c].rows[k].length === 0);
   const fitsIn = (b: Building, k: number, item: CaseFigure) =>
     within(item.heightMm, b.slots[k].maxHeightMm) && within(rowWidth(b.rows[k], item), b.slots[k].widthMm);
   const topOf = (b: Building) => b.slots.findIndex((s) => s.isTop);
@@ -488,21 +509,21 @@ function placeAll(
 
   // the tall figures no place on the wall has room for yet, in list order
   const waiting: CaseFigure[] = [];
-  /** A tall figure's tier in a cabinet with room for it, else -1. */
-  const tierFor = (b: Building, item: CaseFigure): number => {
+  /** A tall figure's tier in a cabinet with room for it (PACK1: one of its places `allowed`), else -1. */
+  const tierFor = (b: Building, item: CaseFigure, allowed: (k: number) => boolean = () => true): number => {
     const t = topOf(b);
-    for (const k of b.tall) if (k !== t && fitsIn(b, k, item)) return k;
+    for (const k of b.tall) if (k !== t && allowed(k) && fitsIn(b, k, item)) return k;
     return -1;
   };
-  const topFor = (b: Building, item: CaseFigure): number => {
+  const topFor = (b: Building, item: CaseFigure, allowed: (k: number) => boolean = () => true): number => {
     const t = topOf(b);
-    return t >= 0 && fitsIn(b, t, item) ? t : -1;
+    return t >= 0 && allowed(t) && fitsIn(b, t, item) ? t : -1;
   };
-  /** A tall figure's place on the wall: the earliest tier with room for it, else the earliest top. */
+  /** A tall figure's place on the wall: the earliest tier with room for it, else the earliest top (PACK1: from its group's mark on). */
   const tallPlace = (item: CaseFigure): [Building, number] | null => {
     for (const place of [tierFor, topFor]) {
-      for (const b of building) {
-        const k = place(b, item);
+      for (const [c, b] of building.entries()) {
+        const k = place(b, item, (j) => tallFrom(c, j));
         if (k >= 0) return [b, k];
       }
     }
@@ -522,12 +543,13 @@ function placeAll(
   const keptRoom = (pi: number, at: number) => {
     const narrow = Math.min(ahead[pi].narrow[at], ...waiting.map((i) => i.widthMm));
     const short = Math.min(ahead[pi].short[at], ...waiting.map((i) => i.heightMm));
+    // (PACK1: room behind the group's mark is no room for it, nor for the groups after it)
     return building.reduce(
-      (w, b) =>
+      (w, b, c) =>
         w +
         [...b.tall].reduce((r, k) => {
           const room = b.slots[k].widthMm - b.rows[k].reduce((x, i) => x + span(i), 0);
-          return r + (room >= narrow && b.slots[k].maxHeightMm >= short ? room : 0);
+          return r + (room >= narrow && b.slots[k].maxHeightMm >= short && tallFrom(c, k) ? room : 0);
         }, 0),
       0,
     );
@@ -633,7 +655,32 @@ function placeAll(
 
   let cab = 0;
   let k = 0;
+  /**
+   * PACK1: where group `g`, starting at figure `i`, starts: on the room left on the shelf cursor's place when all its
+   * shelf figures fit there, or when they would not fit one such shelf anyway; else on the next place.
+   */
+  const startOf = (i: number, g: string) => {
+    const b = building[cab];
+    if (b === undefined || k >= b.slots.length || b.rows[k].length === 0) return { cab, k };
+    const kind = kinds[pattern.indexOf(b.stock)];
+    const slot = b.slots[k];
+    let widthMm = 0;
+    let fits = !b.tall.has(k);
+    for (let j = i; j < items.length && groups![j] === g; j++) {
+      if (kind[j] !== 'shelf') continue;
+      widthMm += span(items[j]);
+      fits &&= within(items[j].heightMm, slot.maxHeightMm);
+    }
+    // (each span counts the gap after its figure: the last one needs none)
+    const left = slot.widthMm - b.rows[k].reduce((x, it) => x + span(it), 0) + FIGURE_GAP_MM;
+    return (fits && within(widthMm, left)) || !within(widthMm, slot.widthMm + FIGURE_GAP_MM) ? { cab, k } : { cab, k: k + 1 };
+  };
   for (const [i, item] of items.entries()) {
+    if (groups !== undefined) {
+      const g = groups[i] ?? null;
+      grouped = g !== null;
+      if (g !== null && (i === 0 || g !== groups[i - 1])) mark = startOf(i, g);
+    }
     if (kinds.every((ks) => ks[i] === 'none')) {
       violators.push({ item, reason: violation(item, pattern, ceilingMm, rules.shelfRemoval).reason });
       continue;
@@ -661,6 +708,23 @@ function placeAll(
           break;
         }
         c++;
+      }
+      continue;
+    }
+    if (grouped) {
+      // PACK1: the first place from the group's mark with room: a gap the group left, else from the cursor on
+      for (let c = mark.cab, j = mark.k; ; j++) {
+        const b = open(c, i);
+        if (j >= b.slots.length) {
+          c++;
+          j = -1;
+          continue;
+        }
+        if (!b.tall.has(j) && fitsIn(b, j, item)) {
+          b.rows[j].push(item);
+          if (c > cab || (c === cab && j > k)) [cab, k] = [c, j];
+          break;
+        }
       }
       continue;
     }

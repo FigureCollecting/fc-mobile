@@ -35,8 +35,8 @@
 // case view gone part way keeps its last partial answer, for when it opens again.
 // NEWHOLD-IMG-1 (Ross 10-31: 90 copies pushed from another device stood as plates; one list call answered 503): a sync that
 // could not read the lists (the server did not answer one, or another document's sync held the lock past its wait) syncs
-// again once the sync engine next completes a pass, its case view still open: the server stayed in reach, so no key
-// changed, and figures held since the last sync that read them had no image until the case view was opened again.
+// again once the sync engine next completes a pass, its Collection page still open: the server stayed in reach, so no key
+// changed, and figures held since the last sync that read them had no image until the Collection page was opened again.
 import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';

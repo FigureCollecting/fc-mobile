@@ -414,7 +414,7 @@ describe('useCollectionImages', () => {
   });
 
   // NEWHOLD-IMG-1 (Ross 10-31): one list call answered 503 with the server still in reach; the figures held since the last
-  // sync that read the lists stood as plates until the case view was opened again.
+  // sync that read the lists stood as plates until the Collection page was opened again.
   const oneImage = (i: number, c: string) =>
     create(GetProductImagesResponseSchema, { products: [{ headId: headOf(i), images: [{ derivativeId: c.repeat(64), role: 'gallery', url: url(c), width: 600, height: 800 }] }] });
   /** The engine's next completed pass, a minute on (its idle poll). */
@@ -444,7 +444,7 @@ describe('useCollectionImages', () => {
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
   });
 
-  it('a sync that read the lists and left an image unfetched is not synced again by a pass: the case view opened again does that (NEWHOLD-IMG-1)', async () => {
+  it('a sync that read the lists and left an image unfetched is not synced again by a pass: the Collection page opened again does that (NEWHOLD-IMG-1)', async () => {
     storage = fakeCaches(async () => new Response('', { status: 503 }));
     vi.stubGlobal('caches', storage);
     vi.stubGlobal('fetch', storage.fetch);

@@ -18,6 +18,8 @@ export class FakeNet {
   /** Origins whose requests never answer; they end only when the caller's signal aborts. */
   readonly hanging = new Set<string>();
   readonly calls: string[] = [];
+  /** Every request as it left the page: url and headers. */
+  readonly sent: Request[] = [];
   private readonly routes = new Map<string, Handler>();
 
   route(origin: string, handler: Handler): void {
@@ -27,6 +29,7 @@ export class FakeNet {
   readonly fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = new Request(input, init);
     this.calls.push(`${req.method} ${req.url}`);
+    this.sent.push(req);
     req.signal.throwIfAborted();
     if (this.offline) throw new TypeError('Failed to fetch');
     if (this.hanging.has(new URL(req.url).origin)) {

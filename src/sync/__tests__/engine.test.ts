@@ -810,3 +810,27 @@ describe('edges', () => {
     expect(engine.state.value.rejected).toEqual([expect.objectContaining({ reason: '' })]);
   });
 });
+
+describe('trace: one random trace per sync pass', () => {
+  it("puts a pass's Status, Push, Delta and GetProducts on one trace, and the next pass on another", async () => {
+    const r = await rig();
+    seedCopies(r.server, 2);
+    r.server.seedProducts([headOf(0), headOf(1)]);
+    await r.store.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'x' });
+    await r.engine.trigger('start');
+    const first = r.server.calls.splice(0);
+    expect(new Set(first.map((c) => c.rpc))).toEqual(new Set(['status', 'push', 'delta', 'getProducts']));
+    const [trace] = new Set(first.map((c) => c.trace));
+    expect(new Set(first.map((c) => c.trace)).size).toBe(1);
+    expect(trace).toMatch(/^[0-9a-f]{32}$/);
+    expect(trace).not.toBe('0'.repeat(32));
+
+    await r.store.writeFacet(ufFacetKey(headOf(1), 'note'), { note: 'y' });
+    await r.engine.trigger('manual');
+    const second = r.server.calls.splice(0);
+    expect(second.map((c) => c.rpc)).toEqual(expect.arrayContaining(['status', 'push', 'delta']));
+    expect(new Set(second.map((c) => c.trace)).size).toBe(1);
+    expect(second[0]!.trace).toMatch(/^[0-9a-f]{32}$/);
+    expect(second[0]!.trace).not.toBe(trace);
+  });
+});

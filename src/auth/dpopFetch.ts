@@ -5,6 +5,7 @@ import type { ServerClock } from './clock';
 import type { DeviceKeyRecord } from './deviceKey';
 import { createDpopProof, dpopChallengeError } from './dpop';
 import { NetworkError } from './errors';
+import { addTraceHeader } from './trace';
 
 export const ENROL_PATH = '/api/auth/devices';
 
@@ -37,6 +38,7 @@ const isAbort = (err: unknown): boolean => (err as { name?: unknown } | null)?.n
 
 export function createDpopFetch(deps: DpopFetchDeps): DpopFetch {
   let nonce: string | undefined;
+  const appOrigin = new URL(deps.origin).origin;
 
   return async (input, init = {}) => {
     const { enrolment = false, ...rest } = init;
@@ -47,10 +49,13 @@ export function createDpopFetch(deps: DpopFetchDeps): DpopFetch {
     const key = await deps.credentials.deviceKey(enrolment);
     let nonceRetried = false;
     let refreshed = false;
+    // Built once per call: a nonce or refresh retry is the same request again, on the same trace header.
+    const base = new Headers(rest.headers);
+    addTraceHeader(base, url, appOrigin);
 
     for (;;) {
       const offsetUsed = deps.clock.offsetMs();
-      const headers = new Headers(rest.headers);
+      const headers = new Headers(base);
       headers.set('authorization', `DPoP ${accessToken}`);
       headers.set(
         'dpop',

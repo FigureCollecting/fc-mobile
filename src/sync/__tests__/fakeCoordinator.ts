@@ -3,7 +3,7 @@
 // Push whose last event carries commit_cursor (rule 7), receipts that answer a replayed client_id
 // with the recorded outcomes (APPLIED as DUPLICATE), basis required, version_future past now + 5 min.
 import { create } from '@bufbuild/protobuf';
-import { Code, ConnectError } from '@connectrpc/connect';
+import { Code, ConnectError, type CallOptions } from '@connectrpc/connect';
 import {
   DeltaResponseSchema,
   GetProductsResponseSchema,
@@ -27,6 +27,7 @@ import {
   type StatusResponse,
   type SyncEvent,
 } from '@figurecollecting/fc-api-contract';
+import { kActionTrace } from '../../auth/trace';
 import type { CatalogCalls, SyncCalls } from '../engine';
 import { iso } from './harness';
 
@@ -57,6 +58,8 @@ export type Fault =
 export interface CallLog {
   rpc: Rpc;
   request: unknown;
+  /** The action trace the call was scoped to (kActionTrace), as the transport's interceptor would read it. */
+  trace: string | undefined;
 }
 
 const encode = (seq: number): string => `c${seq}`;
@@ -117,18 +120,19 @@ export class FakeCoordinator {
   }
 
   readonly sync: SyncCalls = {
-    status: (req, opts) => this.call('status', req, opts?.signal, () => this.status()),
-    delta: (req, opts) => this.call('delta', req, opts?.signal, () => this.delta(req.cursor ?? '', req.limit ?? 0)),
-    push: (req, opts) => this.call('push', req, opts?.signal, () => this.push(req as PushRequest)),
+    status: (req, opts) => this.call('status', req, opts, () => this.status()),
+    delta: (req, opts) => this.call('delta', req, opts, () => this.delta(req.cursor ?? '', req.limit ?? 0)),
+    push: (req, opts) => this.call('push', req, opts, () => this.push(req as PushRequest)),
   };
 
   readonly catalog: CatalogCalls = {
     getProducts: (req, opts) =>
-      this.call('getProducts', req, opts?.signal, () => this.getProducts((req.refs ?? []).map((r) => (r.ref as { value: string }).value))),
+      this.call('getProducts', req, opts, () => this.getProducts((req.refs ?? []).map((r) => (r.ref as { value: string }).value))),
   };
 
-  private async call<T>(rpc: Rpc, request: unknown, signal: AbortSignal | undefined, answer: () => T): Promise<T> {
-    this.calls.push({ rpc, request });
+  private async call<T>(rpc: Rpc, request: unknown, opts: CallOptions | undefined, answer: () => T): Promise<T> {
+    const signal = opts?.signal;
+    this.calls.push({ rpc, request, trace: opts?.contextValues?.get(kActionTrace) });
     await Promise.resolve();
     const fault = this.faults.get(rpc)?.shift();
     if (fault?.kind === 'hang') return aborted(signal);

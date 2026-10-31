@@ -8,6 +8,9 @@ import { defaultLocks, InTabLocks } from '../locks';
 import { NetworkError } from '../errors';
 import { AuthStore } from '../store';
 import { LOCAL_DB_VERSION, openLocalDb } from '../../storage/localDb';
+import { createClient } from '@connectrpc/connect';
+import { CompareService } from '@figurecollecting/fc-api-contract';
+import { createCoordinatorTransport } from '../../api/transport';
 import { World } from './world';
 import { APP_ORIGIN, SUB_A } from './fakes';
 
@@ -60,6 +63,15 @@ describe('browser wiring', () => {
     expect(getAuthSession()).toBe(session);
     expect(session.status.value).toBe('loading');
     expect(session.config).toEqual(configuredOidc());
+  });
+
+  it("leaves the page's fetch as the browser gave it: the trace header is added inside the DPoP fetch only", async () => {
+    const original = window.fetch;
+    const session = createBrowserSession(window);
+    const client = createClient(CompareService, createCoordinatorTransport(session.fetch));
+    await expect(client.compare({})).rejects.toMatchObject({ name: 'ConnectError' });
+    expect(window.fetch).toBe(original);
+    expect(globalThis.fetch).toBe(original);
   });
 
   it('createBrowserSession uses the window it is given for storage, fetch and navigation', async () => {

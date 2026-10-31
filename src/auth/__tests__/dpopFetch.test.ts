@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeJwt } from 'jose';
-import { setDiagIds } from '../diagIds';
+import { create } from '@bufbuild/protobuf';
+import { createClient } from '@connectrpc/connect';
+import { PushRequestSchema, SyncService } from '@figurecollecting/fc-api-contract';
+import { createCoordinatorTransport } from '../../api/transport';
+import { diagIdsClearDone, diagIdsClearPending, diagIdsDefault, setDiagIds } from '../diagIds';
 import { AuthRequiredError, EnrolmentError, NetworkError } from '../errors';
 import { APP_ORIGIN, IDP_ORIGIN, SUB_A } from './fakes';
 import { World, compareInit, compareUrl } from './world';
@@ -303,5 +307,106 @@ describe('trace context: a random traceparent on our own API, and nowhere else',
     expect(world.net.sent.filter((r) => new URL(r.url).origin !== APP_ORIGIN && new URL(r.url).origin !== IDP_ORIGIN)).toEqual([]);
     const api = world.net.sent.filter((r) => new URL(r.url).origin === APP_ORIGIN);
     expect(api.map((r) => r.redirect)).toEqual(['error', 'error', 'error']);
+  });
+});
+
+// LGMOB M2: a Push's origin_trace ids are a body field, not a header. Every attempt reads the rule again, so a
+// call begun while ids could leave sends none on an attempt made after the switch went off or while a clear is owed.
+describe('a Push body: no origin_trace on any attempt made while ids may not leave', () => {
+  const PUSH_PATH = '/api/coordinator.v1.SyncService/Push';
+  const TRACES = ['ab'.repeat(16), 'cd'.repeat(16), 'ef'.repeat(16)];
+  const request = () =>
+    create(PushRequestSchema, {
+      clientId: 'c1',
+      events: TRACES.map((originTrace, i) => ({ facetKey: `uf/${i}/note`, originTrace })),
+    });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setDiagIds(diagIdsDefault());
+  });
+
+  async function pushWorld(first?: (req: Request, coord: (r: Request) => Promise<Response>) => Promise<Response>) {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const coord = world.coord.handler;
+    // Every body that reaches our origin, read as it arrives (the coordinator fake consumes it).
+    const bodies: { path: string; text: string }[] = [];
+    let firstPush = true;
+    world.net.route(APP_ORIGIN, async (req) => {
+      const path = new URL(req.url).pathname;
+      bodies.push({ path, text: await req.clone().text() });
+      if (path !== PUSH_PATH) return coord(req);
+      if (firstPush && first) {
+        firstPush = false;
+        return first(req, coord);
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const wire = createClient(SyncService, createCoordinatorTransport(tab.fetch));
+    const pushBodies = () => bodies.filter((b) => b.path === PUSH_PATH).map((b) => b.text);
+    const attempts = () => pushBodies().map((text) => (JSON.parse(text) as { events: { originTrace?: string }[] }).events.map((e) => e.originTrace));
+    return { world, tab, wire, bodies, pushBodies, attempts };
+  }
+
+  it('D1: off during the token refresh made before the first attempt: that attempt carries no id on any event', async () => {
+    const { world, wire, attempts } = await pushWorld();
+    world.t += 600_000; // the access token has expired: the call refreshes it first
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (req) => {
+      const refresh = (await req.clone().text()).includes('grant_type=refresh_token');
+      const res = await idp(req);
+      if (refresh) setDiagIds(false);
+      return res;
+    });
+    await wire.push(request());
+    expect(world.idp.refreshCount()).toBeGreaterThan(0);
+    expect(attempts()).toEqual([[undefined, undefined, undefined]]);
+  });
+
+  it('D2: off during the round trip that answers use_dpop_nonce: the retry carries no id on any event', async () => {
+    const { world, wire, attempts } = await pushWorld(async (req, coord) => {
+      world.coord.restart();
+      const res = await coord(req);
+      setDiagIds(false);
+      return res;
+    });
+    await wire.push(request());
+    expect(attempts()).toEqual([TRACES, [undefined, undefined, undefined]]);
+  });
+
+  it('with the switch on again but the clear still owed, none; once it is done, the body goes as the caller built it', async () => {
+    const { tab, wire, attempts, pushBodies } = await pushWorld();
+    setDiagIds(false);
+    setDiagIds(true);
+    await wire.push(request());
+    expect(attempts()).toEqual([[undefined, undefined, undefined]]);
+    diagIdsClearDone(diagIdsClearPending()!);
+    const text = `{"clientId":"c1","events":[{"originTrace":"${TRACES[0]}"}]}`;
+    await tab.fetch(PUSH_PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(text) });
+    expect(pushBodies().at(-1)).toBe(text);
+  });
+
+  it('reads a Push body given as a string too', async () => {
+    const { tab, pushBodies } = await pushWorld();
+    setDiagIds(false);
+    await tab.fetch(PUSH_PATH, { method: 'POST', body: `{"clientId":"c1","events":[{"facetKey":"uf/0/note","originTrace":"${TRACES[0]}"}]}` });
+    expect(JSON.parse(pushBodies()[0]!)).toEqual({ clientId: 'c1', events: [{ facetKey: 'uf/0/note' }] });
+  });
+
+  it('touches only a Push: another call keeps its body while off', async () => {
+    const { tab, bodies } = await pushWorld();
+    setDiagIds(false);
+    const init = compareInit();
+    await tab.fetch(compareUrl, init);
+    expect(bodies.filter((b) => b.path === new URL(compareUrl).pathname).map((b) => b.text)).toEqual([init.body]);
+  });
+
+  it('refuses a Push body it cannot read while ids may not leave, rather than send it', async () => {
+    const { tab, pushBodies } = await pushWorld();
+    setDiagIds(false);
+    await expect(tab.fetch(PUSH_PATH, { method: 'POST', body: new Blob(['{}']) })).rejects.toThrow(/cannot be read/);
+    expect(pushBodies()).toEqual([]);
   });
 });

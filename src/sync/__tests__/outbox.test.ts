@@ -4,7 +4,9 @@ import { Code, ConnectError } from '@connectrpc/connect';
 import { PushRequestSchema, isTraceId, type PushRequest, type PushResponse } from '@figurecollecting/fc-api-contract';
 import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { newTraceId } from '../../auth/trace';
+import type { OutboxEntry } from '../../storage/records';
 import type { UserStore } from '../../storage/userStore';
+import { SyncEngine } from '../engine';
 import { rig } from './engineSupport';
 import {
   DAY,
@@ -484,7 +486,7 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       expect(isTraceId(sent.events[0].originTrace)).toBe(true);
       await r.engine.write((s) => write(s, 2, 'note', 'queued'));
       expect((await r.store.listOutbox()).map((e) => [e.state, isTraceId(e.origin_trace)])).toEqual([
-        ['APPLIED', true],
+        ['APPLIED', false],
         ['IN_FLIGHT', true],
         ['PENDING', true],
       ]);
@@ -513,12 +515,18 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
         [key(0, 'score'), after[3].origin_trace],
       ]);
       expect(r.engine.state.value.lastError).toBeNull();
-      expect((await r.store.listOutbox()).map((e) => [e.state, e.outcome])).toEqual([
-        ['APPLIED', 'APPLIED'],
-        ['APPLIED', 'DUPLICATE'],
-        ['APPLIED', 'APPLIED'],
-        ['APPLIED', 'APPLIED'],
+      expect((await r.store.listOutbox()).map((e) => [e.state, e.outcome, 'origin_trace' in e])).toEqual([
+        ['APPLIED', 'APPLIED', false],
+        ['APPLIED', 'DUPLICATE', false],
+        ['APPLIED', 'APPLIED', false],
+        ['APPLIED', 'APPLIED', false],
       ]);
+    });
+
+    it('an engine given no local database refuses the clear rather than skipping it', async () => {
+      const r = await rig();
+      const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog });
+      await expect(engine.clearOriginTraces()).rejects.toThrow(/no local database/);
     });
 
     it('a queued edit that still holds a trace when the switch is off (the clear never ran) is frozen without it; its retry is byte-identical', async () => {
@@ -535,39 +543,111 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       expect(again.retry).toBe(true);
       expect(toBinary(PushRequestSchema, again.request)).toEqual(toBinary(PushRequestSchema, batch.request));
     });
+  });
 
-    it("clears only this account's rows", async () => {
+  describe('kept only until the change is answered', () => {
+    async function inFlight() {
       const { db } = await freshDb();
-      const mine = await openStore(db);
-      const theirs = await openStore(db, { sub: 'user-b' });
-      await write(mine, 0, 'note', 'a');
-      await write(theirs, 0, 'note', 'b');
-      setDiagIds(false);
-      await write(mine, 1, 'note', 'never traced');
-      await mine.clearOriginTraces();
-      expect((await db.getAll('outbox')).map((e) => [e.sub, isTraceId(e.origin_trace)])).toEqual([
-        ['user-a', false],
-        ['user-b', true],
-        ['user-a', false],
+      const store = await openStore(db);
+      const trace = newTraceId();
+      const edit = await store.withAction(trace).writeFacet(key(0, 'note'), { note: 'mine' });
+      await store.onStatus(status(T0), 0);
+      const batch = await send(store);
+      const row = (await store.listOutbox())[0];
+      expect(row).toMatchObject({ state: 'IN_FLIGHT', origin_trace: trace });
+      return { store, edit, batch, row, fk: key(0, 'note') };
+    }
+
+    // The row as answered before origin_trace existed: the answer's own fields, and no trace.
+    const withoutTrace = ({ origin_trace: _dropped, ...rest }: OutboxEntry) => rest;
+
+    it.each([
+      ['APPLIED', PushOutcome.APPLIED, 'APPLIED'],
+      ['DUPLICATE', PushOutcome.DUPLICATE, 'APPLIED'],
+    ] as const)('%s drops it in the transaction that records the answer, and changes no other field', async (outcome, code, state) => {
+      const { store, batch, row, fk } = await inFlight();
+      const echo = batch.request.events[0];
+      await store.recordPush(batch.clientId, { results: [result(fk, code, echo)] });
+      expect((await store.listOutbox())[0]).toEqual({ ...withoutTrace(row), state, outcome });
+    });
+
+    it.each([
+      ['STALE', PushOutcome.STALE, 'STALE', ''],
+      ['REVIEW', PushOutcome.REVIEW, 'REVIEW', ''],
+      ['REJECTED', PushOutcome.REJECTED, 'REJECTED', 'payload_invalid: note too long'],
+      ['UNKNOWN_9', 9 as PushOutcome, 'REJECTED', 'unknown_outcome'],
+    ] as const)('every other terminal answer (%s) drops it too', async (outcome, code, state, reason) => {
+      const { store, batch, row, fk } = await inFlight();
+      const winner = ev(fk, token(T0 + 5_000, 0, OTHER_DEVICE), 'upsert', '{"note":"theirs"}');
+      await store.recordPush(batch.clientId, { results: [result(fk, code, winner, reason === 'unknown_outcome' ? '' : reason)] });
+      expect((await store.listOutbox())[0]).toEqual({ ...withoutTrace(row), state, outcome, ...(reason === '' ? {} : { reason }) });
+    });
+
+    it('an unanswered batch keeps it: a refused answer or an RPC error (INVALID_ARGUMENT) leaves the row as it was', async () => {
+      const { store, batch, row } = await inFlight();
+      await expect(store.recordPush(batch.clientId, { results: [] })).rejects.toThrow(/results/);
+      expect((await store.listOutbox())[0]).toEqual(row);
+      const r = await rig();
+      await r.engine.write((s) => write(s, 0, 'note', 'a'));
+      r.server.fault('push', { kind: 'throw', error: new ConnectError('client_id was already used for a different batch', Code.InvalidArgument) });
+      await r.engine.trigger('start');
+      const [held] = await r.store.listOutbox();
+      expect(held.state).toBe('IN_FLIGHT');
+      expect(isTraceId(held.origin_trace)).toBe(true);
+      await r.engine.trigger('manual');
+      expect((await r.store.listOutbox())[0]).toMatchObject({ state: 'APPLIED', outcome: 'APPLIED' });
+      expect('origin_trace' in (await r.store.listOutbox())[0]).toBe(false);
+    });
+
+    it('a REJECTED version_future keeps it until the re-mint, which moves it to the new row; that row drops it on its own APPLIED', async () => {
+      const { db } = await freshDb();
+      const clock = new FakeClock(T0);
+      const store = await openStore(db, { clock });
+      const known = ev(key(0, 'note'), token(T0 - HOUR, 0, OTHER_DEVICE), 'upsert', '{"note":"server"}');
+      await store.apply([known]);
+      await store.onStatus(status(T0), 0);
+      clock.wall += DAY;
+      const trace = newTraceId();
+      const edit = await store.withAction(trace).writeFacet(key(0, 'note'), { note: 'future' });
+      const batch = await send(store);
+      await store.recordPush(batch.clientId, { results: [result(key(0, 'note'), PushOutcome.REJECTED, known, 'version_future')] });
+      const rejected = (await store.listOutbox())[0];
+      expect(rejected).toMatchObject({ state: 'REJECTED', remint: 'awaiting', origin_trace: trace });
+
+      clock.advance(5_000);
+      await store.onStatus(status(T0 + 5_000), 0);
+      const [old, again] = await store.listOutbox();
+      expect(old).toEqual({ ...withoutTrace(rejected), remint: 'done', reminted_as: again.id });
+      expect(again).toMatchObject({ state: 'PENDING', origin_trace: trace });
+      expect(edit.outbox_id).toBe(old.id);
+
+      const next = await send(store);
+      expect(next.request.events.map((e) => e.originTrace)).toEqual([trace]);
+      await store.recordPush(next.clientId, appliedAll(next.request.events));
+      expect((await store.listOutbox()).map((e) => [e.state, 'origin_trace' in e])).toEqual([
+        ['REJECTED', false],
+        ['APPLIED', false],
       ]);
     });
 
-    it('clears in one transaction: a failed write leaves every trace as it was', async () => {
+    it('a REJECTED version_future that is not re-minted (a newer edit replaced it) drops it at the Status', async () => {
       const { db } = await freshDb();
-      const store = await openStore(db);
-      await write(store, 0, 'note', 'a');
-      await write(store, 1, 'note', 'b');
-      const before = await traces(store);
-      const realPut = IDBObjectStore.prototype.put;
-      let puts = 0;
-      vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args) {
-        if (this.name === 'outbox' && ++puts === 2) throw new DOMException('quota', 'QuotaExceededError');
-        return realPut.apply(this, args as Parameters<typeof realPut>);
-      });
-      await expect(store.clearOriginTraces()).rejects.toMatchObject({ name: 'LocalWriteError', quota: true });
-      vi.restoreAllMocks();
-      expect(await traces(store)).toEqual(before);
-      expect(before.every(isTraceId)).toBe(true);
+      const clock = new FakeClock(T0);
+      const store = await openStore(db, { clock });
+      const known = ev(key(0, 'note'), token(T0 - HOUR, 0, OTHER_DEVICE), 'upsert', '{"note":"server"}');
+      await store.apply([known]);
+      await store.onStatus(status(T0), 0);
+      clock.wall += DAY;
+      await write(store, 0, 'note', 'future');
+      const batch = await send(store);
+      await store.recordPush(batch.clientId, { results: [result(key(0, 'note'), PushOutcome.REJECTED, known, 'version_future')] });
+      await write(store, 0, 'note', 'newer');
+      clock.advance(5_000);
+      await store.onStatus(status(T0 + 5_000), 0);
+      const [old, newer] = await store.listOutbox();
+      expect(old).toMatchObject({ state: 'REJECTED', remint: 'skipped' });
+      expect('origin_trace' in old).toBe(false);
+      expect(isTraceId(newer.origin_trace)).toBe(true);
     });
   });
 

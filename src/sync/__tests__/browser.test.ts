@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signal } from '@preact/signals';
-import { ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { toBinary } from '@bufbuild/protobuf';
+import { PushRequestSchema, isTraceId, ufFacetKey, type PushRequest } from '@figurecollecting/fc-api-contract';
+import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { NetworkError } from '../../auth/errors';
 import type { AuthStatus } from '../../auth/statusGate';
 import type { LocalDb } from '../../storage/localDb';
 import { UserStore } from '../../storage/userStore';
 import { HELD_STATUSES, IDLE_POLL_MS, NotEnrolledError, createBrowserSync, startBrowserSync, storeProvider, type SyncSession } from '../browser';
 import { FakeCoordinator } from './fakeCoordinator';
-import { DEVICE, OTHER_DEVICE, T0, freshDb } from './harness';
+import { DEVICE, OTHER_DEVICE, T0, freshDb, openStore } from './harness';
 import { headOf, seedCopies } from './engineSupport';
 
 function session(db: LocalDb, status: AuthStatus = 'signed-in') {
@@ -184,5 +186,62 @@ describe('startBrowserSync', () => {
     sync.dispose();
     other.dispose();
     add.mockRestore();
+  });
+});
+
+// LGMOB M2: the Diagnostic ids switch going off reaches the whole device, signed in or not.
+describe('the off clear, signed out', () => {
+  afterEach(() => setDiagIds(diagIdsDefault()));
+
+  // Edits two accounts left on this device: user-a's sent batch (the server recorded it, the answer was lost) and queued edit, user-b's queued edit.
+  async function leftBehind() {
+    const { db } = await freshDb();
+    const server = new FakeCoordinator(T0);
+    const a = await openStore(db);
+    const b = await openStore(db, { sub: 'user-b' });
+    await a.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'sent' });
+    await a.onStatus(await server.sync.status({}), 0);
+    const sent = await a.nextBatch();
+    if (sent.kind !== 'send') throw new Error(sent.kind);
+    await server.sync.push(sent.batch.request);
+    await a.writeFacet(ufFacetKey(headOf(1), 'note'), { note: 'queued' });
+    await b.writeFacet(ufFacetKey(headOf(2), 'note'), { note: 'theirs' });
+    const old = (await db.getAll('outbox')).map((e) => e.origin_trace!);
+    expect(old.every(isTraceId)).toBe(true);
+    const s = session(db, 'signed-out');
+    s.set.sub(undefined);
+    const sync = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await expect(sync.engine.write((store) => store.writeFacet(ufFacetKey(headOf(0), 'score'), { score: 1 }))).rejects.toBeInstanceOf(NotEnrolledError);
+    return { db, server, s, sync, old, sentBytes: toBinary(PushRequestSchema, sent.batch.request) };
+  }
+
+  it("clears every account's queued edits with no account store, and leaves the sent batch alone", async () => {
+    const { db, sync, old } = await leftBehind();
+    setDiagIds(false);
+    await sync.engine.clearOriginTraces();
+    expect((await db.getAll('outbox')).map((e) => [e.sub, e.state, e.origin_trace])).toEqual([
+      ['user-a', 'IN_FLIGHT', old[0]],
+      ['user-a', 'PENDING', undefined],
+      ['user-b', 'PENDING', undefined],
+    ]);
+    sync.dispose();
+  });
+
+  it('off while signed out, then on again before signing in: no old id goes out, and the sent batch retries byte for byte', async () => {
+    const { server, s, sync, old, sentBytes } = await leftBehind();
+    const from = server.calls.length;
+    setDiagIds(false);
+    await sync.engine.clearOriginTraces();
+    setDiagIds(true);
+    s.set.sub('user-a');
+    s.status.value = 'signed-in';
+    await vi.waitFor(() => expect(sync.engine.state.value).toMatchObject({ phase: 'idle', pending: 0, reachability: 'reachable' }));
+    const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+    expect(toBinary(PushRequestSchema, pushes[0]!)).toEqual(sentBytes);
+    const later = pushes.slice(1).flatMap((p) => p.events);
+    expect(later.map((e) => e.facetKey)).toEqual([ufFacetKey(headOf(1), 'note')]);
+    expect(later.map((e) => e.originTrace)).toEqual([undefined]);
+    expect(later.map((e) => e.originTrace)).not.toContain(old[1]);
+    sync.dispose();
   });
 });

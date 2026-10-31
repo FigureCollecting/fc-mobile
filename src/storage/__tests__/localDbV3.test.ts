@@ -306,7 +306,15 @@ describe('a v3 store queued before origin_trace existed', () => {
     const after = await store.nextBatch();
     if (after.kind !== 'send') throw new Error(`expected the new edit, got ${after.kind}`);
     expect(after.batch.request.events.map((e) => e.originTrace)).toEqual([traced.origin_trace]);
-    expect((await server.sync.push(after.batch.request)).results.map((r) => r.outcome)).toEqual([PushOutcome.APPLIED]);
+    const answered = await server.sync.push(after.batch.request);
+    expect(answered.results.map((r) => r.outcome)).toEqual([PushOutcome.APPLIED]);
+    // Kept only until the change is answered.
+    await store.recordPush(after.batch.clientId, answered);
+    expect((await store.listOutbox()).map((e) => [e.state, 'origin_trace' in e])).toEqual([
+      ['APPLIED', false],
+      ['APPLIED', false],
+      ['APPLIED', false],
+    ]);
     db.close();
   });
 });

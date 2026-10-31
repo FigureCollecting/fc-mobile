@@ -225,8 +225,8 @@ export function Settings() {
   }, []);
 
   // Shows what now applies to the next request, and whether this browser kept the choice. Off also
-  // takes the ids off this account's queued edits, all but a batch already sent. A clear that cannot
-  // run (signed out) or fails is not lost: the store freezes no id into a batch while the switch is off.
+  // takes the ids off every queued edit on this device, any account, signed in or not, all but a batch
+  // already sent. A clear that fails is not lost: the store freezes no id into a batch while it is off.
   const handleDiagIds = useCallback((v: boolean) => {
     setDiagIds(v);
     setDiagIdsShown(diagIdsOn());

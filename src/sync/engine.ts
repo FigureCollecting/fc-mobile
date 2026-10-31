@@ -31,6 +31,8 @@ import {
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
 import { kActionTrace, newTraceId } from '../auth/trace';
+import type { LocalDb } from '../storage/localDb';
+import { clearOriginTraces } from '../storage/originTraces';
 import { CARD_SCHEMA_VERSION } from '../storage/records';
 import type { UserStore } from '../storage/userStore';
 
@@ -96,6 +98,8 @@ interface Timers {
 export interface SyncEngineDeps {
   /** The signed-in user's store; asked for on every pass, so a new connection or user is picked up. */
   store: () => Promise<UserStore>;
+  /** This device's local database, every account's rows, signed in or not: the Diagnostic ids clear reaches it here. */
+  localDb?: () => Promise<LocalDb>;
   sync: SyncCalls;
   catalog: CatalogCalls;
   /** True while the session cannot sync (sign in to sync, reload required): nothing goes out. */
@@ -293,10 +297,13 @@ export class SyncEngine {
     return out;
   }
 
-  /** The Diagnostic ids switch went off: the signed-in user's queued edits drop their origin_trace (UserStore.clearOriginTraces). */
+  /**
+   * The Diagnostic ids switch went off: every outbox row on this device, of any account, drops its origin_trace but
+   * a batch already sent (storage/originTraces.ts). Needs no signed-in user or enrolled store.
+   */
   async clearOriginTraces(): Promise<void> {
-    const store = await this.deps.store();
-    await store.clearOriginTraces();
+    if (this.deps.localDb === undefined) throw new Error('no local database to clear diagnostic ids from');
+    await clearOriginTraces(await this.deps.localDb());
   }
 
   /** Read through the signed-in user's store. */

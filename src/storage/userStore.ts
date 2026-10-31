@@ -539,22 +539,6 @@ export class UserStore {
     });
   }
 
-  /**
-   * The Diagnostic ids switch went off: drop origin_trace from every one of this user's outbox rows in one
-   * transaction, except a batch sent and unanswered (IN_FLIGHT), which has sent its ids once already and
-   * whose retry must stay byte-identical. Nothing is ever backfilled when the switch comes back on.
-   */
-  async clearOriginTraces(): Promise<void> {
-    await runTx(this.db, ['outbox'], async (tx) => {
-      const outbox = tx.objectStore('outbox');
-      for (const entry of await outbox.index('by_sub').getAll(this.subRange())) {
-        if (entry.origin_trace === undefined || entry.state === 'IN_FLIGHT') continue;
-        delete entry.origin_trace;
-        await outbox.put(entry);
-      }
-    });
-  }
-
   // An unanswered frozen batch always comes back first, same client_id and events.
   // A new batch waits for the session's first Status and for the fresh Status
   // owed after a REJECTED.
@@ -803,6 +787,9 @@ export class UserStore {
         entry.adopted_version = current?.version ?? null;
       }
     }
+    // Answered, the change has synced and its id is done: it goes with the answer, whatever the outcome.
+    // Only an edit the next Status re-mints keeps it, to hand it to the new row (remint below).
+    if (entry.remint !== 'awaiting') delete entry.origin_trace;
     await tx.objectStore('outbox').put(entry);
   }
 
@@ -863,6 +850,8 @@ export class UserStore {
           chain.set(e.facet_key, version);
           count += 1;
         }
+        // Re-minted (the new row carries it) or skipped, the answered edit keeps no id.
+        delete e.origin_trace;
         await outbox.put(e);
         continue;
       }

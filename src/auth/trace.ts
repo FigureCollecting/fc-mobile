@@ -1,10 +1,13 @@
 // W3C trace context (traceparent) for requests to our own API, nothing else: the coordinator
 // joins its log lines on the trace id. Every id is fresh randomness from the CSPRNG: 16 bytes
 // for a trace, 8 for a span, never all zero, never derived from the account, the device or its
-// key, a client id, a version or a clock. No id outlives one sync pass or one call, and the
-// client sends no tracestate and no baggage. While this device's Diagnostic ids switch is off
-// (diagIds.ts), neither writer below adds one, and dropTraceIfOff takes one off any attempt
-// dpopFetch makes after the switch went off, on a call begun while it was on.
+// key, a client id, a version or a clock. No header id outlives one sync pass or one call, and the
+// client sends no tracestate and no baggage. The one id kept longer is an edit's origin_trace: a
+// newTraceId per user action, stored with the queued edit (storage/userStore.ts) only until the
+// change is answered, and sent only in that edit's Push event, never in a header. While this
+// device's Diagnostic ids switch is off (diagIds.ts), neither writer below adds a traceparent, and
+// dropTraceIfOff takes one off any attempt dpopFetch makes after the switch went off, on a call
+// begun while it was on.
 import { createContextKey, type Interceptor } from '@connectrpc/connect';
 import { diagIdsOn } from './diagIds';
 

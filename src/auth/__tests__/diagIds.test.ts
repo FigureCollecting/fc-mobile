@@ -120,3 +120,102 @@ describe('a browser that will not keep the choice', () => {
     expect(() => m.diagIdsSaved()).not.toThrow();
   });
 });
+
+// LGMOB M2: an off owes a device-wide clear of origin_trace. The marker says so until a clear has committed,
+// across reloads and whatever the switch says by then.
+describe('the clear an off owes', () => {
+  const MARK = 'fc-diag-ids-clear-pending';
+
+  it('is owed by no one on a fresh device', () => {
+    expect(m.DIAG_IDS_CLEAR_KEY).toBe(MARK);
+    expect(m.diagIdsClearPending()).toBeUndefined();
+  });
+
+  it('off writes the marker with the choice, and on leaves it', () => {
+    m.setDiagIds(false);
+    const mark = localStorage.getItem(MARK);
+    expect(mark).not.toBeNull();
+    expect(m.diagIdsClearPending()).toBe(mark);
+    m.setDiagIds(true);
+    expect(m.diagIdsOn()).toBe(true);
+    expect(m.diagIdsClearPending()).toBe(mark);
+  });
+
+  it('survives a reload: a fresh module instance still sees it, with the switch back on', async () => {
+    m.setDiagIds(false);
+    m.setDiagIds(true);
+    const mark = m.diagIdsClearPending();
+    vi.resetModules();
+    const reloaded: DiagIds = await import('../diagIds');
+    expect(reloaded.diagIdsOn()).toBe(true);
+    expect(reloaded.diagIdsClearPending()).toBe(mark);
+  });
+
+  it('done removes the mark it is given, and only that one: a newer off keeps its own', () => {
+    m.setDiagIds(false);
+    const first = m.diagIdsClearPending()!;
+    m.setDiagIds(false);
+    const newer = m.diagIdsClearPending()!;
+    expect(newer).not.toBe(first);
+    m.diagIdsClearDone(first);
+    expect(m.diagIdsClearPending()).toBe(newer);
+    m.diagIdsClearDone(newer);
+    expect(m.diagIdsClearPending()).toBeUndefined();
+    expect(localStorage.getItem(MARK)).toBeNull();
+  });
+
+  it("done for an older stored mark leaves a newer one held in memory (that clear began before this page's off)", () => {
+    m.setDiagIds(false);
+    const older = m.diagIdsClearPending()!;
+    const write = refuse('setItem');
+    m.setDiagIds(false);
+    write.mockRestore();
+    const held = m.diagIdsClearPending()!;
+    expect(held).not.toBe(older);
+    expect(localStorage.getItem(MARK)).toBe(older);
+    m.diagIdsClearDone(older);
+    expect(localStorage.getItem(MARK)).toBeNull();
+    expect(m.diagIdsClearPending()).toBe(held);
+  });
+
+  it('storage refuses the marker: it is kept in memory for this page until done', () => {
+    refuse('setItem');
+    m.setDiagIds(false);
+    expect(localStorage.getItem(MARK)).toBeNull();
+    const mark = m.diagIdsClearPending();
+    expect(mark).toEqual(expect.any(String));
+    m.diagIdsClearDone(mark!);
+    expect(m.diagIdsClearPending()).toBeUndefined();
+  });
+
+  it('storage blocked outright: the page still owes the clear, and done never throws', () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+    expect(m.diagIdsClearPending()).toBeUndefined();
+    m.setDiagIds(false);
+    const mark = m.diagIdsClearPending()!;
+    expect(mark).toEqual(expect.any(String));
+    expect(() => m.diagIdsClearDone(mark)).not.toThrow();
+    expect(m.diagIdsClearPending()).toBeUndefined();
+  });
+
+  it('a later saved marker takes over from one held in memory', () => {
+    const write = refuse('setItem');
+    m.setDiagIds(false);
+    const held = m.diagIdsClearPending()!;
+    write.mockRestore();
+    m.setDiagIds(false);
+    const stored = localStorage.getItem(MARK)!;
+    expect(stored).not.toBe(held);
+    expect(m.diagIdsClearPending()).toBe(stored);
+  });
+
+  it('a removal storage refuses leaves the marker set, so the next start or sync clears again', () => {
+    m.setDiagIds(false);
+    const mark = m.diagIdsClearPending()!;
+    refuse('removeItem');
+    expect(() => m.diagIdsClearDone(mark)).not.toThrow();
+    expect(m.diagIdsClearPending()).toBe(mark);
+  });
+});

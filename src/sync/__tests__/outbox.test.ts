@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clone, create, toBinary, toJson } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { PushRequestSchema, isTraceId, type PushRequest, type PushResponse } from '@figurecollecting/fc-api-contract';
-import { diagIdsClearPending, diagIdsDefault, setDiagIds } from '../../auth/diagIds';
+import { diagIdsClearDone, diagIdsClearPending, diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { newTraceId } from '../../auth/trace';
 import { clearOriginTraces } from '../../storage/originTraces';
 import type { OutboxEntry } from '../../storage/records';
@@ -706,6 +706,30 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
         expect(mark).toEqual(expect.any(String));
         await r.engine.trigger('manual');
         expect(diagIdsClearPending()).toBeUndefined();
+      });
+
+      it("this drain's clear fails, and another tab's commits between its freeze and its send: the send still carries no id", async () => {
+        const { r } = await offThenOnUncleared();
+        // No local database here: this engine's drain-time clear throws.
+        const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+        const real = r.store.nextBatch.bind(r.store);
+        let otherTab = false;
+        vi.spyOn(r.store, 'nextBatch').mockImplementation(async (max?: number) => {
+          const next = await real(max);
+          if (next.kind === 'send' && !otherTab) {
+            otherTab = true;
+            expect(isTraceId(next.batch.request.events[0].originTrace)).toBe(true);
+            // Another tab's engine completes the owed clear now, after this drain froze the batch with the id in it.
+            const mark = diagIdsClearPending()!;
+            await clearOriginTraces(r.db);
+            diagIdsClearDone(mark);
+          }
+          return next;
+        });
+        await engine.trigger('manual');
+        expect(otherTab).toBe(true);
+        expect(diagIdsClearPending()).toBeUndefined();
+        expect(pushes(r).flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined]);
       });
 
       it('a clear whose write fails after it began leaves the marker', async () => {

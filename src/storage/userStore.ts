@@ -35,6 +35,8 @@ import { emptyFacet, floorOf, isNewer, mergeRemote, show, toFacetValue, type Rem
 import { indexFacet } from '../sync/facetIndex';
 import { ZERO_HLC, isPast, maxHlc, toHlcRecord, toHlcState } from '../sync/hlcState';
 import { buildView, pickCopy, shownCopies, type CopyView, type LocalView } from '../sync/occurrences';
+import { diagIdsOn } from '../auth/diagIds';
+import { newTraceId } from '../auth/trace';
 
 export { LocalWriteError } from './tx';
 export type { RemoteEvent } from '../sync/facetMerge';
@@ -187,6 +189,8 @@ export class UserStore {
   // rebase() lowers the in-memory clock at once. Until a Status transaction that
   // carries it commits, its re-mint and exact save stay owed, so an abort cannot drop them.
   private rebaseUnsaved = false;
+  /** The user action a withAction view writes for; never set on the store itself. */
+  private actionTrace: string | undefined;
 
   private constructor(db: LocalDb, opts: UserStoreOptions, meta: SyncMeta) {
     this.db = db;
@@ -214,6 +218,21 @@ export class UserStore {
   }
 
   // ---------------------------------------------------------------- writes
+
+  /**
+   * This store, writing for one user action: every edit its writes mint carries `trace` as its origin_trace
+   * (while diagIdsOn()), whatever group it lands in. A plain store write is an action of its own.
+   *
+   * The view is Object.create(this): it reads every field of the store through the prototype and owns only
+   * actionTrace, so interleaved actions never share a trace through the store. The other side of that: an
+   * assignment to `this` made through a view lands on the view, not the store. Only onStatus assigns to
+   * `this` today, and no write path calls it; keep it that way, or give such state a home off `this`.
+   */
+  withAction(trace: string): UserStore {
+    const view = Object.create(this) as UserStore;
+    view.actionTrace = trace;
+    return view;
+  }
 
   /** Write one user-owned facet: the payload's own fields, or null for a tombstone. */
   async writeFacet(facetKey: string, fields: Record<string, unknown> | null): Promise<WriteResult> {
@@ -395,6 +414,8 @@ export class UserStore {
     const at = new Date(this.clock.wallMs());
     const tz = deviceTimeZone(this.timeZone);
     return runTx(this.db, ['facets', 'outbox', 'sync_meta'], async (tx) => {
+      // Read once this transaction exists: an edit that sees the switch on commits before any clear the off begins.
+      const trace = diagIdsOn() ? (this.actionTrace ?? newTraceId()) : undefined;
       const meta = await this.readMeta(tx);
       // A plain write needs no view; an intent reads every row of this user.
       const rows = plan.length === 0 ? [] : await tx.objectStore('facets').getAll(this.subRange());
@@ -421,6 +442,7 @@ export class UserStore {
           state: 'PENDING',
           attempts: 0,
           created_at: at.getTime(),
+          ...(trace !== undefined && { origin_trace: trace }),
           ...(group !== undefined && { group }),
         };
         const id = await tx.objectStore('outbox').add(entry);
@@ -517,6 +539,22 @@ export class UserStore {
     });
   }
 
+  /**
+   * The Diagnostic ids switch went off: drop origin_trace from every one of this user's outbox rows in one
+   * transaction, except a batch sent and unanswered (IN_FLIGHT), which has sent its ids once already and
+   * whose retry must stay byte-identical. Nothing is ever backfilled when the switch comes back on.
+   */
+  async clearOriginTraces(): Promise<void> {
+    await runTx(this.db, ['outbox'], async (tx) => {
+      const outbox = tx.objectStore('outbox');
+      for (const entry of await outbox.index('by_sub').getAll(this.subRange())) {
+        if (entry.origin_trace === undefined || entry.state === 'IN_FLIGHT') continue;
+        delete entry.origin_trace;
+        await outbox.put(entry);
+      }
+    });
+  }
+
   // An unanswered frozen batch always comes back first, same client_id and events.
   // A new batch waits for the session's first Status and for the fresh Status
   // owed after a REJECTED.
@@ -538,8 +576,11 @@ export class UserStore {
       if (!this.statusSeen || meta.rejected_past !== null) return { kind: 'status_required' };
       const pending = queued.slice(0, batchEnd(queued, max));
       const clientId = this.newClientId();
+      // While the switch is off no id is frozen into a batch, though a clear never ran (signed out) or failed.
+      const idsOn = diagIdsOn();
       for (const [i, e] of pending.entries()) {
         Object.assign(e, { state: 'IN_FLIGHT', client_id: clientId, batch_pos: i, attempts: e.attempts + 1 });
+        if (!idsOn) delete e.origin_trace;
         await outbox.put(e);
       }
       return { kind: 'send', batch: this.toBatch(clientId, pending, false) };
@@ -806,6 +847,8 @@ export class UserStore {
             state: 'PENDING',
             attempts: 0,
             created_at: this.clock.wallMs(),
+            // The action that made it, as the basis: carried forward, never minted anew, and only while on.
+            ...(e.origin_trace !== undefined && diagIdsOn() && { origin_trace: e.origin_trace }),
             ...(group !== undefined && { group }),
           };
           const id = await outbox.add(entry);
@@ -847,6 +890,7 @@ export class UserStore {
         op: e.op === 'upsert' ? SyncOp.UPSERT : SyncOp.DELETE,
         payload: e.payload,
         basis: e.basis,
+        ...(e.origin_trace !== undefined && { originTrace: e.origin_trace }),
       }),
     );
     return { clientId, request: create(PushRequestSchema, { clientId, events }), entryIds: entries.map((e) => e.id!), retry };

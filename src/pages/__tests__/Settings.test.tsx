@@ -27,6 +27,7 @@ import { Settings } from '../Settings';
 import { renderWithProviders } from '../../test/testUtils';
 import { useAuthStore } from '../../stores/auth';
 import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
+import { localSession, type LocalSession } from '../../local/session';
 
 const mockedGetCacheStats = getCacheStats as unknown as ReturnType<typeof vi.fn>;
 
@@ -285,6 +286,56 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
     expect(listeners).toHaveLength(1);
     view.unmount();
     expect(storageListeners(remove.mock.calls)).toEqual(listeners);
+  });
+
+  describe('off also clears the ids already kept on queued edits (LGMOB M2)', () => {
+    afterEach(() => {
+      localSession.value = undefined;
+    });
+
+    const withEngine = (clearOriginTraces: () => Promise<void>) => {
+      localSession.value = { engine: { clearOriginTraces } } as unknown as LocalSession;
+    };
+
+    it('an off tap asks the engine to clear them; an on tap does not', async () => {
+      const user = userEvent.setup();
+      const clearOriginTraces = vi.fn(async () => undefined);
+      withEngine(clearOriginTraces);
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      await user.click(diagSwitch());
+      expect(diagIdsOn()).toBe(false);
+      expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+      await user.click(diagSwitch());
+      expect(diagIdsOn()).toBe(true);
+      expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+    });
+
+    it('an off tap with no signed-in engine, or a clear that fails, still turns the ids off and throws nothing', async () => {
+      const user = userEvent.setup();
+      const first = renderWithProviders(<Settings />, { initialPath: '/settings' });
+      await user.click(diagSwitch());
+      expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
+      first.unmount();
+      setDiagIds(true);
+
+      const unhandled = vi.fn();
+      process.on('unhandledRejection', unhandled);
+      try {
+        const clearOriginTraces = vi.fn(async () => {
+          throw new Error('the store is gone');
+        });
+        withEngine(clearOriginTraces);
+        renderWithProviders(<Settings />, { initialPath: '/settings' });
+        await user.click(diagSwitch());
+        expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(unhandled).not.toHaveBeenCalled();
+        expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
+        expect(diagIdsOn()).toBe(false);
+      } finally {
+        process.off('unhandledRejection', unhandled);
+      }
+    });
   });
 
   it('links "How we use your data" to /privacy', async () => {

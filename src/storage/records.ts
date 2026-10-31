@@ -56,6 +56,13 @@ export interface OutboxEntry {
   client_id?: string;
   batch_pos?: number;
   created_at: number;
+  /**
+   * The random id (W3C trace-id form, from newTraceId) of the user action that minted the edit, sent only as
+   * its SyncEvent.origin_trace. Set at mint only while the Diagnostic ids switch is on and carried by a re-mint
+   * and a rebase; taken off every row but a sent batch when the switch goes off. None on an edit queued
+   * before it existed: nothing is backfilled.
+   */
+  origin_trace?: string;
   /** The server's outcome as answered (DUPLICATE is kept distinct from APPLIED). */
   outcome?: string;
   reason?: string;

@@ -280,14 +280,23 @@ export class SyncEngine {
     this.writeTimer = this.timers.setTimeout(() => void this.trigger('write'), WRITE_DELAY_MS);
   }
 
-  /** Make a local edit through the store, then schedule its sync. */
+  /**
+   * Make a local edit through the store, then schedule its sync. One call is one user action: every edit
+   * it mints, in every group, carries one fresh random origin_trace (the store stamps it while diagIdsOn()).
+   */
   async write<T>(fn: (store: UserStore) => Promise<T>): Promise<T> {
     const store = await this.deps.store();
-    const out = await fn(store);
+    const out = await fn(store.withAction(newTraceId()));
     this.notifyWrite();
     await this.refresh(store);
     this.changed();
     return out;
+  }
+
+  /** The Diagnostic ids switch went off: the signed-in user's queued edits drop their origin_trace (UserStore.clearOriginTraces). */
+  async clearOriginTraces(): Promise<void> {
+    const store = await this.deps.store();
+    await store.clearOriginTraces();
   }
 
   /** Read through the signed-in user's store. */

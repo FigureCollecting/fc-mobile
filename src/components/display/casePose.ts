@@ -250,25 +250,50 @@ export function axisGate(axis: 'x' | 'y', unlocked: boolean, dxPx: number, dyPx:
 
 /** NAV-JOG (Ross 10-28): a thumb offset (px) on the jog under this moves nothing: a tap's wobble. */
 export const JOG_DEAD_PX = 8;
-/** NAV-JOG: at this offset (px) or more the jog moves at full speed; from the dead zone it grows as the square. */
+/** NAV-JOG: at this offset (px) or more the jog moves at full speed; from the dead zone it grows with the reach (jogSpeed). */
 export const JOG_FULL_PX = 64;
 /** NAV-JOG: a thumb within this many degrees of an axis moves along that axis only (as a swipe locks to one). */
 export const JOG_SNAP_DEG = 20;
-/** NAV-JOG: full speed slides the picture at the anchor depth by this many frame widths a second. */
+/** NAV-JOG: the jog's speed unit, frame widths a second of picture at the anchor depth: Ross's 10-28 top speed. */
 export const JOG_FRAMES_PER_S = 1;
 /** NAV-JOG: a frame later than this (ms) moves as if this long passed: a stalled phone never leaps. */
 export const JOG_MAX_STEP_MS = 100;
+/**
+ * NAV-2B (Ross 10-31: "1.5-2x" the top speed): full reach moves this many times JOG_FRAMES_PER_S. ?jogmax= tunes it
+ * from 1 (the 10-28 jog) to 2 on the device. At 2 a 100 ms frame steps a fifth of a frame, inside the quarter a kept
+ * cull holds in hand, so even a re-cull drawn a frame late still covers the frame (caseJog.test).
+ */
+export const JOG_MAX_X = 2;
+/** NAV-2B: the top speed's extra over the square grows as this power of the reach, so the middle stays the 10-28 jog's. */
+export const JOG_CURVE_POW = 6;
+/** NAV-2B ("more speed gradations"): speeds (JOG_FRAMES_PER_S units) a light tick marks each way; the top speed is one too. */
+export const JOG_DETENTS: readonly number[] = [0.5, 1];
+
+/**
+ * NAV-2B: the jog's speed (frame widths a second) with the thumb `d` px from where it went down, its top `max` times
+ * the 10-28 jog's: none inside JOG_DEAD_PX; past it, of the reach r to JOG_FULL_PX, r^2 + (max - 1) r^6. The square is
+ * the 10-28 jog: within 1 % of it to 24 px, 6.25 % faster at half reach, today's top at about 54 px, `max` at full reach.
+ */
+export function jogSpeed(d: number, max: number = JOG_MAX_X): number {
+  if (!(d > JOG_DEAD_PX)) return 0;
+  const reach = Math.min(1, (d - JOG_DEAD_PX) / (JOG_FULL_PX - JOG_DEAD_PX));
+  return JOG_FRAMES_PER_S * (reach ** 2 + (max - 1) * reach ** JOG_CURVE_POW);
+}
+
+/** NAV-2B: the speeds a jog topping out at `max` ticks at, slowest first: JOG_DETENTS under it, and the top itself. */
+export function jogDetents(max: number = JOG_MAX_X): number[] {
+  return [...JOG_DETENTS.filter((level) => level < max), max].map((level) => level * JOG_FRAMES_PER_S);
+}
 
 /**
  * NAV-JOG: the picture travel (px at the anchor depth, the way the thumb points) a jog held at (dxPx, dyPx) from where it
- * went down makes in `dtMs`: none inside JOG_DEAD_PX; up to JOG_FRAMES_PER_S frame widths a second at JOG_FULL_PX, as
- * the square of the reach between; along one axis when the thumb is within JOG_SNAP_DEG of it.
+ * went down makes in `dtMs`: jogSpeed of the thumb's distance (top `max`) for at most JOG_MAX_STEP_MS; along one axis
+ * when the thumb is within JOG_SNAP_DEG of it.
  */
-export function jogStep(dxPx: number, dyPx: number, dtMs: number, frameWidthPx: number): { x: number; y: number } {
+export function jogStep(dxPx: number, dyPx: number, dtMs: number, frameWidthPx: number, max: number = JOG_MAX_X): { x: number; y: number } {
   const d = Math.hypot(dxPx, dyPx);
   if (d <= JOG_DEAD_PX || !(dtMs > 0)) return { x: 0, y: 0 };
-  const reach = Math.min(1, (d - JOG_DEAD_PX) / (JOG_FULL_PX - JOG_DEAD_PX));
-  const px = (reach * reach * JOG_FRAMES_PER_S * frameWidthPx * Math.min(dtMs, JOG_MAX_STEP_MS)) / 1000;
+  const px = (jogSpeed(d, max) * frameWidthPx * Math.min(dtMs, JOG_MAX_STEP_MS)) / 1000;
   const angle = Math.atan2(Math.abs(dyPx), Math.abs(dxPx));
   if (angle <= JOG_SNAP_DEG * DEG) return { x: Math.sign(dxPx) * px, y: 0 };
   if (angle >= (90 - JOG_SNAP_DEG) * DEG) return { x: 0, y: Math.sign(dyPx) * px };

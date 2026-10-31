@@ -7,6 +7,7 @@ import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
 import { FigureRail, readySections } from './figureSections';
 import { PhotosSheet } from './PhotosSheet';
+import { PhotosChip } from './PhotosChip';
 import type { LocalFigure } from '../../local/figures';
 import { RAIL_INSET_PX, RAIL_WIDTH_PX, railHeightPx } from '../ui/SideRail';
 import { Style } from '../../styles/Style';
@@ -275,23 +276,27 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
   }, [current]);
 
   const figure = figures[current];
+  // PHOTOS-FIND-1 item 6: the photo picked in the Photos sheet, the large picture behind it until the sheet closes
+  const [aimed, setAimed] = useState<string | undefined>(undefined);
+  const picture = aimed ?? figure?.imageUrl;
   // GALLERY-1: the photo behind the sheet follows a photo the figure takes up while the viewer is open ("Use for me" in the
-  // Photos tab): the slide that stands is rewritten and refreshed, no other. The slides are written once at open otherwise.
+  // Photos tab), and the photo picked in that tab while it is open: the slide that stands is rewritten and refreshed, no
+  // other. The slides are written once at open otherwise.
   const shownUrl = useRef<string | undefined>(undefined);
   const shownFor = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!figure) return;
     // the first look at a figure (the viewer's own, or a swipe to it) is what its slide is written from, the gallery loaded yet or not
     const first = shownFor.current !== figure._id;
-    const changed = shownUrl.current !== figure.imageUrl;
+    const changed = shownUrl.current !== picture;
     shownFor.current = figure._id;
-    shownUrl.current = figure.imageUrl;
+    shownUrl.current = picture;
     const pswp = pswpRef.current;
     if (first || !changed || !pswp) return;
     const slides = pswp.options.dataSource as unknown[];
-    slides[current] = slideOf(figure);
+    slides[current] = slideOf({ ...figure, imageUrl: picture });
     pswp.refreshSlideContent(current);
-  }, [figure, current]);
+  }, [figure, current, picture]);
   const openCopies = useCopiesAction(figure ?? ({} as Figure), closeViewer);
   // GALLERY-1: the figure's photos, over the viewer; another figure (a swipe) is another figure's photos
   const [photosOpen, setPhotosOpen] = useState(false);
@@ -327,6 +332,8 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
         onPhotos={(figure as Partial<LocalFigure>).local === undefined ? null : () => setPhotosOpen(true)}
         onCopies={openCopies}
       />
+      {/* PHOTOS-FIND-1: how many photos the figure has, when more than this one; low on the photo at the left, the rail's opposite */}
+      <PhotosChip headId={(figure as Partial<LocalFigure>).local?.headId} onOpen={() => setPhotosOpen(true)} class="figure-viewer-sheet__photos" />
       <button
         class="figure-viewer-sheet__handle"
         type="button"
@@ -377,6 +384,14 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
           position: absolute;
           right: calc(24px + var(--safe-area-right, 0px));
           bottom: calc(100% + 12px);
+        }
+
+        /* the photos chip: as far in from the left edge as the rail is from the right (the back-swipe), its pill as high above the
+           sheet as the rail's foot */
+        .figure-viewer-sheet__photos {
+          position: absolute;
+          left: calc(${RAIL_INSET_PX}px + var(--safe-area-left, 0px));
+          bottom: 100%;
         }
 
         /* PhotoSwipe's prev/next arrows stand higher than its default middle, and the next arrow stands left of the rail's column
@@ -458,7 +473,7 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
         }
       `} />
     </motion.div>
-    <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
+    <PhotosSheet key={figure._id} figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={setAimed} />
     </>,
     document.body,
   );

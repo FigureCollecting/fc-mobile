@@ -5,6 +5,7 @@ import type { ServerClock } from './clock';
 import type { DeviceKeyRecord } from './deviceKey';
 import { createDpopProof, dpopChallengeError } from './dpop';
 import { NetworkError } from './errors';
+import { attemptBody } from './originTraceGate';
 import { addTraceHeader, dropTraceIfOff } from './trace';
 
 export const ENROL_PATH = '/api/auth/devices';
@@ -69,12 +70,14 @@ export function createDpopFetch(deps: DpopFetchDeps): DpopFetch {
         }),
       );
       dropTraceIfOff(headers);
+      // Likewise a Push's origin_trace ids, on every attempt (originTraceGate.ts).
+      const body = attemptBody(url, rest.body);
       const sentAt = deps.now();
       let res: Response;
       try {
         // Never follow a redirect: the proof is bound to this URL, and a followed redirect would
         // carry it and the trace header to wherever the Location points.
-        res = await deps.fetch(url.toString(), { ...rest, method, headers, redirect: 'error' });
+        res = await deps.fetch(url.toString(), { ...rest, body, method, headers, redirect: 'error' });
       } catch (err) {
         if (isAbort(err)) throw err;
         throw new NetworkError(err);

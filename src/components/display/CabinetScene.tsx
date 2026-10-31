@@ -100,7 +100,7 @@ import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
-import { LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
+import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
 import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -501,7 +501,8 @@ function Rack({ slot }: { slot: WallSlot }) {
 }
 
 /**
- * CAB-FOCUS-1: a flat veil over everything on one side of the focus cabinet's silhouette (its neighbours there), in the
+ * CAB-FOCUS-1: a flat veil over everything on one side of the focus cabinet's silhouette (its neighbours there; past the
+ * wall's first or last cabinet the bare wall or empty space, dimmed the same: CAB-EDGE-DIM-1, Ross 10-31), in the
  * viewport so a pan or a pinch carries it with the picture. It spans only the window the frame shows of that picture
  * (`window`: the picture's x and y at the frame's edges, which a slide moves), never more: a layer the size of the wall
  * would blow the case's budget of scene layers. It never takes a touch: a neighbour's figures stay tappable.
@@ -1210,7 +1211,8 @@ export function CabinetScene({
   );
   const reach = ends !== null ? pagerReach(pages, wall, still.framing, still.panPx, ends, centre) : null;
   const { panPx } = shown;
-  // CAB-FOCUS-1: in the one-cabinet view, the cabinets either side of the focus one are dimmed, from the edges of its silhouette
+  // CAB-FOCUS-1: in the one-cabinet view, all either side of the focus cabinet is dimmed, from the edges of its silhouette
+  // (CAB-EDGE-DIM-1: at the wall's ends too, where no neighbour stands)
   const dimFrom = prefs.view === 'cabinet' ? focusEdgesPx(camera, wall.cabinets[focusIdx]) : null;
   // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
   const [panYMin, panYMax] = panYLimitsPx(shown.framing, wall, ceilingMm);
@@ -1600,6 +1602,7 @@ export function CabinetScene({
         return true;
       },
       aim: fc.jogAim,
+      max: jogMax(),
       stop: () => {
         const left = fc.jogStop();
         if (left === null) return;
@@ -1716,6 +1719,7 @@ export function CabinetScene({
     dimmed: prefs.view === 'cabinet' ? wall.cabinets[focusIdx] : null,
     lookMode: prefs.swipe === 'pan',
     lookHoldMs: lookHoldMs(),
+    jogMax: jogMax(),
     reducedMotion: prefersReducedMotion(),
     // NAV-1A (b): what a look projects the scene's cost from: the figures as this render draws them, listed only when asked
     budget: {
@@ -1854,8 +1858,8 @@ export function CabinetScene({
                 })}
               </DrawContext.Provider>
             </div>
-            {dimFrom !== null && focusIdx > 0 && <NeighbourDim side="left" edge={dimFrom.left} window={shownWindow} />}
-            {dimFrom !== null && focusIdx < lastIndex && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
+            {dimFrom !== null && <NeighbourDim side="left" edge={dimFrom.left} window={shownWindow} />}
+            {dimFrom !== null && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
         {free && <div ref={ringRef} class="cabinet-scene__look-ring" aria-hidden="true" />}
@@ -1971,6 +1975,12 @@ export function CabinetScene({
 function lookHoldMs(): number {
   const v = Number(new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('lookhold'));
   return Number.isFinite(v) && v >= 100 && v <= 1000 ? v : LOOK_HOLD_MS;
+}
+
+/** NAV-2B: the jog's top speed, tunable on the device with ?jogmax=1.5 (1, the 10-28 jog, to 2; Ross asked 1.5-2x). */
+function jogMax(): number {
+  const v = Number(new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('jogmax'));
+  return v >= 1 && v <= JOG_MAX_X ? v : JOG_MAX_X;
 }
 
 /** NAV-1A: the Free camera's own rules, drawn only while it is on (the old path's sheet is untouched). */

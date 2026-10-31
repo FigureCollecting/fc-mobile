@@ -119,6 +119,8 @@ for (const size of FOLD8) {
     // reopened: the pick is the one in use, and Use for me has nothing to do
     await tap(page, photosTab(page));
     await expect(sheet).toBeVisible();
+    // it slides up as it opens (PHOTOS-FIND-1: a sheet that slides): the finger goes where its X has come to rest
+    await atRest(sheet);
     await expect(tiles.nth(1)).toHaveAttribute('aria-label', 'Photo 2 of 3, in use');
     await expect(sheet.getByRole('button', { name: 'Use for me' })).toBeDisabled();
     await tap(page, sheet.getByRole('button', { name: 'Close photos' }));

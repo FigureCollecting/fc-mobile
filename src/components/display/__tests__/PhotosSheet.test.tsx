@@ -26,7 +26,7 @@ beforeEach(() => {
   localStorage.clear();
   __resetPhotoChoices();
   localSession.value = { sub: () => 'user-a' } as unknown as NonNullable<typeof localSession.value>;
-  photosOf.data = PHOTOS;
+  photosOf.data = { photos: PHOTOS, refreshFailed: false };
   photosOf.isLoading = false;
 });
 afterEach(() => {
@@ -117,10 +117,29 @@ describe('PhotosSheet', () => {
     expect(screen.getByText('Loading photos')).toBeInTheDocument();
     cleanup();
     photosOf.isLoading = false;
-    photosOf.data = [];
+    photosOf.data = { photos: [], refreshFailed: false };
     open();
     expect(screen.getByText('No photos of this figure yet.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Use for me' })).toBeNull();
+  });
+
+  // PHOTOS-FIND-1: the kept list after a failed ask is said to be that, never shown as if it were the whole answer
+  it('says, in one line, that it shows the photos kept on this phone when the coordinator could not be asked', () => {
+    photosOf.data = { photos: PHOTOS.slice(0, 1), refreshFailed: true };
+    open();
+    expect(screen.getByText("Showing photos saved on this phone; couldn't refresh.")).toBeInTheDocument();
+    expect(tiles()).toHaveLength(1);
+    cleanup();
+    photosOf.data = { photos: PHOTOS, refreshFailed: false };
+    open();
+    expect(screen.queryByText(/couldn't refresh/)).toBeNull();
+  });
+
+  it('with nothing kept and the ask failed, it says that, not that the figure has no photos', () => {
+    photosOf.data = { photos: [], refreshFailed: true };
+    open();
+    expect(screen.getByText("No photos saved on this phone; couldn't refresh.")).toBeInTheDocument();
+    expect(screen.queryByText('No photos of this figure yet.')).toBeNull();
   });
 
   it('a photo that fails to load stands as a plate, still pickable', () => {

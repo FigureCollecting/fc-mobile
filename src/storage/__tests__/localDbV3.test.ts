@@ -1,9 +1,14 @@
 // The v2 -> v3 upgrade (WK-06b, contract 0.3.0): a HARD gate for WK-16.
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fromBinary, toBinary } from '@bufbuild/protobuf';
+import { PushOutcome, PushRequestSchema, isTraceId } from '@figurecollecting/fc-api-contract';
 import { LOCAL_DB_NAME, LOCAL_DB_VERSION, openLocalDb } from '../localDb';
 import { UserStore } from '../userStore';
 import { buildView } from '../../sync/occurrences';
+import { FakeCoordinator } from '../../sync/__tests__/fakeCoordinator';
+import { FakeClock, T0 } from '../../sync/__tests__/harness';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 const H0 = '1b4e28ba-2fa1-11d2-883f-0016d3cca427';
 const H1 = '6fa459ea-ee8a-3ca4-894e-db77e160355e';
@@ -214,6 +219,105 @@ describe('the seeded v2 store upgrades to v3', () => {
     const db = await openLocalDb({ factory });
     expect(db.version).toBe(3);
     expect(await db.count('facets')).toBe(0);
+    db.close();
+  });
+});
+
+// LGMOB M2: queued edits already on a phone when the update lands. No backfill and no schema change:
+// they keep no origin_trace and go out exactly as the build before would have sent them.
+describe('a v3 store queued before origin_trace existed', () => {
+  inDiagIdsBuild();
+
+  const NOTE = `uf/${H0}/note`;
+  const SCORE = `uf/${H1}/score`;
+  const text = (fields: Record<string, unknown>) => JSON.stringify({ ...fields, ...STAMP });
+  // The rows as the build before LGMOB M2 (fc-mobile 1fb5561) wrote them: a sent, unanswered batch and a queued edit.
+  const PRE_OUTBOX = [
+    { id: 1, sub: 'user-a', facet_key: NOTE, op: 'upsert', payload: text({ note: 'boxed' }), edit_version: v(1), base_version: null, basis: 'c-41', state: 'IN_FLIGHT', attempts: 1, group: 1, client_id: 'b-pre', batch_pos: 0, created_at: 1_001 },
+    { id: 2, sub: 'user-a', facet_key: SCORE, op: 'upsert', payload: text({ score: 8 }), edit_version: v(2), base_version: null, basis: 'c-41', state: 'PENDING', attempts: 0, group: 2, created_at: 1_002 },
+  ];
+  const PRE_FACETS = [
+    { sub: 'user-a', facet_key: NOTE, family: 'uf/note', head_id: H0, value: { version: v(1), op: 'upsert', payload: PRE_OUTBOX[0].payload }, known: null, pending_id: 1, overwritten: null },
+    { sub: 'user-a', facet_key: SCORE, family: 'uf/score', head_id: H1, value: { version: v(2), op: 'upsert', payload: PRE_OUTBOX[1].payload }, known: null, pending_id: 2, overwritten: null },
+  ];
+  // The Push for batch b-pre exactly as the build before sent it: toBinary of 1fb5561's nextBatch over these rows.
+  const PRE_PUSH_HEX = [
+    '0a05622d70726512d4010a2c75662f31623465323862612d326661312d313164322d383833662d3030313664336363613432372f6e6f74651247323032362d30392d32365431323a30303a30312e3030303030305a2330303030',
+    '303030303030233066336135633765396231643266346136633865306232643466366138633065180122537b226e6f7465223a22626f786564222c226564697465645f6174223a22323032362d30392d32365431323a30353a30',
+    '392e3034322d30353a3030222c22747a223a22416d65726963612f4368696361676f227d2a04632d3431',
+  ].join('');
+  const prePush = () => Uint8Array.from(PRE_PUSH_HEX.match(/../g)!.map((b) => parseInt(b, 16)));
+
+  // The v3 layout as WK-06b created it (no change since): v2 plus the by_occ and by_tag indexes.
+  async function seedV3(factory: IDBFactory): Promise<void> {
+    const open = factory.open(LOCAL_DB_NAME, 3);
+    open.onupgradeneeded = () => {
+      createV2(open.result);
+      const facets = open.transaction!.objectStore('facets');
+      facets.createIndex('by_occ', ['sub', 'occ_id']);
+      facets.createIndex('by_tag', ['sub', 'tag_id']);
+    };
+    const db = await req(open);
+    const tx = db.transaction(['facets', 'outbox', 'sync_meta'], 'readwrite');
+    for (const f of PRE_FACETS) tx.objectStore('facets').put(f);
+    for (const e of PRE_OUTBOX) tx.objectStore('outbox').put(e);
+    tx.objectStore('sync_meta').put(META);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }
+
+  it('opens unchanged at version 3, resends the sent batch byte for byte, sends the queued edit without a trace, and traces only new edits', async () => {
+    const factory = new IDBFactory();
+    await seedV3(factory);
+    const server = new FakeCoordinator(T0 + 10_000);
+    // The build before sent b-pre; the server recorded it, and the answer was lost.
+    expect((await server.sync.push(fromBinary(PushRequestSchema, prePush()))).results.map((r) => r.outcome)).toEqual([PushOutcome.APPLIED]);
+
+    const db = await openLocalDb({ factory });
+    expect(db.version).toBe(3);
+    expect([...db.objectStoreNames].sort()).toEqual(['auth', 'device_key', 'facets', 'legacy_pending', 'outbox', 'products', 'sync_meta']);
+    expect([...db.transaction('facets').objectStore('facets').indexNames].sort()).toEqual(['by_head', 'by_occ', 'by_tag']);
+    let batches = 0;
+    const store = await UserStore.open(db, { sub: 'user-a', deviceId: DEVICE, clock: new FakeClock(T0 + 10_000), newClientId: () => `b-post-${++batches}` });
+    expect(await db.getAll('outbox')).toEqual(PRE_OUTBOX);
+    expect(await db.getAll('facets')).toEqual(PRE_FACETS);
+
+    const retry = await store.nextBatch();
+    if (retry.kind !== 'send') throw new Error(`expected the retry, got ${retry.kind}`);
+    expect(retry.batch).toMatchObject({ clientId: 'b-pre', retry: true });
+    expect(toBinary(PushRequestSchema, retry.batch.request)).toEqual(prePush());
+    const replay = await server.sync.push(retry.batch.request);
+    expect(replay.results.map((r) => r.outcome)).toEqual([PushOutcome.DUPLICATE]);
+    await store.recordPush('b-pre', replay);
+
+    await store.onStatus(await server.sync.status({}), 0);
+    const queued = await store.nextBatch();
+    if (queued.kind !== 'send') throw new Error(`expected the queued edit, got ${queued.kind}`);
+    expect(queued.batch.request.events.map((e) => [e.facetKey, e.originTrace])).toEqual([[SCORE, undefined]]);
+    const applied = await server.sync.push(queued.batch.request);
+    expect(applied.results.map((r) => r.outcome)).toEqual([PushOutcome.APPLIED]);
+    await store.recordPush(queued.batch.clientId, applied);
+
+    const fresh = await store.writeFacet(`uf/${H0}/score`, { score: 3 });
+    const rows = await store.listOutbox();
+    expect(rows.slice(0, 2).map((e) => 'origin_trace' in e)).toEqual([false, false]);
+    const traced = rows.find((e) => e.id === fresh.outbox_id)!;
+    expect(isTraceId(traced.origin_trace)).toBe(true);
+    const after = await store.nextBatch();
+    if (after.kind !== 'send') throw new Error(`expected the new edit, got ${after.kind}`);
+    expect(after.batch.request.events.map((e) => e.originTrace)).toEqual([traced.origin_trace]);
+    const answered = await server.sync.push(after.batch.request);
+    expect(answered.results.map((r) => r.outcome)).toEqual([PushOutcome.APPLIED]);
+    // Kept only until the change is answered.
+    await store.recordPush(after.batch.clientId, answered);
+    expect((await store.listOutbox()).map((e) => [e.state, 'origin_trace' in e])).toEqual([
+      ['APPLIED', false],
+      ['APPLIED', false],
+      ['APPLIED', false],
+    ]);
     db.close();
   });
 });

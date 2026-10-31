@@ -8,7 +8,7 @@ import { decodePng } from './paintCheck';
 import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
-import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, SPRING_MS } from '../src/components/display/casePose';
+import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, SPRING_MS, jogSpeed as jogSpeedAt } from '../src/components/display/casePose';
 import { CONTROLS_VIEWPORTS } from '../src/components/display/caseBudget';
 
 /**
@@ -317,7 +317,9 @@ const overlaps = (a: { x: number; y: number; width: number; height: number }, b:
 for (const panel of FOLD8) {
   test(`NAV-JOG ${panel.name}: held, the eye goes the way the thumb holds it and on while it is still, faster the farther; the lift stops it; a tap opens the menu`, async ({ page }) => {
     test.setTimeout(90_000);
-    await openFree(page, panel);
+    // NAV-2B: the 170-figure wall, so twice the speed meets no end of it while the frames are counted (on the 40-figure
+    // wall a loaded runner logged 4 and 5 moving frames before the eye stopped at its end)
+    await openFree(page, panel, { query: 'fx=170' });
     const url = page.url();
     const start = await cameraOf(page);
     // half way to full reach, then full reach, the same time each: the second walks farther
@@ -335,7 +337,7 @@ for (const panel of FOLD8) {
     await settle(page, 400);
     expect(await cameraOf(page), 'the lift stopped it').toEqual(stopped);
     await expect(page.locator('.cabinet-scene')).not.toHaveAttribute('data-gesture', /./);
-    // full reach: a frame width a second of picture at the anchor depth, each frame by the time since the last
+    // full reach: two frame widths a second of picture at the anchor depth (NAV-2B), each frame by the time since the last
     const thumb = await jogBy(page, JOG_FULL_PX, 0, { lift: false });
     await startPoseLog(page);
     // held 900 ms and on until enough frames are logged to measure: a loaded runner draws fewer in a fixed window (CI:
@@ -347,8 +349,8 @@ for (const panel of FOLD8) {
     await settle(page);
     console.log(`JOG-SPEED ${panel.name} ${JSON.stringify(speed)}`);
     expect(speed.pairs, 'frames logged at full reach').toBeGreaterThan(5);
-    expect(speed.framesPerS, 'frame widths a second at full reach').toBeGreaterThan(0.75 * JOG_FRAMES_PER_S);
-    expect(speed.framesPerS, 'frame widths a second at full reach').toBeLessThan(1.25 * JOG_FRAMES_PER_S);
+    expect(speed.framesPerS, 'frame widths a second at full reach').toBeGreaterThan(0.75 * JOG_MAX_X * JOG_FRAMES_PER_S);
+    expect(speed.framesPerS, 'frame widths a second at full reach').toBeLessThan(1.25 * JOG_MAX_X * JOG_FRAMES_PER_S);
     const full = (await cameraOf(page)).x - stopped.x;
     expect(full / halfWay, 'full reach walks faster than half').toBeGreaterThan(1.5);
     // up raises the eye; it never turned or pitched
@@ -373,6 +375,40 @@ for (const panel of FOLD8) {
     await jogButton(page).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByText(/import your mfc export/i)).toBeVisible();
+  });
+}
+
+/**
+ * NAV-2B (Ross 10-31: "1.5-2x" the top speed): the jog held at full reach, its speed over the frames the pose log saw
+ * (picture px at the anchor depth per frame over that frame's time: jogSpeed above), on a page at ?jogmax=1 (the 10-28
+ * jog) and on one at the default.
+ */
+async function fullReachSpeed(page: Page, panel: { width: number; height: number }, query: string) {
+  await openFree(page, panel, { query });
+  const thumb = await jogBy(page, JOG_FULL_PX, 0, { lift: false });
+  await startPoseLog(page);
+  await page.waitForTimeout(900);
+  await expect.poll(async () => framePairs(await loggedJog(page)), { message: 'frames logged at full reach', timeout: 20_000 }).toBeGreaterThan(5);
+  const speed = await jogSpeed(page);
+  await thumb.end();
+  await settle(page);
+  return speed;
+}
+
+for (const panel of FOLD8) {
+  test(`NAV-2B ${panel.name}: held at full reach, the jog moves twice as far a frame as the 10-28 jog (?jogmax=1)`, async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const before = await fullReachSpeed(page, panel, 'fx=170&jogmax=1');
+    const after = await fullReachSpeed(page, panel, 'fx=170');
+    const row = { panel: panel.name, before, after, ratio: Number((after.framesPerS / before.framesPerS).toFixed(3)) };
+    await testInfo.attach('jog-2x', { body: JSON.stringify(row), contentType: 'application/json' });
+    console.log(`JOG-2X ${JSON.stringify(row)}`);
+    expect(before.framesPerS, 'the 10-28 jog: a frame width a second').toBeGreaterThan(0.75 * JOG_FRAMES_PER_S);
+    expect(before.framesPerS).toBeLessThan(1.25 * JOG_FRAMES_PER_S);
+    expect(after.framesPerS, 'NAV-2B: two').toBeGreaterThan(0.75 * JOG_MAX_X * JOG_FRAMES_PER_S);
+    expect(after.framesPerS).toBeLessThan(1.25 * JOG_MAX_X * JOG_FRAMES_PER_S);
+    expect(row.ratio, 'as far again a frame, about').toBeGreaterThan(1.7);
+    expect(row.ratio).toBeLessThan(2.3);
   });
 }
 
@@ -1145,10 +1181,35 @@ for (const panel of FOLD8) {
         const fresh = await freshAt(page, panel);
         const c = await cameraOf(page);
         // a frame's most step at full reach (a late one counts as 100 ms) at the anchor depth: a level eye's distance
-        const stepMm = Math.round((((JOG_FRAMES_PER_S * c.frame.width * JOG_MAX_STEP_MS) / 1000) * c.z) / c.focalPx);
+        const stepMm = Math.round((((jogSpeedAt(JOG_FULL_PX) * c.frame.width * JOG_MAX_STEP_MS) / 1000) * c.z) / c.focalPx);
         rows.push({ what, yaw: Number(((c.yaw ?? 0) / DEG).toFixed(2)), x: Math.round(c.x), dx: Math.round(c.x - from.x), dy: Math.round(c.y - from.y), dz: Math.round(c.z - from.z), s: fresh.s, vp: fresh.vp, stepMm });
         await unfold(page, panel);
       };
+      // NAV-2B (critique 19): at twice the speed the cull redraws more often; every frame, no figure drawn is blank: a
+      // grounded one's picture has loaded, one still being read stands as its plate. A framed one's mat is drawn with it
+      // and stands in until its photo loads, as a plate does: counted apart (10-31, the open panel's framed wall under a
+      // load of 40-77: 2 and 1 figure-frames in 1.2-1.4 million at 2x, none in one run at ?jogmax=1)
+      await page.evaluate(() => {
+        const watch = { frames: 0, figures: 0, blank: 0, framedPending: 0, at: [] as string[] };
+        (window as unknown as { __blank: typeof watch }).__blank = watch;
+        const onFrame = () => {
+          watch.frames++;
+          for (const b of document.querySelectorAll<HTMLElement>('.cabinet-scene button.cab-figure')) {
+            watch.figures++;
+            const img = b.querySelector('img');
+            const loaded = img === null || (img.complete && img.naturalWidth > 0);
+            if (!loaded && b.querySelector('.cab-figure__frame') !== null) {
+              watch.framedPending++;
+              continue;
+            }
+            const ok = b.dataset.grounded === '0' ? b.querySelector('.cab-figure__plate') !== null : loaded;
+            if (!ok && watch.at.length < 5) watch.at.push(b.getAttribute('aria-label') ?? '?');
+            if (!ok) watch.blank++;
+          }
+          requestAnimationFrame(onFrame);
+        };
+        requestAnimationFrame(onFrame);
+      });
       let from = await cameraOf(page);
       await jogBy(page, JOG_FULL_PX, 0, { holdMs: 1200 });
       await record('jog right', from);
@@ -1176,10 +1237,13 @@ for (const panel of FOLD8) {
         await resetView(page);
         await settle(page, 400);
       }
-      const summary = { panel: panel.name, wall: wall.name, openingS, open: { x: open.x, z: open.z }, ends, rows };
+      const blank = await page.evaluate(() => (window as unknown as { __blank: { frames: number; figures: number; blank: number; framedPending: number; at: string[] } }).__blank);
+      const summary = { panel: panel.name, wall: wall.name, openingS, open: { x: open.x, z: open.z }, ends, rows, blank };
       await testInfo.attach('jog', { body: JSON.stringify(summary), contentType: 'application/json' });
       console.log(`JOG-BUDGET ${JSON.stringify(summary)}`);
       expect(rows).toHaveLength(7);
+      expect(blank.frames, 'frames watched').toBeGreaterThan(50);
+      expect(blank.blank, `figures drawn blank (${blank.at.join(', ')})`).toBe(0);
       for (const row of rows) {
         expect(row.s, `${row.what}: px per mm`).toBeLessThanOrEqual(openingS);
         expect(row.vp, `${row.what}: scene layers re-culled, viewports of pixels`).toBeLessThanOrEqual(3);

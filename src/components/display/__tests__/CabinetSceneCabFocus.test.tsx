@@ -165,17 +165,62 @@ describe('CAB-FOCUS-1 (2): the cabinets either side of the focus are dimmed in t
     for (const v of veils(host)) expect(v.style.backgroundColor).toBe(`rgba(0, 0, 0, ${NEIGHBOUR_DIM})`);
   });
 
-  it('a neighbour on each side gets one: none on the side where the wall ends', () => {
+  it('both sides get one at every cabinet, the wall\'s first and last included', () => {
     // a wall of three cabinets, two taps from its first to its last (the 40-copy wall is 28 cabinets: 27 renders to its end,
     // which took 4.5 s on two busy cores and timed out the Node 24 runner at 5 s)
     const { host } = scene(FEW, { view: 'cabinet' });
     expect(wallOf(host)).toHaveLength(3);
-    expect(sides(host)).toEqual(['right']);
+    expect(sides(host)).toEqual(['left', 'right']);
     next();
     expect(sides(host)).toEqual(['left', 'right']);
     next();
     expect(host.dataset.focus).toBe('2');
-    expect(sides(host)).toEqual(['left']);
+    expect(sides(host)).toEqual(['left', 'right']);
+  });
+
+  // CAB-EDGE-DIM-1 (Ross 10-31, Fold8): past the wall's end there is no neighbour, only the bare wall or empty space; it
+  // dims the same, from the end cabinet's outer edge to the frame's edge
+  for (const [name, frame] of [
+    ['cover', COVER],
+    ['open', OPEN],
+  ] as const) {
+    it(`${name}: at the first cabinet the left veil runs from the frame's left edge to its outer edge; at the last the right veil from its outer edge to the frame's right edge`, () => {
+      const { host } = scene(FEW, { view: 'cabinet' }, frame);
+      const edgesOf = (k: number) => {
+        const [x0, x1, y1, z0, z1] = wallOf(host)[k];
+        const cam = cameraOf(host);
+        const xs = [x0, x1].flatMap((x) => [0, y1].flatMap((y) => [z0, z1].map((z) => project(cam, [x, y, z]).x)));
+        return { left: Math.min(...xs), right: Math.max(...xs), width: cam.width };
+      };
+      const veil = (side: string) => veils(host).find((v) => v.dataset.side === side);
+      expect(host.dataset.focus).toBe('0');
+      const first = edgesOf(0);
+      // the first cabinet stands inside the frame: there is bare wall to its left to dim
+      expect(first.left).toBeGreaterThan(0);
+      const l = veil('left')!;
+      expect(l, 'a left veil at the first cabinet').toBeDefined();
+      expect(parseFloat(l.style.left)).toBeLessThanOrEqual(0);
+      expect(parseFloat(l.style.left) + parseFloat(l.style.width)).toBeCloseTo(first.left, 1);
+      expect(Number(l.dataset.edge)).toBeCloseTo(first.left, 1);
+      next(2);
+      expect(host.dataset.focus).toBe('2');
+      const last = edgesOf(2);
+      expect(last.right).toBeLessThan(last.width);
+      const r = veil('right')!;
+      expect(r, 'a right veil at the last cabinet').toBeDefined();
+      expect(parseFloat(r.style.left)).toBeCloseTo(last.right, 1);
+      expect(parseFloat(r.style.left) + parseFloat(r.style.width)).toBeGreaterThanOrEqual(last.width);
+      expect(Number(r.dataset.edge)).toBeCloseTo(last.right, 1);
+      for (const v of veils(host)) expect(v.style.backgroundColor).toBe(`rgba(0, 0, 0, ${NEIGHBOUR_DIM})`);
+    });
+  }
+
+  it('at the wall\'s ends a pinch carries the end veils with the picture: they stay in the zoom layer, as the neighbours\' do', () => {
+    const { host } = scene(FEW, { view: 'cabinet' });
+    pinchOut(host);
+    expect(zoomK(host)).toBeGreaterThan(1);
+    const zoom = host.querySelector('.cabinet-scene__zoom')!;
+    expect(Array.from(zoom.querySelectorAll<HTMLElement>('.cabinet-scene__dim')).map((v) => v.dataset.side).sort()).toEqual(['left', 'right']);
   });
 
   it('none in the wall view, none in the shelf view', () => {

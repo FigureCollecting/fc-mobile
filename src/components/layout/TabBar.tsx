@@ -3,7 +3,7 @@ import { useLocation } from 'wouter';
 import { hapticLight } from '../../utils/haptics';
 import { useChromeStore } from '../../stores/chrome';
 import { useJogStore, type JogTarget } from '../../stores/jog';
-import { JOG_DEAD_PX } from '../display/casePose';
+import { JOG_DEAD_PX, jogDetents, jogSpeed } from '../display/casePose';
 import { BottomSheet } from '../ui/BottomSheet';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 import { Style } from '../../styles/Style';
@@ -143,6 +143,19 @@ const KNOB_REACH_PX = 16;
  * its up; a touch drag none); a later one is a click of its own (Enter, a switch) and opens the menu.
  */
 const JOG_CLICK_MS = 100;
+/** NAV-2B: a detent passed on the way out ticks again on the way back once the thumb is this much (px) inside it: a wobble on it ticks once. */
+const DETENT_SLACK_PX = 4;
+
+/**
+ * NAV-2B: how many of the jog's detents (jogDetents) the thumb `d` px out has passed, from `band` passed before: more once
+ * jogSpeed there reaches the next; fewer only once it would not even DETENT_SLACK_PX farther out.
+ */
+function detentBand(d: number, band: number, max: number | undefined): number {
+  const levels = jogDetents(max);
+  const passed = (at: number) => levels.filter((level) => jogSpeed(at, max) >= level).length;
+  const out = passed(d);
+  return out >= band ? out : Math.min(band, passed(d + DETENT_SLACK_PX));
+}
 
 /**
  * NAV-JOG (Ross 10-28): the bottom-centre button as the jog on offer. A press that leaves JOG_DEAD_PX starts it (once),
@@ -151,7 +164,7 @@ const JOG_CLICK_MS = 100;
  * button's own (pointer capture), so it crosses the tab bar's tabs and the case's tabs without pressing any.
  */
 function useJogDrive(jog: JogTarget | null) {
-  const drive = useRef<{ id: number; x0: number; y0: number; target: JogTarget; moved: boolean; on: boolean } | null>(null);
+  const drive = useRef<{ id: number; x0: number; y0: number; target: JogTarget; moved: boolean; on: boolean; band: number } | null>(null);
   /** When (the event's timeStamp) the last drag lifted; null: no drag since the last press or click. */
   const swallowed = useRef<number | null>(null);
   const knob = useRef<HTMLSpanElement>(null);
@@ -173,7 +186,7 @@ function useJogDrive(jog: JogTarget | null) {
         /* a synthetic pointer cannot be captured */
       }
       swallowed.current = null;
-      drive.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, target: jog, moved: false, on: false };
+      drive.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, target: jog, moved: false, on: false, band: 0 };
     },
     onPointerMove: (e: PointerEvent) => {
       const d = drive.current;
@@ -188,9 +201,17 @@ function useJogDrive(jog: JogTarget | null) {
         if (!d.on) return;
         (e.currentTarget as HTMLElement).dataset.jogging = '';
         hapticLight();
+        // the start's tick stands for any detent its first move is already past
+        d.band = detentBand(reach, 0, d.target.max);
       }
       if (!d.on) return;
       d.target.aim(dx, dy);
+      // NAV-2B: a light tick each time the speed passes a detent, out or back (one for a move past several)
+      const band = detentBand(reach, d.band, d.target.max);
+      if (band !== d.band) {
+        d.band = band;
+        hapticLight();
+      }
       const k = Math.min(1, KNOB_REACH_PX / reach);
       if (knob.current) knob.current.style.transform = `translate(${Math.round(dx * k)}px, ${Math.round(dy * k)}px)`;
     },

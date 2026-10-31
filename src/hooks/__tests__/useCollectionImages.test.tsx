@@ -413,6 +413,84 @@ describe('useCollectionImages', () => {
     expect(imagesComplete(result.current)).toBe(true);
   });
 
+  // NEWHOLD-IMG-1 (Ross 10-31): one list call answered 503 with the server still in reach; the figures held since the last
+  // sync that read the lists stood as plates until the Collection page was opened again.
+  const oneImage = (i: number, c: string) =>
+    create(GetProductImagesResponseSchema, { products: [{ headId: headOf(i), images: [{ derivativeId: c.repeat(64), role: 'gallery', url: url(c), width: 600, height: 800 }] }] });
+  /** The engine's next completed pass, a minute on (its idle poll). */
+  const nextPass = async (r: Awaited<ReturnType<typeof localRig>>) => {
+    r.clock.advance(60_000);
+    await r.engine.trigger('poll');
+  };
+
+  it('a sync that could not read the lists is not asked again at once, but is after the engine\'s next completed pass, and its images arrive (NEWHOLD-IMG-1)', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    r.clients.getProductImages.mockRejectedValueOnce(new ConnectError('display restrictions are unavailable', Code.Unavailable)).mockResolvedValue(oneImage(0, 'a'));
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+    await settle();
+    await settle();
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    expect(result.current.size).toBe(0);
+    expect(imagesComplete(result.current)).toBe(false);
+    await nextPass(r);
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+    // synced: a later pass asks nothing more
+    await nextPass(r);
+    await settle();
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+  });
+
+  it('a sync that read the lists and left an image unfetched is not synced again by a pass: the Collection page opened again does that (NEWHOLD-IMG-1)', async () => {
+    storage = fakeCaches(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Refused' }]);
+    r.clients.getProductImages.mockResolvedValue(oneImage(0, 'a'));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 30 * 60_000, networkMode: 'always' } } });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(storage.added.map((q) => q.url)).toEqual([url('a')]));
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    await waitFor(() => expect(imagesComplete(result.current)).toBe(false));
+    await nextPass(r);
+    await settle();
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pass the engine completes while a sync is under way neither stops it nor starts another (NEWHOLD-IMG-1)', async () => {
+    const r = await localRig();
+    await seedFigures(r, [{ title: 'Owned' }]);
+    let answer!: () => void;
+    let seen: AbortSignal | undefined;
+    r.clients.getProductImages.mockImplementation((_req: unknown, opts?: { signal?: AbortSignal }) => {
+      seen = opts?.signal;
+      return new Promise((res) => (answer = () => res(oneImage(0, 'a'))));
+    });
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+    await nextPass(r);
+    await settle();
+    expect(seen?.aborted).toBe(false);
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    answer();
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pass the engine completes while the device is signed out asks nothing (NEWHOLD-IMG-1)', async () => {
+    const r = await localRig({ status: 'signed-out' });
+    await seedFigures(r, [{ title: 'Owned' }]);
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await nextPass(r);
+    await settle();
+    expect(r.clients.getProductImages).not.toHaveBeenCalled();
+    expect(result.current.size).toBe(0);
+  });
+
   it('answers nothing while signed out', async () => {
     const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await new Promise((res) => setTimeout(res, 20));

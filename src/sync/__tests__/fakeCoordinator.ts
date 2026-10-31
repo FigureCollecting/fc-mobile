@@ -162,6 +162,9 @@ export class FakeCoordinator {
   }
 
   private push(req: PushRequest): PushResponse {
+    // A batch's replay identity leaves origin_trace out, as the contract says (0.7.0) and the coordinator
+    // does (C3): a resend under the same client_id that adds, changes or drops it is a replay, never
+    // INVALID_ARGUMENT, so an app update or rollback cannot strand a batch sent before it.
     const fingerprint = JSON.stringify(req.events.map((e) => [e.facetKey, e.version, e.op, e.payload, e.basis ?? null]));
     const receipt = this.receipts.get(req.clientId);
     if (receipt !== undefined) {

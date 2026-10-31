@@ -6,6 +6,7 @@ import { Code, ConnectError, type Transport } from '@connectrpc/connect';
 import { createConnectTransport } from '@connectrpc/connect-web';
 import { AuthRequiredError, EnrolmentError, NetworkError, ReloadRequiredError } from '../auth/errors';
 import type { DpopFetch } from '../auth/dpopFetch';
+import { traceInterceptor } from '../auth/trace';
 
 export const COORDINATOR_BASE_URL = '/api';
 
@@ -22,6 +23,7 @@ function toConnectError(err: unknown): unknown {
 export function createCoordinatorTransport(dpopFetch: DpopFetch): Transport {
   return createConnectTransport({
     baseUrl: COORDINATOR_BASE_URL,
+    interceptors: [traceInterceptor()],
     fetch: async (input, init) => {
       try {
         return await dpopFetch(String(input), init);

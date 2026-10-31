@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { decodeJwt } from 'jose';
 import { AuthRequiredError, EnrolmentError, NetworkError } from '../errors';
-import { APP_ORIGIN, SUB_A } from './fakes';
+import { APP_ORIGIN, IDP_ORIGIN, SUB_A } from './fakes';
 import { World, compareInit, compareUrl } from './world';
 
 describe('DPoP transport fetch', () => {
@@ -149,5 +150,85 @@ describe('DPoP transport fetch', () => {
     await world.signIn(tab);
     await expect(tab.fetch(compareUrl, compareInit())).rejects.toBeInstanceOf(EnrolmentError);
     expect(tab.sub()).toBe(SUB_A);
+  });
+});
+
+describe('trace context: a random traceparent on our own API, and nowhere else', () => {
+  const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
+  const where = (r: Request): string => `${new URL(r.url).origin}${new URL(r.url).pathname}`;
+  const trace = (r: Request | undefined): string | undefined => r?.headers.get('traceparent')?.split('-')[1];
+
+  it('puts one on the enrolment and on a plain /api call; a nonce retry re-sends the same one', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    await tab.fetch('/api/auth/session');
+    const api = world.net.sent.filter((r) => new URL(r.url).origin === APP_ORIGIN);
+    expect(api.map(where)).toEqual([`${APP_ORIGIN}/api/auth/devices`, `${APP_ORIGIN}/api/auth/devices`, `${APP_ORIGIN}/api/auth/session`]);
+    for (const r of api) expect(r.headers.get('traceparent')).toMatch(TRACEPARENT);
+    // the enrolment's use_dpop_nonce retry is the same request again
+    expect(api[1]!.headers.get('traceparent')).toBe(api[0]!.headers.get('traceparent'));
+    expect(trace(api[2])).not.toBe(trace(api[0]));
+    for (const r of api) expect(r.headers.has('tracestate') || r.headers.has('baggage')).toBe(false);
+  });
+
+  it('sends none to the IdP, to any other origin, or to a same-origin path outside /api/', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const from = world.net.sent.length;
+    for (const url of [
+      'https://images.figurecollecting.com/d/abc.webp',
+      'https://auth.mindsignals1.com/application/o/token/',
+      '//images.figurecollecting.com/d/abc.webp',
+    ]) {
+      await expect(tab.fetch(url)).rejects.toBeInstanceOf(NetworkError);
+    }
+    await tab.fetch(`${APP_ORIGIN}/assets/app.js`);
+    await tab.fetch('/apix/auth/session');
+    await tab.fetch('/api');
+    const off = world.net.sent.slice(from);
+    expect(off.map(where)).toEqual([
+      'https://images.figurecollecting.com/d/abc.webp',
+      'https://auth.mindsignals1.com/application/o/token/',
+      'https://images.figurecollecting.com/d/abc.webp',
+      `${APP_ORIGIN}/assets/app.js`,
+      `${APP_ORIGIN}/apix/auth/session`,
+      `${APP_ORIGIN}/api`,
+    ]);
+    for (const r of off) expect(r.headers.has('traceparent')).toBe(false);
+    const idp = world.net.sent.filter((r) => new URL(r.url).origin === IDP_ORIGIN);
+    expect(idp.length).toBeGreaterThan(0);
+    for (const r of idp) expect(r.headers.has('traceparent')).toBe(false);
+  });
+
+  it('keeps a traceparent the caller set, and the DPoP proof claims stay method, URL, time, token hash, nonce, id', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const given = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+    const from = world.net.sent.length;
+    expect((await tab.fetch('/api/auth/session', { headers: { traceparent: given } })).status).toBe(200);
+    const [req] = world.net.sent.slice(from);
+    expect(req!.headers.get('traceparent')).toBe(given);
+    const proof = decodeJwt(req!.headers.get('dpop')!);
+    expect(Object.keys(proof).sort()).toEqual(['ath', 'htm', 'htu', 'iat', 'jti', 'nonce']);
+    expect(proof).toMatchObject({ htm: 'GET', htu: `${APP_ORIGIN}/api/auth/session` });
+  });
+
+  it('never follows a redirect, so neither the DPoP proof nor the trace leaves our origin', async () => {
+    const world = await World.create();
+    const handler = world.coord.handler;
+    world.net.route(APP_ORIGIN, async (req) =>
+      new URL(req.url).pathname === '/api/auth/session'
+        ? new Response(null, { status: 302, headers: { location: 'https://images.figurecollecting.com/d/abc.webp' } })
+        : handler(req),
+    );
+    const tab = world.tab();
+    await world.signIn(tab);
+    await expect(tab.fetch('/api/auth/session')).rejects.toBeInstanceOf(NetworkError);
+    expect(world.net.sent.filter((r) => new URL(r.url).origin !== APP_ORIGIN && new URL(r.url).origin !== IDP_ORIGIN)).toEqual([]);
+    const api = world.net.sent.filter((r) => new URL(r.url).origin === APP_ORIGIN);
+    expect(api.map((r) => r.redirect)).toEqual(['error', 'error', 'error']);
   });
 });

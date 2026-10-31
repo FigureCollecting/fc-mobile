@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Code, ConnectError, createClient } from '@connectrpc/connect';
+import { Code, ConnectError, createClient, createContextValues } from '@connectrpc/connect';
 import { CatalogService, CompareService } from '@figurecollecting/fc-api-contract';
 import { COORDINATOR_BASE_URL, createCoordinatorTransport } from '../transport';
 import { LOCAL_DB_VERSION } from '../../storage/localDb';
 import { World } from '../../auth/__tests__/world';
 import { APP_ORIGIN } from '../../auth/__tests__/fakes';
+import { kActionTrace, newTraceId } from '../../auth/trace';
 
 const compare = (world: World, tab = world.tab()) => {
   const client = createClient(CompareService, createCoordinatorTransport(tab.fetch));
@@ -21,6 +22,28 @@ describe('coordinator transport', () => {
     expect(JSON.parse(res.resultJson)).toEqual({ gtin14: '04580416940269' });
     expect(res.coverage?.redacted).toEqual([]);
     expect(world.coord.log.at(-1)).toMatchObject({ path: '/api/coordinator.v1.CompareService/Compare', status: 200 });
+  });
+
+  it('sends a W3C traceparent on every Connect call: a fresh trace each unscoped call, one trace per action', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const client = createClient(CompareService, createCoordinatorTransport(tab.fetch));
+    const req = { seed: { case: 'gtin14' as const, value: '04580416940269' }, nowIso: '2026-09-26T12:00:00Z' };
+    const from = world.net.sent.length;
+    await client.compare(req);
+    await client.compare(req);
+    const action = newTraceId();
+    await client.compare(req, { contextValues: createContextValues().set(kActionTrace, action) });
+    await client.compare(req, { contextValues: createContextValues().set(kActionTrace, action) });
+    const headers = world.net.sent.slice(from).map((s) => s.headers.get('traceparent'));
+    expect(headers).toHaveLength(4);
+    for (const h of headers) expect(h).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    const [a, b, c, d] = headers.map((h) => h!.split('-'));
+    expect(a![1]).not.toBe(b![1]);
+    expect([c![1], d![1]]).toEqual([action, action]);
+    expect(c![2]).not.toBe(d![2]);
+    expect(world.net.sent.slice(from).every((s) => !s.headers.has('tracestate') && !s.headers.has('baggage'))).toBe(true);
   });
 
   it('retries a use_dpop_nonce silently after a coordinator restart', async () => {

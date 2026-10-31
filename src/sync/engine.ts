@@ -22,7 +22,7 @@
 // in the outbox. The engine reads facet rows only through the store's index fields (family,
 // head_id), never parsing a key, and never writes the auth status.
 import { signal, type ReadonlySignal } from '@preact/signals';
-import { Code, ConnectError, type Client } from '@connectrpc/connect';
+import { Code, ConnectError, createContextValues, type CallOptions, type Client } from '@connectrpc/connect';
 import {
   isCanonicalVersion,
   type CatalogService,
@@ -30,6 +30,7 @@ import {
   type SyncEvent,
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
+import { kActionTrace, newTraceId } from '../auth/trace';
 import { CARD_SCHEMA_VERSION } from '../storage/records';
 import type { UserStore } from '../storage/userStore';
 
@@ -200,6 +201,8 @@ export class SyncEngine {
   private writeTimer: unknown;
   private started = false;
   private stopped = false;
+  /** The pass's random trace id: its Status, Push, Delta and GetProducts calls share it, each on its own span. */
+  private passTrace: string | undefined;
 
   constructor(deps: SyncEngineDeps) {
     this.deps = deps;
@@ -372,6 +375,7 @@ export class SyncEngine {
       return 'paused';
     }
     let store: UserStore | undefined;
+    this.passTrace = newTraceId();
     try {
       store = await this.deps.store();
       // What waits is counted before the probe: a boot into a dead network shows it at once.
@@ -403,7 +407,7 @@ export class SyncEngine {
   // into [0, the probe's bound] (a monotonic glitch or a stalled tab must not skew the offset).
   private async probe(store: UserStore): Promise<void> {
     const sent = this.clock.monoMs();
-    const status = await bounded(this.timeoutSignal(PROBE_TIMEOUT_MS), (signal) => this.deps.sync.status({}, { signal }));
+    const status = await bounded(this.timeoutSignal(PROBE_TIMEOUT_MS), (signal) => this.deps.sync.status({}, this.options(signal)));
     const rtt = Math.min(Math.max(this.clock.monoMs() - sent, 0), PROBE_TIMEOUT_MS);
     if (!isCanonicalVersion(status.serverNowIso)) throw new ProtocolError(`unreadable server_now_iso: ${JSON.stringify(status.serverNowIso)}`);
     this.reached = true;
@@ -413,6 +417,10 @@ export class SyncEngine {
 
   private call<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
     return bounded(this.timeoutSignal(CALL_TIMEOUT_MS), fn);
+  }
+
+  private options(signal: AbortSignal): CallOptions {
+    return { signal, contextValues: createContextValues().set(kActionTrace, this.passTrace) };
   }
 
   private async drain(store: UserStore): Promise<void> {
@@ -427,7 +435,7 @@ export class SyncEngine {
         continue;
       }
       probed = false;
-      const answer = await this.call((signal) => this.deps.sync.push(next.batch.request, { signal }));
+      const answer = await this.call((signal) => this.deps.sync.push(next.batch.request, this.options(signal)));
       await store.recordPush(next.batch.clientId, answer);
       // A REJECTED edit owes a fresh Status before the next mint (rule 5); a version_future one is re-minted by it.
       if ((await store.getMeta()).rejected_past !== null) {
@@ -463,7 +471,7 @@ export class SyncEngine {
     for (;;) {
       if (sent.size === MAX_DELTA_PAGES) throw new ProtocolError(`Delta still has_more after ${MAX_DELTA_PAGES} pages`);
       sent.add(cursor);
-      const page = await this.call((signal) => this.deps.sync.delta({ cursor, limit: DELTA_PAGE }, { signal }));
+      const page = await this.call((signal) => this.deps.sync.delta({ cursor, limit: DELTA_PAGE }, this.options(signal)));
       const complete: SyncEvent[] = [];
       let commit: string | undefined;
       for (const event of page.events) {
@@ -515,7 +523,7 @@ export class SyncEngine {
       do {
         if (sent.size === MAX_PRODUCT_PAGES) throw new ProtocolError(`GetProducts still paging after ${MAX_PRODUCT_PAGES} pages`);
         sent.add(pageToken);
-        const page = await this.call((signal) => this.deps.catalog.getProducts({ refs, pageToken }, { signal }));
+        const page = await this.call((signal) => this.deps.catalog.getProducts({ refs, pageToken }, this.options(signal)));
         await store.putProducts(page.products);
         for (const u of page.unresolved) if (u.ref.case === 'headId') answeredUnresolved.add(u.ref.value);
         pageToken = page.nextPageToken;

@@ -321,13 +321,15 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
       const unhandled = vi.fn();
       process.on('unhandledRejection', unhandled);
       try {
-        const clearOriginTraces = vi.fn(async () => {
-          throw new Error('the store is gone');
+        // Not a vi.fn: a spy watches the promises its mock returns, which would hide an unhandled rejection.
+        let calls = 0;
+        withEngine(() => {
+          calls += 1;
+          return Promise.reject(new Error('the store is gone'));
         });
-        withEngine(clearOriginTraces);
         renderWithProviders(<Settings />, { initialPath: '/settings' });
         await user.click(diagSwitch());
-        expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+        expect(calls).toBe(1);
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(unhandled).not.toHaveBeenCalled();
         expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');

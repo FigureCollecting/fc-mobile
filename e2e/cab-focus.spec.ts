@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { frameMargins } from '../src/components/display/caseCamera';
 
@@ -21,12 +22,12 @@ const PATTERN = 'ikea-klingsbo+ikea-detolf+open-steel-rack';
 
 async function openCabinetView(page: Page, size: { width: number; height: number }, view = 'cabinet') {
   await page.addInitScript(
-    ([v, pattern]) => {
+    (prefs) => {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
-      localStorage.setItem('fc-case-prefs', JSON.stringify({ view: v, swipe: 'camera', pattern }));
+      localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
     },
-    [view, PATTERN],
+    legacyPrefs({ view, swipe: 'camera', pattern: PATTERN }),
   );
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=8');

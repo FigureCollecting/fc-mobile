@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
@@ -38,7 +39,7 @@ async function openCase(page: Page, size: { width: number; height: number }, pre
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(p));
-  }, prefs);
+  }, legacyPrefs(prefs));
   await page.setViewportSize(size);
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');

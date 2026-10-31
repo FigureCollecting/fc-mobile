@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs, pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 
 /**
@@ -17,11 +18,11 @@ const LEFT_OFF = ['Dark Angel Olivia', 'Spike Spiegel', 'Ryuko Matoi'];
 const SHELVED = ['Rem', 'Nendoroid Hatsune Miku', 'Madoka Kaname', 'Hatsune Miku: Deep Sea Girl'];
 
 async function open(page: Page, size: { width: number; height: number }, layout: 'case' | 'rows') {
-  await page.addInitScript(() => {
+  await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall' }));
-  });
+    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+  }, legacyPrefs({ view: 'wall' }));
   await page.setViewportSize(size);
   await page.goto(`/?layout=${layout}&fxgoods=1`);
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
@@ -53,6 +54,7 @@ test('with no goods or media in the collection the View card says nothing about 
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
   await page.setViewportSize({ width: 443, height: 558 });
   await page.goto('/?layout=case');
   await page.waitForSelector('button.cab-figure');

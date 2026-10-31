@@ -501,7 +501,8 @@ function Rack({ slot }: { slot: WallSlot }) {
 }
 
 /**
- * CAB-FOCUS-1: a flat veil over everything on one side of the focus cabinet's silhouette (its neighbours there), in the
+ * CAB-FOCUS-1: a flat veil over everything on one side of the focus cabinet's silhouette (its neighbours there; past the
+ * wall's first or last cabinet the bare wall or empty space, dimmed the same: CAB-EDGE-DIM-1, Ross 10-31), in the
  * viewport so a pan or a pinch carries it with the picture. It spans only the window the frame shows of that picture
  * (`window`: the picture's x and y at the frame's edges, which a slide moves), never more: a layer the size of the wall
  * would blow the case's budget of scene layers. It never takes a touch: a neighbour's figures stay tappable.
@@ -1210,7 +1211,8 @@ export function CabinetScene({
   );
   const reach = ends !== null ? pagerReach(pages, wall, still.framing, still.panPx, ends, centre) : null;
   const { panPx } = shown;
-  // CAB-FOCUS-1: in the one-cabinet view, the cabinets either side of the focus one are dimmed, from the edges of its silhouette
+  // CAB-FOCUS-1: in the one-cabinet view, all either side of the focus cabinet is dimmed, from the edges of its silhouette
+  // (CAB-EDGE-DIM-1: at the wall's ends too, where no neighbour stands)
   const dimFrom = prefs.view === 'cabinet' ? focusEdgesPx(camera, wall.cabinets[focusIdx]) : null;
   // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
   const [panYMin, panYMax] = panYLimitsPx(shown.framing, wall, ceilingMm);
@@ -1856,8 +1858,8 @@ export function CabinetScene({
                 })}
               </DrawContext.Provider>
             </div>
-            {dimFrom !== null && focusIdx > 0 && <NeighbourDim side="left" edge={dimFrom.left} window={shownWindow} />}
-            {dimFrom !== null && focusIdx < lastIndex && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
+            {dimFrom !== null && <NeighbourDim side="left" edge={dimFrom.left} window={shownWindow} />}
+            {dimFrom !== null && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
         {free && <div ref={ringRef} class="cabinet-scene__look-ring" aria-hidden="true" />}

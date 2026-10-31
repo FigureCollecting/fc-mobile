@@ -76,6 +76,7 @@ export function createBrowserSync(opts: BrowserSyncOptions): BrowserSync {
   const transport = opts.sync === undefined || opts.catalog === undefined ? createCoordinatorTransport(session.fetch) : undefined;
   const engine = new SyncEngine({
     store: storeProvider(session),
+    localDb: () => session.localDb(),
     sync: opts.sync ?? createClient(SyncService, transport!),
     catalog: opts.catalog ?? createClient(CatalogService, transport!),
     blocked: () => HELD_STATUSES.has(session.status.peek()),

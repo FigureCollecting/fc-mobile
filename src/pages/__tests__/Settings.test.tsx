@@ -26,7 +26,9 @@ import { getCacheStats } from '../../storage/cacheManager';
 import { Settings } from '../Settings';
 import { renderWithProviders } from '../../test/testUtils';
 import { useAuthStore } from '../../stores/auth';
-import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
+import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsClearPending, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
+import { localSession, type LocalSession } from '../../local/session';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 const mockedGetCacheStats = getCacheStats as unknown as ReturnType<typeof vi.fn>;
 
@@ -164,7 +166,44 @@ describe('Settings page', () => {
   });
 });
 
+// LGMOB: a build without VITE_DIAG_IDS=true has no Diagnostic ids switch and no /privacy link (P1 ships the page).
+describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
+  beforeEach(() => vi.stubEnv('VITE_DIAG_IDS', undefined));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('shows no Privacy section: Sync is followed by About, with no switch, wording or /privacy link', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    const titles = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(titles).not.toContain('Privacy');
+    expect(titles.slice(titles.indexOf('Sync'), titles.indexOf('About') + 1)).toEqual(['Sync', 'About']);
+    expect(screen.queryByRole('switch', { name: DIAG_IDS_TEXT.label })).toBeNull();
+    expect(screen.queryByText(DIAG_IDS_TEXT.label)).toBeNull();
+    expect(screen.queryByText(DIAG_IDS_TEXT.description)).toBeNull();
+    expect(screen.queryByRole('link', { name: DIAG_IDS_TEXT.privacyLink })).toBeNull();
+    expect(document.querySelector('a[href="/privacy"]')).toBeNull();
+  });
+
+  it('writes nothing to fc-diag-ids, rendering or when another tab writes it', () => {
+    const set = vi.spyOn(Storage.prototype, 'setItem');
+    const remove = vi.spyOn(Storage.prototype, 'removeItem');
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: DIAG_IDS_KEY, newValue: 'off' }));
+    });
+    const diagKeys = (calls: unknown[][]) => calls.filter(([k]) => String(k).startsWith('fc-diag-ids'));
+    expect(diagKeys(set.mock.calls)).toEqual([]);
+    expect(diagKeys(remove.mock.calls)).toEqual([]);
+    expect(localStorage.getItem(DIAG_IDS_KEY)).toBeNull();
+    expect(diagIdsOn()).toBe(false);
+  });
+});
+
 describe('Settings privacy: the Diagnostic ids switch', () => {
+  inDiagIdsBuild();
+
   const diagSwitch = () => screen.getByRole('switch', { name: DIAG_IDS_TEXT.label });
 
   // Before the shared teardown, which writes to storage: a refused setItem must not outlive its test,
@@ -285,6 +324,67 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
     expect(listeners).toHaveLength(1);
     view.unmount();
     expect(storageListeners(remove.mock.calls)).toEqual(listeners);
+  });
+
+  describe('off also clears the ids already kept on queued edits (LGMOB M2)', () => {
+    afterEach(() => {
+      localSession.value = undefined;
+    });
+
+    const withEngine = (clearOriginTraces: () => Promise<void>) => {
+      localSession.value = { engine: { clearOriginTraces } } as unknown as LocalSession;
+    };
+
+    it('an off tap asks the engine to clear them; an on tap does not', async () => {
+      const user = userEvent.setup();
+      const clearOriginTraces = vi.fn(async () => undefined);
+      withEngine(clearOriginTraces);
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      await user.click(diagSwitch());
+      expect(diagIdsOn()).toBe(false);
+      expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+      await user.click(diagSwitch());
+      expect(diagIdsOn()).toBe(true);
+      expect(clearOriginTraces).toHaveBeenCalledTimes(1);
+    });
+
+    it('an off tap with no engine to clear leaves the clear owed (the marker), for the next start or sync to complete', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      await user.click(diagSwitch());
+      await user.click(diagSwitch());
+      expect(diagIdsOn()).toBe(true);
+      expect(diagIdsClearPending()).toEqual(expect.any(String));
+    });
+
+    it('an off tap with no signed-in engine, or a clear that fails, still turns the ids off and throws nothing', async () => {
+      const user = userEvent.setup();
+      const first = renderWithProviders(<Settings />, { initialPath: '/settings' });
+      await user.click(diagSwitch());
+      expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
+      first.unmount();
+      setDiagIds(true);
+
+      const unhandled = vi.fn();
+      process.on('unhandledRejection', unhandled);
+      try {
+        // Not a vi.fn: a spy watches the promises its mock returns, which would hide an unhandled rejection.
+        let calls = 0;
+        withEngine(() => {
+          calls += 1;
+          return Promise.reject(new Error('the store is gone'));
+        });
+        renderWithProviders(<Settings />, { initialPath: '/settings' });
+        await user.click(diagSwitch());
+        expect(calls).toBe(1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(unhandled).not.toHaveBeenCalled();
+        expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
+        expect(diagIdsOn()).toBe(false);
+      } finally {
+        process.off('unhandledRejection', unhandled);
+      }
+    });
   });
 
   it('links "How we use your data" to /privacy', async () => {

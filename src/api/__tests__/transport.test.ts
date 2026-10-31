@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { Code, ConnectError, createClient, createContextValues } from '@connectrpc/connect';
-import { CatalogService, CompareService } from '@figurecollecting/fc-api-contract';
+import { CatalogService, CompareService, SyncOp, SyncService } from '@figurecollecting/fc-api-contract';
 import { COORDINATOR_BASE_URL, createCoordinatorTransport } from '../transport';
 import { LOCAL_DB_VERSION } from '../../storage/localDb';
 import { World } from '../../auth/__tests__/world';
 import { APP_ORIGIN } from '../../auth/__tests__/fakes';
 import { kActionTrace, newTraceId } from '../../auth/trace';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
+
+// LGMOB: these tests run as a build with diagnostic ids (VITE_DIAG_IDS=true).
+inDiagIdsBuild();
 
 const compare = (world: World, tab = world.tab()) => {
   const client = createClient(CompareService, createCoordinatorTransport(tab.fetch));
@@ -22,6 +26,23 @@ describe('coordinator transport', () => {
     expect(JSON.parse(res.resultJson)).toEqual({ gtin14: '04580416940269' });
     expect(res.coverage?.redacted).toEqual([]);
     expect(world.coord.log.at(-1)).toMatchObject({ path: '/api/coordinator.v1.CompareService/Compare', status: 200 });
+  });
+
+  it('pushes JSON, the wire format the origin_trace replay rule assumes (contract 0.7.0), with originTrace as a JSON field', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    const client = createClient(SyncService, createCoordinatorTransport(tab.fetch));
+    const originTrace = newTraceId();
+    const from = world.net.sent.length;
+    const event = { facetKey: 'uf/1b4e28ba-2fa1-11d2-883f-0016d3cca427/note', version: 'v', op: SyncOp.UPSERT, payload: '{}', basis: '' };
+    // The fake edge answers 404 for Push: only what left the page matters here.
+    await client.push({ clientId: 'b-1', events: [{ ...event, originTrace }, event] }).catch(() => undefined);
+    const sent = world.net.sent.slice(from).filter((r) => r.url === `${APP_ORIGIN}/api/coordinator.v1.SyncService/Push`).at(-1)!;
+    expect(sent.headers.get('content-type')).toBe('application/json');
+    const body = JSON.parse(await sent.text()) as { events: Record<string, unknown>[] };
+    expect(body.events[0].originTrace).toBe(originTrace);
+    expect('originTrace' in body.events[1]).toBe(false);
   });
 
   it('sends a W3C traceparent on every Connect call: a fresh trace each unscoped call, one trace per action', async () => {

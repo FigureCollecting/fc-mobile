@@ -611,6 +611,28 @@ describe('FigureViewer: the photos chip', () => {
     expect(within(sheet).getAllByRole('button', { name: /^Photo \d/ })).toHaveLength(5);
   });
 
+  // PHOTOS-FIND-1 item 6 (Ross 10-31: "inspect the tapped image behind"): GALLERY-1's rewrite of the slide that stands, for the
+  // photo picked in the sheet; the figure's own picture once the sheet closes
+  it('a photo picked in the sheet is the large picture behind it, by tap or by Next; closing puts the figure\'s own back', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    const figures = locals();
+    renderWithProviders(<FigureViewer figures={figures} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    await user.click(await screen.findByRole('button', { name: '5 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    const slides = instances[0]!.options.dataSource;
+    const photoUrl = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
+    expect(slides[0].src).toBe(photoUrl('c'));
+    expect(instances[0]!.refreshSlideContent).toHaveBeenLastCalledWith(0);
+    await user.click(within(sheet).getByRole('button', { name: 'Next photo' }));
+    expect(slides[0].src).toBe(photoUrl('0'));
+    expect(slides[1].src).toBe((figures as { imageUrl: string }[])[1]!.imageUrl);
+    await user.click(screen.getByRole('button', { name: 'Close photos' }));
+    expect(slides[0].src).toBe((figures as { imageUrl: string }[])[0]!.imageUrl);
+  });
+
   it('says nothing for a figure with one photo, nor for one with no local item', async () => {
     fixturePhotos(1);
     const one = renderWithProviders(<FigureViewer figures={locals()} index={0} onClose={() => {}} />);

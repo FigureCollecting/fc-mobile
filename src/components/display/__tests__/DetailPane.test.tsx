@@ -181,6 +181,24 @@ describe('DetailPane: the photos chip', () => {
     expect(JSON.parse((container.querySelector('.zoomable') as HTMLElement).dataset.zoom!).k).toBe(1);
   });
 
+  // PHOTOS-FIND-1 item 6: the photo picked in the sheet is the pane's picture until the sheet closes
+  it('a photo picked in the sheet is the pane\'s picture, by tap or by Next; closing puts the figure\'s own back', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);
+    const shown = () => container.querySelector('.detail-pane__image')?.getAttribute('src');
+    expect(shown()).toBe(rem.imageUrl);
+    await user.click(await screen.findByRole('button', { name: '5 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    const photoUrl = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
+    expect(shown()).toBe(photoUrl('c'));
+    await user.click(within(sheet).getByRole('button', { name: 'Next photo' }));
+    expect(shown()).toBe(photoUrl('0'));
+    await user.click(screen.getByRole('button', { name: 'Close photos' }));
+    expect(shown()).toBe(rem.imageUrl);
+  });
+
   it('says nothing for a figure with one photo', async () => {
     fixturePhotos(1);
     renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);

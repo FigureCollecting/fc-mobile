@@ -276,23 +276,27 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
   }, [current]);
 
   const figure = figures[current];
+  // PHOTOS-FIND-1 item 6: the photo picked in the Photos sheet, the large picture behind it until the sheet closes
+  const [aimed, setAimed] = useState<string | undefined>(undefined);
+  const picture = aimed ?? figure?.imageUrl;
   // GALLERY-1: the photo behind the sheet follows a photo the figure takes up while the viewer is open ("Use for me" in the
-  // Photos tab): the slide that stands is rewritten and refreshed, no other. The slides are written once at open otherwise.
+  // Photos tab), and the photo picked in that tab while it is open: the slide that stands is rewritten and refreshed, no
+  // other. The slides are written once at open otherwise.
   const shownUrl = useRef<string | undefined>(undefined);
   const shownFor = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!figure) return;
     // the first look at a figure (the viewer's own, or a swipe to it) is what its slide is written from, the gallery loaded yet or not
     const first = shownFor.current !== figure._id;
-    const changed = shownUrl.current !== figure.imageUrl;
+    const changed = shownUrl.current !== picture;
     shownFor.current = figure._id;
-    shownUrl.current = figure.imageUrl;
+    shownUrl.current = picture;
     const pswp = pswpRef.current;
     if (first || !changed || !pswp) return;
     const slides = pswp.options.dataSource as unknown[];
-    slides[current] = slideOf(figure);
+    slides[current] = slideOf({ ...figure, imageUrl: picture });
     pswp.refreshSlideContent(current);
-  }, [figure, current]);
+  }, [figure, current, picture]);
   const openCopies = useCopiesAction(figure ?? ({} as Figure), closeViewer);
   // GALLERY-1: the figure's photos, over the viewer; another figure (a swipe) is another figure's photos
   const [photosOpen, setPhotosOpen] = useState(false);
@@ -469,7 +473,7 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
         }
       `} />
     </motion.div>
-    <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
+    <PhotosSheet key={figure._id} figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={setAimed} />
     </>,
     document.body,
   );

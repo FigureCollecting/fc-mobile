@@ -77,6 +77,9 @@ export function FigureDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   // PHOTOS-FIND-1: the figure's photos, over the page
   const [photosOpen, setPhotosOpen] = useState(false);
+  // PHOTOS-FIND-1 item 6: the photo picked there is the page's picture until the sheet closes
+  const [aimed, setAimed] = useState<string | undefined>(undefined);
+  const picture = aimed ?? image.data?.url;
   const [moving, setMoving] = useState<string[] | null>(null);
   const [disposing, setDisposing] = useState<string[] | null>(null);
   // Each opening of the disposal sheet is a fresh form: one copy's buyer and price never carry to the next.
@@ -163,8 +166,8 @@ export function FigureDetail() {
             <path d="M6 6l12 12" />
           </svg>
         </button>
-        {image.data && !images.broken(image.data.url) ? (
-          <ZoomableImage frameClass="figure-detail__zoom" imgClass="figure-detail__image" src={image.data.url} alt={figure.name} onError={() => images.failed(image.data!.url)}>
+        {picture !== undefined && !images.broken(picture) ? (
+          <ZoomableImage frameClass="figure-detail__zoom" imgClass="figure-detail__image" src={picture} alt={figure.name} onError={() => images.failed(picture)}>
             {/* PHOTOS-FIND-1: how many photos the figure has, when more than this one */}
             <PhotosChip headId={local.headId} onOpen={() => setPhotosOpen(true)} class="figure-detail__photos" />
           </ZoomableImage>
@@ -277,7 +280,7 @@ export function FigureDetail() {
         </button>
       </div>
 
-      <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
+      <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={setAimed} />
 
       <EditFigureSheet open={editOpen} onClose={() => setEditOpen(false)} figure={figure} onSave={handleEditSave} isSaving={updateMutation.isPending} />
 

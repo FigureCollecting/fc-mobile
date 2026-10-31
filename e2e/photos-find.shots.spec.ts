@@ -4,15 +4,21 @@ import { test, expect } from './fixtures';
 import { SHOT_VIEWPORTS, type ShotViewport } from './caseViewports';
 import { atRest } from './sheetRest';
 import { signoffShot } from './signoffShots';
-import { touchTap } from './touch';
+import { touchDown, touchSwipe, touchTap } from './touch';
 
 /**
  * PHOTOS-FIND-1 (Ross 10-31: "only one picture per figure"): the card's picture says how many photos its figure has when it
  * has more than the one shown, low and clear of the face, and a tap on that opens them all. On the Fold8's panels (the
  * SHOT_VIEWPORTS phone projects): the viewer's pull-up sheet on the cover, the pane beside the case when open. The fixtures
  * (?fxphotos=1&fxphotocount=5) give every figure five photos on the public image address, answered here with a synthetic
- * picture. Sign-off PNGs land in test-results/signoff/<project>/photos-chip*.png.
+ * picture. Sign-off PNGs land in test-results/signoff/<project>/photos-*.png.
+ *
+ * Items 6-8 (Ross 10-31: "inspect the tapped image behind by using the slider"): a photo tapped in the sheet is the large picture
+ * behind it; the sheet slides down to a strip of its photos and back up; a swipe on the picture steps to the next photo.
  */
+
+// the app's service worker would fetch the photos itself, round the route below (and the hands-off rules refuse it)
+test.use({ serviceWorkers: 'block' });
 
 /** Below this width Info is the viewer's pull-up sheet; at or above it, the pane beside the case (Collection.tsx). */
 const DUAL_PANE_MIN_WIDTH = 640;
@@ -103,4 +109,62 @@ test('the picture says 5 photos, low and clear of the face, and a tap opens all 
   await expect(sheet.getByRole('button', { name: /^Photo \d/ })).toHaveCount(5);
   await expect(sheet.locator('.photos-sheet__count')).toHaveText('5 photos');
   await signoffShot(page, testInfo, 'photos-chip-sheet');
+});
+
+const photoUrl = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
+
+test('a photo tapped is the large picture; the sheet slides to its strip and back; a swipe on the picture steps to the next', async ({ page }, testInfo) => {
+  const v = shotViewport(testInfo.project.name);
+  test.skip(!v.mobile, 'the phone panels');
+  await openCase(page);
+  await openFigure(page);
+  const narrow = v.width < DUAL_PANE_MIN_WIDTH;
+  if (narrow) await atRest(page.locator('.figure-viewer-sheet'));
+  const picture = narrow ? page.locator('.pswp__item[aria-hidden="false"] img.pswp__img') : page.locator('.detail-pane__image');
+  await tap(page, page.getByRole('button', { name: '5 photos', exact: true }));
+  const sheet = page.getByRole('dialog', { name: 'Photos' });
+  await expect(sheet).toBeVisible();
+  await atRest(sheet);
+  const tiles = sheet.getByRole('button', { name: /^Photo \d/ });
+
+  // the third of five, tapped: the large picture behind is that photo
+  await tap(page, tiles.nth(2));
+  await expect(tiles.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  await expect(picture).toHaveAttribute('src', photoUrl('c'));
+  await signoffShot(page, testInfo, 'photos-browse-picked');
+
+  // a drag down on its handle: the sheet rests on its strip, the picture in view above it, and it is still open
+  const handle = sheet.getByRole('button', { name: 'Show the large picture' });
+  const h = await box(handle);
+  const finger = await touchDown(page, h.x + h.width / 2, h.y + h.height / 2);
+  await finger.to(h.x + h.width / 2, h.y + h.height / 2 + 400, 12, 16);
+  await finger.end();
+  await atRest(sheet);
+  await expect(sheet).toHaveAttribute('data-detent', 'peek');
+  const strip = await box(sheet);
+  const pic = await box(picture);
+  expect(strip.y, 'the strip stands below the middle of the picture').toBeGreaterThan(pic.y + pic.height / 2);
+  // the rest of the sheet (its notes and Use for me) is below the screen; the strip of photos is on it, one row
+  const shown = await Promise.all((await tiles.all()).map(box));
+  for (const t of shown) expect(t.y + t.height, 'every photo on the strip on the screen').toBeLessThanOrEqual(v.height + 0.5);
+  expect(new Set(shown.map((t) => Math.round(t.y))).size, 'one row').toBe(1);
+
+  // a swipe to the left on the picture: the next photo, the fourth, there and pressed on the strip
+  await touchSwipe(page, pic.x + pic.width / 2, pic.y + pic.height / 3, -160, 0);
+  await expect(picture).toHaveAttribute('src', photoUrl('0'));
+  await expect(tiles.nth(3)).toHaveAttribute('aria-pressed', 'true');
+  await expect(sheet).toHaveAttribute('data-detent', 'peek');
+  await signoffShot(page, testInfo, 'photos-browse-peek');
+
+  // a drag up on its handle: all of it again; the X closes it and the figure's own picture is back
+  const raise = sheet.getByRole('button', { name: 'Show all photos' });
+  const r = await box(raise);
+  const up = await touchDown(page, r.x + r.width / 2, r.y + r.height / 2);
+  await up.to(r.x + r.width / 2, r.y + r.height / 2 - 400, 12, 16);
+  await up.end();
+  await atRest(sheet);
+  await expect(sheet).toHaveAttribute('data-detent', 'all');
+  await tap(page, sheet.getByRole('button', { name: 'Close photos' }));
+  await expect(sheet).toHaveCount(0);
+  await expect(picture).not.toHaveAttribute('src', photoUrl('0'));
 });

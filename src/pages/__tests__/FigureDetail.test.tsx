@@ -465,6 +465,20 @@ describe('FigureDetail: its photos', () => {
     expect(within(sheet).getAllByRole('button', { name: /^Photo \d/ })).toHaveLength(4);
   });
 
+  // PHOTOS-FIND-1 item 6: the photo picked in the sheet is the page's picture until the sheet closes
+  it('a photo picked in the sheet is the picture behind it; closing puts the figure\'s own back', async () => {
+    await openWith(4);
+    const user = userEvent.setup();
+    const shown = () => screen.getByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' }).getAttribute('src');
+    expect(shown()).toBe(`${D}/${'a'.repeat(64)}`);
+    await user.click(await screen.findByRole('button', { name: '4 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    expect(shown()).toBe(`${D}/${'c'.repeat(64)}`);
+    await user.click(within(sheet).getByRole('button', { name: 'Close photos' }));
+    expect(shown()).toBe(`${D}/${'a'.repeat(64)}`);
+  });
+
   it('one photo: nothing on the picture, and Photos is still there', async () => {
     await openWith(1);
     await act(async () => {

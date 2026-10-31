@@ -46,7 +46,10 @@ async function tapCentre(page: Page, locator: Locator) {
 async function openFigure(page: Page) {
   const frame = (await page.locator('.cabinet-scene').boundingBox())!;
   const figures = page.locator('button.cab-figure');
-  for (let i = 0; i < (await figures.count()); i++) {
+  // the earliest in the list the frame shows whole (the case stands them in its arrangement, PACK1; the viewer steps
+  // through the list)
+  const byList = (await figures.evaluateAll((els) => els.map((el, i) => [Number((el as HTMLElement).dataset.index), i]))).sort((a, b) => a[0] - b[0]);
+  for (const [, i] of byList) {
     const b = await figures.nth(i).boundingBox();
     if (b && b.y >= frame.y && b.y + b.height <= frame.y + frame.height && b.x >= frame.x && b.x + b.width <= frame.x + frame.width) {
       await touchTap(page, b.x + b.width / 2, b.y + b.height / 2);

@@ -92,8 +92,12 @@ function script(patch: Partial<CasePrefs>): string[] {
   return out;
 }
 
-/** develop fe967a7, before NAV-1A. */
-const GOLDEN: string[] = ["29280b89484ccdd0","64dde1cc1281b078","2eed5f783ad79a6d","3235291fc2f1cf0c","5dc3c57afeca5ee0","5dc3c57afeca5ee0","106e60df90159c20","17bcfba9ff40a137","303ac9b9a485ab44","92221f23e4acddd6","a2ec5d7cba8933ef","2d89bd732b2220fc","4e3245832598dfbb","b14dfffd42dd076a","1256f46000ef91f8"];
+/**
+ * develop fe967a7, before NAV-1A; taken again at PACK1, which packs the case in its arrangement (series, then scale, then
+ * name by default) and publishes it (data-arrange, data-order): with the list's order packed and those two left off, PACK1's
+ * scene still gives fe967a7's hashes.
+ */
+const GOLDEN: string[] = ["70626e10a1b07860","d2e1de7dd65c3285","fedf418df81c3737","d0d4aa0fef59f755","500d5fe9e34db204","500d5fe9e34db204","4fad32c385f01196","2d79e85a31686d59","6d83c6ae6ff57fec","f7883af4d317fd5b","5a387671bedd6f27","9f32ad78dad6b402","d338ddfef848a450","47ee6b4c705658d7","dabdba75fa2d7b5d"];
 
 // Each step hashes the scene's whole DOM: under coverage on CI's runner the first test took 4.0-4.4 s (Vitest's default
 // is 5 s) and the second about 2.5 s. 20 s, as for the Free camera file's heavy tests

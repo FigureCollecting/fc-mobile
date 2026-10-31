@@ -298,8 +298,10 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
     const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
     const cutouts = Array.from(container.querySelectorAll<HTMLImageElement>('img.cab-figure__art--cutout'));
     expect(cutouts).toHaveLength(3);
-    fireEvent.load(cutouts[1]);
-    fireEvent.load(cutouts[2]);
+    // (by figure: the case stands them in its arrangement, PACK1)
+    const cutoutOf = (f: Figure) => container.querySelector<HTMLImageElement>(`button.cab-figure[aria-label="${f.name}"] img.cab-figure__art--cutout`)!;
+    fireEvent.load(cutoutOf(figs[1]));
+    fireEvent.load(cutoutOf(figs[2]));
     expect(measured.loaded).toEqual([figs[1].imageUrl, figs[2].imageUrl]);
     cleanup();
     measured.loaded.length = 0;

@@ -31,7 +31,7 @@ const PUBLISHED_MM = 0.01;
 /** The KLINGSBO with the Detolf and the open steel rack alongside: three heights, three widths. */
 const MIXED = 'ikea-klingsbo+ikea-detolf+open-steel-rack';
 
-type Prefs = { view?: 'wall' | 'cabinet' | 'shelf'; swipe?: 'camera' | 'pan'; pattern?: string; ceilingMm?: number };
+type Prefs = { view?: 'wall' | 'cabinet' | 'shelf'; swipe?: 'camera' | 'pan'; pattern?: string; ceilingMm?: number; arrange?: string };
 
 async function openCase(page: Page, size: { width: number; height: number }, prefs: Prefs, query = '&fx=170') {
   await page.addInitScript((p) => {
@@ -132,11 +132,13 @@ for (const size of FOLD8) {
 }
 
 // item 1: full height. The single cabinet and the wall: a strip of floor in front of the feet, the top surface and what
-// stands on it inside the frame
+// stands on it inside the frame. Arranged by name (PACK1): the fixtures' Dark Angel Olivia, too tall for a stock shelf,
+// comes first and stands on the tops the wall opens with (by series, the first cabinets hold Cowboy Bebop's Spikes, their
+// tops kept empty for a tall figure of their own)
 for (const size of FOLD8) {
   for (const view of ['wall', 'cabinet'] as const) {
     test(`full height: a floor strip, the top surface and a figure on the top inside the frame, ${view} view: ${size.name}`, async ({ page }) => {
-      await openCase(page, size, { view, swipe: 'camera' });
+      await openCase(page, size, { view, swipe: 'camera', arrange: 'name' });
       const p = await picture(page);
       const { camera } = p;
       const wall = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-wall'))!) as number[][];

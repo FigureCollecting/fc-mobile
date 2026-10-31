@@ -1,12 +1,16 @@
 // The "Diagnostic ids" switch: whether this device adds random diagnostic ids (trace.ts) to its
 // requests to our servers. The choice is kept per device in localStorage, never synced to the
-// account, and survives sign-out like the theme. It is read on every call, with no cache, so a
-// change applies to the next request in every tab. Only a choice that differs from the default
-// is stored; no key means the default, which lives in diagIdsDefault() alone.
+// account, and survives sign-out like the theme. Only a choice that differs from the default is
+// stored; no key means the default, which lives in diagIdsDefault() alone.
+//
+// diagIdsOn() reads storage on every call, with no cache, so a choice saved in any tab applies to
+// the next request in every tab. The one exception: while this page's last write was refused
+// (diagIdsSaved() false), this page uses that choice from memory and does not read storage, until
+// a later write here is saved.
 //
 // A browser that will not keep the choice (storage blocked, quota full) never throws here: a read
-// that fails gives the default, and a write that fails keeps the choice in memory for this page,
-// with diagIdsSaved() false so Settings can say so.
+// that fails gives this page's last choice, or the default if it made none, and a write that fails
+// keeps the choice in memory for this page, with diagIdsSaved() false so Settings can say so.
 
 export const DIAG_IDS_KEY = 'fc-diag-ids';
 

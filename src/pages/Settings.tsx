@@ -14,7 +14,7 @@ import { readStorageStatus, type StorageStatus } from '../pwa/storage';
 import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
 import { Style } from '../styles/Style';
-import { DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
+import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
 
 const SYNC_INTERVALS = [
   { value: 'manual', label: 'Manual' },
@@ -165,6 +165,15 @@ export function Settings() {
   // Privacy: the Diagnostic ids choice, read from and written through src/auth/diagIds.ts
   const [diagIds, setDiagIdsShown] = useState(diagIdsOn);
   const [diagIdsKept, setDiagIdsKept] = useState(diagIdsSaved);
+
+  // Another tab of the app saved a choice: show what this page now sends.
+  useEffect(() => {
+    const storage = (e: StorageEvent) => {
+      if (e.key === DIAG_IDS_KEY) setDiagIdsShown(diagIdsOn());
+    };
+    window.addEventListener('storage', storage);
+    return () => window.removeEventListener('storage', storage);
+  }, []);
 
   // Delete account
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);

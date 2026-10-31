@@ -3,7 +3,8 @@
 // for a trace, 8 for a span, never all zero, never derived from the account, the device or its
 // key, a client id, a version or a clock. No id outlives one sync pass or one call, and the
 // client sends no tracestate and no baggage. While this device's Diagnostic ids switch is off
-// (diagIds.ts, read at each request), neither writer below adds one.
+// (diagIds.ts), neither writer below adds one, and dropTraceIfOff takes one off any attempt
+// dpopFetch makes after the switch went off, on a call begun while it was on.
 import { createContextKey, type Interceptor } from '@connectrpc/connect';
 import { diagIdsOn } from './diagIds';
 
@@ -50,4 +51,9 @@ export function traceInterceptor(): Interceptor {
 export function addTraceHeader(headers: Headers, url: URL, appOrigin: string): void {
   if (!diagIdsOn() || url.origin !== appOrigin || !url.pathname.startsWith('/api/') || headers.has(HEADER)) return;
   headers.set(HEADER, traceparent(newTraceId()));
+}
+
+/** One attempt's headers, just before it is sent: none leaves while the switch is off, whenever the call began. */
+export function dropTraceIfOff(headers: Headers): void {
+  if (!diagIdsOn()) headers.delete(HEADER);
 }

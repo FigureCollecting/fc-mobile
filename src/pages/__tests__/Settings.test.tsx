@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/preact';
+import { act, screen, waitFor } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
@@ -26,7 +26,7 @@ import { getCacheStats } from '../../storage/cacheManager';
 import { Settings } from '../Settings';
 import { renderWithProviders } from '../../test/testUtils';
 import { useAuthStore } from '../../stores/auth';
-import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsOn } from '../../auth/diagIds';
+import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
 
 const mockedGetCacheStats = getCacheStats as unknown as ReturnType<typeof vi.fn>;
 
@@ -167,12 +167,14 @@ describe('Settings page', () => {
 describe('Settings privacy: the Diagnostic ids switch', () => {
   const diagSwitch = () => screen.getByRole('switch', { name: DIAG_IDS_TEXT.label });
 
-  // Before the shared teardown, which writes to storage: a refused setItem must not outlive its test.
+  // Before the shared teardown, which writes to storage: a refused setItem must not outlive its test,
+  // and neither may a choice the module holds as unsaved.
   afterEach(() => {
     vi.restoreAllMocks();
+    setDiagIds(diagIdsDefault());
   });
 
-  it('pins the wording Ross approved on the desk, in the one constant the page shows', () => {
+  it("pins the desk wording, pending Ross's approval, in the one constant the page shows", () => {
     expect(DIAG_IDS_TEXT).toEqual({
       label: 'Diagnostic ids',
       description:
@@ -230,13 +232,59 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
     await user.click(diagSwitch());
     expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
     expect(diagIdsOn()).toBe(false);
-    expect(screen.getByText(DIAG_IDS_TEXT.unsaved)).toBeInTheDocument();
+    expect(screen.getByText(DIAG_IDS_TEXT.unsaved)).toHaveAttribute('aria-live', 'polite');
     // The next choice is saved: storage decides again and the warning goes.
     write.mockRestore();
     await user.click(diagSwitch());
     expect(screen.queryByText(DIAG_IDS_TEXT.unsaved)).toBeNull();
     expect(diagSwitch()).toHaveAttribute('aria-checked', 'true');
     expect(localStorage.getItem(DIAG_IDS_KEY)).toBeNull();
+  });
+
+  it("still says the choice is not saved after leaving Settings and coming back", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    const first = renderWithProviders(<Settings />, { initialPath: '/settings' });
+    await user.click(diagSwitch());
+    expect(screen.getByText(DIAG_IDS_TEXT.unsaved)).toBeInTheDocument();
+    first.unmount();
+
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText(DIAG_IDS_TEXT.unsaved)).toBeInTheDocument();
+    write.mockRestore();
+    await user.click(diagSwitch());
+    expect(screen.queryByText(DIAG_IDS_TEXT.unsaved)).toBeNull();
+  });
+
+  it('follows a choice another tab saves, and stops listening once Settings is gone', async () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
+    const otherTab = (newValue: string | null, key = DIAG_IDS_KEY) => {
+      if (newValue === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, newValue);
+      act(() => {
+        window.dispatchEvent(new StorageEvent('storage', { key, newValue, storageArea: localStorage }));
+      });
+    };
+    const view = renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(diagSwitch()).toHaveAttribute('aria-checked', 'true');
+    otherTab('off');
+    expect(diagSwitch()).toHaveAttribute('aria-checked', 'false');
+    otherTab(null);
+    expect(diagSwitch()).toHaveAttribute('aria-checked', 'true');
+    // another key changing is not this switch's business
+    localStorage.setItem(DIAG_IDS_KEY, 'off');
+    otherTab('dark', 'fc-theme');
+    expect(diagSwitch()).toHaveAttribute('aria-checked', 'true');
+
+    const storageListeners = (calls: unknown[][]) => calls.filter(([type]) => type === 'storage').map(([, fn]) => fn);
+    const listeners = storageListeners(add.mock.calls);
+    expect(listeners).toHaveLength(1);
+    view.unmount();
+    expect(storageListeners(remove.mock.calls)).toEqual(listeners);
   });
 
   it('links "How we use your data" to /privacy', async () => {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decodeJwt } from 'jose';
+import { setDiagIds } from '../diagIds';
 import { AuthRequiredError, EnrolmentError, NetworkError } from '../errors';
 import { APP_ORIGIN, IDP_ORIGIN, SUB_A } from './fakes';
 import { World, compareInit, compareUrl } from './world';
@@ -214,6 +215,78 @@ describe('trace context: a random traceparent on our own API, and nowhere else',
     const proof = decodeJwt(req!.headers.get('dpop')!);
     expect(Object.keys(proof).sort()).toEqual(['ath', 'htm', 'htu', 'iat', 'jti', 'nonce']);
     expect(proof).toMatchObject({ htm: 'GET', htu: `${APP_ORIGIN}/api/auth/session` });
+  });
+
+  // The Diagnostic ids switch is read again for every attempt: a call begun while it was on sends
+  // no trace on any attempt made after it went off.
+  describe('a call begun with the ids on, the switch turned off while it is in flight', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('sends none on the use_dpop_nonce retry made after the switch went off', async () => {
+      const world = await World.create();
+      const tab = world.tab();
+      await world.signIn(tab);
+      const handler = world.coord.handler;
+      let first = true;
+      world.net.route(APP_ORIGIN, async (req) => {
+        if (!first) return handler(req);
+        first = false;
+        world.coord.restart();
+        const nonce = await handler(req);
+        setDiagIds(false);
+        return nonce;
+      });
+      const from = world.coord.log.length;
+      const sentFrom = world.net.sent.length;
+      expect((await tab.fetch('/api/auth/session')).status).toBe(200);
+      expect(world.coord.log.slice(from).map((e) => e.error ?? e.status)).toEqual(['use_dpop_nonce', 200]);
+      const [before, after] = world.net.sent.slice(sentFrom);
+      expect(before!.headers.get('traceparent')).toMatch(TRACEPARENT);
+      expect(after!.headers.has('traceparent')).toBe(false);
+    });
+
+    it('sends none on the replay after an invalid_token refresh during which the switch went off', async () => {
+      const world = await World.create();
+      const tab = world.tab();
+      await world.signIn(tab);
+      // The coordinator's clock is past the token's expiry while the device's is not.
+      const serverNow = world.coord.serverNow;
+      world.coord.serverNow = () => serverNow() + 600_000;
+      world.idp.now = world.coord.serverNow;
+      const idp = world.idp.handler;
+      world.net.route(IDP_ORIGIN, async (req) => {
+        const refresh = (await req.clone().text()).includes('grant_type=refresh_token');
+        const res = await idp(req);
+        if (refresh) setDiagIds(false);
+        return res;
+      });
+      const from = world.coord.log.length;
+      const sentFrom = world.net.sent.length;
+      expect((await tab.fetch(compareUrl, compareInit())).status).toBe(200);
+      expect(world.idp.refreshCount()).toBe(1);
+      expect(world.coord.log.slice(from).map((e) => e.error ?? e.status)).toEqual(['invalid_token', 200]);
+      const [before, after] = world.net.sent.slice(sentFrom).filter((r) => new URL(r.url).origin === APP_ORIGIN);
+      expect(before!.headers.get('traceparent')).toMatch(TRACEPARENT);
+      expect(after!.headers.has('traceparent')).toBe(false);
+    });
+
+    it('checks after the proof is signed, the last await before the request leaves', async () => {
+      const world = await World.create();
+      const tab = world.tab();
+      await world.signIn(tab);
+      const sign = crypto.subtle.sign.bind(crypto.subtle);
+      vi.spyOn(crypto.subtle, 'sign').mockImplementationOnce((...args: Parameters<SubtleCrypto['sign']>) => {
+        setDiagIds(false);
+        return sign(...args);
+      });
+      const sentFrom = world.net.sent.length;
+      expect((await tab.fetch('/api/auth/session')).status).toBe(200);
+      const sent = world.net.sent.slice(sentFrom);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.headers.has('traceparent')).toBe(false);
+    });
   });
 
   it('never follows a redirect, so neither the DPoP proof nor the trace leaves our origin', async () => {

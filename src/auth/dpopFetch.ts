@@ -5,7 +5,7 @@ import type { ServerClock } from './clock';
 import type { DeviceKeyRecord } from './deviceKey';
 import { createDpopProof, dpopChallengeError } from './dpop';
 import { NetworkError } from './errors';
-import { addTraceHeader } from './trace';
+import { addTraceHeader, dropTraceIfOff } from './trace';
 
 export const ENROL_PATH = '/api/auth/devices';
 
@@ -49,7 +49,8 @@ export function createDpopFetch(deps: DpopFetchDeps): DpopFetch {
     const key = await deps.credentials.deviceKey(enrolment);
     let nonceRetried = false;
     let refreshed = false;
-    // Built once per call: a nonce or refresh retry is the same request again, on the same trace header.
+    // Built once per call: a nonce or refresh retry is the same request again, on the same trace
+    // header, unless the Diagnostic ids switch went off meanwhile (checked after the last await).
     const base = new Headers(rest.headers);
     addTraceHeader(base, url, appOrigin);
 
@@ -67,6 +68,7 @@ export function createDpopFetch(deps: DpopFetchDeps): DpopFetch {
           ...(nonce === undefined ? {} : { nonce }),
         }),
       );
+      dropTraceIfOff(headers);
       const sentAt = deps.now();
       let res: Response;
       try {

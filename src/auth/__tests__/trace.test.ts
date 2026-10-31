@@ -6,7 +6,7 @@ import { CompareService } from '@figurecollecting/fc-api-contract';
 import { createCoordinatorTransport } from '../../api/transport';
 import { DIAG_IDS_KEY, setDiagIds } from '../diagIds';
 import { addTraceHeader, kActionTrace, newSpanId, newTraceId, traceInterceptor, traceparent } from '../trace';
-import { APP_ORIGIN } from './fakes';
+import { APP_ORIGIN, IDP_ORIGIN } from './fakes';
 import { World } from './world';
 
 const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
@@ -181,6 +181,39 @@ describe('the Diagnostic ids switch', () => {
     const after = world.net.sent.slice(from);
     expect(after).toHaveLength(2);
     for (const r of after) expect(r.headers.get('traceparent')).toMatch(TRACEPARENT);
+  });
+
+  it('a Connect call begun while on, its token refreshed first, sends none once the switch went off during the refresh', async () => {
+    const world = await World.create();
+    const tab = world.tab();
+    await world.signIn(tab);
+    // The access token has expired: the call refreshes it before its first attempt, after the interceptor ran.
+    world.t += 600_000;
+    const idp = world.idp.handler;
+    world.net.route(IDP_ORIGIN, async (r) => {
+      const refresh = (await r.clone().text()).includes('grant_type=refresh_token');
+      const res = await idp(r);
+      if (refresh) setDiagIds(false);
+      return res;
+    });
+    const seen: (string | null)[] = [];
+    const client = createClient(
+      CompareService,
+      createCoordinatorTransport((input, init) => {
+        seen.push(new Headers(init?.headers).get('traceparent'));
+        return tab.fetch(input, init);
+      }),
+    );
+    const from = world.net.sent.length;
+    const refreshes = world.idp.refreshCount();
+    await client.compare({ seed: { case: 'gtin14', value: '04580416940269' }, nowIso: '2026-09-26T12:00:00Z' });
+    expect(world.idp.refreshCount()).toBe(refreshes + 1);
+    // the interceptor set one while the switch was on; the attempt made after off carries none
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(TRACEPARENT);
+    const compare = world.net.sent.slice(from).filter((r) => new URL(r.url).pathname === '/api/coordinator.v1.CompareService/Compare');
+    expect(compare).toHaveLength(1);
+    expect(compare[0]!.headers.has('traceparent')).toBe(false);
   });
 });
 

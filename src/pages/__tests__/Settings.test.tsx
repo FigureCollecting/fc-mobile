@@ -28,6 +28,7 @@ import { renderWithProviders } from '../../test/testUtils';
 import { useAuthStore } from '../../stores/auth';
 import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsClearPending, diagIdsDefault, diagIdsOn, setDiagIds } from '../../auth/diagIds';
 import { localSession, type LocalSession } from '../../local/session';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 const mockedGetCacheStats = getCacheStats as unknown as ReturnType<typeof vi.fn>;
 
@@ -165,7 +166,44 @@ describe('Settings page', () => {
   });
 });
 
+// LGMOB: a build without VITE_DIAG_IDS=true has no Diagnostic ids switch and no /privacy link (P1 ships the page).
+describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
+  beforeEach(() => vi.stubEnv('VITE_DIAG_IDS', undefined));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('shows no Privacy section: Sync is followed by About, with no switch, wording or /privacy link', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    const titles = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
+    expect(titles).not.toContain('Privacy');
+    expect(titles.slice(titles.indexOf('Sync'), titles.indexOf('About') + 1)).toEqual(['Sync', 'About']);
+    expect(screen.queryByRole('switch', { name: DIAG_IDS_TEXT.label })).toBeNull();
+    expect(screen.queryByText(DIAG_IDS_TEXT.label)).toBeNull();
+    expect(screen.queryByText(DIAG_IDS_TEXT.description)).toBeNull();
+    expect(screen.queryByRole('link', { name: DIAG_IDS_TEXT.privacyLink })).toBeNull();
+    expect(document.querySelector('a[href="/privacy"]')).toBeNull();
+  });
+
+  it('writes nothing to fc-diag-ids, rendering or when another tab writes it', () => {
+    const set = vi.spyOn(Storage.prototype, 'setItem');
+    const remove = vi.spyOn(Storage.prototype, 'removeItem');
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: DIAG_IDS_KEY, newValue: 'off' }));
+    });
+    const diagKeys = (calls: unknown[][]) => calls.filter(([k]) => String(k).startsWith('fc-diag-ids'));
+    expect(diagKeys(set.mock.calls)).toEqual([]);
+    expect(diagKeys(remove.mock.calls)).toEqual([]);
+    expect(localStorage.getItem(DIAG_IDS_KEY)).toBeNull();
+    expect(diagIdsOn()).toBe(false);
+  });
+});
+
 describe('Settings privacy: the Diagnostic ids switch', () => {
+  inDiagIdsBuild();
+
   const diagSwitch = () => screen.getByRole('switch', { name: DIAG_IDS_TEXT.label });
 
   // Before the shared teardown, which writes to storage: a refused setItem must not outlive its test,

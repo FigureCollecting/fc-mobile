@@ -60,8 +60,9 @@ export interface OutboxEntry {
    * The random id (W3C trace-id form, from newTraceId) of the user action that minted the edit, sent only as
    * its SyncEvent.origin_trace. Kept only until the change is answered: the answer deletes it, whatever the
    * outcome, except on a version_future edit awaiting its re-mint, which hands it to the new row. Set at mint
-   * only while the Diagnostic ids switch is on, carried by a rebase, and taken off every row on the device but
-   * a sent batch when the switch goes off. None on an edit queued before it existed: nothing is backfilled.
+   * only while the Diagnostic ids switch is on and carried by a rebase. While the switch is off it is taken off
+   * every row on the device, a frozen batch included, and no Push carries it, retries included. None on an edit
+   * queued before it existed: nothing is backfilled.
    */
   origin_trace?: string;
   /** The server's outcome as answered (DUPLICATE is kept distinct from APPLIED). */

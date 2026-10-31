@@ -225,8 +225,10 @@ export function Settings() {
   }, []);
 
   // Shows what now applies to the next request, and whether this browser kept the choice. Off also
-  // takes the ids off every queued edit on this device, any account, signed in or not, all but a batch
-  // already sent. A clear that fails is not lost: the store freezes no id into a batch while it is off.
+  // takes the ids off every edit on this device not yet answered, any account, signed in or not, a
+  // frozen batch included. If this clear fails or never runs, the engine runs it again at its next
+  // start and before each drain while the switch is off, and no Push carries an id while it is off. An
+  // id stays on a row only if the switch is back on before any of those ran; it then goes out.
   const handleDiagIds = useCallback((v: boolean) => {
     setDiagIds(v);
     setDiagIdsShown(diagIdsOn());

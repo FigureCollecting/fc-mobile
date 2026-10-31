@@ -4,7 +4,8 @@
 //   1. a Status probe bounded at 3 s: the reachability test (never navigator.onLine) and the clock
 //      sample the store anchors its HLC to, taken at the midpoint of the round trip;
 //   2. drain: frozen Push batches of at most 100 events, each under one client_id the store keeps,
-//      so a batch whose answer was lost goes again byte for byte and is answered DUPLICATE;
+//      so a batch whose answer was lost goes again byte for byte and is answered DUPLICATE (while the
+//      Diagnostic ids switch is off it goes without its origin_trace ids, which replay identity leaves out);
 //   3. pull: Delta from the stored cursor in pages of 500 until has_more is false, applying a server
 //      transaction only once the event carrying its commit_cursor has arrived (rule 7), and parking
 //      the cursor at that commit. An unreadable cursor (INVALID_ARGUMENT) replays from '' onto an
@@ -23,13 +24,17 @@
 // head_id), never parsing a key, and never writes the auth status.
 import { signal, type ReadonlySignal } from '@preact/signals';
 import { Code, ConnectError, createContextValues, type CallOptions, type Client } from '@connectrpc/connect';
+import { clone } from '@bufbuild/protobuf';
 import {
+  PushRequestSchema,
   isCanonicalVersion,
   type CatalogService,
   type HlcClock,
+  type PushRequest,
   type SyncEvent,
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
+import { diagIdsOn } from '../auth/diagIds';
 import { kActionTrace, newTraceId } from '../auth/trace';
 import type { LocalDb } from '../storage/localDb';
 import { clearOriginTraces } from '../storage/originTraces';
@@ -129,6 +134,13 @@ class ProtocolError extends Error {
   }
 }
 
+/** The request with every event's origin_trace taken off: what goes out while the Diagnostic ids switch is off. */
+function withoutOriginTraces(request: PushRequest): PushRequest {
+  const copy = clone(PushRequestSchema, request);
+  for (const event of copy.events) delete event.originTrace;
+  return copy;
+}
+
 /** Full jitter: uniform in [0, min(5 min, 2 s * 2^attempt)). */
 export function backoffDelay(attempt: number, random: () => number): number {
   const cap = Math.min(BACKOFF_MAX_MS, BACKOFF_MIN_MS * 2 ** Math.min(attempt, 30));
@@ -226,6 +238,9 @@ export class SyncEngine {
     this.deps.window?.addEventListener('offline', this.onOffline);
     this.deps.window?.addEventListener('pageshow', this.onPageShow);
     this.deps.document?.addEventListener('visibilitychange', this.onVisibility);
+    // An off whose clear never committed (Settings before this engine was published, the app closed mid-clear,
+    // a failed write) is enforced at every start, signed in or not, and before every drain (below).
+    if (!diagIdsOn()) void this.clearOriginTraces().catch(() => undefined);
     void this.trigger('start');
   }
 
@@ -298,8 +313,8 @@ export class SyncEngine {
   }
 
   /**
-   * The Diagnostic ids switch went off: every outbox row on this device, of any account, drops its origin_trace but
-   * a batch already sent (storage/originTraces.ts). Needs no signed-in user or enrolled store.
+   * The Diagnostic ids switch went off: every outbox row on this device, of any account and in any state, a frozen
+   * batch included, drops its origin_trace (storage/originTraces.ts). Needs no signed-in user or enrolled store.
    */
   async clearOriginTraces(): Promise<void> {
     if (this.deps.localDb === undefined) throw new Error('no local database to clear diagnostic ids from');
@@ -440,6 +455,8 @@ export class SyncEngine {
   }
 
   private async drain(store: UserStore): Promise<void> {
+    // While off, the idempotent clear runs first. If it fails the drain goes on: no Push below carries an id anyway.
+    if (!diagIdsOn()) await this.clearOriginTraces().catch(() => undefined);
     let probed = false;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const next = await store.nextBatch(PUSH_BATCH);
@@ -451,7 +468,11 @@ export class SyncEngine {
         continue;
       }
       probed = false;
-      const answer = await this.call((signal) => this.deps.sync.push(next.batch.request, this.options(signal)));
+      // The switch is read again at the send: an off after the batch was frozen still sends no id, and the batch
+      // without them is the same batch to the coordinator (C3 leaves origin_trace out of replay identity).
+      const answer = await this.call((signal) =>
+        this.deps.sync.push(diagIdsOn() ? next.batch.request : withoutOriginTraces(next.batch.request), this.options(signal)),
+      );
       await store.recordPush(next.batch.clientId, answer);
       // A REJECTED edit owes a fresh Status before the next mint (rule 5); a version_future one is re-minted by it.
       if ((await store.getMeta()).rejected_past !== null) {

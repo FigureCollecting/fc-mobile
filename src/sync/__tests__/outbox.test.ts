@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { create, toBinary, toJson } from '@bufbuild/protobuf';
+import { clone, create, toBinary, toJson } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { PushRequestSchema, isTraceId, type PushRequest, type PushResponse } from '@figurecollecting/fc-api-contract';
 import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { newTraceId } from '../../auth/trace';
+import { clearOriginTraces } from '../../storage/originTraces';
 import type { OutboxEntry } from '../../storage/records';
 import type { UserStore } from '../../storage/userStore';
 import { SyncEngine } from '../engine';
@@ -311,6 +312,12 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
 
   const traces = async (store: UserStore) => (await store.listOutbox()).map((e) => e.origin_trace);
   const pushes = (r: Awaited<ReturnType<typeof rig>>) => r.server.calls.filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+  // A request as it would go out with every origin_trace taken off.
+  const stripped = (req: PushRequest): PushRequest => {
+    const copy = clone(PushRequestSchema, req);
+    for (const e of copy.events) delete e.originTrace;
+    return copy;
+  };
 
   it('gives every row of one engine.write the same trace across its groups, and the next write another', async () => {
     const r = await rig();
@@ -474,7 +481,7 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       expect((await r.store.listOutbox()).map((e) => 'origin_trace' in e)).toEqual([false, false]);
     });
 
-    it('off clears every row but a sent batch, whose retry stays byte-identical; on again backfills nothing; the server never refuses', async () => {
+    it('off clears every row, a sent batch included; its retry goes out with the same events and no id, and the server answers DUPLICATE; on again backfills nothing', async () => {
       const r = await rig();
       await r.engine.write((s) => write(s, 0, 'note', 'answered'));
       await r.engine.trigger('start');
@@ -482,7 +489,6 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       r.server.fault('push', { kind: 'drop' });
       await r.engine.trigger('manual');
       const sent = pushes(r).at(-1)!;
-      const sentBytes = toBinary(PushRequestSchema, sent);
       expect(isTraceId(sent.events[0].originTrace)).toBe(true);
       await r.engine.write((s) => write(s, 2, 'note', 'queued'));
       expect((await r.store.listOutbox()).map((e) => [e.state, isTraceId(e.origin_trace)])).toEqual([
@@ -493,23 +499,22 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
 
       setDiagIds(false);
       await r.engine.clearOriginTraces();
-      const cleared = await r.store.listOutbox();
-      expect(cleared.map((e) => [e.state, 'origin_trace' in e])).toEqual([
+      expect((await r.store.listOutbox()).map((e) => [e.state, 'origin_trace' in e])).toEqual([
         ['APPLIED', false],
-        ['IN_FLIGHT', true],
+        ['IN_FLIGHT', false],
         ['PENDING', false],
       ]);
-      expect(cleared[1].origin_trace).toBe(sent.events[0].originTrace);
 
       setDiagIds(true);
       await r.engine.write((s) => write(s, 0, 'score', 5));
       const after = await r.store.listOutbox();
-      expect(after.map((e) => 'origin_trace' in e)).toEqual([false, true, false, true]);
+      expect(after.map((e) => 'origin_trace' in e)).toEqual([false, false, false, true]);
 
       const before = pushes(r).length;
       await r.engine.trigger('manual');
       const [retry, next] = pushes(r).slice(before);
-      expect(toBinary(PushRequestSchema, retry)).toEqual(sentBytes);
+      // The batch first sent with its id, again under its client_id with the same events and none: C3 (and the fake) call that a replay.
+      expect(toBinary(PushRequestSchema, retry)).toEqual(toBinary(PushRequestSchema, stripped(sent)));
       expect(next.events.map((e) => [e.facetKey, e.originTrace])).toEqual([
         [key(2, 'note'), undefined],
         [key(0, 'score'), after[3].origin_trace],
@@ -529,19 +534,164 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
       await expect(engine.clearOriginTraces()).rejects.toThrow(/no local database/);
     });
 
-    it('a queued edit that still holds a trace when the switch is off (the clear never ran) is frozen without it; its retry is byte-identical', async () => {
+    it('a batch frozen while the switch is off (the clear never ran) carries no id on any row; its retry is byte-identical', async () => {
       const { db } = await freshDb();
       const store = await openStore(db);
       await write(store, 0, 'note', 'a');
+      await write(store, 1, 'note', 'b');
+      await store.createCopy(HEAD[2], 'owned');
+      expect((await store.listOutbox()).every((e) => isTraceId(e.origin_trace))).toBe(true);
       setDiagIds(false);
       await store.onStatus(status(T0), 0);
       const batch = await send(store);
-      expect(batch.request.events[0].originTrace).toBeUndefined();
-      expect('origin_trace' in (await store.listOutbox())[0]).toBe(false);
+      expect(batch.request.events.map((e) => e.originTrace)).toEqual([undefined, undefined, undefined, undefined]);
+      expect((await store.listOutbox()).map((e) => 'origin_trace' in e)).toEqual([false, false, false, false]);
       setDiagIds(true);
       const again = await send(store);
       expect(again.retry).toBe(true);
       expect(toBinary(PushRequestSchema, again.request)).toEqual(toBinary(PushRequestSchema, batch.request));
+    });
+
+    it('a batch frozen while on and retried while off (the clear never ran) goes out with the same events and no id on any row, and gets none back after on', async () => {
+      const { db } = await freshDb();
+      const store = await openStore(db);
+      await write(store, 0, 'note', 'a');
+      await store.createCopy(HEAD[1], 'owned');
+      await store.onStatus(status(T0), 0);
+      const first = await send(store);
+      expect(first.request.events.map((e) => isTraceId(e.originTrace))).toEqual([true, true, true]);
+      setDiagIds(false);
+      const retry = await send(store);
+      expect(retry.retry).toBe(true);
+      expect(toBinary(PushRequestSchema, retry.request)).toEqual(toBinary(PushRequestSchema, stripped(first.request)));
+      expect((await store.listOutbox()).map((e) => [e.state, 'origin_trace' in e])).toEqual([
+        ['IN_FLIGHT', false],
+        ['IN_FLIGHT', false],
+        ['IN_FLIGHT', false],
+      ]);
+      setDiagIds(true);
+      expect(toBinary(PushRequestSchema, (await send(store)).request)).toEqual(toBinary(PushRequestSchema, retry.request));
+    });
+
+    it('P1: a Push that never reached the server (network down), then off: its retry carries no id, and is the first copy the server answers', async () => {
+      const r = await rig();
+      await r.engine.write((s) => write(s, 0, 'note', 'a'));
+      r.server.fault('push', { kind: 'throw', error: new ConnectError('fetch failed', Code.Unavailable) });
+      await r.engine.trigger('start');
+      expect((await r.store.listOutbox())[0]).toMatchObject({ state: 'IN_FLIGHT' });
+      const before = pushes(r).length;
+      setDiagIds(false);
+      await r.engine.clearOriginTraces();
+      await r.engine.trigger('manual');
+      const afterOff = pushes(r).slice(before);
+      expect(afterOff.map((p) => p.events.map((e) => e.originTrace))).toEqual([[undefined]]);
+      expect((await r.store.listOutbox())[0]).toMatchObject({ state: 'APPLIED', outcome: 'APPLIED' });
+    });
+
+    it('P1b: a batch the server keeps refusing (INVALID_ARGUMENT) never carries an id on any retry while off', async () => {
+      const r = await rig();
+      await r.engine.write((s) => write(s, 0, 'note', 'a'));
+      const refuse = { kind: 'throw' as const, error: new ConnectError('client_id was already used for a different batch', Code.InvalidArgument) };
+      r.server.fault('push', refuse, refuse, refuse, refuse);
+      await r.engine.trigger('start');
+      setDiagIds(false);
+      const before = pushes(r).length;
+      for (let i = 0; i < 3; i++) await r.engine.trigger('manual');
+      const whileOff = pushes(r).slice(before);
+      expect(whileOff).toHaveLength(3);
+      expect(whileOff.map((p) => p.events.map((e) => e.originTrace))).toEqual([[undefined], [undefined], [undefined]]);
+      expect((await r.store.listOutbox())[0].state).toBe('IN_FLIGHT');
+      expect('origin_trace' in (await r.store.listOutbox())[0]).toBe(false);
+    });
+
+    it('P2: an off tap between the batch being frozen and its Push: the Push still carries no id', async () => {
+      const r = await rig();
+      await r.engine.write((s) => write(s, 0, 'note', 'a'));
+      const real = r.store.nextBatch.bind(r.store);
+      let tapped = false;
+      vi.spyOn(r.store, 'nextBatch').mockImplementation(async (max?: number) => {
+        const next = await real(max);
+        if (next.kind === 'send' && !tapped) {
+          tapped = true;
+          expect(isTraceId(next.batch.request.events[0].originTrace)).toBe(true);
+          // The Settings tap lands here, after the freeze committed with the switch on.
+          setDiagIds(false);
+          await r.engine.clearOriginTraces();
+        }
+        return next;
+      });
+      await r.engine.trigger('start');
+      expect(tapped).toBe(true);
+      expect(pushes(r).map((p) => p.events.map((e) => e.originTrace))).toEqual([[undefined]]);
+      expect((await r.store.listOutbox())[0]).toMatchObject({ state: 'APPLIED', outcome: 'APPLIED' });
+    });
+
+    it("P3: off with no clear (the tap's clear never ran): a pass while off clears every row on the device before it drains, so no pre-off id goes out once on again", async () => {
+      const r = await rig();
+      const other = await openStore(r.db, { sub: 'user-b' });
+      await write(other, 0, 'note', 'theirs');
+      await r.engine.write((s) => write(s, 0, 'note', 'mine'));
+      const old = (await r.db.getAll('outbox')).map((e) => e.origin_trace);
+      expect(old.every(isTraceId)).toBe(true);
+      setDiagIds(false);
+      // No clear; the network is down, so the pass's batch never reaches the server.
+      r.server.fault('push', { kind: 'throw', error: new ConnectError('fetch failed', Code.Unavailable) });
+      await r.engine.trigger('manual');
+      expect((await r.db.getAll('outbox')).map((e) => [e.sub, 'origin_trace' in e])).toEqual([
+        ['user-b', false],
+        ['user-a', false],
+      ]);
+      setDiagIds(true);
+      await r.engine.trigger('manual');
+      const sent = pushes(r).flatMap((p) => p.events.map((e) => e.originTrace));
+      expect(sent.filter((t) => t !== undefined)).toEqual([]);
+    });
+
+    it('a drain whose clear fails still sends no id while off', async () => {
+      const r = await rig();
+      await r.engine.write((s) => write(s, 0, 'note', 'a'));
+      // No local database: the drain-time clear throws, and the pass goes on.
+      const engine = new SyncEngine({ store: async () => r.store, sync: r.server.sync, catalog: r.server.catalog, clock: r.clock, timers: r.timers, timeoutSignal: r.timeouts.signal });
+      setDiagIds(false);
+      await engine.trigger('manual');
+      expect(engine.state.value.lastError).toBeNull();
+      expect(pushes(r).map((p) => p.events.map((e) => e.originTrace))).toEqual([[undefined]]);
+    });
+
+    it('P4: off clears a REJECTED version_future edit awaiting its re-mint, and the re-mint after on carries none', async () => {
+      const { db } = await freshDb();
+      const clock = new FakeClock(T0);
+      const store = await openStore(db, { clock });
+      const known = ev(key(0, 'note'), token(T0 - HOUR, 0, OTHER_DEVICE), 'upsert', '{"note":"server"}');
+      await store.apply([known]);
+      await store.onStatus(status(T0), 0);
+      clock.wall += DAY;
+      const trace = newTraceId();
+      await store.withAction(trace).writeFacet(key(0, 'note'), { note: 'future' });
+      const batch = await send(store);
+      await store.recordPush(batch.clientId, { results: [result(key(0, 'note'), PushOutcome.REJECTED, known, 'version_future')] });
+      expect((await store.listOutbox())[0]).toMatchObject({ state: 'REJECTED', remint: 'awaiting', origin_trace: trace });
+      setDiagIds(false);
+      await clearOriginTraces(db);
+      expect('origin_trace' in (await store.listOutbox())[0]).toBe(false);
+      setDiagIds(true);
+      clock.advance(5_000);
+      expect((await store.onStatus(status(T0 + 5_000), 0)).reminted).toBe(1);
+      const again = (await store.listOutbox())[1];
+      expect(again.state).toBe('PENDING');
+      expect('origin_trace' in again).toBe(false);
+    });
+
+    it('P5: an off tap while an edit is being written: the clear is ordered after its transaction and removes its id', async () => {
+      const r = await rig();
+      // writeFacet goes straight into its transaction, which reads the switch (on) before the tap.
+      const writing = r.store.writeFacet(key(0, 'note'), { note: 'a' });
+      setDiagIds(false);
+      const clearing = r.engine.clearOriginTraces();
+      await Promise.all([writing, clearing]);
+      const [row] = await r.store.listOutbox();
+      expect(row.state).toBe('PENDING');
+      expect('origin_trace' in row).toBe(false);
     });
   });
 
@@ -628,6 +778,24 @@ describe('origin_trace: one random id per user action, kept on its queued edits 
         ['REJECTED', false],
         ['APPLIED', false],
       ]);
+    });
+
+    it('an unknown outcome whose reason is version_future also awaits the re-mint, and keeps the id for it', async () => {
+      const { db } = await freshDb();
+      const clock = new FakeClock(T0);
+      const store = await openStore(db, { clock });
+      const known = ev(key(0, 'note'), token(T0 - HOUR, 0, OTHER_DEVICE), 'upsert', '{"note":"server"}');
+      await store.apply([known]);
+      await store.onStatus(status(T0), 0);
+      clock.wall += DAY;
+      const trace = newTraceId();
+      await store.withAction(trace).writeFacet(key(0, 'note'), { note: 'future' });
+      const batch = await send(store);
+      await store.recordPush(batch.clientId, { results: [result(key(0, 'note'), 9 as PushOutcome, known, 'version_future')] });
+      expect((await store.listOutbox())[0]).toMatchObject({ state: 'REJECTED', outcome: 'UNKNOWN_9', reason: 'unknown_outcome', remint: 'awaiting', origin_trace: trace });
+      clock.advance(5_000);
+      await store.onStatus(status(T0 + 5_000), 0);
+      expect((await send(store)).request.events.map((e) => e.originTrace)).toEqual([trace]);
     });
 
     it('a REJECTED version_future that is not re-minted (a newer edit replaced it) drops it at the Status', async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signal } from '@preact/signals';
-import { toBinary } from '@bufbuild/protobuf';
+import { clone, toBinary } from '@bufbuild/protobuf';
 import { PushRequestSchema, isTraceId, ufFacetKey, type PushRequest } from '@figurecollecting/fc-api-contract';
 import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { NetworkError } from '../../auth/errors';
@@ -212,36 +212,61 @@ describe('the off clear, signed out', () => {
     s.set.sub(undefined);
     const sync = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
     await expect(sync.engine.write((store) => store.writeFacet(ufFacetKey(headOf(0), 'score'), { score: 1 }))).rejects.toBeInstanceOf(NotEnrolledError);
-    return { db, server, s, sync, old, sentBytes: toBinary(PushRequestSchema, sent.batch.request) };
+    return { db, server, s, sync, old, sentRequest: sent.batch.request };
   }
 
-  it("clears every account's queued edits with no account store, and leaves the sent batch alone", async () => {
-    const { db, sync, old } = await leftBehind();
+  async function signIn(s: ReturnType<typeof session>, sync: { engine: { state: { value: unknown } } }) {
+    s.set.sub('user-a');
+    s.status.value = 'signed-in';
+    await vi.waitFor(() => expect(sync.engine.state.value).toMatchObject({ phase: 'idle', pending: 0, reachability: 'reachable' }));
+  }
+
+  const stripped = (req: PushRequest): PushRequest => {
+    const copy = clone(PushRequestSchema, req);
+    for (const e of copy.events) delete e.originTrace;
+    return copy;
+  };
+
+  it("clears every account's edits with no account store, the sent batch included", async () => {
+    const { db, sync } = await leftBehind();
     setDiagIds(false);
     await sync.engine.clearOriginTraces();
-    expect((await db.getAll('outbox')).map((e) => [e.sub, e.state, e.origin_trace])).toEqual([
-      ['user-a', 'IN_FLIGHT', old[0]],
-      ['user-a', 'PENDING', undefined],
-      ['user-b', 'PENDING', undefined],
+    expect((await db.getAll('outbox')).map((e) => [e.sub, e.state, 'origin_trace' in e])).toEqual([
+      ['user-a', 'IN_FLIGHT', false],
+      ['user-a', 'PENDING', false],
+      ['user-b', 'PENDING', false],
     ]);
     sync.dispose();
   });
 
-  it('off while signed out, then on again before signing in: no old id goes out, and the sent batch retries byte for byte', async () => {
-    const { server, s, sync, old, sentBytes } = await leftBehind();
+  it('off while signed out, then on again before signing in: no old id goes out; the sent batch retries with the same events and is a DUPLICATE', async () => {
+    const { server, s, sync, old, sentRequest } = await leftBehind();
     const from = server.calls.length;
     setDiagIds(false);
     await sync.engine.clearOriginTraces();
     setDiagIds(true);
-    s.set.sub('user-a');
-    s.status.value = 'signed-in';
-    await vi.waitFor(() => expect(sync.engine.state.value).toMatchObject({ phase: 'idle', pending: 0, reachability: 'reachable' }));
+    await signIn(s, sync);
     const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
-    expect(toBinary(PushRequestSchema, pushes[0]!)).toEqual(sentBytes);
-    const later = pushes.slice(1).flatMap((p) => p.events);
-    expect(later.map((e) => e.facetKey)).toEqual([ufFacetKey(headOf(1), 'note')]);
-    expect(later.map((e) => e.originTrace)).toEqual([undefined]);
-    expect(later.map((e) => e.originTrace)).not.toContain(old[1]);
+    expect(toBinary(PushRequestSchema, pushes[0]!)).toEqual(toBinary(PushRequestSchema, stripped(sentRequest)));
+    expect(pushes.flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+    expect(pushes.flatMap((p) => p.events.map((e) => e.facetKey))).toEqual([ufFacetKey(headOf(0), 'note'), ufFacetKey(headOf(1), 'note')]);
+    expect(old.every(isTraceId)).toBe(true);
+    expect((await sync.engine.read((store) => store.listOutbox())).map((e) => e.outcome)).toEqual(['DUPLICATE', 'APPLIED']);
     sync.dispose();
+  });
+
+  it("P3 at start: an off whose clear never ran (the app closed first) is enforced by the next start, signed out, on every account's rows", async () => {
+    const { db, server, s, sync } = await leftBehind();
+    sync.dispose();
+    const from = server.calls.length;
+    setDiagIds(false);
+    // The next launch, still signed out: nothing called the clear, and no pass can drain.
+    const next = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await vi.waitFor(async () => expect((await db.getAll('outbox')).map((e) => 'origin_trace' in e)).toEqual([false, false, false]));
+    setDiagIds(true);
+    await signIn(s, next);
+    const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+    expect(pushes.flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+    next.dispose();
   });
 });

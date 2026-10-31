@@ -1,5 +1,5 @@
 // The Diagnostic ids switch going off (LGMOB M2): origin_trace leaves every outbox row on this device,
-// whatever account wrote it, except a batch sent and unanswered.
+// whatever account wrote it and whatever its state, a frozen batch included.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { isTraceId } from '@figurecollecting/fc-api-contract';
 import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
@@ -31,7 +31,7 @@ async function device() {
 }
 
 describe('clearOriginTraces (the whole device, one transaction)', () => {
-  it("takes the id off every account's rows but IN_FLIGHT ones, and changes nothing else", async () => {
+  it("takes the id off every account's rows, IN_FLIGHT ones included, and changes nothing else", async () => {
     const { db } = await device();
     const before = await db.getAll('outbox');
     expect(before.map((e) => [e.sub, e.state, isTraceId(e.origin_trace)])).toEqual([
@@ -42,7 +42,7 @@ describe('clearOriginTraces (the whole device, one transaction)', () => {
     ]);
     await clearOriginTraces(db);
     const after = await db.getAll('outbox');
-    expect(after).toEqual(before.map((e) => (e.state === 'IN_FLIGHT' ? e : withoutTrace(e))));
+    expect(after).toEqual(before.map(withoutTrace));
   });
 
   it('a failed write leaves every id where it was', async () => {

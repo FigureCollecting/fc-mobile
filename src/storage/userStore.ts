@@ -541,15 +541,19 @@ export class UserStore {
 
   // An unanswered frozen batch always comes back first, same client_id and events.
   // A new batch waits for the session's first Status and for the fresh Status
-  // owed after a REJECTED.
+  // owed after a REJECTED. While the Diagnostic ids switch is off, no batch, new or
+  // retried, carries an id, though no clear ran (it failed, or the app closed first):
+  // the rows lose theirs for good. A retry without them is still the same batch (C3).
   async nextBatch(max = 100): Promise<NextBatch> {
     return runTx(this.db, ['outbox', 'sync_meta'], async (tx) => {
       const outbox = tx.objectStore('outbox');
       const flying = await outbox.index('by_sub_state').get(this.stateRange('IN_FLIGHT'));
       if (flying) {
         const entries = await outbox.index('by_sub_client').getAll(this.clientRange(flying.client_id!));
+        const idsOn = diagIdsOn();
         for (const e of entries) {
           e.attempts += 1;
+          if (!idsOn) delete e.origin_trace;
           await outbox.put(e);
         }
         return { kind: 'send', batch: this.toBatch(flying.client_id!, entries, true) };
@@ -560,7 +564,6 @@ export class UserStore {
       if (!this.statusSeen || meta.rejected_past !== null) return { kind: 'status_required' };
       const pending = queued.slice(0, batchEnd(queued, max));
       const clientId = this.newClientId();
-      // While the switch is off no id is frozen into a batch, though a clear never ran (signed out) or failed.
       const idsOn = diagIdsOn();
       for (const [i, e] of pending.entries()) {
         Object.assign(e, { state: 'IN_FLIGHT', client_id: clientId, batch_pos: i, attempts: e.attempts + 1 });

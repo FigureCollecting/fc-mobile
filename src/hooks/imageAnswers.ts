@@ -22,6 +22,7 @@
 // it would have. src/hooks/__tests__/imageAnswersAfterSync.test.tsx; in Chromium, e2e/pwa (b) another tab.
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { withheldAmong, type CachedImage } from '../media/keptImages';
+import type { ProductPhotos } from './useProductPhotos';
 
 /** The channel every document of the app hears another's completed sync on: one name across builds (so still 'owned'). */
 export const OWNED_SYNC_CHANNEL = 'fc-owned-images';
@@ -35,11 +36,11 @@ const inOwnSync = new WeakMap<QueryClient, Set<{ hash: string }>>();
 /** What a document tells the others of its sync once it read the lists: it completed with every image fetched, or it ended any other way (stopped). */
 export type KeptSyncEnd = 'synced' | 'stopped';
 
-/** The addresses an image answer names: the figure page's image; each of its photos and their masks (GALLERY-1); each of the case view's images and masks. */
+/** The addresses an image answer names: the figure page's image; each of its photos and their masks (GALLERY-1; ProductPhotos); each of the case view's images and masks. */
 function addressesIn(key: QueryKey, data: unknown): string[] {
   if (data === undefined || data === null) return [];
   if (key[1] === 'image') return [(data as { url: string }).url];
-  if (key[1] === 'photos') return (data as CachedImage[]).flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
+  if (key[1] === 'photos') return (data as ProductPhotos).photos.flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
   return [...(data as ReadonlyMap<string, CachedImage>).values()].flatMap((i) => (i.maskUrl === undefined ? [i.url] : [i.url, i.maskUrl]));
 }
 
@@ -47,11 +48,13 @@ function addressesIn(key: QueryKey, data: unknown): string[] {
 function without(key: QueryKey, data: unknown, withheld: ReadonlySet<string>): unknown {
   if (key[1] === 'image') return null;
   if (key[1] === 'photos') {
-    return (data as CachedImage[]).filter((i) => !withheld.has(i.url)).map((i) => {
+    const answer = data as ProductPhotos;
+    const photos = answer.photos.filter((i) => !withheld.has(i.url)).map((i) => {
       if (i.maskUrl === undefined || !withheld.has(i.maskUrl)) return i;
       const { maskUrl: _withheld, ...rest } = i;
       return rest;
     });
+    return { ...answer, photos };
   }
   const out = new Map<string, CachedImage>();
   for (const [head, image] of data as ReadonlyMap<string, CachedImage>) {

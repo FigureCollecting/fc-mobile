@@ -192,6 +192,18 @@ npm run build
 Produces a production bundle in `dist/`. `.env.production` supplies the
 production API URL.
 
+Build switches are off unless set to exactly `true` (`src/config/features.ts`):
+
+- `VITE_ENABLE_LEGACY_SCREENS`: the legacy screens that have no backend; local
+  dev only.
+- `VITE_DIAG_IDS`: diagnostic ids (LGMOB): the `traceparent` header on calls to
+  `/api`, the `origin_trace` on queued edits, and Settings > Privacy with its
+  link to `/privacy`. They ship only together with the `/privacy` page, so no
+  env file, the Dockerfile or a workflow sets it
+  (`deploy/__tests__/diagIdsFlag.test.ts`). Off, the app sends no id and
+  writes no `fc-diag-ids` choice. `VITE_DIAG_IDS=true npm run build` builds
+  with them.
+
 ## Web image (fc-mobile-web)
 
 `Dockerfile` builds the production bundle and serves it from

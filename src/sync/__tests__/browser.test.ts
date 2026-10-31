@@ -11,6 +11,7 @@ import { HELD_STATUSES, IDLE_POLL_MS, NotEnrolledError, createBrowserSync, start
 import { FakeCoordinator } from './fakeCoordinator';
 import { DEVICE, OTHER_DEVICE, T0, freshDb, openStore } from './harness';
 import { headOf, seedCopies } from './engineSupport';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
 
 function session(db: LocalDb, status: AuthStatus = 'signed-in') {
   const state = signal<AuthStatus>(status);
@@ -191,6 +192,8 @@ describe('startBrowserSync', () => {
 
 // LGMOB M2: the Diagnostic ids switch going off reaches the whole device, signed in or not.
 describe('the off clear, signed out', () => {
+  inDiagIdsBuild();
+
   afterEach(() => setDiagIds(diagIdsDefault()));
 
   // Edits two accounts left on this device: user-a's sent batch (the server recorded it, the answer was lost) and queued edit, user-b's queued edit.

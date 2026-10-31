@@ -8,6 +8,10 @@ import { DIAG_IDS_KEY, setDiagIds } from '../diagIds';
 import { addTraceHeader, kActionTrace, newSpanId, newTraceId, traceInterceptor, traceparent } from '../trace';
 import { APP_ORIGIN, IDP_ORIGIN } from './fakes';
 import { World } from './world';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
+
+// LGMOB: these tests run as a build with diagnostic ids (VITE_DIAG_IDS=true).
+inDiagIdsBuild();
 
 const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/;
 const part = (header: string | null, i: 1 | 2): string => header!.split('-')[i]!;

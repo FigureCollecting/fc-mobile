@@ -6,6 +6,10 @@ import { LOCAL_DB_VERSION } from '../../storage/localDb';
 import { World } from '../../auth/__tests__/world';
 import { APP_ORIGIN } from '../../auth/__tests__/fakes';
 import { kActionTrace, newTraceId } from '../../auth/trace';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
+
+// LGMOB: these tests run as a build with diagnostic ids (VITE_DIAG_IDS=true).
+inDiagIdsBuild();
 
 const compare = (world: World, tab = world.tab()) => {
   const client = createClient(CompareService, createCoordinatorTransport(tab.fetch));

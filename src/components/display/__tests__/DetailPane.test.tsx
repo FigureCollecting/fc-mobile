@@ -1,10 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, screen, waitFor } from '@testing-library/preact';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
 import { DetailPane } from '../DetailPane';
-import { renderWithProviders } from '../../../test/testUtils';
-import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
+import { flushAll, renderWithProviders } from '../../../test/testUtils';
+import { FIXTURE_FIGURES, setFixtureMode } from '../../../dev-fixtures/fixtures';
 
 describe('DetailPane (Fold dual-pane, >= 640px)', () => {
   it('renders the figure detail content, not a full-screen takeover', () => {
@@ -143,5 +143,48 @@ describe('DetailPane (Fold dual-pane, >= 640px)', () => {
     fields.scrollIntoView = into;
     await user.click(screen.getByRole('button', { name: 'Details' }));
     expect(into).toHaveBeenCalledTimes(1);
+  });
+});
+
+// PHOTOS-FIND-1 (Ross 10-31: "only one picture per figure"): the pane's picture says how many photos its figure has when it
+// has more than the one shown, at its bottom-left (the zoom control has the right), and a tap opens them
+describe('DetailPane: the photos chip', () => {
+  const rem = FIXTURE_FIGURES.find((f) => f._id === 'fx-rem')!;
+  const local = { ...rem, local: { headId: rem._id, kind: 'owned', sync: 'known', asOf: null, copies: [] } } as never;
+  const fixturePhotos = (count: number) => {
+    setFixtureMode(true);
+    window.history.pushState({}, '', `/?fxphotos=1&fxphotocount=${count}`);
+  };
+  afterEach(() => {
+    setFixtureMode(false);
+    window.history.pushState({}, '', '/');
+  });
+
+  it('stands on the picture for a figure with five photos, says 5 photos, and opens all five', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);
+    const chip = await screen.findByRole('button', { name: '5 photos' });
+    expect(chip.closest('.detail-pane .zoomable')).not.toBeNull();
+    expect(chip).toHaveClass('detail-pane__photos');
+    await user.click(chip);
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    expect(within(sheet).getAllByRole('button', { name: /^Photo \d/ })).toHaveLength(5);
+  });
+
+  it('a tap on it neither zooms the picture nor counts toward a double-tap', async () => {
+    fixturePhotos(3);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);
+    const chip = await screen.findByRole('button', { name: '3 photos' });
+    await user.dblClick(chip);
+    expect(JSON.parse((container.querySelector('.zoomable') as HTMLElement).dataset.zoom!).k).toBe(1);
+  });
+
+  it('says nothing for a figure with one photo', async () => {
+    fixturePhotos(1);
+    renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);
+    await act(flushAll);
+    expect(screen.queryByRole('button', { name: /photos$/ })).toBeNull();
   });
 });

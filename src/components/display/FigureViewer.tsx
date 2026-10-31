@@ -7,6 +7,7 @@ import { getDisplayMeta } from './displayMeta';
 import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
 import { FigureRail, readySections } from './figureSections';
 import { PhotosSheet } from './PhotosSheet';
+import { PhotosChip } from './PhotosChip';
 import type { LocalFigure } from '../../local/figures';
 import { RAIL_INSET_PX, RAIL_WIDTH_PX, railHeightPx } from '../ui/SideRail';
 import { Style } from '../../styles/Style';
@@ -327,6 +328,8 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
         onPhotos={(figure as Partial<LocalFigure>).local === undefined ? null : () => setPhotosOpen(true)}
         onCopies={openCopies}
       />
+      {/* PHOTOS-FIND-1: how many photos the figure has, when more than this one; low on the photo at the left, the rail's opposite */}
+      <PhotosChip headId={(figure as Partial<LocalFigure>).local?.headId} onOpen={() => setPhotosOpen(true)} class="figure-viewer-sheet__photos" />
       <button
         class="figure-viewer-sheet__handle"
         type="button"
@@ -377,6 +380,14 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
           position: absolute;
           right: calc(24px + var(--safe-area-right, 0px));
           bottom: calc(100% + 12px);
+        }
+
+        /* the photos chip: as far in from the left edge as the rail is from the right (the back-swipe), its pill as high above the
+           sheet as the rail's foot */
+        .figure-viewer-sheet__photos {
+          position: absolute;
+          left: calc(${RAIL_INSET_PX}px + var(--safe-area-left, 0px));
+          bottom: 100%;
         }
 
         /* PhotoSwipe's prev/next arrows stand higher than its default middle, and the next arrow stands left of the rail's column

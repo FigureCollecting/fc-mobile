@@ -40,7 +40,9 @@ function Sheet({ figure, onClose }: { figure: Figure; onClose: () => void }) {
   useBackToClose(onClose);
   const [picked, pick] = useState<string | undefined>(undefined);
 
-  const list = photos.data ?? [];
+  const list = photos.data?.photos ?? [];
+  // PHOTOS-FIND-1: the kept list after a failed ask is said to be that, not shown as if it were all of them
+  const refreshFailed = photos.data?.refreshFailed === true;
   const byDefault = list.find((p) => p.primary) ?? list[0];
   // what is in use: the chosen photo while the list names it, else the default
   const inUse = list.find((p) => p.url === chosen) ?? byDefault;
@@ -72,9 +74,10 @@ function Sheet({ figure, onClose }: { figure: Figure; onClose: () => void }) {
             Loading photos
           </p>
         ) : list.length === 0 ? (
-          <p class="photos-sheet__note">No photos of this figure yet.</p>
+          <p class="photos-sheet__note">{refreshFailed ? "No photos saved on this phone; couldn't refresh." : 'No photos of this figure yet.'}</p>
         ) : (
           <>
+            {refreshFailed && <p class="photos-sheet__note">Showing photos saved on this phone; couldn't refresh.</p>}
             <div class="photos-sheet__grid">
               {list.map((photo, i) => {
                 const label = `Photo ${i + 1} of ${list.length}${photo === byDefault ? ', the default' : ''}${photo === inUse ? ', in use' : ''}`;

@@ -6,6 +6,7 @@
  * viewer's `z` key; the control and the key start at the face (FACE_ANCHOR). Whole, a drag is the page's (it scrolls);
  * the maths is imageZoom.ts.
  */
+import type { ComponentChildren } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { Style } from '../../styles/Style';
 import {
@@ -39,9 +40,11 @@ interface ZoomableImageProps {
   /** The picture's class. */
   imgClass?: string;
   onError?: () => void;
+  /** Laid over the picture, still as it zooms: the card's own controls (its photos chip, PHOTOS-FIND-1). A button there is its own, as the zoom control is. */
+  children?: ComponentChildren;
 }
 
-export function ZoomableImage({ src, alt, frameClass = '', imgClass = '', onError }: ZoomableImageProps) {
+export function ZoomableImage({ src, alt, frameClass = '', imgClass = '', onError, children }: ZoomableImageProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   // a new picture starts whole: the zoom belongs to the picture it was made on
@@ -207,6 +210,7 @@ export function ZoomableImage({ src, alt, frameClass = '', imgClass = '', onErro
           {!zoomed && <path d="M10.5 7.5v6" />}
         </svg>
       </button>
+      {children}
       <Style css={styles} />
     </div>
   );

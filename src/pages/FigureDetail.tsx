@@ -20,6 +20,8 @@ import type { Disposal } from '../storage/userStore';
 import { Style } from '../styles/Style';
 import { useBrokenImages } from '../hooks/useBrokenImages';
 import { ZoomableImage } from '../components/display/ZoomableImage';
+import { PhotosSheet } from '../components/display/PhotosSheet';
+import { PhotosChip } from '../components/display/PhotosChip';
 import { GoToIcon } from '../components/display/FigureDetailContent';
 import { GO_TO_FORMER, GO_TO_NOT_SHELVED, requestGoTo } from '../components/display/goToRequest';
 import { splitForShelves } from '../components/display/shelved';
@@ -73,6 +75,8 @@ export function FigureDetail() {
   const actions = useCopyActions();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // PHOTOS-FIND-1: the figure's photos, over the page
+  const [photosOpen, setPhotosOpen] = useState(false);
   const [moving, setMoving] = useState<string[] | null>(null);
   const [disposing, setDisposing] = useState<string[] | null>(null);
   // Each opening of the disposal sheet is a fresh form: one copy's buyer and price never carry to the next.
@@ -160,7 +164,10 @@ export function FigureDetail() {
           </svg>
         </button>
         {image.data && !images.broken(image.data.url) ? (
-          <ZoomableImage frameClass="figure-detail__zoom" imgClass="figure-detail__image" src={image.data.url} alt={figure.name} onError={() => images.failed(image.data!.url)} />
+          <ZoomableImage frameClass="figure-detail__zoom" imgClass="figure-detail__image" src={image.data.url} alt={figure.name} onError={() => images.failed(image.data!.url)}>
+            {/* PHOTOS-FIND-1: how many photos the figure has, when more than this one */}
+            <PhotosChip headId={local.headId} onOpen={() => setPhotosOpen(true)} class="figure-detail__photos" />
+          </ZoomableImage>
         ) : (
           // The placeholder plate (MG-2): no derivative, so no image of any kind.
           <div class="figure-detail__plate" aria-hidden="true">
@@ -259,6 +266,9 @@ export function FigureDetail() {
             </span>
           )}
         </div>
+        <button class="figure-detail__action-btn" type="button" onClick={() => setPhotosOpen(true)}>
+          <span>Photos</span>
+        </button>
         <button class="figure-detail__action-btn" type="button" onClick={() => setEditOpen(true)}>
           <span>Edit</span>
         </button>
@@ -266,6 +276,8 @@ export function FigureDetail() {
           <span>Delete</span>
         </button>
       </div>
+
+      <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} />
 
       <EditFigureSheet open={editOpen} onClose={() => setEditOpen(false)} figure={figure} onSave={handleEditSave} isSaving={updateMutation.isPending} />
 
@@ -357,6 +369,14 @@ const styles = `
     width: 100%;
     height: 100%;
     object-fit: contain;
+  }
+
+  /* PHOTOS-FIND-1: at the picture's bottom-left, above the card's 24 px overlap and 24 px in from the back-swipe edge */
+  .figure-detail__photos {
+    position: absolute;
+    left: 24px;
+    bottom: calc(24px + var(--space-1));
+    z-index: 1;
   }
 
   .figure-detail__close {

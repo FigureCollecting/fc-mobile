@@ -3,6 +3,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { FigureDetailContent, useCopiesAction } from './FigureDetailContent';
 import { FigureRail } from './figureSections';
 import { PhotosSheet } from './PhotosSheet';
+import { PhotosChip } from './PhotosChip';
 import type { LocalFigure } from '../../local/figures';
 import { Style } from '../../styles/Style';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -59,7 +60,10 @@ export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }:
       </div>
 
       {imageUrl ? (
-        <ZoomableImage frameClass="detail-pane__frame" imgClass="detail-pane__image" src={imageUrl} alt={figure.name} onError={() => images.failed(imageUrl)} />
+        <ZoomableImage frameClass="detail-pane__frame" imgClass="detail-pane__image" src={imageUrl} alt={figure.name} onError={() => images.failed(imageUrl)}>
+          {/* PHOTOS-FIND-1: how many photos the figure has, when more than this one */}
+          <PhotosChip headId={(figure as Partial<LocalFigure>).local?.headId} onOpen={() => setPhotosOpen(true)} class="detail-pane__photos" />
+        </ZoomableImage>
       ) : (
         <div class="detail-pane__placeholder" aria-hidden="true" />
       )}
@@ -127,6 +131,14 @@ export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }:
         .detail-pane__image {
           width: 100%;
           object-fit: contain;
+        }
+
+        /* at the picture's bottom-left: the face is high, and the zoom control has the right */
+        .detail-pane__photos {
+          position: absolute;
+          left: var(--space-2);
+          bottom: var(--space-1);
+          z-index: 1;
         }
 
         .detail-pane__placeholder {

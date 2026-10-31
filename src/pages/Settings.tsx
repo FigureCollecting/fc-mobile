@@ -15,6 +15,7 @@ import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
 import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
 import { Style } from '../styles/Style';
 import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
+import { localSession } from '../local/session';
 
 const SYNC_INTERVALS = [
   { value: 'manual', label: 'Manual' },
@@ -223,12 +224,17 @@ export function Settings() {
     localStorage.setItem('fc-sync-interval', val);
   }, []);
 
-  // Shows what now applies to the next request, and whether this browser kept the choice. Off has
-  // nothing more to clear until queued edits carry an id of their own (LGMOB M2 adds that call here).
+  // Shows what now applies to the next request, and whether this browser kept the choice. Off also
+  // takes the ids off every edit on this device not yet answered, any account, signed in or not, a
+  // frozen batch included. setDiagIds(false) marks that clear as owed, and only a clear that commits
+  // (this one, through the engine) removes the mark. If this clear fails or never runs, the engine
+  // completes it at its next start or sync whatever the switch says by then, and no Push carries an id
+  // while the switch is off or the clear is owed.
   const handleDiagIds = useCallback((v: boolean) => {
     setDiagIds(v);
     setDiagIdsShown(diagIdsOn());
     setDiagIdsKept(diagIdsSaved());
+    if (!diagIdsOn()) void localSession.peek()?.engine.clearOriginTraces().catch(() => undefined);
   }, []);
 
   // Clear cache

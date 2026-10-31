@@ -4,7 +4,8 @@
 //   1. a Status probe bounded at 3 s: the reachability test (never navigator.onLine) and the clock
 //      sample the store anchors its HLC to, taken at the midpoint of the round trip;
 //   2. drain: frozen Push batches of at most 100 events, each under one client_id the store keeps,
-//      so a batch whose answer was lost goes again byte for byte and is answered DUPLICATE;
+//      so a batch whose answer was lost goes again byte for byte and is answered DUPLICATE (while the
+//      Diagnostic ids switch is off it goes without its origin_trace ids, which replay identity leaves out);
 //   3. pull: Delta from the stored cursor in pages of 500 until has_more is false, applying a server
 //      transaction only once the event carrying its commit_cursor has arrived (rule 7), and parking
 //      the cursor at that commit. An unreadable cursor (INVALID_ARGUMENT) replays from '' onto an
@@ -30,7 +31,11 @@ import {
   type SyncEvent,
   type SyncService,
 } from '@figurecollecting/fc-api-contract';
+import { diagIdsClearDone, diagIdsClearPending } from '../auth/diagIds';
+import { originTracesMayLeave, withoutOriginTraces } from '../auth/originTraceGate';
 import { kActionTrace, newTraceId } from '../auth/trace';
+import type { LocalDb } from '../storage/localDb';
+import { clearOriginTraces } from '../storage/originTraces';
 import { CARD_SCHEMA_VERSION } from '../storage/records';
 import type { UserStore } from '../storage/userStore';
 
@@ -96,6 +101,8 @@ interface Timers {
 export interface SyncEngineDeps {
   /** The signed-in user's store; asked for on every pass, so a new connection or user is picked up. */
   store: () => Promise<UserStore>;
+  /** This device's local database, every account's rows, signed in or not: the Diagnostic ids clear reaches it here. */
+  localDb?: () => Promise<LocalDb>;
   sync: SyncCalls;
   catalog: CatalogCalls;
   /** True while the session cannot sync (sign in to sync, reload required): nothing goes out. */
@@ -145,6 +152,12 @@ export function classify(err: unknown): FailureKind {
   if (name === 'AuthRequiredError' || name === 'ReloadRequiredError' || name === 'VersionError') return 'paused';
   return 'error';
 }
+
+/** A thrown value's class name alone, never its message: safe to log. */
+const errorName = (err: unknown): string => {
+  const name: unknown = Object(err).name;
+  return typeof name === 'string' ? name : 'unknown';
+};
 
 // A DOMException is not always an Error (jsdom, some engines): read any message it carries.
 const message = (err: unknown): string => {
@@ -203,6 +216,7 @@ export class SyncEngine {
   private stopped = false;
   /** The pass's random trace id: its Status, Push, Delta and GetProducts calls share it, each on its own span. */
   private passTrace: string | undefined;
+  private clearFailureSaid = false;
 
   constructor(deps: SyncEngineDeps) {
     this.deps = deps;
@@ -222,6 +236,10 @@ export class SyncEngine {
     this.deps.window?.addEventListener('offline', this.onOffline);
     this.deps.window?.addEventListener('pageshow', this.onPageShow);
     this.deps.document?.addEventListener('visibilitychange', this.onVisibility);
+    // An off whose clear never committed (Settings before this engine was published, the app closed mid-clear,
+    // a failed write) is completed at every start, signed in or not, and before every drain (below), whatever
+    // the switch says by then: its marker stays until a clear commits.
+    if (!originTracesMayLeave()) void this.clearOriginTraces().catch(() => undefined);
     void this.trigger('start');
   }
 
@@ -280,14 +298,38 @@ export class SyncEngine {
     this.writeTimer = this.timers.setTimeout(() => void this.trigger('write'), WRITE_DELAY_MS);
   }
 
-  /** Make a local edit through the store, then schedule its sync. */
+  /**
+   * Make a local edit through the store, then schedule its sync. One call is one user action: every edit
+   * it mints, in every group, carries one fresh random origin_trace (the store stamps it while diagIdsOn()).
+   */
   async write<T>(fn: (store: UserStore) => Promise<T>): Promise<T> {
     const store = await this.deps.store();
-    const out = await fn(store);
+    const out = await fn(store.withAction(newTraceId()));
     this.notifyWrite();
     await this.refresh(store);
     this.changed();
     return out;
+  }
+
+  /**
+   * The Diagnostic ids switch went off: every outbox row on this device, of any account and in any state, a frozen
+   * batch included, drops its origin_trace (storage/originTraces.ts). Needs no signed-in user or enrolled store.
+   * Once the clear has committed, the off it was owed for is done (its marker goes); a newer off keeps its own.
+   */
+  async clearOriginTraces(): Promise<void> {
+    if (this.deps.localDb === undefined) throw new Error('no local database to clear diagnostic ids from');
+    const mark = diagIdsClearPending();
+    try {
+      await clearOriginTraces(await this.deps.localDb());
+    } catch (err) {
+      // Not silent, and said once: the marker stays and no id goes out until a clear commits.
+      if (!this.clearFailureSaid) {
+        this.clearFailureSaid = true;
+        console.warn(`[sync] the diagnostic ids clear failed (${errorName(err)}); no diagnostic id is sent until it succeeds`);
+      }
+      throw err;
+    }
+    if (mark !== undefined) diagIdsClearDone(mark);
   }
 
   /** Read through the signed-in user's store. */
@@ -424,6 +466,10 @@ export class SyncEngine {
   }
 
   private async drain(store: UserStore): Promise<void> {
+    // While off, or while an off's clear is owed, the idempotent clear runs first. If it fails the drain goes on,
+    // and no Push below carries an id: one may still be on a row from before the off.
+    const cleared = originTracesMayLeave() || (await this.clearOriginTraces().then(() => true, () => false));
+    const strip = () => !cleared || !originTracesMayLeave();
     let probed = false;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const next = await store.nextBatch(PUSH_BATCH);
@@ -435,7 +481,11 @@ export class SyncEngine {
         continue;
       }
       probed = false;
-      const answer = await this.call((signal) => this.deps.sync.push(next.batch.request, this.options(signal)));
+      // Read again at the send: an off after the batch was frozen still sends no id, and the batch without them
+      // is the same batch to the coordinator (C3 leaves origin_trace out of replay identity).
+      const answer = await this.call((signal) =>
+        this.deps.sync.push(strip() ? withoutOriginTraces(next.batch.request) : next.batch.request, this.options(signal)),
+      );
       await store.recordPush(next.batch.clientId, answer);
       // A REJECTED edit owes a fresh Status before the next mint (rule 5); a version_future one is re-minted by it.
       if ((await store.getMeta()).rejected_past !== null) {

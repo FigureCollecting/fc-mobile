@@ -98,10 +98,12 @@ const toEvent = (g: Gen): SyncEvent => ev(g.facet, g.version, g.op, JSON.stringi
 async function replay(scenario: { localEdits: readonly (0 | 1 | 2)[]; pages: number[] }, order: Gen[]) {
   const { db } = await freshDb();
   const store = await openStore(db, { clock: new FakeClock(LOCAL_WALL) });
+  // origin_trace is fresh randomness per action: both replays write as one fixed action, so they mint the same rows.
+  const action = store.withAction('ab'.repeat(16));
   for (const which of scenario.localEdits) {
-    if (which === 0) await write(store, 0, 'status', 'owned');
-    if (which === 1) await write(store, 0, 'note', 'mine');
-    if (which === 2) await write(store, 1, 'score', 7);
+    if (which === 0) await write(action, 0, 'status', 'owned');
+    if (which === 1) await write(action, 0, 'note', 'mine');
+    if (which === 2) await write(action, 1, 'score', 7);
   }
   let i = 0;
   let page = 0;

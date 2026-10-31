@@ -1,13 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { signal } from '@preact/signals';
-import { ufFacetKey } from '@figurecollecting/fc-api-contract';
+import { clone, toBinary } from '@bufbuild/protobuf';
+import { PushRequestSchema, isTraceId, ufFacetKey, type PushRequest } from '@figurecollecting/fc-api-contract';
+import { diagIdsClearPending, diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { NetworkError } from '../../auth/errors';
 import type { AuthStatus } from '../../auth/statusGate';
 import type { LocalDb } from '../../storage/localDb';
 import { UserStore } from '../../storage/userStore';
 import { HELD_STATUSES, IDLE_POLL_MS, NotEnrolledError, createBrowserSync, startBrowserSync, storeProvider, type SyncSession } from '../browser';
 import { FakeCoordinator } from './fakeCoordinator';
-import { DEVICE, OTHER_DEVICE, T0, freshDb } from './harness';
+import { DEVICE, OTHER_DEVICE, T0, freshDb, openStore } from './harness';
 import { headOf, seedCopies } from './engineSupport';
 
 function session(db: LocalDb, status: AuthStatus = 'signed-in') {
@@ -184,5 +186,103 @@ describe('startBrowserSync', () => {
     sync.dispose();
     other.dispose();
     add.mockRestore();
+  });
+});
+
+// LGMOB M2: the Diagnostic ids switch going off reaches the whole device, signed in or not.
+describe('the off clear, signed out', () => {
+  afterEach(() => setDiagIds(diagIdsDefault()));
+
+  // Edits two accounts left on this device: user-a's sent batch (the server recorded it, the answer was lost) and queued edit, user-b's queued edit.
+  async function leftBehind() {
+    const { db } = await freshDb();
+    const server = new FakeCoordinator(T0);
+    const a = await openStore(db);
+    const b = await openStore(db, { sub: 'user-b' });
+    await a.writeFacet(ufFacetKey(headOf(0), 'note'), { note: 'sent' });
+    await a.onStatus(await server.sync.status({}), 0);
+    const sent = await a.nextBatch();
+    if (sent.kind !== 'send') throw new Error(sent.kind);
+    await server.sync.push(sent.batch.request);
+    await a.writeFacet(ufFacetKey(headOf(1), 'note'), { note: 'queued' });
+    await b.writeFacet(ufFacetKey(headOf(2), 'note'), { note: 'theirs' });
+    const old = (await db.getAll('outbox')).map((e) => e.origin_trace!);
+    expect(old.every(isTraceId)).toBe(true);
+    const s = session(db, 'signed-out');
+    s.set.sub(undefined);
+    const sync = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await expect(sync.engine.write((store) => store.writeFacet(ufFacetKey(headOf(0), 'score'), { score: 1 }))).rejects.toBeInstanceOf(NotEnrolledError);
+    return { db, server, s, sync, old, sentRequest: sent.batch.request };
+  }
+
+  async function signIn(s: ReturnType<typeof session>, sync: { engine: { state: { value: unknown } } }) {
+    s.set.sub('user-a');
+    s.status.value = 'signed-in';
+    await vi.waitFor(() => expect(sync.engine.state.value).toMatchObject({ phase: 'idle', pending: 0, reachability: 'reachable' }));
+  }
+
+  const stripped = (req: PushRequest): PushRequest => {
+    const copy = clone(PushRequestSchema, req);
+    for (const e of copy.events) delete e.originTrace;
+    return copy;
+  };
+
+  it("clears every account's edits with no account store, the sent batch included", async () => {
+    const { db, sync } = await leftBehind();
+    setDiagIds(false);
+    await sync.engine.clearOriginTraces();
+    expect((await db.getAll('outbox')).map((e) => [e.sub, e.state, 'origin_trace' in e])).toEqual([
+      ['user-a', 'IN_FLIGHT', false],
+      ['user-a', 'PENDING', false],
+      ['user-b', 'PENDING', false],
+    ]);
+    sync.dispose();
+  });
+
+  it('off while signed out, then on again before signing in: no old id goes out; the sent batch retries with the same events and is a DUPLICATE', async () => {
+    const { server, s, sync, old, sentRequest } = await leftBehind();
+    const from = server.calls.length;
+    setDiagIds(false);
+    await sync.engine.clearOriginTraces();
+    setDiagIds(true);
+    await signIn(s, sync);
+    const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+    expect(toBinary(PushRequestSchema, pushes[0]!)).toEqual(toBinary(PushRequestSchema, stripped(sentRequest)));
+    expect(pushes.flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+    expect(pushes.flatMap((p) => p.events.map((e) => e.facetKey))).toEqual([ufFacetKey(headOf(0), 'note'), ufFacetKey(headOf(1), 'note')]);
+    expect(old.every(isTraceId)).toBe(true);
+    expect((await sync.engine.read((store) => store.listOutbox())).map((e) => e.outcome)).toEqual(['DUPLICATE', 'APPLIED']);
+    sync.dispose();
+  });
+
+  it('an off then on before the next launch, the clear never having run: that start completes it, whatever the switch says', async () => {
+    const { db, server, s, sync } = await leftBehind();
+    sync.dispose();
+    const from = server.calls.length;
+    setDiagIds(false);
+    setDiagIds(true);
+    // The next launch (a reload), signed out and with the switch on: only the marker says a clear is owed.
+    const next = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await vi.waitFor(async () => expect((await db.getAll('outbox')).map((e) => 'origin_trace' in e)).toEqual([false, false, false]));
+    await vi.waitFor(() => expect(diagIdsClearPending()).toBeUndefined());
+    await signIn(s, next);
+    const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+    expect(pushes.flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+    next.dispose();
+  });
+
+  it("P3 at start: an off whose clear never ran (the app closed first) is enforced by the next start, signed out, on every account's rows", async () => {
+    const { db, server, s, sync } = await leftBehind();
+    sync.dispose();
+    const from = server.calls.length;
+    setDiagIds(false);
+    // The next launch, still signed out: nothing called the clear, and no pass can drain.
+    const next = createBrowserSync({ session: s, sync: server.sync, catalog: server.catalog });
+    await vi.waitFor(async () => expect((await db.getAll('outbox')).map((e) => 'origin_trace' in e)).toEqual([false, false, false]));
+    setDiagIds(true);
+    await signIn(s, next);
+    const pushes = server.calls.slice(from).filter((c) => c.rpc === 'push').map((c) => c.request as PushRequest);
+    expect(pushes.flatMap((p) => p.events.map((e) => e.originTrace))).toEqual([undefined, undefined]);
+    next.dispose();
   });
 });

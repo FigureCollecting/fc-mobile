@@ -27,7 +27,9 @@ import type { ProductPhotos } from './useProductPhotos';
 /** The channel every document of the app hears another's completed sync on: one name across builds (so still 'owned'). */
 export const OWNED_SYNC_CHANNEL = 'fc-owned-images';
 
-const isImageAnswer = (key: QueryKey): boolean => key[0] === 'local' && (key[1] === 'kept-images' || key[1] === 'image' || key[1] === 'photos');
+// SEARCH-THUMB-1: a search row's photo (src/hooks/useSearchThumbs.ts) joins them, a map of figures to photos as the case view's is
+const isImageAnswer = (key: QueryKey): boolean =>
+  key[0] === 'local' && (key[1] === 'kept-images' || key[1] === 'image' || key[1] === 'photos' || key[1] === 'search-thumbs');
 const channels = new WeakMap<QueryClient, BroadcastChannel>();
 /** Per QueryClient, the case views (query hashes) told to answer again from what another document's sync kept. */
 const toldOfSync = new WeakMap<QueryClient, Set<string>>();

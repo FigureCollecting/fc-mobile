@@ -813,6 +813,11 @@ export interface CabinetSceneProps {
   onWentTo?: (figureId: string, found: boolean) => void;
   /** CARD-VIEW-1: the figures the wall stands on no shelf (they do not fit), once laid out, so a card can say Go to has nowhere to go. */
   onUnplaced?: (ids: ReadonlySet<string>) => void;
+  /**
+   * FETCH-FIRST: the figures it draws now, then every other it stands, in the order it stands them; told again when either
+   * changes. Its owner (Collection) has the image sync fetch their pictures in that order.
+   */
+  onViewOrder?: (figures: readonly Figure[]) => void;
 }
 
 /** A picture whose figure fits the place it was packed in by this much (mm) still draws there: rounding, not a collision. */
@@ -1013,6 +1018,7 @@ export function CabinetScene({
   goTo = null,
   onWentTo,
   onUnplaced,
+  onViewOrder,
 }: CabinetSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const { frame, measured: frameMeasured } = useFrame(hostRef, frameFallback);
@@ -1671,6 +1677,16 @@ export function CabinetScene({
   const figCap = figureCap(heldCounts, heldKinds, drawnCabs);
   const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]), figCap);
   const onShow = showIdx.map((i) => inDrawn[i]);
+  // FETCH-FIRST: what it draws, then the rest as it stands them, told once per change of either
+  const standing = useMemo(() => packed.cabinets.flatMap((c) => c.surfaces.flatMap((x) => x.items.map((p) => p.item.figure))), [packed]);
+  const inView = onShow.map(({ draw: fig }) => fig.placed.item.figure);
+  const inViewKey = inView.map((f) => f._id).join('\n');
+  const viewOrderOut = useRef(onViewOrder);
+  viewOrderOut.current = onViewOrder;
+  useEffect(() => {
+    const shown = new Set(inView);
+    viewOrderOut.current?.([...inView, ...standing.filter((f) => !shown.has(f))]);
+  }, [inViewKey, standing]);
   // the figures' layers cost at most their budget wherever the camera stands: the farthest from the frame centre drawn coarser
   // SHOULD 29: a name plate is drawn with its figure where its own box draws into the frame and its margin, and is
   // drawn at its figure's px per mm, out of the same budget

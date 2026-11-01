@@ -8,7 +8,7 @@ import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine } from '../../sync/engine';
-import { imagesComplete, useCollectionImages } from '../useCollectionImages';
+import { imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
@@ -37,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   localSession.value = undefined;
+  setFetchOrder([]);
 });
 
 describe('useCollectionImages', () => {
@@ -72,6 +73,24 @@ describe('useCollectionImages', () => {
     await waitFor(() => expect(result.current.get(headOf(2))).toMatchObject({ url: url('e'), maskUrl: url('f') }), { timeout: 3000 });
     expect(result.current.get(headOf(0))).toMatchObject({ url: url('a'), maskUrl: url('b') });
     expect([...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f'].map(url));
+  });
+
+  // FETCH-FIRST (10-31: on a slow link, the case arranged by series, its first figure in view stood as its plate for a minute)
+  it('fetches first the images of the figures the case view told it shows, in its order, then the others; a new order is no new sync (FETCH-FIRST)', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, { products: [listWithMask(0, 'a', 'b'), listWithMask(1, 'c', 'd'), listWithMask(2, 'e', 'f')] }),
+    );
+    await seedFigures(r, [{ title: 'One' }, { title: 'Two' }, { title: 'Three' }]);
+    setFetchOrder([headOf(2), headOf(0)]);
+    const { result, rerender } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(result.current.size).toBe(3), { timeout: 3000 });
+    expect(storage.added.map((q) => q.url)).toEqual(['e', 'f', 'a', 'b', 'c', 'd'].map(url));
+    // the view moved: the next sync's fetches follow it, but the order alone starts none
+    setFetchOrder([headOf(1)]);
+    rerender();
+    await settle();
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
   });
 
   it('asks for the owned figures first, then the ordered, then the wished, each figure once; never one no longer owned', async () => {

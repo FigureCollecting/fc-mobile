@@ -26,7 +26,7 @@ import type { LocalFigure } from '../local/figures';
 import { FormerList } from '../components/collection/FormerList';
 import { COLLECTION_TABS, useFigureListParams, type CollectionTab, type ListFilters } from '../hooks/useFigureListParams';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
-import { imagesComplete, useCollectionImages } from '../hooks/useCollectionImages';
+import { imagesComplete, setFetchOrder, useCollectionImages } from '../hooks/useCollectionImages';
 import { useElementWidth } from '../hooks/useElementWidth';
 import { useAuthPhase } from '../local/useLocal';
 import { applyFilters, holdingOf } from '../utils/facets';
@@ -180,6 +180,8 @@ export function Collection() {
     },
     [collectionImages],
   );
+  // FETCH-FIRST: the image sync fetches the pictures of what the case draws first, then the rest as the case stands them
+  const fetchInCaseOrder = useCallback((shown: readonly Figure[]) => setFetchOrder(shown.map((f) => (f as LocalFigure).local.headId)), []);
   const figures: Figure[] = fixtureMode ? (fixturesQuery.data ?? []) : withImages;
   const isLoading = fixtureMode ? fixturesQuery.isLoading : phase === 'loading' || collectionQuery.isLoading;
   const isError = fixtureMode ? fixturesQuery.isError : collectionQuery.isError;
@@ -357,6 +359,7 @@ export function Collection() {
                     if (!found) showToast(GO_TO_NO_FIT);
                   }}
                   onUnplaced={setUnplaced}
+                  onViewOrder={fixtureMode ? undefined : fetchInCaseOrder}
                 />
               </div>
             ) : (

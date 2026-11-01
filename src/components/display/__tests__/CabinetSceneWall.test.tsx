@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import type { CasePrefs } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { WALL_PRESETS } from '../wallColour';
 
@@ -15,7 +16,7 @@ const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 
 afterEach(cleanup);
 
 const scene = (patch: Partial<CasePrefs> = {}) => {
-  const { container } = render(<CabinetScene figures={getFixtureFigures(6)} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, ...patch }} />);
+  const { container } = render(<CabinetScene figures={getFixtureFigures(6)} onSelect={vi.fn()} prefs={{ ...LEGACY_PREFS, ...patch }} />);
   return container.querySelector<HTMLElement>('.cabinet-scene')!;
 };
 

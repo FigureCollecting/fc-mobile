@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import type { CasePrefs } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { IKEA_DETOLF } from '../cabinetPresets';
 import { project } from '../caseCamera';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
@@ -18,7 +19,7 @@ afterEach(() => cleanup());
 const COVER = { width: 443, height: 418 };
 const OPEN = { width: 870, height: 335 };
 // the steps are about the wall's levels, with its figures sized for no clearance above them (CLEAR-1's default would move shelves out)
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, clearanceMm: 0, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, frameFallback = COVER) {
   const { container } = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frameFallback} />);

@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { atRest } from './sheetRest';
 import { touchDown, touchSwipe, touchTap } from './touch';
@@ -26,6 +27,7 @@ async function openCase(page: Page, size: { width: number; height: number }, que
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
@@ -532,6 +534,7 @@ test('a holding the address names twice is one chip; one it does not know is non
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
   await page.setViewportSize(FOLD8[0]);
   await page.goto('/?layout=case&status=owned|owned|bogus');
   await page.waitForSelector('button.cab-figure');
@@ -546,6 +549,7 @@ async function openCaseFromSettings(page: Page, size: { width: number; height: n
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto('/settings');
   await page.waitForLoadState('networkidle');

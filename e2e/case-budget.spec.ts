@@ -1,5 +1,6 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { boxCorners, project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { wallLayout } from '../src/components/display/packCabinets';
@@ -387,7 +388,7 @@ async function settled(page: Page, size: { width: number; height: number }, stat
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
   // the walls the budget was measured on are packed with no clearance above a figure (the 1 in default, CLEAR-1, would pack them differently)
-  }, { view: state.view ?? 'wall', swipe: state.swipe, clearanceMm: 0, ...(state.pattern ? { pattern: state.pattern } : {}) });
+  }, legacyPrefs({ view: state.view ?? 'wall', swipe: state.swipe, clearanceMm: 0, ...(state.pattern ? { pattern: state.pattern } : {}) }));
   await page.setViewportSize(size);
   const t0 = Date.now();
   await page.goto(`/?layout=case&${wall.query}`);
@@ -615,7 +616,7 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
         localStorage.setItem('onboarding_complete', '1');
         localStorage.setItem('fc-fixture-mode', 'on');
         localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-      }, { view: 'wall', swipe: mode, clearanceMm: 0, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
+      }, legacyPrefs({ view: 'wall', swipe: mode, clearanceMm: 0, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' }));
       await page.setViewportSize(size);
       // a wall long enough for the steps' pages (CF1 a: a wide panel's page holds a dozen cabinets)
       await page.goto('/?layout=case&fx=170');

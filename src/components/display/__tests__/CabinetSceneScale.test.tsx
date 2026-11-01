@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import type { PictureMargins } from '../figureArt';
 import { FIGURE_BUDGET_VIEWPORTS } from '../caseCull';
@@ -41,7 +41,7 @@ interface Box {
 }
 
 function figures(figs: Figure[], extra: Partial<Parameters<typeof CabinetScene>[0]> = {}) {
-  const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} {...extra} />);
+  const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={LEGACY_PREFS} {...extra} />);
   return drawn(container);
 }
 
@@ -113,7 +113,7 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
     let binding = 0;
     for (const view of ['wall', 'cabinet', 'shelf'] as const) {
       for (const frame of [{ width: 870, height: 400 }, { width: 443, height: 454 }, { width: 616, height: 245 }]) {
-        const { container } = render(<CabinetScene figures={wall} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, view }} frameFallback={frame} />);
+        const { container } = render(<CabinetScene figures={wall} onSelect={vi.fn()} prefs={{ ...LEGACY_PREFS, view }} frameFallback={frame} />);
         const host = container.querySelector<HTMLElement>('.cabinet-scene')!;
         const s = Number(host.dataset.pxPerMm);
         const buttons = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure'));
@@ -229,7 +229,7 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
     const spikeAt = figs.findIndex((f) => f._id === 'fx-spike');
     measured.margins.set(figs[spikeAt].imageUrl!, null);
     const onSelect = vi.fn();
-    const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
+    const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={LEGACY_PREFS} />);
     const before = drawn(container);
     const spike = before.find((r) => r.name === figs[spikeAt].name)!;
     expect(spike.grounded).toBe('0');
@@ -240,7 +240,7 @@ describe('CabinetScene: cut-out and masked art packed by what it draws at true s
     expect(others.map((r) => r.grounded)).toEqual(others.map(() => '1'));
     expectOpaqueApart(others, margins);
     measured.margins.clear();
-    rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} />);
+    rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={LEGACY_PREFS} />);
     const after = drawn(container);
     expect(after.map((r) => r.grounded)).toEqual(after.map(() => '1'));
     expectOpaqueApart(after, margins);
@@ -263,7 +263,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
       const spikeUrl = imageFor ? imageFor(figs[4]).maskUrl : figs[4].imageUrl!;
       measured.margins.set(spikeUrl, null);
       const onSelect = vi.fn();
-      const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} imageFor={imageFor} />);
+      const { container, rerender } = render(<CabinetScene figures={figs} onSelect={onSelect} prefs={LEGACY_PREFS} imageFor={imageFor} />);
       const rows = drawn(container);
       const spike = rows.find((r) => r.name === figs[4].name)!;
       expect(spike.grounded).toBe('0');
@@ -283,7 +283,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
         expect(r.picture.querySelector<HTMLElement>('.cab-figure__art')!.style.visibility, r.name).toBe('');
       }
       measured.margins.clear();
-      rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={DEFAULT_CASE_PREFS} imageFor={imageFor} />);
+      rerender(<CabinetScene figures={figs} onSelect={onSelect} prefs={LEGACY_PREFS} imageFor={imageFor} />);
       const read = drawn(container).find((r) => r.name === figs[4].name)!;
       expect(read.grounded).toBe('1');
       expect(read.picture.querySelector('.cab-figure__plate')).toBeNull();
@@ -295,7 +295,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
 
   it("a cut-out's own picture, loading hidden while it is read, tells the reads when it has loaded (a read of it out of time goes again at once); a framed copy, never read, tells nothing", () => {
     const figs = FIXTURE_FIGURES.slice(0, 3);
-    const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
+    const { container } = render(<CabinetScene figures={figs} onSelect={vi.fn()} prefs={LEGACY_PREFS} />);
     const cutouts = Array.from(container.querySelectorAll<HTMLImageElement>('img.cab-figure__art--cutout'));
     expect(cutouts).toHaveLength(3);
     // (by figure: the case stands them in its arrangement, PACK1)
@@ -306,7 +306,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
     cleanup();
     measured.loaded.length = 0;
     const framed = { ...FIXTURE_FIGURES[0], _id: 'framed', imageUrl: '/plain.jpg' } as Figure;
-    const scene = render(<CabinetScene figures={[framed]} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
+    const scene = render(<CabinetScene figures={[framed]} onSelect={vi.fn()} prefs={LEGACY_PREFS} />);
     fireEvent.load(scene.container.querySelector('.cab-figure__frame img')!);
     expect(measured.loaded).toEqual([]);
   });
@@ -318,7 +318,7 @@ describe('CabinetScene: a picture not read yet is never drawn: its plate stands 
     const bare = { ...wide(FIXTURE_FIGURES[4]), _id: 'bare', name: 'No picture', imageUrl: undefined } as Figure;
     const ref = (f: Figure) => (f._id === reading._id ? { url: '/clean/r.png', maskUrl: '/mask/r.png', width: 400, height: 800, bottomMarginFrac: 0.1, contactBand: { centerXFrac: 0.2, widthFrac: 0.4 } } : undefined);
     measured.margins.set('/mask/r.png', null);
-    const { container } = render(<CabinetScene figures={[reading, bare]} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
+    const { container } = render(<CabinetScene figures={[reading, bare]} onSelect={vi.fn()} prefs={LEGACY_PREFS} imageFor={ref} />);
     const rows = drawn(container);
     const [a, b] = [rows.find((r) => r.name === reading.name)!, rows.find((r) => r.name === 'No picture')!];
     expect(a.grounded).toBe('0');
@@ -348,7 +348,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
   ]) {
     it(`clear ${sides.left} left, ${sides.right} right: the figure centred on its tap box, never over a neighbour; its shadow under it`, () => {
       measured.fallback = { top: 0.2, bottom: 0.03, ...sides };
-      const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} />);
+      const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.map(unlabelled)} onSelect={vi.fn()} prefs={LEGACY_PREFS} />);
       const rows = drawn(container);
       expect(rows).toHaveLength(FIXTURE_FIGURES.length);
       for (const r of rows) {
@@ -370,7 +370,7 @@ describe('CabinetScene: a figure off-centre in its picture stands centred on its
     measured.fallback = { top: 0.2, bottom: 0.03, left: 0.7, right: 0.1 };
     // the figure stands in columns 0.7..0.9 of its picture, its base centred under it
     const ref = (f: Figure) => ({ url: `/clean/${f._id}.png`, maskUrl: `/mask/${f._id}.png`, width: 600, height: 800, contactBand: { centerXFrac: 0.8, widthFrac: 0.15 } });
-    const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.slice(0, 3).map(unlabelled)} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} imageFor={ref} />);
+    const { container } = render(<CabinetScene figures={FIXTURE_FIGURES.slice(0, 3).map(unlabelled)} onSelect={vi.fn()} prefs={LEGACY_PREFS} imageFor={ref} />);
     for (const r of drawn(container)) {
       const shadow = span(r.picture.closest('button')!.previousElementSibling as HTMLElement);
       expect(shadow.x + shadow.w / 2, r.name).toBeCloseTo((r.tap.x0 + r.tap.x1) / 2, 4);

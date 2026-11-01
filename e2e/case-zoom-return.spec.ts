@@ -1,5 +1,6 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchPinch } from './touch';
 
@@ -135,11 +136,11 @@ const emptyInView = (page: Page): Promise<number[]> =>
   });
 
 async function openRack(page: Page, size: { width: number; height: number }): Promise<void> {
-  await page.addInitScript((pattern) => {
+  await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', swipe: 'camera', pattern }));
-  }, RACK);
+    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+  }, legacyPrefs({ view: 'wall', swipe: 'camera', pattern: RACK }));
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=170&labels=1&fxbranch=masked');
   await ready(page);

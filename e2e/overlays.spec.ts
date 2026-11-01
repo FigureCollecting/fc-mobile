@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { pinLegacyCamera } from './legacyCamera';
 import { atRest } from './sheetRest';
 
 /**
@@ -19,6 +20,7 @@ async function seedFixtureMode(page: Page) {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
 }
 
 test.describe('overlay layout and stacking (real browser, fixture mode)', () => {

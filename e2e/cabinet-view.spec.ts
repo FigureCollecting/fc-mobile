@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, SHOT_VIEWPORTS } from './caseViewports';
 import { atRest, takesTap } from './sheetRest';
 import { touchPinch } from './touch';
@@ -36,8 +37,8 @@ async function openCase(page: Page, size: { width: number; height: number }, que
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    if (Object.keys(p).length > 0) localStorage.setItem('fc-case-prefs', JSON.stringify(p));
-  }, prefs);
+    localStorage.setItem('fc-case-prefs', JSON.stringify(p));
+  }, legacyPrefs(prefs));
   await page.setViewportSize(size);
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');

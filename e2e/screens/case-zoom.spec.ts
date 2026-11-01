@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { expect, test } from '../fixtures';
+import { pinLegacyCamera } from '../legacyCamera';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
@@ -111,6 +112,7 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+  await pinLegacyCamera(context);
   await stack.edge.clearFaults();
   await stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });

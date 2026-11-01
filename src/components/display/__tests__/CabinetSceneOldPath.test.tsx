@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
+import type { CasePrefs } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
@@ -44,7 +45,7 @@ afterEach(() => {
 
 function script(patch: Partial<CasePrefs>): string[] {
   const figures = getFixtureFigures(40);
-  const prefs = (p: Partial<CasePrefs>): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch, ...p });
+  const prefs = (p: Partial<CasePrefs>): CasePrefs => ({ ...LEGACY_PREFS, ...patch, ...p });
   const props = { figures, onSelect: vi.fn(), frameFallback: FRAME };
   const { container, rerender } = render(<CabinetScene {...props} prefs={prefs({})} />);
   const host = () => container.querySelector('.cabinet-scene') as HTMLElement;
@@ -101,7 +102,7 @@ const SCRIPT_MS = 20_000;
 
 describe('the old path, Free camera off: the scene\'s DOM is today\'s at every step', () => {
   it('prefs with no freeCamera', () => {
-    const got = script({});
+    const got = script({ freeCamera: undefined });
     if (process.env.PRINT_GOLDEN) console.log(JSON.stringify(got));
     expect(got).toEqual(GOLDEN);
   }, SCRIPT_MS);

@@ -298,7 +298,8 @@ async function pinchAbout(page: Page, m: { x: number; y: number }, from: number,
 
 /**
  * A point of the frame where a tap lands on no figure and no control: the room, with no figure within a finger's
- * reach of it either (Chrome moves a touch onto a button near it).
+ * reach of it either (Chrome moves a touch onto a button near it). Searched across nearly the frame's whole width: in
+ * the case's default order (PACK1, by series) the cover's frame zoomed 2.5x about its middle has none in its middle band.
  */
 async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
   const frame = await frameBox(page);
@@ -312,7 +313,7 @@ async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
     const reach = 40;
     const around = [[0, 0], [-reach, 0], [reach, 0], [0, -reach], [0, reach], [-reach, -reach], [reach, -reach], [-reach, reach], [reach, reach]];
     for (let fy = 0.08; fy < 0.95; fy += 0.04) {
-      for (let fx = 0.3; fx < 0.75; fx += 0.04) {
+      for (let fx = 0.04; fx < 0.97; fx += 0.04) {
         const x = f.x + f.width * fx;
         const y = f.y + f.height * fy;
         if (around.every(([dx, dy]) => room(x + dx!, y + dy!))) return { x, y };

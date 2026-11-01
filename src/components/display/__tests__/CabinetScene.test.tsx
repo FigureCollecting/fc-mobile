@@ -70,7 +70,17 @@ describe('CabinetScene: faithful cabinets from the profile (CASE-CABINET)', () =
     const cabs = host.querySelectorAll('.cab');
     expect(cabs).toHaveLength(1);
     expect((cabs[0] as HTMLElement).dataset.profile).toBe('ikea-klingsbo');
-    expect(figureButtons(host).map((b) => b.getAttribute('aria-label'))).toEqual(FIXTURE_FIGURES.map((f) => f.name));
+    // in the case's arrangement (PACK1: series, then scale, then name): Dark Angel Olivia, too tall for a stock shelf, on
+    // the top, read first; then the shelves, Cowboy Bebop to Vocaloid
+    expect(figureButtons(host).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Dark Angel Olivia',
+      'Spike Spiegel',
+      'Ryuko Matoi',
+      'Madoka Kaname',
+      'Rem',
+      'Nendoroid Hatsune Miku',
+      'Hatsune Miku: Deep Sea Girl',
+    ]);
   });
 
   it('draws the cabinet as an object: posts, splayed legs, glass shelves, an open shelf, the top', () => {
@@ -115,7 +125,9 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
   it('a fixture is a cut-out carrying its own alpha', () => {
     const { host } = scene(FIXTURE_FIGURES);
     for (const b of figureButtons(host)) expect(b.dataset.art).toBe('cutout');
-    expect(host.querySelector('.cab-figure img')?.getAttribute('src')).toBe(FIXTURE_FIGURES[0].imageUrl);
+    // (the case stands them in its arrangement, PACK1: the first drawn is the figure its button names)
+    const first = figureButtons(host)[0];
+    expect(first.querySelector('img')?.getAttribute('src')).toBe(FIXTURE_FIGURES.find((f) => f.name === first.getAttribute('aria-label'))!.imageUrl);
   });
 
   it('an image with a mask is composited at display time (CSS mask-image), never cut out', () => {
@@ -191,7 +203,9 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     expect(scene(FIXTURE_FIGURES).host.querySelectorAll('.cab-plate')).toHaveLength(0);
     cleanup();
     const { host } = scene(FIXTURE_FIGURES, {}, { labels: true });
-    expect(Array.from(host.querySelectorAll('.cab-plate')).map((p) => p.textContent)).toEqual(FIXTURE_FIGURES.map((f) => f.name));
+    // one plate per figure, in the order the case stands them (its arrangement, PACK1)
+    expect(Array.from(host.querySelectorAll('.cab-plate')).map((p) => p.textContent)).toEqual(figureButtons(host).map((b) => b.getAttribute('aria-label')));
+    expect(host.querySelectorAll('.cab-plate')).toHaveLength(FIXTURE_FIGURES.length);
   });
 
   it('a nameplate is never wider than its figure: narrow figures (Nendoroids) keep their plates apart', () => {
@@ -228,7 +242,8 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
 describe('CabinetScene: taps and the CC4 swipe toggle', () => {
   it('a tap opens the figure (onSelect with its list index)', () => {
     const { host, onSelect } = scene(FIXTURE_FIGURES);
-    fireEvent.click(figureButtons(host)[3]);
+    // (the case stands it where its arrangement does, PACK1; the tap still gives its place in the list)
+    fireEvent.click(figureButtons(host).find((b) => b.getAttribute('aria-label') === FIXTURE_FIGURES[3].name)!);
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_FIGURES[3], 3);
   });
 
@@ -399,7 +414,12 @@ describe('CabinetScene: views and navigation', () => {
         const drawn = host.querySelectorAll('.cab').length;
         expect(drawn, `${swipe} ${view}`).toBeGreaterThan(0);
         expect(drawn, `${swipe} ${view}`).toBeLessThanOrEqual(8);
-        expect(figureButtons(host).length, `${swipe} ${view}`).toBeLessThanOrEqual(8 * 16);
+        // only the figures of the cabinets drawn (PACK1: the arrangement packs a series' copies close, some 40 to a
+        // cabinet, so a count per cabinet bounds nothing)
+        const order = JSON.parse(host.dataset.order!) as string[][];
+        const held = new Set(Array.from(host.querySelectorAll<HTMLElement>('.cab')).flatMap((c) => order[Number(c.dataset.index)]));
+        expect(held.size, `${swipe} ${view}`).toBeLessThan(lots.length / 4);
+        for (const b of figureButtons(host)) expect(held.has(b.dataset.figureId!), `${swipe} ${view} ${b.dataset.figureId}`).toBe(true);
         cleanup();
       }
     }
@@ -1219,8 +1239,9 @@ describe('CabinetScene: the numbers the e2e checks the drawing against', () => {
       expect(w.surface - w.y0).toBeLessThan(0.5 * (w.y1 - w.y0));
     }
     const surfaces = new Set(figureButtons(host).map((b) => JSON.parse(b.dataset.world!).surface));
-    // the seven fixtures, packed by their labelled widths, stand on the KLINGSBO's top and three of its glass shelves
-    expect([...surfaces].sort((a, b) => a - b)).toEqual([969, 1243, 1519, 1800]);
+    // the seven fixtures, packed by their labelled widths in the case's arrangement (PACK1: a series whole on a shelf), stand
+    // on the KLINGSBO's top and four of its glass shelves
+    expect([...surfaces].sort((a, b) => a - b)).toEqual([694, 969, 1243, 1519, 1800]);
   });
 
   it('publishes the wall: each cabinet\'s box, feet and body (x0, x1, its height, back and front, mm)', () => {

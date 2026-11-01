@@ -25,6 +25,7 @@ import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng } from '../paintCheck';
 import { SHOT_VIEWPORTS } from '../caseViewports';
+import { arrangeCase } from '../caseArrange';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
@@ -375,7 +376,9 @@ test('(a) once its sync has kept them, every figure in view with an image stands
 
 /**
  * The first dozen figures' images arrive at once, every later one takes 2.5 s (a slow link, never a stalled
- * one). The case's first view holds the lowest head ids, which the sync fetches first: so it shows both.
+ * one). The case's first view holds the lowest head ids, which the sync fetches first: so it shows both. That is
+ * the case arranged by date added, the list's own order (PACK1): by series, the default, the wall opens on figures
+ * from anywhere in the sync's order, (b) finds none of the first dozen in view, and (c) stays until one comes.
  */
 const SLOW_FROM = 12;
 const slowLink = (head: string | undefined): Promise<void> =>
@@ -384,6 +387,7 @@ const slowLink = (head: string | undefined): Promise<void> =>
 test('(b) on a slow link, while its sync is still fetching, the figures it kept already stand as pictures', async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
+  await arrangeCase(context, 'date-added');
   const served = await imageHost(context, slowLink);
   await imageLists(page);
   await openCase(page);
@@ -407,6 +411,7 @@ test('(b) on a slow link, while its sync is still fetching, the figures it kept 
 test('(c) a case view left part way shows what its sync kept the moment it opens again, and its sync carries on with only what is missing', async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
+  await arrangeCase(context, 'date-added');
   // while it is away and until released, the image host answers nothing; once released, everything at once
   let held: Promise<void> | undefined;
   let release = () => {};

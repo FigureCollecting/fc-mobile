@@ -50,10 +50,13 @@ test.beforeEach(({}, testInfo) => {
 });
 
 /**
- * The loaded middle of the wall: a picture two swipes in draws at least this many figures; the sideways cover's
- * frame is 143 px tall, so the tops and the open shelves of its five cabinets lie past it and its margin (55 drawn).
+ * The loaded middle of the wall: a picture two swipes in draws at least this many figures in each cabinet it draws. The
+ * case stands the fixtures in its arrangement (PACK1, by series): two swipes in stand Kill la Kill's 170 Ryuko Matoi
+ * copies, 339 mm wide, one to a shelf: five to a KLINGSBO (35 drawn in the cover's seven cabinets, 75 in the sideways
+ * cover's fifteen, 70 in the open panel's fourteen, 40 in the rotated panel's eight). In the list's order, before PACK1,
+ * the floor was 60 figures (50 on the sideways cover).
  */
-const MID_FIGURES = (panel: string) => (panel === 'fold8-cover-sideways' ? 50 : 60);
+const MID_FIGURES_PER_CABINET = 5;
 /** The scene's composited layers, in viewports of pixels at the device pixel ratio. */
 const CEILING_VIEWPORTS = 3;
 /** What the case may draw past the frame on each side, as a share of the frame. */
@@ -588,7 +591,7 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
       // the far end of the wall may stand empty; as it opens and in its middle figures are drawn
       if (state.swipes < 40) expect(scene.figures, 'figures are drawn').toBeGreaterThan(0);
       else expect(scene.cabinets, 'cabinets are drawn').toBeGreaterThan(0);
-      if (state.swipes === 2) expect.soft(scene.figures, 'the loaded middle of the wall').toBeGreaterThanOrEqual(MID_FIGURES(size.name));
+      if (state.swipes === 2) expect.soft(scene.figures, 'the loaded middle of the wall').toBeGreaterThanOrEqual(MID_FIGURES_PER_CABINET * scene.cabinets);
       budgetChecks(m, state);
     });
 

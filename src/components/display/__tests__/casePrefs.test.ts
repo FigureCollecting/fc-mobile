@@ -26,6 +26,7 @@ describe('case prefs, kept per device (CC14)', () => {
       showEstimated: false,
       wall: 'cream',
       wallCustom: '#d8d2c4',
+      arrange: 'series-scale-name',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -42,6 +43,7 @@ describe('case prefs, kept per device (CC14)', () => {
       showEstimated: true,
       wall: 'custom',
       wallCustom: '#336699',
+      arrange: 'scale-name',
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -170,3 +172,43 @@ describe('the back wall colour (WALL-COLOUR-1)', () => {
   });
 });
 
+
+// PACK1 (Ross 10-26): the order the case stands its figures in, per device, apart from the list's sort
+describe('the case arrangement (PACK1)', () => {
+  it('a fresh device arranges by series, then scale, then name; so does a record from before it existed', () => {
+    expect(readCasePrefs().arrange).toBe('series-scale-name');
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', swipe: 'pan' }));
+    expect(readCasePrefs()).toMatchObject({ view: 'shelf', swipe: 'pan', arrange: 'series-scale-name' });
+  });
+
+  it('each of the six is kept once chosen', () => {
+    for (const arrange of ['series-scale-name', 'scale-series-name', 'series-name', 'scale-name', 'name', 'date-added'] as const) {
+      writeCasePrefs({ arrange });
+      expect(readCasePrefs().arrange, arrange).toBe(arrange);
+    }
+  });
+
+  it('an explicit choice survives later writes of the other prefs, the default included', () => {
+    writeCasePrefs({ arrange: 'date-added' });
+    writeCasePrefs({ swipe: 'pan' });
+    writeCasePrefs({ freeCamera: true });
+    writeCasePrefs({ showEstimated: false });
+    expect(readCasePrefs().arrange).toBe('date-added');
+    writeCasePrefs({ arrange: 'series-scale-name' });
+    writeCasePrefs({ view: 'cabinet' });
+    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).arrange, 'the default, chosen, is stored too').toBe('series-scale-name');
+  });
+
+  it('the hook keeps it across its own later updates', () => {
+    const { result } = renderHook(() => useCasePrefs());
+    act(() => result.current[1]({ arrange: 'name' }));
+    act(() => result.current[1]({ wall: 'seafoam' }));
+    expect(result.current[0].arrange).toBe('name');
+    expect(readCasePrefs()).toMatchObject({ arrange: 'name', wall: 'seafoam' });
+  });
+
+  it.each([['Name'], ['activity'], [''], [7], [null], [['name']]])('reads %j as the default', (bad) => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ arrange: bad, view: 'shelf' }));
+    expect(readCasePrefs()).toMatchObject({ arrange: 'series-scale-name', view: 'shelf' });
+  });
+});

@@ -1,7 +1,10 @@
 /**
  * The View tab's card: how the case looks, kept on this device (CC14): the
  * wall's colour (WALL-COLOUR-1), which cabinets line the
- * wall, the room's ceiling (CC9, which limits what may stand on a top), the
+ * wall, the order they stand the figures in (PACK1, Ross 10-26: six orders,
+ * apart from the list's sort; it sits with the cabinets it fills, not in the
+ * header's Case menu, which holds only how you look at the case), the room's
+ * ceiling (CC9, which limits what may stand on a top), the
  * clearance every compartment keeps above a figure (CLEAR-1) and which side the
  * tabs sit on. What a sideways swipe does (CC4: walk the
  * camera or pan the wall) moved to the header, beside the display modes
@@ -18,6 +21,7 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { Style } from '../../styles/Style';
 import { CLEARANCE_MAX_MM, CLEARANCE_STEP_MM, inchesToMm } from './cabinetProfile';
 import { IN_MM } from './caseCamera';
+import { ARRANGEMENT_LABEL, CASE_ARRANGEMENTS } from './caseArrangement';
 import { WALL_PATTERNS, type CasePrefs } from './casePrefs';
 import { WALL_PRESETS, swatchStyle } from './wallColour';
 
@@ -79,6 +83,17 @@ export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, 
               </label>
             );
           })}
+        </fieldset>
+
+        {/* PACK1 (Ross 10-26): the order the case stands its figures in; the list keeps its own sort */}
+        <fieldset class="case-card__group">
+          <legend>Arrange by</legend>
+          {CASE_ARRANGEMENTS.map((arrange) => (
+            <label key={arrange} class="case-card__choice">
+              <input type="radio" name="case-arrange" checked={prefs.arrange === arrange} onChange={() => onChange({ arrange })} />
+              {ARRANGEMENT_LABEL[arrange]}
+            </label>
+          ))}
         </fieldset>
 
         <label class="case-card__ceiling">

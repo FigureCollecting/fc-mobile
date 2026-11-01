@@ -18,6 +18,7 @@ import {
   KEPT_SYNC_WAIT_MS,
   WITHHELD_CACHE,
   fetchImageLists,
+  keepChosenPhotos,
   keptImage,
   keptImages,
   primaryImage,
@@ -165,6 +166,91 @@ describe('a chosen photo', () => {
     const fetchLists = lists({ h1: [img('a', { primary: true }), img('b')], h2: [img('c', { primary: true }), img('d')] });
     await syncKeptImages(['h1', 'h2'], fetchLists, { storage, choices: choose('h1', 'b') });
     expect(await owned(storage)).toEqual([url('a'), url('b'), url('c')].sort());
+  });
+});
+
+describe('keepChosenPhotos (PICK-CASE-1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  const choose = (head: string, c: string) => new Map([[head, url(c)]]);
+  /** A device whose last sync kept h1's list (a: the primary with mask e; b: plain; c: with mask f) and the primary's bytes. */
+  const synced = async (fetcher?: (request: Request) => Promise<Response>) => {
+    const storage = device(fetcher);
+    await syncKeptImages(['h1'], lists({ h1: [img('a', { primary: true, mask: mask('e') }), img('b'), img('c', { mask: mask('f') })] }), { storage });
+    storage.added.length = 0;
+    return storage;
+  };
+
+  it('fetches a chosen photo with no cut-out from the kept list, as the sync fetches, without reading any list: keptImages then answers it', async () => {
+    const storage = await synced();
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'b'), { storage })).toBe(1);
+    expect(storage.added.map((r) => [r.url, r.mode, r.credentials, r.cache])).toEqual([[url('b'), 'cors', 'omit', 'no-store']]);
+    expect(await keptImages(['h1'], storage, choose('h1', 'b'))).toEqual(new Map([['h1', expect.objectContaining({ url: url('b') })]]));
+    expect((await keptImages(['h1'], storage, choose('h1', 'b'))).get('h1')?.maskUrl).toBeUndefined();
+  });
+
+  it('fetches a chosen photo\'s mask with it, and the next sync keeps both without fetching them again', async () => {
+    const storage = await synced();
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage })).toBe(2);
+    expect((await keptImages(['h1'], storage, choose('h1', 'c'))).get('h1')).toMatchObject({ url: url('c'), maskUrl: url('f') });
+    storage.added.length = 0;
+    const fetchLists = lists({ h1: [img('a', { primary: true, mask: mask('e') }), img('b'), img('c', { mask: mask('f') })] });
+    expect(await syncKeptImages(['h1'], fetchLists, { storage, choices: choose('h1', 'c') })).toMatchObject({ added: 0, failed: 0 });
+    expect(owned(storage)).toEqual([url('a'), url('c'), url('e'), url('f')].sort());
+  });
+
+  it('fetches nothing already on the device, nothing for no choice, and nothing for a figure not asked about', async () => {
+    const storage = await synced();
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'a'), { storage })).toBe(0);
+    expect(await keepChosenPhotos(['h1'], new Map(), { storage })).toBe(0);
+    expect(await keepChosenPhotos(['h2'], choose('h1', 'b'), { storage })).toBe(0);
+    expect(storage.added).toEqual([]);
+  });
+
+  it('leaves to the sync a figure with no kept list and a choice its kept list does not name', async () => {
+    const storage = await synced();
+    expect(await keepChosenPhotos(['h2'], choose('h2', 'b'), { storage })).toBe(0);
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'z'), { storage })).toBe(0);
+    expect(storage.added).toEqual([]);
+  });
+
+  it('never fetches a withheld photo or its mask, and fetches a photo whose mask is withheld without it', async () => {
+    const storage = await synced();
+    const tomb = await storage.open(WITHHELD_CACHE);
+    await tomb.put(withheldKey(url('c')), new Response(null));
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage })).toBe(0);
+    await tomb.delete(withheldKey(url('c')));
+    await tomb.put(withheldKey(url('f')), new Response(null));
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage })).toBe(1);
+    expect(storage.added.map((r) => r.url)).toEqual([url('c')]);
+  });
+
+  it('counts a fetch that fails as not kept and goes on to the next, never throwing: the sync fetches it later', async () => {
+    const storage = await synced(async (r) => (r.url === url('c') ? new Response('gone', { status: 404 }) : new Response('img')));
+    const choices = new Map([['h1', url('c')]]);
+    expect(await keepChosenPhotos(['h1'], choices, { storage })).toBe(1);
+    expect(owned(storage)).toContain(url('f'));
+    expect(owned(storage)).not.toContain(url('c'));
+  });
+
+  it('starts no fetch once its signal aborts, keeping what it fetched', async () => {
+    const stop = new AbortController();
+    // the case view goes away while the photo comes (this network answers it all the same); its mask is not asked
+    const storage = await synced(async (r) => {
+      if (r.url === url('c')) stop.abort();
+      return new Response('img');
+    });
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage, signal: stop.signal })).toBe(1);
+    expect(storage.added.map((r) => r.url)).toEqual([url('c')]);
+    expect(owned(storage)).not.toContain(url('f'));
+  });
+
+  it('does nothing where the browser has no Cache API, and reads the browser\'s caches when given none', async () => {
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'b'), { storage: undefined })).toBe(0);
+    const storage = await synced();
+    vi.stubGlobal('caches', storage);
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'b'))).toBe(1);
   });
 });
 

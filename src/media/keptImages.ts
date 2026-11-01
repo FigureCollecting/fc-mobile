@@ -364,6 +364,85 @@ function joined(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+/**
+ * One image into the owned cache, fetched as the sync fetches each: CORS, no credentials, past the HTTP cache, and kept only
+ * when the answer is ok with a body, once all of it arrived. Aborted when `signal` aborts, or when it has received nothing
+ * (its headers, a byte of its body) for KEPT_SYNC_STEP_MS, `onStall` told first. Throws when nothing was kept.
+ */
+async function fetchKept(media: Cache, address: string, signal: AbortSignal | undefined, onStall: () => void): Promise<void> {
+  const step = new AbortController();
+  let quiet: ReturnType<typeof setTimeout> | undefined;
+  const heard = () => {
+    clearTimeout(quiet);
+    quiet = setTimeout(() => {
+      onStall();
+      step.abort(new DOMException('the image link sent nothing in time', 'TimeoutError'));
+    }, KEPT_SYNC_STEP_MS);
+  };
+  const stop = () => step.abort(signal?.reason);
+  signal?.addEventListener('abort', stop, { once: true });
+  try {
+    heard();
+    const request = new Request(address, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal: step.signal });
+    const res = await fetch(request);
+    heard();
+    if (!res.ok || res.body === null) throw new TypeError(`the image link answered ${res.status} without an image`);
+    const chunks: Uint8Array[] = [];
+    const reader = res.body.getReader();
+    for (let read = await reader.read(); !read.done; read = await reader.read()) {
+      heard();
+      chunks.push(read.value);
+    }
+    // All of it arrived: a slow write here is not a stalled link.
+    clearTimeout(quiet);
+    await media.put(request, new Response(joined(chunks), { status: res.status, statusText: res.statusText, headers: res.headers }));
+  } finally {
+    clearTimeout(quiet);
+    signal?.removeEventListener('abort', stop);
+  }
+}
+
+/**
+ * PICK-CASE-1 (Ross 10-31: he chose a photo with no cut-out, and the case went on drawing the default cut-out): the photo the
+ * user chose for each of these figures, and its mask, fetched into the owned cache now when their bytes are not on the device,
+ * from the list the device kept for the figure. A choice so reaches the case within an image fetch, never only through a sync
+ * that reads every kept figure's list again first: that takes tens of seconds for a large collection, and one list call that
+ * fails (a 503) ends it before it fetches anything. A figure with no kept list, a choice its kept list does not name, and an
+ * address a sync withheld are left to the sync. The sync keeps what this fetched (the chosen photo and its mask are in what it
+ * keeps), so nothing is fetched twice. Not under the sync's lock: another document's sync that read the choices before this one
+ * may evict what it fetched, which the sync this document runs next fetches again. Answers how many it kept.
+ */
+export async function keepChosenPhotos(
+  heads: readonly string[],
+  choices: PhotoChoices,
+  options: { storage?: CacheStorage | undefined; signal?: AbortSignal } = {},
+): Promise<number> {
+  const storage = 'storage' in options ? options.storage : browserCaches();
+  const chosen = heads.filter((h) => choices.has(h));
+  if (storage === undefined || chosen.length === 0) return 0;
+  const records = await storage.open(IMAGE_LISTS_CACHE);
+  const media = await storage.open(OWNED_MEDIA_CACHE);
+  const tomb = await storage.open(WITHHELD_CACHE);
+  let kept = 0;
+  for (const head of chosen) {
+    const image = ((await readList(records, head)) ?? []).find((i) => i.url === choices.get(head));
+    // a photo a sync withheld is not shown: neither it nor its mask is fetched
+    if (image === undefined || (await tomb.match(withheldKey(image.url))) !== undefined) continue;
+    for (const address of addressesOf([image])) {
+      if (options.signal?.aborted === true) return kept;
+      // here already, or a withheld mask (the photo is shown without it)
+      if ((await media.match(address, IGNORE_VARY)) !== undefined || (await tomb.match(withheldKey(address))) !== undefined) continue;
+      try {
+        await fetchKept(media, address, options.signal, () => {});
+        kept += 1;
+      } catch {
+        // not kept now: the sync fetches it
+      }
+    }
+  }
+  return kept;
+}
+
 async function bringToKept(
   keptHeads: readonly string[],
   fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
@@ -524,40 +603,13 @@ async function bringToKept(
   let stalled = false;
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
     for (let next = take(); next !== undefined && options.signal?.aborted !== true && !stalled; next = take()) {
-      const step = new AbortController();
-      let quiet: ReturnType<typeof setTimeout> | undefined;
-      const heard = () => {
-        clearTimeout(quiet);
-        quiet = setTimeout(() => {
-          stalled = true;
-          step.abort(new DOMException('the image link sent nothing in time', 'TimeoutError'));
-        }, KEPT_SYNC_STEP_MS);
-      };
-      const stop = () => step.abort(options.signal?.reason);
-      options.signal?.addEventListener('abort', stop, { once: true });
       try {
-        heard();
-        const request = new Request(next, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal: step.signal });
-        const res = await fetch(request);
-        heard();
-        if (!res.ok || res.body === null) throw new TypeError(`the image link answered ${res.status} without an image`);
-        const chunks: Uint8Array[] = [];
-        const reader = res.body.getReader();
-        for (let read = await reader.read(); !read.done; read = await reader.read()) {
-          heard();
-          chunks.push(read.value);
-        }
-        // All of it arrived: a slow write here is not a stalled link.
-        clearTimeout(quiet);
-        await media.put(request, new Response(joined(chunks), { status: res.status, statusText: res.statusText, headers: res.headers }));
+        await fetchKept(media, next, options.signal, () => (stalled = true));
         result.added += 1;
         have.add(next);
         tellKept();
       } catch {
         result.failed += 1;
-      } finally {
-        clearTimeout(quiet);
-        options.signal?.removeEventListener('abort', stop);
       }
     }
   });

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { DEFAULT_CASE_PREFS } from '../casePrefs';
+import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
 import { liftOutShelves } from '../cabinetProfile';
 import { __clearAlphaMarginCache } from '../alphaMargin';
@@ -28,7 +28,7 @@ const TALL: Record<string, readonly [number, number]> = { [IKEA_KLINGSBO.id]: [2
 
 function scene(figures: Figure[], pattern: string) {
   const { container } = render(
-    <CabinetScene figures={figures} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, pattern, view: 'wall' }} frameFallback={{ width: 870, height: 900 }} />,
+    <CabinetScene figures={figures} onSelect={vi.fn()} prefs={{ ...LEGACY_PREFS, pattern, view: 'wall' }} frameFallback={{ width: 870, height: 900 }} />,
   );
   return container.querySelector('.cabinet-scene') as HTMLElement;
 }

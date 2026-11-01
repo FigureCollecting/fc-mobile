@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { pinLegacyCamera } from './legacyCamera';
 import { SHOT_VIEWPORTS } from './caseViewports';
 import type { ShotViewport } from './caseViewports';
 import { shotSizeError, signoffShot } from './signoffShots';
@@ -23,6 +24,7 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
+  await pinLegacyCamera(page);
 });
 
 test('this project is its panel: CSS size, pixel ratio, touch, a mobile viewport, and the hands-off resolver rules', async ({ page }, testInfo) => {

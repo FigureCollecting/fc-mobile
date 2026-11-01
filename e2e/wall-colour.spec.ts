@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs, pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 
 /**
@@ -25,6 +26,7 @@ async function openCase(page: Page, size: { width: number; height: number }, sch
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-theme', theme);
   }, scheme);
+  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=6');
   await page.waitForSelector('button.cab-figure');
@@ -102,7 +104,7 @@ for (const size of FOLD8) {
 
   test(`the wall colour is drawn in every view, the wall, one cabinet and one shelf: ${size.name}`, async ({ page }) => {
     for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      await page.addInitScript((v) => localStorage.setItem('fc-case-prefs', JSON.stringify({ view: v, wall: 'seafoam' })), view);
+      await page.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view, wall: 'seafoam' }));
       await openCase(page, size, 'light');
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', view);
       await expect(page.locator('.cabinet-scene .room-wall')).toHaveCount(1);

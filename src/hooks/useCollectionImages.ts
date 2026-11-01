@@ -45,7 +45,7 @@ import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tans
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
-import { fetchImageLists, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
+import { fetchImageLists, keepChosenPhotos, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
 import { usePhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -133,6 +133,9 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         shown.show(await keptImages(kept, undefined, allChoices));
         let read = false;
         try {
+          // PICK-CASE-1: a chosen photo the device lacks is fetched first, from the figure's kept list, so a pick is shown
+          // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails)
+          if (choiceKey !== '' && (await keepChosenPhotos(kept, allChoices, { signal })) > 0) shown.show(await keptImages(kept, undefined, allChoices));
           const synced = await duringOwnSync(client, queryKey, () =>
             syncKeptImages(kept, (h) => fetchImageLists(session!.clients.catalog, h, signal), {
               signal,

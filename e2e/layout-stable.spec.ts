@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { legacyPrefs } from './legacyCamera';
 
 /**
  * LAYOUT-STABLE-1 (Ross 10-18, a first launch: the larger figures "flash into and out of place while it works out what goes
@@ -21,10 +22,10 @@ type Frame = [number, Record<string, string>];
 
 /** Every figure the case draws, frame by frame: its place (centre, base, surface) and its art; and each picture's alpha read staggered, seeded. */
 async function watch(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+  await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall' }));
+    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
     // the pictures are read slowly, each after its own delay (the app's alpha reads: its crossOrigin canvas reads)
     let seed = 7;
     const rand = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
@@ -54,7 +55,7 @@ async function watch(page: Page): Promise<void> {
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-  });
+  }, legacyPrefs({ view: 'wall' }));
 }
 
 const frames = (page: Page) => page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames);

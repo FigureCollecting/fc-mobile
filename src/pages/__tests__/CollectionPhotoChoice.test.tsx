@@ -11,6 +11,7 @@ vi.mock('photoswipe', () => ({ default: class {} }));
 vi.mock('photoswipe/style.css', () => ({}));
 
 import { create } from '@bufbuild/protobuf';
+import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { Collection } from '../Collection';
 import { renderWithProviders } from '../../test/testUtils';
@@ -81,4 +82,45 @@ describe('the case draws the photo the user chose', () => {
     await waitFor(() => expect(artSrc()).toBe(url('b')), { timeout: 5000 });
     expect(drawn()!.dataset.art).toBe('framed');
   });
+});
+
+describe('PICK-CASE-1 (Ross 10-31): a photo with no cut-out chosen while the case is open', () => {
+  it('draws the chosen photo as it is, not the default cut-out', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(photos());
+    await seedFigures(r, [{ title: 'Kurumi' }]);
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await waitFor(() => expect(artSrc()).toBe(url('a')), { timeout: 5000 });
+    expect(drawn()!.dataset.art).toBe('masked');
+    act(() => setPhotoChoice('user-a', headOf(0), url('b')));
+    await waitFor(() => expect(artSrc()).toBe(url('b')), { timeout: 5000 });
+    expect(drawn()!.dataset.art).toBe('framed');
+  }, 20_000);
+
+  it('draws it when the collection\'s image lists cannot be read again (a list call answered 503 on his phone that morning)', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(photos());
+    await seedFigures(r, [{ title: 'Kurumi' }]);
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await waitFor(() => expect(artSrc()).toBe(url('a')), { timeout: 5000 });
+    expect(drawn()!.dataset.art).toBe('masked');
+    // from the pick on, the server does not answer a list
+    r.clients.getProductImages.mockRejectedValue(new ConnectError('upstream answered 503', Code.Unavailable));
+    act(() => setPhotoChoice('user-a', headOf(0), url('b')));
+    await waitFor(() => expect(artSrc()).toBe(url('b')), { timeout: 5000 });
+    expect(drawn()!.dataset.art).toBe('framed');
+  }, 20_000);
+
+  it('draws it before the collection\'s image lists are read again (a large collection reads them for tens of seconds)', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(photos());
+    await seedFigures(r, [{ title: 'Kurumi' }]);
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await waitFor(() => expect(artSrc()).toBe(url('a')), { timeout: 5000 });
+    // from the pick on, the lists are still being read
+    r.clients.getProductImages.mockImplementation(() => new Promise(() => {}));
+    act(() => setPhotoChoice('user-a', headOf(0), url('b')));
+    await waitFor(() => expect(artSrc()).toBe(url('b')), { timeout: 5000 });
+    expect(drawn()!.dataset.art).toBe('framed');
+  }, 20_000);
 });

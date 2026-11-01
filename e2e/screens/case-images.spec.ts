@@ -13,6 +13,8 @@
 //       carries on with only what is missing.
 //   (d) user C's Ordered and Wished (on figures C owns none of): filtered to each, every figure in view
 //       with an image stands as its cut-out, and the tiles show the pictures (FB-QUICK, Ross 10-16).
+//   (e) a case view moved far along while its sync fetches: the next figures fetched are those it draws
+//       there, not those next in the case's order, and the sync under way follows it.
 // On 6f458ce3 every figure stood as its plate until the whole sync ended (all 1,200 images), a case
 // view left part way showed nothing when it opened again, and a synced one drew framed pictures only.
 // On 692149fe only the owned figures were synced: an Ordered or Wished figure not also owned stood as its plate.
@@ -21,6 +23,7 @@ import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { expect, test } from '../fixtures';
+import { pinLegacyCamera } from '../legacyCamera';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
@@ -508,4 +511,53 @@ test("(d) filtered to Ordered and to Wished, figures not owned stand as their cu
   const wishedImages = new Set(HEADS.slice(HELD_FROM + HELD_ORDERED, HELD_FROM + HELD_ORDERED + HELD_WISHED).map((h) => h.headId).filter(imaged).map((h) => `${MEDIA}/${imageId(h)}`));
   await expect.poll(async () => (await wishedPictures()).filter((src) => wishedImages.has(src)).length, { timeout: 30_000 }).toBeGreaterThan(0);
   await shot(page, testInfo, 'case-images-wished-tiles');
+});
+
+// ------------------------------------------------------------------ (e)
+
+/**
+ * The tests above all start at the case's start, where the figures in view and those next in its order are the same
+ * ones; this one moves the view twelve cabinets along first. Told only the case's order, the sync went on fetching the
+ * figures at its start (case positions about 30 to 45) while the view stood at 129 to 158: none of the next eight asked
+ * was one it drew (10-31).
+ */
+test("(e) a case view moved far along while its sync fetches: the figures it draws there are fetched next, not those next in the case's order", async ({ context, page }, testInfo) => {
+  test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
+  test.setTimeout(240_000);
+  // NAV-2A0: it steps with the side arrows, which Free camera retires
+  await pinLegacyCamera(context);
+  // every image 1.5 s late (a slow link), the figures recorded in the order first asked
+  const asked: string[] = [];
+  await imageHost(context, async (head) => {
+    if (head !== undefined && !asked.includes(head)) asked.push(head);
+    await new Promise((res) => setTimeout(res, 1500));
+  });
+  const lists = await imageLists(page);
+  await openCase(page);
+  await expect.poll(() => asked.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(4);
+  const listCalls = lists.calls();
+
+  const next = page.getByRole('button', { name: 'Next cabinet' });
+  for (let i = 0; i < 12 && !(await next.isDisabled()); i++) {
+    await next.tap();
+    await page.waitForTimeout(450);
+  }
+  await page.waitForTimeout(1200);
+  const k = asked.length;
+  const order = (JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-order')) ?? '[]') as string[][]).flat();
+  const view = (await drawn(page)).map((d) => d.id);
+  const toCome = view.filter((id) => imaged(id) && !asked.includes(id));
+  const viewFrom = Math.min(...view.map((id) => order.indexOf(id)).filter((i) => i >= 0));
+  expect(viewFrom, "the view stands far from the case's start").toBeGreaterThan(60);
+  expect(toCome.length, 'figures in view with images not asked for yet').toBeGreaterThanOrEqual(3);
+
+  // the next asked are those it draws, but for the two at most that the sync had picked before the view moved
+  const n = Math.min(toCome.length, 6);
+  await expect.poll(() => asked.length, { timeout: 90_000 }).toBeGreaterThanOrEqual(k + n + 2);
+  const nextAsked = asked.slice(k, k + n + 2);
+  const inView = nextAsked.filter((h) => toCome.includes(h)).length;
+  testInfo.annotations.push({ type: 'next asked in view', description: `${inView} of ${nextAsked.length} (at least ${n}); the view from case position ${viewFrom}` });
+  expect(inView, 'of the next figures asked for, those the moved view draws').toBeGreaterThanOrEqual(n);
+  // the sync under way followed the view: no new sync read the lists again
+  expect(lists.calls()).toBe(listCalls);
 });

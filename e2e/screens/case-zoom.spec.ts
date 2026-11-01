@@ -24,6 +24,7 @@ import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng } from '../paintCheck';
 import { FOLD8_DPR, SHOT_VIEWPORTS } from '../caseViewports';
+import { arrangeCase } from '../caseArrange';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { touchDoubleTap, touchPinch, touchSwipe, touchTap } from '../touch';
 import { loginDevice } from '../stack/src/device.js';
@@ -296,7 +297,8 @@ async function pinchAbout(page: Page, m: { x: number; y: number }, from: number,
 
 /**
  * A point of the frame where a tap lands on no figure and no control: the room, with no figure within a finger's
- * reach of it either (Chrome moves a touch onto a button near it).
+ * reach of it either (Chrome moves a touch onto a button near it). The (c) tests arrange the case by date added, the
+ * list's own order (PACK1): by series, the default, the cover's frame zoomed 2.5x about its middle has no such point.
  */
 async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
   const frame = await frameBox(page);
@@ -455,6 +457,7 @@ test('(b) zoomed, one finger pans the magnified picture to its edges and never w
 
 test('(c) a double-tap on an empty spot and the Reset view chip each return to 1x, animated; a double-tap at 1x zooms 2x there', async ({ context, page }) => {
   test.setTimeout(240_000);
+  await arrangeCase(context, 'date-added');
   await openCase(context, page);
   const frame = await frameBox(page);
   const mid = centre(frame);
@@ -517,6 +520,7 @@ test('(c) with reduced motion the double-tap and the chip return to 1x at once, 
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (c) covers the animation at both');
   test.setTimeout(240_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await arrangeCase(context, 'date-added');
   await openCase(context, page);
   const mid = centre(await frameBox(page));
   await pinchAbout(page, mid, 40, 100);

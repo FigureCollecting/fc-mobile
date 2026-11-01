@@ -7,7 +7,7 @@ import { theme } from '../stores/theme';
 import type { Theme } from '../stores/theme';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { getCacheStats, clearAllCaches } from '../storage/cacheManager';
-import { LEGACY_SCREENS_ENABLED } from '../config/features';
+import { LEGACY_SCREENS_ENABLED, diagIdsEnabled } from '../config/features';
 import { APP_VERSION } from '../config/version';
 import type { CacheStats } from '../storage/cacheManager';
 import { readStorageStatus, type StorageStatus } from '../pwa/storage';
@@ -395,25 +395,27 @@ export function Settings() {
           </div>
         </section>
 
-        {/* ── Privacy ── */}
-        <section class="settings__section">
-          <h3 class="settings__section-title">Privacy</h3>
+        {/* ── Privacy: only in a build with diagnostic ids (VITE_DIAG_IDS=true) ── */}
+        {diagIdsEnabled() && (
+          <section class="settings__section">
+            <h3 class="settings__section-title">Privacy</h3>
 
-          <div class="settings__row">
-            <span class="settings__label" id="settings-diag-ids">{DIAG_IDS_TEXT.label}</span>
-            <Toggle checked={diagIds} onChange={handleDiagIds} labelledBy="settings-diag-ids" describedBy="settings-diag-ids-desc" />
-          </div>
-          <p class="settings__hint" id="settings-diag-ids-desc">{DIAG_IDS_TEXT.description}</p>
-          <p class="settings__hint">{DIAG_IDS_TEXT.hint}</p>
-          <p class="settings__hint" aria-live="polite">{!diagIdsKept && DIAG_IDS_TEXT.unsaved}</p>
+            <div class="settings__row">
+              <span class="settings__label" id="settings-diag-ids">{DIAG_IDS_TEXT.label}</span>
+              <Toggle checked={diagIds} onChange={handleDiagIds} labelledBy="settings-diag-ids" describedBy="settings-diag-ids-desc" />
+            </div>
+            <p class="settings__hint" id="settings-diag-ids-desc">{DIAG_IDS_TEXT.description}</p>
+            <p class="settings__hint">{DIAG_IDS_TEXT.hint}</p>
+            <p class="settings__hint" aria-live="polite">{!diagIdsKept && DIAG_IDS_TEXT.unsaved}</p>
 
-          <Link class="settings__row settings__row--action" href="/privacy">
-            <span class="settings__label">{DIAG_IDS_TEXT.privacyLink}</span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </Link>
-        </section>
+            <Link class="settings__row settings__row--action" href="/privacy">
+              <span class="settings__label">{DIAG_IDS_TEXT.privacyLink}</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </Link>
+          </section>
+        )}
 
         {/* ── About ── */}
         <section class="settings__section">

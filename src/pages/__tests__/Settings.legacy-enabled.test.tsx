@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 // Exercises the LEGACY_SCREENS_ENABLED=true path: the push-notification
 // toggle and its "blocked in browser settings" hint reappear.
-vi.mock('../../config/features', () => ({ LEGACY_SCREENS_ENABLED: true }));
+vi.mock('../../config/features', async (importOriginal) => ({ ...(await importOriginal<typeof import('../../config/features')>()), LEGACY_SCREENS_ENABLED: true }));
 
 vi.mock('framer-motion', () => import('../../test/framerMotionMock'));
 

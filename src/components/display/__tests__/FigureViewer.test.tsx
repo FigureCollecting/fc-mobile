@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
@@ -43,7 +43,7 @@ vi.mock('photoswipe/style.css', () => ({}));
 import { FigureViewer, fitSlideToPicture } from '../FigureViewer';
 import { RAIL_INSET_PX, RAIL_WIDTH_PX } from '../../ui/SideRail';
 import { renderWithProviders, flushAll } from '../../../test/testUtils';
-import { FIXTURE_FIGURES, FIXTURE_META } from '../../../dev-fixtures/fixtures';
+import { FIXTURE_FIGURES, FIXTURE_META, setFixtureMode } from '../../../dev-fixtures/fixtures';
 
 beforeEach(() => {
   instances.length = 0;
@@ -583,5 +583,66 @@ describe('FigureViewer (Display D)', () => {
     await waitFor(() => expect(instances).toHaveLength(1));
     instances[0].destroy(); // user closed the gallery (pinch/vertical drag)
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// PHOTOS-FIND-1 (Ross 10-31: "only one picture per figure"): the viewer's picture says how many photos its figure has when
+// it has more than the one shown, and a tap on that opens them; it rides the sheet's top edge at the left, the rail's opposite
+describe('FigureViewer: the photos chip', () => {
+  const locals = (figures = FIXTURE_FIGURES) => figures.map((f) => ({ ...f, local: { headId: f._id, kind: 'owned', sync: 'known', asOf: null, copies: [] } })) as never;
+  const fixturePhotos = (count: number) => {
+    setFixtureMode(true);
+    window.history.pushState({}, '', `/?fxphotos=1&fxphotocount=${count}`);
+  };
+  afterEach(() => {
+    setFixtureMode(false);
+    window.history.pushState({}, '', '/');
+  });
+
+  it('stands on the sheet for a figure with five photos, says 5 photos, and opens all five', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    renderWithProviders(<FigureViewer figures={locals()} index={0} onClose={() => {}} />);
+    const chip = await screen.findByRole('button', { name: '5 photos' });
+    expect(chip.closest('.figure-viewer-sheet')).not.toBeNull();
+    expect(chip).toHaveClass('figure-viewer-sheet__photos');
+    await user.click(chip);
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    expect(within(sheet).getAllByRole('button', { name: /^Photo \d/ })).toHaveLength(5);
+  });
+
+  // PHOTOS-FIND-1 item 6 (Ross 10-31: "inspect the tapped image behind"): GALLERY-1's rewrite of the slide that stands, for the
+  // photo picked in the sheet; the figure's own picture once the sheet closes
+  it('a photo picked in the sheet is the large picture behind it, by tap or by Next; closing puts the figure\'s own back', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    const figures = locals();
+    renderWithProviders(<FigureViewer figures={figures} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    await user.click(await screen.findByRole('button', { name: '5 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    const slides = instances[0]!.options.dataSource;
+    const photoUrl = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
+    expect(slides[0].src).toBe(photoUrl('c'));
+    expect(instances[0]!.refreshSlideContent).toHaveBeenLastCalledWith(0);
+    await user.click(within(sheet).getByRole('button', { name: 'Next photo' }));
+    expect(slides[0].src).toBe(photoUrl('0'));
+    expect(slides[1].src).toBe((figures as { imageUrl: string }[])[1]!.imageUrl);
+    await user.click(screen.getByRole('button', { name: 'Close photos' }));
+    expect(slides[0].src).toBe((figures as { imageUrl: string }[])[0]!.imageUrl);
+  });
+
+  it('says nothing for a figure with one photo, nor for one with no local item', async () => {
+    fixturePhotos(1);
+    const one = renderWithProviders(<FigureViewer figures={locals()} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances).toHaveLength(1));
+    await act(flushAll);
+    expect(screen.queryByRole('button', { name: /photos$/ })).toBeNull();
+    one.unmount();
+    fixturePhotos(5);
+    renderWithProviders(<FigureViewer figures={FIXTURE_FIGURES} index={0} onClose={() => {}} />);
+    await act(flushAll);
+    expect(screen.queryByRole('button', { name: /photos$/ })).toBeNull();
   });
 });

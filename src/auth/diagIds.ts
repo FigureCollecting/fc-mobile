@@ -16,6 +16,10 @@
 // The same call that stores 'off' writes a marker saying so, which only a clear that has committed
 // removes (diagIdsClearDone). It survives a reload and a later on: the sync engine completes the
 // clear at its next start or sync whatever the switch says by then, and sends no id while it is owed.
+//
+// A build without VITE_DIAG_IDS=true (src/config/features.ts) has no switch: diagIdsOn() is false
+// whatever storage says, and setDiagIds writes nothing. What an earlier build stored stays as it was.
+import { diagIdsEnabled } from '../config/features';
 
 export const DIAG_IDS_KEY = 'fc-diag-ids';
 export const DIAG_IDS_CLEAR_KEY = 'fc-diag-ids-clear-pending';
@@ -45,6 +49,7 @@ let saved = true;
 let clearHere: string | undefined;
 
 export function diagIdsOn(): boolean {
+  if (!diagIdsEnabled()) return false;
   if (!saved) return chosen!;
   try {
     const stored = localStorage.getItem(DIAG_IDS_KEY);
@@ -57,6 +62,7 @@ export function diagIdsOn(): boolean {
 }
 
 export function setDiagIds(on: boolean): void {
+  if (!diagIdsEnabled()) return;
   chosen = on;
   if (!on) markClearOwed();
   try {

@@ -6,6 +6,10 @@ import { diagIdsDefault, setDiagIds } from '../../auth/diagIds';
 import { clearOriginTraces } from '../originTraces';
 import type { OutboxEntry } from '../records';
 import { freshDb, openStore, status, T0, write } from '../../sync/__tests__/harness';
+import { inDiagIdsBuild } from '../../test/diagIdsBuild';
+
+// LGMOB: these tests run as a build with diagnostic ids (VITE_DIAG_IDS=true).
+inDiagIdsBuild();
 
 afterEach(() => {
   vi.restoreAllMocks();

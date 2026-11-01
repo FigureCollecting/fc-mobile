@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { act, createEvent, fireEvent, screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
@@ -8,6 +8,7 @@ import { TabBar } from '../TabBar';
 import { renderWithProviders } from '../../../test/testUtils';
 import { useChromeStore } from '../../../stores/chrome';
 import { offerJog, useJogStore, type JogTarget } from '../../../stores/jog';
+import { JOG_DEAD_PX, JOG_FULL_PX, JOG_MAX_X, jogDetents, jogSpeed } from '../../display/casePose';
 
 beforeEach(() => useChromeStore.setState({ hidden: false }));
 
@@ -222,5 +223,129 @@ describe('TabBar: the jog (NAV-JOG)', () => {
     expect(jogButton().hasAttribute('data-jog')).toBe(false);
     fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 250, clientY: 500 });
     expect(t.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+// NAV-2B (Ross 10-31: "more speed gradations"): a light tick (the 10 ms haptic) as the jog's speed passes each of
+// jogDetents' speeds, on the way out and on the way back, once per crossing: where jogSpeed reaches the speed, never a
+// threshold of the bar's own; a thumb wobbling on one ticks once.
+describe('TabBar: the jog\'s detents (NAV-2B)', () => {
+  let ticks: number[];
+  let reach = 0;
+  const vibrate = vi.fn((ms: number | number[]) => (ticks.push(reach), ms === 10));
+  const jogButton = () => document.querySelector('.tab-bar__add') as HTMLElement;
+  const offered = (patch: Partial<JogTarget> = {}) => {
+    const t: JogTarget = { start: vi.fn(() => true), aim: vi.fn(), stop: vi.fn(), ...patch };
+    act(() => {
+      offerJog(t);
+    });
+    return t;
+  };
+  /** The thumb `px` right of where it went down (200, 500). */
+  const to = (px: number) => {
+    reach = px;
+    fireEvent.pointerMove(jogButton(), { pointerId: 1, clientX: 200 + px, clientY: 500 });
+  };
+  /** The first whole px out from the dead zone where the jog's speed reaches `level` (jogSpeed's, at `max`). */
+  const firstAt = (level: number, max = JOG_MAX_X) => {
+    let d = JOG_DEAD_PX + 1;
+    while (jogSpeed(d, max) < level) d++;
+    return d;
+  };
+
+  beforeEach(() => {
+    useJogStore.setState({ target: null });
+    ticks = [];
+    vibrate.mockClear();
+    Object.defineProperty(navigator, 'vibrate', { value: vibrate, configurable: true, writable: true });
+  });
+  afterEach(() => {
+    delete (navigator as { vibrate?: unknown }).vibrate;
+  });
+
+  it('out a px at a time past full reach and back: the start\'s tick, one where jogSpeed reaches each detent, and one back past each', () => {
+    renderWithProviders(<TabBar />);
+    offered();
+    fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+    for (let px = 1; px <= JOG_FULL_PX + 6; px++) to(px);
+    const out = jogDetents().map((level) => firstAt(level));
+    expect(out).toEqual([45, 55, JOG_FULL_PX]);
+    expect(ticks).toEqual([JOG_DEAD_PX + 1, ...out]);
+    for (let px = JOG_FULL_PX + 5; px >= JOG_DEAD_PX + 1; px--) to(px);
+    const back = ticks.slice(1 + out.length);
+    expect(back).toHaveLength(out.length);
+    // back past each, highest first, a few px inside where it ticked on the way out
+    out
+      .slice()
+      .reverse()
+      .forEach((at, i) => {
+        expect(back[i], `back past the detent at ${at} px`).toBeLessThan(at);
+        expect(back[i]).toBeGreaterThanOrEqual(at - 6);
+      });
+    expect(vibrate.mock.calls.every(([ms]) => ms === 10)).toBe(true);
+    fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 209, clientY: 500 });
+  });
+
+  it('a thumb wobbling 2 px either side of a detent ticks once; straight up ticks at the same distances', () => {
+    renderWithProviders(<TabBar />);
+    offered();
+    fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+    const one = firstAt(1);
+    for (let px = 1; px <= one; px++) to(px);
+    const after = ticks.length;
+    for (let i = 0; i < 10; i++) {
+      to(one - 2);
+      to(one + 2);
+    }
+    expect(ticks).toHaveLength(after);
+    fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 200 + one, clientY: 500 });
+    // straight up, the same distances tick
+    ticks = [];
+    fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+    for (let px = 1; px <= JOG_FULL_PX; px++) fireEvent.pointerMove(jogButton(), { pointerId: 1, clientX: 200, clientY: 500 - (reach = px) });
+    expect(ticks).toEqual([JOG_DEAD_PX + 1, ...jogDetents().map((level) => firstAt(level))]);
+    fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 200, clientY: 500 - JOG_FULL_PX });
+  });
+
+  it('the jog\'s own top speed (?jogmax) sets the detents: at 1.5x the top ticks at full reach; at 1x two', () => {
+    renderWithProviders(<TabBar />);
+    for (const max of [1.5, 1]) {
+      ticks = [];
+      offered({ max });
+      fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+      for (let px = 1; px <= JOG_FULL_PX + 4; px++) to(px);
+      const out = jogDetents(max).map((level) => firstAt(level, max));
+      expect(out[out.length - 1]).toBe(JOG_FULL_PX);
+      expect(ticks, `${max}x`).toEqual([JOG_DEAD_PX + 1, ...out]);
+      fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 268, clientY: 500 });
+    }
+  });
+
+  it('a jump across detents is one tick; a start already past one is the start\'s tick alone; a refused jog ticks nothing', () => {
+    renderWithProviders(<TabBar />);
+    const t = offered();
+    fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+    to(30);
+    to(60);
+    expect(ticks).toEqual([30, 60]);
+    to(20);
+    expect(ticks).toEqual([30, 60, 20]);
+    fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 220, clientY: 500 });
+    // the first move lands at 60 px: the start's tick is all
+    ticks = [];
+    fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+    to(60);
+    expect(ticks).toEqual([60]);
+    to(20);
+    expect(ticks).toEqual([60, 20]);
+    fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 220, clientY: 500 });
+    expect(t.stop).toHaveBeenCalledTimes(2);
+    // the scene refuses the jog (a finger on it): no tick at all, however far
+    ticks = [];
+    offered({ start: vi.fn(() => false) });
+    fireEvent.pointerDown(jogButton(), { pointerId: 1, clientX: 200, clientY: 500, button: 0 });
+    for (let px = 1; px <= JOG_FULL_PX; px++) to(px);
+    fireEvent.pointerUp(jogButton(), { pointerId: 1, clientX: 264, clientY: 500 });
+    expect(ticks).toEqual([]);
   });
 });

@@ -35,6 +35,8 @@ export interface FreeScene {
   /** A drag in the header's Look around mode turns the eye at once. */
   readonly lookMode: boolean;
   readonly lookHoldMs: number;
+  /** NAV-2B: the jog's top speed, in the 10-28 jog's (?jogmax=, JOG_MAX_X). */
+  readonly jogMax: number;
   readonly reducedMotion: boolean;
   /** What a look's projected scene is worked out from (NAV-1A b): a look stops where it would pass the ceiling. */
   readonly budget: BudgetScene;
@@ -239,7 +241,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       // furniture, within the Classic cap and the wall's ends (jogOk); written only when it moved
       if (j.last !== undefined) {
         const s = scene.current;
-        const step = jogStep(j.aim.x, j.aim.y, now - j.last, s.base.frame.width);
+        const step = jogStep(j.aim.x, j.aim.y, now - j.last, s.base.frame.width, s.jogMax);
         if (step.x !== 0 || step.y !== 0) {
           const ok = jogOk(s, j.pose, j.span);
           let next = walk(j.pose, -step.x, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, ok);

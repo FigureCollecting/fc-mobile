@@ -19,6 +19,7 @@ import {
   getFixtureMisfits,
   getFixtureGoods,
   getFixturePhotos,
+  getFixturePhotoCount,
   fixturePhotos,
   FIXTURE_SUB,
   getFixtureOnly,
@@ -786,5 +787,27 @@ describe('fixture photos (?fxphotos=1): a local item and three photos each, for 
     expect(photos.map((p) => [p.primary, p.maskUrl !== undefined])).toEqual([[true, true], [false, false], [false, true]]);
     for (const p of photos) expect(p.url).toMatch(/^https:\/\/images\.figurecollecting\.com\/d\/[0-9a-f]{64}$/);
     expect(FIXTURE_SUB).toBe('fixture-user');
+  });
+
+  // PHOTOS-FIND-1: a figure with five photos, for the photos chip
+  it('?fxphotocount=N gives every figure N photos, each its own address on the public image address, the first three as before', () => {
+    window.history.pushState({}, '', '/?fxphotos=1&fxphotocount=5');
+    expect(getFixturePhotoCount()).toBe(5);
+    const photos = fixturePhotos();
+    expect(photos).toHaveLength(5);
+    expect(photos.slice(0, 3)).toEqual(fixturePhotos(3));
+    expect(photos.filter((p) => p.primary)).toHaveLength(1);
+    expect(new Set(photos.map((p) => p.url)).size).toBe(5);
+    for (const p of photos) expect(p.url).toMatch(/^https:\/\/images\.figurecollecting\.com\/d\/[0-9a-f]{64}$/);
+    expect(fixturePhotos(1)).toEqual(fixturePhotos(3).slice(0, 1));
+  });
+
+  it('?fxphotocount= is three unless a count, at least one and at most fourteen', () => {
+    for (const [query, count] of [['/', 3], ['/?fxphotocount=bogus', 3], ['/?fxphotocount=-2', 3], ['/?fxphotocount=0', 1], ['/?fxphotocount=1', 1], ['/?fxphotocount=14', 14], ['/?fxphotocount=99', 14]] as const) {
+      window.history.pushState({}, '', query);
+      expect(getFixturePhotoCount(), query).toBe(count);
+      expect(fixturePhotos(), query).toHaveLength(count);
+    }
+    expect(new Set(fixturePhotos(14).map((p) => p.url)).size).toBe(14);
   });
 });

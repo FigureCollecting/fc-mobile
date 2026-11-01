@@ -4,7 +4,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
-import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, LOOK_HOLD_MS, PITCH, jogStep, yawLimits } from '../casePose';
+import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, LOOK_HOLD_MS, PITCH, jogSpeed, jogStep, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
 import { useJogStore } from '../../../stores/jog';
 import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
@@ -861,22 +861,25 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(useJogStore.getState().target).toBeNull();
   });
 
-  it('held right: the eye trucks right every frame, four times as fast at full reach as half way; the lift stops it there', () => {
+  it('held right: the eye trucks right every frame, as much faster at full reach than half way as jogSpeed says (NAV-2B: 7.5x); the lift stops it there', () => {
     scene();
     const before = pose();
     expect(begin()).toBe(true);
     expect(host().dataset.gesture).toBe('jog');
     const x0 = pose().x;
-    run((8 + JOG_FULL_PX) / 2, 0, 10);
+    const halfPx = (8 + JOG_FULL_PX) / 2;
+    run(halfPx, 0, 10);
     const half = pose().x - x0;
     expect(half).toBeGreaterThan(0);
     const x1 = pose().x;
     run(JOG_FULL_PX, 0, 10);
-    expect((pose().x - x1) / half).toBeCloseTo(4, 1);
+    const ratio = jogSpeed(JOG_FULL_PX) / jogSpeed(halfPx);
+    expect(ratio).toBeCloseTo(7.53, 2);
+    expect((pose().x - x1) / half).toBeCloseTo(ratio, 1);
     // the reach past full is full speed
     const x2 = pose().x;
     run(JOG_FULL_PX * 3, 0, 10);
-    expect((pose().x - x2) / half).toBeCloseTo(4, 1);
+    expect((pose().x - x2) / half).toBeCloseTo(ratio, 1);
     expect([pose().y, pose().z, pose().yaw, pose().pitch]).toEqual([before.y, before.z, 0, 0]);
     const running = pose();
     end();
@@ -916,7 +919,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
       });
   };
 
-  it('each frame moves by the time since the last, however uneven (8, 33, 120 ms): a frame width a second at full reach, a late frame as 100 ms', () => {
+  it('each frame moves by the time since the last, however uneven (8, 33, 120 ms): two frame widths a second at full reach (NAV-2B), a late frame as 100 ms', () => {
     scene();
     const frameAt = handFrames();
     const c0 = cam();
@@ -931,7 +934,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     for (const dt of [8, 33, 120]) frameAt((t += dt));
     // picture travel at the anchor depth: a level eye's frame centre meets the fronts at its distance, z
     const travelPx = [8, 33, 120].reduce((a, dt) => a + jogStep(JOG_FULL_PX, 0, dt, c0.width).x, 0);
-    expect(travelPx).toBeCloseTo((JOG_FRAMES_PER_S * c0.width * (8 + 33 + JOG_MAX_STEP_MS)) / 1000, 9);
+    expect(travelPx).toBeCloseTo((JOG_MAX_X * JOG_FRAMES_PER_S * c0.width * (8 + 33 + JOG_MAX_STEP_MS)) / 1000, 9);
     expect(cam().x - c0.x).toBeCloseTo((travelPx * c0.z) / c0.focalPx, 3);
     expect([cam().y, cam().z]).toEqual([c0.y, c0.z]);
     end();
@@ -973,15 +976,16 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     return { left: Math.min(...boxes.map((b) => b[0])), right: Math.max(...boxes.map((b) => b[1])) };
   };
 
-  it('a long jog stops where the eye reaches the wall\'s end, never past it (half the frame still shows the wall); there up still goes, and back', () => {
+  it('a long jog at twice the speed (NAV-2B) stops where the eye reaches the wall\'s end, never past it (half the frame still shows the wall); there up still goes, and back', () => {
     scene({ view: 'cabinet' });
     expect(host().dataset.focus).toBe('0');
     const ends = wallEnds();
     begin();
     run(JOG_FULL_PX, 0, 3000);
     const far = pose();
-    // within one frame's step short of the end: 16 ms at a frame width a second, at the anchor depth (the eye's distance)
-    const step = (cam().width * 0.016 * far.z) / cam().focalPx;
+    // within one frame's step short of the end: 16 ms at full reach's speed, at the anchor depth (the eye's distance)
+    const step = (jogSpeed(JOG_FULL_PX) * cam().width * 0.016 * far.z) / cam().focalPx;
+    expect(jogSpeed(JOG_FULL_PX)).toBe(2);
     expect(far.x).toBeLessThanOrEqual(ends.right);
     expect(far.x).toBeGreaterThan(ends.right - step - 1e-6);
     run(JOG_FULL_PX, 0, 100);
@@ -1181,6 +1185,32 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(raf).not.toHaveBeenCalled();
     raf.mockRestore();
   });
+
+  // NAV-2B: Ross tunes the top speed on the device with ?jogmax=1|1.5|2 (as ?lookhold=), no roll; 2 unless it says 1 to 2
+  it('?jogmax= sets the top speed: 1 is today\'s, 1.5, 2 the default; outside 1 to 2 or not a number, 2; the button is told it', () => {
+    onTestFinished(() => window.history.replaceState(null, '', '/'));
+    /** Frame widths a second of picture at the anchor depth, held at full reach over one 100 ms frame. */
+    const topSpeed = () => {
+      const { unmount } = scene();
+      const frameAt = handFrames();
+      const c0 = cam();
+      act(() => {
+        jog().start();
+        jog().aim(JOG_FULL_PX, 0);
+      });
+      frameAt(1000);
+      frameAt(1000 + JOG_MAX_STEP_MS);
+      const speed = (((cam().x - c0.x) * c0.focalPx) / c0.z / c0.width) * (1000 / JOG_MAX_STEP_MS);
+      const max = jog().max;
+      end();
+      unmount();
+      return { speed: Math.round(speed * 1e6) / 1e6, max };
+    };
+    for (const [query, x] of [['', 2], ['?jogmax=1', 1], ['?jogmax=1.5', 1.5], ['?jogmax=2', 2], ['?jogmax=1.25', 1.25], ['?jogmax=3', 2], ['?jogmax=0.5', 2], ['?jogmax=fast', 2], ['?jogmax=', 2]] as const) {
+      window.history.replaceState(null, '', `/${query}`);
+      expect(topSpeed(), query || 'no knob').toEqual({ speed: x * JOG_FRAMES_PER_S, max: x });
+    }
+  });
 });
 
 // NAV3-TOP (b), Ross 10-28 ("we can try b I reckon"), a trial with the Free camera: only the one-cabinet view stands back so
@@ -1222,5 +1252,75 @@ describe('NAV3-TOP (b): the one-cabinet view shows the tallest top figure whole;
     scene({ view: 'cabinet', pattern: IKEA_DETOLF.id, freeCamera: false }, { figures: [tall], frameFallback: { width: 870, height: 475 } });
     const { y, margin } = head();
     expect(y).toBeLessThan(margin - 1);
+  });
+});
+
+// CAB-EDGE-DIM-1 (Ross 10-31, Fold8): in the one-cabinet view, what lies past the wall's end (the bare wall, or empty
+// space) dims as a neighbour does, from the end cabinet's outer edge to the frame's edge, straight on, turned, live and let go.
+describe('CAB-EDGE-DIM-1: the one-cabinet view dims past the wall\'s ends in Free camera', () => {
+  /** A wall of two cabinets: the first and the last. */
+  const FEW = FIGURES.slice(0, 40);
+  const veil = (side: string) => host().querySelector<HTMLElement>(`.cabinet-scene__dim[data-side="${side}"]`);
+  const wallOf = () => JSON.parse(host().dataset.wall!) as [number, number, number, number, number][];
+  /** The focus cabinet's silhouette across the frame, through the camera the scene publishes (its yaw included). */
+  const edges = () => {
+    const [x0, x1, y1, z0, z1] = wallOf()[Number(host().dataset.focus)];
+    const c = cam();
+    const camera = { ...c, frame: { width: c.width, height: c.height } };
+    const xs = [x0, x1].flatMap((x) => [0, y1].flatMap((y) => [z0, z1].map((z) => project(camera, [x, y, z]).x)));
+    return { left: Math.min(...xs), right: Math.max(...xs), width: c.width };
+  };
+  /** A veil's span across the frame (px from its left edge). */
+  const span = (side: string) => {
+    const v = veil(side);
+    expect(v, `a ${side} veil`).not.toBeNull();
+    return { a: parseFloat(v!.style.left), b: parseFloat(v!.style.left) + parseFloat(v!.style.width) };
+  };
+  const coversLeftEnd = () => {
+    const e = edges();
+    expect(e.left).toBeGreaterThan(0);
+    const l = span('left');
+    expect(l.a).toBeLessThanOrEqual(0);
+    expect(l.b).toBeCloseTo(e.left, 1);
+  };
+  const coversRightEnd = () => {
+    const e = edges();
+    expect(e.right).toBeLessThan(e.width);
+    const r = span('right');
+    expect(r.a).toBeCloseTo(e.right, 1);
+    expect(r.b).toBeGreaterThanOrEqual(e.width);
+  };
+
+  it('the first cabinet: from the frame\'s left edge to its outer edge, at the opening and turned toward the end, live and let go', () => {
+    scene({ view: 'cabinet', swipe: 'pan' }, { figures: FEW });
+    expect(host().dataset.focus).toBe('0');
+    coversLeftEnd();
+    // Look around turns at once; a drag right turns the eye left (yaw below 0), toward the wall's first end
+    drag({ x: 200, y: 200 }, { x: 260, y: 200 }, { lift: false });
+    expect(cam().yaw).toBeLessThan(0);
+    coversLeftEnd();
+    up(1, { x: 260, y: 200 });
+    tick(500);
+    expect(cam().yaw).toBeLessThan(0);
+    coversLeftEnd();
+  });
+
+  it('the last cabinet, reached by a walk: from its outer edge to the frame\'s right edge, straight on and turned toward the end, live and let go', () => {
+    const { again } = scene({ view: 'cabinet', swipe: 'camera' }, { figures: FEW });
+    const last = String(wallOf().length - 1);
+    expect(Number(last), 'a wall of more than one cabinet').toBeGreaterThan(0);
+    for (let i = 0; i < 40 && host().dataset.focus !== last; i++) drag({ x: 400, y: 200 }, { x: 60, y: 200 });
+    tick(500);
+    expect(host().dataset.focus).toBe(last);
+    coversRightEnd();
+    again({ swipe: 'pan' });
+    drag({ x: 260, y: 200 }, { x: 200, y: 200 }, { lift: false });
+    expect(cam().yaw).toBeGreaterThan(0);
+    coversRightEnd();
+    up(1, { x: 200, y: 200 });
+    tick(500);
+    expect(cam().yaw).toBeGreaterThan(0);
+    expect(host().dataset.focus).toBe(last);
+    coversRightEnd();
   });
 });

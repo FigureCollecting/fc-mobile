@@ -33,8 +33,12 @@
 // every KEPT_SHOWN_EVERY_MS). Such an answer, and that of a sync that left an image unfetched, is
 // partial: never fresh, so the case view opened again syncs again, fetching only what is missing. A
 // case view gone part way keeps its last partial answer, for when it opens again.
-import { useQuery, type QueryClient, type QueryKey } from '@tanstack/react-query';
-import { useCallback } from 'preact/hooks';
+// NEWHOLD-IMG-1 (Ross 10-31: 90 copies pushed from another device stood as plates; one list call answered 503): a sync that
+// could not read the lists (the server did not answer one, or another document's sync held the lock past its wait) syncs
+// again once the sync engine next completes a pass, its Collection page still open: the server stayed in reach, so no key
+// changed, and figures held since the last sync that read them had no image until the Collection page was opened again.
+import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
 import { fetchImageLists, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
@@ -51,6 +55,8 @@ const KEPT_KINDS = ['owned', 'ordered', 'wished'] as const;
 const KEPT_SHOWN_EVERY_MS = 1000;
 /** The answers of syncs that did not complete: never fresh. */
 const partial = new WeakSet<ReadonlyMap<string, CachedImage>>();
+/** The answers of syncs that could not read the lists: synced again after the sync engine's next completed pass. */
+const unread = new WeakSet<ReadonlyMap<string, CachedImage>>();
 
 /** Shows each answer a sync tells, at most every KEPT_SHOWN_EVERY_MS and the latest last, until the sync aborts or `stop`. */
 function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal) {
@@ -100,8 +106,9 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const choiceKey = (heads ?? []).filter((h) => allChoices.has(h)).map((h) => `${h}=${allChoices.get(h)}`).join(',');
   const signedIn = session !== undefined && phase === 'signed-in';
   const enabled = signedIn && heads !== undefined;
+  const key = ['local', 'kept-images', reachable, heads?.join(',') ?? '', choiceKey];
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
-    queryKey: ['local', 'kept-images', reachable, heads?.join(',') ?? '', choiceKey],
+    queryKey: key,
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
     // replaces it: aborted while it reads the lists, it touches no cache; while it fetches images, the
     // fetches in flight are aborted and no other starts.
@@ -109,6 +116,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       hearKeptSyncs(client);
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
       let incomplete = false;
+      let listsUnread = false;
       if (reachable && !answersFromKept(client, queryKey)) {
         const shown = showKept(client, queryKey, signal);
         shown.show(await keptImages(kept, undefined, allChoices));
@@ -136,17 +144,30 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // The server did not answer (UNAVAILABLE, a fault, a lost connection): what the last sync kept stands, shown, but a
           // sync that failed is no answer to keep fresh: partial, so it syncs again once the server is reached (STALE-CONTENT).
           incomplete = true;
+          listsUnread = !read;
         } finally {
           shown.stop();
         }
       }
       const answer = await keptImages(kept, undefined, allChoices);
       if (incomplete) partial.add(answer);
+      if (listsUnread) unread.add(answer);
       return answer;
     },
     enabled,
     staleTime: (q) => (q.state.data !== undefined && partial.has(q.state.data) ? 0 : 10 * 60_000),
     retry: false,
   });
+  // NEWHOLD-IMG-1: a pass the engine completes after a sync that could not read the lists syncs again; never the failure
+  // itself (a server still failing is asked again at the next pass, not at once), nor one already under way
+  const client = useQueryClient();
+  const passedAt = session?.engine.state.value.lastSyncedAt ?? null;
+  const seenPass = useRef(passedAt);
+  useEffect(() => {
+    if (seenPass.current === passedAt) return;
+    seenPass.current = passedAt;
+    const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
+    if (state?.fetchStatus === 'idle' && state.data !== undefined && unread.has(state.data)) void client.refetchQueries({ queryKey: key, exact: true });
+  }, [passedAt]);
   return query.data ?? (signedIn ? LOADING : EMPTY);
 }

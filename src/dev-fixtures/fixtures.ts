@@ -453,13 +453,32 @@ export function getFixturePhotos(): boolean {
 
 const hex = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
 
-/** A fixture figure's photos under ?fxphotos=1, on the public image address (the e2e answers them with a synthetic picture): the default with a mask, a plain one, a second with a mask. */
-export function fixturePhotos(): CachedImage[] {
-  return [
+const FIXTURE_PHOTO_COUNT_PARAM = 'fxphotocount';
+/** The hex digits the photos past the third are named by (a to e name the first three and their masks). */
+const MORE_PHOTOS = '0123456789f';
+
+/**
+ * Dev-only, with ?fxphotos=1: `?fxphotocount=N` gives every figure N photos instead of three (PHOTOS-FIND-1: a figure with
+ * five). From 1 to 14; three for anything else.
+ */
+export function getFixturePhotoCount(): number {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_PHOTO_COUNT_PARAM);
+  if (raw === null || !/^\d+$/.test(raw)) return 3;
+  return Math.min(3 + MORE_PHOTOS.length, Math.max(1, Number(raw)));
+}
+
+/**
+ * A fixture figure's photos under ?fxphotos=1, on the public image address (the e2e answers them with a synthetic picture): the
+ * default with a mask, a plain one, a second with a mask, and plain ones past those when ?fxphotocount= asks for more.
+ */
+export function fixturePhotos(count = getFixturePhotoCount()): CachedImage[] {
+  const first: CachedImage[] = [
     { url: hex('a'), width: 600, height: 800, role: 'gallery', primary: true, maskUrl: hex('d') },
     { url: hex('b'), width: 600, height: 800, role: 'gallery', primary: false },
     { url: hex('c'), width: 500, height: 800, role: 'gallery', primary: false, maskUrl: hex('e') },
   ];
+  const more = Array.from(MORE_PHOTOS, (c): CachedImage => ({ url: hex(c), width: 600, height: 800, role: 'gallery', primary: false }));
+  return [...first, ...more].slice(0, count);
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

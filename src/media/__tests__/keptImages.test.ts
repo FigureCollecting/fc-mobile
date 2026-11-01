@@ -282,6 +282,51 @@ describe('syncKeptImages', () => {
   });
 });
 
+// FETCH-FIRST (10-31: on a slow link, the case arranged by series, its default, the first figure in view stood as its plate for
+// about a minute: the sync fetched in head-id order, whatever the case showed)
+describe('syncKeptImages: the figures the case view shows first (FETCH-FIRST)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  /** h1 to h4, each an image with its mask: a+e, b+f, c+8, d+9. */
+  const four = () => lists({ h1: [img('a', { mask: mask('e') })], h2: [img('b', { mask: mask('f') })], h3: [img('c', { mask: mask('8') })], h4: [img('d', { mask: mask('9') })] });
+  const KEPT = ['h1', 'h2', 'h3', 'h4'];
+  /** The images the sync fetched, in the order it asked for them, by their last letter. */
+  const asked = (storage: ReturnType<typeof fakeCaches>) => storage.added.map((r) => r.url.slice(-1)).join('');
+
+  it('fetches the images of the heads `first` names in its order, each before its mask, then every other kept figure\'s in the order kept', async () => {
+    const storage = device();
+    const result = await syncKeptImages(KEPT, four(), { storage, concurrency: 1, first: () => ['h3', 'h9', 'h1', 'h3'] });
+    expect(asked(storage)).toBe('c8aebfd9');
+    expect(result).toEqual({ figures: 4, images: 8, added: 8, evicted: 0, failed: 0 });
+  });
+
+  it('fetches in the order kept without `first`, or with one that names no kept figure', async () => {
+    for (const first of [undefined, () => [], () => ['h9']]) {
+      const storage = device();
+      await syncKeptImages(KEPT, four(), { storage, concurrency: 1, ...(first === undefined ? {} : { first }) });
+      expect(asked(storage)).toBe('aebfc8d9');
+    }
+  });
+
+  it('asks `first` as each fetch starts: the view moved part way, what it shows now comes next, and what it no longer names goes back to the order kept', async () => {
+    let first: readonly string[] = ['h2', 'h3'];
+    // the case view moves while the first image is on its way
+    const storage = device(async (r) => {
+      if (r.url === url('b')) first = ['h4'];
+      return new Response('img');
+    });
+    const result = await syncKeptImages(KEPT, four(), { storage, concurrency: 1, first: () => first });
+    expect(asked(storage)).toBe('bd9aefc8');
+    expect(result).toMatchObject({ added: 8, failed: 0 });
+  });
+
+  it('fetches an image two figures share where the earlier of them in `first` comes', async () => {
+    const storage = device();
+    await syncKeptImages(['h1', 'h2', 'h3'], lists({ h1: [img('a')], h2: [img('b')], h3: [img('b')] }), { storage, concurrency: 1, first: () => ['h3'] });
+    expect(asked(storage)).toBe('ba');
+  });
+});
+
 describe('fetchImageLists', () => {
   it('asks in batches of 200 heads for pages of 200 rows, follows every page, and joins a figure\'s rows across pages', async () => {
     const heads = Array.from({ length: 201 }, (_, i) => `h${i}`);

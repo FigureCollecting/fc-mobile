@@ -37,6 +37,10 @@
 // could not read the lists (the server did not answer one, or another document's sync held the lock past its wait) syncs
 // again once the sync engine next completes a pass, its Collection page still open: the server stayed in reach, so no key
 // changed, and figures held since the last sync that read them had no image until the Collection page was opened again.
+// FETCH-FIRST (10-31: on a slow link, the case arranged by series, its default, the first figure in view stood as its plate
+// for about a minute, the images fetched in head-id order): the case view tells the heads it shows, then the rest as it
+// stands them (setFetchOrder), and a sync fetches what is missing in that order, followed as the view moves, then the
+// other kept figures'. What a sync keeps, and when its answer is complete, are the same in any order.
 import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
@@ -57,6 +61,13 @@ const KEPT_SHOWN_EVERY_MS = 1000;
 const partial = new WeakSet<ReadonlyMap<string, CachedImage>>();
 /** The answers of syncs that could not read the lists: synced again after the sync engine's next completed pass. */
 const unread = new WeakSet<ReadonlyMap<string, CachedImage>>();
+/** FETCH-FIRST: the heads the case view shows, then the rest as it stands them; the last case view's until another tells. */
+let fetchOrder: readonly string[] = [];
+
+/** FETCH-FIRST: the case view's heads, those it shows first: the sync under way fetches in this order from its next fetch on. */
+export function setFetchOrder(heads: readonly string[]): void {
+  fetchOrder = heads;
+}
 
 /** Shows each answer a sync tells, at most every KEPT_SHOWN_EVERY_MS and the latest last, until the sync aborts or `stop`. */
 function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal) {
@@ -123,7 +134,13 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         let read = false;
         try {
           const synced = await duringOwnSync(client, queryKey, () =>
-            syncKeptImages(kept, (h) => fetchImageLists(session!.clients.catalog, h, signal), { signal, onListsRead: () => (read = true), onKept: shown.show, choices: allChoices }),
+            syncKeptImages(kept, (h) => fetchImageLists(session!.clients.catalog, h, signal), {
+              signal,
+              onListsRead: () => (read = true),
+              onKept: shown.show,
+              choices: allChoices,
+              first: () => fetchOrder,
+            }),
           );
           void dropImageAnswers(client, queryKey);
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a

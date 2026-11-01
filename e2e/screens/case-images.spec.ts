@@ -4,7 +4,8 @@
 // its grounding on the first of two gallery rows, pages of 200 rows that split a figure's rows. The
 // images come from images.figurecollecting.com, another origin than the app, with the production
 // headers (ACAO *, CORP cross-origin, Vary: Origin, immutable): a 136 KB JPEG derivative and a PNG
-// mask. About half the figures have images. The sync fetches them in the order of their head ids.
+// mask. About half the figures have images. The sync fetches first those of the figures the case view shows, then
+// the rest in the order it stands them (FETCH-FIRST), whatever the case's arrangement.
 //   (a) once the sync has kept them, every figure in view with an image stands as its cut-out (masked,
 //       grounded and drawn), every other one as its plate; the tiles and the figure page show it too.
 //   (b) on a slow link, while the sync is still fetching, the figures it kept already stand as pictures.
@@ -25,7 +26,6 @@ import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng } from '../paintCheck';
 import { SHOT_VIEWPORTS } from '../caseViewports';
-import { arrangeCase } from '../caseArrange';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
@@ -80,8 +80,8 @@ const maskId = (head: string) => sha(`mask:${head}`);
 const MASKS = new Set<string>();
 /** About half the figures have images, fixed by their head ids. */
 const imaged = (head: string): boolean => parseInt(sha(head).slice(0, 2), 16) % 2 === 0;
-/** Where each imaged figure comes in the sync's fetches (the owned heads in order, src/hooks/useCollectionImages.ts). */
-let RANK = new Map<string, number>();
+/** The owned figures with images. */
+let IMAGED = new Set<string>();
 
 async function seed(): Promise<void> {
   const owned = await stack.sync.counts({ user: USER_A.sub, prefix: OWNED_PREFIX });
@@ -146,12 +146,10 @@ test.beforeAll(async () => {
   [USER_A, USER_C] = [state.users[0]!, state.users[2]!];
   HEADS = (JSON.parse(readFileSync(state.catalog.file, 'utf8')) as { heads: { headId: string }[] }).heads;
   for (const h of HEADS.slice(0, OWNED)) MASKS.add(maskId(h.headId));
-  RANK = new Map(
+  IMAGED = new Set(
     HEADS.slice(0, OWNED)
       .map((h) => h.headId)
-      .sort()
-      .filter(imaged)
-      .map((h, i) => [h, i]),
+      .filter(imaged),
   );
   await seed();
   await seedHeld();
@@ -362,7 +360,7 @@ test('(a) once its sync has kept them, every figure in view with an image stands
     )
     .toEqual(expect.arrayContaining([expect.stringMatching(/^https:\/\/images\.figurecollecting\.com\/d\/[0-9a-f]{64}$/)]));
   const tiles = await page.locator('img.jrows__img').evaluateAll((imgs) => (imgs as HTMLImageElement[]).map((i) => i.src));
-  expect(tiles.every((src) => [...RANK.keys()].some((h) => src === `${MEDIA}/${imageId(h)}`))).toBe(true);
+  expect(tiles.every((src) => [...IMAGED].some((h) => src === `${MEDIA}/${imageId(h)}`))).toBe(true);
   await shot(page, testInfo, 'case-images-tiles');
 
   // the figure page asks the coordinator for its own picture and shows it
@@ -375,34 +373,46 @@ test('(a) once its sync has kept them, every figure in view with an image stands
 // ------------------------------------------------------------------ (b)
 
 /**
- * The first dozen figures' images arrive at once, every later one takes 2.5 s (a slow link, never a stalled
- * one). The case's first view holds the lowest head ids, which the sync fetches first: so it shows both. That is
- * the case arranged by date added, the list's own order (PACK1): by series, the default, the wall opens on figures
- * from anywhere in the sync's order, (b) finds none of the first dozen in view, and (c) stays until one comes.
+ * The images of the first three figures the sync asks for arrive at once, every later one's take 2.5 s (a slow
+ * link, never a stalled one). The sync asks first for the figures in the case's view (FETCH-FIRST), in its default
+ * arrangement too, and the cover's first view has more than three with images (six, 10-31): so it shows both.
+ * Asked in head-id order, the wall arranged by series opened on figures from anywhere in that order: none of the
+ * first dozen stood in view, and the first picture in view came after about a minute.
  */
-const SLOW_FROM = 12;
-const slowLink = (head: string | undefined): Promise<void> =>
-  new Promise((res) => setTimeout(res, head !== undefined && (RANK.get(head) ?? 0) >= SLOW_FROM ? 2500 : 0));
+const SLOW_FROM = 3;
+/** A slow link, and the figures its host was asked for, in the order first asked. */
+function slowLink(): { ready: (head: string | undefined) => Promise<void>; asked: string[] } {
+  const asked: string[] = [];
+  const ready = (head: string | undefined): Promise<void> => {
+    if (head !== undefined && !asked.includes(head)) asked.push(head);
+    return new Promise((res) => setTimeout(res, head !== undefined && asked.indexOf(head) >= SLOW_FROM ? 2500 : 0));
+  };
+  return { ready, asked };
+}
 
 test('(b) on a slow link, while its sync is still fetching, the figures it kept already stand as pictures', async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
-  await arrangeCase(context, 'date-added');
-  const served = await imageHost(context, slowLink);
+  const link = slowLink();
+  const served = await imageHost(context, link.ready);
   await imageLists(page);
   await openCase(page);
-  const early = (await drawn(page)).filter((d) => imaged(d.id) && RANK.get(d.id)! < SLOW_FROM);
+  await expect.poll(() => link.asked.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(SLOW_FROM);
+  const first = new Set(link.asked.slice(0, SLOW_FROM));
+  const early = (await drawn(page)).filter((d) => first.has(d.id));
+  testInfo.annotations.push({ type: 'first asked in view', description: `${early.length} of ${SLOW_FROM}` });
   expect(early.length, 'figures in view the sync fetches first').toBeGreaterThan(0);
 
   await expect
-    .poll(async () => (await drawn(page)).filter((d) => cutOut(d) && RANK.get(d.id)! < SLOW_FROM).length, { timeout: 60_000 })
+    .poll(async () => (await drawn(page)).filter((d) => cutOut(d) && first.has(d.id)).length, { timeout: 60_000 })
     .toBeGreaterThan(0);
   // still fetching: the slow half has hardly begun
-  expect(served.length).toBeLessThan(RANK.size * 2);
+  expect(served.length).toBeLessThan(IMAGED.size * 2);
   const now = await drawn(page);
   expect(now.filter((d) => imaged(d.id) && !cutOut(d)).length, 'figures in view still to come').toBeGreaterThan(0);
-  expect(now.filter((d) => cutOut(d) && RANK.get(d.id)! >= SLOW_FROM + 50)).toEqual([]);
-  testInfo.annotations.push({ type: 'served while fetching', description: `${served.length} of ${RANK.size * 2}` });
+  const late = new Set(link.asked.slice(SLOW_FROM + 50));
+  expect(now.filter((d) => cutOut(d) && late.has(d.id))).toEqual([]);
+  testInfo.annotations.push({ type: 'served while fetching', description: `${served.length} of ${IMAGED.size * 2}` });
   await shot(page, testInfo, 'case-images-while-syncing');
 });
 
@@ -411,12 +421,12 @@ test('(b) on a slow link, while its sync is still fetching, the figures it kept 
 test('(c) a case view left part way shows what its sync kept the moment it opens again, and its sync carries on with only what is missing', async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
-  await arrangeCase(context, 'date-added');
   // while it is away and until released, the image host answers nothing; once released, everything at once
   let held: Promise<void> | undefined;
   let release = () => {};
   let fast = false;
-  const served = await imageHost(context, (head) => held ?? (fast ? Promise.resolve() : slowLink(head)));
+  const link = slowLink();
+  const served = await imageHost(context, (head) => held ?? (fast ? Promise.resolve() : link.ready(head)));
   const lists = await imageLists(page);
   await openCase(page);
   await expect.poll(async () => (await drawn(page)).filter(cutOut).length, { timeout: 60_000 }).toBeGreaterThan(0);

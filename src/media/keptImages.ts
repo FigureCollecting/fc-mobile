@@ -289,6 +289,12 @@ interface SyncOptions {
    * written, and again as each image lands, so a case view shows them while the rest still come.
    */
   onKept?: (kept: ReadonlyMap<string, CachedImage>) => void;
+  /**
+   * FETCH-FIRST: the heads whose missing images to fetch first, in this order (the case view's: the figures it shows, then
+   * the rest as it stands them), asked as each fetch starts, so a view that moves is followed from the next fetch on. The
+   * other kept figures' come after, in the order kept. It orders the fetches only: what is kept is the same either way.
+   */
+  first?: () => readonly string[];
 }
 
 /**
@@ -344,6 +350,9 @@ export async function syncKeptImages(
   }
 }
 
+/** FETCH-FIRST: no head to fetch first, one array for every fetch, so the order is not worked out again at each. */
+const NO_HEADS: readonly string[] = [];
+
 /** One body of the chunks a reader read, in order. */
 function joined(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
@@ -387,6 +396,12 @@ async function bringToKept(
   const keep = new Set<string>();
   const kept = new Map<string, CachedImage[]>();
   const fresh = new Set<string>();
+  // the kept figures each kept address is shown for (FETCH-FIRST: it is fetched where the first of them comes)
+  const shownFor = new Map<string, string[]>();
+  const keepFor = (u: string, head: string) => {
+    keep.add(u);
+    shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
+  };
   for (const head of heads) {
     const list = toCachedImages(lists.get(head) ?? []);
     const shown = answerable(list, options.choices?.get(head));
@@ -395,8 +410,8 @@ async function bringToKept(
     kept.set(head, list);
     // the chosen photo and the primary it replaces (shown till the chosen one is here), each with its mask
     for (const image of shown) {
-      keep.add(image.url);
-      if (image.maskUrl !== undefined) keep.add(image.maskUrl);
+      keepFor(image.url, head);
+      if (image.maskUrl !== undefined) keepFor(image.maskUrl, head);
     }
   }
 
@@ -476,6 +491,22 @@ async function bringToKept(
     await records.put(listKey(head), listOf(list));
   }
   const missing = [...keep].filter((u) => !have.has(u));
+  // FETCH-FIRST: the next address to fetch, those of the heads `first` names first, in its order, then the rest as kept
+  const keptAt = new Map(missing.map((u, i) => [u, i]));
+  let orderedBy: readonly string[] | undefined;
+  const take = (): string | undefined => {
+    const first = options.first?.() ?? NO_HEADS;
+    if (first !== orderedBy) {
+      orderedBy = first;
+      const rank = new Map<string, number>();
+      first.forEach((head, i) => {
+        if (!rank.has(head)) rank.set(head, i);
+      });
+      const at = new Map(missing.map((u) => [u, Math.min(...shownFor.get(u)!.map((head) => rank.get(head) ?? first.length))]));
+      missing.sort((a, b) => at.get(a)! - at.get(b)! || keptAt.get(a)! - keptAt.get(b)!);
+    }
+    return missing.shift();
+  };
   // Each fresh list's primary whose bytes are here (none of them is withheld): what keptImages would answer now.
   const tellKept = () => {
     if (options.onKept === undefined) return;
@@ -492,7 +523,7 @@ async function bringToKept(
   // starts. Only an ok answer with a body is kept (Cache.add kept any ok one), once all of it arrived.
   let stalled = false;
   const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
-    for (let next = missing.shift(); next !== undefined && options.signal?.aborted !== true && !stalled; next = missing.shift()) {
+    for (let next = take(); next !== undefined && options.signal?.aborted !== true && !stalled; next = take()) {
       const step = new AbortController();
       let quiet: ReturnType<typeof setTimeout> | undefined;
       const heard = () => {

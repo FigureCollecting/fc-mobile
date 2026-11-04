@@ -97,7 +97,7 @@ import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { arrangeOrder } from './caseArrangement';
 import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
-import { alphaDrawsNothing, alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { alphaDrawsNothing, alphaPictureLoaded, rereadUndecoded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
@@ -1064,6 +1064,29 @@ export function CabinetScene({
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
   // one still being read stands as its plate on its label meanwhile, holding back no other
   const liveAlpha = useAlphaMarginsOf(alphaUrls);
+  // GKSHOW-2: a mask whose read never decoded it (a 404, offline, a weak link) stands its figure framed, and a CSS mask has no
+  // load to read it again on (alphaPictureLoaded): it is read again, once each time, when the case opens or its masks change,
+  // an image sync starts or ends (imagesComplete), the link comes back or the app is shown again
+  const maskUrls = useMemo(() => {
+    const masks = new Set(listedArts.flatMap(({ art }) => (art.kind === 'masked' ? [art.maskUrl] : [])));
+    return alphaUrls.filter((url) => masks.has(url));
+  }, [alphaUrls, listedArts]);
+  const masksNow = useRef(maskUrls);
+  masksNow.current = maskUrls;
+  const maskKey = maskUrls.join('\n');
+  useEffect(() => {
+    const again = () => rereadUndecoded(masksNow.current);
+    const shown = () => {
+      if (document.visibilityState === 'visible') again();
+    };
+    again();
+    window.addEventListener('online', again);
+    document.addEventListener('visibilitychange', shown);
+    return () => {
+      window.removeEventListener('online', again);
+      document.removeEventListener('visibilitychange', shown);
+    };
+  }, [maskKey, imagesComplete]);
   // GKSHOW: what the case can draw of each, as its pictures stand (drawableArt): a broken picture is its plate, a masked one
   // whose mask failed or draws nothing stands framed. A figure whose art is unchanged keeps its entry, and one changed keeps
   // the entry it was changed to, so a picture read elsewhere moves no figure that drew the same before (drawing() below);

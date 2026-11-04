@@ -2331,4 +2331,98 @@ describe('CabinetScene: a mask that cannot be shown stands its picture framed (G
     await waitFor(() => expect(artOf(host)[figures[1]._id]).toBe('framed'));
     expect(artOf(host)[figures[0]._id]).toBe('masked');
   });
+
+  /** The masks named fail until `served` (a 404, offline, a weak link), then load; `reads` counts the reads of `late`. */
+  function lateMask(late: string) {
+    const state = { served: false, reads: 0 };
+    masksThat((src) => {
+      if (!src.endsWith(late)) return false;
+      state.reads++;
+      return !state.served;
+    });
+    return state;
+  }
+
+  it('GKSHOW-2: a mask that failed once and then arrives draws masked again when the case is left and opened again, with no reload', async () => {
+    const figures = maskedFigures();
+    const late = getFixtureImageRef(figures[0])!.maskUrl!;
+    let online = false;
+    masksThat((src) => !online && src.endsWith(late));
+    const first = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(first.host);
+    await waitFor(() => expect(artOf(first.host)[figures[0]._id]).toBe('framed'));
+    // the mask is now on the device / the network is back
+    online = true;
+    // the case is left and opened again (a new mount, as navigating away and back does)
+    first.unmount();
+    const again = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(again.host);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(artOf(again.host)[figures[0]._id]).toBe('masked');
+  });
+
+  it('GKSHOW-2: the link coming back (online) reads a failed mask again, the case left open: one read each time, still framed while it fails, masked once it loads', async () => {
+    const figures = maskedFigures();
+    const mask = lateMask(getFixtureImageRef(figures[0])!.maskUrl!);
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    expect(mask.reads).toBe(1);
+    // back online, the mask still missing: read once, framed still, and never read again of itself
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(mask.reads).toBe(2));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mask.reads).toBe(2);
+    expect(artOf(host)[figures[0]._id]).toBe('framed');
+    mask.served = true;
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
+    expect(mask.reads).toBe(3);
+  });
+
+  it('GKSHOW-2: the app shown again (visibilitychange to visible) reads a failed mask again; hidden, it reads nothing', async () => {
+    const figures = maskedFigures();
+    const mask = lateMask(getFixtureImageRef(figures[0])!.maskUrl!);
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    mask.served = true;
+    const shown = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mask.reads).toBe(1);
+    expect(artOf(host)[figures[0]._id]).toBe('framed');
+    shown.mockReturnValue('visible');
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
+    expect(mask.reads).toBe(2);
+  });
+
+  it('GKSHOW-2: the image sync completing (imagesComplete) or the case\'s masks changing reads a failed mask again', async () => {
+    const figures = maskedFigures();
+    const mask = lateMask(getFixtureImageRef(figures[0])!.maskUrl!);
+    const at = (shown: Figure[], imagesComplete: boolean) => (
+      <CabinetScene figures={shown} onSelect={vi.fn()} prefs={prefs()} imageFor={getFixtureImageRef} imagesComplete={imagesComplete} />
+    );
+    const { host, rerender } = scene(figures, {}, { imageFor: getFixtureImageRef, imagesComplete: false });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    // the sync completes, the mask still missing: read once more
+    rerender(at(figures, true));
+    await waitFor(() => expect(mask.reads).toBe(2));
+    expect(artOf(host)[figures[0]._id]).toBe('framed');
+    // a figure leaves the case (a filter, a sync): its masks change, and the mask, here now, is read again
+    mask.served = true;
+    rerender(at(figures.slice(0, -1), true));
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
+    expect(mask.reads).toBe(3);
+  });
 });

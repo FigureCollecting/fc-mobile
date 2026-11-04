@@ -10,7 +10,7 @@ import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLA
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, frameCase } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, unprojectToPlaneZ, type Camera } from '../caseCamera';
-import { __clearAlphaMarginCache } from '../alphaMargin';
+import { ALPHA_READS_AT_ONCE, ALPHA_READ_TURN_MS, __clearAlphaMarginCache } from '../alphaMargin';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
 // what a test checks at once is laid out on the labels, never on reads an earlier test left in the cache
@@ -2424,5 +2424,84 @@ describe('CabinetScene: a mask that cannot be shown stands its picture framed (G
     rerender(at(figures.slice(0, -1), true));
     await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
     expect(mask.reads).toBe(3);
+  });
+
+  it('GKSHOW-2: only the masks are read again: a cut-out whose read never decoded is left to its own picture load, never read on online', async () => {
+    window.history.pushState({}, '', '/?fxbranch=masked');
+    const figures = [...getFixtureFigures(1, 'masked'), ...getFixtureFigures(1, 'matted')];
+    const masks = figures.flatMap((f) => getFixtureImageRef(f)?.maskUrl ?? []);
+    let photoReads = 0;
+    // every mask reads; every cut-out's photo never decodes
+    masksThat((src) => {
+      const photo = !masks.some((m) => src.endsWith(m));
+      if (photo) photoReads++;
+      return photo;
+    });
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    const cutout = figures.find((f) => !f._id.endsWith('-masked'))!;
+    expect(artOf(host)[cutout._id]).toBe('cutout');
+    expect(artOf(host)[figures[0]._id]).toBe('masked');
+    const read = photoReads;
+    expect(read).toBeGreaterThan(0);
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(photoReads, 'no photo read again').toBe(read);
+  });
+
+  it('a picture that fails to load stands as its plate, and its read still waiting in line never runs', async () => {
+    const figures = getFixtureFigures(1, 'matted');
+    const started: string[] = [];
+    // every read stalls: the first ALPHA_READS_AT_ONCE hold their turns, the rest wait in line
+    (HTMLImageElement.prototype as { decode?: (this: HTMLImageElement) => Promise<void> }).decode = function (this: HTMLImageElement) {
+      started.push(this.src);
+      return new Promise<void>(() => {});
+    };
+    const { host } = scene(figures);
+    await waitFor(() => expect(started).toHaveLength(ALPHA_READS_AT_ONCE));
+    const waiting = Array.from(host.querySelectorAll<HTMLImageElement>('img.cab-figure__art--cutout')).filter((img) => !started.includes(img.src));
+    expect(waiting.length, 'pictures waiting in line').toBeGreaterThan(1);
+    const broken = waiting[0].src;
+    fireEvent.error(waiting[0]);
+    // the stalled reads give up their turns: the next in line start, never the broken picture's
+    await new Promise((r) => setTimeout(r, ALPHA_READ_TURN_MS + 300));
+    expect(started.length).toBeGreaterThan(ALPHA_READS_AT_ONCE);
+    expect(started).not.toContain(broken);
+  });
+
+  it('GKSHOW-2: the scene holds one online and one visibilitychange listener, however often its masks or imagesComplete change, and none once it unmounts', async () => {
+    const onWindow = { add: vi.spyOn(window, 'addEventListener'), remove: vi.spyOn(window, 'removeEventListener') };
+    const onDocument = { add: vi.spyOn(document, 'addEventListener'), remove: vi.spyOn(document, 'removeEventListener') };
+    /** How many `type` listeners stand on `on`'s target now: its adds and removes replayed in the order they came. */
+    const standing = (on: typeof onWindow, type: string) => {
+      const calls = [
+        ...on.add.mock.calls.map((c, i) => ({ add: true, c, at: on.add.mock.invocationCallOrder[i] })),
+        ...on.remove.mock.calls.map((c, i) => ({ add: false, c, at: on.remove.mock.invocationCallOrder[i] })),
+      ].sort((a, b) => a.at - b.at);
+      const live = new Set<unknown>();
+      for (const { add, c } of calls) if (c[0] === type) (add ? live.add(c[1]) : live.delete(c[1]));
+      return live.size;
+    };
+    const figures = maskedFigures();
+    masksThat(() => false);
+    const at = (shown: Figure[], imagesComplete: boolean) => (
+      <CabinetScene figures={shown} onSelect={vi.fn()} prefs={prefs()} imageFor={getFixtureImageRef} imagesComplete={imagesComplete} />
+    );
+    const { host, rerender, unmount } = scene(figures, {}, { imageFor: getFixtureImageRef, imagesComplete: false });
+    await grounded(host);
+    const online = standing(onWindow, 'online');
+    const shown = standing(onDocument, 'visibilitychange');
+    expect(online).toBeGreaterThan(0);
+    expect(shown).toBeGreaterThan(0);
+    rerender(at(figures, true));
+    rerender(at(figures, false));
+    rerender(at(figures.slice(0, -1), false));
+    expect(standing(onWindow, 'online')).toBe(online);
+    expect(standing(onDocument, 'visibilitychange')).toBe(shown);
+    unmount();
+    expect(standing(onWindow, 'online')).toBe(0);
+    expect(standing(onDocument, 'visibilitychange')).toBe(0);
   });
 });

@@ -137,6 +137,11 @@ export function DisplayToggle({
   const [menu, setMenu] = useState<LayoutMode | 'swipe' | null>(null);
   const root = useRef<HTMLDivElement>(null);
 
+  // The swipe button goes when Free camera is ticked; its menu must not outlive it (a keyboard can reach this).
+  useEffect(() => {
+    if (menu === 'swipe' && !onSwipe) setMenu(null);
+  }, [menu, onSwipe]);
+
   useEffect(() => {
     if (menu === null) return;
     const onDown = (e: PointerEvent) => {

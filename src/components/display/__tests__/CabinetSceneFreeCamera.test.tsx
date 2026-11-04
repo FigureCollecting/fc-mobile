@@ -14,7 +14,7 @@ import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
 import { frameMargins, project } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT } from '../caseCull';
 
-// NAV-1A, the Free camera (trial), in the scene: MOVE and LOOK from one finger, the hold that arms Look without swallowing
+// NAV-1A, the Free camera, in the scene: MOVE and LOOK from one finger, the hold that arms Look without swallowing
 // a tap, the realism cone and its ease back, the pose held across a fold, the arrows and Reset from the frame-centre
 // cabinet, the side walls, and PINCH-1 as it was. jsdom lays nothing out: a client point is a frame point.
 

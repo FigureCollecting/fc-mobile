@@ -1,5 +1,5 @@
 /**
- * NAV-1A, the Free camera (trial): the live pose and the gestures that move it (rulings S2, S6, S8; spec 2.1, 2.2, 6).
+ * NAV-1A, the Free camera: the live pose and the gestures that move it (rulings S2, S6, S8; spec 2.1, 2.2, 6).
  * The pose lives in a ref, not in Preact state: while a finger moves it, each animation frame writes the scene root's
  * transform and data-camera directly (the viewport keeps its perspective and never a translate), and the scene renders
  * only when the cull must change (stickyWhole) or a gesture ends. One finger drags MOVE the eye (truck and pedestal);

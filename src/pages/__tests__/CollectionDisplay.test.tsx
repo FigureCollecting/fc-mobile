@@ -131,6 +131,30 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ wall: 'white' });
   });
 
+  it('NAV-2A: a fresh device opens the case in Free camera, with no swipe button and no pan anywhere; the View card\'s untick brings the old path\'s button back, kept on this device', async () => {
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ swipe: 'pan' }));
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(container.querySelector('.cabinet-scene[data-free-camera="1"]')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
+    expect(screen.queryByText(/pan the wall/i)).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'View' }));
+    expect(screen.queryByText(/pan the wall/i)).toBeNull();
+    const box = await screen.findByRole('checkbox', { name: 'Free camera' });
+    expect(box).toBeChecked();
+    await user.click(box);
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-free-camera]')).toBeNull());
+    // the swipe mode stored before is the old path's again, untouched
+    expect(screen.getByRole('button', { name: 'Swipe, Pan the wall' })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ freeCamera: false, swipe: 'pan' });
+    unmount();
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(screen.getByRole('button', { name: 'Swipe, Pan the wall' })).toBeInTheDocument();
+  });
+
   it('CAM1: the header\'s swipe menu sets the swipe mode, kept on this device; the tiles have no such button', async () => {
     storeLegacyCamera();
     await respondWith([makeFigure('1')]);

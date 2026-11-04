@@ -69,10 +69,10 @@ export interface CasePrefs {
   /** The custom wall colour, #rrggbb (its light-theme colour; the dark one is mixed from it). */
   readonly wallCustom: string;
   /**
-   * NAV-1A (rulings R0.2): the Free camera trial (a camera that turns, walks without snapping and never traps you), per
-   * device. Off (absent) is today's case, to the byte; it is kept only while on.
+   * NAV-1A: the Free camera (a camera that turns, walks without snapping and never traps you), per device. NAV-2A (NAVDEF
+   * a, Ross 10-31): on by default; only a stored false (the View card's box, unticked) keeps this device on the old path.
    */
-  readonly freeCamera?: boolean;
+  readonly freeCamera: boolean;
   /** PACK1 (Ross 10-26): the order the case stands its figures in, apart from the list's sort (caseArrangement.ts). */
   readonly arrange: CaseArrangement;
 }
@@ -88,6 +88,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   showEstimated: false,
   wall: DEFAULT_WALL,
   wallCustom: DEFAULT_WALL_CUSTOM,
+  freeCamera: true,
   arrange: DEFAULT_CASE_ARRANGEMENT,
 };
 
@@ -132,7 +133,7 @@ export function readCasePrefs(): CasePrefs {
     showEstimated: stored.showEstimated === true,
     wall: isWallPreset(stored.wall) ? stored.wall : d.wall,
     wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
-    ...(stored.freeCamera === true ? { freeCamera: true } : {}),
+    freeCamera: stored.freeCamera !== false,
     arrange: isCaseArrangement(stored.arrange) ? stored.arrange : d.arrange,
   };
 }

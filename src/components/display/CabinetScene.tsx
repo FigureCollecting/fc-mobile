@@ -1801,7 +1801,6 @@ export function CabinetScene({
     space: eyeSpace(room, ceilingMm),
     zBack: room.zBack,
     dimmed: prefs.view === 'cabinet' ? wall.cabinets[focusIdx] : null,
-    lookMode: prefs.swipe === 'pan',
     lookHoldMs: lookHoldMs(),
     jogMax: jogMax(),
     reducedMotion: prefersReducedMotion(),
@@ -1982,29 +1981,26 @@ export function CabinetScene({
 
       {/* NAV-PTR-1: the arrows are the scene's controls, not its picture: a press on one is no gesture of the scene's */}
       <div class="cabinet-scene__nav" data-scene-ui>
-        {/* NAV-JOG: in Free camera the bottom-centre button's jog moves it; the side arrows retire */}
-        {!free && (
-          <StepButton
-            cls="cabinet-scene__step cabinet-scene__step--prev"
-            label="Previous cabinet"
-            disabled={reach !== null ? !reach.prev : focusIdx <= 0}
-            onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
-            onDrag={startPress}
-          >
-            ‹
-          </StepButton>
-        )}
-        {!free && (
-          <StepButton
-            cls="cabinet-scene__step cabinet-scene__step--next"
-            label="Next cabinet"
-            disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
-            onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
-            onDrag={startPress}
-          >
-            ›
-          </StepButton>
-        )}
+        {/* NAV-JOG: in Free camera the bottom-centre button's jog moves it and the side arrows retire from sight; NAV-2A:
+            they stay for the keyboard, unseen and untouchable until focused (freeStyles) */}
+        <StepButton
+          cls={`cabinet-scene__step cabinet-scene__step--prev${free ? ' cabinet-scene__step--keys' : ''}`}
+          label="Previous cabinet"
+          disabled={reach !== null ? !reach.prev : focusIdx <= 0}
+          onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
+          onDrag={startPress}
+        >
+          ‹
+        </StepButton>
+        <StepButton
+          cls={`cabinet-scene__step cabinet-scene__step--next${free ? ' cabinet-scene__step--keys' : ''}`}
+          label="Next cabinet"
+          disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
+          onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
+          onDrag={startPress}
+        >
+          ›
+        </StepButton>
         {prefs.view === 'shelf' && (
           <div class="cabinet-scene__shelves">
             <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))} onDrag={startPress}>
@@ -2072,6 +2068,9 @@ function jogMax(): number {
 /** NAV-1A: the Free camera's own rules, drawn only while it is on (the old path's sheet is untouched). */
 const freeStyles = `
   .cabinet-scene[data-free-camera] { -webkit-touch-callout: none; }
+  /* NAV-2A: the side arrows, kept for the keyboard alone: no eye or finger meets them until one is focused */
+  .cabinet-scene__step--keys { opacity: 0; pointer-events: none; }
+  .cabinet-scene__step--keys:focus { opacity: 1; pointer-events: auto; }
   /* rulings S6: the 28 px ring under a finger that has armed Look, gone when it lifts */
   .cabinet-scene__look-ring {
     position: absolute;

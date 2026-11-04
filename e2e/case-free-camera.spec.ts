@@ -34,7 +34,8 @@ type Swipe = 'camera' | 'pan';
 const settle = (page: Page, ms = 300) => page.evaluate((m) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, m)))), ms);
 
 async function openFree(page: Page, size: { width: number; height: number }, opts: { view?: View; swipe?: Swipe; query?: string; free?: boolean } = {}) {
-  const prefs = { view: opts.view ?? 'wall', swipe: opts.swipe ?? 'camera', clearanceMm: 0, ...(opts.free === false ? {} : { freeCamera: true }) };
+  // NAV-2A: Free camera is the default; off is a stored false
+  const prefs = { view: opts.view ?? 'wall', swipe: opts.swipe ?? 'camera', clearanceMm: 0, freeCamera: opts.free !== false };
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
@@ -72,13 +73,16 @@ async function fingerDrag(page: Page, from: { x: number; y: number }, to: { x: n
   return finger;
 }
 
-/** A turn by `deg` (positive: right) in the header's Look mode: from the frame centre to where its bearing gives the turn. */
+/**
+ * A turn by `deg` (positive: right) with Look's hold (NAV-2A: no header mode turns at once any more): held at the frame
+ * centre until Look arms, then to where its bearing gives the turn.
+ */
 async function lookBy(page: Page, deg: number) {
   const f = await frameBox(page);
   const c = await cameraOf(page);
   const cx = f.x + f.width / 2;
   const cy = f.y + f.height / 2;
-  await fingerDrag(page, { x: cx, y: cy }, { x: cx - c.focalPx * Math.tan(deg * DEG), y: cy }, { steps: 12 });
+  await holdAndSweep(page, { x: cx, y: cy }, [{ x: cx - c.focalPx * Math.tan(deg * DEG), y: cy }]);
   await settle(page, 300);
 }
 
@@ -87,7 +91,7 @@ async function lookBy(page: Page, deg: number) {
 for (const panel of FOLD8) {
   test(`oracle ${panel.name}: a KLINGSBO post's front face draws where project() puts it, yaw -30..30`, async ({ page }, testInfo) => {
     test.setTimeout(60_000);
-    await openFree(page, panel, { swipe: 'pan' });
+    await openFree(page, panel);
     const n = (await wallOf(page)).length;
     const wall = klingsbo(n);
     const sec = IKEA_KLINGSBO.base.leg?.sectionMm ?? IKEA_KLINGSBO.panels.sideMm;
@@ -295,15 +299,25 @@ async function jogSpeed(page: Page) {
   };
 }
 
-test('NAV-JOG: in Free camera the side arrows are gone and the bottom-centre button is the jog; off, the arrows and the + as they were', async ({ page }) => {
-  await openFree(page, COVER);
-  await expect(page.locator('.cabinet-scene__step--prev, .cabinet-scene__step--next')).toHaveCount(0);
+test('NAV-JOG: in Free camera the side arrows are gone from sight and touch (NAV-2A: kept for the keyboard) and the bottom-centre button is the jog; off, the arrows and the + as they were', async ({ page }) => {
+  await openFree(page, COVER, { view: 'cabinet' });
+  const next = page.locator('.cabinet-scene__step--next');
+  await expect(next).toHaveCSS('opacity', '0');
+  await expect(next).toHaveCSS('pointer-events', 'none');
+  const b = (await next.boundingBox())!;
+  const hit = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return el !== null && el.closest('.cabinet-scene__step') === null && document.querySelector('.cabinet-scene')!.contains(el);
+  }, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  expect(hit, 'a finger where Next stood lands on the picture').toBe(true);
   await expect(jogButton(page)).toHaveCount(1);
   await expect(page.getByRole('button', { name: /move the camera/i })).toHaveCount(1);
   const off = await page.context().newPage();
   await openFree(off, COVER, { free: false });
+  await expect(off.locator('.cabinet-scene')).not.toHaveAttribute('data-free-camera', /./);
   await expect(off.locator('.cabinet-scene__step--prev')).toHaveCount(1);
-  await expect(off.locator('.cabinet-scene__step--next')).toHaveCount(1);
+  await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('opacity', '1');
+  await expect(off.locator('.cabinet-scene__step--keys')).toHaveCount(0);
   await expect(off.locator('.tab-bar__add[data-jog]')).toHaveCount(0);
   await expect(off.getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
   await off.close();

@@ -14,7 +14,7 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 beforeEach(() => localStorage.clear());
 
 describe('case prefs, kept per device (CC14)', () => {
-  it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, the camera walks (CC4 playable), an 8 ft ceiling, IC1-R1 tab order', () => {
+  it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, the camera walks (CC4 playable), an 8 ft ceiling, IC1-R1 tab order, Free camera on (NAVDEF a)', () => {
     expect(DEFAULT_CASE_PREFS).toEqual({
       pattern: 'ikea-klingsbo',
       view: 'wall',
@@ -26,6 +26,7 @@ describe('case prefs, kept per device (CC14)', () => {
       showEstimated: false,
       wall: 'cream',
       wallCustom: '#d8d2c4',
+      freeCamera: true,
       arrange: 'series-scale-name',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
@@ -43,6 +44,7 @@ describe('case prefs, kept per device (CC14)', () => {
       showEstimated: true,
       wall: 'custom',
       wallCustom: '#336699',
+      freeCamera: false,
       arrange: 'scale-name',
     } as const;
     writeCasePrefs(prefs);
@@ -172,6 +174,39 @@ describe('the back wall colour (WALL-COLOUR-1)', () => {
   });
 });
 
+
+// NAV-2A (NAVDEF a, Ross 10-31): Free camera is on unless this device turned it off, and a turn-off is kept
+describe('Free camera (NAV-2A)', () => {
+  it('a fresh device has it on, and so does a record from before it existed', () => {
+    expect(readCasePrefs().freeCamera).toBe(true);
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', swipe: 'pan' }));
+    expect(readCasePrefs()).toMatchObject({ view: 'shelf', swipe: 'pan', freeCamera: true });
+  });
+
+  it('turned off, it stays off through later writes of the other prefs', () => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: false }));
+    writeCasePrefs({ view: 'cabinet' });
+    expect(readCasePrefs().freeCamera).toBe(false);
+    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).freeCamera, 'the turn-off is stored').toBe(false);
+    writeCasePrefs({ freeCamera: true });
+    writeCasePrefs({ swipe: 'pan' });
+    expect(readCasePrefs().freeCamera).toBe(true);
+  });
+
+  it('the hook keeps a turn-off across its own later updates', () => {
+    const { result } = renderHook(() => useCasePrefs());
+    expect(result.current[0].freeCamera).toBe(true);
+    act(() => result.current[1]({ freeCamera: false }));
+    act(() => result.current[1]({ view: 'shelf' }));
+    expect(result.current[0].freeCamera).toBe(false);
+    expect(readCasePrefs().freeCamera).toBe(false);
+  });
+
+  it.each([[1], [0], ['true'], ['false'], ['no'], [null], [{}], [[false]]])('reads %j as on: only an explicit false turns it off', (bad) => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: bad, view: 'shelf' }));
+    expect(readCasePrefs()).toMatchObject({ freeCamera: true, view: 'shelf' });
+  });
+});
 
 // PACK1 (Ross 10-26): the order the case stands its figures in, per device, apart from the list's sort
 describe('the case arrangement (PACK1)', () => {

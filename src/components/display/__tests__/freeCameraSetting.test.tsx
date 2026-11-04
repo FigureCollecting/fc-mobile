@@ -7,72 +7,63 @@ import { renderWithProviders } from '../../../test/testUtils';
 
 vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
 
-// NAV-1A (rulings R0.2): Free camera is a per-device trial setting, off by default; off is today's app. Nothing migrates:
-// the swipe mode stays 'pan' | 'camera' and in Free camera the header names them Move and Look around.
+// NAV-2A (NAVDEF a, Ross 10-31): Free camera is on by default on every device; the View card keeps the box that turns it
+// off on this one. Nothing migrates: the stored swipe mode stays as it was, for the old path (Free camera off).
 
 beforeEach(() => localStorage.clear());
 afterEach(() => cleanup());
 
-describe('the Free camera (trial) pref', () => {
-  it('is off by default and absent from the stored prefs while off', () => {
-    expect(DEFAULT_CASE_PREFS.freeCamera ?? false).toBe(false);
-    expect(readCasePrefs().freeCamera ?? false).toBe(false);
+describe('the Free camera pref', () => {
+  it('is on by default, and on for a record that does not say', () => {
+    expect(DEFAULT_CASE_PREFS.freeCamera).toBe(true);
+    expect(readCasePrefs().freeCamera).toBe(true);
     writeCasePrefs({ view: 'shelf' });
-    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).not.toHaveProperty('freeCamera');
+    expect(readCasePrefs().freeCamera).toBe(true);
   });
 
-  it('is on only when stored exactly true', () => {
-    writeCasePrefs({ freeCamera: true });
-    expect(readCasePrefs().freeCamera).toBe(true);
-    for (const bad of [1, 'true', 'yes', null, {}, false]) {
-      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: bad }));
-      expect(readCasePrefs().freeCamera ?? false).toBe(false);
+  it('is off only when stored exactly false, and the stored swipe mode is left as it was', () => {
+    writeCasePrefs({ freeCamera: false, swipe: 'pan' });
+    expect(readCasePrefs()).toMatchObject({ freeCamera: false, swipe: 'pan' });
+    for (const bad of [0, 'false', 'no', null, {}, true]) {
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: bad, swipe: 'pan' }));
+      expect(readCasePrefs(), JSON.stringify(bad)).toMatchObject({ freeCamera: true, swipe: 'pan' });
     }
   });
 });
 
-describe('the View card: a "Free camera (trial)" checkbox beside "Show estimated sizes"', () => {
-  it('off to begin with; a tap is a patch of the pref; on when the pref is', () => {
+describe('the View card: a "Free camera" checkbox beside "Show estimated sizes"', () => {
+  it('ticked to begin with; a tap is a patch of the pref; unticked when the pref is off', () => {
     const onChange = vi.fn();
     const { unmount } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
-    const box = screen.getByRole('checkbox', { name: 'Free camera (trial)' });
-    expect(box).not.toBeChecked();
+    const box = screen.getByRole('checkbox', { name: 'Free camera' });
+    expect(box).toBeChecked();
     fireEvent.click(box);
-    expect(onChange).toHaveBeenCalledWith({ freeCamera: true });
+    expect(onChange).toHaveBeenCalledWith({ freeCamera: false });
     unmount();
-    const off = vi.fn();
-    render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, freeCamera: true }} onChange={off} onClose={() => {}} />);
-    const on = screen.getByRole('checkbox', { name: 'Free camera (trial)' });
-    expect(on).toBeChecked();
-    fireEvent.click(on);
-    expect(off).toHaveBeenCalledWith({ freeCamera: false });
+    const on = vi.fn();
+    render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, freeCamera: false }} onChange={on} onClose={() => {}} />);
+    const off = screen.getByRole('checkbox', { name: 'Free camera' });
+    expect(off).not.toBeChecked();
+    fireEvent.click(off);
+    expect(on).toHaveBeenCalledWith({ freeCamera: true });
   });
 
   it('sits right after the estimated-sizes row', () => {
     render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
     const boxes = screen.getAllByRole('checkbox').map((b) => b.closest('label')!.textContent!.trim());
-    expect(boxes.indexOf('Free camera (trial)')).toBe(boxes.indexOf('Show estimated sizes') + 1);
+    expect(boxes.indexOf('Free camera')).toBe(boxes.indexOf('Show estimated sizes') + 1);
   });
 });
 
-describe('the header swipe button in Free camera: Move and Look around', () => {
-  const mount = (freeCamera: boolean | undefined, swipe: 'pan' | 'camera') =>
+describe('the header swipe button is the old path\'s alone', () => {
+  it('names its modes Pan the wall and Move the camera; Free camera gives it no handler, so no button (Collection)', () => {
     renderWithProviders(
-      <DisplayToggle layout="case" density="compact" caseView="wall" swipe={swipe} freeCamera={freeCamera} labels={false} onLayout={vi.fn()} onDensity={vi.fn()} onCaseView={vi.fn()} onSwipe={vi.fn()} onLabels={vi.fn()} />,
-    ) as ReturnType<typeof renderWithProviders> & { unmount: () => void };
-
-  it('names the modes Move and Look around; off, they stay Pan the wall and Move the camera', () => {
-    const names = (free: boolean | undefined) => {
-      const { unmount } = mount(free, 'pan');
-      const button = screen.getByRole('button', { name: /^Swipe/ });
-      const label = button.getAttribute('aria-label');
-      fireEvent.click(button);
-      const items = within(screen.getByRole('menu', { name: 'Swipe modes' })).getAllByRole('menuitemradio').map((i) => i.textContent);
-      unmount();
-      return { label, items };
-    };
-    expect(names(true)).toEqual({ label: 'Swipe, Look around', items: ['Look around', 'Move'] });
-    expect(names(false)).toEqual({ label: 'Swipe, Pan the wall', items: ['Pan the wall', 'Move the camera'] });
-    expect(names(undefined)).toEqual({ label: 'Swipe, Pan the wall', items: ['Pan the wall', 'Move the camera'] });
+      <DisplayToggle layout="case" density="compact" caseView="wall" swipe="pan" labels={false} onLayout={vi.fn()} onDensity={vi.fn()} onCaseView={vi.fn()} onSwipe={vi.fn()} onLabels={vi.fn()} />,
+    );
+    const button = screen.getByRole('button', { name: /^Swipe/ });
+    expect(button).toHaveAttribute('aria-label', 'Swipe, Pan the wall');
+    fireEvent.click(button);
+    const items = within(screen.getByRole('menu', { name: 'Swipe modes' })).getAllByRole('menuitemradio').map((i) => i.textContent);
+    expect(items).toEqual(['Pan the wall', 'Move the camera']);
   });
 });

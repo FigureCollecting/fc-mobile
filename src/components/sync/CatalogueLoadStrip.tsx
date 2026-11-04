@@ -1,25 +1,37 @@
 // LOADBAR-2 (Ross 11-04: "so loading is hidden if there are filters? Then we won't know it's loading... maybe better to
 // cover filters behind it with full-width bar of same background color while loading occurs instead?"): on the collection,
-// while the catalogue loads, its label stands as a full-width opaque strip in the page's own colour over the filter chips
-// row, and takes the taps that land on it, so no chip under it is removed by one; where no row stands it stands as high, in
-// the row's place under the top bar. It takes no layout space, so nothing moves when it comes or goes, and it stands under
-// the top bar and its menus. The page places it (Collection); the bar along the top edge (CatalogueLoadBar) shows with it.
-// A live region always there, empty while nothing loads, so a screen reader hears the load start, move and end.
-import { APPLIED_CHIPS_ROW_HEIGHT } from '../collection/AppliedChips';
+// while the catalogue loads and its row of filter chips stands, the label stands as a full-width opaque strip in the page's
+// own colour over the row. It takes the taps that land on it, and the row under it is inert (no focus, no key), so no chip
+// is removed by accident. It takes no layout space, so nothing moves when it comes or goes, and it stands under the top bar
+// and its menus. Where no row stands no strip is drawn (challenge B1/S1: it covered the one-shelf view's Shelf above and the
+// first figures and tiles); the bar's own label says it in the case there (CatalogueLoadBar). The page places it round its
+// row (Collection). A live region always there, empty while nothing loads, so a screen reader hears the load start, move
+// and end, row or not.
+import type { ComponentChildren } from 'preact';
+import { useAppliedChipsShown } from '../collection/AppliedChips';
 import { loadingLabel, useCatalogueLoading } from './CatalogueLoadBar';
 import { Style } from '../../styles/Style';
 
-export function CatalogueLoadStrip() {
+/** The filter chips row's place (`children`: the row), and over the row while the catalogue loads, the strip. */
+export function CatalogueLoadStrip({ children }: { children: ComponentChildren }) {
   const loading = useCatalogueLoading();
+  const rowShown = useAppliedChipsShown();
+  const covering = loading !== null && rowShown;
   return (
-    <div class={loading === null ? 'sr-only' : 'catalogue-strip'} role="status" aria-live="polite">
-      {loading !== null && loadingLabel(loading)}
+    <div class="catalogue-strip-slot">
+      <div inert={covering}>{children}</div>
+      <div class={covering ? 'catalogue-strip' : 'sr-only'} role="status" aria-live="polite">
+        {loading !== null && loadingLabel(loading)}
+      </div>
 
       <Style css={`
+        .catalogue-strip-slot {
+          position: relative;
+        }
+
         .catalogue-strip {
           position: absolute;
           inset: 0;
-          min-height: ${APPLIED_CHIPS_ROW_HEIGHT};
           /* over the row and the page under it; under the top bar (20) and its menus */
           z-index: 19;
           display: flex;

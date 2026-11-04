@@ -21,9 +21,6 @@ interface DetailPaneProps {
   goToBlocked?: (figure: Figure) => string | null;
 }
 
-/** The pane's share of the page's width, at its right. */
-export const DETAIL_PANE_WIDTH = '40%';
-
 /**
  * Fold-open dual-pane detail (>= 640px container width): the SAME
  * FigureDetailContent used by the full-screen viewer's pull-up sheet,
@@ -83,8 +80,8 @@ export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }:
       <Style css={`
         .detail-pane {
           position: relative;
-          flex: 0 0 ${DETAIL_PANE_WIDTH};
-          max-width: ${DETAIL_PANE_WIDTH};
+          flex: 0 0 40%;
+          max-width: 40%;
           display: flex;
           flex-direction: column;
           height: 100%;

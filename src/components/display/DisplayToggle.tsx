@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { hapticLight } from '../../utils/haptics';
 import { DENSITIES } from './density';
 import type { Density } from './density';
-import type { CaseView, SwipeMode } from './casePrefs';
+import type { CaseView } from './casePrefs';
 import type { LayoutMode } from '../../hooks/useFigureListParams';
 import { Style } from '../../styles/Style';
 
@@ -12,15 +12,11 @@ interface DisplayToggleProps {
   density: Density;
   /** The case's view (whole cabinets, one cabinet, one shelf). */
   caseView: CaseView;
-  /** What a swipe does in the case (CAM1): pans the wall or moves the camera. */
-  swipe?: SwipeMode;
   /** Nameplate overlay toggle — defaults off. */
   labels?: boolean;
   onLayout: (layout: LayoutMode) => void;
   onDensity: (density: Density) => void;
   onCaseView: (view: CaseView) => void;
-  /** The case's swipe-mode button is shown only where this is given (NAV-2A: the old path's, not Free camera's). */
-  onSwipe?: (swipe: SwipeMode) => void;
   onLabels?: (labels: boolean) => void;
 }
 
@@ -35,12 +31,6 @@ const CASE_VIEW_LABEL: Record<CaseView, string> = {
   wall: 'Whole cabinets',
   cabinet: 'One cabinet',
   shelf: 'One shelf',
-};
-
-const SWIPES: readonly SwipeMode[] = ['pan', 'camera'];
-const SWIPE_LABEL: Record<SwipeMode, string> = {
-  pan: 'Pan the wall',
-  camera: 'Move the camera',
 };
 
 const ICON = {
@@ -81,24 +71,6 @@ function CaseIcon({ view }: { view: CaseView }) {
   );
 }
 
-/** The swipe button's icon: the mode it is in, four arrows (pan the wall) or a camera (move it). */
-function SwipeIcon({ mode }: { mode: SwipeMode }) {
-  if (mode === 'pan') {
-    return (
-      <svg {...ICON} stroke-linejoin="round" stroke-linecap="round">
-        <path d="M8 1.5v13M1.5 8h13" />
-        <path d="M6 3.5l2-2 2 2M6 12.5l2 2 2-2M3.5 6l-2 2 2 2M12.5 6l2 2-2 2" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...ICON} stroke-linejoin="round" stroke-linecap="round">
-      <path d="M2 5h2.2l1-1.6h5.6L11.8 5H14a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5H2a.5.5 0 0 1-.5-.5v-7A.5.5 0 0 1 2 5Z" />
-      <circle cx="8" cy="8.8" r="2.3" />
-    </svg>
-  );
-}
-
 /** The tiles button's icon: its density as a grid of one tile, four or nine. */
 function TilesIcon({ density }: { density: Density }) {
   return (
@@ -117,30 +89,20 @@ function TilesIcon({ density }: { density: Density }) {
  * cabinets, one cabinet, one shelf; Tiles: its densities), the current one ticked. Each button's icon is
  * its mode's current view.
  *
- * CAM1 (Ross 10-18, a): on the case, just left of the two mode buttons, one more button: what a swipe does
- * (pan the wall or move the camera, exclusive), its icon the mode in force and a tap opening the same kind of
- * menu. It stands in the header, outside the zoom layer, so it works with the picture zoomed. NAV-2A (NAVDEF a,
- * Ross 10-31): only with Free camera off; Free camera's one finger moves, a hold looks, and the jog is always on.
+ * NAV-2A2 (Ross 11-04): no swipe-mode button (CAM1's) on either camera: one finger moves the camera.
  */
 export function DisplayToggle({
   layout,
   density,
   caseView,
-  swipe = 'camera',
   labels = false,
   onLayout,
   onDensity,
   onCaseView,
-  onSwipe,
   onLabels,
 }: DisplayToggleProps) {
-  const [menu, setMenu] = useState<LayoutMode | 'swipe' | null>(null);
+  const [menu, setMenu] = useState<LayoutMode | null>(null);
   const root = useRef<HTMLDivElement>(null);
-
-  // The swipe button goes when Free camera is ticked; its menu must not outlive it (a keyboard can reach this).
-  useEffect(() => {
-    if (menu === 'swipe' && !onSwipe) setMenu(null);
-  }, [menu, onSwipe]);
 
   useEffect(() => {
     if (menu === null) return;
@@ -184,29 +146,11 @@ export function DisplayToggle({
   const items: readonly [string, string, boolean, () => void][] =
     menu === 'case'
       ? CASE_VIEWS.map((v) => [v, CASE_VIEW_LABEL[v], v === caseView, () => onCaseView(v)])
-      : menu === 'swipe'
-        ? SWIPES.map((m) => [m, SWIPE_LABEL[m], m === swipe, () => onSwipe?.(m)])
-        : DENSITIES.map((d) => [d, DENSITY_LABEL[d], d === density, () => onDensity(d)]);
-  const menuName = menu === 'case' ? 'Case views' : menu === 'swipe' ? 'Swipe modes' : 'Tiles views';
+      : DENSITIES.map((d) => [d, DENSITY_LABEL[d], d === density, () => onDensity(d)]);
+  const menuName = menu === 'case' ? 'Case views' : 'Tiles views';
 
   return (
     <div class="display-toggle" ref={root}>
-      {layout === 'case' && onSwipe && (
-        <button
-          class={`display-toggle__swipe ${menu === 'swipe' ? 'display-toggle__swipe--open' : ''}`}
-          type="button"
-          aria-label={`Swipe, ${SWIPE_LABEL[swipe]}`}
-          aria-haspopup="menu"
-          aria-expanded={menu === 'swipe'}
-          onClick={() => {
-            hapticLight();
-            setMenu(menu === 'swipe' ? null : 'swipe');
-          }}
-        >
-          <SwipeIcon mode={swipe} />
-        </button>
-      )}
-
       <div class="display-toggle__group" role="group" aria-label="Display mode">
         {modeButton('case', 'Case', CASE_VIEW_LABEL[caseView], <CaseIcon view={caseView} />)}
         {modeButton('rows', 'Tiles', DENSITY_LABEL[density], <TilesIcon density={density} />)}
@@ -284,8 +228,7 @@ export function DisplayToggle({
           box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         }
 
-        .display-toggle__cycle,
-        .display-toggle__swipe {
+        .display-toggle__cycle {
           display: flex;
           align-items: center;
           justify-content: center;
@@ -295,14 +238,12 @@ export function DisplayToggle({
           color: var(--text-secondary);
         }
 
-        .display-toggle__cycle:active,
-        .display-toggle__swipe:active {
+        .display-toggle__cycle:active {
           background: var(--surface-tertiary);
           color: var(--text-primary);
         }
 
-        .display-toggle__cycle--active,
-        .display-toggle__swipe--open {
+        .display-toggle__cycle--active {
           background: var(--surface-tertiary);
           color: var(--brand-400);
         }

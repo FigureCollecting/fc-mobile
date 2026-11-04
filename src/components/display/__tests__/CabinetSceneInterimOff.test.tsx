@@ -12,7 +12,7 @@ afterEach(() => cleanup());
 describe('CASE-FB2a: REPACK_ON_FILTER off', () => {
   it('a new filter keeps the walk and the cabinet in view', () => {
     const many = getFixtureFigures(8);
-    const props = { figures: many, onSelect: vi.fn(), prefs: { ...LEGACY_PREFS, view: 'cabinet' as const, swipe: 'camera' as const }, frameFallback: { width: 443, height: 558 } };
+    const props = { figures: many, onSelect: vi.fn(), prefs: { ...LEGACY_PREFS, view: 'cabinet' as const }, frameFallback: { width: 443, height: 558 } };
     const { container, rerender } = render(<CabinetScene {...props} filterKey="all" />);
     const host = container.querySelector('.cabinet-scene') as HTMLElement;
     fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });

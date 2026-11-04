@@ -25,7 +25,7 @@ async function openShelfView(page: Page, size: { width: number; height: number }
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'shelf', swipe: 'camera', pattern: 'ikea-detolf' }));
+  }, legacyPrefs({ view: 'shelf', pattern: 'ikea-detolf' }));
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=2');
   await page.waitForSelector('button.cab-figure');

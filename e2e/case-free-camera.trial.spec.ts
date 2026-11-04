@@ -38,7 +38,7 @@ for (const panel of FOLD8) {
     await page.addInitScript(() => {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
-      localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', swipe: 'camera', freeCamera: true }));
+      localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', freeCamera: true }));
     });
     await page.setViewportSize({ width: panel.width, height: panel.height });
     await page.goto('/?layout=case&fx=40');

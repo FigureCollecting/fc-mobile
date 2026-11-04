@@ -140,7 +140,7 @@ async function openRack(page: Page, size: { width: number; height: number }): Pr
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'wall', swipe: 'camera', pattern: RACK }));
+  }, legacyPrefs({ view: 'wall', pattern: RACK }));
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=170&labels=1&fxbranch=masked');
   await ready(page);

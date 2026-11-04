@@ -6,11 +6,24 @@
 // moment the pass ends. Shown only once a load has lasted LOADBAR_SHOW_DELAY_MS, so a fast link never flashes it.
 // An indicator, never a control (feedback: no frequent controls at the top): it takes no taps and no layout space, so
 // whatever lies under it at the top keeps working and nothing moves when it comes or goes.
+// Its label is drawn only on the screens whose top holds nothing to tap or type in (labelDrawn); elsewhere (the Search
+// screen's field, the collection's rows of figure tiles) it is left to screen readers and the bar alone shows the load.
 import { useEffect, useState } from 'preact/hooks';
+import { useLocation, useSearch } from 'wouter';
 import { localSession } from '../../local/session';
 import type { CatalogueLoading } from '../../sync/engine';
 import { getFixtureLoading, isFixtureMode } from '../../dev-fixtures/fixtures';
+import { resolveLayout } from '../../hooks/useFigureListParams';
 import { Style } from '../../styles/Style';
+
+/** The screens whose top, just under the top bar, holds no control (the collection: as the case only). */
+const LABEL_CLEAR_ROUTES: readonly string[] = ['/stats', '/profile', '/settings'];
+
+/** Whether the label is drawn on the screen at `path` with `search`: only where nothing to tap or type in lies under it. */
+function labelDrawn(path: string, search: string): boolean {
+  if (path === '/') return resolveLayout(new URLSearchParams(search)) === 'case';
+  return LABEL_CLEAR_ROUTES.includes(path);
+}
 
 /** How long a load must last before the bar shows. */
 export const LOADBAR_SHOW_DELAY_MS = 600;
@@ -37,6 +50,8 @@ function useAfterDelay(active: boolean, delayMs: number): boolean {
 }
 
 export function CatalogueLoadBar() {
+  const [path] = useLocation();
+  const search = useSearch();
   const loading = (isFixtureMode() ? getFixtureLoading() : null) ?? localSession.value?.engine.state.value.loading ?? null;
   const shown = useAfterDelay(loading !== null, LOADBAR_SHOW_DELAY_MS);
   if (!shown || loading === null) return null;
@@ -52,7 +67,7 @@ export function CatalogueLoadBar() {
       <div class="catalogue-loadbar__track">
         <div class="catalogue-loadbar__fill" style={known ? { width: `${pct}%` } : undefined} />
       </div>
-      <span class="catalogue-loadbar__label">{loadingLabel(loading)}</span>
+      <span class={labelDrawn(path, search) ? 'catalogue-loadbar__label' : 'sr-only'}>{loadingLabel(loading)}</span>
 
       <Style css={`
         .catalogue-loadbar {

@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
+import { navigate } from 'wouter/use-browser-location';
 import { localSession, type LocalSession } from '../../../local/session';
 import type { SyncState } from '../../../sync/engine';
 import { setFixtureMode } from '../../../dev-fixtures/fixtures';
@@ -99,6 +100,55 @@ describe('CatalogueLoadBar', () => {
     unmount();
     act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
     expect(bar()).toBeNull();
+  });
+
+  it('on a screen whose top holds a control (Search: its field), the label is left to screen readers, not drawn over it; the bar stays', () => {
+    window.history.pushState({}, '', '/discover');
+    render(<CatalogueLoadBar />);
+    load({ step: 'cards', done: 3, total: 10 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    const progress = screen.getByRole('progressbar', { name: 'Loading catalogue' });
+    expect(progress).toHaveTextContent('Loading catalogue · 3 of 10');
+    expect(progress.querySelector('.catalogue-loadbar__track')).not.toBeNull();
+    expect(progress.querySelector('.catalogue-loadbar__label')).toBeNull();
+    expect(progress.querySelector('span')).toHaveClass('sr-only');
+  });
+
+  it.each([
+    ['the collection in rows (a figure tile under it)', '/?layout=rows', null],
+    ['the collection kept in rows (no layout in the address)', '/', 'rows'],
+  ])('on %s, the label is left to screen readers too', (_name, path, stored) => {
+    if (stored) localStorage.setItem('fc-list-layout', stored);
+    window.history.pushState({}, '', path);
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    expect(screen.getByRole('progressbar').querySelector('span')).toHaveClass('sr-only');
+  });
+
+  it('follows the screen while it shows: the collection switched to rows, then to Search, then back to the case', () => {
+    window.history.pushState({}, '', '/?layout=case');
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    const label = () => screen.getByRole('progressbar').querySelector('span');
+    expect(label()).toHaveClass('catalogue-loadbar__label');
+    act(() => navigate('/?layout=rows', { replace: true }));
+    expect(label()).toHaveClass('sr-only');
+    act(() => navigate('/discover'));
+    expect(label()).toHaveClass('sr-only');
+    act(() => navigate('/?layout=case'));
+    expect(label()).toHaveClass('catalogue-loadbar__label');
+  });
+
+  it.each(['/', '/?layout=case', '/stats', '/profile', '/settings'])('on %s (nothing to tap under it) the label is drawn', (path) => {
+    window.history.pushState({}, '', path);
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    const label = screen.getByRole('progressbar').querySelector('span');
+    expect(label).toHaveClass('catalogue-loadbar__label');
+    expect(label).not.toHaveClass('sr-only');
   });
 
   it('the dev fixtures (no session) show it from ?fxloadbar=, for the sign-off shots', () => {

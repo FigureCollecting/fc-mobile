@@ -85,3 +85,45 @@ for (const load of [
     expect(under).toBeNull();
   });
 }
+
+// LOADBAR (challenge r1): the label stands over each screen's top just under the top bar; drawn over a control there (the
+// Search screen's field) it would hide that control, so on such a screen only the bar is drawn and the label is left to
+// screen readers. Every tab, and the collection in both its layouts: nothing a user taps or types in lies under a drawn label.
+for (const { name, path } of [
+  { name: 'collection-case', path: '/?layout=case' },
+  { name: 'collection-rows', path: '/?layout=rows' },
+  { name: 'search', path: '/discover' },
+  { name: 'stats', path: '/stats' },
+  { name: 'profile', path: '/profile' },
+  { name: 'settings', path: '/settings' },
+] as const) {
+  test(`LOADBAR (${name}): no control lies under the label, and the bar and its text stay`, async ({ page }, testInfo) => {
+    await page.goto(`${path}${path.includes('?') ? '&' : '?'}fxloadbar=cards:120:400`);
+    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
+    const bar = page.getByRole('progressbar', { name: 'Loading catalogue' });
+    await bar.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
+    await page.waitForTimeout(500);
+    await signoffShot(page, testInfo, `loadbar-tab-${name}`);
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveText('Loading catalogue · 120 of 400');
+    const label = (await bar.locator('span').boundingBox())!;
+    const drawn = label !== null && label.width > 2 && label.height > 2;
+    const under = drawn
+      ? await page.evaluate(({ x, y, width, height }) => {
+          const hits = new Set<string>();
+          for (let i = 0; i <= 4; i++)
+            for (let j = 0; j <= 2; j++)
+              for (const el of document.elementsFromPoint(x + (width * i) / 4, y + (height * j) / 2)) {
+                if (el.closest('.catalogue-loadbar')) continue;
+                const control = el.closest('input, textarea, select, button, a, [role="button"], [role="link"], [role="searchbox"]');
+                if (control) hits.add(`${control.tagName.toLowerCase()}.${(control as HTMLElement).className}`);
+              }
+          return [...hits];
+        }, label)
+      : [];
+    console.log(`LOADBAR ${name}: label drawn=${drawn} under=${JSON.stringify(under)}`);
+    expect(under, 'controls under the drawn label').toEqual([]);
+    // the case view, the screen Ross loads on, keeps its label
+    if (name === 'collection-case') expect(drawn, 'the case view draws the label').toBe(true);
+  });
+}

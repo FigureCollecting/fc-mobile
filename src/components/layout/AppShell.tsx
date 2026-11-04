@@ -4,6 +4,7 @@ import { Redirect, Route, Switch, useLocation } from 'wouter';
 import { TabBar } from './TabBar';
 import { GatedScreen } from './GatedScreen';
 import { OfflineBanner } from '../ui/OfflineBanner';
+import { CatalogueLoadBar } from '../sync/CatalogueLoadBar';
 import { InstallBanner } from '../../pwa/InstallBanner';
 import { localSession } from '../../local/session';
 import { AnimatedRoutes } from '../ui/AnimatedRoutes';
@@ -72,6 +73,8 @@ export function AppShell() {
   return (
     <div class="app-shell">
       <OfflineBanner />
+      {/* LOADBAR: over the top edge, taking no taps and no space, while the catalogue loads */}
+      {!isAuthRoute && <CatalogueLoadBar />}
       {/* In the layout, above the screen, so it never covers a control. */}
       <InstallBanner unsyncedCount={unsyncedCount} />
       <main

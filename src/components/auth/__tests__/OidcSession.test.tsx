@@ -22,7 +22,7 @@ vi.mock('../../../pwa/updates', () => ({ reloadToLatest: h.reloadToLatest }));
 vi.mock('../../../sync/browser', () => ({ startBrowserSync: h.startBrowserSync }));
 
 function fakeSync(patch: Partial<SyncState> = {}) {
-  const state = signal<SyncState>({ reachability: 'unknown', phase: 'idle', pending: 0, rejected: [], overwritten: 0, lastSyncedAt: null, lastError: null, ...patch });
+  const state = signal<SyncState>({ reachability: 'unknown', phase: 'idle', pending: 0, rejected: [], overwritten: 0, lastSyncedAt: null, lastError: null, loading: null, ...patch });
   const engine = { state, dismissRejected: vi.fn(async () => undefined) };
   return { engine, dispose: vi.fn() };
 }

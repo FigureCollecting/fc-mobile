@@ -16,6 +16,7 @@ import {
   getFixtureSync,
   getFixtureFields,
   getFixtureSteady,
+  getFixtureLoading,
   getFixtureMisfits,
   getFixtureGoods,
   getFixturePhotos,
@@ -809,5 +810,24 @@ describe('fixture photos (?fxphotos=1): a local item and three photos each, for 
       expect(fixturePhotos(), query).toHaveLength(count);
     }
     expect(new Set(fixturePhotos(14).map((p) => p.url)).size).toBe(14);
+  });
+});
+
+describe('fixture catalogue load (?fxloadbar=pull|cards:<done>:<total>): the load bar of the sign-off shots (LOADBAR)', () => {
+  const at = (search: string) => window.history.pushState({}, '', `/${search}`);
+  afterEach(() => at(''));
+
+  it('off for anything absent or malformed', () => {
+    for (const q of ['', '?fxloadbar=', '?fxloadbar=cards', '?fxloadbar=cards:a:3', '?fxloadbar=cards:4:3', '?fxloadbar=cards:-1:3', '?fxloadbar=cards:0:0', '?fxloadbar=x']) {
+      at(q);
+      expect(getFixtureLoading(), q).toBeNull();
+    }
+  });
+
+  it('a pull, or a share of the cards', () => {
+    at('?fxloadbar=pull');
+    expect(getFixtureLoading()).toEqual({ step: 'pull', pages: 0 });
+    at('?fxloadbar=cards:120:400');
+    expect(getFixtureLoading()).toEqual({ step: 'cards', done: 120, total: 400 });
   });
 });

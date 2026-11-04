@@ -80,6 +80,12 @@ export interface RejectedEdit {
   reason: string;
 }
 
+/**
+ * LOADBAR (Ross 11-03): what of the catalogue a pass is loading, for the app to show while it loads on a weak link: the
+ * pull's pages walked so far (how many are to come is not known), then the cards fetched of those due.
+ */
+export type CatalogueLoading = { step: 'pull'; pages: number } | { step: 'cards'; done: number; total: number };
+
 export interface SyncState {
   reachability: Reachability;
   phase: 'idle' | 'syncing' | 'paused';
@@ -91,6 +97,12 @@ export interface SyncState {
   overwritten: number;
   lastSyncedAt: number | null;
   lastError: string | null;
+  /**
+   * LOADBAR: set while a pass loads the catalogue: a first load or a replay (the pull from no cursor), a pull past its
+   * first page, the cards due. Null otherwise: a pass that pulls one page and has no card due loads nothing to show, and
+   * every pass ends with it null, however it ends.
+   */
+  loading: CatalogueLoading | null;
 }
 
 interface Timers {
@@ -195,6 +207,7 @@ export class SyncEngine {
     overwritten: 0,
     lastSyncedAt: null,
     lastError: null,
+    loading: null,
   });
   readonly state: ReadonlySignal<SyncState> = this.#state;
   readonly #changes = signal(0);
@@ -440,6 +453,7 @@ export class SyncEngine {
       this.set({ lastError: message(err), ...(kind === 'unreachable' ? { reachability: cold ? ('connecting' as const) : ('unreachable' as const) } : {}) });
       return kind;
     } finally {
+      this.set({ loading: null });
       if (store !== undefined) await this.refresh(store).catch(() => undefined);
       this.changed();
     }
@@ -520,6 +534,7 @@ export class SyncEngine {
     const sent = new Set<string>();
     for (;;) {
       if (sent.size === MAX_DELTA_PAGES) throw new ProtocolError(`Delta still has_more after ${MAX_DELTA_PAGES} pages`);
+      if (from === '' || sent.size > 0) this.set({ loading: { step: 'pull', pages: sent.size } });
       sent.add(cursor);
       const page = await this.call((signal) => this.deps.sync.delta({ cursor, limit: DELTA_PAGE }, this.options(signal)));
       const complete: SyncEvent[] = [];
@@ -567,6 +582,7 @@ export class SyncEngine {
     const due = [...heads].filter((h) => !isFresh(h)).sort();
     const answeredUnresolved = new Set<string>();
     for (let i = 0; i < due.length; i += PRODUCT_BATCH) {
+      this.set({ loading: { step: 'cards', done: i, total: due.length } });
       const refs = due.slice(i, i + PRODUCT_BATCH).map((value) => ({ ref: { case: 'headId' as const, value } }));
       let pageToken = '';
       const sent = new Set<string>();

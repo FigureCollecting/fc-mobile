@@ -127,3 +127,85 @@ for (const { name, path } of [
     if (name === 'collection-case') expect(drawn, 'the case view draws the label').toBe(true);
   });
 }
+
+/**
+ * What a drawn label lies over: the controls under a 5 x 3 grid of its box, and the visible text its box overlaps. A label
+ * left to screen readers lies over nothing.
+ */
+async function underLabel(page: Page): Promise<{ drawn: boolean; controls: string[]; text: string[] }> {
+  const label = await page.getByRole('progressbar', { name: 'Loading catalogue' }).locator('span').boundingBox();
+  if (label === null || label.width <= 2 || label.height <= 2) return { drawn: false, controls: [], text: [] };
+  return page.evaluate((r) => {
+    const controls = new Set<string>();
+    for (let i = 0; i <= 4; i++)
+      for (let j = 0; j <= 2; j++)
+        for (const el of document.elementsFromPoint(r.x + (r.width * i) / 4, r.y + (r.height * j) / 2)) {
+          if (el.closest('.catalogue-loadbar')) continue;
+          const control = el.closest('input, textarea, select, button, a, [role="button"], [role="link"], [role="searchbox"]');
+          if (control) controls.add(`${control.tagName.toLowerCase()}.${(control as HTMLElement).className}`);
+        }
+    const text = new Set<string>();
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const p = n.parentElement;
+      if (!p || p.closest('.catalogue-loadbar') || !n.textContent?.trim() || getComputedStyle(p).visibility === 'hidden') continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const q of range.getClientRects()) {
+        const ox = Math.min(q.right, r.x + r.width) - Math.max(q.left, r.x);
+        const oy = Math.min(q.bottom, r.y + r.height) - Math.max(q.top, r.y);
+        if (ox > 1 && oy > 1) text.add(`${p.tagName.toLowerCase()}.${p.className}: "${n.textContent.trim()}"`);
+      }
+    }
+    return { drawn: true, controls: [...controls], text: [...text] };
+  }, label);
+}
+
+/** Every scroller of the page, the document's own included, scrolled to `top` px; how far the farthest went. */
+const scrollTo = (page: Page, top: number): Promise<number> =>
+  page.evaluate((top) => {
+    let went = 0;
+    for (const s of [document.scrollingElement, ...document.querySelectorAll('*')]) {
+      if (s && (s === document.scrollingElement || (s.scrollHeight > s.clientHeight + 4 && /(auto|scroll)/.test(getComputedStyle(s).overflowY)))) {
+        s.scrollTop = top;
+        went = Math.max(went, s.scrollTop);
+      }
+    }
+    return went;
+  }, top);
+
+// LOADBAR (challenge r2, Ross: nothing that stays may sit over a control or the data he reads often): the label is fixed, so
+// a screen's content scrolls under it, and the case view grows a row of removable filter chips under the top bar while a
+// filter is applied. On each: no control and no text under a drawn label, scrolled too.
+for (const { name, path, scrolls, chips } of [
+  { name: 'collection-case-filtered', path: '/?layout=case&mfr=Good%20Smile%20Company', scrolls: [0], chips: true },
+  { name: 'stats-counts', path: '/stats', scrolls: [0], chips: false },
+  { name: 'settings-scrolled', path: '/settings', scrolls: [0, 60, 120, 180, 240], chips: false },
+  { name: 'profile-scrolled', path: '/profile', scrolls: [0, 60, 120, 180, 240], chips: false },
+] as const) {
+  test(`LOADBAR (${name}): no control and no text lies under the label`, async ({ page }, testInfo) => {
+    await page.goto(`${path}${path.includes('?') ? '&' : '?'}fxloadbar=cards:120:400`);
+    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
+    const bar = page.getByRole('progressbar', { name: 'Loading catalogue' });
+    await bar.waitFor({ state: 'visible', timeout: 5_000 });
+    if (chips) await expect(page.locator('.applied-chips button.applied-chips__chip').first()).toBeVisible();
+    await page.waitForTimeout(500);
+    const over: Record<number, { drawn: boolean; controls: string[]; text: string[]; went?: number }> = {};
+    let shot = false;
+    for (const top of scrolls) {
+      const went = await scrollTo(page, top);
+      await page.waitForTimeout(150);
+      over[top] = { ...(await underLabel(page)), went };
+      if (!shot && (over[top].controls.length > 0 || over[top].text.length > 0 || top === scrolls[scrolls.length - 1])) {
+        shot = true;
+        await signoffShot(page, testInfo, `loadbar-over-${name}`);
+      }
+    }
+    console.log(`LOADBAR ${name}: ${JSON.stringify(over)}`);
+    await expect(bar).toHaveText('Loading catalogue · 120 of 400');
+    for (const top of scrolls) {
+      expect(over[top].controls, `controls under the drawn label, scrolled ${top} px`).toEqual([]);
+      expect(over[top].text, `text under the drawn label, scrolled ${top} px`).toEqual([]);
+    }
+  });
+}

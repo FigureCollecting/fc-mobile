@@ -6,23 +6,25 @@
 // moment the pass ends. Shown only once a load has lasted LOADBAR_SHOW_DELAY_MS, so a fast link never flashes it.
 // An indicator, never a control (feedback: no frequent controls at the top): it takes no taps and no layout space, so
 // whatever lies under it at the top keeps working and nothing moves when it comes or goes.
-// Its label is drawn only on the screens whose top holds nothing to tap or type in (labelDrawn); elsewhere (the Search
-// screen's field, the collection's rows of figure tiles) it is left to screen readers and the bar alone shows the load.
+// Its label is drawn only where nothing to tap, type in or read lies under it, scrolled too (labelDrawn): the case view
+// while no row of filter chips stands under the top bar. Elsewhere it is left to screen readers and the bar alone shows the
+// load: the Search field, the collection's rows of figure tiles, the filter chips, the Stats counts, and the screens whose
+// content scrolls under it (Settings; Profile, signed in, is a list of actions).
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation, useSearch } from 'wouter';
 import { localSession } from '../../local/session';
 import type { CatalogueLoading } from '../../sync/engine';
 import { getFixtureLoading, isFixtureMode } from '../../dev-fixtures/fixtures';
 import { resolveLayout } from '../../hooks/useFigureListParams';
+import { useAppliedChipsShown } from '../collection/AppliedChips';
 import { Style } from '../../styles/Style';
 
-/** The screens whose top, just under the top bar, holds no control (the collection: as the case only). */
-const LABEL_CLEAR_ROUTES: readonly string[] = ['/stats', '/profile', '/settings'];
-
-/** Whether the label is drawn on the screen at `path` with `search`: only where nothing to tap or type in lies under it. */
-function labelDrawn(path: string, search: string): boolean {
-  if (path === '/') return resolveLayout(new URLSearchParams(search)) === 'case';
-  return LABEL_CLEAR_ROUTES.includes(path);
+/**
+ * Whether the label is drawn on the screen at `path` with `search`: only where nothing to tap, type in or read lies under it,
+ * the collection as the case while no row of filter chips stands under the top bar.
+ */
+function labelDrawn(path: string, search: string, chipsShown: boolean): boolean {
+  return path === '/' && !chipsShown && resolveLayout(new URLSearchParams(search)) === 'case';
 }
 
 /** How long a load must last before the bar shows. */
@@ -52,6 +54,7 @@ function useAfterDelay(active: boolean, delayMs: number): boolean {
 export function CatalogueLoadBar() {
   const [path] = useLocation();
   const search = useSearch();
+  const chipsShown = useAppliedChipsShown();
   const loading = (isFixtureMode() ? getFixtureLoading() : null) ?? localSession.value?.engine.state.value.loading ?? null;
   const shown = useAfterDelay(loading !== null, LOADBAR_SHOW_DELAY_MS);
   if (!shown || loading === null) return null;
@@ -67,7 +70,7 @@ export function CatalogueLoadBar() {
       <div class="catalogue-loadbar__track">
         <div class="catalogue-loadbar__fill" style={known ? { width: `${pct}%` } : undefined} />
       </div>
-      <span class={labelDrawn(path, search) ? 'catalogue-loadbar__label' : 'sr-only'}>{loadingLabel(loading)}</span>
+      <span class={labelDrawn(path, search, chipsShown) ? 'catalogue-loadbar__label' : 'sr-only'}>{loadingLabel(loading)}</span>
 
       <Style css={`
         .catalogue-loadbar {

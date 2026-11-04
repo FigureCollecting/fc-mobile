@@ -10,6 +10,8 @@ import { localSession, type LocalSession } from '../../../local/session';
 import type { SyncState } from '../../../sync/engine';
 import { setFixtureMode } from '../../../dev-fixtures/fixtures';
 import { CatalogueLoadBar, LOADBAR_SHOW_DELAY_MS, loadingLabel } from '../CatalogueLoadBar';
+import { AppliedChips } from '../../collection/AppliedChips';
+import { DEFAULT_CAT, DEFAULT_TYPE, type ListFilters } from '../../../hooks/useFigureListParams';
 
 type Loading = SyncState['loading'];
 const state = signal<{ loading: Loading }>({ loading: null });
@@ -141,7 +143,35 @@ describe('CatalogueLoadBar', () => {
     expect(label()).toHaveClass('catalogue-loadbar__label');
   });
 
-  it.each(['/', '/?layout=case', '/stats', '/profile', '/settings'])('on %s (nothing to tap under it) the label is drawn', (path) => {
+  it.each(['/stats', '/settings', '/profile'])('on %s (its counts, or controls scrolled under it) the label is left to screen readers', (path) => {
+    window.history.pushState({}, '', path);
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    expect(screen.getByRole('progressbar').querySelector('span')).toHaveClass('sr-only');
+  });
+
+  it('on the case view, while its row of filter chips stands under the top bar, the label is left to screen readers; drawn again once the row goes', () => {
+    const filters: ListFilters = { status: ['owned'], mfr: [], dist: [], scale: [], origin: [], cat: DEFAULT_CAT, type: DEFAULT_TYPE, tag: [] };
+    window.history.pushState({}, '', '/?layout=case&mfr=Good%20Smile%20Company');
+    const chips = render(<AppliedChips filters={{ ...filters, mfr: ['Good Smile Company'] }} defaults={filters} shown={2} total={7} onChange={() => {}} />);
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    const label = () => screen.getByRole('progressbar').querySelector('span');
+    expect(label()).toHaveClass('sr-only');
+    // the filter removed with no address change, and nothing hidden: the row goes and the label is drawn
+    act(() => chips.rerender(<AppliedChips filters={filters} defaults={filters} shown={7} total={7} onChange={() => {}} />));
+    expect(label()).toHaveClass('catalogue-loadbar__label');
+    // the defaults alone hiding figures (a garage kit is not Prepainted) show the row with no filter in the address
+    act(() => navigate('/?layout=case', { replace: true }));
+    act(() => chips.rerender(<AppliedChips filters={filters} defaults={filters} shown={5} total={7} onChange={() => {}} />));
+    expect(label()).toHaveClass('sr-only');
+    act(() => void chips.unmount());
+    expect(label()).toHaveClass('catalogue-loadbar__label');
+  });
+
+  it.each(['/', '/?layout=case'])('on %s (nothing to tap or read under it) the label is drawn', (path) => {
     window.history.pushState({}, '', path);
     render(<CatalogueLoadBar />);
     load({ step: 'pull', pages: 0 });

@@ -1,3 +1,4 @@
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import type { CollectionTab, ListFilters } from '../../hooks/useFigureListParams';
 import { isDefaultFilters } from '../../utils/facets';
 import { TAB_LABEL } from './holdings';
@@ -19,6 +20,28 @@ interface Chip {
   label: string;
 }
 
+// LOADBAR (challenge r2): how many filter rows stand under the top bar now; the load bar draws no label over one. The row,
+// not the address: the defaults alone show it when they hide figures (a garage kit is not Prepainted). A plain store with a
+// hook, not a signal (photoFit.ts says why).
+let rowsShown = 0;
+const rowListeners = new Set<() => void>();
+const tellRows = () => {
+  for (const l of [...rowListeners]) l();
+};
+
+/** Whether a filter row stands under the top bar now, kept current. */
+export function useAppliedChipsShown(): boolean {
+  const [shown, setShown] = useState(() => rowsShown > 0);
+  useEffect(() => {
+    const l = () => setShown(rowsShown > 0);
+    rowListeners.add(l);
+    // a row that came or went between this render and now
+    l();
+    return () => void rowListeners.delete(l);
+  }, []);
+  return shown;
+}
+
 /**
  * The page's filter row (SHEETS-FB1): the applied filters as removable chips and what shows of the total
  * ("312 of 559"); gone entirely while nothing is filtered (every filter its default and nothing hidden by
@@ -27,7 +50,17 @@ interface Chip {
  * its remove (there is no empty choice; Refine or Clear changes it).
  */
 export function AppliedChips({ filters, defaults, shown, total, onChange }: AppliedChipsProps) {
-  if (shown >= total && isDefaultFilters(filters, defaults)) return null;
+  const standing = shown < total || !isDefaultFilters(filters, defaults);
+  useLayoutEffect(() => {
+    if (!standing) return;
+    rowsShown++;
+    tellRows();
+    return () => {
+      rowsShown--;
+      tellRows();
+    };
+  }, [standing]);
+  if (!standing) return null;
   const chips: Chip[] = filters.status.map((value) => ({ key: 'status', value, label: TAB_LABEL[value as CollectionTab] }));
   const push = (key: keyof ListFilters, values: string[], prefix?: string) => {
     for (const value of values) {

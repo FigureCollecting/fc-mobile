@@ -5,13 +5,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/preact';
 import { signal } from '@preact/signals';
-import { navigate } from 'wouter/use-browser-location';
 import { localSession, type LocalSession } from '../../../local/session';
 import type { SyncState } from '../../../sync/engine';
 import { setFixtureMode } from '../../../dev-fixtures/fixtures';
 import { CatalogueLoadBar, LOADBAR_SHOW_DELAY_MS, loadingLabel } from '../CatalogueLoadBar';
-import { AppliedChips } from '../../collection/AppliedChips';
-import { DEFAULT_CAT, DEFAULT_TYPE, type ListFilters } from '../../../hooks/useFigureListParams';
 
 type Loading = SyncState['loading'];
 const state = signal<{ loading: Loading }>({ loading: null });
@@ -104,82 +101,22 @@ describe('CatalogueLoadBar', () => {
     expect(bar()).toBeNull();
   });
 
-  it('on a screen whose top holds a control (Search: its field), the label is left to screen readers, not drawn over it; the bar stays', () => {
-    window.history.pushState({}, '', '/discover');
-    render(<CatalogueLoadBar />);
-    load({ step: 'cards', done: 3, total: 10 });
-    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
-    const progress = screen.getByRole('progressbar', { name: 'Loading catalogue' });
-    expect(progress).toHaveTextContent('Loading catalogue · 3 of 10');
-    expect(progress.querySelector('.catalogue-loadbar__track')).not.toBeNull();
-    expect(progress.querySelector('.catalogue-loadbar__label')).toBeNull();
-    expect(progress.querySelector('span')).toHaveClass('sr-only');
-  });
-
-  it.each([
-    ['the collection in rows (a figure tile under it)', '/?layout=rows', null],
-    ['the collection kept in rows (no layout in the address)', '/', 'rows'],
-  ])('on %s, the label is left to screen readers too', (_name, path, stored) => {
-    if (stored) localStorage.setItem('fc-list-layout', stored);
-    window.history.pushState({}, '', path);
-    render(<CatalogueLoadBar />);
-    load({ step: 'pull', pages: 0 });
-    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
-    expect(screen.getByRole('progressbar').querySelector('span')).toHaveClass('sr-only');
-  });
-
-  it('follows the screen while it shows: the collection switched to rows, then to Search, then back to the case', () => {
-    window.history.pushState({}, '', '/?layout=case');
-    render(<CatalogueLoadBar />);
-    load({ step: 'pull', pages: 0 });
-    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
-    const label = () => screen.getByRole('progressbar').querySelector('span');
-    expect(label()).toHaveClass('catalogue-loadbar__label');
-    act(() => navigate('/?layout=rows', { replace: true }));
-    expect(label()).toHaveClass('sr-only');
-    act(() => navigate('/discover'));
-    expect(label()).toHaveClass('sr-only');
-    act(() => navigate('/?layout=case'));
-    expect(label()).toHaveClass('catalogue-loadbar__label');
-  });
-
-  it.each(['/stats', '/settings', '/profile'])('on %s (its counts, or controls scrolled under it) the label is left to screen readers', (path) => {
-    window.history.pushState({}, '', path);
-    render(<CatalogueLoadBar />);
-    load({ step: 'pull', pages: 0 });
-    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
-    expect(screen.getByRole('progressbar').querySelector('span')).toHaveClass('sr-only');
-  });
-
-  it('on the case view, while its row of filter chips stands under the top bar, the label is left to screen readers; drawn again once the row goes', () => {
-    const filters: ListFilters = { status: ['owned'], mfr: [], dist: [], scale: [], origin: [], cat: DEFAULT_CAT, type: DEFAULT_TYPE, tag: [] };
-    window.history.pushState({}, '', '/?layout=case&mfr=Good%20Smile%20Company');
-    const chips = render(<AppliedChips filters={{ ...filters, mfr: ['Good Smile Company'] }} defaults={filters} shown={2} total={7} onChange={() => {}} />);
-    render(<CatalogueLoadBar />);
-    load({ step: 'pull', pages: 0 });
-    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
-    const label = () => screen.getByRole('progressbar').querySelector('span');
-    expect(label()).toHaveClass('sr-only');
-    // the filter removed with no address change, and nothing hidden: the row goes and the label is drawn
-    act(() => chips.rerender(<AppliedChips filters={filters} defaults={filters} shown={7} total={7} onChange={() => {}} />));
-    expect(label()).toHaveClass('catalogue-loadbar__label');
-    // the defaults alone hiding figures (a garage kit is not Prepainted) show the row with no filter in the address
-    act(() => navigate('/?layout=case', { replace: true }));
-    act(() => chips.rerender(<AppliedChips filters={filters} defaults={filters} shown={5} total={7} onChange={() => {}} />));
-    expect(label()).toHaveClass('sr-only');
-    act(() => void chips.unmount());
-    expect(label()).toHaveClass('catalogue-loadbar__label');
-  });
-
-  it.each(['/', '/?layout=case'])('on %s (nothing to tap or read under it) the label is drawn', (path) => {
-    window.history.pushState({}, '', path);
-    render(<CatalogueLoadBar />);
-    load({ step: 'pull', pages: 0 });
-    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
-    const label = screen.getByRole('progressbar').querySelector('span');
-    expect(label).toHaveClass('catalogue-loadbar__label');
-    expect(label).not.toHaveClass('sr-only');
-  });
+  // LOADBAR-2 (Ross 11-04): the bar draws no label of its own on any screen; on the collection the load strip in the filter
+  // row's place says it (CatalogueLoadStrip), and elsewhere (Search, Stats, Settings, Profile) the bar alone shows the load.
+  it.each(['/', '/?layout=case', '/?layout=rows', '/?layout=case&mfr=Good%20Smile%20Company', '/discover', '/stats', '/settings', '/profile'])(
+    'on %s the label is left to screen readers; the bar stays',
+    (path) => {
+      window.history.pushState({}, '', path);
+      render(<CatalogueLoadBar />);
+      load({ step: 'cards', done: 3, total: 10 });
+      act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+      const progress = screen.getByRole('progressbar', { name: 'Loading catalogue' });
+      expect(progress).toHaveTextContent('Loading catalogue · 3 of 10');
+      expect(progress.querySelector('.catalogue-loadbar__track')).not.toBeNull();
+      expect(progress.querySelector('.catalogue-loadbar__label')).toBeNull();
+      expect(progress.querySelector('span')).toHaveClass('sr-only');
+    },
+  );
 
   it('the dev fixtures (no session) show it from ?fxloadbar=, for the sign-off shots', () => {
     localSession.value = undefined;

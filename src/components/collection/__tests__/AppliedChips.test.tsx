@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { act, renderHook, screen } from '@testing-library/preact';
+import { screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
-import { AppliedChips, useAppliedChipsShown } from '../AppliedChips';
+import { AppliedChips } from '../AppliedChips';
 import { renderWithProviders } from '../../../test/testUtils';
 import { DEFAULT_CAT, DEFAULT_TYPE } from '../../../hooks/useFigureListParams';
 import type { ListFilters } from '../../../hooks/useFigureListParams';
@@ -17,41 +17,6 @@ const DEFAULTS: ListFilters = { ...BASE, status: ['owned'] };
 const chips = () => screen.queryAllByRole('listitem').map((c) => c.getAttribute('aria-label') ?? c.textContent);
 
 describe("AppliedChips: the page's filter row (SHEETS-FB1 3)", () => {
-  it('LOADBAR (challenge r2): useAppliedChipsShown says whether a row stands now, from its mount until the last row goes; with nothing filtered there is none', () => {
-    const { result } = renderHook(() => useAppliedChipsShown());
-    expect(result.current).toBe(false);
-    const none = renderWithProviders(<AppliedChips filters={DEFAULTS} defaults={DEFAULTS} shown={7} total={7} onChange={() => {}} />);
-    expect(result.current).toBe(false);
-    const hiding = renderWithProviders(<AppliedChips filters={DEFAULTS} defaults={DEFAULTS} shown={5} total={7} onChange={() => {}} />);
-    expect(result.current).toBe(true);
-    const filtered = renderWithProviders(<AppliedChips filters={{ ...DEFAULTS, mfr: ['FREEing'] }} defaults={DEFAULTS} shown={2} total={7} onChange={() => {}} />);
-    act(() => void hiding.unmount());
-    expect(result.current, 'one row still stands').toBe(true);
-    // its filter removed and nothing hidden: the row goes
-    act(() => filtered.rerender(<AppliedChips filters={DEFAULTS} defaults={DEFAULTS} shown={7} total={7} onChange={() => {}} />));
-    expect(result.current).toBe(false);
-    act(() => filtered.rerender(<AppliedChips filters={{ ...DEFAULTS, mfr: ['FREEing'] }} defaults={DEFAULTS} shown={2} total={7} onChange={() => {}} />));
-    expect(result.current).toBe(true);
-    // a hook that comes after the row stands knows it at once
-    expect(renderHook(() => useAppliedChipsShown()).result.current).toBe(true);
-    act(() => void filtered.unmount());
-    expect(result.current).toBe(false);
-    none.unmount();
-  });
-
-  it('LOADBAR (challenge r2): a reader drawn in the same pass as the row, ahead of it (the load bar above the page, at launch), still learns the row stands', () => {
-    function Reader() {
-      return <span data-testid="reader">{String(useAppliedChipsShown())}</span>;
-    }
-    renderWithProviders(
-      <>
-        <Reader />
-        <AppliedChips filters={DEFAULTS} defaults={DEFAULTS} shown={5} total={7} onChange={() => {}} />
-      </>,
-    );
-    expect(screen.getByTestId('reader')).toHaveTextContent('true');
-  });
-
   it('nothing filtered (every filter its default, nothing hidden): no row at all', () => {
     const { container } = renderWithProviders(<AppliedChips filters={DEFAULTS} defaults={DEFAULTS} shown={7} total={7} onChange={() => {}} />);
     expect(container.querySelector('.applied-chips')).toBeNull();

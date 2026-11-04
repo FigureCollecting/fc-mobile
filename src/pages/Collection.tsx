@@ -16,8 +16,9 @@ import { BrandWatermark } from '../components/brand/BrandWatermark';
 import { DisplayToggle } from '../components/display/DisplayToggle';
 import { imageRefFromProductImage } from '../components/display/figureArt';
 import { FigureViewer } from '../components/display/FigureViewer';
-import { DetailPane } from '../components/display/DetailPane';
+import { DETAIL_PANE_WIDTH, DetailPane } from '../components/display/DetailPane';
 import { AppliedChips } from '../components/collection/AppliedChips';
+import { CatalogueLoadStrip } from '../components/sync/CatalogueLoadStrip';
 import { TabbedFilterSheet } from '../components/collection/TabbedFilterSheet';
 import { useCollection, useCollectionCounts } from '../hooks/useCollection';
 import { useLastSynced } from '../local/useLocal';
@@ -326,7 +327,11 @@ export function Collection() {
     <div class={`page-collection cq-grid ${shownLayout === 'case' ? 'page-collection--case' : ''}`} data-density={density} ref={pageRef}>
       <SlimHeader context={<span>Collection ({total})</span>} actions={headerActions} />
       {!fixtureMode && outOfReach && <LastSyncedBadge timestamp={lastSynced} />}
-      <AppliedChips filters={filters} defaults={defaults} shown={visible.length} total={total} onChange={setFilters} />
+      {/* LOADBAR-2: while the catalogue loads, a strip over the filter row's place says so, the row under it */}
+      <div class="page-collection__chips-slot">
+        <AppliedChips filters={filters} defaults={defaults} shown={visible.length} total={total} onChange={setFilters} />
+        <CatalogueLoadStrip />
+      </div>
 
       <div class={`page-collection__body ${showDetailPane ? 'page-collection__body--split' : ''}`}>
         <div class="page-collection__grid-col">
@@ -500,6 +505,17 @@ const styles = `
 
   .page-collection__display--case > .cabinet-scene {
     height: 100%;
+  }
+
+  /* LOADBAR-2: the catalogue load strip (CatalogueLoadStrip) stands over this slot, the filter row's, taking no space: over
+     the row, or as high over the top of the body where no row stands. There, beside an open detail pane, it stops at the
+     pane, whose own controls (Close) stand at its top. */
+  .page-collection__chips-slot {
+    position: relative;
+  }
+
+  .page-collection:has(> .page-collection__body--split) > .page-collection__chips-slot:not(:has(.applied-chips)) > .catalogue-strip {
+    right: ${DETAIL_PANE_WIDTH};
   }
 
   /* Fold dual-pane (>= 640px container width): grid condenses left, detail

@@ -3,8 +3,9 @@
  * The pose lives in a ref, not in Preact state: while a finger moves it, each animation frame writes the scene root's
  * transform and data-camera directly (the viewport keeps its perspective and never a translate), and the scene renders
  * only when the cull must change (stickyWhole) or a gesture ends. One finger drags MOVE the eye (truck and pedestal);
- * held still LOOK_HOLD_MS first, or with the header's Look around, a right or Shift+left mouse drag, they LOOK (yaw and
- * pitch through the realism cone, eased back to its soft limit when let go). A still release is a tap, as today.
+ * held still LOOK_HOLD_MS first, or a right or Shift+left mouse drag, they LOOK (yaw and pitch through the realism cone,
+ * eased back to its soft limit when let go). A still release is a tap, as today. NAV-2A: the stored swipe mode (the
+ * old path's) has no say here.
  */
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera } from './caseCamera';
@@ -32,8 +33,6 @@ export interface FreeScene {
   readonly zBack: number;
   /** The one-cabinet view's focus cabinet, whose neighbours are dimmed; null in the other views. */
   readonly dimmed: WallSlot | null;
-  /** A drag in the header's Look around mode turns the eye at once. */
-  readonly lookMode: boolean;
   readonly lookHoldMs: number;
   /** NAV-2B: the jog's top speed, in the 10-28 jog's (?jogmax=, JOG_MAX_X). */
   readonly jogMax: number;
@@ -311,7 +310,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const prev = gesture.current;
     if (prev?.timer !== undefined) clearTimeout(prev.timer);
     const s = scene.current;
-    const lookAtOnce = s.lookMode || e.button === 2 || (e.button === 0 && e.shiftKey === true);
+    const lookAtOnce = e.button === 2 || (e.button === 0 && e.shiftKey === true);
     const start = drawn() ?? poseOf(s.base);
     const g: Gesture = {
       id: e.pointerId,

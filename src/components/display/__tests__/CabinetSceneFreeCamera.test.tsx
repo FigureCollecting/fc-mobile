@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach, onTestFinished } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
+import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
@@ -235,19 +236,34 @@ describe('LOOK (rulings S6): a still hold arms it; the hold never swallows a tap
     expect(host().querySelector('.cabinet-scene__look-ring')!.hasAttribute('data-on')).toBe(false);
   });
 
-  it('the header\'s Look around (swipe pan) turns at once; so do a right drag and a Shift+left drag', () => {
-    for (const [patch, o] of [
-      [{ swipe: 'pan' }, {}],
-      [{}, { button: 2 }],
-      [{}, { shiftKey: true }],
-    ] as const) {
-      const { unmount } = scene(patch);
+  it('a right drag and a Shift+left drag turn at once', () => {
+    for (const o of [{ button: 2 }, { shiftKey: true }] as const) {
+      const { unmount } = scene();
       const before = pose();
       drag({ x: 220, y: 200 }, { x: 160, y: 200 }, o);
       expect(pose().yaw).toBeGreaterThan(0);
       expect(pose().x).toBe(before.x);
       unmount();
     }
+  });
+
+  it('NAV-2A: a stored swipe mode changes nothing: with Pan the wall stored, a quick one-finger drag MOVEs, and a hold still LOOKs', () => {
+    scene({ swipe: 'pan' });
+    const before = pose();
+    drag({ x: 220, y: 200 }, { x: 160, y: 200 });
+    tick(500);
+    const moved = pose();
+    expect(moved.x).toBeGreaterThan(before.x);
+    expect([moved.yaw, moved.pitch]).toEqual([0, 0]);
+    down(1, { x: 220, y: 200 });
+    tick(LOOK_HOLD_MS + 20);
+    for (let i = 1; i <= 6; i++) {
+      move(1, { x: 220 - i * 10, y: 200 });
+      tick(16);
+    }
+    up(1, { x: 160, y: 200 });
+    expect(pose().yaw).toBeGreaterThan(0);
+    expect(pose().x).toBe(moved.x);
   });
 
   it('a finger down looks up; the pitch keeps to its cone', () => {
@@ -347,18 +363,66 @@ describe('the arrows and Reset from where you look (rulings S7, spec 4)', () => 
     expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
   });
 
-  it('NAV-JOG: the side arrows retire in Free camera (the jog moves it); the shelf view keeps its shelf steps; off, the arrows stay', () => {
+  it('NAV-JOG: the side arrows retire from sight in Free camera (the jog moves it), kept for the keyboard alone (NAV-2A); the shelf view keeps its shelf steps; off, the arrows stay as they were', () => {
+    const keysOnly = (name: string) => screen.getByRole('button', { name }).classList.contains('cabinet-scene__step--keys');
     scene({ view: 'cabinet' });
-    expect(screen.queryByRole('button', { name: 'Next cabinet' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Previous cabinet' })).toBeNull();
+    expect(keysOnly('Next cabinet')).toBe(true);
+    expect(keysOnly('Previous cabinet')).toBe(true);
     cleanup();
     scene({ view: 'shelf' });
-    expect(screen.queryByRole('button', { name: 'Next cabinet' })).toBeNull();
+    expect(keysOnly('Next cabinet')).toBe(true);
     expect(screen.getByRole('button', { name: 'Shelf below' })).toBeInTheDocument();
     cleanup();
     scene({ freeCamera: false });
-    expect(screen.getByRole('button', { name: 'Next cabinet' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Previous cabinet' })).toBeInTheDocument();
+    expect(keysOnly('Next cabinet')).toBe(false);
+    expect(keysOnly('Previous cabinet')).toBe(false);
+  });
+
+  it('NAV-2A: unseen, the arrows hide from the eye and the finger only, until focused; Tab reaches Next and Enter stands the eye at the next cabinet', async () => {
+    scene({ view: 'cabinet' });
+    const next = screen.getByRole('button', { name: 'Next cabinet' });
+    const shown = () => getComputedStyle(next);
+    expect(shown().opacity).toBe('0');
+    expect(shown().pointerEvents).toBe('none');
+    expect(next.tabIndex).toBe(0);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    // from the last figure the scene draws (the arrows follow the picture in the tab order)
+    const figures = screen.getAllByRole('button', { name: /^Figure / });
+    figures[figures.length - 1].focus();
+    for (let i = 0; i < 5 && document.activeElement !== next; i++) await user.tab();
+    expect(document.activeElement, 'Tab reaches Next cabinet').toBe(next);
+    // shown once focused: jsdom keeps a computed style until the DOM changes, so case-free-default.spec.ts sees that
+    expect(next.matches('.cabinet-scene__step--keys:focus')).toBe(true);
+    const before = pose();
+    await user.keyboard('{Enter}');
+    tick();
+    expect(host().dataset.focus).toBe('1');
+    expect(pose().x).toBeGreaterThan(before.x);
+    expect([pose().yaw, pose().pitch]).toEqual([0, 0]);
+    const prev = screen.getByRole('button', { name: 'Previous cabinet' });
+    expect(prev).toBeEnabled();
+    prev.focus();
+    await user.keyboard('{Enter}');
+    tick();
+    expect(host().dataset.focus).toBe('0');
+  });
+
+  it('NAV-2A: in the whole-cabinets view the keyboard\'s Next and Previous page the wall from where the eye looks', async () => {
+    scene();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const start = pose();
+    screen.getByRole('button', { name: 'Next cabinet' }).focus();
+    await user.keyboard('{Enter}');
+    tick();
+    const paged = pose();
+    expect(paged.x).toBeGreaterThan(start.x);
+    expect([paged.yaw, paged.pitch]).toEqual([0, 0]);
+    const prev = screen.getByRole('button', { name: 'Previous cabinet' });
+    expect(prev).toBeEnabled();
+    prev.focus();
+    await user.keyboard('{Enter}');
+    tick();
+    expect(pose().x).toBeLessThan(paged.x);
   });
 
   it('the shelf arrows stand it at the shelf\'s framing too', () => {
@@ -1292,11 +1356,11 @@ describe('CAB-EDGE-DIM-1: the one-cabinet view dims past the wall\'s ends in Fre
   };
 
   it('the first cabinet: from the frame\'s left edge to its outer edge, at the opening and turned toward the end, live and let go', () => {
-    scene({ view: 'cabinet', swipe: 'pan' }, { figures: FEW });
+    scene({ view: 'cabinet' }, { figures: FEW });
     expect(host().dataset.focus).toBe('0');
     coversLeftEnd();
-    // Look around turns at once; a drag right turns the eye left (yaw below 0), toward the wall's first end
-    drag({ x: 200, y: 200 }, { x: 260, y: 200 }, { lift: false });
+    // a right drag turns at once; a drag right turns the eye left (yaw below 0), toward the wall's first end
+    drag({ x: 200, y: 200 }, { x: 260, y: 200 }, { lift: false, button: 2 });
     expect(cam().yaw).toBeLessThan(0);
     coversLeftEnd();
     up(1, { x: 260, y: 200 });
@@ -1306,15 +1370,14 @@ describe('CAB-EDGE-DIM-1: the one-cabinet view dims past the wall\'s ends in Fre
   });
 
   it('the last cabinet, reached by a walk: from its outer edge to the frame\'s right edge, straight on and turned toward the end, live and let go', () => {
-    const { again } = scene({ view: 'cabinet', swipe: 'camera' }, { figures: FEW });
+    scene({ view: 'cabinet', swipe: 'camera' }, { figures: FEW });
     const last = String(wallOf().length - 1);
     expect(Number(last), 'a wall of more than one cabinet').toBeGreaterThan(0);
     for (let i = 0; i < 40 && host().dataset.focus !== last; i++) drag({ x: 400, y: 200 }, { x: 60, y: 200 });
     tick(500);
     expect(host().dataset.focus).toBe(last);
     coversRightEnd();
-    again({ swipe: 'pan' });
-    drag({ x: 260, y: 200 }, { x: 200, y: 200 }, { lift: false });
+    drag({ x: 260, y: 200 }, { x: 200, y: 200 }, { lift: false, button: 2 });
     expect(cam().yaw).toBeGreaterThan(0);
     coversRightEnd();
     up(1, { x: 200, y: 200 });

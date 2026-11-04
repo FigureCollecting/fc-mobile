@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { touchTap } from './touch';
+import { legacyPrefs } from './legacyCamera';
 
 /**
  * PACK1 (Ross 10-26): the case stands its figures in an arrangement chosen in the View card (series, then scale, then name
@@ -77,7 +78,7 @@ function grouped(ids: readonly string[], rank: (id: string) => number | string):
 
 for (const size of FOLD8) {
   test(`a fresh device arranges the case by series, then scale, then name: ${size.name}`, async ({ page }) => {
-    await openCase(page, size);
+    await openCase(page, size, legacyPrefs({}));
     const scene = page.locator('.cabinet-scene');
     await expect(scene).toHaveAttribute('data-arrange', 'series-scale-name');
     const ids = await order(page);
@@ -91,7 +92,7 @@ for (const size of FOLD8) {
 
   for (const free of [false, true]) {
     test(`switching the arrangement packs the case again, and the device keeps it${free ? ', in the Free camera' : ''}: ${size.name}`, async ({ page }) => {
-      await openCase(page, size, free ? { freeCamera: true } : null);
+      await openCase(page, size, free ? { freeCamera: true } : legacyPrefs({}));
       const scene = page.locator('.cabinet-scene');
       if (free) await expect(scene).toHaveAttribute('data-free-camera', '1');
       const before = await order(page);
@@ -116,7 +117,7 @@ for (const size of FOLD8) {
   }
 
   test(`the list keeps its own sort whatever the case's arrangement: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, null, '&fx=1');
+    await openCase(page, size, legacyPrefs({}), '&fx=1');
     /** The tiles' pictures in the list's order, then back to the case. */
     const tiles = async () => {
       await page.goto('/?layout=rows&fx=1');
@@ -140,7 +141,7 @@ for (const size of FOLD8) {
   });
 
   test(`the one-cabinet view starts again at the first cabinet, and a tap opens the figure it shows: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, { view: 'cabinet' });
+    await openCase(page, size, legacyPrefs({ view: 'cabinet' }));
     const scene = page.locator('.cabinet-scene');
     await page.getByRole('button', { name: 'Next cabinet' }).click();
     await expect(scene).toHaveAttribute('data-focus', '1');

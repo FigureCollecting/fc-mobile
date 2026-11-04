@@ -159,6 +159,12 @@ const contactBandCache = new Map<string, ContactBand | null>();
 const undecoded = new Set<string>();
 /** Pictures whose own picture loaded before any read of them landed: each reader of them carries a read again (Reader.retryUndecoded). */
 const loadedUnread = new Set<string>();
+/**
+ * GKSHOW: pictures whose last read says they draw nothing at all: one that never decoded (a 404, a failed fetch, no CORS
+ * answer) or one that decoded with no pixel past ALPHA_THRESHOLD. Not a read that failed otherwise (no canvas, tainted):
+ * that says nothing of what the picture draws.
+ */
+const drawsNothing = new Set<string>();
 /** What each view does when a picture is read again on its own load after it never decoded (alphaPictureLoaded). */
 const rereadViews = new Set<(imageUrl: string, read: AlphaRead) => void>();
 
@@ -364,6 +370,7 @@ export function __clearAlphaMarginCache(): void {
   readers.clear();
   undecoded.clear();
   loadedUnread.clear();
+  drawsNothing.clear();
 }
 
 /**
@@ -523,6 +530,17 @@ function keep(imageUrl: string, read: AlphaRead): void {
   loadedUnread.delete(imageUrl);
   if (read === UNDECODED) undecoded.add(imageUrl);
   else undecoded.delete(imageUrl);
+  if (read === UNDECODED || read.mask?.drawn === 0) drawsNothing.add(imageUrl);
+  else drawsNothing.delete(imageUrl);
+}
+
+/**
+ * GKSHOW: whether the last read of `imageUrl` says it draws nothing: it never decoded, or it has no opaque pixel. A CSS mask
+ * that fails to load, or is all clear, hides everything it masks, so a figure drawn through such a mask would stand as an
+ * empty gap the size of a figure. False until it is read, and for a read that could not tell (no canvas, tainted).
+ */
+export function alphaDrawsNothing(imageUrl: string): boolean {
+  return drawsNothing.has(imageUrl);
 }
 
 /** While mounted, `tell` hears of each picture read again on its own load after it never decoded (alphaPictureLoaded). */

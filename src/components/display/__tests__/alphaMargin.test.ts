@@ -23,6 +23,7 @@ import {
   alphaMaskDrawnIn,
   getAlphaMask,
   ALPHA_MASK_MAX_CELLS,
+  alphaDrawsNothing,
 } from '../alphaMargin';
 import type { AlphaBuffer, AlphaMargins, AlphaMask } from '../alphaMargin';
 
@@ -1809,5 +1810,84 @@ describe('getAlphaMask (from the same canvas read as the grounding margin)', () 
     const { result } = renderHook(() => useBottomMarginFrac(url));
     await waitFor(() => expect(result.current).toBe(0));
     await waitFor(() => expect(getAlphaMask(url)).toBeNull());
+  });
+});
+
+describe('alphaDrawsNothing (GKSHOW: a mask that would hide its whole picture)', () => {
+  function mockDecode(impl: () => Promise<void>) {
+    HTMLImageElement.prototype.decode = vi.fn(impl);
+  }
+  let getContextSpy: ReturnType<typeof vi.spyOn>;
+  const readAs = (buffer: AlphaBuffer | (() => never)) => {
+    mockDecode(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 4, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 4, configurable: true });
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: typeof buffer === 'function' ? buffer : () => buffer,
+    } as unknown as CanvasRenderingContext2D);
+  };
+
+  beforeEach(() => {
+    __clearAlphaMarginCache();
+  });
+
+  afterEach(() => {
+    getContextSpy?.mockRestore();
+    delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  it('is false for a picture not read yet', () => {
+    expect(alphaDrawsNothing('https://example.com/unread.png')).toBe(false);
+  });
+
+  it('is true once a picture that never decodes (a 404, a failed fetch, no CORS answer) is read', async () => {
+    mockDecode(() => Promise.reject(new DOMException('network error', 'EncodingError')));
+    const url = 'https://example.com/missing-mask.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+  });
+
+  it('is true for a picture that decodes but draws no pixel (a blank mask)', async () => {
+    readAs(bufferWithPixels(4, 4, []));
+    const url = 'https://example.com/blank.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+  });
+
+  it('is false for a picture that draws, and for one whose canvas could not be read (tainted: no verdict on what it draws)', async () => {
+    readAs(bufferWithPixels(4, 4, [[1, 1]]));
+    const drawn = 'https://example.com/drawn.png';
+    renderHook(() => useAlphaMarginsOf([drawn]));
+    await waitFor(() => expect(getAlphaMask(drawn)).toBeTruthy());
+    expect(alphaDrawsNothing(drawn)).toBe(false);
+    getContextSpy.mockRestore();
+    readAs(() => {
+      throw new DOMException('tainted canvas', 'SecurityError');
+    });
+    const tainted = 'https://example.com/tainted.png';
+    renderHook(() => useAlphaMarginsOf([tainted]));
+    await waitFor(() => expect(getAlphaMask(tainted)).toBeNull());
+    expect(alphaDrawsNothing(tainted)).toBe(false);
+  });
+
+  it('a picture that never decoded and then reads as drawn (its own load read it again) is no longer said to draw nothing', async () => {
+    let decodes = 0;
+    readAs(bufferWithPixels(4, 4, [[1, 1]]));
+    mockDecode(() => (decodes++ === 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve()));
+    const url = 'https://example.com/late.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+    alphaPictureLoaded(url);
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(false));
+  });
+
+  it('is forgotten with the cache', async () => {
+    readAs(bufferWithPixels(4, 4, []));
+    const url = 'https://example.com/blank-cleared.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+    __clearAlphaMarginCache();
+    expect(alphaDrawsNothing(url)).toBe(false);
   });
 });

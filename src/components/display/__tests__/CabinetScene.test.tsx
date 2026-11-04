@@ -2275,3 +2275,60 @@ describe('CabinetScene: the swipe mode keeps the camera (PAN-KEEP-1)', () => {
   });
 });
 
+
+describe('CabinetScene: a mask that cannot be shown stands its picture framed (GKSHOW)', () => {
+  /** jsdom decodes every picture; the masks named fail (a 404, a failed fetch) or, `blank`, decode but draw nothing. */
+  function masksThat(fail: (src: string) => boolean, blank: (src: string) => boolean = () => false) {
+    (HTMLImageElement.prototype as { decode?: (this: HTMLImageElement) => Promise<void> }).decode = function (this: HTMLImageElement) {
+      return fail(this.src) ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve();
+    };
+    const [w, h] = [4, 4];
+    let drawn = '';
+    vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(w);
+    vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(h);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: (img: HTMLImageElement) => {
+        drawn = img.src;
+      },
+      getImageData: () => {
+        const data = new Uint8ClampedArray(w * h * 4);
+        if (!blank(drawn)) data.fill(255);
+        return { width: w, height: h, data };
+      },
+    } as unknown as CanvasRenderingContext2D);
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  const maskedFigures = () => {
+    window.history.pushState({}, '', '/?fxbranch=masked');
+    return getFixtureFigures(1, 'masked');
+  };
+  const artOf = (host: HTMLElement) => Object.fromEntries(figureButtons(host).map((b) => [b.dataset.figureId, b.dataset.art]));
+
+  it('a figure whose mask never loads is drawn framed, its picture shown, never an empty sized gap; the others stay masked', async () => {
+    const figures = maskedFigures();
+    const failing = getFixtureImageRef(figures[0])!.maskUrl!;
+    masksThat((src) => src.endsWith(failing));
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    const b = host.querySelector<HTMLElement>(`button.cab-figure[data-figure-id="${figures[0]._id}"]`)!;
+    expect(b.querySelector('.cab-figure__art--masked')).toBeNull();
+    expect(b.querySelector('.cab-figure__frame img')?.getAttribute('src')).toBe(getFixtureImageRef(figures[0])!.url);
+    for (const f of figures.slice(1)) expect(artOf(host)[f._id]).toBe('masked');
+  });
+
+  it('a figure whose mask decodes but draws nothing (a blank mask) is drawn framed too', async () => {
+    const figures = maskedFigures();
+    const blank = getFixtureImageRef(figures[1])!.maskUrl!;
+    masksThat(() => false, (src) => src.endsWith(blank));
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[1]._id]).toBe('framed'));
+    expect(artOf(host)[figures[0]._id]).toBe('masked');
+  });
+});

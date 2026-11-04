@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { MAX_MARGINS_FRAC, clearInset, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox, pictureOffsetMm } from '../figureArt';
+import { MAX_MARGINS_FRAC, clearInset, drawableArt, drawnWidthMm, figureArt, imageRefFromProductImage, pictureBox, pictureOffsetMm } from '../figureArt';
 import { UNMATTED_META } from '../displayMeta';
 import type { FigureDisplayMeta } from '../displayMeta';
 
@@ -224,5 +224,38 @@ describe('imageRefFromProductImage', () => {
   it('an empty URL (no public media base) or an empty mask URL is no image or no mask', () => {
     expect(imageRefFromProductImage({ url: '', width: 0, height: 0 })).toBeUndefined();
     expect(imageRefFromProductImage({ url: '/d/2.webp', width: 0, height: 0, mask: { url: '' } })).toEqual({ url: '/d/2.webp' });
+  });
+});
+
+describe('drawableArt (GKSHOW: never an empty sized gap)', () => {
+  const masked = figureArt(fig(), UNMATTED_META, { url: '/d/abc.webp', maskUrl: '/m/abc.png', bottomMarginFrac: 0.07 }, BASE);
+  const none = () => false;
+
+  it('keeps art whose pictures load and whose mask draws', () => {
+    expect(drawableArt(masked, none, none)).toBe(masked);
+    const framed = figureArt(fig({ imageUrl: '/d/f.webp' }), UNMATTED_META, undefined, BASE);
+    expect(drawableArt(framed, none, none)).toBe(framed);
+    expect(drawableArt({ kind: 'plate' }, none, none)).toEqual({ kind: 'plate' });
+  });
+
+  it('a picture that failed to load is the plate (ADDR-1)', () => {
+    const broken = (u?: string) => u === '/d/abc.webp';
+    expect(drawableArt(masked, broken, none)).toEqual({ kind: 'plate' });
+    const framed = figureArt(fig({ imageUrl: '/d/abc.webp' }), UNMATTED_META, undefined, BASE);
+    expect(drawableArt(framed, broken, none)).toEqual({ kind: 'plate' });
+  });
+
+  it('a mask that failed to load stands the picture framed, without it: a failed CSS mask hides all it covers', () => {
+    expect(drawableArt(masked, (u) => u === '/m/abc.png', none)).toEqual({ kind: 'framed', url: '/d/abc.webp' });
+  });
+
+  it('a mask read as drawing nothing (never decoded, or blank) stands the picture framed too', () => {
+    expect(drawableArt(masked, none, (u) => u === '/m/abc.png')).toEqual({ kind: 'framed', url: '/d/abc.webp' });
+  });
+
+  it('a cut-out is judged by its own load, never by its read: it has no separate mask', () => {
+    const cutout = figureArt(fig({ imageUrl: '/d/cut.png' }), MATTED, undefined, BASE);
+    expect(cutout.kind).toBe('cutout');
+    expect(drawableArt(cutout, none, () => true)).toBe(cutout);
   });
 });

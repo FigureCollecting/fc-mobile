@@ -19,6 +19,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import type { FigureImageRef } from '../components/display/figureArt';
 import type { ItemSync, LocalMeta } from '../local/figures';
 import type { CachedImage } from '../media/keptImages';
+import type { CatalogueLoading } from '../sync/engine';
 
 /**
  * Display-layer metadata for a DEV FIXTURE figure image (matted or not).
@@ -435,6 +436,22 @@ const MEDIA_SLOTS = [6];
  */
 export function getFixtureGoods(): boolean {
   return new URLSearchParams(location.search).get(FIXTURE_GOODS_PARAM) === '1';
+}
+
+const FIXTURE_LOADBAR_PARAM = 'fxloadbar';
+
+/**
+ * Dev-only switch for the catalogue load bar (LOADBAR), which the fixtures, having no sync engine, never show of
+ * themselves: `?fxloadbar=pull` is a pull under way, `?fxloadbar=cards:<done>:<total>` that share of the cards. Off
+ * (null) for anything else.
+ */
+export function getFixtureLoading(): CatalogueLoading | null {
+  const raw = new URLSearchParams(location.search).get(FIXTURE_LOADBAR_PARAM) ?? '';
+  if (raw === 'pull') return { step: 'pull', pages: 0 };
+  const cards = /^cards:(\d+):(\d+)$/.exec(raw);
+  if (cards === null) return null;
+  const [done, total] = [Number(cards[1]), Number(cards[2])];
+  return total > 0 && done <= total ? { step: 'cards', done, total } : null;
 }
 
 const FIXTURE_PHOTOS_PARAM = 'fxphotos';

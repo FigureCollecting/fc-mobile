@@ -62,6 +62,18 @@ export function figureArt(figure: Figure, meta: FigureDisplayMeta, image?: Figur
 }
 
 /**
+ * GKSHOW (Ross 11-03: GK slots sized as if a figure stood there, and nothing drawn): what the case can draw of `art` as
+ * its pictures stand. A picture that failed to load is the plate (ADDR-1). A masked picture whose mask failed to load, or
+ * whose read says it draws nothing (never decoded, or blank), stands framed without it: a CSS mask-image that fails or is
+ * all clear hides all it covers, and gives no error to catch. A cut-out carries its own alpha, judged by its own load.
+ */
+export function drawableArt(art: FigureArt, broken: (url: string | undefined) => boolean, drawsNothing: (url: string) => boolean): FigureArt {
+  if (broken(art.url)) return { kind: 'plate' };
+  if (art.kind === 'masked' && (broken(art.maskUrl) || drawsNothing(art.maskUrl!))) return { kind: 'framed', url: art.url };
+  return art;
+}
+
+/**
  * The clear margins above and below a figure, together, are believed up to
  * this fraction of its picture, so the box stays within 10x the figure: a
  * larger sum (a figure under a tenth of its picture, or a bad mask) is cut.

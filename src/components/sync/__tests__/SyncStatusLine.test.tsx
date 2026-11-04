@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/preact';
 import type { SyncState } from '../../../sync/engine';
 import { SyncStatusLine } from '../SyncStatusLine';
 
-const base: SyncState = { reachability: 'reachable', phase: 'idle', pending: 0, rejected: [], overwritten: 0, lastSyncedAt: null, lastError: null };
+const base: SyncState = { reachability: 'reachable', phase: 'idle', pending: 0, rejected: [], overwritten: 0, lastSyncedAt: null, lastError: null, loading: null };
 
 function show(patch: Partial<SyncState>, onDismissRejected = vi.fn()) {
   const state = signal<SyncState>({ ...base, ...patch });

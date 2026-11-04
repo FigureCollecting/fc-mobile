@@ -155,10 +155,16 @@ const pending = new Map<string, Promise<AlphaMargins>>();
 const maskCache = new Map<string, AlphaMask | null>();
 /** null: measured, but no contact band (unreadable, or nothing drawn); filled by the same read as the margins. */
 const contactBandCache = new Map<string, ContactBand | null>();
-/** Pictures whose last read never decoded them (UNDECODED): their own picture loading reads them again. */
+/** Pictures whose last read never decoded them (UNDECODED): their own picture loading reads them again (and rereadUndecoded). */
 const undecoded = new Set<string>();
 /** Pictures whose own picture loaded before any read of them landed: each reader of them carries a read again (Reader.retryUndecoded). */
 const loadedUnread = new Set<string>();
+/**
+ * GKSHOW: pictures whose last read says they draw nothing at all: one that never decoded (a 404, a failed fetch, no CORS
+ * answer) or one that decoded with no pixel past ALPHA_THRESHOLD. Not a read that failed otherwise (no canvas, tainted):
+ * that says nothing of what the picture draws.
+ */
+const drawsNothing = new Set<string>();
 /** What each view does when a picture is read again on its own load after it never decoded (alphaPictureLoaded). */
 const rereadViews = new Set<(imageUrl: string, read: AlphaRead) => void>();
 
@@ -364,6 +370,7 @@ export function __clearAlphaMarginCache(): void {
   readers.clear();
   undecoded.clear();
   loadedUnread.clear();
+  drawsNothing.clear();
 }
 
 /**
@@ -505,14 +512,32 @@ export function alphaPictureLoaded(imageUrl: string): void {
     reader.retryUndecoded = true;
     if (reader.hurry) reader.hurry();
     else reader.loaded = true;
-  } else if (undecoded.has(imageUrl)) {
-    void readInTurn(imageUrl, true).then((read) => {
-      // its views gone before its turn: nothing kept, its next load reads it again
-      if (!read) return;
-      keep(imageUrl, read);
-      for (const tell of rereadViews) tell(imageUrl, read);
-    });
-  } else if (!marginCache.has(imageUrl)) loadedUnread.add(imageUrl);
+  } else if (undecoded.has(imageUrl)) readAgain(imageUrl, true);
+  else if (!marginCache.has(imageUrl)) loadedUnread.add(imageUrl);
+}
+
+/**
+ * A picture whose last read never decoded it, read again (readInTurn, `first` as there), the views showing it told what
+ * that read gives. Its views gone before its turn: nothing kept, and it is read again when next asked.
+ */
+function readAgain(imageUrl: string, first: boolean): void {
+  void readInTurn(imageUrl, first).then((read) => {
+    if (!read) return;
+    keep(imageUrl, read);
+    for (const tell of rereadViews) tell(imageUrl, read);
+  });
+}
+
+/**
+ * GKSHOW-2: each of `urls` whose last read never decoded it (a 404, a failed fetch, offline), and is not being read now, is
+ * read once more, in line as a first read, and the views showing it learn what that read gives. For a picture no load
+ * tells of: a masked figure's CSS mask, which CabinetScene asks for when the link comes back, the app is shown again, its
+ * masks change or an image sync starts or ends. One read a picture a call, with no read again of its own: one that still
+ * never decodes is kept as it was until the next call, so a dead link costs one read a call. A read running out of time
+ * waits its backoff and goes again while its view lives, as any first read does (readInTurn).
+ */
+export function rereadUndecoded(urls: readonly string[]): void {
+  for (const url of urls) if (undecoded.has(url) && !readers.has(url)) readAgain(url, false);
 }
 
 /** What a read of a picture gives, kept by its URL. */
@@ -523,6 +548,17 @@ function keep(imageUrl: string, read: AlphaRead): void {
   loadedUnread.delete(imageUrl);
   if (read === UNDECODED) undecoded.add(imageUrl);
   else undecoded.delete(imageUrl);
+  if (read === UNDECODED || read.mask?.drawn === 0) drawsNothing.add(imageUrl);
+  else drawsNothing.delete(imageUrl);
+}
+
+/**
+ * GKSHOW: whether the last read of `imageUrl` says it draws nothing: it never decoded, or it has no opaque pixel. A CSS mask
+ * that fails to load, or is all clear, hides everything it masks, so a figure drawn through such a mask would stand as an
+ * empty gap the size of a figure. False until it is read, and for a read that could not tell (no canvas, tainted).
+ */
+export function alphaDrawsNothing(imageUrl: string): boolean {
+  return drawsNothing.has(imageUrl);
 }
 
 /** While mounted, `tell` hears of each picture read again on its own load after it never decoded (alphaPictureLoaded). */

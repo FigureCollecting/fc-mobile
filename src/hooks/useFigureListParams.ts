@@ -54,6 +54,14 @@ export const DEFAULT_TYPE = ['Figures'];
 /** Sentinel meaning "user explicitly cleared this defaulted facet". */
 const CLEARED = 'all';
 
+/** The collection's layout: the address's `layout`, else the one kept on this device, else the case. */
+export function resolveLayout(params: URLSearchParams): LayoutMode {
+  const p = params.get('layout') as LayoutMode;
+  if (VALID_LAYOUTS.includes(p)) return p;
+  const stored = lsGet(LS_LAYOUT) as LayoutMode;
+  return VALID_LAYOUTS.includes(stored) ? stored : 'case';
+}
+
 function lsGet(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -112,12 +120,7 @@ export function useFigureListParams(options: ListParamOptions = {}) {
   const holdingsKey = holdingsDefault.join('|');
   const [params, setParams] = useSearchParams();
 
-  const layout = useMemo((): LayoutMode => {
-    const p = params.get('layout') as LayoutMode;
-    if (VALID_LAYOUTS.includes(p)) return p;
-    const stored = lsGet(LS_LAYOUT) as LayoutMode;
-    return VALID_LAYOUTS.includes(stored) ? stored : 'case';
-  }, [params]);
+  const layout = useMemo(() => resolveLayout(params), [params]);
 
   const density = useMemo((): Density => {
     const p = params.get('density');

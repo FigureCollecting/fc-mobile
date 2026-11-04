@@ -23,6 +23,8 @@ import {
   alphaMaskDrawnIn,
   getAlphaMask,
   ALPHA_MASK_MAX_CELLS,
+  alphaDrawsNothing,
+  rereadUndecoded,
 } from '../alphaMargin';
 import type { AlphaBuffer, AlphaMargins, AlphaMask } from '../alphaMargin';
 
@@ -863,6 +865,87 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     expect(started.filter((s) => s === A)).toHaveLength(2);
     expect(marginsOf(again.result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
     expect(others.result.current, 'a list not showing it: no new answer').toBe(othersAnswer);
+  });
+
+  it('rereadUndecoded (GKSHOW-2: a CSS mask has no load of its own): a picture that never decoded is read again and its list learns its margins; one never read, or read already, starts no read', async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    let fails = 1;
+    mockPictures(pictures(), (src) => {
+      started.push(src);
+      return src === A && fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+    });
+    const { result } = renderHook(() => useAlphaMarginsOf([A, B]));
+    await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+    expect(result.current.get(A)).toEqual(NONE);
+    expect(alphaDrawsNothing(A)).toBe(true);
+    rereadUndecoded([A, B, 'https://example.com/never-read.png']);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A, B, A]);
+    expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+    expect(alphaDrawsNothing(A)).toBe(false);
+    // read now: asked again, nothing is read
+    rereadUndecoded([A, B]);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toEqual([A, B, A]);
+  });
+
+  it('rereadUndecoded on a dead link (it never decodes): one read a call, none between calls however long, and a call while that read is in flight, or the same picture twice, starts no other', async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    let land: (() => void) | undefined;
+    let hold = false;
+    mockPictures(pictures(), (src) => {
+      started.push(src);
+      if (!hold) return Promise.reject(neverDecoded());
+      return new Promise<void>((_, fail) => {
+        land = () => fail(neverDecoded());
+      });
+    });
+    const { result } = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A]);
+    // one call, one read; failing again it is kept as it was, and never read again of itself
+    rereadUndecoded([A]);
+    await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toEqual([A, A]);
+    expect(result.current.get(A)).toEqual(NONE);
+    expect(alphaDrawsNothing(A)).toBe(true);
+    // the link back and the app shown at once (two calls), the picture listed twice: one read
+    hold = true;
+    rereadUndecoded([A, A]);
+    rereadUndecoded([A]);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A, A, A]);
+    land!();
+    await vi.advanceTimersByTimeAsync(10 * ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toEqual([A, A, A]);
+    expect(alphaDrawsNothing(A)).toBe(true);
+  });
+
+  it('rereadUndecoded for a picture no view shows: nothing read, nothing kept; once a view shows it again, the next call reads it', async () => {
+    vi.useFakeTimers();
+    const started: string[] = [];
+    let fails = 1;
+    mockPictures(pictures(), (src) => {
+      started.push(src);
+      return fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+    });
+    const first = renderHook(() => useAlphaMarginsOf([A]));
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(alphaDrawsNothing(A)).toBe(true);
+    // its view gone: asked to read it again, nothing is read
+    first.unmount();
+    rereadUndecoded([A]);
+    await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MAX_MS);
+    expect(started).toEqual([A]);
+    expect(alphaDrawsNothing(A)).toBe(true);
+    const again = renderHook(() => useAlphaMarginsOf([A]));
+    expect(again.result.current.get(A)).toEqual(NONE);
+    rereadUndecoded([A]);
+    await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+    expect(started).toEqual([A, A]);
+    expect(marginsOf(again.result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
   });
 
   it('a list with a new picture keeps what it knows: only the new one is unknown, until it is read', async () => {
@@ -1809,5 +1892,84 @@ describe('getAlphaMask (from the same canvas read as the grounding margin)', () 
     const { result } = renderHook(() => useBottomMarginFrac(url));
     await waitFor(() => expect(result.current).toBe(0));
     await waitFor(() => expect(getAlphaMask(url)).toBeNull());
+  });
+});
+
+describe('alphaDrawsNothing (GKSHOW: a mask that would hide its whole picture)', () => {
+  function mockDecode(impl: () => Promise<void>) {
+    HTMLImageElement.prototype.decode = vi.fn(impl);
+  }
+  let getContextSpy: ReturnType<typeof vi.spyOn>;
+  const readAs = (buffer: AlphaBuffer | (() => never)) => {
+    mockDecode(() => Promise.resolve());
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', { value: 4, configurable: true });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', { value: 4, configurable: true });
+    getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn(),
+      getImageData: typeof buffer === 'function' ? buffer : () => buffer,
+    } as unknown as CanvasRenderingContext2D);
+  };
+
+  beforeEach(() => {
+    __clearAlphaMarginCache();
+  });
+
+  afterEach(() => {
+    getContextSpy?.mockRestore();
+    delete (HTMLImageElement.prototype as { decode?: unknown }).decode;
+  });
+
+  it('is false for a picture not read yet', () => {
+    expect(alphaDrawsNothing('https://example.com/unread.png')).toBe(false);
+  });
+
+  it('is true once a picture that never decodes (a 404, a failed fetch, no CORS answer) is read', async () => {
+    mockDecode(() => Promise.reject(new DOMException('network error', 'EncodingError')));
+    const url = 'https://example.com/missing-mask.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+  });
+
+  it('is true for a picture that decodes but draws no pixel (a blank mask)', async () => {
+    readAs(bufferWithPixels(4, 4, []));
+    const url = 'https://example.com/blank.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+  });
+
+  it('is false for a picture that draws, and for one whose canvas could not be read (tainted: no verdict on what it draws)', async () => {
+    readAs(bufferWithPixels(4, 4, [[1, 1]]));
+    const drawn = 'https://example.com/drawn.png';
+    renderHook(() => useAlphaMarginsOf([drawn]));
+    await waitFor(() => expect(getAlphaMask(drawn)).toBeTruthy());
+    expect(alphaDrawsNothing(drawn)).toBe(false);
+    getContextSpy.mockRestore();
+    readAs(() => {
+      throw new DOMException('tainted canvas', 'SecurityError');
+    });
+    const tainted = 'https://example.com/tainted.png';
+    renderHook(() => useAlphaMarginsOf([tainted]));
+    await waitFor(() => expect(getAlphaMask(tainted)).toBeNull());
+    expect(alphaDrawsNothing(tainted)).toBe(false);
+  });
+
+  it('a picture that never decoded and then reads as drawn (its own load read it again) is no longer said to draw nothing', async () => {
+    let decodes = 0;
+    readAs(bufferWithPixels(4, 4, [[1, 1]]));
+    mockDecode(() => (decodes++ === 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : Promise.resolve()));
+    const url = 'https://example.com/late.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+    alphaPictureLoaded(url);
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(false));
+  });
+
+  it('is forgotten with the cache', async () => {
+    readAs(bufferWithPixels(4, 4, []));
+    const url = 'https://example.com/blank-cleared.png';
+    renderHook(() => useAlphaMarginsOf([url]));
+    await waitFor(() => expect(alphaDrawsNothing(url)).toBe(true));
+    __clearAlphaMarginCache();
+    expect(alphaDrawsNothing(url)).toBe(false);
   });
 });

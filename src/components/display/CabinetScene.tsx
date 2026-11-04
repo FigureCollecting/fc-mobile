@@ -92,12 +92,12 @@ import {
   type Rect,
   type TexelGrid,
 } from './caseCull';
-import { clearInset, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
+import { clearInset, drawableArt, drawnWidthMm, figureArt, pictureBox, pictureOffsetMm, type FigureArt, type FigureImageRef, type PictureMargins } from './figureArt';
 import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { arrangeOrder } from './caseArrangement';
 import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
-import { alphaPictureLoaded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { alphaDrawsNothing, alphaPictureLoaded, rereadUndecoded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
@@ -1032,17 +1032,16 @@ export function CabinetScene({
 
   // a picture that fails to load stands as its plate (ADDR-1), never a blank space
   const images = useBrokenImages();
-  // what the case draws for each figure, in the shape it draws it (the image list's own size when it gives one)
-  const liveArts = useMemo<readonly ArtEntry[]>(
+  // what the image list and the figure give each figure, in the shape it draws it (the image list's own size when it gives one)
+  const listedArts = useMemo<readonly (ArtEntry & { image?: FigureImageRef })[]>(
     () =>
       figures.map((f) => {
         const meta = getDisplayMeta(f);
         const image = imageFor?.(f);
-        const drawn = figureArt(f, meta, image);
-        const art: FigureArt = images.broken(drawn.url) ? { kind: 'plate' } : drawn;
-        return { meta, art, aspect: artAspect(art, image, meta.aspect) };
+        const art = figureArt(f, meta, image);
+        return { meta, art, image, aspect: artAspect(art, image, meta.aspect) };
       }),
-    [figures, imageFor, images.broken],
+    [figures, imageFor],
   );
   // PACK1 (Ross 10-26): the case stands them in its own arrangement, apart from the list's sort, a gap filled only within
   // a group (each keeps its list index: the tap and the pictures find it by that). The order is the figures' alone: read
@@ -1051,12 +1050,61 @@ export function CabinetScene({
   // the pictures are read in that order, those the wall opens with first: each read packs the case again, and read in the
   // list's order the last ones read could stand at the wall's start, moving it until the very last
   const alphaUrls = useMemo(
-    () => [...new Set(arrangement.order.flatMap((i) => (liveArts[i].art.alphaUrl ? [liveArts[i].art.alphaUrl] : [])))],
-    [liveArts, arrangement],
+    () =>
+      [
+        ...new Set(
+          arrangement.order.flatMap((i) => {
+            const { art } = listedArts[i];
+            return art.alphaUrl && !images.broken(art.url) ? [art.alphaUrl] : [];
+          }),
+        ),
+      ],
+    [listedArts, arrangement, images.broken],
   );
   // each picture's clear margins as soon as it is read: from then on its figure is grounded and packed by what it draws;
   // one still being read stands as its plate on its label meanwhile, holding back no other
   const liveAlpha = useAlphaMarginsOf(alphaUrls);
+  // GKSHOW-2: a mask whose read never decoded it (a 404, offline, a weak link) stands its figure framed, and a CSS mask has no
+  // load to read it again on (alphaPictureLoaded): it is read again, once each time, when the case opens or its masks change,
+  // an image sync starts or ends (imagesComplete), the link comes back or the app is shown again
+  const maskUrls = useMemo(() => {
+    const masks = new Set(listedArts.flatMap(({ art }) => (art.kind === 'masked' ? [art.maskUrl] : [])));
+    return alphaUrls.filter((url) => masks.has(url));
+  }, [alphaUrls, listedArts]);
+  const masksNow = useRef(maskUrls);
+  masksNow.current = maskUrls;
+  const maskKey = maskUrls.join('\n');
+  useEffect(() => {
+    const again = () => rereadUndecoded(masksNow.current);
+    const shown = () => {
+      if (document.visibilityState === 'visible') again();
+    };
+    again();
+    window.addEventListener('online', again);
+    document.addEventListener('visibilitychange', shown);
+    return () => {
+      window.removeEventListener('online', again);
+      document.removeEventListener('visibilitychange', shown);
+    };
+  }, [maskKey, imagesComplete]);
+  // GKSHOW: what the case can draw of each, as its pictures stand (drawableArt): a broken picture is its plate, a masked one
+  // whose mask failed or draws nothing stands framed. A figure whose art is unchanged keeps its entry, and one changed keeps
+  // the entry it was changed to, so a picture read elsewhere moves no figure that drew the same before (drawing() below);
+  // asked again as each read lands (liveAlpha), which may say a mask draws nothing
+  const changedArts = useRef(new WeakMap<ArtEntry, ArtEntry>());
+  const liveArts = useMemo<readonly ArtEntry[]>(
+    () =>
+      listedArts.map((listed) => {
+        const art = drawableArt(listed.art, images.broken, alphaDrawsNothing);
+        if (art === listed.art) return listed;
+        const kept = changedArts.current.get(listed);
+        if (kept && kept.art.kind === art.kind && kept.art.url === art.url) return kept;
+        const entry = { meta: listed.meta, art, aspect: artAspect(art, listed.image, listed.meta.aspect) };
+        changedArts.current.set(listed, entry);
+        return entry;
+      }),
+    [listedArts, images.broken, liveAlpha],
+  );
 
   // LAYOUT-STABLE-1: the wall is laid out from a basis of the picture inputs, held between the moments layoutBasis.ts names,
   // not from whatever the last picture changed. Pictures stream in for minutes on a first launch, and the packer is global:

@@ -139,10 +139,10 @@ export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, 
           )}
         </div>
 
-        {/* NAV-1A (rulings R0.2): the Free camera trial, per device, off until turned on */}
+        {/* NAV-2A (NAVDEF a): the Free camera, per device, on until unticked here */}
         <label class="case-card__choice">
-          <input type="checkbox" checked={prefs.freeCamera === true} onChange={() => onChange({ freeCamera: prefs.freeCamera !== true })} />
-          Free camera (trial)
+          <input type="checkbox" checked={prefs.freeCamera} onChange={() => onChange({ freeCamera: !prefs.freeCamera })} />
+          Free camera
         </label>
 
         {misfitCount > 0 && onShowMisfits !== undefined && (

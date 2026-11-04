@@ -1,5 +1,5 @@
 /**
- * NAV-1A, the Free camera (trial): the camera's pose and every rule that moves it. Ross 10-20 ("ROSS'S CAMERA MODEL"):
+ * NAV-1A, the Free camera: the camera's pose and every rule that moves it. Ross 10-20 ("ROSS'S CAMERA MODEL"):
  * MOVE trucks and pedestals the eye with its aim travelling, the pitch unchanged; LOOK turns the aim from where it
  * stands. Ross 10-25: the camera turns; nothing traps you; no roll. One pose, changed only by a delta from an input, a
  * command (instant in this slice) or a collision clamp: never a settle, a snap or a retake. Pure maths, no DOM.

@@ -3,7 +3,7 @@ import { SHOT_VIEWPORTS } from './caseViewports';
 import { shotSizeError, signoffShot } from './signoffShots';
 
 /**
- * NAV-1A: sign-off shots of the Free camera (trial) as it opens (level, rulings R0.3) in the wall, cabinet and shelf
+ * NAV-1A: sign-off shots of the Free camera as it opens (level, rulings R0.3) in the wall, cabinet and shelf
  * views, one full frame per SHOT_VIEWPORTS project, in fixture mode on the committed synthetic art. They land beside
  * the others in test-results/signoff/<project>/free-camera-<view>.png:
  *   npm run test:e2e:shots

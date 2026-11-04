@@ -271,12 +271,12 @@ export function Collection() {
         density={density}
         caseView={casePrefs.view}
         swipe={casePrefs.swipe}
-        freeCamera={casePrefs.freeCamera}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}
         onCaseView={(view) => setCasePrefs({ view })}
-        onSwipe={(swipe) => setCasePrefs({ swipe })}
+        // NAV-2A (NAVDEF a): the swipe button is the old path's alone; Free camera has none
+        onSwipe={casePrefs.freeCamera ? undefined : (swipe) => setCasePrefs({ swipe })}
         onLabels={setLabels}
       />
     </>

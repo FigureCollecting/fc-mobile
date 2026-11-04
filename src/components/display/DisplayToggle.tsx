@@ -14,14 +14,12 @@ interface DisplayToggleProps {
   caseView: CaseView;
   /** What a swipe does in the case (CAM1): pans the wall or moves the camera. */
   swipe?: SwipeMode;
-  /** NAV-1A: the case is on the Free camera trial: the same two modes are Move and Look around. */
-  freeCamera?: boolean;
   /** Nameplate overlay toggle — defaults off. */
   labels?: boolean;
   onLayout: (layout: LayoutMode) => void;
   onDensity: (density: Density) => void;
   onCaseView: (view: CaseView) => void;
-  /** The case's swipe-mode button is shown only where this is given. */
+  /** The case's swipe-mode button is shown only where this is given (NAV-2A: the old path's, not Free camera's). */
   onSwipe?: (swipe: SwipeMode) => void;
   onLabels?: (labels: boolean) => void;
 }
@@ -43,11 +41,6 @@ const SWIPES: readonly SwipeMode[] = ['pan', 'camera'];
 const SWIPE_LABEL: Record<SwipeMode, string> = {
   pan: 'Pan the wall',
   camera: 'Move the camera',
-};
-/** NAV-1A: in Free camera a drag moves the eye ('camera') or turns it ('pan': Look around); nothing migrates. */
-const FREE_SWIPE_LABEL: Record<SwipeMode, string> = {
-  pan: 'Look around',
-  camera: 'Move',
 };
 
 const ICON = {
@@ -126,14 +119,14 @@ function TilesIcon({ density }: { density: Density }) {
  *
  * CAM1 (Ross 10-18, a): on the case, just left of the two mode buttons, one more button: what a swipe does
  * (pan the wall or move the camera, exclusive), its icon the mode in force and a tap opening the same kind of
- * menu. It stands in the header, outside the zoom layer, so it works with the picture zoomed.
+ * menu. It stands in the header, outside the zoom layer, so it works with the picture zoomed. NAV-2A (NAVDEF a,
+ * Ross 10-31): only with Free camera off; Free camera's one finger moves, a hold looks, and the jog is always on.
  */
 export function DisplayToggle({
   layout,
   density,
   caseView,
   swipe = 'camera',
-  freeCamera = false,
   labels = false,
   onLayout,
   onDensity,
@@ -143,7 +136,11 @@ export function DisplayToggle({
 }: DisplayToggleProps) {
   const [menu, setMenu] = useState<LayoutMode | 'swipe' | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  const swipeLabel = freeCamera ? FREE_SWIPE_LABEL : SWIPE_LABEL;
+
+  // The swipe button goes when Free camera is ticked; its menu must not outlive it (a keyboard can reach this).
+  useEffect(() => {
+    if (menu === 'swipe' && !onSwipe) setMenu(null);
+  }, [menu, onSwipe]);
 
   useEffect(() => {
     if (menu === null) return;
@@ -188,7 +185,7 @@ export function DisplayToggle({
     menu === 'case'
       ? CASE_VIEWS.map((v) => [v, CASE_VIEW_LABEL[v], v === caseView, () => onCaseView(v)])
       : menu === 'swipe'
-        ? SWIPES.map((m) => [m, swipeLabel[m], m === swipe, () => onSwipe?.(m)])
+        ? SWIPES.map((m) => [m, SWIPE_LABEL[m], m === swipe, () => onSwipe?.(m)])
         : DENSITIES.map((d) => [d, DENSITY_LABEL[d], d === density, () => onDensity(d)]);
   const menuName = menu === 'case' ? 'Case views' : menu === 'swipe' ? 'Swipe modes' : 'Tiles views';
 
@@ -198,7 +195,7 @@ export function DisplayToggle({
         <button
           class={`display-toggle__swipe ${menu === 'swipe' ? 'display-toggle__swipe--open' : ''}`}
           type="button"
-          aria-label={`Swipe, ${swipeLabel[swipe]}`}
+          aria-label={`Swipe, ${SWIPE_LABEL[swipe]}`}
           aria-haspopup="menu"
           aria-expanded={menu === 'swipe'}
           onClick={() => {

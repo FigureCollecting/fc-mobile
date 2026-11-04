@@ -103,6 +103,16 @@ describe('DisplayToggle: two mode buttons at fixed places, the nameplate toggle 
     expect(container.querySelector('.display-toggle__swipe')).toBeNull();
   });
 
+  it('NAV-2A: the swipe menu closes when its button goes (Free camera ticked from the keyboard while it was open)', async () => {
+    const user = userEvent.setup();
+    const { rerender, onLayout, onDensity, onCaseView, onLabels } = mount({ layout: 'case', swipe: 'camera' });
+    await user.click(swipeButton());
+    expect(screen.getByRole('menu', { name: 'Swipe modes' })).toBeInTheDocument();
+    rerender(<DisplayToggle layout="case" density="compact" caseView="wall" swipe="camera" labels={false} onLayout={onLayout} onDensity={onDensity} onCaseView={onCaseView} onLabels={onLabels} />);
+    expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
   it('the active mode is pressed and offers its views; the other is not', () => {
     mount({ layout: 'case' });
     expect(caseButton()).toHaveAttribute('aria-pressed', 'true');

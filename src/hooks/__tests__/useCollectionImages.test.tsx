@@ -463,20 +463,51 @@ describe('useCollectionImages', () => {
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
   });
 
-  it('a sync that read the lists and left an image unfetched is not synced again by a pass: the Collection page opened again does that (NEWHOLD-IMG-1)', async () => {
-    storage = fakeCaches(async () => new Response('', { status: 503 }));
+  // PHOTOS1 (Ross 11-04): the figures past the first cabinets stood as name cards for as long as the page stayed open
+  it('a sync that read the lists and left an image unfetched has it fetched at the engine\'s next pass, from the kept list: no list is read again (PHOTOS1)', async () => {
+    let refusing = true;
+    storage = fakeCaches(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
     vi.stubGlobal('caches', storage);
     vi.stubGlobal('fetch', storage.fetch);
     const r = await localRig();
-    await seedFigures(r, [{ title: 'Refused' }]);
+    await seedFigures(r, [{ title: 'Refused, then served' }]);
     r.clients.getProductImages.mockResolvedValue(oneImage(0, 'a'));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 30 * 60_000, networkMode: 'always' } } });
+    const client = appClient();
     const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(storage.added.map((q) => q.url)).toEqual([url('a')]));
     await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
     await waitFor(() => expect(imagesComplete(result.current)).toBe(false));
+    refusing = false;
+    await nextPass(r);
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    expect(storage.added.map((q) => q.url)).toEqual([url('a'), url('a')]);
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+    // nothing is left: a later pass fetches nothing
     await nextPass(r);
     await settle();
+    expect(storage.added).toHaveLength(2);
+  });
+
+  it('a sync that left images unfetched: the view moved to them fetches them at once, in its order, with no pass and no list read (PHOTOS1)', async () => {
+    let refusing = true;
+    storage = fakeCaches(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, { products: [listWithMask(0, 'a', 'b'), listWithMask(1, 'c', 'd'), listWithMask(2, 'e', 'f')] }),
+    );
+    await seedFigures(r, [{ title: 'One' }, { title: 'Two' }, { title: 'Three' }]);
+    const client = appClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(storage.added).toHaveLength(6));
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    refusing = false;
+    // Free camera walked far along: the case now draws the third figure, then the first
+    setFetchOrder([headOf(2), headOf(0), headOf(1)]);
+    await waitFor(() => expect(result.current.size).toBe(3), { timeout: 3000 });
+    expect(storage.added.slice(6).map((q) => q.url)).toEqual(['e', 'f', 'a', 'b', 'c', 'd'].map(url));
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
   });
 

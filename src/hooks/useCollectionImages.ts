@@ -45,7 +45,7 @@ import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tans
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
-import { fetchImageLists, keepChosenPhotos, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
+import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
 import { usePhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -63,10 +63,32 @@ const partial = new WeakSet<ReadonlyMap<string, CachedImage>>();
 const unread = new WeakSet<ReadonlyMap<string, CachedImage>>();
 /** FETCH-FIRST: the heads the case view shows, then the rest as it stands them; the last case view's until another tells. */
 let fetchOrder: readonly string[] = [];
+/** PHOTOS1: told when the case view tells a new order. */
+const orderHeard = new Set<() => void>();
+/**
+ * PHOTOS1: the answers of a sync or a fill that left images unfetched, and when a fill may fetch them: at once after a sync,
+ * REFILL_AFTER_MS after a fill that left some (the link refusing them), so neither a walk nor a pass asks for them in a loop.
+ */
+const leftover = new WeakMap<ReadonlyMap<string, CachedImage>, number>();
+/** PHOTOS1: how long a fill that left an image unfetched waits before another asks for it. */
+export const REFILL_AFTER_MS = 30_000;
+/** PHOTOS1: a new order starts a fill this long after the case view stops telling new ones (a walk tells one each step). */
+export const FILL_AFTER_ORDER_MS = 250;
+/** PHOTOS1: the fill under way in this document (one at a time). */
+let filling: { stop: () => void; done: Promise<void> } | undefined;
 
-/** FETCH-FIRST: the case view's heads, those it shows first: the sync under way fetches in this order from its next fetch on. */
+/** FETCH-FIRST: the case view's heads, those it shows first: the sync or fill under way fetches in this order from its next fetch on. */
 export function setFetchOrder(heads: readonly string[]): void {
   fetchOrder = heads;
+  for (const heard of orderHeard) heard();
+}
+
+/** PHOTOS1: the fill under way stopped, its fetches in flight aborted, and ended (so a sync never waits for its lock). */
+async function stopFill(): Promise<void> {
+  const under = filling;
+  if (under === undefined) return;
+  under.stop();
+  await under.done;
 }
 
 /** Shows each answer a sync tells, at most every KEPT_SHOWN_EVERY_MS and the latest last, until the sync aborts or `stop`. */
@@ -125,9 +147,11 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     // fetches in flight are aborted and no other starts.
     queryFn: async ({ signal, client, queryKey }) => {
       hearKeptSyncs(client);
+      await stopFill();
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
       let incomplete = false;
       let listsUnread = false;
+      let left = false;
       if (reachable && !answersFromKept(client, queryKey)) {
         const shown = showKept(client, queryKey, signal);
         shown.show(await keptImages(kept, undefined, allChoices));
@@ -150,6 +174,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // stalled link, refused): the other documents drop their answers too, and a sync of theirs
           // under way runs on.
           incomplete = synced.failed > 0;
+          left = incomplete && !signal.aborted;
           tellKeptSync(client, signal.aborted || incomplete ? 'stopped' : 'synced');
         } catch (err) {
           // Failed or stopped after it read the lists (a write refused, its case view gone): told as
@@ -172,15 +197,71 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       const answer = await keptImages(kept, undefined, allChoices);
       if (incomplete) partial.add(answer);
       if (listsUnread) unread.add(answer);
+      if (left) leftover.set(answer, 0);
       return answer;
     },
     enabled,
     staleTime: (q) => (q.state.data !== undefined && partial.has(q.state.data) ? 0 : 10 * 60_000),
     retry: false,
   });
-  // NEWHOLD-IMG-1: a pass the engine completes after a sync that could not read the lists syncs again; never the failure
-  // itself (a server still failing is asked again at the next pass, not at once), nor one already under way
   const client = useQueryClient();
+  // PHOTOS1: what the sync (or a fill) left unfetched, fetched from the kept lists by a fill, never while a sync runs
+  const startFill = () => {
+    const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
+    const data = state?.data;
+    if (filling !== undefined || !reachable || !signedIn || state?.fetchStatus !== 'idle' || data === undefined) return;
+    const at = leftover.get(data);
+    if (at === undefined || at > Date.now()) return;
+    const stop = new AbortController();
+    const queryKey = key;
+    const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
+    const choices = allChoices;
+    const done = (async () => {
+      const shown = showKept(client, queryKey, stop.signal);
+      try {
+        const filled = await fillKeptImages(kept, { signal: stop.signal, choices, first: () => fetchOrder, onKept: shown.show });
+        // another document's sync holds the lock: the next pass or order asks again
+        if (filled === undefined || stop.signal.aborted) return;
+        shown.stop();
+        const again = Date.now() + REFILL_AFTER_MS;
+        if (filled.added === 0) {
+          if (filled.failed > 0) leftover.set(data, again);
+          else leftover.delete(data);
+          return;
+        }
+        const answer = await keptImages(kept, undefined, choices);
+        if (stop.signal.aborted) return;
+        if (filled.failed > 0) {
+          partial.add(answer);
+          leftover.set(answer, again);
+        }
+        client.setQueryData(queryKey, answer);
+      } finally {
+        shown.stop();
+        filling = undefined;
+      }
+    })();
+    filling = { stop: () => stop.abort(), done: done.catch(() => undefined) };
+  };
+  const fillNow = useRef(startFill);
+  fillNow.current = startFill;
+  // PHOTOS1: the case view telling a new order (Free camera walking, the old camera moving) fetches what it now shows
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const heard = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fillNow.current(), FILL_AFTER_ORDER_MS);
+    };
+    orderHeard.add(heard);
+    return () => {
+      orderHeard.delete(heard);
+      clearTimeout(timer);
+      filling?.stop();
+    };
+  }, []);
+  // NEWHOLD-IMG-1: a pass the engine completes after a sync that could not read the lists syncs again; never the failure
+  // itself (a server still failing is asked again at the next pass, not at once), nor one already under way. PHOTOS1: after
+  // one that read them and left an image unfetched, the pass fills instead.
   const passedAt = session?.engine.state.value.lastSyncedAt ?? null;
   const seenPass = useRef(passedAt);
   useEffect(() => {
@@ -188,6 +269,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     seenPass.current = passedAt;
     const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
     if (state?.fetchStatus === 'idle' && state.data !== undefined && unread.has(state.data)) void client.refetchQueries({ queryKey: key, exact: true });
+    else startFill();
   }, [passedAt]);
   return query.data ?? (signedIn ? LOADING : EMPTY);
 }

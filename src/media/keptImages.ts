@@ -118,7 +118,12 @@ export interface KeptImageSync {
   added: number;
   evicted: number;
   failed: number;
+  /** PHOTOS1: fetches the origin answered 404, no display copy made yet (counted in `failed` until 4a). */
+  absent: number;
 }
+
+/** PHOTOS1: what a fill fetched (fillKeptImages). */
+export type KeptImageFill = Pick<KeptImageSync, 'added' | 'absent' | 'failed'>;
 
 /** The images a client may keep: only those on the public image address, a mask only when it is too. */
 export function toCachedImages(images: readonly ProductImage[]): CachedImage[] {
@@ -330,7 +335,7 @@ export async function syncKeptImages(
   options: SyncOptions = {},
 ): Promise<KeptImageSync> {
   const storage = 'storage' in options ? options.storage : browserCaches();
-  if (storage === undefined) return { figures: 0, images: 0, added: 0, evicted: 0, failed: 0 };
+  if (storage === undefined) return { figures: 0, images: 0, added: 0, evicted: 0, failed: 0, absent: 0 };
   const locks = (navigator as { locks?: LockManager }).locks;
   if (locks === undefined) return bringToKept(keptHeads, fetchLists, storage, options);
   const wait = new AbortController();
@@ -443,13 +448,149 @@ export async function keepChosenPhotos(
   return kept;
 }
 
+/** No address: nothing withheld. */
+const NO_ADDRESSES: ReadonlySet<string> = new Set();
+
+/**
+ * What keptImages answers for these kept lists, given the addresses whose bytes are here and those withheld: each figure's
+ * shown image (the chosen one, else the primary) whose bytes are here and that is not withheld, without a withheld mask.
+ */
+function answersOf(
+  lists: ReadonlyMap<string, readonly CachedImage[]>,
+  choices: PhotoChoices | undefined,
+  have: ReadonlySet<string>,
+  withheld: ReadonlySet<string>,
+): Map<string, CachedImage> {
+  const out = new Map<string, CachedImage>();
+  for (const [head, list] of lists) {
+    const image = answerable(list, choices?.get(head)).find((i) => have.has(i.url) && !withheld.has(i.url));
+    if (image === undefined) continue;
+    if (image.maskUrl !== undefined && withheld.has(image.maskUrl)) {
+      const { maskUrl: _withheld, ...rest } = image;
+      out.set(head, rest);
+    } else out.set(head, image);
+  }
+  return out;
+}
+
+/** FETCH-FIRST: the addresses to fetch, each taken where the first of the heads it is shown for comes in `first` (asked at each take), then in the order added. */
+interface FetchQueue {
+  add(addresses: Iterable<string>): void;
+  take(): string | undefined;
+}
+
+function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (() => readonly string[]) | undefined): FetchQueue {
+  const queued: string[] = [];
+  const addedAt = new Map<string, number>();
+  let orderedBy: readonly string[] | undefined;
+  return {
+    add(addresses) {
+      for (const u of addresses) {
+        if (addedAt.has(u)) continue;
+        addedAt.set(u, addedAt.size);
+        queued.push(u);
+      }
+      orderedBy = undefined;
+    },
+    take() {
+      const order = first?.() ?? NO_HEADS;
+      if (order !== orderedBy) {
+        orderedBy = order;
+        const rank = new Map<string, number>();
+        order.forEach((head, i) => {
+          if (!rank.has(head)) rank.set(head, i);
+        });
+        const at = new Map(queued.map((u) => [u, Math.min(...(shownFor.get(u) ?? NO_HEADS).map((head) => rank.get(head) ?? order.length))]));
+        queued.sort((a, b) => at.get(a)! - at.get(b)! || addedAt.get(a)! - addedAt.get(b)!);
+      }
+      return queued.shift();
+    },
+  };
+}
+
+/**
+ * The queue's addresses fetched into the owned cache, `concurrency` at a time, `landed` told of each kept. Each fetch is
+ * aborted when the signal aborts, or when it has received nothing (its headers, a byte of its body) for KEPT_SYNC_STEP_MS;
+ * then the link is taken as stalled and no other fetch starts. Only an ok answer with a body is kept, once all of it arrived.
+ */
+async function fetchQueued(
+  media: Cache,
+  queue: FetchQueue,
+  options: { concurrency?: number; signal?: AbortSignal },
+  result: KeptImageFill,
+  landed: (address: string) => void,
+): Promise<void> {
+  let stalled = false;
+  const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
+    for (let next = queue.take(); next !== undefined && options.signal?.aborted !== true && !stalled; next = queue.take()) {
+      try {
+        await fetchKept(media, next, options.signal, () => (stalled = true));
+        result.added += 1;
+        landed(next);
+      } catch {
+        result.failed += 1;
+      }
+    }
+  });
+  await Promise.all(workers);
+}
+
+/**
+ * PHOTOS1 (Ross 11-04: past the first cabinets the case stood as name cards, and nothing was asked for as he walked to them):
+ * the images of these kept figures that are not on the device, fetched from the lists the device kept, asking the
+ * coordinator nothing, so what a sync left unfetched (a stalled or refused fetch) is fetched while the case view stays open.
+ * Only the shown image of each figure with a kept list (the chosen one and the primary, each with its mask), never a
+ * withheld address; those of the heads `first` names first, in its order, asked as each fetch starts; `onKept` told what
+ * keptImages answers as each lands. It runs only while no document of the app holds the sync's lock (OWNED_SYNC_LOCK, asked
+ * if available), and holds it till its fetches end, so no sync reads what it withholds or evicts in between; another
+ * document's sync holding it, it fetches nothing and answers undefined. Its signal aborts its fetches in flight.
+ */
+export async function fillKeptImages(
+  heads: readonly string[],
+  options: { storage?: CacheStorage | undefined; choices?: PhotoChoices; concurrency?: number; signal?: AbortSignal; first?: () => readonly string[]; onKept?: (kept: ReadonlyMap<string, CachedImage>) => void } = {},
+): Promise<KeptImageFill | undefined> {
+  const storage = 'storage' in options ? options.storage : browserCaches();
+  if (storage === undefined) return { added: 0, absent: 0, failed: 0 };
+  const locks = (navigator as { locks?: LockManager }).locks;
+  if (locks === undefined) return fill(heads, storage, options);
+  return locks.request(OWNED_SYNC_LOCK, { ifAvailable: true }, (lock) => (lock === null ? undefined : fill(heads, storage, options)));
+}
+
+async function fill(
+  heads: readonly string[],
+  storage: CacheStorage,
+  options: { choices?: PhotoChoices; concurrency?: number; signal?: AbortSignal; first?: () => readonly string[]; onKept?: (kept: ReadonlyMap<string, CachedImage>) => void },
+): Promise<KeptImageFill> {
+  const result: KeptImageFill = { added: 0, absent: 0, failed: 0 };
+  if (options.signal?.aborted === true) return result;
+  const records = await storage.open(IMAGE_LISTS_CACHE);
+  const recorded = new Set((await records.keys()).map((k) => headOfKey(k.url)));
+  const lists = new Map<string, CachedImage[]>();
+  for (const head of new Set(heads)) if (recorded.has(head)) lists.set(head, (await readList(records, head)) ?? []);
+  if (lists.size === 0) return result;
+  const media = await storage.open(OWNED_MEDIA_CACHE);
+  const have = new Set((await media.keys()).map((k) => k.url));
+  const withheld = new Set((await (await storage.open(WITHHELD_CACHE)).keys()).map((k) => addressOfWithheldKey(k.url)));
+  const shownFor = new Map<string, string[]>();
+  for (const [head, list] of lists)
+    for (const image of answerable(list, options.choices?.get(head)).filter((i) => !withheld.has(i.url)))
+      for (const u of addressesOf([image])) if (!have.has(u) && !withheld.has(u)) shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
+  const queue = fetchQueue(shownFor, options.first);
+  queue.add(shownFor.keys());
+  await fetchQueued(media, queue, options, result, (u) => {
+    have.add(u);
+    options.onKept?.(answersOf(lists, options.choices, have, withheld));
+  });
+  return result;
+}
+
 async function bringToKept(
   keptHeads: readonly string[],
   fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
   storage: CacheStorage,
   options: SyncOptions,
 ): Promise<KeptImageSync> {
-  const result: KeptImageSync = { figures: 0, images: 0, added: 0, evicted: 0, failed: 0 };
+  const result: KeptImageSync = { figures: 0, images: 0, added: 0, evicted: 0, failed: 0, absent: 0 };
   const heads = [...new Set(keptHeads)].slice(0, options.max ?? MAX_KEPT_FIGURES);
   const lists = await fetchLists(heads);
   // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched.
@@ -569,51 +710,15 @@ async function bringToKept(
     options.signal?.throwIfAborted();
     await records.put(listKey(head), listOf(list));
   }
-  const missing = [...keep].filter((u) => !have.has(u));
-  // FETCH-FIRST: the next address to fetch, those of the heads `first` names first, in its order, then the rest as kept
-  const keptAt = new Map(missing.map((u, i) => [u, i]));
-  let orderedBy: readonly string[] | undefined;
-  const take = (): string | undefined => {
-    const first = options.first?.() ?? NO_HEADS;
-    if (first !== orderedBy) {
-      orderedBy = first;
-      const rank = new Map<string, number>();
-      first.forEach((head, i) => {
-        if (!rank.has(head)) rank.set(head, i);
-      });
-      const at = new Map(missing.map((u) => [u, Math.min(...shownFor.get(u)!.map((head) => rank.get(head) ?? first.length))]));
-      missing.sort((a, b) => at.get(a)! - at.get(b)! || keptAt.get(a)! - keptAt.get(b)!);
-    }
-    return missing.shift();
-  };
   // Each fresh list's primary whose bytes are here (none of them is withheld): what keptImages would answer now.
-  const tellKept = () => {
-    if (options.onKept === undefined) return;
-    const now = new Map<string, CachedImage>();
-    for (const [head, list] of kept) {
-      const image = answerable(list, options.choices?.get(head)).find((i) => have.has(i.url));
-      if (image !== undefined) now.set(head, image);
-    }
-    options.onKept(now);
-  };
+  const tellKept = () => options.onKept?.(answersOf(kept, options.choices, have, NO_ADDRESSES));
   tellKept();
-  // Each fetch is aborted when the sync's signal aborts, or when it has received nothing (its headers,
-  // a byte of its body) for KEPT_SYNC_STEP_MS; then the link is taken as stalled and no other fetch
-  // starts. Only an ok answer with a body is kept (Cache.add kept any ok one), once all of it arrived.
-  let stalled = false;
-  const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
-    for (let next = take(); next !== undefined && options.signal?.aborted !== true && !stalled; next = take()) {
-      try {
-        await fetchKept(media, next, options.signal, () => (stalled = true));
-        result.added += 1;
-        have.add(next);
-        tellKept();
-      } catch {
-        result.failed += 1;
-      }
-    }
+  const queue = fetchQueue(shownFor, options.first);
+  queue.add([...keep].filter((u) => !have.has(u)));
+  await fetchQueued(media, queue, options, result, (u) => {
+    have.add(u);
+    tellKept();
   });
-  await Promise.all(workers);
   result.figures = kept.size;
   result.images = keep.size;
   return result;

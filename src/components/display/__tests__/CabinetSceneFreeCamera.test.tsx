@@ -5,7 +5,7 @@ import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
-import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, LOOK_HOLD_MS, PITCH, jogSpeed, jogStep, yawLimits } from '../casePose';
+import { AXIS_UNLOCK_PX, DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, EYE_MARGIN_MM, JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, LOOK_HOLD_MS, PITCH, jogSpeed, jogStep, move as movePose, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
 import { useJogStore } from '../../../stores/jog';
 import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
@@ -174,6 +174,77 @@ describe('MOVE: one finger, at once', () => {
     scene();
     for (let i = 0; i < 6; i++) drag({ x: 200, y: 20 }, { x: 200, y: 400 });
     expect(cam().y).toBeLessThanOrEqual(DEFAULT_CASE_PREFS.ceilingMm - 50 + 1e-6);
+  });
+});
+
+describe('NAV-SWIPE-2X (Ross 11-04): a one-finger MOVE walks twice as far sideways as the finger; height stays 1:1', () => {
+  // pressed at the frame centre of a level opening, the anchor is the fronts' plane (z = 0) at the eye's distance, z
+  const centre = () => ({ x: cam().width / 2, y: cam().height / 2 });
+
+  it('a 100 px sideways drag moves the eye exactly 2x what move() gives for 100 px at the same anchor (the point under the finger no longer stays under it)', () => {
+    scene();
+    const c0 = cam();
+    const p0 = pose();
+    const at = centre();
+    drag(at, { x: at.x - 100, y: at.y }, { lift: false });
+    // move() is still 1:1 (the jog's speed rides on it): 100 px at the anchor depth z
+    const oneToOne = movePose(p0, -100, 0, c0.z, c0.focalPx).x - p0.x;
+    expect(oneToOne).toBeCloseTo((100 * c0.z) / c0.focalPx, 9);
+    expect(pose().x - p0.x).toBeCloseTo(2 * oneToOne, 3);
+    expect(DRAG_WALK_GAIN_X).toBe(2);
+    expect([pose().y, pose().z, pose().yaw, pose().pitch]).toEqual([p0.y, p0.z, p0.yaw, p0.pitch]);
+    up(1, { x: at.x - 100, y: at.y });
+  });
+
+  it('a 100 px vertical drag moves the eye\'s height exactly 1x what move() gives (DRAG_WALK_GAIN_Y)', () => {
+    scene();
+    const c0 = cam();
+    const p0 = pose();
+    const at = centre();
+    // finger up lowers the eye: away from the ceiling's bound
+    drag(at, { x: at.x, y: at.y - 100 }, { lift: false });
+    const oneToOne = movePose(p0, 0, -100, c0.z, c0.focalPx).y - p0.y;
+    expect(oneToOne).toBeCloseTo((-100 * c0.z) / c0.focalPx, 9);
+    expect(pose().y - p0.y).toBeCloseTo(oneToOne, 3);
+    expect(DRAG_WALK_GAIN_Y).toBe(1);
+    expect([pose().x, pose().z]).toEqual([p0.x, p0.z]);
+    up(1, { x: at.x, y: at.y - 100 });
+  });
+
+  it(`the axis lock opens at AXIS_UNLOCK_PX (${AXIS_UNLOCK_PX}) of finger travel, not of the doubled walk`, () => {
+    scene();
+    const c0 = cam();
+    const p0 = pose();
+    const at = centre();
+    down(1, at);
+    // locked up and down by its first move
+    move(1, { x: at.x, y: at.y - 60 });
+    tick(16);
+    // AXIS_UNLOCK_PX sideways (doubled, 48 would be past it): still locked, the eye keeps its x
+    move(1, { x: at.x + AXIS_UNLOCK_PX, y: at.y - 80 });
+    tick(16);
+    expect(pose().x).toBe(p0.x);
+    // 6 px more: open; the step since the last move walks, doubled, opposite the finger
+    move(1, { x: at.x + AXIS_UNLOCK_PX + 6, y: at.y - 90 });
+    tick(16);
+    expect(pose().x - p0.x).toBeCloseTo((-2 * 6 * c0.z) / c0.focalPx, 3);
+    up(1, { x: at.x + AXIS_UNLOCK_PX + 6, y: at.y - 90 });
+  });
+
+  it('a doubled drag into the room\'s side wall stops at the wall (less EYE_MARGIN_MM), never past it', () => {
+    // one cabinet: the side walls stand ROOM_SIDE_MM (6 m) past the wall's ends
+    scene({ view: 'cabinet' }, { figures: FIGURES.slice(0, 2) });
+    const boxes = JSON.parse(host().dataset.wall!) as number[][];
+    const bound = Math.min(...boxes.map((b) => b[0])) - 6000 + EYE_MARGIN_MM;
+    let swipes = 0;
+    for (let last = NaN; pose().x !== last && swipes < 40; swipes++) {
+      last = pose().x;
+      // finger right: the eye walks left
+      drag({ x: 40, y: 200 }, { x: 400, y: 200 });
+      expect(pose().x).toBeGreaterThanOrEqual(bound);
+    }
+    expect(swipes).toBeLessThan(40);
+    expect(pose().x).toBe(bound);
   });
 });
 
@@ -1001,6 +1072,29 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(travelPx).toBeCloseTo((JOG_MAX_X * JOG_FRAMES_PER_S * c0.width * (8 + 33 + JOG_MAX_STEP_MS)) / 1000, 9);
     expect(cam().x - c0.x).toBeCloseTo((travelPx * c0.z) / c0.focalPx, 3);
     expect([cam().y, cam().z]).toEqual([c0.y, c0.z]);
+    end();
+  });
+
+  it('NAV-SWIPE-2X: the swipe\'s doubling is the swipe\'s alone: a jog held at an offset steps its picture travel 1:1 at the anchor depth, each way', () => {
+    scene();
+    const frameAt = handFrames();
+    const c0 = cam();
+    act(() => {
+      jog().start();
+      jog().aim(40, 0);
+    });
+    frameAt(1000);
+    frameAt(1000 + JOG_MAX_STEP_MS);
+    const right = jogStep(40, 0, JOG_MAX_STEP_MS, c0.width).x;
+    expect(right).toBeGreaterThan(0);
+    expect(cam().x - c0.x).toBeCloseTo((right * c0.z) / c0.focalPx, 3);
+    const c1 = cam();
+    // held up: the eye rises by the picture travel at the anchor depth, 1:1
+    act(() => jog().aim(0, -40));
+    frameAt(1000 + 2 * JOG_MAX_STEP_MS);
+    const upward = jogStep(0, -40, JOG_MAX_STEP_MS, c0.width).y;
+    expect(cam().y - c1.y).toBeCloseTo((-upward * c1.z) / c1.focalPx, 3);
+    expect(cam().x).toBe(c1.x);
     end();
   });
 

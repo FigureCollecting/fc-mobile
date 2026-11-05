@@ -841,7 +841,8 @@ for (const panel of FOLD8) {
       'pose writes with no input',
     ).toEqual([]);
 
-    // 4: MOVE: each write's step is the finger's step times one ratio (d / f, the anchor depth), within 1 px at that depth
+    // 4: MOVE: each write's step is the finger's step times one ratio (DRAG_WALK_GAIN_X d / f, d the anchor depth: twice
+    // the finger since NAV-SWIPE-2X, Ross 11-04), within 1 px at that depth
     let worstMovePx = 0;
     let worstLookDeg = 0;
     let prevCam: Camera | null = null;
@@ -872,7 +873,7 @@ for (const panel of FOLD8) {
       for (const s of steps) worstMovePx = Math.max(worstMovePx, Math.abs(s.dp - k * s.df) / Math.abs(k));
     }
     expect(gestures.size, 'the walk was logged').toBeGreaterThan(4);
-    expect(worstMovePx, 'a walk step off the finger, px at the anchor depth').toBeLessThanOrEqual(1);
+    expect(worstMovePx, 'a walk step off the gesture\'s one ratio, px at the anchor depth').toBeLessThanOrEqual(1);
 
     // 4: LOOK: within the soft limit the yaw is the finger's bearing turn to 0.1 deg; a step never turns more than the finger's plus 0.1 deg
     let maxShown = 0;

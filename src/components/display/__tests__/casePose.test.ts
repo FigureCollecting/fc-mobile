@@ -65,7 +65,7 @@ describe('poseOf / withPose', () => {
 });
 
 describe('MOVE (spec 2.1): truck along the camera\'s right, pedestal along world y; the aim travels, yaw and pitch kept', () => {
-  it('the world point at the anchor depth stays under the finger, at any yaw and pitch', () => {
+  it('move() is 1:1: the world point at the anchor depth stays under the finger, at any yaw and pitch (the jog walks on it; a drag doubles it sideways at its call: NAV-SWIPE-2X)', () => {
     fc.assert(
       fc.property(
         fc.double({ min: -60 * DEG, max: 60 * DEG, noNaN: true }),

@@ -480,12 +480,7 @@ describe('useCollectionImages', () => {
     made = true;
     await nextPass(r);
     setFetchOrder([headOf(1)]);
-    await settle();
-    await settle();
-    await settle();
-    await settle();
-    await settle();
-    await settle();
+    await quiet();
     expect(asked()).toBe(1);
     const now = Date.now();
     const later = vi.spyOn(Date, 'now').mockReturnValue(now + ABSENT_RECHECK_MS);
@@ -558,7 +553,7 @@ describe('useCollectionImages', () => {
     await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
     // nothing is left: a later pass fetches nothing
     await nextPass(r);
-    await settle();
+    await quiet();
     expect(storage.added).toHaveLength(2);
   });
 
@@ -614,12 +609,7 @@ describe('useCollectionImages', () => {
     expect(asked).toBe(4);
     // the view moves again at once: the refused image is not asked for again yet
     setFetchOrder([headOf(1), headOf(0)]);
-    await settle();
-    await settle();
-    await settle();
-    await settle();
-    await settle();
-    await settle();
+    await quiet();
     expect(storage.added).toHaveLength(asked);
     serve = new Set([url('0'), url('1')]);
     const later = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + REFILL_AFTER_MS);
@@ -722,15 +712,10 @@ describe('useCollectionImages', () => {
       const asked = locks.asked.length;
       setFetchOrder([headOf(0)]);
       await waitFor(() => expect(locks.asked.length).toBe(asked + 1));
-      await settle();
+      await quiet();
       expect(view.result.current).toBe(before);
       setFetchOrder([headOf(0), headOf(0)]);
-      await settle();
-      await settle();
-      await settle();
-      await settle();
-      await settle();
-      await settle();
+      await quiet();
       expect(locks.asked.length).toBe(asked + 1);
       expect(storage.added).toHaveLength(1);
     } finally {
@@ -752,12 +737,7 @@ describe('useCollectionImages', () => {
       }, { storage, lockWaitMs: 60_000 });
       await settle();
       setFetchOrder([headOf(0)]);
-      await settle();
-      await settle();
-      await settle();
-      await settle();
-      await settle();
-      await settle();
+      await quiet();
       expect(storage.added).toHaveLength(1);
       answer();
       await other;

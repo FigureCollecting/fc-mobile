@@ -314,6 +314,21 @@ describe('fillKeptImages (PHOTOS1)', () => {
     expect(storage.added).toEqual([]);
   });
 
+  it('fetches a figure\'s image without its withheld mask, and tells it without that mask; with no kept list it asks nothing', async () => {
+    let refusing = true;
+    const storage = device(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(['h1'], lists({ h1: KEPT.h1 }), { storage });
+    refusing = false;
+    storage.added.length = 0;
+    await (await storage.open(WITHHELD_CACHE)).put(withheldKey(url('d')), new Response(null));
+    const told: (CachedImage | undefined)[] = [];
+    expect(await fillKeptImages(['h1'], { storage, onKept: (k) => told.push(k.get('h1')) })).toEqual({ added: 1, absent: 0, failed: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    expect(told.at(-1)).toMatchObject({ url: url('a') });
+    expect(told.at(-1)?.maskUrl).toBeUndefined();
+    expect(await fillKeptImages(['h1'], { storage: device() })).toEqual({ added: 0, absent: 0, failed: 0 });
+  });
+
   it('runs only while no sync holds the lock: another document syncing, it fetches nothing and answers undefined', async () => {
     uninstall = installFakeLocks();
     const storage = await leftUnfetched();

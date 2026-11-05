@@ -8,14 +8,14 @@ import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine } from '../../sync/engine';
-import { imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
+import { REFILL_AFTER_MS, imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { ABSENT_RECHECK_MS, OWNED_MEDIA_CACHE, rememberImages, syncKeptImages } from '../../media/keptImages';
+import { ABSENT_RECHECK_MS, OWNED_MEDIA_CACHE, recallImages, rememberImages, syncKeptImages } from '../../media/keptImages';
 import { installFakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
@@ -573,6 +573,146 @@ describe('useCollectionImages', () => {
     await waitFor(() => expect(result.current.size).toBe(3), { timeout: 3000 });
     expect(storage.added.slice(6).map((q) => q.url)).toEqual(['e', 'f', 'a', 'b', 'c', 'd'].map(url));
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  /** A sync that read the lists of `n` figures (image c0, c1, ...) and left every image unfetched: the link refused them (503). */
+  const leftAll = async (n: number, link: (req: Request) => Promise<Response>) => {
+    storage = fakeCaches(link);
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, {
+        products: Array.from({ length: n }, (_, i) => ({ headId: headOf(i), images: [{ derivativeId: String(i).repeat(64), role: 'gallery', url: url(String(i)), width: 600, height: 800 }] })),
+      }),
+    );
+    await seedFigures(r, Array.from({ length: n }, (_, i) => ({ title: `F${i}` })));
+    const client = appClient();
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(storage.added).toHaveLength(n));
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    return { r, client, view };
+  };
+
+  it('a fill the link still refuses part of leaves the answer partial, and that image to a fill REFILL_AFTER_MS on, not one at every order (PHOTOS1)', async () => {
+    let serve = new Set<string>();
+    const { view } = await leftAll(2, async (req) => (serve.has(req.url) ? new Response('img') : new Response('', { status: 503 })));
+    serve = new Set([url('0')]);
+    setFetchOrder([headOf(0), headOf(1)]);
+    await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('0')), { timeout: 3000 });
+    expect(imagesComplete(view.result.current)).toBe(false);
+    const asked = storage.added.length;
+    expect(asked).toBe(4);
+    // the view moves again at once: the refused image is not asked for again yet
+    setFetchOrder([headOf(1), headOf(0)]);
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+    expect(storage.added).toHaveLength(asked);
+    serve = new Set([url('0'), url('1')]);
+    const later = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + REFILL_AFTER_MS);
+    try {
+      setFetchOrder([headOf(1)]);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('1')), { timeout: 3000 });
+    } finally {
+      later.mockRestore();
+    }
+    expect(REFILL_AFTER_MS).toBe(30_000);
+  });
+
+  it('a fill that finds nothing left to fetch (another document fetched it) leaves the answer as it is and asks nothing again (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { view } = await leftAll(1, async () => new Response('', { status: 503 }));
+      const before = view.result.current;
+      // another document of the app kept the bytes meanwhile
+      await (await storage.open(OWNED_MEDIA_CACHE)).put(url('0'), new Response('bytes'));
+      const locks = (navigator as unknown as { locks: { asked: string[] } }).locks;
+      const asked = locks.asked.length;
+      setFetchOrder([headOf(0)]);
+      await waitFor(() => expect(locks.asked.length).toBe(asked + 1));
+      await settle();
+      expect(view.result.current).toBe(before);
+      setFetchOrder([headOf(0), headOf(0)]);
+      await settle();
+      await settle();
+      await settle();
+      await settle();
+      await settle();
+      await settle();
+      expect(locks.asked.length).toBe(asked + 1);
+      expect(storage.added).toHaveLength(1);
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('another document\'s sync holding the lock: the fill fetches nothing, and a later order fills (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      let serve = false;
+      const { view } = await leftAll(1, async () => (serve ? new Response('img') : new Response('', { status: 503 })));
+      // another document's sync of the same figure, reading its lists (the link still refusing its image)
+      let answer!: () => void;
+      const list = await recallImages(headOf(0), storage);
+      const other = syncKeptImages([headOf(0)], async () => {
+        await new Promise<void>((res) => (answer = res));
+        return new Map([[headOf(0), list!.map((i) => ({ ...i, derivativeId: i.url.slice(-64), $typeName: 'fc.api.v1.ProductImage' }) as never)]]);
+      }, { storage, lockWaitMs: 60_000 });
+      await settle();
+      setFetchOrder([headOf(0)]);
+      await settle();
+      await settle();
+      await settle();
+      await settle();
+      await settle();
+      await settle();
+      expect(storage.added).toHaveLength(1);
+      answer();
+      await other;
+      expect(storage.added).toHaveLength(2);
+      serve = true;
+      setFetchOrder([headOf(0), headOf(0)]);
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('0')), { timeout: 3000 });
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('a new sync (the kept figures changed) stops a fill under way first, its fetch aborted, so the sync never waits on its lock (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      let hang = false;
+      const { r } = await leftAll(1, (req) =>
+        hang ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('', { status: 503 })),
+      );
+      hang = true;
+      setFetchOrder([headOf(0)]);
+      await waitFor(() => expect(storage.added).toHaveLength(2));
+      const filling = storage.added[1]!.signal;
+      expect(filling.aborted).toBe(false);
+      await r.engine.write((store) => store.createCopy(headOf(5), 'owned'));
+      await waitFor(() => expect(filling.aborted).toBe(true));
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('the case view going away stops its fill, the fetch in flight aborted (PHOTOS1)', async () => {
+    let hang = false;
+    const { view } = await leftAll(1, (req) =>
+      hang ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('', { status: 503 })),
+    );
+    hang = true;
+    setFetchOrder([headOf(0)]);
+    await waitFor(() => expect(storage.added).toHaveLength(2));
+    const filling = storage.added[1]!.signal;
+    view.unmount();
+    await waitFor(() => expect(filling.aborted).toBe(true));
   });
 
   it('a pass the engine completes while a sync is under way neither stops it nor starts another (NEWHOLD-IMG-1)', async () => {

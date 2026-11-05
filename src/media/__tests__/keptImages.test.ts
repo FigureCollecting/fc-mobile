@@ -391,6 +391,20 @@ describe('a display copy not made yet (404) (PHOTOS1)', () => {
     expect(ABSENT_RECHECK_MS).toBe(10 * 60_000);
   });
 
+  it(`remembers at most ${2 * MAX_KEPT_FIGURES} addresses (twice MAX_KEPT_FIGURES), forgetting the oldest first`, async () => {
+    const n = 2 * MAX_KEPT_FIGURES + 1;
+    const at = (i: number) => `${D}/f${i.toString(16).padStart(63, '0')}`;
+    const heads = Array.from({ length: n }, (_, i) => `h${i}`);
+    const all = new Map(heads.map((h, i) => [h, [img('a', { primary: true, url: at(i) })]]));
+    const storage = device(async () => new Response('not found', { status: 404 }));
+    await syncKeptImages(heads, async () => all, { storage, max: n, concurrency: 1 });
+    expect(storage.added).toHaveLength(n);
+    storage.added.length = 0;
+    // the first asked is forgotten, the last is not
+    expect(await syncKeptImages(['h0', `h${n - 1}`], async () => all, { storage })).toMatchObject({ added: 0, failed: 0, absent: 2 });
+    expect(storage.added.map((r) => r.url)).toEqual([at(0)]);
+  });
+
   it('is remembered per device: another device\'s caches ask for it', async () => {
     const one = device(notYet('b'));
     await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: one });

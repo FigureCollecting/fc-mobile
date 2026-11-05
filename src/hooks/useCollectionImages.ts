@@ -32,7 +32,9 @@
 // PHOTOS1 (Ross 11-04: past the first cabinets the case stood as name cards for as long as the page stayed open): what a
 // sync that read the lists left unfetched is fetched by a fill (src/media/keptImages.ts fillKeptImages, from the kept lists,
 // asking the coordinator nothing) at the sync engine's next completed pass, and when the case view tells a new order (Free
-// camera walking, the old camera moving), in that order; never while a sync runs, and a sync stops a fill first.
+// camera walking, the old camera moving), in that order; never while a sync runs, and a sync stops a fill first. A display
+// copy the server has not made yet (a 404) is not an image left unfetched: such a sync is told synced and its answer is
+// complete, and the first pass ABSENT_RECHECK_MS later asks for it again (src/media/keptImages.ts), never a walk or pass before.
 // IMG-SHOW-1: a sync of a large collection takes minutes (two images a figure), so the case view never
 // waits on it: it shows at once what the device kept, then each image as the sync keeps it (at most
 // every KEPT_SHOWN_EVERY_MS). Such an answer, and that of a sync that left an image unfetched, is
@@ -50,7 +52,7 @@ import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tans
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
-import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImages, syncKeptImages, MAX_KEPT_FIGURES, type CachedImage } from '../media/keptImages';
+import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImages, syncKeptImages, ABSENT_RECHECK_MS, MAX_KEPT_FIGURES, type CachedImage, type KeptImageFill } from '../media/keptImages';
 import { usePhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -71,10 +73,14 @@ let fetchOrder: readonly string[] = [];
 /** PHOTOS1: told when the case view tells a new order. */
 const orderHeard = new Set<() => void>();
 /**
- * PHOTOS1: the answers of a sync or a fill that left images unfetched, and when a fill may fetch them: at once after a sync,
- * REFILL_AFTER_MS after a fill that left some (the link refusing them), so neither a walk nor a pass asks for them in a loop.
+ * PHOTOS1: the answers of a sync or a fill that left images unfetched, and when a fill may fetch them: at once after a sync
+ * the link failed some of, REFILL_AFTER_MS after a fill it failed some of, and ABSENT_RECHECK_MS on when the only ones left
+ * are display copies not made yet (404); so neither a walk nor a pass asks for them in a loop.
  */
 const leftover = new WeakMap<ReadonlyMap<string, CachedImage>, number>();
+/** PHOTOS1: when what this sync or fill left may be fetched (leftover), or undefined when it left nothing. */
+const leftAfter = (done: KeptImageFill, failedAfterMs: number): number | undefined =>
+  done.failed > 0 ? Date.now() + failedAfterMs : done.absent > 0 ? Date.now() + ABSENT_RECHECK_MS : undefined;
 /** PHOTOS1: how long a fill that left an image unfetched waits before another asks for it. */
 export const REFILL_AFTER_MS = 30_000;
 /** PHOTOS1: a new order starts a fill this long after the case view stops telling new ones (a walk tells one each step). */
@@ -156,7 +162,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
       let incomplete = false;
       let listsUnread = false;
-      let left = false;
+      let left: number | undefined;
       if (reachable && !answersFromKept(client, queryKey)) {
         const shown = showKept(client, queryKey, signal);
         shown.show(await keptImages(kept, undefined, allChoices));
@@ -178,8 +184,9 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
           // stalled link, refused): the other documents drop their answers too, and a sync of theirs
           // under way runs on.
+          // PHOTOS1: a display copy not made yet (404) is no image left unfetched: the case lays out at once
           incomplete = synced.failed > 0;
-          left = incomplete && !signal.aborted;
+          if (!signal.aborted) left = leftAfter(synced, 0);
           tellKeptSync(client, signal.aborted || incomplete ? 'stopped' : 'synced');
         } catch (err) {
           // Failed or stopped after it read the lists (a write refused, its case view gone): told as
@@ -202,7 +209,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       const answer = await keptImages(kept, undefined, allChoices);
       if (incomplete) partial.add(answer);
       if (listsUnread) unread.add(answer);
-      if (left) leftover.set(answer, 0);
+      if (left !== undefined) leftover.set(answer, left);
       return answer;
     },
     enabled,
@@ -228,18 +235,16 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         // another document's sync holds the lock: the next pass or order asks again
         if (filled === undefined || stop.signal.aborted) return;
         shown.stop();
-        const again = Date.now() + REFILL_AFTER_MS;
+        const again = leftAfter(filled, REFILL_AFTER_MS);
         if (filled.added === 0) {
-          if (filled.failed > 0) leftover.set(data, again);
-          else leftover.delete(data);
+          if (again === undefined) leftover.delete(data);
+          else leftover.set(data, again);
           return;
         }
         const answer = await keptImages(kept, undefined, choices);
         if (stop.signal.aborted) return;
-        if (filled.failed > 0) {
-          partial.add(answer);
-          leftover.set(answer, again);
-        }
+        if (filled.failed > 0) partial.add(answer);
+        if (again !== undefined) leftover.set(answer, again);
         client.setQueryData(queryKey, answer);
       } finally {
         shown.stop();

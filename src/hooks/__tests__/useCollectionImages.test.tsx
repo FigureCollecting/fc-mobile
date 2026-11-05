@@ -15,7 +15,7 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { OWNED_MEDIA_CACHE, rememberImages, syncKeptImages } from '../../media/keptImages';
+import { ABSENT_RECHECK_MS, OWNED_MEDIA_CACHE, rememberImages, syncKeptImages } from '../../media/keptImages';
 import { installFakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
@@ -437,6 +437,57 @@ describe('useCollectionImages', () => {
     await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
     expect(imagesComplete(first.result.current)).toBe(false);
     first.unmount();
+  });
+
+  // PHOTOS1 (11-05: most misses were display copies the server had not made yet, 404): the layout waited QUIET_MS on them
+  it('imagesComplete: yes for a sync whose only misses are display copies not made yet (404): nothing the link could bring is missing (PHOTOS1)', async () => {
+    storage = fakeCaches(async (req) => (req.url === url('b') ? new Response('not found', { status: 404 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched' }, { title: 'Not made yet' }]);
+    const client = appClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
+    expect(imagesComplete(result.current)).toBe(true);
+    expect(result.current.has(headOf(1))).toBe(false);
+  });
+
+  it('a display copy not made yet (404) is asked for again by the first pass ABSENT_RECHECK_MS after, not by a pass or a walk before (PHOTOS1)', async () => {
+    let made = false;
+    storage = fakeCaches(async (req) => (req.url === url('b') && !made ? new Response('not found', { status: 404 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched' }, { title: 'Made later' }]);
+    const client = appClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    const asked = () => storage.added.filter((q) => q.url === url('b')).length;
+    expect(asked()).toBe(1);
+    made = true;
+    await nextPass(r);
+    setFetchOrder([headOf(1)]);
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+    expect(asked()).toBe(1);
+    const now = Date.now();
+    const later = vi.spyOn(Date, 'now').mockReturnValue(now + ABSENT_RECHECK_MS);
+    try {
+      await nextPass(r);
+      await waitFor(() => expect(result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(asked()).toBe(2);
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    } finally {
+      later.mockRestore();
+    }
   });
 
   it('imagesComplete: yes while signed out, where nothing will ever stream in', async () => {

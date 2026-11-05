@@ -99,6 +99,42 @@ export const KEPT_SYNC_WAIT_MS = 10_000;
  * row as run at once, nothing answered between, is a dead link, and no other starts after them.
  */
 export const KEPT_SYNC_STEP_MS = 20_000;
+/**
+ * PHOTOS1: how many image fetches a sync or a fill runs at once (4 before: on 11-05 most of a large first sync's fetches were
+ * display copies not made yet, each holding a fetch 115-475 ms for its 404, and the wall filled at about 11 images a second).
+ */
+export const KEPT_FETCHES = 8;
+/**
+ * PHOTOS1: how long an address the image origin answered 404 (its display copy not made yet: the server makes them in the
+ * background, about 4,500 an hour on 11-05) is not asked for again by this document, so neither a walk nor a pass asks for
+ * it in a loop. Remembered per CacheStorage (a device), in memory: a document opened later asks again.
+ */
+export const ABSENT_RECHECK_MS = 10 * 60_000;
+/** PHOTOS1: the most 404 addresses remembered, the oldest forgotten first. */
+const MAX_ABSENT = 2 * MAX_KEPT_FIGURES;
+/** PHOTOS1: when each address answered 404, per CacheStorage. */
+const absentAt = new WeakMap<CacheStorage, Map<string, number>>();
+const absentOf = (storage: CacheStorage): Map<string, number> => {
+  let seen = absentAt.get(storage);
+  if (seen === undefined) absentAt.set(storage, (seen = new Map()));
+  return seen;
+};
+/** PHOTOS1: whether the address answered 404 less than ABSENT_RECHECK_MS ago. */
+function knownAbsent(storage: CacheStorage, address: string): boolean {
+  const at = absentAt.get(storage)?.get(address);
+  return at !== undefined && Date.now() - at < ABSENT_RECHECK_MS;
+}
+function rememberAbsent(storage: CacheStorage, address: string): void {
+  const seen = absentOf(storage);
+  seen.delete(address);
+  seen.set(address, Date.now());
+  for (const oldest of seen.keys()) {
+    if (seen.size <= MAX_ABSENT) break;
+    seen.delete(oldest);
+  }
+}
+/** PHOTOS1: the image origin has no display copy at this address yet (a 404). */
+class AbsentImage extends Error {}
 
 export interface CachedImage {
   url: string;
@@ -119,7 +155,7 @@ export interface KeptImageSync {
   added: number;
   evicted: number;
   failed: number;
-  /** PHOTOS1: fetches the origin answered 404, no display copy made yet (counted in `failed` until 4a). */
+  /** PHOTOS1: images whose display copy is not made yet: answered 404 now, or less than ABSENT_RECHECK_MS ago (not asked again). */
   absent: number;
 }
 
@@ -448,6 +484,7 @@ async function fetchKept(media: Cache, address: string, signal: AbortSignal | un
     const res = await fetch(request);
     heard();
     link.answered?.();
+    if (res.status === 404) throw new AbsentImage(`no display copy at ${address} yet`);
     if (!res.ok || res.body === null) throw new TypeError(`the image link answered ${res.status} without an image`);
     const chunks: Uint8Array[] = [];
     const reader = res.body.getReader();
@@ -585,7 +622,8 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
 }
 
 /**
- * The queue's addresses fetched into the owned cache, `concurrency` at a time, `landed` told of each kept. Each fetch is
+ * The queue's addresses fetched into the owned cache, `concurrency` (KEPT_FETCHES) at a time, `landed` told of each kept; one
+ * answered 404 is absent, and not asked again for ABSENT_RECHECK_MS. Each fetch is
  * aborted when the signal aborts, or when it has received nothing (its headers, a byte of its body) for KEPT_SYNC_STEP_MS:
  * then that address alone is abandoned (PHOTOS1: one silent image stopped every fetch, and the case stood as name cards past
  * the first cabinets). `concurrency` fetches abandoned in a row, no answer between, is a dead link: no other starts, so the
@@ -593,25 +631,34 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
  * of it arrived.
  */
 async function fetchQueued(
+  storage: CacheStorage,
   media: Cache,
   queue: FetchQueue,
   options: { concurrency?: number; signal?: AbortSignal },
   result: KeptImageFill,
   landed: (address: string) => void,
 ): Promise<void> {
-  const width = Math.max(1, options.concurrency ?? 4);
+  const width = Math.max(1, options.concurrency ?? KEPT_FETCHES);
   // fetches abandoned in a row, with no answer between
   let quiet = 0;
   const workers = Array.from({ length: width }, async () => {
     for (let next = await queue.next(); next !== undefined && options.signal?.aborted !== true && quiet < width; next = await queue.next()) {
+      // PHOTOS1: a display copy answered 404 a moment ago is not asked again
+      if (knownAbsent(storage, next)) {
+        result.absent += 1;
+        continue;
+      }
       let stalled = false;
       let answered = false;
       try {
         await fetchKept(media, next, options.signal, { stalled: () => (stalled = true), answered: () => (answered = true) });
         result.added += 1;
         landed(next);
-      } catch {
-        result.failed += 1;
+      } catch (error) {
+        if (error instanceof AbsentImage) {
+          rememberAbsent(storage, next);
+          result.absent += 1;
+        } else result.failed += 1;
       }
       if (stalled) quiet += 1;
       else if (answered) quiet = 0;
@@ -663,7 +710,7 @@ async function fill(
   const queue = fetchQueue(shownFor, options.first);
   queue.add(shownFor.keys());
   queue.close();
-  await fetchQueued(media, queue, options, result, (u) => {
+  await fetchQueued(storage, media, queue, options, result, (u) => {
     have.add(u);
     options.onKept?.(answersOf(lists, options.choices, have, withheld));
   });
@@ -682,7 +729,7 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
   let tell = () => {};
   let pool: Promise<void> | undefined;
   const fetching = (media: Cache) =>
-    (pool ??= fetchQueued(media, queue, options, result, (u) => {
+    (pool ??= fetchQueued(storage, media, queue, options, result, (u) => {
       have.add(u);
       tell();
     }));

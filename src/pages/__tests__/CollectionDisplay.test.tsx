@@ -36,7 +36,6 @@ import { requestGoTo, takeGoToRequest } from '../../components/display/goToReque
 import { toasts } from '../../stores/toast';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches } from '../../test/fakeCaches';
-import { storeLegacyCamera } from '../../test/legacyPrefs';
 
 /** The local store holding `figs` (on the local data no figure has an image: MG-2). */
 async function respondWith(figs: SeedFigure[]) {
@@ -131,7 +130,7 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ wall: 'white' });
   });
 
-  it('NAV-2A: a fresh device opens the case in Free camera, with no swipe button and no pan anywhere; the View card\'s untick brings the old path\'s button back, kept on this device', async () => {
+  it('NAV-2A: a fresh device opens the case in Free camera, with no swipe button and no pan anywhere; NAV-2A2: the View card\'s untick brings no button back, and the stored swipe mode is dropped', async () => {
     localStorage.setItem('fc-case-prefs', JSON.stringify({ swipe: 'pan' }));
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
@@ -146,62 +145,16 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(box).toBeChecked();
     await user.click(box);
     await waitFor(() => expect(container.querySelector('.cabinet-scene[data-free-camera]')).toBeNull());
-    // the swipe mode stored before is the old path's again, untouched
-    expect(screen.getByRole('button', { name: 'Swipe, Pan the wall' })).toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ freeCamera: false, swipe: 'pan' });
+    // NAV-2A2 (Ross 11-04): the old camera has no swipe button either, and the swipe mode stored before is gone
+    expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
+    const stored = JSON.parse(localStorage.getItem('fc-case-prefs')!);
+    expect(stored).toMatchObject({ freeCamera: false });
+    expect('swipe' in stored).toBe(false);
     unmount();
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(screen.getByRole('button', { name: 'Swipe, Pan the wall' })).toBeInTheDocument();
-  });
-
-  it('CAM1: the header\'s swipe menu sets the swipe mode, kept on this device; the tiles have no such button', async () => {
-    storeLegacyCamera();
-    await respondWith([makeFigure('1')]);
-    const user = userEvent.setup();
-    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByRole('button', { name: 'Figure 1' });
-    expect(container.querySelector('.cabinet-scene[data-swipe="camera"]')).not.toBeNull();
-    await user.click(screen.getByRole('button', { name: /^Swipe, Move the camera/ }));
-    await user.click(screen.getByRole('menuitemradio', { name: 'Pan the wall' }));
-    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-swipe="pan"]')).not.toBeNull());
-    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ swipe: 'pan' });
-    expect(screen.getByRole('button', { name: /^Swipe, Pan the wall/ })).toBeInTheDocument();
-    unmount();
-    renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
-    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(document.querySelector('.cabinet-scene[data-free-camera]')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
-  });
-
-  it('CAM1: the swipe menu is usable while the picture is zoomed: it stands outside the zoom layer, and picking a mode there sets it (the zoom stays with the camera, PAN-KEEP-1)', async () => {
-    storeLegacyCamera();
-    await respondWith([makeFigure('1')]);
-    const user = userEvent.setup();
-    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-    await screen.findByRole('button', { name: 'Figure 1' });
-    const scene = container.querySelector('.cabinet-scene') as HTMLElement;
-    const zoomK = () => (JSON.parse(scene.dataset.zoom!) as { k: number }).k;
-    // two fingers spread: about 2x
-    const at = (id: number, x: number) => ({ pointerId: id, clientX: x, clientY: 260, button: 0 });
-    fireEvent.pointerDown(scene, at(11, 180));
-    fireEvent.pointerDown(scene, at(12, 260));
-    for (const t of [0.5, 1]) {
-      fireEvent.pointerMove(scene, at(11, 180 - 40 * t));
-      fireEvent.pointerMove(scene, at(12, 260 + 40 * t));
-    }
-    fireEvent.pointerUp(scene, at(11, 140));
-    fireEvent.pointerUp(scene, at(12, 300));
-    expect(zoomK()).toBeGreaterThan(1);
-    const button = screen.getByRole('button', { name: /^Swipe/ });
-    expect(scene.contains(button)).toBe(false);
-    expect(button).toBeEnabled();
-    await user.click(button);
-    const menu = screen.getByRole('menu', { name: 'Swipe modes' });
-    expect(scene.contains(menu)).toBe(false);
-    await user.click(screen.getByRole('menuitemradio', { name: 'Pan the wall' }));
-    await waitFor(() => expect(scene.dataset.swipe).toBe('pan'));
-    // PAN-KEEP-1: a mode is not a new picture in the wall view: the zoom stays
-    expect(zoomK()).toBeGreaterThan(1);
   });
 
   it('CARD-REFRESH-1: a pull down on the collection refetches the cards past the 24 h TTL (the engine rate-limits it), where it used to run a plain sync', async () => {

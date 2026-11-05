@@ -319,7 +319,8 @@ describe('LOOK (rulings S6): a still hold arms it; the hold never swallows a tap
   });
 
   it('NAV-2A: a stored swipe mode changes nothing: with Pan the wall stored, a quick one-finger drag MOVEs, and a hold still LOOKs', () => {
-    scene({ swipe: 'pan' });
+    // NAV-2A2: no prefs carry a swipe mode any more; a stale one handed in is still nothing
+    scene({ swipe: 'pan' } as Partial<CasePrefs>);
     const before = pose();
     drag({ x: 220, y: 200 }, { x: 160, y: 200 });
     tick(500);
@@ -505,13 +506,13 @@ describe('the arrows and Reset from where you look (rulings S7, spec 4)', () => 
     expect(cam().pitch).toBe(0);
   });
 
-  it('a new view starts from its framing; a mode switch keeps the pose', () => {
+  it('a new view starts from its framing; new prefs that are not a new view keep the pose', () => {
     const { again } = scene();
     drag({ x: 300, y: 200 }, { x: 100, y: 200 });
     const walked = pose();
-    again({ swipe: 'pan' });
+    again({ showEstimated: true });
     expect(pose()).toEqual(walked);
-    again({ swipe: 'pan', view: 'cabinet' });
+    again({ showEstimated: true, view: 'cabinet' });
     expect(pose().x).not.toBe(walked.x);
   });
 });
@@ -1464,7 +1465,7 @@ describe('CAB-EDGE-DIM-1: the one-cabinet view dims past the wall\'s ends in Fre
   });
 
   it('the last cabinet, reached by a walk: from its outer edge to the frame\'s right edge, straight on and turned toward the end, live and let go', () => {
-    scene({ view: 'cabinet', swipe: 'camera' }, { figures: FEW });
+    scene({ view: 'cabinet' }, { figures: FEW });
     const last = String(wallOf().length - 1);
     expect(Number(last), 'a wall of more than one cabinet').toBeGreaterThan(0);
     for (let i = 0; i < 40 && host().dataset.focus !== last; i++) drag({ x: 400, y: 200 }, { x: 60, y: 200 });

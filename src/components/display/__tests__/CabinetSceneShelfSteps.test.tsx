@@ -74,7 +74,7 @@ const zoomK = (host: HTMLElement) => (JSON.parse(host.dataset.zoom!) as { k: num
 describe('SHELF-STEPS-1 (a): the shelf steps on a wall of Detolfs, some with a shelf out', () => {
   for (const [name, frame] of [['cover', COVER], ['open', OPEN]] as const) {
     it(`${name}: on a stock Detolf the last step is the fourth, Shelf below is disabled there, and no step repeats the one above`, () => {
-      const host = scene(MIXED_DETOLFS, { pattern: 'ikea-detolf', view: 'shelf', swipe: 'camera' }, frame);
+      const host = scene(MIXED_DETOLFS, { pattern: 'ikea-detolf', view: 'shelf' }, frame);
       const held = JSON.parse(host.dataset.held!) as [number, number, number[]][];
       expect(held.some((h) => h[2].length > 0)).toBe(true);
       // the second cabinet stands stock
@@ -104,7 +104,7 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
   it('camera mode: a lifted camera goes back to the straight-on view on Shelf below, Shelf above and either cabinet arrow', () => {
     const fresh = (steps: (() => void)[]) => {
       cleanup();
-      const host = scene(fixtures, { view: 'shelf', swipe: 'camera' });
+      const host = scene(fixtures, { view: 'shelf' });
       steps.forEach((s) => s());
       return host.dataset.camera;
     };
@@ -124,7 +124,7 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
   });
 
   it('camera mode: a walk of the camera (a sideways drag) is snapped back to the focus cabinet on an arrow press too', () => {
-    const host = scene(fixtures, { view: 'shelf', swipe: 'camera' });
+    const host = scene(fixtures, { view: 'shelf' });
     const start = host.dataset.camera;
     drag(host, -300);
     expect(host.dataset.camera).not.toEqual(start);
@@ -132,23 +132,10 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
     tapButton('Shelf below');
     const snapped = host.dataset.camera;
     cleanup();
-    const there = scene(fixtures, { view: 'shelf', swipe: 'camera' });
+    const there = scene(fixtures, { view: 'shelf' });
     for (let i = 0; i < focus; i++) tapButton('Next cabinet');
     tapButton('Shelf below');
     expect(there.dataset.camera).toEqual(snapped);
-  });
-
-  it('pan mode: the photo slid both ways comes back unslid on an arrow press', () => {
-    const host = scene(fixtures, { view: 'shelf', swipe: 'pan' });
-    drag(host, -60, 0);
-    drag(host, 0, -50);
-    expect([host.dataset.pan, host.dataset.panY]).not.toEqual(['0', '0']);
-    tapButton('Shelf below');
-    expect([host.dataset.pan, host.dataset.panY]).toEqual(['0', '0']);
-    drag(host, -60, 0);
-    drag(host, 0, -50);
-    tapButton('Next cabinet');
-    expect([host.dataset.pan, host.dataset.panY]).toEqual(['0', '0']);
   });
 
   it('a pinch zoom goes back to 1x on an arrow press', () => {
@@ -159,24 +146,19 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
     expect(zoomK(host)).toBe(1);
   });
 
-  it('free movement is never overridden: after a snap a drag lifts (camera) or slides (pan) as the mode says, and a pinch zooms', () => {
-    const camera = scene(fixtures, { view: 'shelf', swipe: 'camera' });
+  it('free movement is never overridden: after a snap a drag lifts the camera, and a pinch zooms', () => {
+    const camera = scene(fixtures, { view: 'shelf' });
     tapButton('Shelf below');
     const snapped = cameraOf(camera).y;
     drag(camera, 0, -120);
     expect(cameraOf(camera).y).not.toBe(snapped);
     pinchOut(camera);
     expect(zoomK(camera)).toBeGreaterThan(1);
-    cleanup();
-    const pan = scene(fixtures, { view: 'shelf', swipe: 'pan' });
-    tapButton('Shelf below');
-    drag(pan, 0, -50);
-    expect(pan.dataset.panY).not.toBe('0');
   });
 
   // CAB-FOCUS-1 (Ross 10-18): the one-cabinet view's arrows snap too (CabinetSceneCabFocus.test.tsx); the wall view's do not
   it('the shelf and the one-cabinet views snap: in the wall view a lifted camera keeps its height through the arrows', () => {
-    const host = scene(fixtures, { view: 'wall', swipe: 'camera' });
+    const host = scene(fixtures, { view: 'wall' });
     drag(host, 0, -120);
     const lifted = cameraOf(host).y;
     tapButton('Next cabinet');
@@ -189,7 +171,7 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
 // slop). An arrow now steps on the pointerup of a press that began on it, inside its box; the click that tap makes is
 // ignored; a click with no pointerup before it (the keyboard's) steps.
 describe('NAV-PTR-1: a tap on an arrow always steps, once', () => {
-  const wall = () => scene(getFixtureFigures(40), { view: 'wall', swipe: 'camera' });
+  const wall = () => scene(getFixtureFigures(40), { view: 'wall' });
   /** The arrow's box on the screen (jsdom lays nothing out): 32 x 48 px at (400, 180). */
   const boxed = (name: string) => {
     const b = button(name);
@@ -280,7 +262,7 @@ describe('NAV-PTR-1: a tap on an arrow always steps, once', () => {
   });
 
   it('shelf view: Shelf below and Shelf above step on a tap that travels, once each; a disabled one does nothing', () => {
-    const host = scene(getFixtureFigures(8), { view: 'shelf', swipe: 'camera' });
+    const host = scene(getFixtureFigures(8), { view: 'shelf' });
     const straight = host.dataset.camera;
     tapWithTravel('Shelf above', 10);
     expect([host.dataset.shelf, host.dataset.camera], 'Shelf above is disabled on the top step').toEqual(['0', straight]);

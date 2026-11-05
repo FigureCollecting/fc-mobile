@@ -29,13 +29,12 @@ test.beforeEach(({}, testInfo) => {
 const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 const DEG = Math.PI / 180;
 type View = 'wall' | 'cabinet' | 'shelf';
-type Swipe = 'camera' | 'pan';
 
 const settle = (page: Page, ms = 300) => page.evaluate((m) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, m)))), ms);
 
-async function openFree(page: Page, size: { width: number; height: number }, opts: { view?: View; swipe?: Swipe; query?: string; free?: boolean } = {}) {
+async function openFree(page: Page, size: { width: number; height: number }, opts: { view?: View; query?: string; free?: boolean } = {}) {
   // NAV-2A: Free camera is the default; off is a stored false
-  const prefs = { view: opts.view ?? 'wall', swipe: opts.swipe ?? 'camera', clearanceMm: 0, freeCamera: opts.free !== false };
+  const prefs = { view: opts.view ?? 'wall', clearanceMm: 0, freeCamera: opts.free !== false };
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');

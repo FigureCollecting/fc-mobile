@@ -75,7 +75,7 @@ for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF]) {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
       localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-    }, legacyPrefs({ view: 'shelf', swipe: 'camera', pattern: profile.id }));
+    }, legacyPrefs({ view: 'shelf', pattern: profile.id }));
     await page.setViewportSize({ width: 657, height: 870 });
     await page.goto('/?layout=case&fx=1&fxonly=spike');
     await page.waitForSelector('.cab', { state: 'attached' });

@@ -228,7 +228,7 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY });
 
   it('camera mode: a walk along the wall and a lift, then a filter: the camera stands where a scene of the filtered figures starts', () => {
-    const patch = { view: 'cabinet', swipe: 'camera' } as const;
+    const patch = { view: 'cabinet' } as const;
     const start = fresh(few, patch);
     const { host, again } = scene(many, patch, { filterKey: 'all' });
     drag(host, -300);
@@ -239,7 +239,7 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   });
 
   it('the wall view after a walk to its far end: a filter starts at the wall\'s start, not in an empty room past it', () => {
-    const patch = { view: 'wall', swipe: 'camera' } as const;
+    const patch = { view: 'wall' } as const;
     const start = fresh(few, patch);
     const { host, again } = scene(many, patch, { filterKey: 'all' });
     for (let i = 0; i < 6; i++) drag(host, -400);
@@ -247,17 +247,6 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
     again({ figures: few, filterKey: 'ordered' });
     expect(view(host)).toEqual(start);
     expect(figureButtons(host).length).toBe(few.length);
-  });
-
-  it('pan mode: the photo slid both ways, then a filter: unslid', () => {
-    const patch = { view: 'cabinet', swipe: 'pan' } as const;
-    const start = fresh(few, patch);
-    const { host, again } = scene(many, patch, { filterKey: 'all' });
-    drag(host, -200);
-    drag(host, 0, 60);
-    expect([host.dataset.pan, host.dataset.panY]).not.toEqual(['0', '0']);
-    again({ figures: few, filterKey: 'ordered' });
-    expect(view(host)).toEqual(start);
   });
 
   it('the shelf view, a few cabinets and shelves along: a filter starts at the first cabinet\'s first shelf', () => {
@@ -272,7 +261,7 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   });
 
   it('the same filter with new figure data (an image landing) keeps the view where it is', () => {
-    const { host, again } = scene(many, { view: 'cabinet', swipe: 'camera' }, { filterKey: 'all' });
+    const { host, again } = scene(many, { view: 'cabinet' }, { filterKey: 'all' });
     drag(host, -300);
     const walked = view(host);
     again({ figures: many.map((f) => ({ ...f })), filterKey: 'all' });

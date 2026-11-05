@@ -30,7 +30,7 @@ async function openCabinetView(page: Page, size: { width: number; height: number
       localStorage.setItem('fc-fixture-mode', 'on');
       localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
     },
-    legacyPrefs({ view, swipe: 'camera', pattern: PATTERN, ...more }),
+    legacyPrefs({ view, pattern: PATTERN, ...more }),
   );
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=8');

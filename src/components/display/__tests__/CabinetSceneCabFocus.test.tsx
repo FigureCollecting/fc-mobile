@@ -68,7 +68,7 @@ const next = (times = 1) => {
 describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the whole focus cabinet; a gesture never does', () => {
   for (const [name, frame] of [['cover', COVER], ['open', OPEN]] as const) {
     it(`${name}: Next cabinet puts the camera straight on (no tilt) at the next cabinet`, () => {
-      const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' }, frame);
+      const { host } = scene(MANY, { view: 'cabinet' }, frame);
       const first = cameraOf(host);
       expect(first.pitch).toBe(0);
       next();
@@ -81,12 +81,12 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
 
   it('Next cabinet after a lift (camera mode) and a pinch: the lift and the zoom are gone, as a fresh Next frames it', () => {
     // a fresh Next
-    const fresh = scene(MANY, { view: 'cabinet', swipe: 'camera' }).host;
+    const fresh = scene(MANY, { view: 'cabinet' }).host;
     next();
     const want = cameraOf(fresh);
     cleanup();
     // a lift and a pinch first
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'cabinet' });
     drag(host, 0, -150);
     pinchOut(host);
     expect(zoomK(host)).toBeGreaterThan(1.5);
@@ -96,20 +96,8 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
     expect(cameraOf(host)).toEqual(want);
   });
 
-  it('Next cabinet after a slide of the photo (pan mode, sideways and up/down): the slide is gone', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'pan' }, { width: 443, height: 418 });
-    next();
-    drag(host, -90);
-    drag(host, 0, 120);
-    expect(host.dataset.pan).toBe('-90');
-    expect(Number(host.dataset.panY)).toBeGreaterThan(0);
-    next();
-    expect(host.dataset.pan).toBe('0');
-    expect(host.dataset.panY).toBe('0');
-  });
-
   it('Prev cabinet snaps the same way', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'cabinet' });
     next(3);
     const there = cameraOf(host);
     drag(host, 0, -150);
@@ -122,7 +110,7 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
   });
 
   it('a camera-mode walk that carries the focus to a neighbour moves the camera along the wall only: its distance, height and frame stay, nothing re-fits under the finger', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'cabinet' });
     const before = cameraOf(host);
     drag(host, -400);
     expect(Number(host.dataset.focus)).toBeGreaterThan(0);
@@ -132,7 +120,7 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
   });
 
   it('after such a walk the arrows go on from the focus the walk reached, and frame it by its own size', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'cabinet' });
     drag(host, -400);
     const k = Number(host.dataset.focus);
     expect(k).toBeGreaterThan(0);
@@ -140,13 +128,13 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
     expect(host.dataset.focus).toBe(String(k + 1));
     const got = cameraOf(host);
     cleanup();
-    const fresh = scene(MANY, { view: 'cabinet', swipe: 'camera' }).host;
+    const fresh = scene(MANY, { view: 'cabinet' }).host;
     next(k + 1);
     expect(cameraOf(fresh)).toEqual(got);
   });
 
   it('the wall view\'s arrows do not snap (its one camera is the wall\'s): a lift survives Next', () => {
-    const { host } = scene(MANY, { view: 'wall', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'wall' });
     drag(host, 0, -150);
     const lifted = cameraOf(host).y;
     next();
@@ -234,7 +222,7 @@ describe('CAB-FOCUS-1 (2): the cabinets either side of the focus are dimmed in t
   });
 
   it('it ends at the focus cabinet\'s silhouette: its edges are where the box\'s corners cross the frame, so the focus cabinet is never dimmed', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'cabinet' });
     next();
     const k = Number(host.dataset.focus);
     const [x0, x1, y1, z0, z1] = wallOf(host)[k];
@@ -253,7 +241,7 @@ describe('CAB-FOCUS-1 (2): the cabinets either side of the focus are dimmed in t
   });
 
   it('a camera-mode walk carries the dimming with the picture: the edges are the focus cabinet\'s through the walked camera', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(MANY, { view: 'cabinet' });
     next();
     drag(host, -120);
     const k = Number(host.dataset.focus);
@@ -273,27 +261,6 @@ describe('CAB-FOCUS-1 (2): the cabinets either side of the focus are dimmed in t
     for (const v of veils(host)) {
       expect(parseFloat(v.style.width)).toBeLessThanOrEqual(cam.width + 16);
       expect(parseFloat(v.style.height)).toBeLessThanOrEqual(cam.height + 16);
-    }
-  });
-
-  it('as the photo slides (pan mode) the veils keep covering the frame: they span the window the slide shows, from the focus cabinet\'s edges', () => {
-    const { host } = scene(MANY, { view: 'cabinet', swipe: 'pan' });
-    next();
-    drag(host, -90);
-    const pan = Number(host.dataset.pan);
-    expect(pan).toBe(-90);
-    const cam = cameraOf(host);
-    const l = veils(host).find((v) => v.dataset.side === 'left')!;
-    const r = veils(host).find((v) => v.dataset.side === 'right')!;
-    // the picture is drawn slid by `pan`: the frame shows the picture's x from -pan to -pan + its width
-    expect(parseFloat(l.style.left)).toBeLessThanOrEqual(-pan);
-    expect(parseFloat(l.style.left) + parseFloat(l.style.width)).toBeCloseTo(Number(l.dataset.edge), 1);
-    expect(parseFloat(r.style.left)).toBeCloseTo(Number(r.dataset.edge), 1);
-    expect(parseFloat(r.style.left) + parseFloat(r.style.width)).toBeGreaterThanOrEqual(-pan + cam.width);
-    for (const v of veils(host)) {
-      expect(parseFloat(v.style.width)).toBeLessThanOrEqual(cam.width + 16);
-      expect(parseFloat(v.style.top)).toBeLessThanOrEqual(0);
-      expect(parseFloat(v.style.top) + parseFloat(v.style.height)).toBeGreaterThanOrEqual(cam.height);
     }
   });
 

@@ -242,7 +242,7 @@ describe('MISFIT-CHIP-1 (3): the list is always recallable from outside, whether
 
 describe('MISFIT-CHIP-1 (4): the scene\'s gestures leave the chip and its list alone', () => {
   it('a drag that starts on the open list scrolls the list: the camera does not move', () => {
-    const { host } = scene(SIXTEEN, { view: 'cabinet', swipe: 'camera' }, { misfitsOpen: true });
+    const { host } = scene(SIXTEEN, { view: 'cabinet' }, { misfitsOpen: true });
     const before = host.dataset.camera;
     const l = list(host)!;
     fireEvent.pointerDown(l, { pointerId: 1, clientX: 200, clientY: 400, button: 0 });
@@ -254,7 +254,7 @@ describe('MISFIT-CHIP-1 (4): the scene\'s gestures leave the chip and its list a
   });
 
   it('a tap on the chip right after a drag of the scene still opens the list: the drag\'s swallowed click does not eat it', () => {
-    const { host } = scene(SIXTEEN, { view: 'cabinet', swipe: 'camera' });
+    const { host } = scene(SIXTEEN, { view: 'cabinet' });
     fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
     fireEvent.pointerMove(host, { pointerId: 1, clientX: 140, clientY: 200 });
     fireEvent.pointerMove(host, { pointerId: 1, clientX: 80, clientY: 200 });

@@ -254,30 +254,78 @@ export interface ImageListClient {
   ): Promise<{ products: { headId: string; images: ProductImage[] }[]; nextPageToken: string }>;
 }
 
+/** LOAD2: how many GetProductImages calls of a sync are in flight at once, a batch each (a batch's pages follow one another). */
+export const LIST_CALLS_IN_FLIGHT = 3;
+/** LOAD2: told batch by batch, the first batches are this small, so the lists of the figures asked first come within a call or two. */
+const FIRST_BATCHES = [25, 50, 100];
+
 /**
  * Every head's image list, in batches of 200 heads and pages of IMAGE_PAGE_SIZE rows, every page
- * followed, a head's rows joined across pages. An aborted signal stops it between calls and aborts the
- * call in flight; a call the coordinator has not answered within KEPT_SYNC_STEP_MS fails it.
+ * followed, a head's rows joined across pages. LOAD2 (Ross 11-04: about a minute from the cards to the first photo, 75 calls
+ * one after another): up to LIST_CALLS_IN_FLIGHT batches are read at once, and `onBatch` is told each batch's lists once all
+ * its pages are read, the first batches then smaller (25, 50, 100 heads). An aborted signal stops it between calls and aborts
+ * the calls in flight; a call the coordinator has not answered within KEPT_SYNC_STEP_MS fails it. A call that fails starts no
+ * other batch and fails it once the calls in flight end, and no batch is told after it.
  */
-export async function fetchImageLists(client: ImageListClient, heads: readonly string[], signal?: AbortSignal): Promise<Map<string, ProductImage[]>> {
-  const out = new Map<string, ProductImage[]>();
-  for (let i = 0; i < heads.length; i += MAX_HEADS_PER_CALL) {
-    const headIds = heads.slice(i, i + MAX_HEADS_PER_CALL);
+export async function fetchImageLists(
+  client: ImageListClient,
+  heads: readonly string[],
+  signal?: AbortSignal,
+  onBatch?: (lists: Map<string, ProductImage[]>) => void,
+): Promise<Map<string, ProductImage[]>> {
+  const batches: string[][] = [];
+  for (let at = 0, k = 0; at < heads.length; k += 1) {
+    const size = onBatch === undefined ? MAX_HEADS_PER_CALL : (FIRST_BATCHES[k] ?? MAX_HEADS_PER_CALL);
+    batches.push(heads.slice(at, at + size));
+    at += size;
+  }
+  const read = new Map<string, ProductImage[]>();
+  let failure: { error: unknown } | undefined;
+  const readBatch = async (headIds: string[]) => {
+    const lists = new Map<string, ProductImage[]>();
     let pageToken = '';
-    for (let pages = 0; ; pages += 1) {
+    for (let pages = 0; failure === undefined; pages += 1) {
       signal?.throwIfAborted();
       // Over the budget the sync fails before it touches a cache: nothing is evicted, so a kept image a
       // fresh list would now withhold stays until a sync completes (an F6 follow-up of ADDR-1).
       if (pages === MAX_IMAGE_PAGES) throw new Error(`GetProductImages did not end within ${MAX_IMAGE_PAGES} pages`);
       const request = pageToken === '' ? { headIds, pageSize: IMAGE_PAGE_SIZE } : { headIds, pageSize: IMAGE_PAGE_SIZE, pageToken };
       const res = await client.getProductImages(request, signal === undefined ? { timeoutMs: KEPT_SYNC_STEP_MS } : { signal, timeoutMs: KEPT_SYNC_STEP_MS });
-      for (const p of res.products) out.set(p.headId, [...(out.get(p.headId) ?? []), ...p.images]);
+      for (const p of res.products) lists.set(p.headId, [...(lists.get(p.headId) ?? []), ...p.images]);
       pageToken = res.nextPageToken;
       if (pageToken === '') break;
     }
-  }
+    if (failure !== undefined) return;
+    for (const [head, images] of lists) read.set(head, images);
+    onBatch?.(lists);
+  };
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(LIST_CALLS_IN_FLIGHT, batches.length) }, async () => {
+    while (failure === undefined && next < batches.length) {
+      try {
+        await readBatch(batches[next++]!);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  });
+  await Promise.all(lanes);
+  if (failure !== undefined) throw failure.error;
+  // in the order asked, whichever batch came first
+  const out = new Map<string, ProductImage[]>();
+  for (const head of heads) if (read.has(head)) out.set(head, read.get(head)!);
   return out;
 }
+
+/** LOAD2: the heads `first` names first, in its order, then the rest as given; those given when it names none of them. */
+function namedFirst(heads: readonly string[], first: readonly string[] | undefined): readonly string[] {
+  const all = new Set(heads);
+  const named = new Set((first ?? NO_HEADS).filter((h) => all.has(h)));
+  return named.size === 0 ? heads : [...named, ...heads.filter((h) => !named.has(h))];
+}
+
+/** The kept figures' lists (fetchImageLists): told batch by batch when it can, so a sync starts on the first figures' images early (LOAD2). */
+export type ListsReader = (heads: readonly string[], onBatch?: (lists: Map<string, ProductImage[]>) => void) => Promise<Map<string, ProductImage[]>>;
 
 interface SyncOptions {
   storage?: CacheStorage | undefined;
@@ -288,7 +336,7 @@ interface SyncOptions {
   signal?: AbortSignal;
   /** How long to wait for another document's sync (KEPT_SYNC_WAIT_MS). */
   lockWaitMs?: number;
-  /** Called once the sync has read the lists, its signal not aborted, before it touches any cache. */
+  /** Called once the sync has read the lists, its signal not aborted, before it touches any cache but a new figure's (LOAD2). */
   onListsRead?: () => void;
   /**
    * Told what the device keeps for the kept figures, as keptImages answers it: once every kept list is
@@ -312,6 +360,10 @@ interface SyncOptions {
  * too, before any list is written. A record the device refuses, even the first, fails the sync once
  * the deletes ran. `onListsRead` is told once the lists arrived with the signal not aborted, before
  * any cache is touched: from then on the caller tells the sync's end, however it ends.
+ * LOAD2: told the lists batch by batch (fetchImageLists' onBatch), the lists of the heads `first` names asked first, a
+ * figure the device kept no list for is the exception: it withholds and replaces nothing, so its fresh list is written and
+ * its images fetched as soon as its batch is read, while the other lists are still read. A read of the lists that then
+ * fails, or a case view gone meanwhile, leaves those (added, never withheld) and touches nothing else.
  *
  * One document of the app at a time (a tab, the installed window): the sync holds the Web Lock
  * OWNED_SYNC_LOCK from before it reads the lists until its last cache write, so a sync that read the
@@ -333,7 +385,7 @@ interface SyncOptions {
  */
 export async function syncKeptImages(
   keptHeads: readonly string[],
-  fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
+  fetchLists: ListsReader,
   options: SyncOptions = {},
 ): Promise<KeptImageSync> {
   const storage = 'storage' in options ? options.storage : browserCaches();
@@ -359,6 +411,8 @@ export async function syncKeptImages(
 
 /** FETCH-FIRST: no head to fetch first, one array for every fetch, so the order is not worked out again at each. */
 const NO_HEADS: readonly string[] = [];
+/** A kept list's record. */
+const listOf = (list: readonly CachedImage[]) => new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } });
 
 /** One body of the chunks a reader read, in order. */
 function joined(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
@@ -476,16 +530,28 @@ function answersOf(
   return out;
 }
 
-/** FETCH-FIRST: the addresses to fetch, each taken where the first of the heads it is shown for comes in `first` (asked at each take), then in the order added. */
+/**
+ * FETCH-FIRST: the addresses to fetch, each taken where the first of the heads it is shown for comes in `first` (asked at
+ * each take), then in the order added; an address once added is never added again. LOAD2: added to while the lists are
+ * still read, a take waits for more until the queue is closed; closed dropping, what is still queued is not taken.
+ */
 interface FetchQueue {
   add(addresses: Iterable<string>): void;
-  take(): string | undefined;
+  next(): Promise<string | undefined>;
+  close(drop?: boolean): void;
 }
 
 function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (() => readonly string[]) | undefined): FetchQueue {
   const queued: string[] = [];
   const addedAt = new Map<string, number>();
   let orderedBy: readonly string[] | undefined;
+  let closed = false;
+  let waiting: (() => void)[] = [];
+  const wake = () => {
+    const woken = waiting;
+    waiting = [];
+    for (const w of woken) w();
+  };
   return {
     add(addresses) {
       for (const u of addresses) {
@@ -494,8 +560,10 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
         queued.push(u);
       }
       orderedBy = undefined;
+      wake();
     },
-    take() {
+    async next() {
+      while (queued.length === 0 && !closed) await new Promise<void>((res) => waiting.push(res));
       const order = first?.() ?? NO_HEADS;
       if (order !== orderedBy) {
         orderedBy = order;
@@ -507,6 +575,11 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
         queued.sort((a, b) => at.get(a)! - at.get(b)! || addedAt.get(a)! - addedAt.get(b)!);
       }
       return queued.shift();
+    },
+    close(drop = false) {
+      closed = true;
+      if (drop) queued.length = 0;
+      wake();
     },
   };
 }
@@ -530,7 +603,7 @@ async function fetchQueued(
   // fetches abandoned in a row, with no answer between
   let quiet = 0;
   const workers = Array.from({ length: width }, async () => {
-    for (let next = queue.take(); next !== undefined && options.signal?.aborted !== true && quiet < width; next = queue.take()) {
+    for (let next = await queue.next(); next !== undefined && options.signal?.aborted !== true && quiet < width; next = await queue.next()) {
       let stalled = false;
       let answered = false;
       try {
@@ -589,6 +662,7 @@ async function fill(
       for (const u of addressesOf([image])) if (!have.has(u) && !withheld.has(u)) shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
   const queue = fetchQueue(shownFor, options.first);
   queue.add(shownFor.keys());
+  queue.close();
   await fetchQueued(media, queue, options, result, (u) => {
     have.add(u);
     options.onKept?.(answersOf(lists, options.choices, have, withheld));
@@ -596,142 +670,214 @@ async function fill(
   return result;
 }
 
-async function bringToKept(
-  keptHeads: readonly string[],
-  fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
-  storage: CacheStorage,
-  options: SyncOptions,
-): Promise<KeptImageSync> {
+async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader, storage: CacheStorage, options: SyncOptions): Promise<KeptImageSync> {
   const result: KeptImageSync = { figures: 0, images: 0, added: 0, evicted: 0, failed: 0, absent: 0 };
   const heads = [...new Set(keptHeads)].slice(0, options.max ?? MAX_KEPT_FIGURES);
-  const lists = await fetchLists(heads);
-  // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched.
-  options.signal?.throwIfAborted();
-  options.onListsRead?.();
-
-  // Every address the device holds for a kept figure before this sync: each record's, each kept byte's.
-  const records = await storage.open(IMAGE_LISTS_CACHE);
-  const media = await storage.open(OWNED_MEDIA_CACHE);
-  const recordKeys = await records.keys();
-  const before = new Set<string>();
-  const beforeOf = new Map<string, string[]>();
-  for (const key of recordKeys) {
-    const addresses = addressesOf((await readList(records, headOfKey(key.url))) ?? []);
-    beforeOf.set(headOfKey(key.url), addresses);
-    for (const u of addresses) before.add(u);
-  }
-  const mediaKeys = await media.keys();
-  for (const key of mediaKeys) before.add(key.url);
-
-  // A figure with no image costs nothing here: only a non-empty list is written, and every record
-  // of a figure that is not kept (no image now, or no longer kept) is deleted below.
-  const keep = new Set<string>();
-  const kept = new Map<string, CachedImage[]>();
-  const fresh = new Set<string>();
+  const headSet = new Set(heads);
   // the kept figures each kept address is shown for (FETCH-FIRST: it is fetched where the first of them comes)
   const shownFor = new Map<string, string[]>();
-  const keepFor = (u: string, head: string) => {
-    keep.add(u);
-    shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
-  };
-  for (const head of heads) {
-    const list = toCachedImages(lists.get(head) ?? []);
-    const shown = answerable(list, options.choices?.get(head));
-    if (shown.length === 0) continue;
-    for (const u of addressesOf(list)) fresh.add(u);
-    kept.set(head, list);
-    // the chosen photo and the primary it replaces (shown till the chosen one is here), each with its mask
-    for (const image of shown) {
-      keepFor(image.url, head);
-      if (image.maskUrl !== undefined) keepFor(image.maskUrl, head);
-    }
-  }
-
-  // Withheld: an address the kept list of a figure still kept named and no fresh list carries. It is
-  // remembered before any kept list is replaced or any byte evicted, so a sync that stops part way
-  // (a quota error, the page killed) loses no record of it, and the worker refuses it from then on
-  // (src/sw.ts). An address a fresh list carries again is forgotten before any fetch below. When a
-  // record cannot be written, the first or a later one, the deletes below still run, then the sync
-  // fails.
-  const tomb = await storage.open(WITHHELD_CACHE);
-  const remembered = (await tomb.keys()).map((k) => addressOfWithheldKey(k.url));
-  const withheld = new Set<string>();
-  for (const head of heads) for (const u of beforeOf.get(head) ?? []) if (!fresh.has(u)) withheld.add(u);
-  for (const u of remembered) if (fresh.has(u)) await tomb.delete(withheldKey(u));
-  // Oldest first. A withheld address was named by a list this sync replaced, so it is normally not
-  // recorded yet; the Set keeps one of each.
-  const recorded = new Set(remembered.filter((u) => !fresh.has(u)));
-  const unrecorded = new Set(withheld);
-  let refused: { error: unknown } | undefined;
-  try {
-    for (const u of withheld) {
-      await tomb.put(withheldKey(u), new Response(null));
-      unrecorded.delete(u);
-      recorded.add(u);
-    }
-  } catch (error) {
-    // The deletes below run, then the sync fails.
-    refused = { error };
-  }
-  const oldestFirst = [...recorded];
-  for (const u of oldestFirst.slice(0, Math.max(0, oldestFirst.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
-
-  // Deletes need no quota, and every one comes before the first kept list is written: what this sync
-  // withholds, and what it no longer keeps, leaves the device even when a later write fails. The kept
-  // list of a figure no longer kept is deleted, and when a record was refused, so is one that names a
-  // recorded address; but not one that names an address the device refused to record: the next sync
-  // records that from it. That address's bytes and shown copy are deleted all the same (keptImages
-  // then answers no image of it; a mask of it stays named with its figure's image until then).
-  const namesRecorded = (head: string) => (beforeOf.get(head) ?? []).some((u) => recorded.has(u));
-  for (const key of recordKeys) {
-    const head = headOfKey(key.url);
-    const names = beforeOf.get(head) ?? [];
-    if ((!kept.has(head) || (refused !== undefined && namesRecorded(head))) && !names.some((u) => unrecorded.has(u))) await records.delete(key);
-  }
-  const have = new Set<string>();
-  for (const key of mediaKeys) {
-    if (keep.has(key.url)) have.add(key.url);
-    else if (await media.delete(key, IGNORE_VARY)) result.evicted += 1;
-  }
-  // From the worker's browsed cache: every address gone since the last sync, and every withheld one
-  // remembered, so a refill after the sync that withheld it goes at the next.
-  const sweep = new Set([...before].filter((u) => !fresh.has(u)));
-  for (const u of recorded) sweep.add(u);
-  if (sweep.size > 0) {
-    const browsed = await storage.open(BROWSED_MEDIA_CACHE);
-    for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);
-  }
-  if (refused !== undefined) throw refused.error;
-
-  const listOf = (list: readonly CachedImage[]) => new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } });
-  // A kept list naming a recorded address is replaced next, the case view gone or not; one the device
-  // refuses to write is deleted instead, with every such list not written yet, and the sync fails. So
-  // no kept list names a recorded address once these writes end, however the sync ends.
-  const replaced = [...kept.keys()].filter(namesRecorded);
-  const replacedFirst = new Set(replaced);
-  let at = 0;
-  try {
-    for (; at < replaced.length; at += 1) await records.put(listKey(replaced[at]!), listOf(kept.get(replaced[at]!)!));
-  } catch (error) {
-    for (const head of replaced.slice(at)) await records.delete(listKey(head));
-    throw error;
-  }
-  for (const [head, list] of kept) {
-    if (replacedFirst.has(head)) continue;
-    // Cancelled (the case view went away): no other kept list is written, and nothing is fetched.
-    options.signal?.throwIfAborted();
-    await records.put(listKey(head), listOf(list));
-  }
-  // Each fresh list's primary whose bytes are here (none of them is withheld): what keptImages would answer now.
-  const tellKept = () => options.onKept?.(answersOf(kept, options.choices, have, NO_ADDRESSES));
-  tellKept();
   const queue = fetchQueue(shownFor, options.first);
-  queue.add([...keep].filter((u) => !have.has(u)));
-  await fetchQueued(media, queue, options, result, (u) => {
-    have.add(u);
-    tellKept();
-  });
-  result.figures = kept.size;
-  result.images = keep.size;
-  return result;
+  // the addresses whose bytes are here: of the kept figures once the lists are read
+  const have = new Set<string>();
+  let tell = () => {};
+  let pool: Promise<void> | undefined;
+  const fetching = (media: Cache) =>
+    (pool ??= fetchQueued(media, queue, options, result, (u) => {
+      have.add(u);
+      tell();
+    }));
+  // LOAD2 (Ross 11-04: about a minute from the cards to the first photo, every list read before any image was fetched): a
+  // figure the device kept no list for withholds nothing and replaces nothing, so once its batch is read its list is kept
+  // and its images fetched, while the other lists are still read. What the device held before this sync is read first, once,
+  // before anything is written. A figure it kept a list for waits for every list, as what it withholds is read from all of
+  // them. A write the device refuses here stops this and is left to the writes below.
+  let early: { records: Cache; media: Cache; tomb: Cache; before: Map<string, CachedImage[]>; lists: Map<string, CachedImage[]>; withheld: Set<string>; written: Set<string> } | undefined;
+  let earlyStopped = false;
+  let keeping: Promise<void> = Promise.resolve();
+  const aborted = () => options.signal?.aborted === true;
+  const keepEarly = async (batch: Map<string, ProductImage[]>) => {
+    if (earlyStopped || aborted()) return;
+    if (early === undefined) {
+      const records = await storage.open(IMAGE_LISTS_CACHE);
+      const before = new Map<string, CachedImage[]>();
+      for (const key of await records.keys()) before.set(headOfKey(key.url), (await readList(records, headOfKey(key.url))) ?? []);
+      const media = await storage.open(OWNED_MEDIA_CACHE);
+      for (const key of await media.keys()) have.add(key.url);
+      const tomb = await storage.open(WITHHELD_CACHE);
+      const withheld = new Set((await tomb.keys()).map((k) => addressOfWithheldKey(k.url)));
+      early = { records, media, tomb, before, lists: new Map(before), withheld, written: new Set() };
+      const { lists } = early;
+      tell = () => options.onKept?.(answersOf(lists, options.choices, have, withheld));
+    }
+    for (const [head, images] of batch) {
+      if (!headSet.has(head) || early.before.has(head) || aborted()) continue;
+      const list = toCachedImages(images);
+      const shown = answerable(list, options.choices?.get(head));
+      if (shown.length === 0) continue;
+      // an address a fresh list carries again is forgotten before it is fetched
+      for (const u of addressesOf(list).filter((a) => early!.withheld.has(a))) {
+        await early.tomb.delete(withheldKey(u));
+        early.withheld.delete(u);
+      }
+      await early.records.put(listKey(head), listOf(list));
+      early.written.add(head);
+      early.lists.set(head, list);
+      for (const u of addressesOf(shown)) if (!have.has(u)) shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
+      queue.add(addressesOf(shown).filter((u) => !have.has(u)));
+    }
+    tell();
+    void fetching(early.media);
+  };
+  const onBatch = (batch: Map<string, ProductImage[]>) => {
+    keeping = keeping.then(() => keepEarly(batch)).catch(() => {
+      earlyStopped = true;
+    });
+  };
+  const stop = () => queue.close(true);
+  options.signal?.addEventListener('abort', stop, { once: true });
+  try {
+    return await keepTheLists();
+  } catch (error) {
+    queue.close(true);
+    throw error;
+  } finally {
+    queue.close();
+    options.signal?.removeEventListener('abort', stop);
+    // the fetches under way end before the lock is let go
+    await pool;
+  }
+
+  async function keepTheLists(): Promise<KeptImageSync> {
+    let lists: Map<string, ProductImage[]>;
+    try {
+      lists = await fetchLists(namedFirst(heads, options.first?.()), onBatch);
+      // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched but a new figure's (LOAD2).
+      options.signal?.throwIfAborted();
+      options.onListsRead?.();
+    } finally {
+      // no early write starts after this point, and the one under way ends first
+      earlyStopped = true;
+      await keeping;
+    }
+    // Cancelled while a new figure's list was written: nothing else is touched.
+    options.signal?.throwIfAborted();
+
+    // Every address the device holds for a kept figure before this sync: each record's, each kept byte's.
+    const records = await storage.open(IMAGE_LISTS_CACHE);
+    const media = await storage.open(OWNED_MEDIA_CACHE);
+    const before = new Set<string>();
+    const beforeOf = new Map<string, string[]>();
+    if (early === undefined) for (const key of await records.keys()) beforeOf.set(headOfKey(key.url), addressesOf((await readList(records, headOfKey(key.url))) ?? []));
+    else for (const [head, list] of early.before) beforeOf.set(head, addressesOf(list));
+    for (const addresses of beforeOf.values()) for (const u of addresses) before.add(u);
+    const writtenEarly = early?.written ?? new Set<string>();
+    const mediaKeys = await media.keys();
+    for (const key of mediaKeys) before.add(key.url);
+
+    // A figure with no image costs nothing here: only a non-empty list is written, and every record
+    // of a figure that is not kept (no image now, or no longer kept) is deleted below.
+    const keep = new Set<string>();
+    const kept = new Map<string, CachedImage[]>();
+    const fresh = new Set<string>();
+    const keepFor = (u: string, head: string) => {
+      keep.add(u);
+      shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
+    };
+    for (const head of heads) {
+      const list = toCachedImages(lists.get(head) ?? []);
+      const shown = answerable(list, options.choices?.get(head));
+      if (shown.length === 0) continue;
+      for (const u of addressesOf(list)) fresh.add(u);
+      kept.set(head, list);
+      // the chosen photo and the primary it replaces (shown till the chosen one is here), each with its mask
+      for (const image of shown) {
+        keepFor(image.url, head);
+        if (image.maskUrl !== undefined) keepFor(image.maskUrl, head);
+      }
+    }
+
+    // Withheld: an address the kept list of a figure still kept named and no fresh list carries. It is
+    // remembered before any kept list is replaced or any byte evicted, so a sync that stops part way
+    // (a quota error, the page killed) loses no record of it, and the worker refuses it from then on
+    // (src/sw.ts). An address a fresh list carries again is forgotten before any fetch below. When a
+    // record cannot be written, the first or a later one, the deletes below still run, then the sync
+    // fails.
+    const tomb = await storage.open(WITHHELD_CACHE);
+    const remembered = (await tomb.keys()).map((k) => addressOfWithheldKey(k.url));
+    const withheld = new Set<string>();
+    for (const head of heads) for (const u of beforeOf.get(head) ?? []) if (!fresh.has(u)) withheld.add(u);
+    for (const u of remembered) if (fresh.has(u)) await tomb.delete(withheldKey(u));
+    // Oldest first. A withheld address was named by a list this sync replaced, so it is normally not
+    // recorded yet; the Set keeps one of each.
+    const recorded = new Set(remembered.filter((u) => !fresh.has(u)));
+    const unrecorded = new Set(withheld);
+    let refused: { error: unknown } | undefined;
+    try {
+      for (const u of withheld) {
+        await tomb.put(withheldKey(u), new Response(null));
+        unrecorded.delete(u);
+        recorded.add(u);
+      }
+    } catch (error) {
+      // The deletes below run, then the sync fails.
+      refused = { error };
+    }
+    const oldestFirst = [...recorded];
+    for (const u of oldestFirst.slice(0, Math.max(0, oldestFirst.length - MAX_WITHHELD))) await tomb.delete(withheldKey(u));
+
+    // Deletes need no quota, and every one comes before the first kept list is written: what this sync
+    // withholds, and what it no longer keeps, leaves the device even when a later write fails. The kept
+    // list of a figure no longer kept is deleted, and when a record was refused, so is one that names a
+    // recorded address; but not one that names an address the device refused to record: the next sync
+    // records that from it. That address's bytes and shown copy are deleted all the same (keptImages
+    // then answers no image of it; a mask of it stays named with its figure's image until then).
+    const namesRecorded = (head: string) => (beforeOf.get(head) ?? []).some((u) => recorded.has(u));
+    for (const [head, names] of beforeOf) {
+      if ((!kept.has(head) || (refused !== undefined && namesRecorded(head))) && !names.some((u) => unrecorded.has(u))) await records.delete(listKey(head));
+    }
+    for (const key of mediaKeys) {
+      if (keep.has(key.url)) have.add(key.url);
+      else {
+        have.delete(key.url);
+        if (await media.delete(key, IGNORE_VARY)) result.evicted += 1;
+      }
+    }
+    // From the worker's browsed cache: every address gone since the last sync, and every withheld one
+    // remembered, so a refill after the sync that withheld it goes at the next.
+    const sweep = new Set([...before].filter((u) => !fresh.has(u)));
+    for (const u of recorded) sweep.add(u);
+    if (sweep.size > 0) {
+      const browsed = await storage.open(BROWSED_MEDIA_CACHE);
+      for (const key of await browsed.keys()) if (sweep.has(key.url)) await browsed.delete(key, IGNORE_VARY);
+    }
+    if (refused !== undefined) throw refused.error;
+
+    // A kept list naming a recorded address is replaced next, the case view gone or not; one the device
+    // refuses to write is deleted instead, with every such list not written yet, and the sync fails. So
+    // no kept list names a recorded address once these writes end, however the sync ends.
+    const replaced = [...kept.keys()].filter(namesRecorded);
+    const replacedFirst = new Set(replaced);
+    let at = 0;
+    try {
+      for (; at < replaced.length; at += 1) await records.put(listKey(replaced[at]!), listOf(kept.get(replaced[at]!)!));
+    } catch (error) {
+      for (const head of replaced.slice(at)) await records.delete(listKey(head));
+      throw error;
+    }
+    for (const [head, list] of kept) {
+      if (replacedFirst.has(head) || writtenEarly.has(head)) continue;
+      // Cancelled (the case view went away): no other kept list is written, and nothing is fetched.
+      options.signal?.throwIfAborted();
+      await records.put(listKey(head), listOf(list));
+    }
+    // Each fresh list's primary whose bytes are here (none of them is withheld): what keptImages would answer now.
+    tell = () => options.onKept?.(answersOf(kept, options.choices, have, NO_ADDRESSES));
+    tell();
+    queue.add([...keep].filter((u) => !have.has(u)));
+    queue.close();
+    await fetching(media);
+    result.figures = kept.size;
+    result.images = keep.size;
+    return result;
+  }
 }

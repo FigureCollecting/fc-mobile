@@ -17,7 +17,8 @@
 // refused is the exception: the case view names it until a later sync records it, though its bytes
 // are gone (src/media/keptImages.ts). A sync whose read of the lists fails, or whose
 // case view goes away before they arrive, touches no cache and tells nothing: what the last one kept
-// stands. An answer that names an address that sync withheld, shown or opened while the document reads
+// stands (LOAD2: but for a figure it kept no list for, whose list and images it keeps as soon as its batch is read; such a
+// figure withholds nothing). An answer that names an address that sync withheld, shown or opened while the document reads
 // what it withheld, stops naming it once that is read, not once the coordinator answers; so does the
 // answer a stopped sync's case view, going away, reverted it to, which stands for when it opens again.
 // A case view told of another document's completed sync answers from what it kept, without a sync of
@@ -147,7 +148,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: key,
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
-    // replaces it: aborted while it reads the lists, it touches no cache; while it fetches images, the
+    // replaces it: aborted while it reads the lists, it touches no cache but a new figure's; while it fetches images, the
     // fetches in flight are aborted and no other starts.
     queryFn: async ({ signal, client, queryKey }) => {
       hearKeptSyncs(client);
@@ -165,7 +166,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails)
           if (choiceKey !== '' && (await keepChosenPhotos(kept, allChoices, { signal })) > 0) shown.show(await keptImages(kept, undefined, allChoices));
           const synced = await duringOwnSync(client, queryKey, () =>
-            syncKeptImages(kept, (h) => fetchImageLists(session!.clients.catalog, h, signal), {
+            syncKeptImages(kept, (h, onBatch) => fetchImageLists(session!.clients.catalog, h, signal, onBatch), {
               signal,
               onListsRead: () => (read = true),
               onKept: shown.show,

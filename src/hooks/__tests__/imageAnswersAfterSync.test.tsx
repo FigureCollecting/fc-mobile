@@ -1168,6 +1168,9 @@ describe('a sync stopped part way, after it read the lists: its case view gone, 
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned 1' }, { title: 'Owned 2' }, { title: 'Owned 3' }]);
     await keptX();
+    // LOAD2: the three others were kept before (a figure with no kept list has its list written as soon as its batch is
+    // read, before anything is recorded), and their lists are unchanged: the writes held here come after the record
+    for (const i of [1, 2, 3]) await rememberImages(headOf(i), [{ url: `${D}/${String(i).repeat(64)}`, width: 600, height: 800, role: 'gallery', primary: true }], storage);
     const docA = appQueryClient();
     const docB = appQueryClient();
     r.clients.getProductImages.mockResolvedValue(lists([X], []));

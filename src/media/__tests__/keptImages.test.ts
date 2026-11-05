@@ -16,6 +16,7 @@ import {
   OWNED_MEDIA_CACHE,
   KEPT_SYNC_STEP_MS,
   KEPT_SYNC_WAIT_MS,
+  LIST_CALLS_IN_FLIGHT,
   WITHHELD_CACHE,
   fetchImageLists,
   fillKeptImages,
@@ -377,7 +378,7 @@ describe('syncKeptImages', () => {
       h2: [img('c')],
     });
     const result = await syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage });
-    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3']);
+    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3'], expect.any(Function));
     expect(await owned(storage)).toEqual([url('a'), url('c'), url('f')].sort());
     expect(storage.added.every((r) => r.mode === 'cors' && r.credentials === 'omit')).toBe(true);
     // The origin answers immutable: a byte the HTTP cache kept would outlive its eviction from the owned cache.
@@ -408,7 +409,7 @@ describe('syncKeptImages', () => {
     const storage = device();
     const fetchLists = lists({ h1: [img('a')], h2: [img('b')], h3: [img('c')] });
     await syncKeptImages(['h1', 'h1', 'h2', 'h3'], fetchLists, { storage, max: 2 });
-    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2']);
+    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2'], expect.any(Function));
     expect(await owned(storage)).toEqual([url('a'), url('b')]);
   });
 
@@ -511,7 +512,8 @@ describe('fetchImageLists', () => {
       return { products: [{ headId: 'h0', images: [img('b')] }, { headId: 'h1', images: [img('c')] }], nextPageToken: '' };
     });
     const got = await fetchImageLists({ getProductImages } as never, heads);
-    expect(getProductImages.mock.calls.map(([r]) => [r.headIds.length, r.pageSize, r.pageToken ?? ''])).toEqual([[200, 200, ''], [200, 200, 't2'], [1, 200, '']]);
+    // LOAD2: the second batch is read beside the first, so its call comes before the first batch's second page
+    expect(getProductImages.mock.calls.map(([r]) => [r.headIds.length, r.pageSize, r.pageToken ?? ''])).toEqual([[200, 200, ''], [1, 200, ''], [200, 200, 't2']]);
     expect([...got.keys()]).toEqual(['h0', 'h1', 'h200']);
     expect(got.get('h0')?.map((i) => i.derivativeId)).toEqual([hex('a'), hex('b')]);
   });
@@ -564,6 +566,149 @@ describe('fetchImageLists', () => {
     const got = await fetchImageLists({ getProductImages } as never, ['h1']);
     expect(getProductImages).toHaveBeenCalledTimes(MAX_IMAGE_PAGES);
     expect(got.get('h1')?.map((i) => i.derivativeId)).toEqual([hex('a')]);
+  });
+});
+
+// LOAD2 (Ross 11-04: about a minute from the cards to the first photo): the image lists were read one call at a time, every
+// list before any image was fetched (75 calls at about 0.9 s for his 1,200 figures).
+describe('fetchImageLists: lists read side by side, and told a batch at a time (LOAD2)', () => {
+  /** A coordinator that answers each call after `ms` (real time), one row per head, recording how many calls were in flight. */
+  const slow = (ms = 5) => {
+    let inFlight = 0;
+    const most = { at: 0 };
+    const getProductImages = vi.fn(async (req: { headIds: string[]; pageSize?: number; pageToken?: string }) => {
+      inFlight += 1;
+      most.at = Math.max(most.at, inFlight);
+      await new Promise((res) => setTimeout(res, ms));
+      inFlight -= 1;
+      return { products: req.headIds.map((h) => ({ headId: h, images: [img('a', { primary: true })] })), nextPageToken: '' };
+    });
+    return { getProductImages, most };
+  };
+  const heads = (n: number) => Array.from({ length: n }, (_, i) => `h${i}`);
+
+  it(`reads up to ${LIST_CALLS_IN_FLIGHT} batches at once, never more, and answers every head's list`, async () => {
+    const coordinator = slow();
+    const got = await fetchImageLists(coordinator as never, heads(801));
+    expect(LIST_CALLS_IN_FLIGHT).toBe(3);
+    expect(coordinator.most.at).toBe(3);
+    expect(coordinator.getProductImages).toHaveBeenCalledTimes(5);
+    expect(got.size).toBe(801);
+  });
+
+  it('told each batch as it is read, asks first for small batches (25, 50, 100, then 200 heads), so the first figures\' lists come within a call', async () => {
+    const coordinator = slow();
+    const told: string[][] = [];
+    const got = await fetchImageLists(coordinator as never, heads(400), undefined, (batch) => told.push([...batch.keys()]));
+    expect(coordinator.getProductImages.mock.calls.map(([r]) => r.headIds.length)).toEqual([25, 50, 100, 200, 25]);
+    expect(coordinator.getProductImages.mock.calls[0]![0].headIds).toEqual(heads(25));
+    expect(told.map((b) => b.length).sort((a, b) => a - b)).toEqual([25, 25, 50, 100, 200]);
+    expect(told.find((b) => b.length === 25 && b[0] === 'h0')).toEqual(heads(25));
+    expect(got.size).toBe(400);
+  });
+
+  it('a call that fails starts no other batch and fails once the calls in flight end; no batch is told after it', async () => {
+    let calls = 0;
+    const told: number[] = [];
+    let inFlight = 0;
+    const getProductImages = vi.fn(async (req: { headIds: string[] }) => {
+      calls += 1;
+      inFlight += 1;
+      const mine = calls;
+      await new Promise((res) => setTimeout(res, mine === 1 ? 1 : 20));
+      inFlight -= 1;
+      if (mine === 1) throw new Error('unavailable');
+      return { products: req.headIds.map((h) => ({ headId: h, images: [img('a', { primary: true })] })), nextPageToken: '' };
+    });
+    await expect(fetchImageLists({ getProductImages } as never, heads(1000), undefined, (b) => told.push(b.size))).rejects.toThrow('unavailable');
+    expect(inFlight).toBe(0);
+    expect(getProductImages).toHaveBeenCalledTimes(3);
+    expect(told).toEqual([]);
+  });
+});
+
+describe('syncKeptImages: the first figures\' images fetched while the other lists are read (LOAD2)', () => {
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const KEPT: Record<string, ProductImage[]> = { h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('c', { primary: true })] };
+  /** Lists told in two batches, h1's first; the rest held until released. */
+  const twoBatches = () => {
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const fetchLists = vi.fn(async (heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      const all = new Map(heads.filter((h) => h in KEPT).map((h) => [h, KEPT[h]!]));
+      onBatch?.(new Map([[heads[0]!, all.get(heads[0]!)!]]));
+      await held;
+      onBatch?.(new Map([...all].slice(1)));
+      return all;
+    });
+    return { fetchLists, release };
+  };
+  const settle = () => new Promise((res) => setTimeout(res, 20));
+
+  it('asks for the lists of the heads `first` names first, in its order, then the rest as kept', async () => {
+    const storage = device();
+    const fetchLists = vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in KEPT).map((h) => [h, KEPT[h]!])));
+    await syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, first: () => ['h3', 'h9'] });
+    expect(fetchLists.mock.calls[0]![0]).toEqual(['h3', 'h1', 'h2']);
+  });
+
+  it('a figure the device kept no list for: its list kept and its image fetched and told once its batch is read, before the other lists arrive', async () => {
+    const storage = device();
+    const { fetchLists, release } = twoBatches();
+    const told: string[][] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, onKept: (k) => told.push([...k.keys()]) });
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('a'));
+    expect(told.at(-1)).toEqual(['h1']);
+    release();
+    expect(await sync).toEqual({ figures: 3, images: 3, added: 3, evicted: 0, failed: 0, absent: 0 });
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('c')]);
+    expect(storage.added).toHaveLength(3);
+  });
+
+  it('a figure the device kept a list for waits for every list (what it withholds is read from all of them), and what was kept stays shown meanwhile', async () => {
+    const storage = device();
+    await syncKeptImages(['h1'], async () => new Map([['h1', [img('d', { primary: true })]]]), { storage });
+    storage.added.length = 0;
+    const { fetchLists, release } = twoBatches();
+    const told: (string | undefined)[] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, onKept: (k) => told.push(k.get('h1')?.url) });
+    await settle();
+    expect(storage.added).toEqual([]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('d'));
+    release();
+    await sync;
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('c')]);
+    expect(told.every((u) => u === url('d') || u === url('a') || u === undefined)).toBe(true);
+  });
+
+  it('lists that fail after a batch was kept: the sync fails, not told as read; that new figure\'s list and bytes stay, nothing else is touched', async () => {
+    const storage = device();
+    const onListsRead = vi.fn();
+    const fetchLists = async (heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([[heads[0]!, KEPT[heads[0]!]!]]));
+      await settle();
+      throw new Error('unavailable');
+    };
+    await expect(syncKeptImages(['h1', 'h2'], fetchLists, { storage, onListsRead })).rejects.toThrow('unavailable');
+    expect(onListsRead).not.toHaveBeenCalled();
+    expect(owned(storage)).toEqual([url('a')]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('a'));
+    expect(await recallImages('h2', storage)).toBeUndefined();
+  });
+
+  it('a case view gone while the lists are read: no fetch starts after, and the sync fails', async () => {
+    const abort = new AbortController();
+    const storage = device();
+    const fetchLists = async (heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      abort.abort();
+      onBatch?.(new Map([[heads[0]!, KEPT[heads[0]!]!]]));
+      await settle();
+      return new Map(heads.map((h) => [h, KEPT[h]!]));
+    };
+    await expect(syncKeptImages(['h1', 'h2'], fetchLists, { storage, signal: abort.signal })).rejects.toThrow();
+    expect(storage.added).toEqual([]);
   });
 });
 

@@ -93,6 +93,19 @@ describe('useCollectionImages', () => {
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
   });
 
+  // LOAD2 (Ross 11-04: about a minute from the cards to the first photo)
+  it('asks the coordinator for the lists of the figures the case view shows first, in its order, a small batch first (LOAD2)', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(create(GetProductImagesResponseSchema, {}));
+    await seedFigures(r, Array.from({ length: 30 }, (_, i) => ({ title: `F${i}` })));
+    setFetchOrder([headOf(29), headOf(3)]);
+    renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+    const firstCall = r.clients.getProductImages.mock.calls[0]![0] as { headIds: string[] };
+    expect(firstCall.headIds).toHaveLength(25);
+    expect(firstCall.headIds.slice(0, 3)).toEqual([headOf(29), headOf(3), headOf(0)]);
+  });
+
   it('asks for the owned figures first, then the ordered, then the wished, each figure once; never one no longer owned', async () => {
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(create(GetProductImagesResponseSchema, {}));

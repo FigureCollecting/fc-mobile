@@ -770,6 +770,56 @@ describe('useCollectionImages', () => {
     }
   });
 
+  // PHOTOS1 fix round 3 (X2: a figure added every 5 s in an outage, each a new sync asking every refused address, sent 16,674
+  // requests in 5 min for 300 figures, twice develop's 7,866)
+  it('a figure added while the link refuses all: its sync asks nothing a fill holds, and a fill asks once the wait is over (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { r, client } = await leftAll(2, async () => new Response('', { status: 503 }));
+      setFetchOrder([headOf(0), headOf(1)]);
+      await waitFor(() => expect(storage.added).toHaveLength(4));
+      await quiet();
+      const t = Date.now();
+      await r.engine.write((store) => store.createCopy(headOf(5), 'owned'));
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+      await quiet();
+      expect(storage.added).toHaveLength(4);
+      vi.spyOn(Date, 'now').mockReturnValue(t + REFILL_AFTER_MS);
+      try {
+        setFetchOrder([headOf(1), headOf(0)]);
+        await waitFor(() => expect(storage.added).toHaveLength(6));
+      } finally {
+        vi.restoreAllMocks();
+      }
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('the server reached again, or the case view opened again, asks every refused address at once, held or not (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { r, client, view } = await leftAll(2, async () => new Response('', { status: 503 }));
+      setFetchOrder([headOf(0), headOf(1)]);
+      await waitFor(() => expect(storage.added).toHaveLength(4));
+      await quiet();
+      r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+      await act(() => r.engine.trigger('manual'));
+      expect(r.engine.state.value.reachability).toBe('unreachable');
+      await act(() => r.engine.trigger('manual'));
+      expect(r.engine.state.value.reachability).toBe('reachable');
+      await waitFor(() => expect(storage.added).toHaveLength(6), { timeout: 3000 });
+      await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+      view.unmount();
+      const again = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+      await waitFor(() => expect(storage.added).toHaveLength(8), { timeout: 3000 });
+      again.unmount();
+    } finally {
+      uninstall();
+    }
+  });
+
   it('the case view going away stops its fill, the fetch in flight aborted (PHOTOS1)', async () => {
     let hang = false;
     const { view } = await leftAll(1, (req) =>

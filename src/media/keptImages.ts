@@ -144,14 +144,14 @@ class AbsentImage extends Error {}
 /**
  * PHOTOS1: how long a fill waits before asking again an address it was refused (a 5xx, a 403, a CORS or network failure, a
  * stall), twice as long after each refusal after, at most REFUSED_WAIT_MAX_MS; an address served forgets its refusals. A
- * sync asks it all the same (the case view opened again, the server reached again).
+ * sync asks it all the same (the case view opened again, the server reached again), but one that backs off (SyncOptions).
  * Remembered per CacheStorage, in memory, as the 404s are: so an origin refusing every image has each address asked 6 times
  * in the first 10 minutes (the sync, then fills at once and 30 s, 1.5, 3.5 and 7.5 min on: 3,600 requests for 300 figures,
  * not 600 every 30 s), then once every 10 minutes.
  */
 export const REFUSED_WAIT_MS = 30_000;
 export const REFUSED_WAIT_MAX_MS = 10 * 60_000;
-/** PHOTOS1: the addresses a fill was refused, when each may be asked again and how long it waited last, per CacheStorage. */
+/** PHOTOS1: the addresses a fill (or a sync that backs off) was refused, when each may be asked again and how long it waited last, per CacheStorage. */
 const refusedAt = new WeakMap<CacheStorage, Map<string, { until: number; wait: number }>>();
 function rememberRefused(storage: CacheStorage, address: string): number {
   let seen = refusedAt.get(storage);
@@ -183,6 +183,8 @@ export interface KeptImageSync {
   failed: number;
   /** PHOTOS1: images whose display copy is not made yet: answered 404 now, or less than ABSENT_RECHECK_MS ago (not asked again). */
   absent: number;
+  /** PHOTOS1: of a sync that backs off (SyncOptions.backOff) and left an address it was refused, when the soonest may be asked again. */
+  retryAt?: number;
 }
 
 /** PHOTOS1: what a fill fetched (fillKeptImages). */
@@ -192,6 +194,12 @@ export type KeptImageFill = Pick<KeptImageSync, 'added' | 'absent' | 'failed'> &
   /** PHOTOS1: of a fill that left an address it was refused (REFUSED_WAIT_MS), the soonest one of them may be asked again. */
   retryAt?: number;
 };
+/** PHOTOS1: how fetchQueued treats a refusal: held (the address not asked till its wait is over), and a full device ending it. */
+interface Refusals {
+  backOff: boolean;
+  endWhenFull: boolean;
+}
+const AS_FILL: Refusals = { backOff: true, endWhenFull: true };
 
 /** The images a client may keep: only those on the public image address, a mask only when it is too. */
 export function toCachedImages(images: readonly ProductImage[]): CachedImage[] {
@@ -437,6 +445,13 @@ interface SyncOptions {
    * other kept figures' come after, in the order kept. It orders the fetches only: what is kept is the same either way.
    */
   first?: () => readonly string[];
+  /**
+   * PHOTOS1 (X2: a figure added every 5 s in an outage, each a new sync asking every refused address): back off as a fill
+   * does, an address a fill or such a sync was refused not asked till its wait is over (REFUSED_WAIT_MS), one refused now held
+   * as a fill holds it, and `retryAt` answered. For a sync the kept figures or choices started while the case view stays open
+   * and in reach; not for one the case view opened again or the server reached again started, which asks every address.
+   */
+  backOff?: boolean;
 }
 
 /**
@@ -717,7 +732,7 @@ async function fetchQueued(
   options: { concurrency?: number; signal?: AbortSignal },
   result: KeptImageFill,
   landed: (address: string) => void,
-  asFill = false,
+  refusals: Refusals,
 ): Promise<void> {
   const width = Math.max(1, options.concurrency ?? KEPT_FETCHES);
   // fetches abandoned in a row, with no answer between
@@ -732,8 +747,8 @@ async function fetchQueued(
         result.absent += 1;
         continue;
       }
-      // PHOTOS1: nor by a fill, an address a fill was refused, until its wait is over
-      const held = asFill ? refused?.get(next) : undefined;
+      // PHOTOS1: nor by a fill (or a sync that backs off), an address one was refused, until its wait is over
+      const held = refusals.backOff ? refused?.get(next) : undefined;
       if (held !== undefined && held.until > Date.now()) {
         result.failed += 1;
         retryAt(held.until);
@@ -753,8 +768,8 @@ async function fetchQueued(
         } else {
           result.failed += 1;
           // PHOTOS1: a fill out of space ends (each image after it would be downloaded only to be dropped); a sync fetches on
-          if (asFill && error instanceof DOMException && error.name === 'QuotaExceededError') result.full = true;
-          else if (asFill && !stopped()) retryAt(rememberRefused(storage, next));
+          if (refusals.endWhenFull && error instanceof DOMException && error.name === 'QuotaExceededError') result.full = true;
+          else if (refusals.backOff && !stopped()) retryAt(rememberRefused(storage, next));
         }
       }
       if (stalled) quiet += 1;
@@ -817,7 +832,7 @@ async function fill(
       have.add(u);
       options.onKept?.(answersOf(lists, options.choices, have, withheld));
     },
-    true,
+    AS_FILL,
   );
   return result;
 }
@@ -836,10 +851,18 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
   let tell = () => {};
   let pool: Promise<void> | undefined;
   const fetching = (media: Cache) =>
-    (pool ??= fetchQueued(storage, media, queue, options, result, (u) => {
-      have.add(u);
-      tell();
-    }));
+    (pool ??= fetchQueued(
+      storage,
+      media,
+      queue,
+      options,
+      result,
+      (u) => {
+        have.add(u);
+        tell();
+      },
+      { backOff: options.backOff === true, endWhenFull: false },
+    ));
   // LOAD2 (Ross 11-04: about a minute from the cards to the first photo, every list read before any image was fetched): a
   // figure the device kept no list for withholds nothing and replaces nothing, so once its batch is read its list is kept
   // and its images fetched, while the other lists are still read. What the device held before this sync is read first, once,

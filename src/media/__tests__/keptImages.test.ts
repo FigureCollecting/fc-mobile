@@ -475,6 +475,25 @@ describe('an address the link refused: a fill asks it again only after a wait th
     expect(storage.added.length).toBe(before + 1);
   });
 
+  it('a sync that backs off (a figure added while the case view is open) asks no address a fill holds, and holds one it is refused (PHOTOS1)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const storage = device(async (r) => (r.url === url('a') ? new Response('img') : new Response('', { status: 503 })));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    await fillKeptImages(['h1', 'h2'], { storage });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('b')]);
+    // h3 added: its sync does not ask b (held 30 s), asks c, and holds c as a fill would
+    const three = { ...KEPT, h3: [img('c', { primary: true })] };
+    expect(await syncKeptImages(['h1', 'h2', 'h3'], lists(three), { storage, backOff: true })).toMatchObject({ added: 0, failed: 2, retryAt: T0 + REFUSED_WAIT_MS });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('b'), url('c')]);
+    expect(await syncKeptImages(['h1', 'h2', 'h3'], lists(three), { storage, backOff: true })).toMatchObject({ added: 0, failed: 2, retryAt: T0 + REFUSED_WAIT_MS });
+    expect(storage.added).toHaveLength(4);
+    // a sync that does not back off asks both all the same
+    const plain = await syncKeptImages(['h1', 'h2', 'h3'], lists(three), { storage });
+    expect(plain).toMatchObject({ added: 0, failed: 2 });
+    expect(plain).not.toHaveProperty('retryAt');
+    expect(storage.added.map((r) => r.url).slice(4).sort()).toEqual([url('b'), url('c')]);
+  });
+
   it('a fetch the fill itself stopped (its case view gone) is no refusal: the next fill asks it at once', async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: T0 });
     let hang = false;

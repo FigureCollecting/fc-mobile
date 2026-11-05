@@ -159,6 +159,10 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const signedIn = session !== undefined && phase === 'signed-in';
   const enabled = signedIn && heads !== undefined;
   const key = ['local', 'kept-images', reachable, heads?.join(',') ?? '', choiceKey];
+  // PHOTOS1 (X2): whether this case view has synced in reach since it opened, the server not lost since; a sync after that
+  // (the kept figures or choices changed) backs off on the addresses refused, as a fill does (keptImages.ts SyncOptions.backOff)
+  const syncedInReach = useRef(false);
+  if (!reachable) syncedInReach.current = false;
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: key,
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
@@ -175,6 +179,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         const shown = showKept(client, queryKey, signal);
         shown.show(await keptImages(kept, undefined, allChoices));
         let read = false;
+        const backOff = syncedInReach.current;
+        syncedInReach.current = true;
         try {
           // PICK-CASE-1: a chosen photo the device lacks is fetched first, from the figure's kept list, so a pick is shown
           // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails)
@@ -186,6 +192,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
               onKept: shown.show,
               choices: allChoices,
               first: () => fetchOrder,
+              backOff,
             }),
           );
           void dropImageAnswers(client, queryKey);

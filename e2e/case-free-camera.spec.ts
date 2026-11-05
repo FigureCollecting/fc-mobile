@@ -8,7 +8,7 @@ import { decodePng } from './paintCheck';
 import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
-import { JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, SPRING_MS, jogSpeed as jogSpeedAt } from '../src/components/display/casePose';
+import { DRAG_WALK_GAIN_X, JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, SPRING_MS, jogSpeed as jogSpeedAt } from '../src/components/display/casePose';
 import { CONTROLS_VIEWPORTS } from '../src/components/display/caseBudget';
 
 /**
@@ -763,8 +763,11 @@ for (const panel of FOLD8) {
     await startPoseLog(page);
     const y = f.y + f.height * 0.2;
 
-    // a walk: from the wall's first cabinet to its last and back
-    const swipeBy = (dir: 1 | -1) => fingerDrag(page, { x: f.x + f.width * (dir > 0 ? 0.85 : 0.15), y }, { x: f.x + f.width * (dir > 0 ? 0.15 : 0.85), y });
+    // a walk: from the wall's first cabinet to its last and back, 0.7 frame widths a swipe. NAV-SWIPE-2X walks twice the
+    // finger, so the finger goes 0.7 / DRAG_WALK_GAIN_X: a full 0.7 (1.4 frames) walked the wide panels' last swipe into
+    // the room's side wall, whose stop is off the ratio by design (the unit tests hold the wall)
+    const reach = 0.35 / DRAG_WALK_GAIN_X;
+    const swipeBy = (dir: 1 | -1) => fingerDrag(page, { x: f.x + f.width * (0.5 + dir * reach), y }, { x: f.x + f.width * (0.5 - dir * reach), y });
     let swipes = 0;
     while ((await cameraOf(page)).x < last && swipes < 80) (await swipeBy(1), swipes++);
     while ((await cameraOf(page)).x > first && swipes < 160) (await swipeBy(-1), swipes++);

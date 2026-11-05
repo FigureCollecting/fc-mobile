@@ -22,6 +22,14 @@ const DEG = Math.PI / 180;
 export const LOOK_HOLD_MS = 250;
 /** Spec 2.1: once the finger has moved this far (px) on the axis a drag did not lock to, that axis moves too, for good. */
 export const AXIS_UNLOCK_PX = 24;
+/**
+ * NAV-SWIPE-2X (Ross 11-04: "the amount of walk relative to swipe distance...probably should be 2x as far (at least
+ * horizontally)"): a one-finger MOVE drag in the Free camera walks the eye this many times move()'s 1:1 sideways. Applied
+ * at the drag alone (useFreeCamera), never in move() or walk(): the jog walks through them at its own speed.
+ */
+export const DRAG_WALK_GAIN_X = 2;
+/** NAV-SWIPE-2X: the same drag's height move, times move()'s 1:1: kept at 1 until Ross says about height. */
+export const DRAG_WALK_GAIN_Y = 1;
 /** Spec 1.3: how far the eye keeps off every cabinet and the room's walls (mm): a nose and a phone. */
 export const EYE_MARGIN_MM = 100;
 /** Rulings S9: the lowest the eye goes (mm); the highest is the ceiling less its clearance. */

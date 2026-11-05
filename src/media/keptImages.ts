@@ -82,8 +82,8 @@ export const OWNED_SYNC_LOCK = 'fc-owned-sync';
  * goes away, it lets go once its fetches in flight end and the cache work under way is done: a write,
  * or, once it has read the lists, reading the kept lists, recording and deleting what it withholds or
  * no longer keeps and replacing the kept lists that named what it withholds, which an abort never cuts
- * short; it writes no other kept list and starts no fetch after. And at most KEPT_SYNC_STEP_MS after
- * its fetches in flight stop receiving anything, or a cache write finishes, whichever is later
+ * short; it writes no other kept list and starts no fetch after. And at most twice KEPT_SYNC_STEP_MS
+ * after its fetches in flight stop receiving anything, or a cache write finishes, whichever is later
  * (syncKeptImages). While their bytes keep coming (a large first sync, a slow link), or a write is
  * slow, it holds the lock, and this wait runs out first. A document whose sync failed here answers from
  * what was kept, the other's sync told to it or not, until a sync of its own: its case view opened
@@ -95,7 +95,8 @@ export const KEPT_SYNC_WAIT_MS = 10_000;
 /**
  * The longest a GetProductImages call of a sync may take, and the longest an image fetch may go
  * without receiving anything (its headers, a byte of its body). A list call past it fails the sync; an
- * image fetch that receives nothing for that long is abandoned, and no other starts after it.
+ * image fetch that receives nothing for that long is abandoned, that address alone (PHOTOS1); as many in a
+ * row as run at once, nothing answered between, is a dead link, and no other starts after them.
  */
 export const KEPT_SYNC_STEP_MS = 20_000;
 
@@ -320,10 +321,11 @@ interface SyncOptions {
  * the fetches in flight (and fetchImageLists' call), and the sync lets go of the lock once they
  * end and the cache work under way is done (KEPT_SYNC_WAIT_MS): it writes no other kept list and
  * starts no fetch after. An image fetch that receives nothing (its headers, a byte of its body) for
- * KEPT_SYNC_STEP_MS is abandoned and no other starts after it; what is still missing is fetched at a
- * later sync that the link brings bytes to. So the sync lets go of the lock at most that long after
- * its fetches in flight stop receiving anything, or a cache write finishes, whichever is later, its
- * case view open or not; while their bytes keep coming, however slowly, it fetches on, and a slow but
+ * KEPT_SYNC_STEP_MS is abandoned, that address alone; `concurrency` abandoned in a row, nothing
+ * answered between, is a dead link and no other starts after them (fetchQueued); what is still missing
+ * is fetched by a later fill or sync (fillKeptImages). So the sync lets go of the lock at most twice
+ * that long after its fetches in flight stop receiving anything, or a cache write finishes, whichever
+ * is later, its case view open or not; while their bytes keep coming, however slowly, it fetches on, and a slow but
  * working link keeps every image. A write is not bounded: a slow one holds the lock.
  * Where the browser has no Web Locks (an older browser, a page not served securely), syncs are not
  * serialised, as before the lock: two documents syncing at once can finish in the other order, and
@@ -374,13 +376,13 @@ function joined(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
  * when the answer is ok with a body, once all of it arrived. Aborted when `signal` aborts, or when it has received nothing
  * (its headers, a byte of its body) for KEPT_SYNC_STEP_MS, `onStall` told first. Throws when nothing was kept.
  */
-async function fetchKept(media: Cache, address: string, signal: AbortSignal | undefined, onStall: () => void): Promise<void> {
+async function fetchKept(media: Cache, address: string, signal: AbortSignal | undefined, link: { stalled?: () => void; answered?: () => void } = {}): Promise<void> {
   const step = new AbortController();
   let quiet: ReturnType<typeof setTimeout> | undefined;
   const heard = () => {
     clearTimeout(quiet);
     quiet = setTimeout(() => {
-      onStall();
+      link.stalled?.();
       step.abort(new DOMException('the image link sent nothing in time', 'TimeoutError'));
     }, KEPT_SYNC_STEP_MS);
   };
@@ -391,6 +393,7 @@ async function fetchKept(media: Cache, address: string, signal: AbortSignal | un
     const request = new Request(address, { mode: 'cors', credentials: 'omit', cache: 'no-store', signal: step.signal });
     const res = await fetch(request);
     heard();
+    link.answered?.();
     if (!res.ok || res.body === null) throw new TypeError(`the image link answered ${res.status} without an image`);
     const chunks: Uint8Array[] = [];
     const reader = res.body.getReader();
@@ -438,7 +441,7 @@ export async function keepChosenPhotos(
       // here already, or a withheld mask (the photo is shown without it)
       if ((await media.match(address, IGNORE_VARY)) !== undefined || (await tomb.match(withheldKey(address))) !== undefined) continue;
       try {
-        await fetchKept(media, address, options.signal, () => {});
+        await fetchKept(media, address, options.signal);
         kept += 1;
       } catch {
         // not kept now: the sync fetches it
@@ -510,8 +513,11 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
 
 /**
  * The queue's addresses fetched into the owned cache, `concurrency` at a time, `landed` told of each kept. Each fetch is
- * aborted when the signal aborts, or when it has received nothing (its headers, a byte of its body) for KEPT_SYNC_STEP_MS;
- * then the link is taken as stalled and no other fetch starts. Only an ok answer with a body is kept, once all of it arrived.
+ * aborted when the signal aborts, or when it has received nothing (its headers, a byte of its body) for KEPT_SYNC_STEP_MS:
+ * then that address alone is abandoned (PHOTOS1: one silent image stopped every fetch, and the case stood as name cards past
+ * the first cabinets). `concurrency` fetches abandoned in a row, no answer between, is a dead link: no other starts, so the
+ * lock is let go at most twice KEPT_SYNC_STEP_MS after the link went quiet. Only an ok answer with a body is kept, once all
+ * of it arrived.
  */
 async function fetchQueued(
   media: Cache,
@@ -520,16 +526,22 @@ async function fetchQueued(
   result: KeptImageFill,
   landed: (address: string) => void,
 ): Promise<void> {
-  let stalled = false;
-  const workers = Array.from({ length: Math.max(1, options.concurrency ?? 4) }, async () => {
-    for (let next = queue.take(); next !== undefined && options.signal?.aborted !== true && !stalled; next = queue.take()) {
+  const width = Math.max(1, options.concurrency ?? 4);
+  // fetches abandoned in a row, with no answer between
+  let quiet = 0;
+  const workers = Array.from({ length: width }, async () => {
+    for (let next = queue.take(); next !== undefined && options.signal?.aborted !== true && quiet < width; next = queue.take()) {
+      let stalled = false;
+      let answered = false;
       try {
-        await fetchKept(media, next, options.signal, () => (stalled = true));
+        await fetchKept(media, next, options.signal, { stalled: () => (stalled = true), answered: () => (answered = true) });
         result.added += 1;
         landed(next);
       } catch {
         result.failed += 1;
       }
+      if (stalled) quiet += 1;
+      else if (answered) quiet = 0;
     }
   });
   await Promise.all(workers);

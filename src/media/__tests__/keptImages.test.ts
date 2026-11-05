@@ -1403,22 +1403,42 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(KEPT_SYNC_STEP_MS).toBe(20_000);
   });
 
-  it('once an image fetch is abandoned no other starts, so the sync lets go of the lock at most 20 s later, when the fetches already under way end', async () => {
+  // PHOTOS1 (Ross 11-04: one silent image stopped every fetch, and the case stood as name cards past the first cabinets)
+  it('one image that sends nothing for 20 s (KEPT_SYNC_STEP_MS) is abandoned alone: every other image is still fetched, and the sync ends failed: 1', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();
-    const stalled = stalling('a', 'd', 'e');
-    const storage = device((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
-    const fetchLists = lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })], h4: [img('e', { primary: true })] });
-    const sync = syncKeptImages(['h1', 'h2', 'h3', 'h4'], fetchLists, { storage, concurrency: 2 });
+    // every other image takes 5 s, so most are still to fetch when c is abandoned, at 25 s
+    const stalled = stalling('c');
+    const storage = device((req) => (req.url === url('c') ? stalled(req) : new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 5_000))));
+    const cs = ['a', 'b', 'c', 'd', 'e', 'f', '0', '1', '2', '3'];
+    const heads = cs.map((_, i) => `h${i}`);
+    const sync = syncKeptImages(heads, lists(Object.fromEntries(cs.map((c, i) => [`h${i}`, [img(c, { primary: true })]]))), { storage, concurrency: 2 });
     const a = track(sync);
-    // a is abandoned at 20 s; d, started at 15 s when b arrived, at 35 s; e is never asked.
     await vi.advanceTimersByTimeAsync(34_999);
     expect(a()).toBe('running');
-    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d')]);
     await vi.advanceTimersByTimeAsync(1);
     expect(a()).toBe('settled');
-    expect(await sync).toMatchObject({ added: 1, failed: 2 });
-    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d')]);
+    expect(owned(storage)).toEqual(cs.filter((c) => c !== 'c').map(url).sort());
+    expect(await sync).toMatchObject({ added: 9, failed: 1 });
+  });
+
+  it('a dead link: once `concurrency` fetches in a row stalled with nothing answered between, no other starts, so the sync lets go of the lock at most 2 x 20 s after the link went quiet', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const stalled = stalling('a', 'd', 'e', 'g');
+    const storage = device((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
+    const fetchLists = lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })], h4: [img('e', { primary: true })], h5: [img('g', { primary: true })] });
+    const sync = syncKeptImages(['h1', 'h2', 'h3', 'h4', 'h5'], fetchLists, { storage, concurrency: 2 });
+    const a = track(sync);
+    // b answers at 15 s and d starts; a stalls at 20 s, one in a row, and e starts; d stalls at 35 s, two in a row: no other
+    // starts, and g is never asked; e, under way, stalls at 40 s
+    await vi.advanceTimersByTimeAsync(39_999);
+    expect(a()).toBe('running');
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d'), url('e')]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(a()).toBe('settled');
+    expect(await sync).toMatchObject({ added: 1, failed: 3 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d'), url('e')]);
   });
 
   it('a slow link that brings each image within 20 s brings them all: the deadline is each fetch\'s, not the sync\'s', async () => {

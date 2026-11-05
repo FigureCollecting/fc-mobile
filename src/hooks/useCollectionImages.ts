@@ -27,7 +27,11 @@
 // Where the browser has Web Locks, documents sync one at a time (src/media/keptImages.ts), so a sync
 // that read older lists never undoes what a later one withheld. A collection with no image costs a few
 // cache calls, not a few per figure, and a sync stops when the case view goes away (its fetches in
-// flight aborted) or a step of it stalls (src/media/keptImages.ts KEPT_SYNC_STEP_MS).
+// flight aborted), a list call stalls or the image link is dead (src/media/keptImages.ts KEPT_SYNC_STEP_MS).
+// PHOTOS1 (Ross 11-04: past the first cabinets the case stood as name cards for as long as the page stayed open): what a
+// sync that read the lists left unfetched is fetched by a fill (src/media/keptImages.ts fillKeptImages, from the kept lists,
+// asking the coordinator nothing) at the sync engine's next completed pass, and when the case view tells a new order (Free
+// camera walking, the old camera moving), in that order; never while a sync runs, and a sync stops a fill first.
 // IMG-SHOW-1: a sync of a large collection takes minutes (two images a figure), so the case view never
 // waits on it: it shows at once what the device kept, then each image as the sync keeps it (at most
 // every KEPT_SHOWN_EVERY_MS). Such an answer, and that of a sync that left an image unfetched, is

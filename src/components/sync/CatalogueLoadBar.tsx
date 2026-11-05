@@ -10,6 +10,8 @@
 // while no row of filter chips stands under the top bar. Elsewhere it is left to screen readers and the bar alone shows the
 // load: the Search field, the collection's rows of figure tiles, the filter chips, the Stats counts, and the screens whose
 // content scrolls under it (Settings; Profile, signed in, is a list of actions).
+// LOADBAR-2 (Ross 11-04: "so loading is hidden if there are filters?"): over the filter chips, the collection says it in a
+// strip of its own that covers the row (CatalogueLoadStrip).
 import { useEffect, useState } from 'preact/hooks';
 import { useLocation, useSearch } from 'wouter';
 import { localSession } from '../../local/session';
@@ -32,32 +34,57 @@ export const LOADBAR_SHOW_DELAY_MS = 600;
 
 const count = (n: number): string => n.toLocaleString('en-US');
 
-/** What the bar's label says. */
+/** What the bar's label, and the collection's load strip, say. */
 export function loadingLabel(loading: CatalogueLoading): string {
   return loading.step === 'cards' ? `Loading catalogue · ${count(loading.done)} of ${count(loading.total)}` : 'Loading catalogue…';
 }
 
-/** Whether `active` has lasted `delayMs`: true from then until it ends, false again at once when it does. */
+// LOADBAR-2 (challenge N2): when the load under way began, one time for every reader (the bar, the collection's load
+// strip), so one drawn part way through a load (the collection opened mid-load) shows it when the others do, not the delay
+// after; null while none loads, and forgotten when the last reader goes, none being left to see the load end.
+let loadBegan: number | null = null;
+let readers = 0;
+
+/** Whether `active`, the load, has lasted `delayMs` since it began: true from then until it ends, false again at once when it does. */
 function useAfterDelay(active: boolean, delayMs: number): boolean {
-  const [shown, setShown] = useState(false);
+  const [shown, setShown] = useState(() => active && loadBegan !== null && performance.now() - loadBegan >= delayMs);
+  useEffect(() => {
+    readers++;
+    return () => {
+      if (--readers === 0) loadBegan = null;
+    };
+  }, []);
   useEffect(() => {
     if (!active) {
+      loadBegan = null;
       setShown(false);
       return;
     }
-    const timer = setTimeout(() => setShown(true), delayMs);
+    loadBegan ??= performance.now();
+    const timer = setTimeout(() => setShown(true), loadBegan + delayMs - performance.now());
     return () => clearTimeout(timer);
   }, [active, delayMs]);
   return active && shown;
+}
+
+/**
+ * What of the catalogue loads, once the load has lasted LOADBAR_SHOW_DELAY_MS; null otherwise, at once when it ends. The dev
+ * fixtures, which have no sync engine, take theirs from the address (?fxloadbar=), followed as it changes.
+ */
+export function useCatalogueLoading(): CatalogueLoading | null {
+  // the fixtures' load is read from the address: drawn again as it changes
+  useSearch();
+  const loading = (isFixtureMode() ? getFixtureLoading() : null) ?? localSession.value?.engine.state.value.loading ?? null;
+  const shown = useAfterDelay(loading !== null, LOADBAR_SHOW_DELAY_MS);
+  return shown ? loading : null;
 }
 
 export function CatalogueLoadBar() {
   const [path] = useLocation();
   const search = useSearch();
   const chipsShown = useAppliedChipsShown();
-  const loading = (isFixtureMode() ? getFixtureLoading() : null) ?? localSession.value?.engine.state.value.loading ?? null;
-  const shown = useAfterDelay(loading !== null, LOADBAR_SHOW_DELAY_MS);
-  if (!shown || loading === null) return null;
+  const loading = useCatalogueLoading();
+  if (loading === null) return null;
   const known = loading.step === 'cards';
   const pct = known ? Math.round((loading.done / loading.total) * 1000) / 10 : 0;
   return (

@@ -18,6 +18,7 @@ import { imageRefFromProductImage } from '../components/display/figureArt';
 import { FigureViewer } from '../components/display/FigureViewer';
 import { DetailPane } from '../components/display/DetailPane';
 import { AppliedChips } from '../components/collection/AppliedChips';
+import { CatalogueLoadStrip } from '../components/sync/CatalogueLoadStrip';
 import { TabbedFilterSheet } from '../components/collection/TabbedFilterSheet';
 import { useCollection, useCollectionCounts } from '../hooks/useCollection';
 import { useLastSynced } from '../local/useLocal';
@@ -326,7 +327,10 @@ export function Collection() {
     <div class={`page-collection cq-grid ${shownLayout === 'case' ? 'page-collection--case' : ''}`} data-density={density} ref={pageRef}>
       <SlimHeader context={<span>Collection ({total})</span>} actions={headerActions} />
       {!fixtureMode && outOfReach && <LastSyncedBadge timestamp={lastSynced} />}
-      <AppliedChips filters={filters} defaults={defaults} shown={visible.length} total={total} onChange={setFilters} />
+      {/* LOADBAR-2: while the catalogue loads, a strip over the filter row says so */}
+      <CatalogueLoadStrip>
+        <AppliedChips filters={filters} defaults={defaults} shown={visible.length} total={total} onChange={setFilters} />
+      </CatalogueLoadStrip>
 
       <div class={`page-collection__body ${showDetailPane ? 'page-collection__body--split' : ''}`}>
         <div class="page-collection__grid-col">

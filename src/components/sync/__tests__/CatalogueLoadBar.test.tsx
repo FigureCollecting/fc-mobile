@@ -104,6 +104,50 @@ describe('CatalogueLoadBar', () => {
     expect(bar()).toBeNull();
   });
 
+  // LOADBAR-2 (challenge N2): the bar stands for the whole app while the collection's load strip comes with its page; both
+  // read the load through useCatalogueLoading, and one drawn part way through a load keeps the time the load began.
+  const bars = () => document.querySelectorAll('.catalogue-loadbar').length;
+
+  it('LOADBAR-2: a reader drawn once the load shows (the collection opened mid-load) shows it at once, not the delay after', () => {
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS + 100));
+    expect(bars()).toBe(1);
+    render(<CatalogueLoadBar />);
+    expect(bars()).toBe(2);
+    // the load ends: both go at once; the next waits the delay in both
+    load(null);
+    expect(bars()).toBe(0);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS - 1));
+    expect(bars()).toBe(0);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(bars()).toBe(2);
+  });
+
+  it('LOADBAR-2: a reader drawn part way through the delay shows it with the first, when the load has lasted the delay', () => {
+    render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(400));
+    render(<CatalogueLoadBar />);
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS - 400 - 1));
+    expect(bars()).toBe(0);
+    act(() => void vi.advanceTimersByTime(1));
+    expect(bars()).toBe(2);
+  });
+
+  it('LOADBAR-2: once every reader has gone, one drawn later waits the delay afresh (no time is kept with no one to see the load end)', () => {
+    const first = render(<CatalogueLoadBar />);
+    load({ step: 'pull', pages: 0 });
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    expect(bars()).toBe(1);
+    first.unmount();
+    render(<CatalogueLoadBar />);
+    expect(bars()).toBe(0);
+    act(() => void vi.advanceTimersByTime(LOADBAR_SHOW_DELAY_MS));
+    expect(bars()).toBe(1);
+  });
+
   it('on a screen whose top holds a control (Search: its field), the label is left to screen readers, not drawn over it; the bar stays', () => {
     window.history.pushState({}, '', '/discover');
     render(<CatalogueLoadBar />);

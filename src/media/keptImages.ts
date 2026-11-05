@@ -301,20 +301,31 @@ const FIRST_BATCHES = [25, 50, 100];
  * one after another): up to LIST_CALLS_IN_FLIGHT batches are read at once, and `onBatch` is told each batch's lists once all
  * its pages are read, the first batches then smaller (25, 50, 100 heads). An aborted signal stops it between calls and aborts
  * the calls in flight; a call the coordinator has not answered within KEPT_SYNC_STEP_MS fails it. A call that fails starts no
- * other batch and fails it once the calls in flight end, and no batch is told after it.
+ * other batch and fails it once the calls in flight end, and no batch is told after it. Given `order`, each batch is formed
+ * as it starts, of the heads left that the order names first, then the rest as given.
  */
 export async function fetchImageLists(
   client: ImageListClient,
   heads: readonly string[],
   signal?: AbortSignal,
   onBatch?: (lists: Map<string, ProductImage[]>) => void,
+  order?: () => readonly string[],
 ): Promise<Map<string, ProductImage[]>> {
-  const batches: string[][] = [];
-  for (let at = 0, k = 0; at < heads.length; k += 1) {
+  // each batch formed as it starts: given an order, of the heads it names first (the case view's, as it moves)
+  const left = new Set(heads);
+  let k = 0;
+  const nextBatch = (): string[] => {
     const size = onBatch === undefined ? MAX_HEADS_PER_CALL : (FIRST_BATCHES[k] ?? MAX_HEADS_PER_CALL);
-    batches.push(heads.slice(at, at + size));
-    at += size;
-  }
+    k += 1;
+    const from = order === undefined ? left : namedFirst([...left], order());
+    const batch: string[] = [];
+    for (const head of from) {
+      if (batch.length === size) break;
+      batch.push(head);
+    }
+    for (const head of batch) left.delete(head);
+    return batch;
+  };
   const read = new Map<string, ProductImage[]>();
   let failure: { error: unknown } | undefined;
   const readBatch = async (headIds: string[]) => {
@@ -333,13 +344,13 @@ export async function fetchImageLists(
     }
     if (failure !== undefined) return;
     for (const [head, images] of lists) read.set(head, images);
-    onBatch?.(lists);
+    // every head of the batch, one with no image as an empty list: its images are not still to come
+    onBatch?.(new Map(headIds.map((head) => [head, lists.get(head) ?? []])));
   };
-  let next = 0;
-  const lanes = Array.from({ length: Math.min(LIST_CALLS_IN_FLIGHT, batches.length) }, async () => {
-    while (failure === undefined && next < batches.length) {
+  const lanes = Array.from({ length: LIST_CALLS_IN_FLIGHT }, async () => {
+    while (failure === undefined && left.size > 0) {
       try {
-        await readBatch(batches[next++]!);
+        await readBatch(nextBatch());
       } catch (error) {
         failure ??= { error };
       }
@@ -361,7 +372,11 @@ function namedFirst(heads: readonly string[], first: readonly string[] | undefin
 }
 
 /** The kept figures' lists (fetchImageLists): told batch by batch when it can, so a sync starts on the first figures' images early (LOAD2). */
-export type ListsReader = (heads: readonly string[], onBatch?: (lists: Map<string, ProductImage[]>) => void) => Promise<Map<string, ProductImage[]>>;
+export type ListsReader = (
+  heads: readonly string[],
+  onBatch?: (lists: Map<string, ProductImage[]>) => void,
+  order?: () => readonly string[],
+) => Promise<Map<string, ProductImage[]>>;
 
 interface SyncOptions {
   storage?: CacheStorage | undefined;
@@ -576,12 +591,20 @@ interface FetchQueue {
   add(addresses: Iterable<string>): void;
   next(): Promise<string | undefined>;
   close(drop?: boolean): void;
+  /** Told that a head's list arrived (no longer in `unread`). */
+  wake(): void;
 }
 
-function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (() => readonly string[]) | undefined): FetchQueue {
+/**
+ * `unread`: the heads whose images may still come (their lists not read, or not kept yet): while it names one, no address is
+ * taken that `first` ranks after it, so the fetches go in `first` order across the batches the lists come in.
+ */
+function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (() => readonly string[]) | undefined, unread: ReadonlySet<string> = NO_ADDRESSES): FetchQueue {
   const queued: string[] = [];
   const addedAt = new Map<string, number>();
   let orderedBy: readonly string[] | undefined;
+  let rank = new Map<string, number>();
+  const rankOf = (head: string) => rank.get(head) ?? orderedBy!.length;
   let closed = false;
   let waiting: (() => void)[] = [];
   const wake = () => {
@@ -600,24 +623,31 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
       wake();
     },
     async next() {
-      while (queued.length === 0 && !closed) await new Promise<void>((res) => waiting.push(res));
-      const order = first?.() ?? NO_HEADS;
-      if (order !== orderedBy) {
-        orderedBy = order;
-        const rank = new Map<string, number>();
-        order.forEach((head, i) => {
-          if (!rank.has(head)) rank.set(head, i);
-        });
-        const at = new Map(queued.map((u) => [u, Math.min(...(shownFor.get(u) ?? NO_HEADS).map((head) => rank.get(head) ?? order.length))]));
-        queued.sort((a, b) => at.get(a)! - at.get(b)! || addedAt.get(a)! - addedAt.get(b)!);
+      for (;;) {
+        while (queued.length === 0 && !closed) await new Promise<void>((res) => waiting.push(res));
+        const order = first?.() ?? NO_HEADS;
+        if (order !== orderedBy) {
+          orderedBy = order;
+          rank = new Map();
+          order.forEach((head, i) => {
+            if (!rank.has(head)) rank.set(head, i);
+          });
+          const at = new Map(queued.map((u) => [u, Math.min(...(shownFor.get(u) ?? NO_HEADS).map(rankOf))]));
+          queued.sort((a, b) => at.get(a)! - at.get(b)! || addedAt.get(a)! - addedAt.get(b)!);
+        }
+        if (queued.length === 0 || closed || unread.size === 0) return queued.shift();
+        let bound = Infinity;
+        for (const head of unread) bound = Math.min(bound, rankOf(head));
+        if (Math.min(...(shownFor.get(queued[0]!) ?? NO_HEADS).map(rankOf)) <= bound) return queued.shift();
+        await new Promise<void>((res) => waiting.push(res));
       }
-      return queued.shift();
     },
     close(drop = false) {
       closed = true;
       if (drop) queued.length = 0;
       wake();
     },
+    wake,
   };
 }
 
@@ -723,7 +753,9 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
   const headSet = new Set(heads);
   // the kept figures each kept address is shown for (FETCH-FIRST: it is fetched where the first of them comes)
   const shownFor = new Map<string, string[]>();
-  const queue = fetchQueue(shownFor, options.first);
+  // the heads whose images may still come before the lists are all read: those whose lists did not come, or were kept before
+  const unread = new Set(heads);
+  const queue = fetchQueue(shownFor, options.first, unread);
   // the addresses whose bytes are here: of the kept figures once the lists are read
   const have = new Set<string>();
   let tell = () => {};
@@ -737,7 +769,8 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
   // figure the device kept no list for withholds nothing and replaces nothing, so once its batch is read its list is kept
   // and its images fetched, while the other lists are still read. What the device held before this sync is read first, once,
   // before anything is written. A figure it kept a list for waits for every list, as what it withholds is read from all of
-  // them. A write the device refuses here stops this and is left to the writes below.
+  // them. A write the device refuses here stops this and is left to the writes below. The fetches still go in `first` order
+  // across batches (fetchQueue's unread): one is not taken while a head ranked before it may still bring images.
   let early: { records: Cache; media: Cache; tomb: Cache; before: Map<string, CachedImage[]>; lists: Map<string, CachedImage[]>; withheld: Set<string>; written: Set<string> } | undefined;
   let earlyStopped = false;
   let keeping: Promise<void> = Promise.resolve();
@@ -760,7 +793,10 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
       if (!headSet.has(head) || early.before.has(head) || aborted()) continue;
       const list = toCachedImages(images);
       const shown = answerable(list, options.choices?.get(head));
-      if (shown.length === 0) continue;
+      if (shown.length === 0) {
+        unread.delete(head);
+        continue;
+      }
       // an address a fresh list carries again is forgotten before it is fetched
       for (const u of addressesOf(list).filter((a) => early!.withheld.has(a))) {
         await early.tomb.delete(withheldKey(u));
@@ -770,8 +806,10 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
       early.written.add(head);
       early.lists.set(head, list);
       for (const u of addressesOf(shown)) if (!have.has(u)) shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
+      unread.delete(head);
       queue.add(addressesOf(shown).filter((u) => !have.has(u)));
     }
+    queue.wake();
     tell();
     void fetching(early.media);
   };
@@ -797,13 +835,15 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
   async function keepTheLists(): Promise<KeptImageSync> {
     let lists: Map<string, ProductImage[]>;
     try {
-      lists = await fetchLists(namedFirst(heads, options.first?.()), onBatch);
+      lists = await fetchLists(namedFirst(heads, options.first?.()), onBatch, options.first);
       // Cancelled (the case view went away, or a newer sync replaced this one): no cache is touched but a new figure's (LOAD2).
       options.signal?.throwIfAborted();
       options.onListsRead?.();
-    } finally {
-      // no early write starts after this point, and the one under way ends first
+    } catch (error) {
+      // no early write starts after a failure, and the one under way ends first
       earlyStopped = true;
+      throw error;
+    } finally {
       await keeping;
     }
     // Cancelled while a new figure's list was written: nothing else is touched.
@@ -922,6 +962,7 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
     tell();
     queue.add([...keep].filter((u) => !have.has(u)));
     queue.close();
+    unread.clear();
     await fetching(media);
     result.figures = kept.size;
     result.images = keep.size;

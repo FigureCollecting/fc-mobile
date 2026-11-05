@@ -84,6 +84,8 @@ describe('FETCH-FIRST: the Collection page fetches the pictures of the figures i
 
     await waitFor(() => expect(storage.added).toHaveLength(FIGURES), { timeout: 4000 });
     const fetched = storage.added.map((q) => q.url);
-    expect(fetched).toEqual([...inView, ...standing.filter((id) => !inView.includes(id))].map((id) => photo(indexOf(id))));
+    // PHOTOS1: those in view nearest the middle of the view first (the case's order of them), then the rest as it stands them
+    expect([...fetched.slice(0, inView.length)].sort()).toEqual(inView.map((id) => photo(indexOf(id))).sort());
+    expect(fetched.slice(inView.length)).toEqual(standing.filter((id) => !inView.includes(id)).map((id) => photo(indexOf(id))));
   });
 });

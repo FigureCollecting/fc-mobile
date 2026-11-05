@@ -172,7 +172,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails)
           if (choiceKey !== '' && (await keepChosenPhotos(kept, allChoices, { signal })) > 0) shown.show(await keptImages(kept, undefined, allChoices));
           const synced = await duringOwnSync(client, queryKey, () =>
-            syncKeptImages(kept, (h, onBatch) => fetchImageLists(session!.clients.catalog, h, signal, onBatch), {
+            syncKeptImages(kept, (h, onBatch, order) => fetchImageLists(session!.clients.catalog, h, signal, onBatch, order), {
               signal,
               onListsRead: () => (read = true),
               onKept: shown.show,

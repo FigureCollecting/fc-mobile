@@ -436,7 +436,7 @@ describe('syncKeptImages', () => {
       h2: [img('c')],
     });
     const result = await syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage });
-    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3'], expect.any(Function));
+    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3'], expect.any(Function), undefined);
     expect(await owned(storage)).toEqual([url('a'), url('c'), url('f')].sort());
     expect(storage.added.every((r) => r.mode === 'cors' && r.credentials === 'omit')).toBe(true);
     // The origin answers immutable: a byte the HTTP cache kept would outlive its eviction from the owned cache.
@@ -467,7 +467,7 @@ describe('syncKeptImages', () => {
     const storage = device();
     const fetchLists = lists({ h1: [img('a')], h2: [img('b')], h3: [img('c')] });
     await syncKeptImages(['h1', 'h1', 'h2', 'h3'], fetchLists, { storage, max: 2 });
-    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2'], expect.any(Function));
+    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2'], expect.any(Function), undefined);
     expect(await owned(storage)).toEqual([url('a'), url('b')]);
   });
 
@@ -665,6 +665,28 @@ describe('fetchImageLists: lists read side by side, and told a batch at a time (
     expect(got.size).toBe(400);
   });
 
+  it('given an order, forms each batch as it starts, from the heads the order names first then (a view that moved while the lists are read is followed)', async () => {
+    const coordinator = slow();
+    let order: readonly string[] = [];
+    await fetchImageLists(coordinator as never, heads(400), undefined, () => {
+      // the case view drew its first view: figures 300-309
+      order = heads(400).slice(300, 310);
+    }, () => order);
+    const asked = coordinator.getProductImages.mock.calls.map(([r]) => r.headIds);
+    // the first three batches went out at once, before any order was told; the next takes 300-309 first
+    expect(asked.slice(0, 3)).toEqual([heads(25), heads(75).slice(25), heads(175).slice(75)]);
+    expect(asked[3]!.slice(0, 10)).toEqual(heads(400).slice(300, 310));
+    expect(asked[3]!.slice(10, 12)).toEqual(['h175', 'h176']);
+  });
+
+  it('tells every head of a batch, one with no image as an empty list, so the sync knows its images are not still to come', async () => {
+    const getProductImages = vi.fn(async (req: { headIds: string[] }) => ({ products: [{ headId: req.headIds[0]!, images: [img('a', { primary: true })] }], nextPageToken: '' }));
+    const told: [string, number][][] = [];
+    const got = await fetchImageLists({ getProductImages } as never, ['h1', 'h2'], undefined, (b) => told.push([...b].map(([h, i]) => [h, i.length])));
+    expect(told).toEqual([[['h1', 1], ['h2', 0]]]);
+    expect([...got.keys()]).toEqual(['h1']);
+  });
+
   it('a call that fails starts no other batch and fails once the calls in flight end; no batch is told after it', async () => {
     let calls = 0;
     const told: number[] = [];
@@ -723,6 +745,42 @@ describe('syncKeptImages: the first figures\' images fetched while the other lis
     expect(await sync).toEqual({ figures: 3, images: 3, added: 3, evicted: 0, failed: 0, absent: 0 });
     expect(owned(storage)).toEqual([url('a'), url('b'), url('c')]);
     expect(storage.added).toHaveLength(3);
+  });
+
+  it('fetches in `first` order across batches: a batch read early waits for a head `first` ranks before it whose list is still to come', async () => {
+    const storage = device();
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    // h1's batch went out before the view told its order, and is read first; the view ranks h3 first
+    const fetchLists = async (_heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([['h1', KEPT.h1!]]));
+      await held;
+      onBatch?.(new Map([['h2', KEPT.h2!], ['h3', KEPT.h3!]]));
+      return new Map(Object.entries(KEPT));
+    };
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, first: () => ['h3', 'h2', 'h1'] });
+    await settle();
+    expect(storage.added).toEqual([]);
+    release();
+    await sync;
+    expect(storage.added.map((r) => r.url)).toEqual([url('c'), url('b'), url('a')]);
+  });
+
+  it('a head `first` ranks first that has no image does not hold the others back once its batch is read', async () => {
+    const storage = device();
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const fetchLists = async (_heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([['h0', []], ['h1', KEPT.h1!]]));
+      await held;
+      onBatch?.(new Map([['h2', KEPT.h2!], ['h3', KEPT.h3!]]));
+      return new Map(Object.entries(KEPT));
+    };
+    const sync = syncKeptImages(['h0', 'h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, first: () => ['h0', 'h1', 'h2', 'h3'] });
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    release();
+    await sync;
   });
 
   it('a figure the device kept a list for waits for every list (what it withholds is read from all of them), and what was kept stays shown meanwhile', async () => {

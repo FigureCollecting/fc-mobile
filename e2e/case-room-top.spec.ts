@@ -11,8 +11,8 @@ import { watchPull } from './pullWatch';
  * move very slightly lower for room top to render fully"). Camera mode, raised as far as one up/down drag series goes
  * (the rack wall, fixture mode): the frame's top band is the room's ceiling, drawn, not the page behind the case. On
  * 8c565638 the camera rose to the ceiling's own height (data-camera y = data-room ceilingMm), where the ceiling is
- * edge-on and the band above the wall's top is blank, at every Fold8 panel. In pan mode the photo's slide ends with
- * the wall's gradient at the frame's top: held here too.
+ * edge-on and the band above the wall's top is blank, at every Fold8 panel. (NAV-2A2, Ross 11-04: the pan mode's test
+ * went with the pan mode.)
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -33,7 +33,6 @@ const camera = async (page: Page) => {
   return {
     y: (JSON.parse((await host.getAttribute('data-camera'))!) as { y: number }).y,
     ceilingMm: (JSON.parse((await host.getAttribute('data-room'))!) as { ceilingMm: number }).ceilingMm,
-    panY: Number(await host.getAttribute('data-pan-y')),
   };
 };
 
@@ -46,12 +45,12 @@ async function topBandMean(page: Page): Promise<number> {
   return sum / (shot.data.length / 4);
 }
 
-async function openRack(page: Page, size: { width: number; height: number }, swipe: 'camera' | 'pan'): Promise<void> {
+async function openRack(page: Page, size: { width: number; height: number }): Promise<void> {
   await page.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'wall', swipe, pattern: 'open-steel-rack' }));
+  }, legacyPrefs({ view: 'wall', pattern: 'open-steel-rack' }));
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=170&labels=1');
   await page.waitForSelector('button.cab-figure');
@@ -81,21 +80,14 @@ async function toTop(page: Page): Promise<void> {
 
 for (const panel of CASE_VIEWPORTS) {
   test(`${panel.name}: camera mode raised as far as it goes shows the ceiling at the frame's top, not the page behind`, async ({ page }, testInfo) => {
-    await openRack(page, panel, 'camera');
+    await openRack(page, panel);
     const before = await topBandMean(page);
     await toTop(page);
     const c = await camera(page);
     const mean = await topBandMean(page);
-    console.log(`case-room-top ${JSON.stringify({ panel: panel.name, swipe: 'camera', cameraY: c.y, ceilingMm: c.ceilingMm, bandMeanBefore: Math.round(before), bandMeanAtTop: Math.round(mean) })}`);
+    console.log(`case-room-top ${JSON.stringify({ panel: panel.name, cameraY: c.y, ceilingMm: c.ceilingMm, bandMeanBefore: Math.round(before), bandMeanAtTop: Math.round(mean) })}`);
     await testInfo.attach('top limit', { body: await page.screenshot(), contentType: 'image/png' });
     expect(c.y, 'the camera stays under the ceiling').toBeLessThan(c.ceilingMm);
     expect(mean, "the frame's top band at the top limit").toBeGreaterThan(CEILING_MEAN_MIN);
   });
 }
-
-test('pan mode slid down as far as it goes shows the room at the frame top (as before)', async ({ page }) => {
-  await openRack(page, CASE_VIEWPORTS.find((v) => v.name === 'fold8-open-rotated')!, 'pan');
-  await toTop(page);
-  expect((await camera(page)).panY, 'the photo slid down').toBeGreaterThan(0);
-  expect(await topBandMean(page), "the frame's top band at the top limit").toBeGreaterThan(CEILING_MEAN_MIN);
-});

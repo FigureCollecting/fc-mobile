@@ -24,7 +24,7 @@ import { SyncEngine } from '../../sync/engine';
 import { CASE_PREFS_KEY } from '../../components/display/casePrefs';
 
 /** What this device keeps for the case: nothing here is a default. */
-const STORED = { pattern: 'ikea-detolf', view: 'shelf', swipe: 'pan', ceilingMm: 2743.2 };
+const STORED = { pattern: 'ikea-detolf', view: 'shelf', ceilingMm: 2743.2 };
 
 beforeEach(() => {
   localStorage.setItem(CASE_PREFS_KEY, JSON.stringify(STORED));
@@ -39,7 +39,6 @@ afterEach(() => {
 const prefsOf = (scene: HTMLElement) => ({
   pattern: scene.dataset.pattern,
   view: scene.dataset.view,
-  swipe: scene.dataset.swipe,
   ceilingMm: JSON.parse(scene.dataset.room!).ceilingMm as number,
 });
 

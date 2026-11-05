@@ -62,13 +62,12 @@ const CEILING_VIEWPORTS = 3;
 /** What the case may draw past the frame on each side, as a share of the frame. */
 const MARGIN = 0.5;
 
-type State = { name: string; swipe: 'camera' | 'pan'; swipes: number; view?: 'wall' | 'cabinet' | 'shelf'; pattern?: string };
+// NAV-2A2 (Ross 11-04): the pan mode is gone, and its pan-2 and pan-40 states with it
+type State = { name: string; swipes: number; view?: 'wall' | 'cabinet' | 'shelf'; pattern?: string };
 const STATES: State[] = [
-  { name: 'default', swipe: 'camera', swipes: 0 },
-  { name: 'camera-2', swipe: 'camera', swipes: 2 },
-  { name: 'pan-2', swipe: 'pan', swipes: 2 },
-  { name: 'camera-40', swipe: 'camera', swipes: 40 },
-  { name: 'pan-40', swipe: 'pan', swipes: 40 },
+  { name: 'default', swipes: 0 },
+  { name: 'camera-2', swipes: 2 },
+  { name: 'camera-40', swipes: 40 },
 ];
 
 /** The fixture wall: about 1,200 figures of the seven fixtures, or of one in every slot (?fxonly). */
@@ -110,15 +109,15 @@ const DENSE_LABELLED: Wall[] = [
   { name: 'spike wall at the 250 cap, labels on', query: 'fx=170&fxonly=spike&fxwidth=narrow&fxbranch=framed&labels=1' },
 ];
 const PATTERN_STATES: State[] = [
-  { name: 'wall as it opens', view: 'wall', swipe: 'camera', swipes: 0 },
-  { name: 'wall two swipes in', view: 'wall', swipe: 'camera', swipes: 2 },
-  { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0 },
-  { name: 'shelf view as it opens', view: 'shelf', swipe: 'camera', swipes: 0 },
+  { name: 'wall as it opens', view: 'wall', swipes: 0 },
+  { name: 'wall two swipes in', view: 'wall', swipes: 2 },
+  { name: 'cabinet view as it opens', view: 'cabinet', swipes: 0 },
+  { name: 'shelf view as it opens', view: 'shelf', swipes: 0 },
 ];
 const VIEW_STATES: State[] = [
-  { name: 'shelf view walked', view: 'shelf', swipe: 'camera', swipes: 2 },
-  { name: 'cabinet view as it opens', view: 'cabinet', swipe: 'camera', swipes: 0 },
-  { name: 'rack wall as it opens', view: 'wall', pattern: 'open-steel-rack', swipe: 'camera', swipes: 0 },
+  { name: 'shelf view walked', view: 'shelf', swipes: 2 },
+  { name: 'cabinet view as it opens', view: 'cabinet', swipes: 0 },
+  { name: 'rack wall as it opens', view: 'wall', pattern: 'open-steel-rack', swipes: 0 },
 ];
 
 async function swipe(page: Page, dx: number) {
@@ -388,7 +387,7 @@ async function settled(page: Page, size: { width: number; height: number }, stat
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
   // the walls the budget was measured on are packed with no clearance above a figure (the 1 in default, CLEAR-1, would pack them differently)
-  }, legacyPrefs({ view: state.view ?? 'wall', swipe: state.swipe, clearanceMm: 0, ...(state.pattern ? { pattern: state.pattern } : {}) }));
+  }, legacyPrefs({ view: state.view ?? 'wall', clearanceMm: 0, ...(state.pattern ? { pattern: state.pattern } : {}) }));
   await page.setViewportSize(size);
   const t0 = Date.now();
   await page.goto(`/?layout=case&${wall.query}`);
@@ -559,7 +558,7 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
     test(`the densest wall: at most DRAWN_FIGURES_LIMIT figures, none of the cabinets wholly in the frame empty, scene layers <= ${CEILING_VIEWPORTS} viewports, ${view} view: ${size.name}`, async ({ page }, testInfo) => {
       test.setTimeout(240_000);
       const wall: Wall = { name: 'densest wall, labels on', query: 'fx=250&fxonly=spike&fxwidth=narrow&fxbranch=framed&labels=1' };
-      const { scene, layers, viewport, filled } = await measured(page, size, { name: `densest ${view}`, view, swipe: 'camera', swipes: 0 }, wall, testInfo);
+      const { scene, layers, viewport, filled } = await measured(page, size, { name: `densest ${view}`, view, swipes: 0 }, wall, testInfo);
       figureChecks(scene);
       if (size.name === 'fold8-cover-sideways' && view === 'wall') expect.soft(scene.figureCap, 'the sideways cover\'s fifteen KLINGSBOs hold the limit').toBe(DRAWN_FIGURES_LIMIT);
       expect.soft(filled.empty, `cabinets wholly inside the frame drawn with no figure (counts ${filled.counts.join(',')})`).toEqual([]);
@@ -609,49 +608,47 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
   // it reported stayed right; the scene never scrolls, its picture is drawn where its camera and pan put it, and its
   // cabinets cover the frame wherever the wall stands in it. The mixed wall, pressed as soon as the case shows (the
   // challenger's repro: 2 runs in 5)
-  for (const mode of ['camera', 'pan'] as const) {
-    test(`swipes and presses never scroll the scene: its cabinets fill the frame where its camera puts them, ${mode} mode: ${size.name}`, async ({ page }) => {
-      test.setTimeout(180_000);
-      await page.addInitScript((prefs) => {
-        localStorage.setItem('onboarding_complete', '1');
-        localStorage.setItem('fc-fixture-mode', 'on');
-        localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-      }, legacyPrefs({ view: 'wall', swipe: mode, clearanceMm: 0, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' }));
-      await page.setViewportSize(size);
-      // a wall long enough for the steps' pages (CF1 a: a wide panel's page holds a dozen cabinets)
-      await page.goto('/?layout=case&fx=170');
-      await page.waitForSelector('button.cab-figure');
-      const host = page.locator('.cabinet-scene');
-      const next = page.getByRole('button', { name: 'Next cabinet' });
-      const prev = page.getByRole('button', { name: 'Previous cabinet' });
-      const steps: [string, () => Promise<void>][] = [
-        ['Next', () => next.click()],
-        ['Next', () => next.click()],
-        ['swipe -150', () => swipe(page, -150)],
-        ['Next', () => next.click()],
-        ['Prev', () => prev.click()],
-        ['swipe 200', () => swipe(page, 200)],
-        ['Prev', () => prev.click()],
-        ['swipe -400', () => swipe(page, -400)],
-        ['Next', () => next.click()],
-      ];
-      for (const [k, [name, step]] of steps.entries()) {
-        await step();
-        await page.waitForTimeout(200);
-        const at = `step ${k} ${name}`;
-        const placed = await host.evaluate((h) => {
-          const f = h.getBoundingClientRect();
-          const left = (sel: string) => h.querySelector(sel)!.getBoundingClientRect().left - f.left;
-          // the picture slides within the frame it is drawn in (CASE-FB1: centred, cropped on a wide panel)
-          return { scroll: [h.scrollLeft, h.scrollTop], picture: left('.cabinet-scene__viewport') - left('.cabinet-scene__frame'), prev: left('.cabinet-scene__step--prev') };
-        });
-        const scene = await drawn(page);
-        expect.soft(placed.scroll, `${at}: the scene scrolled`).toEqual([0, 0]);
-        expect.soft(placed.picture, `${at}: the picture's left edge against its pan ${scene.pan}`).toBeCloseTo(scene.pan, 0);
-        expect.soft(placed.prev, `${at}: the Previous button's left edge`).toBeCloseTo(4, 0);
-        const { blank, narrowest } = wallCover(scene);
-        expect.soft(blank, `${at}: bare wall inside the frame where the wall stands (px; a cabinet is ${Math.round(narrowest)} px)`).toBeLessThan(narrowest / 2);
-      }
-    });
-  }
+  test(`swipes and presses never scroll the scene: its cabinets fill the frame where its camera puts them: ${size.name}`, async ({ page }) => {
+    test.setTimeout(180_000);
+    await page.addInitScript((prefs) => {
+      localStorage.setItem('onboarding_complete', '1');
+      localStorage.setItem('fc-fixture-mode', 'on');
+      localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
+    }, legacyPrefs({ view: 'wall', clearanceMm: 0, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' }));
+    await page.setViewportSize(size);
+    // a wall long enough for the steps' pages (CF1 a: a wide panel's page holds a dozen cabinets)
+    await page.goto('/?layout=case&fx=170');
+    await page.waitForSelector('button.cab-figure');
+    const host = page.locator('.cabinet-scene');
+    const next = page.getByRole('button', { name: 'Next cabinet' });
+    const prev = page.getByRole('button', { name: 'Previous cabinet' });
+    const steps: [string, () => Promise<void>][] = [
+      ['Next', () => next.click()],
+      ['Next', () => next.click()],
+      ['swipe -150', () => swipe(page, -150)],
+      ['Next', () => next.click()],
+      ['Prev', () => prev.click()],
+      ['swipe 200', () => swipe(page, 200)],
+      ['Prev', () => prev.click()],
+      ['swipe -400', () => swipe(page, -400)],
+      ['Next', () => next.click()],
+    ];
+    for (const [k, [name, step]] of steps.entries()) {
+      await step();
+      await page.waitForTimeout(200);
+      const at = `step ${k} ${name}`;
+      const placed = await host.evaluate((h) => {
+        const f = h.getBoundingClientRect();
+        const left = (sel: string) => h.querySelector(sel)!.getBoundingClientRect().left - f.left;
+        // the picture slides within the frame it is drawn in (CASE-FB1: centred, cropped on a wide panel)
+        return { scroll: [h.scrollLeft, h.scrollTop], picture: left('.cabinet-scene__viewport') - left('.cabinet-scene__frame'), prev: left('.cabinet-scene__step--prev') };
+      });
+      const scene = await drawn(page);
+      expect.soft(placed.scroll, `${at}: the scene scrolled`).toEqual([0, 0]);
+      expect.soft(placed.picture, `${at}: the picture's left edge against its pan ${scene.pan}`).toBeCloseTo(scene.pan, 0);
+      expect.soft(placed.prev, `${at}: the Previous button's left edge`).toBeCloseTo(4, 0);
+      const { blank, narrowest } = wallCover(scene);
+      expect.soft(blank, `${at}: bare wall inside the frame where the wall stands (px; a cabinet is ${Math.round(narrowest)} px)`).toBeLessThan(narrowest / 2);
+    }
+  });
 }

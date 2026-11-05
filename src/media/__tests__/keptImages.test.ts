@@ -673,10 +673,12 @@ describe('fetchImageLists: lists read side by side, and told a batch at a time (
       order = heads(400).slice(300, 310);
     }, () => order);
     const asked = coordinator.getProductImages.mock.calls.map(([r]) => r.headIds);
-    // the first three batches went out at once, before any order was told; the next takes 300-309 first
+    // the first three batches went out at once, before any order was told; the next takes 300-309 first, and is small
+    // again (a new view's lists come within a call or two), the ones after it larger
     expect(asked.slice(0, 3)).toEqual([heads(25), heads(75).slice(25), heads(175).slice(75)]);
     expect(asked[3]!.slice(0, 10)).toEqual(heads(400).slice(300, 310));
     expect(asked[3]!.slice(10, 12)).toEqual(['h175', 'h176']);
+    expect(asked.map((a) => a.length)).toEqual([25, 50, 100, 25, 50, 100, 50]);
   });
 
   it('tells every head of a batch, one with no image as an empty list, so the sync knows its images are not still to come', async () => {

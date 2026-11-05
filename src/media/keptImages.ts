@@ -302,7 +302,8 @@ const FIRST_BATCHES = [25, 50, 100];
  * its pages are read, the first batches then smaller (25, 50, 100 heads). An aborted signal stops it between calls and aborts
  * the calls in flight; a call the coordinator has not answered within KEPT_SYNC_STEP_MS fails it. A call that fails starts no
  * other batch and fails it once the calls in flight end, and no batch is told after it. Given `order`, each batch is formed
- * as it starts, of the heads left that the order names first, then the rest as given.
+ * as it starts, of the heads left that the order names first, then the rest as given; one formed after the order changed
+ * (the case view drawn, or moved) is small again (25, 50, 100).
  */
 export async function fetchImageLists(
   client: ImageListClient,
@@ -314,10 +315,15 @@ export async function fetchImageLists(
   // each batch formed as it starts: given an order, of the heads it names first (the case view's, as it moves)
   const left = new Set(heads);
   let k = 0;
+  let formedBy: readonly string[] | undefined;
   const nextBatch = (): string[] => {
+    // PHOTOS1: an order told or changed since the last batch (the case view drawn, or moved) starts small again
+    const now = order?.();
+    if (now !== undefined && formedBy !== undefined && (now.length !== formedBy.length || now.some((head, i) => head !== formedBy![i]))) k = 0;
+    formedBy = now;
     const size = onBatch === undefined ? MAX_HEADS_PER_CALL : (FIRST_BATCHES[k] ?? MAX_HEADS_PER_CALL);
     k += 1;
-    const from = order === undefined ? left : namedFirst([...left], order());
+    const from = now === undefined ? left : namedFirst([...left], now);
     const batch: string[] = [];
     for (const head of from) {
       if (batch.length === size) break;

@@ -298,16 +298,14 @@ test("the case screen's chrome and cards are drawn after every collection switch
   expect(errors).toEqual([]);
 });
 
-test('after the wall is panned far (CC4 pan, 20 swipes of 400 px), the chrome, the tabs and the View card are still drawn', async ({ page, context }, testInfo) => {
+test('after the wall is walked far (CC4, 20 swipes of 400 px; NAV-2A2: the pan mode is gone), the chrome, the tabs and the View card are still drawn', async ({ page, context }, testInfo) => {
   test.setTimeout(420_000);
   inks.length = 0;
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view: 'wall', swipe: 'pan' }));
+  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view: 'wall' }));
   await openApp(page);
   await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 60_000 });
-  const scene = page.locator('.cabinet-scene');
-  await expect(scene).toHaveAttribute('data-swipe', 'pan');
   const failures: string[] = [];
   const top = { x: page.viewportSize()!.width / 2, y: 12 };
 
@@ -325,7 +323,7 @@ test('after the wall is panned far (CC4 pan, 20 swipes of 400 px), the chrome, t
   await page.locator('.case-tabs__tab[data-tab="view"]').tap();
   const card = page.locator('.bottom-sheet');
   await atRest(card);
-  await checkViewCard(page, testInfo, failures, 'the View card, panned');
+  await checkViewCard(page, testInfo, failures, 'the View card, walked');
   await page.locator('.bottom-sheet__backdrop').tap({ position: top });
   await expect(card).toHaveCount(0);
   await check(page, testInfo, failures, 'after closing the View card, panned', chrome(page));

@@ -8,8 +8,9 @@ import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
 // NAV-1A (rulings R0.2): with the Free camera off (absent or false) the case is today's to the byte. The scene's whole DOM is
-// hashed after each step of a script of drags (walk, lift, pan, pan up/down), arrows, a pinch, Reset and a double-tap in
-// every view; the hashes were taken from develop fe967a7's CabinetScene before NAV-1A touched it.
+// hashed after each step of a script of drags (walk, lift, walk back, lower), arrows, a pinch, Reset and a double-tap in
+// every view; the hashes were taken from develop fe967a7's CabinetScene before NAV-1A touched it, and again at NAV-2A2 (Ross
+// 11-04), whose pan mode is gone: the script's two pan drags walk and lower the camera now (GOLDEN).
 
 const FRAME = { width: 443, height: 454 };
 type P = { x: number; y: number };
@@ -64,7 +65,6 @@ function script(patch: Partial<CasePrefs>): string[] {
   snap();
   button('Next cabinet');
   snap();
-  rerender(<CabinetScene {...props} prefs={prefs({ swipe: 'pan' })} />);
   drag(host(), 90, 0);
   snap();
   drag(host(), 0, -50);
@@ -96,9 +96,10 @@ function script(patch: Partial<CasePrefs>): string[] {
 /**
  * develop fe967a7, before NAV-1A; taken again at PACK1, which packs the case in its arrangement (series, then scale, then
  * name by default) and publishes it (data-arrange, data-order): with the list's order packed and those two left off, PACK1's
- * scene still gives fe967a7's hashes.
+ * scene still gives fe967a7's hashes. NAV-2A2: the script without its pan mode, on 34e5eb5's scene in camera mode with
+ * data-swipe left out, gives these to the step (checked once with a scratch copy of this file; not kept).
  */
-const GOLDEN: string[] = ["70626e10a1b07860","d2e1de7dd65c3285","fedf418df81c3737","d0d4aa0fef59f755","500d5fe9e34db204","500d5fe9e34db204","4fad32c385f01196","2d79e85a31686d59","6d83c6ae6ff57fec","f7883af4d317fd5b","5a387671bedd6f27","9f32ad78dad6b402","d338ddfef848a450","47ee6b4c705658d7","dabdba75fa2d7b5d"];
+const GOLDEN: string[] = ["2888a7a00b0df2eb","d58102745749a335","f39c54394a517dac","825b4ca11447498d","7c74b214f1660986","9158280e04a06a34","ce6422a7c2d1b500","ee0348300b0bfa91","edd439e9852b9e67","109bd20cb7ce6ab6","bd35778dc76bd1b2","9a465ef0cef5649e","93b680c86d8bae9b","4fb810f8bfbde4d6","25c1287d0d1594f7"];
 
 // Each step hashes the scene's whole DOM: under coverage on CI's runner the first test took 4.0-4.4 s (Vitest's default
 // is 5 s) and the second about 2.5 s. 20 s, as for the Free camera file's heavy tests

@@ -7,9 +7,9 @@
  * ceiling (CC9, which limits what may stand on a top), the
  * clearance every compartment keeps above a figure (CLEAR-1) and which side the
  * tabs sit on. What a sideways swipe does (CC4: walk the
- * camera or pan the wall) moved to the header, beside the display modes
- * (CAM1, Ross 10-18), and so did the view (whole cabinets, one cabinet, one
- * shelf: VIEWCARD-1, Ross 10-20, the header's Case menu chooses it).
+ * camera or pan the wall) moved to the header (CAM1, Ross 10-18) and is gone
+ * (NAV-2A2, Ross 11-04: a swipe moves the camera); the view (whole cabinets,
+ * one cabinet, one shelf: VIEWCARD-1, Ross 10-20) is the header's Case menu's.
  * "Doesn't fit (N)" opens the list of the figures the wall cannot take, whether or not
  * the case's chip for them is hidden (MISFIT-CHIP-1).
  * One quiet line says how many goods and media the case leaves off its shelves (FIGURES-ONLY-1).

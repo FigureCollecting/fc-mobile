@@ -105,7 +105,7 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 
   it('a two-finger pinch zooms toward the midpoint between the fingers, as one transform on the zoom layer; the camera, the walk and the pan stay', () => {
-    const { host, layer } = scene(getFixtureFigures(8), { swipe: 'camera', view: 'cabinet' });
+    const { host, layer } = scene(getFixtureFigures(8), { view: 'cabinet' });
     const before = still(host);
     zoomIn(host);
     const z = zoomOf(host);
@@ -145,7 +145,7 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 
   it('a second finger landing mid-swipe stops the walk where it started: a two-finger gesture never walks', () => {
-    const { host, onSelect } = scene(getFixtureFigures(8), { swipe: 'camera', view: 'cabinet' });
+    const { host, onSelect } = scene(getFixtureFigures(8), { view: 'cabinet' });
     const before = still(host);
     down(host, 11, { x: 300, y: 200 });
     move(host, 11, { x: 240, y: 200 });
@@ -164,7 +164,7 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 
   it('a pinch that ends back at 1x leaves its last finger unable to walk', () => {
-    const { host } = scene(getFixtureFigures(8), { swipe: 'camera', view: 'cabinet' });
+    const { host } = scene(getFixtureFigures(8), { view: 'cabinet' });
     const before = still(host);
     pinch(host, { x: 180, y: 260 }, { x: 260, y: 260 }, { x: 200, y: 260 }, { x: 240, y: 260 }, false);
     up(host, 12, { x: 240, y: 260 });
@@ -276,28 +276,26 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
 });
 
 describe('CabinetScene: panning while zoomed (PINCH-1)', () => {
-  for (const swipe of ['camera', 'pan'] as const) {
-    it(`${swipe} mode: zoomed, one finger pans the magnified picture; it never walks the wall, changes cabinets, lifts or slides the photo`, () => {
-      const { host, onSelect } = scene(getFixtureFigures(60), { swipe, view: 'wall' });
-      zoomIn(host);
-      const z0 = zoomOf(host);
-      const before = still(host);
-      drag(host, -150);
-      expect(zoomOf(host)).toEqual({ ...z0, x: z0.x - 150 });
-      drag(host, 0, 120);
-      expect(zoomOf(host)).toEqual({ ...z0, x: z0.x - 150, y: z0.y + 120 });
-      // a long drag stops at the picture's edge, still without a walk
-      for (let i = 0; i < 4; i++) drag(host, -400);
-      expect(zoomOf(host).x).toBeCloseTo(-FRAME.width, 6);
-      expect(still(host)).toEqual(before);
-      // the click a pan leaves opens nothing
-      fireEvent.click(figureButtons(host)[0]);
-      expect(onSelect).not.toHaveBeenCalled();
-    });
-  }
+  it('zoomed, one finger pans the magnified picture; it never walks the wall, changes cabinets, lifts or slides the photo', () => {
+    const { host, onSelect } = scene(getFixtureFigures(60), { view: 'wall' });
+    zoomIn(host);
+    const z0 = zoomOf(host);
+    const before = still(host);
+    drag(host, -150);
+    expect(zoomOf(host)).toEqual({ ...z0, x: z0.x - 150 });
+    drag(host, 0, 120);
+    expect(zoomOf(host)).toEqual({ ...z0, x: z0.x - 150, y: z0.y + 120 });
+    // a long drag stops at the picture's edge, still without a walk
+    for (let i = 0; i < 4; i++) drag(host, -400);
+    expect(zoomOf(host).x).toBeCloseTo(-FRAME.width, 6);
+    expect(still(host)).toEqual(before);
+    // the click a pan leaves opens nothing
+    fireEvent.click(figureButtons(host)[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 
   it('at 1x the swipe walks as before', () => {
-    const { host } = scene(getFixtureFigures(8), { swipe: 'camera', view: 'cabinet' });
+    const { host } = scene(getFixtureFigures(8), { view: 'cabinet' });
     const x0 = Number(host.dataset.cameraX);
     drag(host, -150);
     expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
@@ -473,7 +471,7 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
   });
 
   it('a drag between two taps is no double-tap', () => {
-    const { host } = scene(getFixtureFigures(8), { swipe: 'pan' });
+    const { host } = scene(getFixtureFigures(8));
     tap(host, { x: 200, y: 200 });
     drag(host, -60);
     tap(host, { x: 200, y: 200 });
@@ -522,35 +520,20 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
   });
 
-  // PAN-KEEP-1: the swipe mode is not a new picture (the camera stays across it): the zoom stays too, in the wall and cabinet
-  // views; in the shelf view a mode still starts from the frame at 1x (TOP1)
   for (const [what, base, next] of [
     ['view', {}, { view: 'shelf' }],
     ['wall', {}, { pattern: 'ikea-detolf' }],
-    ['swipe mode in the shelf view', { view: 'shelf' }, { swipe: 'pan' }],
     // PACK1: a new arrangement of the case, as a new sort
     ['arrangement', {}, { arrange: 'name' }],
   ] as const) {
     it(`switching the ${what} starts the picture at 1x, at once`, () => {
-      const { host, layer, again } = scene(getFixtureFigures(8), { swipe: 'camera', ...base });
+      const { host, layer, again } = scene(getFixtureFigures(8), { ...base });
       zoomIn(host);
-      again({ prefs: prefs({ swipe: 'camera', ...base, ...next }) });
+      again({ prefs: prefs({ ...base, ...next }) });
       expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
       expect(layer.style.transform).toBe('');
       expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
       expect(chip()).toBeNull();
-    });
-  }
-
-  for (const view of ['wall', 'cabinet'] as const) {
-    it(`switching the swipe mode keeps the zoom in the ${view} view`, () => {
-      const { host, again } = scene(getFixtureFigures(8), { swipe: 'camera', view });
-      zoomIn(host);
-      const zoomed = zoomOf(host);
-      expect(zoomed.k).toBeCloseTo(2, 6);
-      again({ prefs: prefs({ swipe: 'pan', view }) });
-      expect(zoomOf(host)).toEqual(zoomed);
-      expect(chip()).not.toBeNull();
     });
   }
 

@@ -7,8 +7,8 @@
  * legs show; wide screens show several cabinets. Ross 2026-10-09: clear,
  * see-through glass (CC13), neighbours drawn true (CC4a), the camera steps
  * back at a cabinet's top (CC4b; TOP1 10-18: the top step shows up to the
- * ceiling instead), and a sideways swipe either walks the
- * camera or pans the picture, a toggle kept per device (CC4, CC14).
+ * ceiling instead), and a sideways swipe walks the camera (CC4; NAV-2A2,
+ * Ross 11-04: the pan-the-picture mode is gone).
  *
  * The world is authored in CSS px at 1 px per mm (x right, y down = -world
  * y, z toward the viewer); every face is a flat element placed with
@@ -62,10 +62,8 @@ import {
   pagerReach,
   panFraming,
   panLimitsPx,
-  panStops,
   panYLimitsPx,
   roomBox,
-  settlePan,
   settleWalk,
   shelfSteps,
   swipeCamera,
@@ -946,9 +944,6 @@ function StepButton({ cls, label, disabled, onStep, onDrag, children }: { cls?: 
   );
 }
 
-/** PAN-KEEP-1: what starts the picture from its frame again besides the view and the wall: the swipe mode, in the shelf view only (TOP1). */
-const shelfSwipeKey = (prefs: CasePrefs): string => (prefs.view === 'shelf' ? prefs.swipe : '');
-
 /** MISFIT-CHIP-1: whether a touch landed on one of the scene's own controls (the do-not-fit chip, its list). */
 const onSceneUi = (target: EventTarget | null): boolean => target instanceof Element && target.closest('[data-scene-ui]') !== null;
 
@@ -1191,23 +1186,20 @@ export function CabinetScene({
   const [walkX, setWalkX] = useState<number | null>(null);
   const [pan, setPan] = useState(0);
   const [liveDx, setLiveDx] = useState(0);
-  // CASE-FB1 item 5: an up/down drag raises the camera with its aim (camera mode, mm) or slides the photo (pan mode, px)
+  // CASE-FB1 item 5: an up/down drag raises the camera with its aim (mm)
   const [lift, setLift] = useState(0);
   const [panY, setPanY] = useState(0);
   const [liveDy, setLiveDy] = useState(0);
 
-  // a new view or wall starts from its own framing. PAN-KEEP-1: a swipe mode does not, in the wall and cabinet views: the camera
-  // (its walk, its height) and the pan stay across Pan <-> Move the camera, so a perspective set in one is the one the other
-  // works from; Reset view is the way back. The shelf view still starts a mode from its frame (TOP1).
-  const framingKey = shelfSwipeKey(prefs);
-  // (a layout effect: the frame is back before the mode's picture is painted, as the filter's reset below is)
+  // a new view or wall starts from its own framing
+  // (a layout effect: the frame is back before the view's picture is painted, as the filter's reset below is)
   useLayoutEffect(() => {
     setWalkX(null);
     setPan(0);
     setLift(0);
     setPanY(0);
     setFramedFocus(null);
-  }, [prefs.view, prefs.pattern, framingKey]);
+  }, [prefs.view, prefs.pattern]);
   // CASE-FB2a (interim, REPACK_ON_FILTER): a new filter or sort packs its figures from the wall's start, and the view
   // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened.
   // PACK1: so does a new arrangement of the case
@@ -1258,15 +1250,14 @@ export function CabinetScene({
   // between the floor and the ceiling, and the walk keeps that height
   const along = walkX === null ? base : atX(base, walkX);
   const liftBy = (dy: number) => clampLift(along, ceilingMm, lift + (dy === 0 ? 0 : liftForDragMm(along, dy)));
-  // PAN-KEEP-1: the camera's height holds in pan mode too (a drag there slides the photo; it does not lift)
-  const walked = lifted(along, liftBy(prefs.swipe === 'camera' ? liveDy : 0));
-  const swiping = prefs.swipe === 'camera' && liveDx !== 0;
-  const framing = swiping ? swipeCamera(walked, wall, liveDx) : walked;
+  // NAV-2A2 (Ross 11-04): no pan mode: a drag always walks and lifts the camera
+  const walked = lifted(along, liftBy(liveDy));
+  const framing = liveDx !== 0 ? swipeCamera(walked, wall, liveDx) : walked;
   const [panMin, panMax] = panLimitsPx(framing, wall);
   const clampPan = (v: number) => Math.min(panMax, Math.max(panMin, v));
-  // the photo slides (a pan mode drag moves it; a camera mode drag does not, but what was panned stays panned: PAN-KEEP-1), and
-  // past its sane extent is retaken farther along (panFraming)
-  const shown = panFraming(framing, clampPan(pan + (prefs.swipe === 'pan' ? liveDx : 0)));
+  // the photo's slide (none since NAV-2A2: no drag slides it, and every reset puts it back at 0), past its sane extent
+  // retaken farther along (panFraming)
+  const shown = panFraming(framing, clampPan(pan));
   // NAV-1A: in Free camera the camera is the pose (on the framing's lens and frame); the pager pages from what its frame
   // centre looks at (rulings S7)
   const camera = free ? fc.camera(base.camera) : shown.framing.camera;
@@ -1286,10 +1277,10 @@ export function CabinetScene({
   // CAB-FOCUS-1: in the one-cabinet view, all either side of the focus cabinet is dimmed, from the edges of its silhouette
   // (CAB-EDGE-DIM-1: at the wall's ends too, where no neighbour stands)
   const dimFrom = prefs.view === 'cabinet' ? focusEdgesPx(camera, wall.cabinets[focusIdx]) : null;
-  // pan mode: the photo slides up and down too, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
+  // the photo's slide up and down, between the ceiling over the fronts and the floor line (CASE-FB1 item 5)
   const [panYMin, panYMax] = panYLimitsPx(shown.framing, wall, ceilingMm);
   const clampPanY = (v: number) => Math.min(panYMax, Math.max(panYMin, v));
-  const panYPx = clampPanY(panY + (prefs.swipe === 'pan' ? liveDy : 0));
+  const panYPx = clampPanY(panY);
   // CAB-FOCUS-1: the picture's x and y the frame shows at its edges (the picture is drawn slid by the pan)
   const shownWindow: Rect = { x0: -panPx, x1: -panPx + camera.frame.width, y0: -panYPx, y1: -panYPx + camera.frame.height };
 
@@ -1407,12 +1398,10 @@ export function CabinetScene({
       settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
     } else if (how !== 'live') setSharp(z);
   }, [settled]);
-  // a new view, wall, filter, arrangement (PACK1) or frame starts the picture at 1x, at once; so does a swipe mode in the
-  // shelf view, where it starts from the frame. PAN-KEEP-1: elsewhere the mode is not a new picture, and the zoom (which
-  // both modes treat alike: zoomed, one finger pans the magnified picture) stays with the camera
+  // a new view, wall, filter, arrangement (PACK1) or frame starts the picture at 1x, at once
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-  }, [prefs.view, prefs.pattern, framingKey, filterKey, prefs.arrange, frame.width, frame.height, showZoom]);
+  }, [prefs.view, prefs.pattern, filterKey, prefs.arrange, frame.width, frame.height, showZoom]);
 
   // CARD-VIEW-1: Go to. The wall is laid out (every figure in the place it keeps); a request is taken up once, after the resets
   // above (a layout effect declared after them: a new view's reset never undoes it), to the framing goToFigure gives
@@ -1590,18 +1579,8 @@ export function CabinetScene({
     setLiveDy(0);
     if (!commit) return;
     if (p.axis === 'y') {
-      // an up/down drag: the camera keeps the height it was raised to, the photo where it slid (CASE-FB1 item 5)
-      if (prefs.swipe === 'pan') setPanY(clampPanY(panY + dy));
-      else setLift(liftBy(dy));
-      return;
-    }
-    if (prefs.swipe === 'pan') {
-      // a pan of the wall view settles on the same kind of stop as a walk, where the photo can slide to one (NOTE 31)
-      if (prefs.view !== 'wall') setPan(clampPan(pan + dx));
-      else {
-        const stop = settlePan(walked, wall, panStops(walked, wall), pan, dx);
-        if (stop !== null) setPan(stop.panPx);
-      }
+      // an up/down drag: the camera keeps the height it was raised to (CASE-FB1 item 5)
+      setLift(liftBy(dy));
       return;
     }
     // a walk of the wall view settles on a stop: three cabinets or more whole, the wall's ends, or the one that stands
@@ -1627,7 +1606,7 @@ export function CabinetScene({
 
   // TOP1 (Ross 10-18): an arrow press in the one-shelf view snaps to the straight-on view that shows that whole shelf of the
   // focus cabinet: the walk, the pan, the lift and the zoom a drag or a pinch left are gone. Only the arrows do it; a drag
-  // or a pinch still moves the picture as the swipe mode says, from there. CAB-FOCUS-1: the one-cabinet view's arrows do
+  // or a pinch still moves the picture from there. CAB-FOCUS-1: the one-cabinet view's arrows do
   // the same, to the straight-on fit of the whole focus cabinet.
   const snapFrame = () => {
     setWalkX(null);
@@ -1844,7 +1823,6 @@ export function CabinetScene({
       // NAV-PTR-1: every drag on the scene is its own (a finger moving down raises the camera): never a pull to refresh
       data-own-gestures
       data-view={prefs.view}
-      data-swipe={prefs.swipe}
       // WALL-COLOUR-1: the wall's colour (both themes', as custom properties)
       data-wall-colour={prefs.wall}
       style={wallStyle(prefs.wall, prefs.wallCustom)}

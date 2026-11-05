@@ -8,8 +8,8 @@ import { JOG_FULL_PX } from '../src/components/display/casePose';
  * NAV-2A (NAVDEF a, Ross 10-31): Free camera is the case's default on every device, and the header's swipe button (the
  * camera icon) goes with it: one finger moves, a hold looks, the jog is always on and a tap on it is the menu. A swipe
  * mode stored before changes nothing in Free camera. The View card's box turns Free camera off on this device: the old
- * path, its swipe button with it, comes back and is kept. At the Fold8's four panels under a real finger (Chromium's
- * touch pipeline), and on a desktop with a mouse and a keyboard.
+ * path comes back and is kept, with no swipe button (NAV-2A2, Ross 11-04: its pan mode is gone too). At the Fold8's four
+ * panels under a real finger (Chromium's touch pipeline), and on a desktop with a mouse and a keyboard.
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -74,7 +74,7 @@ async function quickDrag(page: Page) {
 }
 
 for (const panel of FOLD8) {
-  test(`a fresh device: Free camera, no swipe icon, the jog on and its tap the menu; unticked, the old path's icon comes back and is kept: ${panel.name}`, async ({ page }) => {
+  test(`a fresh device: Free camera, no swipe icon, the jog on and its tap the menu; unticked, the old path is kept, with no swipe icon either (NAV-2A2): ${panel.name}`, async ({ page }) => {
     test.setTimeout(90_000);
     await openCase(page, panel);
     const scene = page.locator('.cabinet-scene');
@@ -96,7 +96,7 @@ for (const panel of FOLD8) {
     await expect(addSheet(page)).toBeVisible();
     await page.locator('.bottom-sheet__handle-area').click();
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
-    // the View card offers no pan, and its box is ticked; unticked, the case is the old path's, with its swipe icon
+    // the View card offers no pan, and its box is ticked; unticked, the case is the old path's, with no swipe icon (NAV-2A2)
     const box = await freeCameraBox(page);
     await expect(box).toBeChecked();
     await expect(page.getByText(/pan the wall/i)).toHaveCount(0);
@@ -104,18 +104,19 @@ for (const panel of FOLD8) {
     await expect(box).not.toBeChecked();
     await closeSheet(page);
     await expect(scene).not.toHaveAttribute('data-free-camera', /./);
-    await expect(swipeButton(page)).toHaveAttribute('aria-label', 'Swipe, Move the camera');
+    await expect(swipeButton(page)).toHaveCount(0);
+    expect(await headerControls(page)).toEqual(['display-toggle__btn:Case', 'display-toggle__btn:Tiles', 'display-toggle__cycle:Labels: off']);
     await expect(jogButton(page)).toHaveCount(0);
     // kept through a view change and a reload
     await page.getByRole('button', { name: /^Case,/ }).click();
     await page.getByRole('menuitemradio', { name: 'One cabinet' }).click();
     await expect(scene).toHaveAttribute('data-view', 'cabinet');
-    await expect(swipeButton(page)).toHaveCount(1);
+    await expect(swipeButton(page)).toHaveCount(0);
     await page.reload();
     await waitForCase(page);
     await expect(scene).toHaveAttribute('data-view', 'cabinet');
     await expect(scene).not.toHaveAttribute('data-free-camera', /./);
-    await expect(swipeButton(page)).toHaveAttribute('aria-label', 'Swipe, Move the camera');
+    await expect(swipeButton(page)).toHaveCount(0);
     await expect(await freeCameraBox(page)).not.toBeChecked();
   });
 
@@ -129,8 +130,20 @@ for (const panel of FOLD8) {
     const moved = await cameraOf(page);
     expect(moved.x, 'the drag walked the eye').toBeGreaterThan(start.x);
     expect([moved.yaw ?? 0, moved.pitch], 'and never turned it').toEqual([0, 0]);
-    // the stored mode is left as it was, for the old path
-    expect(JSON.parse((await page.evaluate(() => localStorage.getItem('fc-case-prefs')))!)).toMatchObject({ swipe: 'pan' });
+  });
+
+  test(`NAV-2A2: a device that stored Pan the wall with Free camera off: no icon, and a quick drag walks the camera, never pans: ${panel.name}`, async ({ page }) => {
+    await openCase(page, panel, { freeCamera: false, swipe: 'pan', view: 'wall' });
+    const scene = page.locator('.cabinet-scene');
+    await expect(scene).not.toHaveAttribute('data-free-camera', /./);
+    await expect(scene).not.toHaveAttribute('data-swipe', /./);
+    await expect(swipeButton(page)).toHaveCount(0);
+    expect(await headerControls(page)).toEqual(['display-toggle__btn:Case', 'display-toggle__btn:Tiles', 'display-toggle__cycle:Labels: off']);
+    const start = await cameraOf(page);
+    await quickDrag(page);
+    expect((await cameraOf(page)).x, 'the drag walked the camera').toBeGreaterThan(start.x);
+    await expect(scene).toHaveAttribute('data-pan', '0');
+    await expect(scene).toHaveAttribute('data-pan-y', '0');
   });
 }
 

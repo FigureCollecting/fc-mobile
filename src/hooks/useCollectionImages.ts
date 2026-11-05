@@ -74,14 +74,22 @@ let fetchOrder: readonly string[] = [];
 const orderHeard = new Set<() => void>();
 /**
  * PHOTOS1: the answers of a sync or a fill that left images unfetched, and when a fill may fetch them: at once after a sync
- * the link failed some of, REFILL_AFTER_MS after a fill it failed some of, and ABSENT_RECHECK_MS on when the only ones left
- * are display copies not made yet (404); so neither a walk nor a pass asks for them in a loop.
+ * the link failed some of; after a fill it failed some of, when the soonest address it was refused may be asked again (its
+ * wait doubling at each refusal, src/media/keptImages.ts REFUSED_WAIT_MS), and REFILL_AFTER_MS on at the soonest; and
+ * ABSENT_RECHECK_MS on when the only ones left are display copies not made yet (404); so neither a walk nor a pass asks for
+ * them in a loop. A fill the device refused an image for want of space leaves nothing for a fill: the next sync asks.
  */
 const leftover = new WeakMap<ReadonlyMap<string, CachedImage>, number>();
-/** PHOTOS1: when what this sync or fill left may be fetched (leftover), or undefined when it left nothing. */
+/** PHOTOS1: when what this sync or fill left may be fetched (leftover), or undefined when it left nothing a fill may fetch. */
 const leftAfter = (done: KeptImageFill, failedAfterMs: number): number | undefined =>
-  done.failed > 0 ? Date.now() + failedAfterMs : done.absent > 0 ? Date.now() + ABSENT_RECHECK_MS : undefined;
-/** PHOTOS1: how long a fill that left an image unfetched waits before another asks for it. */
+  done.full === true
+    ? undefined
+    : done.failed > 0
+      ? Math.max(Date.now() + failedAfterMs, done.retryAt ?? -Infinity)
+      : done.absent > 0
+        ? Date.now() + ABSENT_RECHECK_MS
+        : undefined;
+/** PHOTOS1: how long a fill that left an image unfetched waits at least before another asks for it. */
 export const REFILL_AFTER_MS = 30_000;
 /** PHOTOS1: a new order starts a fill this long after the case view stops telling new ones (a walk tells one each step). */
 export const FILL_AFTER_ORDER_MS = 250;

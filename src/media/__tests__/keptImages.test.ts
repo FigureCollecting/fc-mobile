@@ -17,6 +17,8 @@ import {
   KEPT_SYNC_STEP_MS,
   KEPT_SYNC_WAIT_MS,
   ABSENT_RECHECK_MS,
+  REFUSED_WAIT_MS,
+  REFUSED_WAIT_MAX_MS,
   KEPT_FETCHES,
   LIST_CALLS_IN_FLIGHT,
   WITHHELD_CACHE,
@@ -395,6 +397,128 @@ describe('a display copy not made yet (404) (PHOTOS1)', () => {
     const other = device(notYet('b'));
     await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: other });
     expect(other.added.map((r) => r.url)).toEqual([url('a'), url('b')]);
+  });
+});
+
+// PHOTOS1 fix round (B1: an origin refusing an image was asked again by every fill, 600 requests each 30 s for 300 figures,
+// a full device downloading each image only to drop it): a fill backs off per address, and a full device ends the fetching.
+describe('an address the link refused: a fill asks it again only after a wait that doubles (PHOTOS1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const KEPT = { h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] };
+  const T0 = 1_000_000;
+  afterEach(() => vi.useRealTimers());
+
+  it(`waits REFUSED_WAIT_MS (30 s) after a fill's refusal, then twice as long after each, at most ${10} min; answering when it may ask`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const storage = device(async (r) => (r.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    const asked = () => storage.added.filter((r) => r.url === url('b')).length;
+    expect(asked()).toBe(1);
+    // the sync's refusal holds nothing back: the fill after it asks at once
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: T0 + REFUSED_WAIT_MS });
+    expect(asked()).toBe(2);
+    let at = T0;
+    let times = 2;
+    const waits = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000];
+    for (const [i, wait] of waits.entries()) {
+      const due = at + wait;
+      vi.setSystemTime(due - 1);
+      expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: due });
+      expect(asked()).toBe(times);
+      vi.setSystemTime(due);
+      const next = waits[i + 1] ?? REFUSED_WAIT_MAX_MS;
+      expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: due + next });
+      times += 1;
+      expect(asked()).toBe(times);
+      at = due;
+    }
+    expect([REFUSED_WAIT_MS, REFUSED_WAIT_MAX_MS]).toEqual([30_000, 10 * 60_000]);
+  });
+
+  it('a sync asks a held address all the same; one served forgets its refusals, so its next wait starts at 30 s again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    let refusing = true;
+    const storage = device(async (r) => (refusing && r.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    await fillKeptImages(['h1', 'h2'], { storage });
+    vi.setSystemTime(T0 + REFUSED_WAIT_MS);
+    // refused twice by fills: held 60 s now
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toMatchObject({ retryAt: T0 + 3 * REFUSED_WAIT_MS });
+    refusing = false;
+    expect(await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage })).toMatchObject({ added: 1, failed: 0 });
+    // its bytes gone again (another document's sync evicted them), and the link refusing again
+    await (await storage.open(OWNED_MEDIA_CACHE)).delete(url('b'));
+    refusing = true;
+    const before = storage.added.length;
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: T0 + 2 * REFUSED_WAIT_MS });
+    expect(storage.added.length).toBe(before + 1);
+  });
+
+  it('a fetch the fill itself stopped (its case view gone) is no refusal: the next fill asks it at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    let hang = false;
+    const storage = device((r) =>
+      hang && r.url === url('b')
+        ? new Promise<Response>((_res, rej) => r.signal.addEventListener('abort', () => rej(r.signal.reason)))
+        : Promise.resolve(r.url === url('b') ? new Response('', { status: 503 }) : new Response('img')),
+    );
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    hang = true;
+    const stop = new AbortController();
+    const filling = fillKeptImages(['h1', 'h2'], { storage, signal: stop.signal });
+    await vi.waitFor(() => expect(storage.added).toHaveLength(3));
+    stop.abort();
+    await filling;
+    hang = false;
+    const now = Date.now();
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: now + REFUSED_WAIT_MS });
+    expect(storage.added).toHaveLength(4);
+  });
+
+  it('is remembered per device: another device\'s fill asks at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const refuse = async (r: Request) => (r.url === url('b') ? new Response('', { status: 503 }) : new Response('img'));
+    const one = device(refuse);
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: one });
+    await fillKeptImages(['h1', 'h2'], { storage: one });
+    const other = device(refuse);
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: other });
+    other.added.length = 0;
+    await fillKeptImages(['h1', 'h2'], { storage: other });
+    expect(other.added.map((r) => r.url)).toEqual([url('b')]);
+  });
+});
+
+describe('a device out of space (QuotaExceededError) (PHOTOS1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const heads = ['h1', 'h2', 'h3', 'h4'];
+  const KEPT = Object.fromEntries(heads.map((h, i) => [h, [img('abcd'[i]!, { primary: true })]]));
+  /** A device whose owned cache takes `room` images, then refuses each write for want of space. */
+  const full = (room: number, storage: ReturnType<typeof fakeCaches>) => {
+    const open = storage.open.bind(storage);
+    storage.open = (async (name: string) => {
+      const cache = await open(name);
+      if (name !== OWNED_MEDIA_CACHE) return cache;
+      const put = cache.put.bind(cache);
+      cache.put = async (...args: Parameters<Cache['put']>) => {
+        if (room <= 0) throw new DOMException('the device is full', 'QuotaExceededError');
+        room -= 1;
+        return put(...args);
+      };
+      return cache;
+    }) as typeof storage.open;
+    return storage;
+  };
+
+  it('ends a fill at the first image it refuses to keep: no other fetch starts, and it answers full, with no time to ask again (a sync fetches on: below)', async () => {
+    let refusing = true;
+    const storage = device(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(heads, lists(KEPT), { storage });
+    refusing = false;
+    full(1, storage);
+    storage.added.length = 0;
+    expect(await fillKeptImages(heads, { storage, concurrency: 1 })).toEqual({ added: 1, absent: 0, failed: 1, full: true });
+    expect(storage.added).toHaveLength(2);
   });
 });
 

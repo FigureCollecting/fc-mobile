@@ -128,6 +128,10 @@ function rememberAbsent(storage: CacheStorage, address: string): void {
   const seen = absentOf(storage);
   seen.delete(address);
   seen.set(address, Date.now());
+  trimOldest(seen);
+}
+/** PHOTOS1: a memory of addresses kept to MAX_ABSENT, the oldest forgotten first. */
+function trimOldest(seen: Map<string, unknown>): void {
   for (const oldest of seen.keys()) {
     if (seen.size <= MAX_ABSENT) break;
     seen.delete(oldest);
@@ -135,6 +139,26 @@ function rememberAbsent(storage: CacheStorage, address: string): void {
 }
 /** PHOTOS1: the image origin has no display copy at this address yet (a 404). */
 class AbsentImage extends Error {}
+/**
+ * PHOTOS1: how long a fill waits before asking again an address it was refused (a 5xx, a 403, a CORS or network failure, a
+ * stall), twice as long after each refusal after, at most REFUSED_WAIT_MAX_MS; an address served forgets its refusals. A
+ * sync asks it all the same (the case view opened again, the server reached again). Remembered per CacheStorage, in memory,
+ * as the 404s are: so an origin refusing every image is asked about 600 times in 10 minutes for 300 figures, not every 30 s.
+ */
+export const REFUSED_WAIT_MS = 30_000;
+export const REFUSED_WAIT_MAX_MS = 10 * 60_000;
+/** PHOTOS1: the addresses a fill was refused, when each may be asked again and how long it waited last, per CacheStorage. */
+const refusedAt = new WeakMap<CacheStorage, Map<string, { until: number; wait: number }>>();
+function rememberRefused(storage: CacheStorage, address: string): number {
+  let seen = refusedAt.get(storage);
+  if (seen === undefined) refusedAt.set(storage, (seen = new Map()));
+  const before = seen.get(address);
+  const wait = before === undefined ? REFUSED_WAIT_MS : Math.min(2 * before.wait, REFUSED_WAIT_MAX_MS);
+  seen.delete(address);
+  seen.set(address, { until: Date.now() + wait, wait });
+  trimOldest(seen);
+  return Date.now() + wait;
+}
 
 export interface CachedImage {
   url: string;
@@ -160,7 +184,12 @@ export interface KeptImageSync {
 }
 
 /** PHOTOS1: what a fill fetched (fillKeptImages). */
-export type KeptImageFill = Pick<KeptImageSync, 'added' | 'absent' | 'failed'>;
+export type KeptImageFill = Pick<KeptImageSync, 'added' | 'absent' | 'failed'> & {
+  /** PHOTOS1: the device refused to keep an image for want of space (QuotaExceededError): the fill started no other fetch. */
+  full?: true;
+  /** PHOTOS1: of a fill that left an address it was refused (REFUSED_WAIT_MS), the soonest one of them may be asked again. */
+  retryAt?: number;
+};
 
 /** The images a client may keep: only those on the public image address, a mask only when it is too. */
 export function toCachedImages(images: readonly ProductImage[]): CachedImage[] {
@@ -685,15 +714,25 @@ async function fetchQueued(
   options: { concurrency?: number; signal?: AbortSignal },
   result: KeptImageFill,
   landed: (address: string) => void,
+  asFill = false,
 ): Promise<void> {
   const width = Math.max(1, options.concurrency ?? KEPT_FETCHES);
   // fetches abandoned in a row, with no answer between
   let quiet = 0;
+  const refused = refusedAt.get(storage);
+  const retryAt = (at: number) => (result.retryAt = Math.min(result.retryAt ?? Infinity, at));
   const workers = Array.from({ length: width }, async () => {
-    for (let next = await queue.next(); next !== undefined && options.signal?.aborted !== true && quiet < width; next = await queue.next()) {
+    for (let next = await queue.next(); next !== undefined && options.signal?.aborted !== true && quiet < width && result.full !== true; next = await queue.next()) {
       // PHOTOS1: a display copy answered 404 a moment ago is not asked again
       if (knownAbsent(storage, next)) {
         result.absent += 1;
+        continue;
+      }
+      // PHOTOS1: nor by a fill, an address a fill was refused, until its wait is over
+      const held = asFill ? refused?.get(next) : undefined;
+      if (held !== undefined && held.until > Date.now()) {
+        result.failed += 1;
+        retryAt(held.until);
         continue;
       }
       let stalled = false;
@@ -701,12 +740,18 @@ async function fetchQueued(
       try {
         await fetchKept(media, next, options.signal, { stalled: () => (stalled = true), answered: () => (answered = true) });
         result.added += 1;
+        refusedAt.get(storage)?.delete(next);
         landed(next);
       } catch (error) {
         if (error instanceof AbsentImage) {
           rememberAbsent(storage, next);
           result.absent += 1;
-        } else result.failed += 1;
+        } else {
+          result.failed += 1;
+          // PHOTOS1: a fill out of space ends (each image after it would be downloaded only to be dropped); a sync fetches on
+          if (asFill && error instanceof DOMException && error.name === 'QuotaExceededError') result.full = true;
+          else if (asFill && options.signal?.aborted !== true) retryAt(rememberRefused(storage, next));
+        }
       }
       if (stalled) quiet += 1;
       else if (answered) quiet = 0;
@@ -758,10 +803,18 @@ async function fill(
   const queue = fetchQueue(shownFor, options.first);
   queue.add(shownFor.keys());
   queue.close();
-  await fetchQueued(storage, media, queue, options, result, (u) => {
-    have.add(u);
-    options.onKept?.(answersOf(lists, options.choices, have, withheld));
-  });
+  await fetchQueued(
+    storage,
+    media,
+    queue,
+    options,
+    result,
+    (u) => {
+      have.add(u);
+      options.onKept?.(answersOf(lists, options.choices, have, withheld));
+    },
+    true,
+  );
   return result;
 }
 

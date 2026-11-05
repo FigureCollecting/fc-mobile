@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { frameMargins } from '../src/components/display/caseCamera';
+import { DRAG_WALK_GAIN_X } from '../src/components/display/casePose';
 import { decodePng } from './paintCheck';
 import { touchPinch } from './touch';
 
@@ -288,9 +289,10 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
     await endDimsAsNeighbour(page, 'first', `${size.name} free first turned`);
     await sweep(page, -40, 'right');
     expect(await yaw(), 'turned back').toBeCloseTo(0, 3);
-    // walked to the last cabinet (Free camera retires the arrows: the frame centre's cabinet is the focus)
+    // walked to the last cabinet (Free camera retires the arrows: the frame centre's cabinet is the focus), half a frame a
+    // sweep: NAV-SWIPE-2X walks twice the finger, so the finger goes a quarter (half a frame overshot the last cabinet)
     const last = String((await wallLength(page)) - 1);
-    for (let i = 0; i < 20 && (await host.getAttribute('data-focus')) !== last; i++) await sweep(page, -size.width * 0.5);
+    for (let i = 0; i < 20 && (await host.getAttribute('data-focus')) !== last; i++) await sweep(page, (-size.width * 0.5) / DRAG_WALK_GAIN_X);
     await expect(host).toHaveAttribute('data-focus', last);
     await endDimsAsNeighbour(page, 'last', `${size.name} free last`);
     // turned toward the wall's end past Reset's 10 degrees, the last cabinet still the focus: its inner edge can leave the

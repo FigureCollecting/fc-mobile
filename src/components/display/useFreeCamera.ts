@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera } from './caseCamera';
 import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
-import { SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
+import { DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling, projector, type BudgetScene, type Projector, type SceneCost } from './caseBudget';
 import type { WallLayout, WallSlot } from './packCabinets';
 import type { Point } from './caseZoom';
@@ -400,7 +400,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       g.unlocked = gate.unlocked;
       const ddx = gate.x ? at.x - g.last.x : 0;
       const ddy = gate.y ? at.y - g.last.y : 0;
-      g.committed = walk(g.committed, ddx, ddy, g.anchor, base.focalPx, s.space, s.boxes, capOf(s, g.committed, g.span));
+      g.committed = walk(g.committed, ddx * DRAG_WALK_GAIN_X, ddy * DRAG_WALK_GAIN_Y, g.anchor, base.focalPx, s.space, s.boxes, capOf(s, g.committed, g.span));
       g.shown = g.committed;
     }
     g.last = at;

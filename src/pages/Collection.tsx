@@ -199,6 +199,10 @@ export function Collection() {
     () => sortFigures(applyFilters(scoped, filters), sort, order),
     [scoped, filters, sort, order],
   );
+  // PHOTOS1: the cards tell no order of their own: the image sync fetches in the order they list the figures, top first
+  useEffect(() => {
+    if (!fixtureMode && layout !== 'case') setFetchOrder(visible.map((f) => (f as LocalFigure).local.headId));
+  }, [fixtureMode, layout, visible]);
   // FIGURES-ONLY-1: the case stands figures only; goods and media stay in `visible` (the tiles, Info) and are counted for the View card
   const onShelves = useMemo(() => splitForShelves(visible), [visible]);
   // SIZE-BASIS-1: how many of the figures the case stands are sized from an estimate (the View card says so)

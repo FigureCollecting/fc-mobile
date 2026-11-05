@@ -785,7 +785,8 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
       for (const key of await media.keys()) have.add(key.url);
       const tomb = await storage.open(WITHHELD_CACHE);
       const withheld = new Set((await tomb.keys()).map((k) => addressOfWithheldKey(k.url)));
-      early = { records, media, tomb, before, lists: new Map(before), withheld, written: new Set() };
+      // what keptImages answers for the kept figures meanwhile: their lists as kept, a new one's once written
+      early = { records, media, tomb, before, lists: new Map([...before].filter(([head]) => headSet.has(head))), withheld, written: new Set() };
       const { lists } = early;
       tell = () => options.onKept?.(answersOf(lists, options.choices, have, withheld));
     }

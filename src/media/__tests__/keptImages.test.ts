@@ -783,6 +783,19 @@ describe('syncKeptImages: the first figures\' images fetched while the other lis
     await sync;
   });
 
+  it('tells, while the lists are read, only the figures still kept: one the device kept that left the collection is not named', async () => {
+    const storage = device();
+    await syncKeptImages(['h9'], async () => new Map([['h9', [img('d', { primary: true })]]]), { storage });
+    const { fetchLists, release } = twoBatches();
+    const told: string[][] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, onKept: (k) => told.push([...k.keys()]) });
+    await settle();
+    release();
+    await sync;
+    expect(told.length).toBeGreaterThan(0);
+    expect(told.some((k) => k.includes('h9'))).toBe(false);
+  });
+
   it('a figure the device kept a list for waits for every list (what it withholds is read from all of them), and what was kept stays shown meanwhile', async () => {
     const storage = device();
     await syncKeptImages(['h1'], async () => new Map([['h1', [img('d', { primary: true })]]]), { storage });

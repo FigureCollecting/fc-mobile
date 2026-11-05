@@ -574,6 +574,24 @@ describe('the refusal and 404 memories past 3,000 addresses (PHOTOS1)', () => {
     expect(asked).toEqual([3200, 3200, 3200, 3200, 3200, 3200, 3200]);
   }, 60_000);
 
+  // A full memory: each address a fill is refused again takes its own place, so none it holds is forgotten (S1).
+  it(`a fill backs off on every address of ${MAX_KEPT_FIGURES} figures each with a chosen photo (${4 * MAX_KEPT_FIGURES} addresses, a full memory), the origin refusing all`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const { heads, storage, choices } = await world(MAX_KEPT_FIGURES, MAX_KEPT_FIGURES, () => new Response('', { status: 503 }));
+    expect(new Set(storage.added.map((r) => r.url)).size).toBe(4 * MAX_KEPT_FIGURES);
+    const asked: number[] = [];
+    const waits: number[] = [];
+    for (let n = 0; n < 6; n += 1) {
+      const before = storage.added.length;
+      const done = await fillKeptImages(heads, { storage, choices });
+      asked.push(storage.added.length - before);
+      waits.push((done!.retryAt! - Date.now()) / 1000);
+      vi.setSystemTime(Math.max(Date.now() + REFUSED_WAIT_MS, done!.retryAt!));
+    }
+    expect(waits).toEqual([30, 60, 120, 240, 480, 600]);
+    expect(asked).toEqual(Array(6).fill(4 * MAX_KEPT_FIGURES));
+  }, 60_000);
+
   it(`a 404 of ${MAX_KEPT_FIGURES} figures with 100 chosen photos is not asked again for 10 min, one address refused all along`, async () => {
     vi.useFakeTimers({ toFake: ['Date'], now: T0 });
     const refused = at(0, 'a');

@@ -8,14 +8,14 @@ import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine } from '../../sync/engine';
-import { imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
+import { FILL_AFTER_ORDER_MS, REFILL_AFTER_MS, imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { OWNED_MEDIA_CACHE, rememberImages, syncKeptImages } from '../../media/keptImages';
+import { ABSENT_RECHECK_MS, OWNED_MEDIA_CACHE, recallImages, rememberImages, syncKeptImages } from '../../media/keptImages';
 import { installFakeLocks } from '../../test/fakeLocks';
 
 const D = 'https://images.figurecollecting.com/d';
@@ -28,6 +28,15 @@ async function keep(head: string, c: string, bytes = true): Promise<void> {
   if (bytes) await (await storage.open(OWNED_MEDIA_CACHE)).put(url(c), new Response('bytes'));
 }
 const settle = () => new Promise((res) => setTimeout(res, 50));
+/**
+ * Long enough for a new order's wait (FILL_AFTER_ORDER_MS) or a pass's effect to start any fill, and for that fill to ask what
+ * it asks, however loaded the host: each wait is set after the timers it must follow, so it fires after them.
+ */
+const quiet = async () => {
+  await new Promise((res) => setTimeout(res, FILL_AFTER_ORDER_MS + 100));
+  await settle();
+  await settle();
+};
 
 beforeEach(() => {
   storage = fakeCaches();
@@ -91,6 +100,19 @@ describe('useCollectionImages', () => {
     rerender();
     await settle();
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  // LOAD2 (Ross 11-04: about a minute from the cards to the first photo)
+  it('asks the coordinator for the lists of the figures the case view shows first, in its order, a small batch first (LOAD2)', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(create(GetProductImagesResponseSchema, {}));
+    await seedFigures(r, Array.from({ length: 30 }, (_, i) => ({ title: `F${i}` })));
+    setFetchOrder([headOf(29), headOf(3)]);
+    renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
+    await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+    const firstCall = r.clients.getProductImages.mock.calls[0]![0] as { headIds: string[] };
+    expect(firstCall.headIds).toHaveLength(25);
+    expect(firstCall.headIds.slice(0, 3)).toEqual([headOf(29), headOf(3), headOf(0)]);
   });
 
   it('asks for the owned figures first, then the ordered, then the wished, each figure once; never one no longer owned', async () => {
@@ -426,6 +448,52 @@ describe('useCollectionImages', () => {
     first.unmount();
   });
 
+  // PHOTOS1 (11-05: most misses were display copies the server had not made yet, 404): the layout waited QUIET_MS on them
+  it('imagesComplete: yes for a sync whose only misses are display copies not made yet (404): nothing the link could bring is missing (PHOTOS1)', async () => {
+    storage = fakeCaches(async (req) => (req.url === url('b') ? new Response('not found', { status: 404 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched' }, { title: 'Not made yet' }]);
+    const client = appClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
+    expect(imagesComplete(result.current)).toBe(true);
+    expect(result.current.has(headOf(1))).toBe(false);
+  });
+
+  it('a display copy not made yet (404) is asked for again by the first pass ABSENT_RECHECK_MS after, not by a pass or a walk before (PHOTOS1)', async () => {
+    let made = false;
+    storage = fakeCaches(async (req) => (req.url === url('b') && !made ? new Response('not found', { status: 404 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(realShaped());
+    await seedFigures(r, [{ title: 'Fetched' }, { title: 'Made later' }]);
+    const client = appClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    const asked = () => storage.added.filter((q) => q.url === url('b')).length;
+    expect(asked()).toBe(1);
+    made = true;
+    await nextPass(r);
+    setFetchOrder([headOf(1)]);
+    await quiet();
+    expect(asked()).toBe(1);
+    const now = Date.now();
+    const later = vi.spyOn(Date, 'now').mockReturnValue(now + ABSENT_RECHECK_MS);
+    try {
+      await nextPass(r);
+      await waitFor(() => expect(result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(asked()).toBe(2);
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    } finally {
+      later.mockRestore();
+    }
+  });
+
   it('imagesComplete: yes while signed out, where nothing will ever stream in', async () => {
     const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await new Promise((res) => setTimeout(res, 20));
@@ -463,21 +531,306 @@ describe('useCollectionImages', () => {
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
   });
 
-  it('a sync that read the lists and left an image unfetched is not synced again by a pass: the Collection page opened again does that (NEWHOLD-IMG-1)', async () => {
-    storage = fakeCaches(async () => new Response('', { status: 503 }));
+  // PHOTOS1 (Ross 11-04): the figures past the first cabinets stood as name cards for as long as the page stayed open
+  it('a sync that read the lists and left an image unfetched has it fetched at the engine\'s next pass, from the kept list: no list is read again (PHOTOS1)', async () => {
+    let refusing = true;
+    storage = fakeCaches(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
     vi.stubGlobal('caches', storage);
     vi.stubGlobal('fetch', storage.fetch);
     const r = await localRig();
-    await seedFigures(r, [{ title: 'Refused' }]);
+    await seedFigures(r, [{ title: 'Refused, then served' }]);
     r.clients.getProductImages.mockResolvedValue(oneImage(0, 'a'));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 30 * 60_000, networkMode: 'always' } } });
+    const client = appClient();
     const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
     await waitFor(() => expect(storage.added.map((q) => q.url)).toEqual([url('a')]));
     await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
     await waitFor(() => expect(imagesComplete(result.current)).toBe(false));
+    refusing = false;
     await nextPass(r);
-    await settle();
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    expect(storage.added.map((q) => q.url)).toEqual([url('a'), url('a')]);
     expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+    // nothing is left: a later pass fetches nothing
+    await nextPass(r);
+    await quiet();
+    expect(storage.added).toHaveLength(2);
+  });
+
+  it('a sync that left images unfetched: the view moved to them fetches them at once, in its order, with no pass and no list read (PHOTOS1)', async () => {
+    let refusing = true;
+    storage = fakeCaches(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, { products: [listWithMask(0, 'a', 'b'), listWithMask(1, 'c', 'd'), listWithMask(2, 'e', 'f')] }),
+    );
+    await seedFigures(r, [{ title: 'One' }, { title: 'Two' }, { title: 'Three' }]);
+    const client = appClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(storage.added).toHaveLength(6));
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    refusing = false;
+    // Free camera walked far along: the case now draws the third figure, then the first
+    setFetchOrder([headOf(2), headOf(0), headOf(1)]);
+    await waitFor(() => expect(result.current.size).toBe(3), { timeout: 3000 });
+    expect(storage.added.slice(6).map((q) => q.url)).toEqual(['e', 'f', 'a', 'b', 'c', 'd'].map(url));
+    expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+  });
+
+  /** A sync that read the lists of `n` figures (image c0, c1, ...) and left every image unfetched: the link refused them (503). */
+  const leftAll = async (n: number, link: (req: Request) => Promise<Response>) => {
+    storage = fakeCaches(link);
+    vi.stubGlobal('caches', storage);
+    vi.stubGlobal('fetch', storage.fetch);
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(
+      create(GetProductImagesResponseSchema, {
+        products: Array.from({ length: n }, (_, i) => ({ headId: headOf(i), images: [{ derivativeId: String(i).repeat(64), role: 'gallery', url: url(String(i)), width: 600, height: 800 }] })),
+      }),
+    );
+    await seedFigures(r, Array.from({ length: n }, (_, i) => ({ title: `F${i}` })));
+    const client = appClient();
+    const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(storage.added).toHaveLength(n), { timeout: 5000 });
+    await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1), { timeout: 5000 });
+    return { r, client, view };
+  };
+
+  it('a fill the link still refuses part of leaves the answer partial, and that image to a fill REFILL_AFTER_MS on, not one at every order (PHOTOS1)', async () => {
+    let serve = new Set<string>();
+    const { view } = await leftAll(2, async (req) => (serve.has(req.url) ? new Response('img') : new Response('', { status: 503 })));
+    serve = new Set([url('0')]);
+    setFetchOrder([headOf(0), headOf(1)]);
+    await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('0')), { timeout: 3000 });
+    expect(imagesComplete(view.result.current)).toBe(false);
+    const asked = storage.added.length;
+    expect(asked).toBe(4);
+    // the view moves again at once: the refused image is not asked for again yet
+    setFetchOrder([headOf(1), headOf(0)]);
+    await quiet();
+    expect(storage.added).toHaveLength(asked);
+    serve = new Set([url('0'), url('1')]);
+    const later = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + REFILL_AFTER_MS);
+    try {
+      setFetchOrder([headOf(1)]);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('1')), { timeout: 3000 });
+    } finally {
+      later.mockRestore();
+    }
+    expect(REFILL_AFTER_MS).toBe(30_000);
+  });
+
+  // PHOTOS1 fix round (B1): an origin refusing every image was asked again by a fill every 30 s for as long as the page stayed open
+  it('a fill that fetched nothing, the link refusing all, starts no other fill till the soonest refused address may be asked: 30 s, then 60 s (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { view } = await leftAll(2, async () => new Response('', { status: 503 }));
+      const locks = (navigator as unknown as { locks: { asked: string[] } }).locks;
+      const fills = locks.asked.length;
+      setFetchOrder([headOf(0), headOf(1)]);
+      await waitFor(() => expect(storage.added).toHaveLength(4));
+      await quiet();
+      const t = Date.now();
+      // the view moves again at once: no fill starts
+      setFetchOrder([headOf(1), headOf(0)]);
+      await quiet();
+      expect(locks.asked.length).toBe(fills + 1);
+      const at = (ms: number) => vi.spyOn(Date, 'now').mockReturnValue(t + ms);
+      try {
+        at(REFILL_AFTER_MS);
+        setFetchOrder([headOf(0), headOf(1)]);
+        await waitFor(() => expect(storage.added).toHaveLength(6));
+        // refused twice now: held 60 s more, so a pass or a move 30 s on starts no fill
+        at(2 * REFILL_AFTER_MS);
+        setFetchOrder([headOf(1), headOf(0)]);
+        await quiet();
+        expect(locks.asked.length).toBe(fills + 2);
+        at(3 * REFILL_AFTER_MS);
+        setFetchOrder([headOf(0), headOf(1)]);
+        await waitFor(() => expect(storage.added).toHaveLength(8));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      expect(view.result.current.size).toBe(0);
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('a fill the device refused to keep an image for want of space starts no other fill, however long the view moves; the next sync asks again (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      let serve = false;
+      const { r } = await leftAll(10, async () => (serve ? new Response('img') : new Response('', { status: 503 })));
+      serve = true;
+      const open = storage.open.bind(storage);
+      storage.open = (async (name: string) => {
+        const cache = await open(name);
+        if (name !== OWNED_MEDIA_CACHE) return cache;
+        cache.put = async () => {
+          throw new DOMException('the device is full', 'QuotaExceededError');
+        };
+        return cache;
+      }) as typeof storage.open;
+      const locks = (navigator as unknown as { locks: { asked: string[] } }).locks;
+      const fills = locks.asked.length;
+      const t = Date.now();
+      setFetchOrder([headOf(0), headOf(1)]);
+      await waitFor(() => expect(storage.added.length).toBeGreaterThan(10));
+      await quiet();
+      // the fetches in flight when the first write was refused end; no other starts
+      const asked = storage.added.length;
+      expect(asked).toBeLessThan(20);
+      vi.spyOn(Date, 'now').mockReturnValue(t + 20 * REFILL_AFTER_MS);
+      try {
+        setFetchOrder([headOf(1), headOf(0)]);
+        await quiet();
+        await nextPass(r);
+        await quiet();
+        expect(locks.asked.length).toBe(fills + 1);
+        expect(storage.added).toHaveLength(asked);
+      } finally {
+        vi.restoreAllMocks();
+      }
+      await r.engine.write((store) => store.createCopy(headOf(15), 'owned'));
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('a fill that finds nothing left to fetch (another document fetched it) leaves the answer as it is and asks nothing again (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { view } = await leftAll(1, async () => new Response('', { status: 503 }));
+      const before = view.result.current;
+      // another document of the app kept the bytes meanwhile
+      await (await storage.open(OWNED_MEDIA_CACHE)).put(url('0'), new Response('bytes'));
+      const locks = (navigator as unknown as { locks: { asked: string[] } }).locks;
+      const asked = locks.asked.length;
+      setFetchOrder([headOf(0)]);
+      await waitFor(() => expect(locks.asked.length).toBe(asked + 1));
+      await quiet();
+      expect(view.result.current).toBe(before);
+      setFetchOrder([headOf(0), headOf(0)]);
+      await quiet();
+      expect(locks.asked.length).toBe(asked + 1);
+      expect(storage.added).toHaveLength(1);
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('another document\'s sync holding the lock: the fill fetches nothing, and a later order fills (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      let serve = false;
+      const { view } = await leftAll(1, async () => (serve ? new Response('img') : new Response('', { status: 503 })));
+      // another document's sync of the same figure, reading its lists (the link still refusing its image)
+      let answer!: () => void;
+      const list = await recallImages(headOf(0), storage);
+      const other = syncKeptImages([headOf(0)], async () => {
+        await new Promise<void>((res) => (answer = res));
+        return new Map([[headOf(0), list!.map((i) => ({ ...i, derivativeId: i.url.slice(-64), $typeName: 'fc.api.v1.ProductImage' }) as never)]]);
+      }, { storage, lockWaitMs: 60_000 });
+      await settle();
+      setFetchOrder([headOf(0)]);
+      await quiet();
+      expect(storage.added).toHaveLength(1);
+      answer();
+      await other;
+      expect(storage.added).toHaveLength(2);
+      serve = true;
+      setFetchOrder([headOf(0), headOf(0)]);
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('0')), { timeout: 3000 });
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('a new sync (the kept figures changed) stops a fill under way first, its fetch aborted, so the sync never waits on its lock (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      let hang = false;
+      const { r } = await leftAll(1, (req) =>
+        hang ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('', { status: 503 })),
+      );
+      hang = true;
+      setFetchOrder([headOf(0)]);
+      await waitFor(() => expect(storage.added).toHaveLength(2));
+      const filling = storage.added[1]!.signal;
+      expect(filling.aborted).toBe(false);
+      await r.engine.write((store) => store.createCopy(headOf(5), 'owned'));
+      await waitFor(() => expect(filling.aborted).toBe(true));
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+    } finally {
+      uninstall();
+    }
+  });
+
+  // PHOTOS1 fix round 3 (X2: a figure added every 5 s in an outage, each a new sync asking every refused address, sent 16,674
+  // requests in 5 min for 300 figures, twice develop's 7,866)
+  it('a figure added while the link refuses all: its sync asks nothing a fill holds, and a fill asks once the wait is over (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { r, client } = await leftAll(2, async () => new Response('', { status: 503 }));
+      setFetchOrder([headOf(0), headOf(1)]);
+      await waitFor(() => expect(storage.added).toHaveLength(4));
+      await quiet();
+      const t = Date.now();
+      await r.engine.write((store) => store.createCopy(headOf(5), 'owned'));
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+      await quiet();
+      expect(storage.added).toHaveLength(4);
+      vi.spyOn(Date, 'now').mockReturnValue(t + REFILL_AFTER_MS);
+      try {
+        setFetchOrder([headOf(1), headOf(0)]);
+        await waitFor(() => expect(storage.added).toHaveLength(6));
+      } finally {
+        vi.restoreAllMocks();
+      }
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('the server reached again, or the case view opened again, asks every refused address at once, held or not (PHOTOS1)', async () => {
+    const uninstall = installFakeLocks();
+    try {
+      const { r, client, view } = await leftAll(2, async () => new Response('', { status: 503 }));
+      setFetchOrder([headOf(0), headOf(1)]);
+      await waitFor(() => expect(storage.added).toHaveLength(4));
+      await quiet();
+      r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+      await act(() => r.engine.trigger('manual'));
+      expect(r.engine.state.value.reachability).toBe('unreachable');
+      await act(() => r.engine.trigger('manual'));
+      expect(r.engine.state.value.reachability).toBe('reachable');
+      await waitFor(() => expect(storage.added).toHaveLength(6), { timeout: 3000 });
+      await waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+      view.unmount();
+      const again = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+      await waitFor(() => expect(storage.added).toHaveLength(8), { timeout: 3000 });
+      again.unmount();
+    } finally {
+      uninstall();
+    }
+  });
+
+  it('the case view going away stops its fill, the fetch in flight aborted (PHOTOS1)', async () => {
+    let hang = false;
+    const { view } = await leftAll(1, (req) =>
+      hang ? new Promise<Response>((_res, rej) => req.signal.addEventListener('abort', () => rej(req.signal.reason))) : Promise.resolve(new Response('', { status: 503 })),
+    );
+    hang = true;
+    setFetchOrder([headOf(0)]);
+    await waitFor(() => expect(storage.added).toHaveLength(2));
+    const filling = storage.added[1]!.signal;
+    view.unmount();
+    await waitFor(() => expect(filling.aborted).toBe(true));
   });
 
   it('a pass the engine completes while a sync is under way neither stops it nor starts another (NEWHOLD-IMG-1)', async () => {

@@ -275,6 +275,32 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
   });
 });
 
+// PHOTOS1 fix round: the figures in view told nearest the middle of the zoomed view first (the point figureScales draws
+// sharpest), not the middle of the frame
+describe('CabinetScene: the order it tells the image sync, zoomed (PHOTOS1)', () => {
+  /** The first figure the scene tells, unzoomed, then zoomed 4x about `at`, and how many times it told. */
+  const firstTold = (at: P) => {
+    const onViewOrder = vi.fn<(shown: readonly Figure[]) => void>();
+    const { host, unmount } = scene(getFixtureFigures(60), { view: 'wall' }, { onViewOrder });
+    const unzoomed = onViewOrder.mock.lastCall![0][0]!._id;
+    pinch(host, { x: at.x - 10, y: at.y }, { x: at.x + 10, y: at.y }, { x: at.x - 40, y: at.y }, { x: at.x + 40, y: at.y });
+    expect(zoomOf(host).k).toBeCloseTo(4, 6);
+    const zoomed = onViewOrder.mock.lastCall![0][0]!._id;
+    const told = onViewOrder.mock.calls.length;
+    unmount();
+    return { unzoomed, zoomed, told };
+  };
+
+  it('zoomed off the middle of the frame, it tells again, first the figures nearest the middle of the zoomed view', () => {
+    const topLeft = firstTold({ x: 60, y: 90 });
+    const bottomRight = firstTold({ x: 380, y: 400 });
+    expect(topLeft.told).toBeGreaterThan(1);
+    expect(topLeft.zoomed).not.toBe(topLeft.unzoomed);
+    expect(bottomRight.zoomed).not.toBe(bottomRight.unzoomed);
+    expect(topLeft.zoomed).not.toBe(bottomRight.zoomed);
+  });
+});
+
 describe('CabinetScene: panning while zoomed (PINCH-1)', () => {
   it('zoomed, one finger pans the magnified picture; it never walks the wall, changes cabinets, lifts or slides the photo', () => {
     const { host, onSelect } = scene(getFixtureFigures(60), { view: 'wall' });

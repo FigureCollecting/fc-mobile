@@ -84,6 +84,38 @@ describe('FETCH-FIRST: the Collection page fetches the pictures of the figures i
 
     await waitFor(() => expect(storage.added).toHaveLength(FIGURES), { timeout: 4000 });
     const fetched = storage.added.map((q) => q.url);
-    expect(fetched).toEqual([...inView, ...standing.filter((id) => !inView.includes(id))].map((id) => photo(indexOf(id))));
+    // PHOTOS1: those in view nearest the middle of the view first (the case's order of them), then the rest as it stands them
+    expect([...fetched.slice(0, inView.length)].sort()).toEqual(inView.map((id) => photo(indexOf(id))).sort());
+    expect(fetched.slice(inView.length)).toEqual(standing.filter((id) => !inView.includes(id)).map((id) => photo(indexOf(id))));
+  });
+});
+
+// PHOTOS1 fix round (S1): the cards view told no order, so the image sync held every fetch until it had read every list
+describe('FETCH-FIRST: the Collection page in the cards view fetches the pictures in the order it lists the figures (PHOTOS1)', () => {
+  it('top first, from the first batch of lists on, before the other lists are read', async () => {
+    const r = await localRig();
+    let release!: () => void;
+    const rest = new Promise<void>((res) => (release = res));
+    let calls = 0;
+    r.clients.getProductImages.mockImplementation(async (req: { headIds: string[] }) => {
+      if ((calls += 1) > 1) await rest;
+      return create(GetProductImagesResponseSchema, {
+        products: req.headIds.map((h) => ({ headId: h, images: [{ derivativeId: photo(indexOf(h)).slice(-64), role: 'gallery', url: photo(indexOf(h)), width: 600, height: 800 }] })),
+      });
+    });
+    owned(r, FIGURES);
+    await r.engine.trigger('manual');
+    renderWithProviders(<Collection />, { initialPath: '/?layout=rows&sort=name' });
+    await waitFor(() => expect(storage.added.length).toBeGreaterThan(0), { timeout: 4000 });
+    const firstCall = r.clients.getProductImages.mock.calls[0]![0] as { headIds: string[] };
+    // the figures as the cards list them, by the name each card shows (owned(): figure i is named FIGURES - i)
+    const listed = [...new Set(document.body.innerHTML.match(/Figure \d{3}/g))].map((name) => headOf(FIGURES - Number(name.slice(-3))));
+    // listed by name: the last head id first, not in head-id order
+    expect(listed.slice(0, 3)).toEqual([headOf(FIGURES - 1), headOf(FIGURES - 2), headOf(FIGURES - 3)]);
+    expect(firstCall.headIds.slice(0, 3)).toEqual(listed.slice(0, 3));
+    await waitFor(() => expect(storage.added).toHaveLength(firstCall.headIds.length), { timeout: 4000 });
+    expect(storage.added.map((q) => q.url)).toEqual(firstCall.headIds.map((h) => photo(indexOf(h))));
+    release();
+    await waitFor(() => expect(storage.added).toHaveLength(FIGURES), { timeout: 4000 });
   });
 });

@@ -1024,12 +1024,12 @@ describe('a sync stopped part way, after it read the lists: its case view gone, 
     },
   );
 
-  it.each([['the link refuses it (404)'], ['the device refuses its write (quota)']])(
+  it.each([['the link refuses it (503; a 404 is a display copy not made yet, PHOTOS1)'], ['the device refuses its write (quota)']])(
     'a sync whose case view stays open and that leaves an image unfetched, as %s, tells it stopped: the case view of another document waiting on the lock syncs and records the withholding its own read carries',
     async (how) => {
       const W = `${D}/${'f'.repeat(64)}`;
       const byLink = how.startsWith('the link');
-      storage = fakeCaches((req) => Promise.resolve(req.url === W && byLink ? new Response('', { status: 404 }) : new Response('img')));
+      storage = fakeCaches((req) => Promise.resolve(req.url === W && byLink ? new Response('', { status: 503 }) : new Response('img')));
       const open = storage.open.bind(storage);
       (storage as unknown as { open: (name: string) => Promise<Cache> }).open = async (name: string) => {
         const cache = await open(name);
@@ -1168,6 +1168,9 @@ describe('a sync stopped part way, after it read the lists: its case view gone, 
     const r = await localRig();
     await seedFigures(r, [{ title: 'Owned' }, { title: 'Owned 1' }, { title: 'Owned 2' }, { title: 'Owned 3' }]);
     await keptX();
+    // LOAD2: the three others were kept before (a figure with no kept list has its list written as soon as its batch is
+    // read, before anything is recorded), and their lists are unchanged: the writes held here come after the record
+    for (const i of [1, 2, 3]) await rememberImages(headOf(i), [{ url: `${D}/${String(i).repeat(64)}`, width: 600, height: 800, role: 'gallery', primary: true }], storage);
     const docA = appQueryClient();
     const docB = appQueryClient();
     r.clients.getProductImages.mockResolvedValue(lists([X], []));

@@ -16,8 +16,14 @@ import {
   OWNED_MEDIA_CACHE,
   KEPT_SYNC_STEP_MS,
   KEPT_SYNC_WAIT_MS,
+  ABSENT_RECHECK_MS,
+  REFUSED_WAIT_MS,
+  REFUSED_WAIT_MAX_MS,
+  KEPT_FETCHES,
+  LIST_CALLS_IN_FLIGHT,
   WITHHELD_CACHE,
   fetchImageLists,
+  fillKeptImages,
   keepChosenPhotos,
   keptImage,
   keptImages,
@@ -254,6 +260,427 @@ describe('keepChosenPhotos (PICK-CASE-1)', () => {
   });
 });
 
+// PHOTOS1 (Ross 11-04: a wall of name cards past the first cabinets, nothing asked for while he walked to them): what a sync
+// left unfetched is fetched again from the lists the device kept, while the case view stays open, without reading any list.
+describe('fillKeptImages (PHOTOS1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  const KEPT = { h1: [img('a', { primary: true, mask: mask('d') })], h2: [img('b', { primary: true })], h3: [img('c', { primary: true }), img('e')] };
+  /** A device whose last sync kept h1..h3's lists and only a and its mask d: b and c were refused (503). The link then answers all. */
+  const leftUnfetched = async () => {
+    let refusing = true;
+    const storage = device(async (r) => (refusing && (r.url === url('b') || r.url === url('c')) ? new Response('', { status: 503 }) : new Response('img')));
+    expect(await syncKeptImages(['h1', 'h2', 'h3'], lists(KEPT), { storage })).toMatchObject({ added: 2, failed: 2 });
+    refusing = false;
+    storage.added.length = 0;
+    return storage;
+  };
+  let uninstall: () => void = () => {};
+  afterEach(() => uninstall());
+
+  it('fetches what the last sync left unfetched from the lists the device kept, asking the coordinator nothing: keptImages then answers it', async () => {
+    const storage = await leftUnfetched();
+    expect(await fillKeptImages(['h1', 'h2', 'h3'], { storage })).toEqual({ added: 2, absent: 0, failed: 0 });
+    expect(storage.added.map((r) => [r.url, r.mode, r.credentials, r.cache]).sort()).toEqual([
+      [url('b'), 'cors', 'omit', 'no-store'],
+      [url('c'), 'cors', 'omit', 'no-store'],
+    ]);
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('c'), url('d')].sort());
+    expect([...(await keptImages(['h1', 'h2', 'h3'], storage)).keys()]).toEqual(['h1', 'h2', 'h3']);
+    // nothing is left: a second fill asks nothing
+    expect(await fillKeptImages(['h1', 'h2', 'h3'], { storage })).toEqual({ added: 0, absent: 0, failed: 0 });
+    expect(storage.added).toHaveLength(2);
+  });
+
+  it('fetches first those of the heads `first` names, in its order, asked as each fetch starts; then the rest in the order kept', async () => {
+    const storage = await leftUnfetched();
+    await fillKeptImages(['h1', 'h2', 'h3'], { storage, concurrency: 1, first: () => ['h3', 'h1'] });
+    expect(storage.added.map((r) => r.url)).toEqual([url('c'), url('b')]);
+  });
+
+  it('tells onKept what the device keeps as each image lands, the figures kept before with it', async () => {
+    const storage = await leftUnfetched();
+    const told: string[][] = [];
+    await fillKeptImages(['h1', 'h2', 'h3'], { storage, concurrency: 1, onKept: (k) => told.push([...k.keys()].sort()) });
+    expect(told).toEqual([
+      ['h1', 'h2'],
+      ['h1', 'h2', 'h3'],
+    ]);
+  });
+
+  it('never fetches a withheld address, nor a figure with no kept list or one not asked about', async () => {
+    const storage = await leftUnfetched();
+    await (await storage.open(WITHHELD_CACHE)).put(withheldKey(url('c')), new Response(null));
+    expect(await fillKeptImages(['h1', 'h3', 'h9'], { storage })).toEqual({ added: 0, absent: 0, failed: 0 });
+    expect(storage.added).toEqual([]);
+  });
+
+  it('fetches a figure\'s image without its withheld mask, and tells it without that mask; with no kept list it asks nothing', async () => {
+    let refusing = true;
+    const storage = device(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(['h1'], lists({ h1: KEPT.h1 }), { storage });
+    refusing = false;
+    storage.added.length = 0;
+    await (await storage.open(WITHHELD_CACHE)).put(withheldKey(url('d')), new Response(null));
+    const told: (CachedImage | undefined)[] = [];
+    expect(await fillKeptImages(['h1'], { storage, onKept: (k) => told.push(k.get('h1')) })).toEqual({ added: 1, absent: 0, failed: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    expect(told.at(-1)).toMatchObject({ url: url('a') });
+    expect(told.at(-1)?.maskUrl).toBeUndefined();
+    expect(await fillKeptImages(['h1'], { storage: device() })).toEqual({ added: 0, absent: 0, failed: 0 });
+  });
+
+  it('runs only while no sync holds the lock: another document syncing, it fetches nothing and answers undefined', async () => {
+    uninstall = installFakeLocks();
+    const storage = await leftUnfetched();
+    let answer!: () => void;
+    const other = syncKeptImages(['h1', 'h2', 'h3'], async () => {
+      await new Promise<void>((res) => (answer = res));
+      return new Map(Object.entries(KEPT));
+    }, { storage });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(await fillKeptImages(['h1', 'h2', 'h3'], { storage })).toBeUndefined();
+    expect(storage.added).toEqual([]);
+    answer();
+    await other;
+    expect(await fillKeptImages(['h1', 'h2', 'h3'], { storage })).toEqual({ added: 0, absent: 0, failed: 0 });
+  });
+
+  it('starts no fetch once its signal aborts', async () => {
+    const storage = await leftUnfetched();
+    const stop = new AbortController();
+    stop.abort();
+    expect(await fillKeptImages(['h1', 'h2', 'h3'], { storage, signal: stop.signal })).toEqual({ added: 0, absent: 0, failed: 0 });
+    expect(storage.added).toEqual([]);
+  });
+
+  it('does nothing where the browser has no Cache API, and reads the browser\'s caches when given none', async () => {
+    expect(await fillKeptImages(['h1'], { storage: undefined })).toEqual({ added: 0, absent: 0, failed: 0 });
+    const storage = await leftUnfetched();
+    vi.stubGlobal('caches', storage);
+    expect(await fillKeptImages(['h2'])).toEqual({ added: 1, absent: 0, failed: 0 });
+  });
+});
+
+// PHOTOS1 (11-05: 262 of 413 display-copy requests answered 404 at 115-475 ms each, the server's backlog of display copies still
+// draining): a missing display copy is no failure of the link, is not asked again in a loop, and never holds the others up.
+describe('a display copy not made yet (404) (PHOTOS1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const KEPT = { h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] };
+  const notYet = (...cs: string[]) => async (r: Request) => (cs.some((c) => r.url === url(c)) ? new Response('not found', { status: 404 }) : new Response('img'));
+  afterEach(() => vi.useRealTimers());
+
+  it('is counted absent, not failed: the sync left nothing unfetched that the link could have brought', async () => {
+    const storage = device(notYet('b'));
+    expect(await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage })).toMatchObject({ added: 1, failed: 0, absent: 1 });
+  });
+
+  it(`is not asked again by a sync or a fill for ABSENT_RECHECK_MS (10 min), and is after`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
+    const storage = device(notYet('b'));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b')]);
+    vi.setSystemTime(1_000_000 + ABSENT_RECHECK_MS - 1);
+    expect(await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage })).toMatchObject({ added: 0, failed: 0, absent: 1 });
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 1, failed: 0 });
+    expect(storage.added).toHaveLength(2);
+    vi.setSystemTime(1_000_000 + ABSENT_RECHECK_MS);
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 1, failed: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('b')]);
+    expect(ABSENT_RECHECK_MS).toBe(10 * 60_000);
+  });
+
+  it(`remembers at most ${4 * MAX_KEPT_FIGURES} addresses (4 a kept figure): one more is not remembered while all are recent, and is once theirs are due`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
+    const n = 4 * MAX_KEPT_FIGURES + 1;
+    const at = (i: number) => `${D}/f${i.toString(16).padStart(63, '0')}`;
+    const heads = Array.from({ length: n }, (_, i) => `h${i}`);
+    const all = new Map(heads.map((h, i) => [h, [img('a', { primary: true, url: at(i) })]]));
+    const storage = device(async () => new Response('not found', { status: 404 }));
+    await syncKeptImages(heads, async () => all, { storage, max: n, concurrency: 1 });
+    expect(storage.added).toHaveLength(n);
+    storage.added.length = 0;
+    // the first asked is remembered, the last (past the cap) is not: nothing remembered is forgotten for it
+    expect(await syncKeptImages(['h0', `h${n - 1}`], async () => all, { storage })).toMatchObject({ added: 0, failed: 0, absent: 2 });
+    expect(storage.added.map((r) => r.url)).toEqual([at(n - 1)]);
+    // 10 min on, the addresses remembered are due: the next 404 takes the place of one
+    vi.setSystemTime(1_000_000 + ABSENT_RECHECK_MS);
+    storage.added.length = 0;
+    await syncKeptImages([`h${n - 1}`], async () => all, { storage });
+    expect(await syncKeptImages([`h${n - 1}`], async () => all, { storage })).toMatchObject({ added: 0, failed: 0, absent: 1 });
+    expect(storage.added.map((r) => r.url)).toEqual([at(n - 1)]);
+  });
+
+  it('is remembered per device: another device\'s caches ask for it', async () => {
+    const one = device(notYet('b'));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: one });
+    const other = device(notYet('b'));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: other });
+    expect(other.added.map((r) => r.url)).toEqual([url('a'), url('b')]);
+  });
+});
+
+// PHOTOS1 fix round (B1: an origin refusing an image was asked again by every fill, 600 requests each 30 s for 300 figures,
+// a full device downloading each image only to drop it): a fill backs off per address, and a full device ends the fetching.
+describe('an address the link refused: a fill asks it again only after a wait that doubles (PHOTOS1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const KEPT = { h1: [img('a', { primary: true })], h2: [img('b', { primary: true })] };
+  const T0 = 1_000_000;
+  afterEach(() => vi.useRealTimers());
+
+  it(`waits REFUSED_WAIT_MS (30 s) after a fill's refusal, then twice as long after each, at most ${10} min; answering when it may ask`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const storage = device(async (r) => (r.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    const asked = () => storage.added.filter((r) => r.url === url('b')).length;
+    expect(asked()).toBe(1);
+    // the sync's refusal holds nothing back: the fill after it asks at once
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: T0 + REFUSED_WAIT_MS });
+    expect(asked()).toBe(2);
+    let at = T0;
+    let times = 2;
+    const waits = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000];
+    for (const [i, wait] of waits.entries()) {
+      const due = at + wait;
+      vi.setSystemTime(due - 1);
+      expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: due });
+      expect(asked()).toBe(times);
+      vi.setSystemTime(due);
+      const next = waits[i + 1] ?? REFUSED_WAIT_MAX_MS;
+      expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: due + next });
+      times += 1;
+      expect(asked()).toBe(times);
+      at = due;
+    }
+    expect([REFUSED_WAIT_MS, REFUSED_WAIT_MAX_MS]).toEqual([30_000, 10 * 60_000]);
+  });
+
+  it('a sync asks a held address all the same; one served forgets its refusals, so its next wait starts at 30 s again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    let refusing = true;
+    const storage = device(async (r) => (refusing && r.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    await fillKeptImages(['h1', 'h2'], { storage });
+    vi.setSystemTime(T0 + REFUSED_WAIT_MS);
+    // refused twice by fills: held 60 s now
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toMatchObject({ retryAt: T0 + 3 * REFUSED_WAIT_MS });
+    refusing = false;
+    expect(await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage })).toMatchObject({ added: 1, failed: 0 });
+    // its bytes gone again (another document's sync evicted them), and the link refusing again
+    await (await storage.open(OWNED_MEDIA_CACHE)).delete(url('b'));
+    refusing = true;
+    const before = storage.added.length;
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: T0 + 2 * REFUSED_WAIT_MS });
+    expect(storage.added.length).toBe(before + 1);
+  });
+
+  it('a sync that backs off (a figure added while the case view is open) asks no address a fill holds, and holds one it is refused (PHOTOS1)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const storage = device(async (r) => (r.url === url('a') ? new Response('img') : new Response('', { status: 503 })));
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    await fillKeptImages(['h1', 'h2'], { storage });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('b')]);
+    // h3 added: its sync does not ask b (held 30 s), asks c, and holds c as a fill would
+    const three = { ...KEPT, h3: [img('c', { primary: true })] };
+    expect(await syncKeptImages(['h1', 'h2', 'h3'], lists(three), { storage, backOff: true })).toMatchObject({ added: 0, failed: 2, retryAt: T0 + REFUSED_WAIT_MS });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('b'), url('c')]);
+    expect(await syncKeptImages(['h1', 'h2', 'h3'], lists(three), { storage, backOff: true })).toMatchObject({ added: 0, failed: 2, retryAt: T0 + REFUSED_WAIT_MS });
+    expect(storage.added).toHaveLength(4);
+    // a sync that does not back off asks both all the same
+    const plain = await syncKeptImages(['h1', 'h2', 'h3'], lists(three), { storage });
+    expect(plain).toMatchObject({ added: 0, failed: 2 });
+    expect(plain).not.toHaveProperty('retryAt');
+    expect(storage.added.map((r) => r.url).slice(4).sort()).toEqual([url('b'), url('c')]);
+  });
+
+  it('a fetch the fill itself stopped (its case view gone) is no refusal: the next fill asks it at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    let hang = false;
+    const storage = device((r) =>
+      hang && r.url === url('b')
+        ? new Promise<Response>((_res, rej) => r.signal.addEventListener('abort', () => rej(r.signal.reason)))
+        : Promise.resolve(r.url === url('b') ? new Response('', { status: 503 }) : new Response('img')),
+    );
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage });
+    hang = true;
+    const stop = new AbortController();
+    const filling = fillKeptImages(['h1', 'h2'], { storage, signal: stop.signal });
+    await vi.waitFor(() => expect(storage.added).toHaveLength(3));
+    stop.abort();
+    await filling;
+    hang = false;
+    const now = Date.now();
+    expect(await fillKeptImages(['h1', 'h2'], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: now + REFUSED_WAIT_MS });
+    expect(storage.added).toHaveLength(4);
+  });
+
+  it('is remembered per device: another device\'s fill asks at once', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const refuse = async (r: Request) => (r.url === url('b') ? new Response('', { status: 503 }) : new Response('img'));
+    const one = device(refuse);
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: one });
+    await fillKeptImages(['h1', 'h2'], { storage: one });
+    const other = device(refuse);
+    await syncKeptImages(['h1', 'h2'], lists(KEPT), { storage: other });
+    other.added.length = 0;
+    await fillKeptImages(['h1', 'h2'], { storage: other });
+    expect(other.added.map((r) => r.url)).toEqual([url('b')]);
+  });
+});
+
+// PHOTOS1 fix round 3 (X1: both memories held 2 x MAX_KEPT_FIGURES addresses, oldest forgotten first; a fill walks its
+// addresses in the same order each time, so past that each one it remembered forgot the next it would check, and every fill
+// asked every refused address again, every 30 s): they hold as many addresses as a fill may ask for, and a full memory forgets
+// only an address whose wait is over, never one still held.
+describe('the refusal and 404 memories past 3,000 addresses (PHOTOS1)', () => {
+  const T0 = 1_000_000;
+  const hx = (n: number, salt: string) => (salt + n.toString(16)).padStart(64, '0');
+  const at = (n: number, salt: string) => `${D}/${hx(n, salt)}`;
+  afterEach(() => vi.useRealTimers());
+  /** `figures` kept figures, each a primary with its mask; the first `chosen` with a second photo (and its mask) chosen. */
+  async function world(figures: number, chosen: number, answer: (r: Request) => Response) {
+    const heads = Array.from({ length: figures }, (_, i) => `h${i}`);
+    const all = new Map<string, ProductImage[]>();
+    const choices = new Map<string, string>();
+    for (const [i, h] of heads.entries()) {
+      const rows = [img('a', { primary: true, derivativeId: hx(i, 'a'), url: at(i, 'a'), mask: { maskId: hx(i, 'f'), contentType: 'image/png', url: at(i, 'f') } })];
+      if (i < chosen) {
+        rows.push(img('b', { derivativeId: hx(i, 'b'), url: at(i, 'b'), mask: { maskId: hx(i, 'e'), contentType: 'image/png', url: at(i, 'e') } }));
+        choices.set(h, at(i, 'b'));
+      }
+      all.set(h, rows);
+    }
+    const storage = device(async (r) => answer(r));
+    await syncKeptImages(heads, async () => all, { storage, choices });
+    return { heads, storage, choices };
+  }
+
+  it(`a fill backs off on every address of ${MAX_KEPT_FIGURES} figures with 100 chosen photos (3,200 addresses), the origin refusing all`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const { heads, storage, choices } = await world(MAX_KEPT_FIGURES, 100, () => new Response('', { status: 503 }));
+    expect(new Set(storage.added.map((r) => r.url)).size).toBe(3200);
+    const asked: number[] = [];
+    const waits: number[] = [];
+    for (let n = 0; n < 7; n += 1) {
+      const before = storage.added.length;
+      const done = await fillKeptImages(heads, { storage, choices });
+      asked.push(storage.added.length - before);
+      waits.push((done!.retryAt! - Date.now()) / 1000);
+      // the hook's gate: REFILL_AFTER_MS at the soonest, else the soonest address's wait
+      vi.setSystemTime(Math.max(Date.now() + REFUSED_WAIT_MS, done!.retryAt!));
+    }
+    expect(waits).toEqual([30, 60, 120, 240, 480, 600, 600]);
+    expect(asked).toEqual([3200, 3200, 3200, 3200, 3200, 3200, 3200]);
+  }, 60_000);
+
+  // A full memory: each address a fill is refused again takes its own place, so none it holds is forgotten (S1).
+  it(`a fill backs off on every address of ${MAX_KEPT_FIGURES} figures each with a chosen photo (${4 * MAX_KEPT_FIGURES} addresses, a full memory), the origin refusing all`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const { heads, storage, choices } = await world(MAX_KEPT_FIGURES, MAX_KEPT_FIGURES, () => new Response('', { status: 503 }));
+    expect(new Set(storage.added.map((r) => r.url)).size).toBe(4 * MAX_KEPT_FIGURES);
+    const asked: number[] = [];
+    const waits: number[] = [];
+    for (let n = 0; n < 6; n += 1) {
+      const before = storage.added.length;
+      const done = await fillKeptImages(heads, { storage, choices });
+      asked.push(storage.added.length - before);
+      waits.push((done!.retryAt! - Date.now()) / 1000);
+      vi.setSystemTime(Math.max(Date.now() + REFUSED_WAIT_MS, done!.retryAt!));
+    }
+    expect(waits).toEqual([30, 60, 120, 240, 480, 600]);
+    expect(asked).toEqual(Array(6).fill(4 * MAX_KEPT_FIGURES));
+  }, 60_000);
+
+  it(`a 404 of ${MAX_KEPT_FIGURES} figures with 100 chosen photos is not asked again for 10 min, one address refused all along`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const refused = at(0, 'a');
+    const { heads, storage, choices } = await world(MAX_KEPT_FIGURES, 100, (r) => (r.url === refused ? new Response('', { status: 503 }) : new Response('nf', { status: 404 })));
+    const asked404: number[] = [];
+    while (Date.now() < T0 + ABSENT_RECHECK_MS) {
+      const before = storage.added.length;
+      const done = await fillKeptImages(heads, { storage, choices });
+      asked404.push(storage.added.slice(before).filter((r) => r.url !== refused).length);
+      vi.setSystemTime(Math.max(Date.now() + REFUSED_WAIT_MS, done!.retryAt!));
+    }
+    expect(asked404).toEqual([0, 0, 0, 0, 0]);
+  }, 60_000);
+
+  it(`remembers ${4 * MAX_KEPT_FIGURES} refused addresses (4 a kept figure); one more, all still held, is not remembered and nothing held is forgotten`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const n = 4 * MAX_KEPT_FIGURES + 1;
+    const one = (i: number) => `${D}/f${i.toString(16).padStart(63, '0')}`;
+    const heads = Array.from({ length: n }, (_, i) => `h${i}`);
+    const all = new Map(heads.map((h, i) => [h, [img('a', { primary: true, url: one(i) })]]));
+    const storage = device(async () => new Response('', { status: 503 }));
+    await syncKeptImages(heads, async () => all, { storage, max: n, concurrency: 1 });
+    await fillKeptImages(heads, { storage, concurrency: 1 });
+    storage.added.length = 0;
+    vi.setSystemTime(T0 + 1);
+    // the first asked is held, the last (past the cap) is asked again
+    expect(await fillKeptImages(heads, { storage, concurrency: 1 })).toMatchObject({ added: 0, failed: n, absent: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([one(n - 1)]);
+    // 30 s on, the addresses remembered are due: the next refusal takes the place of one
+    vi.setSystemTime(T0 + REFUSED_WAIT_MS);
+    storage.added.length = 0;
+    await fillKeptImages([`h${n - 1}`], { storage });
+    expect(await fillKeptImages([`h${n - 1}`], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: T0 + 2 * REFUSED_WAIT_MS });
+    expect(storage.added.map((r) => r.url)).toEqual([one(n - 1)]);
+  }, 60_000);
+});
+
+describe('a device out of space (QuotaExceededError) (PHOTOS1)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const heads = ['h1', 'h2', 'h3', 'h4'];
+  const KEPT = Object.fromEntries(heads.map((h, i) => [h, [img('abcd'[i]!, { primary: true })]]));
+  /** A device whose owned cache takes `room` images, then refuses each write for want of space. */
+  const full = (room: number, storage: ReturnType<typeof fakeCaches>) => {
+    const open = storage.open.bind(storage);
+    storage.open = (async (name: string) => {
+      const cache = await open(name);
+      if (name !== OWNED_MEDIA_CACHE) return cache;
+      const put = cache.put.bind(cache);
+      cache.put = async (...args: Parameters<Cache['put']>) => {
+        if (room <= 0) throw new DOMException('the device is full', 'QuotaExceededError');
+        room -= 1;
+        return put(...args);
+      };
+      return cache;
+    }) as typeof storage.open;
+    return storage;
+  };
+
+  it('ends a fill at the first image it refuses to keep: no other fetch starts, and it answers full, with no time to ask again (a sync fetches on: below)', async () => {
+    let refusing = true;
+    const storage = device(async () => (refusing ? new Response('', { status: 503 }) : new Response('img')));
+    await syncKeptImages(heads, lists(KEPT), { storage });
+    refusing = false;
+    full(1, storage);
+    storage.added.length = 0;
+    expect(await fillKeptImages(heads, { storage, concurrency: 1 })).toEqual({ added: 1, absent: 0, failed: 1, full: true });
+    expect(storage.added).toHaveLength(2);
+  });
+});
+
+describe('how many images a sync fetches at once (PHOTOS1)', () => {
+  it(`is ${8} by default (KEPT_FETCHES): enough to fill a wall while each missing display copy takes its 404`, async () => {
+    let inFlight = 0;
+    let most = 0;
+    const storage = device(async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((res) => setTimeout(res, 5));
+      inFlight -= 1;
+      return new Response('img');
+    });
+    const heads = Array.from({ length: 20 }, (_, i) => `h${i}`);
+    const m = new Map(heads.map((h, i) => [h, [img('a', { primary: true, url: `${D}/${i.toString(16).padStart(64, 'a')}` })]]));
+    await syncKeptImages(heads, async () => m, { storage });
+    expect(KEPT_FETCHES).toBe(8);
+    expect(most).toBe(8);
+  });
+});
+
 describe('rememberImages / recallImages', () => {
   it('keeps a figure\'s list and gives it back, and forgets it when the fresh list is empty', async () => {
     const storage = device();
@@ -288,14 +715,14 @@ describe('syncKeptImages', () => {
       h2: [img('c')],
     });
     const result = await syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage });
-    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3']);
+    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2', 'h3'], expect.any(Function), undefined);
     expect(await owned(storage)).toEqual([url('a'), url('c'), url('f')].sort());
     expect(storage.added.every((r) => r.mode === 'cors' && r.credentials === 'omit')).toBe(true);
     // The origin answers immutable: a byte the HTTP cache kept would outlive its eviction from the owned cache.
     expect(storage.added.map((r) => r.cache)).toEqual(['no-store', 'no-store', 'no-store']);
     expect(await recallImages('h1', storage)).toHaveLength(2);
     expect(await recallImages('h3', storage)).toBeUndefined();
-    expect(result).toEqual({ figures: 2, images: 3, added: 3, evicted: 0, failed: 0 });
+    expect(result).toEqual({ figures: 2, images: 3, added: 3, evicted: 0, failed: 0, absent: 0 });
   });
 
   it('evicts with the collection: a figure no longer owned loses its list and its images', async () => {
@@ -319,12 +746,12 @@ describe('syncKeptImages', () => {
     const storage = device();
     const fetchLists = lists({ h1: [img('a')], h2: [img('b')], h3: [img('c')] });
     await syncKeptImages(['h1', 'h1', 'h2', 'h3'], fetchLists, { storage, max: 2 });
-    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2']);
+    expect(fetchLists).toHaveBeenCalledWith(['h1', 'h2'], expect.any(Function), undefined);
     expect(await owned(storage)).toEqual([url('a'), url('b')]);
   });
 
   it('counts an image it could not fetch and carries on', async () => {
-    const storage = device(async (r) => (r.url === url('a') ? new Response('', { status: 404 }) : new Response('img')));
+    const storage = device(async (r) => (r.url === url('a') ? new Response('', { status: 503 }) : new Response('img')));
     const result = await syncKeptImages(['h1', 'h2'], lists({ h1: [img('a')], h2: [img('b')] }), { storage, concurrency: 1 });
     expect(await owned(storage)).toEqual([url('b')]);
     expect(result).toMatchObject({ added: 1, failed: 1 });
@@ -363,7 +790,7 @@ describe('syncKeptImages', () => {
 
   it('does nothing where the browser has no Cache API', async () => {
     const fetchLists = lists({});
-    expect(await syncKeptImages(['h1'], fetchLists, { storage: undefined })).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0 });
+    expect(await syncKeptImages(['h1'], fetchLists, { storage: undefined })).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0, absent: 0 });
     expect(fetchLists).not.toHaveBeenCalled();
   });
 });
@@ -383,7 +810,7 @@ describe('syncKeptImages: the figures the case view shows first (FETCH-FIRST)', 
     const storage = device();
     const result = await syncKeptImages(KEPT, four(), { storage, concurrency: 1, first: () => ['h3', 'h9', 'h1', 'h3'] });
     expect(asked(storage)).toBe('c8aebfd9');
-    expect(result).toEqual({ figures: 4, images: 8, added: 8, evicted: 0, failed: 0 });
+    expect(result).toEqual({ figures: 4, images: 8, added: 8, evicted: 0, failed: 0, absent: 0 });
   });
 
   it('fetches in the order kept without `first`, or with one that names no kept figure', async () => {
@@ -422,7 +849,8 @@ describe('fetchImageLists', () => {
       return { products: [{ headId: 'h0', images: [img('b')] }, { headId: 'h1', images: [img('c')] }], nextPageToken: '' };
     });
     const got = await fetchImageLists({ getProductImages } as never, heads);
-    expect(getProductImages.mock.calls.map(([r]) => [r.headIds.length, r.pageSize, r.pageToken ?? ''])).toEqual([[200, 200, ''], [200, 200, 't2'], [1, 200, '']]);
+    // LOAD2: the second batch is read beside the first, so its call comes before the first batch's second page
+    expect(getProductImages.mock.calls.map(([r]) => [r.headIds.length, r.pageSize, r.pageToken ?? ''])).toEqual([[200, 200, ''], [1, 200, ''], [200, 200, 't2']]);
     expect([...got.keys()]).toEqual(['h0', 'h1', 'h200']);
     expect(got.get('h0')?.map((i) => i.derivativeId)).toEqual([hex('a'), hex('b')]);
   });
@@ -475,6 +903,284 @@ describe('fetchImageLists', () => {
     const got = await fetchImageLists({ getProductImages } as never, ['h1']);
     expect(getProductImages).toHaveBeenCalledTimes(MAX_IMAGE_PAGES);
     expect(got.get('h1')?.map((i) => i.derivativeId)).toEqual([hex('a')]);
+  });
+});
+
+// LOAD2 (Ross 11-04: about a minute from the cards to the first photo): the image lists were read one call at a time, every
+// list before any image was fetched (75 calls at about 0.9 s for his 1,200 figures).
+describe('fetchImageLists: lists read side by side, and told a batch at a time (LOAD2)', () => {
+  /** A coordinator that answers each call after `ms` (real time), one row per head, recording how many calls were in flight. */
+  const slow = (ms = 5) => {
+    let inFlight = 0;
+    const most = { at: 0 };
+    const getProductImages = vi.fn(async (req: { headIds: string[]; pageSize?: number; pageToken?: string }) => {
+      inFlight += 1;
+      most.at = Math.max(most.at, inFlight);
+      await new Promise((res) => setTimeout(res, ms));
+      inFlight -= 1;
+      return { products: req.headIds.map((h) => ({ headId: h, images: [img('a', { primary: true })] })), nextPageToken: '' };
+    });
+    return { getProductImages, most };
+  };
+  const heads = (n: number) => Array.from({ length: n }, (_, i) => `h${i}`);
+
+  it(`reads up to ${LIST_CALLS_IN_FLIGHT} batches at once, never more, and answers every head's list`, async () => {
+    const coordinator = slow();
+    const got = await fetchImageLists(coordinator as never, heads(801));
+    expect(LIST_CALLS_IN_FLIGHT).toBe(3);
+    expect(coordinator.most.at).toBe(3);
+    expect(coordinator.getProductImages).toHaveBeenCalledTimes(5);
+    expect(got.size).toBe(801);
+  });
+
+  it('told each batch as it is read, asks first for small batches (25, 50, 100, then 200 heads), so the first figures\' lists come within a call', async () => {
+    const coordinator = slow();
+    const told: string[][] = [];
+    const got = await fetchImageLists(coordinator as never, heads(400), undefined, (batch) => told.push([...batch.keys()]));
+    expect(coordinator.getProductImages.mock.calls.map(([r]) => r.headIds.length)).toEqual([25, 50, 100, 200, 25]);
+    expect(coordinator.getProductImages.mock.calls[0]![0].headIds).toEqual(heads(25));
+    expect(told.map((b) => b.length).sort((a, b) => a - b)).toEqual([25, 25, 50, 100, 200]);
+    expect(told.find((b) => b.length === 25 && b[0] === 'h0')).toEqual(heads(25));
+    expect(got.size).toBe(400);
+  });
+
+  it('given an order, forms each batch as it starts, from the heads the order names first then (a view that moved while the lists are read is followed)', async () => {
+    const coordinator = slow();
+    let order: readonly string[] = [];
+    await fetchImageLists(coordinator as never, heads(400), undefined, () => {
+      // the case view drew its first view: figures 300-309
+      order = heads(400).slice(300, 310);
+    }, () => order);
+    const asked = coordinator.getProductImages.mock.calls.map(([r]) => r.headIds);
+    // the first three batches went out at once, before any order was told; the next takes 300-309 first, and is small
+    // again (a new view's lists come within a call or two), the ones after it larger
+    expect(asked.slice(0, 3)).toEqual([heads(25), heads(75).slice(25), heads(175).slice(75)]);
+    expect(asked[3]!.slice(0, 10)).toEqual(heads(400).slice(300, 310));
+    expect(asked[3]!.slice(10, 12)).toEqual(['h175', 'h176']);
+    expect(asked.map((a) => a.length)).toEqual([25, 50, 100, 25, 50, 100, 50]);
+  });
+
+  it('tells every head of a batch, one with no image as an empty list, so the sync knows its images are not still to come', async () => {
+    const getProductImages = vi.fn(async (req: { headIds: string[] }) => ({ products: [{ headId: req.headIds[0]!, images: [img('a', { primary: true })] }], nextPageToken: '' }));
+    const told: [string, number][][] = [];
+    const got = await fetchImageLists({ getProductImages } as never, ['h1', 'h2'], undefined, (b) => told.push([...b].map(([h, i]) => [h, i.length])));
+    expect(told).toEqual([[['h1', 1], ['h2', 0]]]);
+    expect([...got.keys()]).toEqual(['h1']);
+  });
+
+  it('a call that fails starts no other batch and fails once the calls in flight end; no batch is told after it', async () => {
+    let calls = 0;
+    const told: number[] = [];
+    let inFlight = 0;
+    const getProductImages = vi.fn(async (req: { headIds: string[] }) => {
+      calls += 1;
+      inFlight += 1;
+      const mine = calls;
+      await new Promise((res) => setTimeout(res, mine === 1 ? 1 : 20));
+      inFlight -= 1;
+      if (mine === 1) throw new Error('unavailable');
+      return { products: req.headIds.map((h) => ({ headId: h, images: [img('a', { primary: true })] })), nextPageToken: '' };
+    });
+    await expect(fetchImageLists({ getProductImages } as never, heads(1000), undefined, (b) => told.push(b.size))).rejects.toThrow('unavailable');
+    expect(inFlight).toBe(0);
+    expect(getProductImages).toHaveBeenCalledTimes(3);
+    expect(told).toEqual([]);
+  });
+});
+
+describe('syncKeptImages: the first figures\' images fetched while the other lists are read (LOAD2)', () => {
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const KEPT: Record<string, ProductImage[]> = { h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('c', { primary: true })] };
+  /** Lists told in two batches, h1's first; the rest held until released. */
+  const twoBatches = () => {
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const fetchLists = vi.fn(async (heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      const all = new Map(heads.filter((h) => h in KEPT).map((h) => [h, KEPT[h]!]));
+      onBatch?.(new Map([[heads[0]!, all.get(heads[0]!)!]]));
+      await held;
+      onBatch?.(new Map([...all].slice(1)));
+      return all;
+    });
+    return { fetchLists, release };
+  };
+  const settle = () => new Promise((res) => setTimeout(res, 20));
+
+  it('asks for the lists of the heads `first` names first, in its order, then the rest as kept', async () => {
+    const storage = device();
+    const fetchLists = vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in KEPT).map((h) => [h, KEPT[h]!])));
+    await syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, first: () => ['h3', 'h9'] });
+    expect(fetchLists.mock.calls[0]![0]).toEqual(['h3', 'h1', 'h2']);
+  });
+
+  it('a figure the device kept no list for: its list kept and its image fetched and told once its batch is read, before the other lists arrive', async () => {
+    const storage = device();
+    const { fetchLists, release } = twoBatches();
+    const told: string[][] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, onKept: (k) => told.push([...k.keys()]) });
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('a'));
+    expect(told.at(-1)).toEqual(['h1']);
+    release();
+    expect(await sync).toEqual({ figures: 3, images: 3, added: 3, evicted: 0, failed: 0, absent: 0 });
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('c')]);
+    expect(storage.added).toHaveLength(3);
+  });
+
+  it('fetches in `first` order across batches: a batch read early waits for a head `first` ranks before it whose list is still to come', async () => {
+    const storage = device();
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    // h1's batch went out before the view told its order, and is read first; the view ranks h3 first
+    const fetchLists = async (_heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([['h1', KEPT.h1!]]));
+      await held;
+      onBatch?.(new Map([['h2', KEPT.h2!], ['h3', KEPT.h3!]]));
+      return new Map(Object.entries(KEPT));
+    };
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, first: () => ['h3', 'h2', 'h1'] });
+    await settle();
+    expect(storage.added).toEqual([]);
+    release();
+    await sync;
+    expect(storage.added.map((r) => r.url)).toEqual([url('c'), url('b'), url('a')]);
+  });
+
+  it('a view that has told no order yet holds the early fetches back (what it will show may be in a batch to come), and its order, once told, is followed', async () => {
+    const storage = device();
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    let order: readonly string[] = [];
+    const fetchLists = async (_heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([['h1', KEPT.h1!], ['h2', KEPT.h2!]]));
+      await held;
+      onBatch?.(new Map([['h3', KEPT.h3!]]));
+      return new Map(Object.entries(KEPT));
+    };
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, first: () => order });
+    await settle();
+    expect(storage.added).toEqual([]);
+    // the case view draws h2, then the others
+    order = ['h2', 'h3', 'h1'];
+    await new Promise((res) => setTimeout(res, 300));
+    expect(storage.added.map((r) => r.url)).toEqual([url('b')]);
+    release();
+    await sync;
+    expect(storage.added.map((r) => r.url)).toEqual([url('b'), url('c'), url('a')]);
+  });
+
+  it('a head `first` ranks first that has no image does not hold the others back once its batch is read', async () => {
+    const storage = device();
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    const fetchLists = async (_heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([['h0', []], ['h1', KEPT.h1!]]));
+      await held;
+      onBatch?.(new Map([['h2', KEPT.h2!], ['h3', KEPT.h3!]]));
+      return new Map(Object.entries(KEPT));
+    };
+    const sync = syncKeptImages(['h0', 'h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, first: () => ['h0', 'h1', 'h2', 'h3'] });
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('a')]);
+    release();
+    await sync;
+  });
+
+  it('tells, while the lists are read, only the figures still kept: one the device kept that left the collection is not named', async () => {
+    const storage = device();
+    await syncKeptImages(['h9'], async () => new Map([['h9', [img('d', { primary: true })]]]), { storage });
+    const { fetchLists, release } = twoBatches();
+    const told: string[][] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, onKept: (k) => told.push([...k.keys()]) });
+    await settle();
+    release();
+    await sync;
+    expect(told.length).toBeGreaterThan(0);
+    expect(told.some((k) => k.includes('h9'))).toBe(false);
+  });
+
+  // PHOTOS1 fix round (S1: on a returning device, the installed app, the in-view photos still missing waited for every list)
+  /** A device whose last sync kept h1..h3's lists and the bytes of a only: b and c went missing since. */
+  const returning = async () => {
+    const storage = device();
+    await syncKeptImages(['h1', 'h2', 'h3'], async () => new Map(Object.entries(KEPT)), { storage });
+    const media = await storage.open(OWNED_MEDIA_CACHE);
+    await media.delete(url('b'));
+    await media.delete(url('c'));
+    storage.added.length = 0;
+    return storage;
+  };
+
+  it('a figure the device kept a list for: the shown image its kept and its fresh list both name is fetched and told once its batch is read, before the other lists arrive', async () => {
+    const storage = await returning();
+    const { fetchLists, release } = twoBatches();
+    const told: string[][] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, first: () => ['h2', 'h3', 'h1'], onKept: (k) => told.push([...k.keys()].sort()) });
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('b')]);
+    expect((await keptImage('h2', storage))?.url).toBe(url('b'));
+    expect(told.at(-1)).toEqual(['h1', 'h2']);
+    release();
+    expect(await sync).toEqual({ figures: 3, images: 3, added: 2, evicted: 0, failed: 0, absent: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('b'), url('c')]);
+  });
+
+  it('...but not one a sync recorded withheld: that waits for every list, which forget it before it is fetched', async () => {
+    const storage = await returning();
+    await (await storage.open(WITHHELD_CACHE)).put(withheldKey(url('b')), new Response(null));
+    const { fetchLists, release } = twoBatches();
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, first: () => ['h2', 'h3', 'h1'] });
+    await settle();
+    expect(storage.added).toEqual([]);
+    release();
+    await sync;
+    expect(storage.added.map((r) => r.url)).toEqual([url('b'), url('c')]);
+    expect(await withheldAmong([url('b')], storage)).toEqual(new Set());
+  });
+
+  it('a figure the device kept a list for whose shown image changed waits for every list (what it withholds is read from all of them), and what was kept stays shown meanwhile', async () => {
+    const storage = device();
+    await syncKeptImages(['h1'], async () => new Map([['h1', [img('d', { primary: true })]]]), { storage });
+    storage.added.length = 0;
+    const { fetchLists, release } = twoBatches();
+    const told: (string | undefined)[] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, onKept: (k) => told.push(k.get('h1')?.url) });
+    await settle();
+    expect(storage.added).toEqual([]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('d'));
+    release();
+    await sync;
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('c')]);
+    expect(told.every((u) => u === url('d') || u === url('a') || u === undefined)).toBe(true);
+  });
+
+  it('lists that fail after a batch was kept: the sync fails, not told as read; that new figure\'s list and bytes stay, nothing else is touched', async () => {
+    const storage = device();
+    const onListsRead = vi.fn();
+    const fetchLists = async (heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([[heads[0]!, KEPT[heads[0]!]!]]));
+      await settle();
+      throw new Error('unavailable');
+    };
+    await expect(syncKeptImages(['h1', 'h2'], fetchLists, { storage, onListsRead })).rejects.toThrow('unavailable');
+    expect(onListsRead).not.toHaveBeenCalled();
+    expect(owned(storage)).toEqual([url('a')]);
+    expect((await keptImage('h1', storage))?.url).toBe(url('a'));
+    expect(await recallImages('h2', storage)).toBeUndefined();
+  });
+
+  it('a case view gone while the lists are read: no fetch starts after, and the sync fails', async () => {
+    const abort = new AbortController();
+    const storage = device();
+    const fetchLists = async (heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      abort.abort();
+      onBatch?.(new Map([[heads[0]!, KEPT[heads[0]!]!]]));
+      await settle();
+      return new Map(heads.map((h) => [h, KEPT[h]!]));
+    };
+    await expect(syncKeptImages(['h1', 'h2'], fetchLists, { storage, signal: abort.signal })).rejects.toThrow();
+    expect(storage.added).toEqual([]);
   });
 });
 
@@ -634,7 +1340,7 @@ describe('a large collection with no image yet costs a few cache calls, not a fe
     const storage = device();
     const calls = countCalls(storage);
     const result = await syncKeptImages(heads, async () => new Map(), { storage });
-    expect(result).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0 });
+    expect(result).toEqual({ figures: 0, images: 0, added: 0, evicted: 0, failed: 0, absent: 0 });
     expect(calls.length).toBeLessThanOrEqual(6);
   });
 
@@ -1314,22 +2020,42 @@ describe('syncs in different documents of the app (a tab, the installed window):
     expect(KEPT_SYNC_STEP_MS).toBe(20_000);
   });
 
-  it('once an image fetch is abandoned no other starts, so the sync lets go of the lock at most 20 s later, when the fetches already under way end', async () => {
+  // PHOTOS1 (Ross 11-04: one silent image stopped every fetch, and the case stood as name cards past the first cabinets)
+  it('one image that sends nothing for 20 s (KEPT_SYNC_STEP_MS) is abandoned alone: every other image is still fetched, and the sync ends failed: 1', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     uninstall = installFakeLocks();
-    const stalled = stalling('a', 'd', 'e');
-    const storage = device((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
-    const fetchLists = lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })], h4: [img('e', { primary: true })] });
-    const sync = syncKeptImages(['h1', 'h2', 'h3', 'h4'], fetchLists, { storage, concurrency: 2 });
+    // every other image takes 5 s, so most are still to fetch when c is abandoned, at 25 s
+    const stalled = stalling('c');
+    const storage = device((req) => (req.url === url('c') ? stalled(req) : new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 5_000))));
+    const cs = ['a', 'b', 'c', 'd', 'e', 'f', '0', '1', '2', '3'];
+    const heads = cs.map((_, i) => `h${i}`);
+    const sync = syncKeptImages(heads, lists(Object.fromEntries(cs.map((c, i) => [`h${i}`, [img(c, { primary: true })]]))), { storage, concurrency: 2 });
     const a = track(sync);
-    // a is abandoned at 20 s; d, started at 15 s when b arrived, at 35 s; e is never asked.
     await vi.advanceTimersByTimeAsync(34_999);
     expect(a()).toBe('running');
-    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d')]);
     await vi.advanceTimersByTimeAsync(1);
     expect(a()).toBe('settled');
-    expect(await sync).toMatchObject({ added: 1, failed: 2 });
-    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d')]);
+    expect(owned(storage)).toEqual(cs.filter((c) => c !== 'c').map(url).sort());
+    expect(await sync).toMatchObject({ added: 9, failed: 1 });
+  });
+
+  it('a dead link: once `concurrency` fetches in a row stalled with nothing answered between, no other starts, so the sync lets go of the lock at most 2 x 20 s after the link went quiet', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    uninstall = installFakeLocks();
+    const stalled = stalling('a', 'd', 'e', 'g');
+    const storage = device((req) => (req.url === url('b') ? new Promise<Response>((res) => setTimeout(() => res(new Response('img')), 15_000)) : stalled(req)));
+    const fetchLists = lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('d', { primary: true })], h4: [img('e', { primary: true })], h5: [img('g', { primary: true })] });
+    const sync = syncKeptImages(['h1', 'h2', 'h3', 'h4', 'h5'], fetchLists, { storage, concurrency: 2 });
+    const a = track(sync);
+    // b answers at 15 s and d starts; a stalls at 20 s, one in a row, and e starts; d stalls at 35 s, two in a row: no other
+    // starts, and g is never asked; e, under way, stalls at 40 s
+    await vi.advanceTimersByTimeAsync(39_999);
+    expect(a()).toBe('running');
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d'), url('e')]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(a()).toBe('settled');
+    expect(await sync).toMatchObject({ added: 1, failed: 3 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('a'), url('b'), url('d'), url('e')]);
   });
 
   it('a slow link that brings each image within 20 s brings them all: the deadline is each fetch\'s, not the sync\'s', async () => {
@@ -1422,7 +2148,7 @@ describe('syncs in different documents of the app (a tab, the installed window):
     const storage = device((req) => (req.url === url('a') ? Promise.resolve(new Response('', { status: 404 })) : req.url === url('b') ? slow(req) : Promise.resolve(new Response('img'))));
     const sync = syncKeptImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h2: [img('b', { primary: true })], h3: [img('c', { primary: true })] }), { storage, concurrency: 1 });
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(await sync).toMatchObject({ added: 2, failed: 1 });
+    expect(await sync).toMatchObject({ added: 2, failed: 0, absent: 1 });
     expect(owned(storage)).toEqual([url('b'), url('c')]);
   });
 

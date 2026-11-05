@@ -32,13 +32,29 @@ function scene(figures: Figure[], patch: Partial<CasePrefs> = {}) {
   return { ...utils, host, onViewOrder, told, again };
 }
 
+/** A drawn figure's place in its cabinet, from the translation of its transform: x along its shelf, and its shelf (y, z). */
+const place = (b: HTMLElement) => {
+  const m = /matrix3d\(([^)]*)\)/.exec(b.style.transform)![1]!.split(',').map(Number);
+  return { x: m[12]!, shelf: `${m[13]} ${m[14]}` };
+};
+
 describe('CabinetScene: the figures in view first, then the rest as the case stands them (FETCH-FIRST)', () => {
-  it('tells the figures it draws, in its reading order, then every other figure it stands, in the order it stands them', () => {
+  // PHOTOS1: the figures nearest the middle of the view first (byFrameCentre), so a wall fills from where the eye is
+  it('tells the figures it draws, nearest the middle of the view first, then every other figure it stands, in the order it stands them', () => {
     const { host, told } = scene(getFixtureFigures(40), { view: 'cabinet' });
     const shown = drawn(host);
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.length).toBeLessThan(standing(host).length);
-    expect(told()).toEqual([...shown, ...standing(host).filter((id) => !shown.includes(id))]);
+    expect([...told().slice(0, shown.length)].sort()).toEqual([...shown].sort());
+    expect(told().slice(shown.length)).toEqual(standing(host).filter((id) => !shown.includes(id)));
+    // not in reading order (each shelf from its left): the first told is neither end of its shelf
+    expect(told().slice(0, shown.length)).not.toEqual(shown);
+    const at = new Map(Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => [b.dataset.figureId!, place(b)]));
+    const first = at.get(told()[0]!)!;
+    const shelf = [...at.values()].filter((p) => p.shelf === first.shelf).map((p) => p.x);
+    expect(shelf.length).toBeGreaterThan(2);
+    expect(first.x).toBeGreaterThan(Math.min(...shelf));
+    expect(first.x).toBeLessThan(Math.max(...shelf));
   });
 
   it('a step to the next cabinet tells the figures it draws there first', () => {
@@ -47,7 +63,8 @@ describe('CabinetScene: the figures in view first, then the rest as the case sta
     fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
     const after = drawn(host);
     expect(after).not.toEqual(before);
-    expect(told()).toEqual([...after, ...standing(host).filter((id) => !after.includes(id))]);
+    expect([...told().slice(0, after.length)].sort()).toEqual([...after].sort());
+    expect(told().slice(after.length)).toEqual(standing(host).filter((id) => !after.includes(id)));
   });
 
   it('tells nothing again while what it draws and what it stands are the same', () => {

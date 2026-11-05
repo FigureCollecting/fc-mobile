@@ -721,8 +721,9 @@ async function fetchQueued(
   let quiet = 0;
   const refused = refusedAt.get(storage);
   const retryAt = (at: number) => (result.retryAt = Math.min(result.retryAt ?? Infinity, at));
+  const stopped = () => options.signal?.aborted === true;
   const workers = Array.from({ length: width }, async () => {
-    for (let next = await queue.next(); next !== undefined && options.signal?.aborted !== true && quiet < width && result.full !== true; next = await queue.next()) {
+    for (let next = await queue.next(); next !== undefined && !stopped() && quiet < width && result.full !== true; next = await queue.next()) {
       // PHOTOS1: a display copy answered 404 a moment ago is not asked again
       if (knownAbsent(storage, next)) {
         result.absent += 1;
@@ -750,7 +751,7 @@ async function fetchQueued(
           result.failed += 1;
           // PHOTOS1: a fill out of space ends (each image after it would be downloaded only to be dropped); a sync fetches on
           if (asFill && error instanceof DOMException && error.name === 'QuotaExceededError') result.full = true;
-          else if (asFill && options.signal?.aborted !== true) retryAt(rememberRefused(storage, next));
+          else if (asFill && !stopped()) retryAt(rememberRefused(storage, next));
         }
       }
       if (stalled) quiet += 1;

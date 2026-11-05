@@ -1707,8 +1707,11 @@ export function CabinetScene({
   const onShow = showIdx.map((i) => inDrawn[i]);
   // FETCH-FIRST: what it draws, then the rest as it stands them, told once per change of either
   const standing = useMemo(() => packed.cabinets.flatMap((c) => c.surfaces.flatMap((x) => x.items.map((p) => p.item.figure))), [packed]);
-  // PHOTOS1: nearest the middle of the view first, so a wall's photos come in from where the eye is
-  const inView = byFrameCentre(cull, showIdx.map((i) => inDrawnBoxes[i])).map((k) => onShow[k].draw.placed.item.figure);
+  // PINCH-1: the middle of the zoomed view once a zoom settles, in frame px (figureScales draws the figures nearest it sharpest)
+  const middle = toPicture(sharp, { x: camera.frame.width / 2, y: camera.frame.height / 2 });
+  const zoomedAt = isZoomed(sharp) ? { x: middle.x, y: middle.y - panYPx } : undefined;
+  // PHOTOS1: nearest the middle of the view first (of the zoomed view when zoomed), so a wall's photos come in from where the eye is
+  const inView = byFrameCentre(cull, showIdx.map((i) => inDrawnBoxes[i]), zoomedAt).map((k) => onShow[k].draw.placed.item.figure);
   const inViewKey = inView.map((f) => f._id).join('\n');
   const viewOrderOut = useRef(onViewOrder);
   viewOrderOut.current = onViewOrder;
@@ -1726,13 +1729,12 @@ export function CabinetScene({
   // PINCH-1: Chrome rasters a layer under the perspective at the device pixel ratio per layer px, whatever the zoom
   // magnifies it by; so once a zoom settles the figures nearest the middle of the zoomed view are drawn at the zoom
   // times the scene's px per mm, out of the same budget (the rest coarser outward from it)
-  const middle = toPicture(sharp, { x: camera.frame.width / 2, y: camera.frame.height / 2 });
   const scales = figureScales(
     cull,
     showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * LABEL_HEIGHT_MM : 0 })),
     s * sharp.k,
     FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,
-    isZoomed(sharp) ? { x: middle.x, y: middle.y - panYPx } : undefined,
+    zoomedAt,
   );
   const overhangs = draws.filter((d) => d.draw.placed.tooDeep);
   const flagged = packed.violators.length + overhangs.length;

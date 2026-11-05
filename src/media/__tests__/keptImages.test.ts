@@ -768,6 +768,29 @@ describe('syncKeptImages: the first figures\' images fetched while the other lis
     expect(storage.added.map((r) => r.url)).toEqual([url('c'), url('b'), url('a')]);
   });
 
+  it('a view that has told no order yet holds the early fetches back (what it will show may be in a batch to come), and its order, once told, is followed', async () => {
+    const storage = device();
+    let release!: () => void;
+    const held = new Promise<void>((res) => (release = res));
+    let order: readonly string[] = [];
+    const fetchLists = async (_heads: readonly string[], onBatch?: (batch: Map<string, ProductImage[]>) => void) => {
+      onBatch?.(new Map([['h1', KEPT.h1!], ['h2', KEPT.h2!]]));
+      await held;
+      onBatch?.(new Map([['h3', KEPT.h3!]]));
+      return new Map(Object.entries(KEPT));
+    };
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, concurrency: 1, first: () => order });
+    await settle();
+    expect(storage.added).toEqual([]);
+    // the case view draws h2, then the others
+    order = ['h2', 'h3', 'h1'];
+    await new Promise((res) => setTimeout(res, 300));
+    expect(storage.added.map((r) => r.url)).toEqual([url('b')]);
+    release();
+    await sync;
+    expect(storage.added.map((r) => r.url)).toEqual([url('b'), url('c'), url('a')]);
+  });
+
   it('a head `first` ranks first that has no image does not hold the others back once its batch is read', async () => {
     const storage = device();
     let release!: () => void;

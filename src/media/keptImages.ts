@@ -601,9 +601,13 @@ interface FetchQueue {
   wake(): void;
 }
 
+/** How often a fetch waiting for the case view's first order asks for it again (a new batch of lists asks at once too). */
+const ORDER_POLL_MS = 100;
+
 /**
  * `unread`: the heads whose images may still come (their lists not read, or not kept yet): while it names one, no address is
- * taken that `first` ranks after it, so the fetches go in `first` order across the batches the lists come in.
+ * taken that `first` ranks after it, so the fetches go in `first` order across the batches the lists come in; and none at
+ * all while `first` names nothing yet (the case view not drawn): it may show first a figure whose list is still to come.
  */
 function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (() => readonly string[]) | undefined, unread: ReadonlySet<string> = NO_ADDRESSES): FetchQueue {
   const queued: string[] = [];
@@ -642,6 +646,14 @@ function fetchQueue(shownFor: ReadonlyMap<string, readonly string[]>, first: (()
           queued.sort((a, b) => at.get(a)! - at.get(b)! || addedAt.get(a)! - addedAt.get(b)!);
         }
         if (queued.length === 0 || closed || unread.size === 0) return queued.shift();
+        // a view that has told no order yet: what it will show first may be in a batch still to come; asked again shortly
+        if (first !== undefined && order.length === 0) {
+          await new Promise<void>((res) => {
+            waiting.push(res);
+            setTimeout(res, ORDER_POLL_MS);
+          });
+          continue;
+        }
         let bound = Infinity;
         for (const head of unread) bound = Math.min(bound, rankOf(head));
         if (Math.min(...(shownFor.get(queued[0]!) ?? NO_HEADS).map(rankOf)) <= bound) return queued.shift();

@@ -183,12 +183,17 @@ const rowsOf = (head: string) => [
   { derivativeId: sha(`second:${head}`), role: 'gallery', contentType: 'image/jpeg', width: 550, height: 800, url: `${MEDIA}/${sha(`second:${head}`)}` },
 ];
 
-/** GetProductImages as the coordinator answers it, paged by rows; returns how many calls it answered. */
-async function imageLists(page: Page): Promise<{ calls: () => number }> {
+/**
+ * GetProductImages as the coordinator answers it, paged by rows; returns how many calls it answered, and each head a call
+ * started a batch for (its first page: a later page asks the same heads again).
+ */
+async function imageLists(page: Page): Promise<{ calls: () => number; batched: () => string[] }> {
   let calls = 0;
+  const batched: string[] = [];
   await page.route(IMAGES_PATH, async (route) => {
     calls += 1;
     const req = route.request().postDataJSON() as { headIds: string[]; pageSize?: number; pageToken?: string };
+    if (!req.pageToken) batched.push(...req.headIds);
     const rows = req.headIds.filter(imaged).flatMap((head) => rowsOf(head).map((row) => ({ head, row })));
     const size = req.pageSize || 50;
     const at = req.pageToken ? Number(req.pageToken) : 0;
@@ -202,7 +207,7 @@ async function imageLists(page: Page): Promise<{ calls: () => number }> {
     const body = toJson(GetProductImagesResponseSchema, create(GetProductImagesResponseSchema, { products, nextPageToken }));
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
   });
-  return { calls: () => calls };
+  return { calls: () => calls, batched: () => [...batched] };
 }
 
 /** The image host: answers each address once `ready(head)` settles, and records what it served. */
@@ -457,8 +462,8 @@ test('(c) a case view left part way shows what its sync kept the moment it opens
   release();
   await expect.poll(async () => wrong(await drawn(page)).length, { timeout: 180_000 }).toBe(0);
   const twice = served.filter((u, i) => served.indexOf(u) !== i);
-  // at most the fetches in flight when the case view went away are asked again
-  expect(twice.length, twice.join('\n')).toBeLessThanOrEqual(4);
+  // at most the fetches in flight when the case view went away are asked again (PHOTOS1: 8 at once, KEPT_FETCHES)
+  expect(twice.length, twice.join('\n')).toBeLessThanOrEqual(8);
 });
 
 // ------------------------------------------------------------------ (d)
@@ -535,7 +540,6 @@ test("(e) a case view moved far along while its sync fetches: the figures it dra
   const lists = await imageLists(page);
   await openCase(page);
   await expect.poll(() => asked.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(4);
-  const listCalls = lists.calls();
 
   const next = page.getByRole('button', { name: 'Next cabinet' });
   for (let i = 0; i < 12 && !(await next.isDisabled()); i++) {
@@ -558,6 +562,8 @@ test("(e) a case view moved far along while its sync fetches: the figures it dra
   const inView = nextAsked.filter((h) => toCome.includes(h)).length;
   testInfo.annotations.push({ type: 'next asked in view', description: `${inView} of ${nextAsked.length} (at least ${n}); the view from case position ${viewFrom}` });
   expect(inView, 'of the next figures asked for, those the moved view draws').toBeGreaterThanOrEqual(n);
-  // the sync under way followed the view: no new sync read the lists again
-  expect(lists.calls()).toBe(listCalls);
+  // the sync under way followed the view: no new sync read the lists again (LOAD2: its own may still be reading them, so
+  // each head's list is asked once, not the calls counted from here)
+  const batched = lists.batched();
+  expect(batched.length, 'every head asked for once').toBe(new Set(batched).size);
 });

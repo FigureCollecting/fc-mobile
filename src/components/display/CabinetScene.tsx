@@ -76,6 +76,7 @@ import {
   FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
   GRADIENT_GRID,
+  byFrameCentre,
   cullRect,
   figureCap,
   figureScales,
@@ -1727,7 +1728,8 @@ export function CabinetScene({
   const onShow = showIdx.map((i) => inDrawn[i]);
   // FETCH-FIRST: what it draws, then the rest as it stands them, told once per change of either
   const standing = useMemo(() => packed.cabinets.flatMap((c) => c.surfaces.flatMap((x) => x.items.map((p) => p.item.figure))), [packed]);
-  const inView = onShow.map(({ draw: fig }) => fig.placed.item.figure);
+  // PHOTOS1: nearest the middle of the view first, so a wall's photos come in from where the eye is
+  const inView = byFrameCentre(cull, showIdx.map((i) => inDrawnBoxes[i])).map((k) => onShow[k].draw.placed.item.figure);
   const inViewKey = inView.map((f) => f._id).join('\n');
   const viewOrderOut = useRef(onViewOrder);
   viewOrderOut.current = onViewOrder;

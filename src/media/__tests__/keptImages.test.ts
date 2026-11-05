@@ -391,8 +391,9 @@ describe('a display copy not made yet (404) (PHOTOS1)', () => {
     expect(ABSENT_RECHECK_MS).toBe(10 * 60_000);
   });
 
-  it(`remembers at most ${2 * MAX_KEPT_FIGURES} addresses (twice MAX_KEPT_FIGURES), forgetting the oldest first`, async () => {
-    const n = 2 * MAX_KEPT_FIGURES + 1;
+  it(`remembers at most ${4 * MAX_KEPT_FIGURES} addresses (4 a kept figure): one more is not remembered while all are recent, and is once theirs are due`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000_000 });
+    const n = 4 * MAX_KEPT_FIGURES + 1;
     const at = (i: number) => `${D}/f${i.toString(16).padStart(63, '0')}`;
     const heads = Array.from({ length: n }, (_, i) => `h${i}`);
     const all = new Map(heads.map((h, i) => [h, [img('a', { primary: true, url: at(i) })]]));
@@ -400,9 +401,15 @@ describe('a display copy not made yet (404) (PHOTOS1)', () => {
     await syncKeptImages(heads, async () => all, { storage, max: n, concurrency: 1 });
     expect(storage.added).toHaveLength(n);
     storage.added.length = 0;
-    // the first asked is forgotten, the last is not
+    // the first asked is remembered, the last (past the cap) is not: nothing remembered is forgotten for it
     expect(await syncKeptImages(['h0', `h${n - 1}`], async () => all, { storage })).toMatchObject({ added: 0, failed: 0, absent: 2 });
-    expect(storage.added.map((r) => r.url)).toEqual([at(0)]);
+    expect(storage.added.map((r) => r.url)).toEqual([at(n - 1)]);
+    // 10 min on, the addresses remembered are due: the next 404 takes the place of one
+    vi.setSystemTime(1_000_000 + ABSENT_RECHECK_MS);
+    storage.added.length = 0;
+    await syncKeptImages([`h${n - 1}`], async () => all, { storage });
+    expect(await syncKeptImages([`h${n - 1}`], async () => all, { storage })).toMatchObject({ added: 0, failed: 0, absent: 1 });
+    expect(storage.added.map((r) => r.url)).toEqual([at(n - 1)]);
   });
 
   it('is remembered per device: another device\'s caches ask for it', async () => {
@@ -501,6 +508,88 @@ describe('an address the link refused: a fill asks it again only after a wait th
     await fillKeptImages(['h1', 'h2'], { storage: other });
     expect(other.added.map((r) => r.url)).toEqual([url('b')]);
   });
+});
+
+// PHOTOS1 fix round 3 (X1: both memories held 2 x MAX_KEPT_FIGURES addresses, oldest forgotten first; a fill walks its
+// addresses in the same order each time, so past that each one it remembered forgot the next it would check, and every fill
+// asked every refused address again, every 30 s): they hold as many addresses as a fill may ask for, and a full memory forgets
+// only an address whose wait is over, never one still held.
+describe('the refusal and 404 memories past 3,000 addresses (PHOTOS1)', () => {
+  const T0 = 1_000_000;
+  const hx = (n: number, salt: string) => (salt + n.toString(16)).padStart(64, '0');
+  const at = (n: number, salt: string) => `${D}/${hx(n, salt)}`;
+  afterEach(() => vi.useRealTimers());
+  /** `figures` kept figures, each a primary with its mask; the first `chosen` with a second photo (and its mask) chosen. */
+  async function world(figures: number, chosen: number, answer: (r: Request) => Response) {
+    const heads = Array.from({ length: figures }, (_, i) => `h${i}`);
+    const all = new Map<string, ProductImage[]>();
+    const choices = new Map<string, string>();
+    for (const [i, h] of heads.entries()) {
+      const rows = [img('a', { primary: true, derivativeId: hx(i, 'a'), url: at(i, 'a'), mask: { maskId: hx(i, 'f'), contentType: 'image/png', url: at(i, 'f') } })];
+      if (i < chosen) {
+        rows.push(img('b', { derivativeId: hx(i, 'b'), url: at(i, 'b'), mask: { maskId: hx(i, 'e'), contentType: 'image/png', url: at(i, 'e') } }));
+        choices.set(h, at(i, 'b'));
+      }
+      all.set(h, rows);
+    }
+    const storage = device(async (r) => answer(r));
+    await syncKeptImages(heads, async () => all, { storage, choices });
+    return { heads, storage, choices };
+  }
+
+  it(`a fill backs off on every address of ${MAX_KEPT_FIGURES} figures with 100 chosen photos (3,200 addresses), the origin refusing all`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const { heads, storage, choices } = await world(MAX_KEPT_FIGURES, 100, () => new Response('', { status: 503 }));
+    expect(new Set(storage.added.map((r) => r.url)).size).toBe(3200);
+    const asked: number[] = [];
+    const waits: number[] = [];
+    for (let n = 0; n < 7; n += 1) {
+      const before = storage.added.length;
+      const done = await fillKeptImages(heads, { storage, choices });
+      asked.push(storage.added.length - before);
+      waits.push((done!.retryAt! - Date.now()) / 1000);
+      // the hook's gate: REFILL_AFTER_MS at the soonest, else the soonest address's wait
+      vi.setSystemTime(Math.max(Date.now() + REFUSED_WAIT_MS, done!.retryAt!));
+    }
+    expect(waits).toEqual([30, 60, 120, 240, 480, 600, 600]);
+    expect(asked).toEqual([3200, 3200, 3200, 3200, 3200, 3200, 3200]);
+  }, 60_000);
+
+  it(`a 404 of ${MAX_KEPT_FIGURES} figures with 100 chosen photos is not asked again for 10 min, one address refused all along`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const refused = at(0, 'a');
+    const { heads, storage, choices } = await world(MAX_KEPT_FIGURES, 100, (r) => (r.url === refused ? new Response('', { status: 503 }) : new Response('nf', { status: 404 })));
+    const asked404: number[] = [];
+    while (Date.now() < T0 + ABSENT_RECHECK_MS) {
+      const before = storage.added.length;
+      const done = await fillKeptImages(heads, { storage, choices });
+      asked404.push(storage.added.slice(before).filter((r) => r.url !== refused).length);
+      vi.setSystemTime(Math.max(Date.now() + REFUSED_WAIT_MS, done!.retryAt!));
+    }
+    expect(asked404).toEqual([0, 0, 0, 0, 0]);
+  }, 60_000);
+
+  it(`remembers ${4 * MAX_KEPT_FIGURES} refused addresses (4 a kept figure); one more, all still held, is not remembered and nothing held is forgotten`, async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: T0 });
+    const n = 4 * MAX_KEPT_FIGURES + 1;
+    const one = (i: number) => `${D}/f${i.toString(16).padStart(63, '0')}`;
+    const heads = Array.from({ length: n }, (_, i) => `h${i}`);
+    const all = new Map(heads.map((h, i) => [h, [img('a', { primary: true, url: one(i) })]]));
+    const storage = device(async () => new Response('', { status: 503 }));
+    await syncKeptImages(heads, async () => all, { storage, max: n, concurrency: 1 });
+    await fillKeptImages(heads, { storage, concurrency: 1 });
+    storage.added.length = 0;
+    vi.setSystemTime(T0 + 1);
+    // the first asked is held, the last (past the cap) is asked again
+    expect(await fillKeptImages(heads, { storage, concurrency: 1 })).toMatchObject({ added: 0, failed: n, absent: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([one(n - 1)]);
+    // 30 s on, the addresses remembered are due: the next refusal takes the place of one
+    vi.setSystemTime(T0 + REFUSED_WAIT_MS);
+    storage.added.length = 0;
+    await fillKeptImages([`h${n - 1}`], { storage });
+    expect(await fillKeptImages([`h${n - 1}`], { storage })).toEqual({ added: 0, absent: 0, failed: 1, retryAt: T0 + 2 * REFUSED_WAIT_MS });
+    expect(storage.added.map((r) => r.url)).toEqual([one(n - 1)]);
+  }, 60_000);
 });
 
 describe('a device out of space (QuotaExceededError) (PHOTOS1)', () => {

@@ -110,8 +110,14 @@ export const KEPT_FETCHES = 8;
  * it in a loop. Remembered per CacheStorage (a device), in memory: a document opened later asks again.
  */
 export const ABSENT_RECHECK_MS = 10 * 60_000;
-/** PHOTOS1: the most 404 addresses remembered, the oldest forgotten first. */
-const MAX_ABSENT = 2 * MAX_KEPT_FIGURES;
+/**
+ * PHOTOS1: the most addresses the 404 memory and the refusal memory each hold: as many as a fill may ask for, each kept
+ * figure's shown image and the primary it replaces, each with its mask (answerable). A full memory forgets only addresses
+ * whose wait is over; while every one it holds is still waiting, it does not remember another. (Forgetting the oldest
+ * instead, past 3,000 addresses each one a fill remembered forgot the next it would check, as a fill walks its addresses in
+ * the same order each time, and every fill asked every address again.)
+ */
+const MAX_REMEMBERED = 4 * MAX_KEPT_FIGURES;
 /** PHOTOS1: when each address answered 404, per CacheStorage. */
 const absentAt = new WeakMap<CacheStorage, Map<string, number>>();
 const absentOf = (storage: CacheStorage): Map<string, number> => {
@@ -125,25 +131,23 @@ function knownAbsent(storage: CacheStorage, address: string): boolean {
   return at !== undefined && Date.now() - at < ABSENT_RECHECK_MS;
 }
 function rememberAbsent(storage: CacheStorage, address: string): void {
-  const seen = absentOf(storage);
-  seen.delete(address);
-  seen.set(address, Date.now());
-  trimOldest(seen);
+  remember(absentOf(storage), address, Date.now(), (at) => Date.now() - at < ABSENT_RECHECK_MS);
 }
-/** PHOTOS1: a memory of addresses kept to MAX_ABSENT, the oldest forgotten first. */
-function trimOldest(seen: Map<string, unknown>): void {
-  for (const oldest of seen.keys()) {
-    if (seen.size <= MAX_ABSENT) break;
-    seen.delete(oldest);
-  }
+/** PHOTOS1: `address` remembered last; when the memory is full, those no longer `waiting` are forgotten first, and if none is, it is not remembered. */
+function remember<T>(seen: Map<string, T>, address: string, value: T, waiting: (value: T) => boolean): void {
+  seen.delete(address);
+  if (seen.size >= MAX_REMEMBERED) for (const [other, v] of seen) if (!waiting(v)) seen.delete(other);
+  if (seen.size < MAX_REMEMBERED) seen.set(address, value);
 }
 /** PHOTOS1: the image origin has no display copy at this address yet (a 404). */
 class AbsentImage extends Error {}
 /**
  * PHOTOS1: how long a fill waits before asking again an address it was refused (a 5xx, a 403, a CORS or network failure, a
  * stall), twice as long after each refusal after, at most REFUSED_WAIT_MAX_MS; an address served forgets its refusals. A
- * sync asks it all the same (the case view opened again, the server reached again). Remembered per CacheStorage, in memory,
- * as the 404s are: so an origin refusing every image is asked about 600 times in 10 minutes for 300 figures, not every 30 s.
+ * sync asks it all the same (the case view opened again, the server reached again).
+ * Remembered per CacheStorage, in memory, as the 404s are: so an origin refusing every image has each address asked 6 times
+ * in the first 10 minutes (the sync, then fills at once and 30 s, 1.5, 3.5 and 7.5 min on: 3,600 requests for 300 figures,
+ * not 600 every 30 s), then once every 10 minutes.
  */
 export const REFUSED_WAIT_MS = 30_000;
 export const REFUSED_WAIT_MAX_MS = 10 * 60_000;
@@ -154,9 +158,7 @@ function rememberRefused(storage: CacheStorage, address: string): number {
   if (seen === undefined) refusedAt.set(storage, (seen = new Map()));
   const before = seen.get(address);
   const wait = before === undefined ? REFUSED_WAIT_MS : Math.min(2 * before.wait, REFUSED_WAIT_MAX_MS);
-  seen.delete(address);
-  seen.set(address, { until: Date.now() + wait, wait });
-  trimOldest(seen);
+  remember(seen, address, { until: Date.now() + wait, wait }, (held) => held.until > Date.now());
   return Date.now() + wait;
 }
 

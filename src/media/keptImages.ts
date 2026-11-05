@@ -448,7 +448,8 @@ interface SyncOptions {
  * any cache is touched: from then on the caller tells the sync's end, however it ends.
  * LOAD2: told the lists batch by batch (fetchImageLists' onBatch), the lists of the heads `first` names asked first, a
  * figure the device kept no list for is the exception: it withholds and replaces nothing, so its fresh list is written and
- * its images fetched as soon as its batch is read, while the other lists are still read. A read of the lists that then
+ * its images fetched as soon as its batch is read, while the other lists are still read; so are the shown images a kept
+ * figure's kept list and its fresh one both name, not withheld (PHOTOS1). A read of the lists that then
  * fails, or a case view gone meanwhile, leaves those (added, never withheld) and touches nothing else.
  *
  * One document of the app at a time (a tab, the installed window): the sync holds the Web Lock
@@ -841,7 +842,7 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
   // figure the device kept no list for withholds nothing and replaces nothing, so once its batch is read its list is kept
   // and its images fetched, while the other lists are still read. What the device held before this sync is read first, once,
   // before anything is written. A figure it kept a list for waits for every list, as what it withholds is read from all of
-  // them. A write the device refuses here stops this and is left to the writes below. The fetches still go in `first` order
+  // them, but for the shown images its kept list and its fresh one both name (PHOTOS1). A write the device refuses here stops this and is left to the writes below. The fetches still go in `first` order
   // across batches (fetchQueue's unread): one is not taken while a head ranked before it may still bring images.
   let early: { records: Cache; media: Cache; tomb: Cache; before: Map<string, CachedImage[]>; lists: Map<string, CachedImage[]>; withheld: Set<string>; written: Set<string> } | undefined;
   let earlyStopped = false;
@@ -863,7 +864,21 @@ async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader
       tell = () => options.onKept?.(answersOf(lists, options.choices, have, withheld));
     }
     for (const [head, images] of batch) {
-      if (!headSet.has(head) || early.before.has(head) || aborted()) continue;
+      if (!headSet.has(head) || aborted()) continue;
+      const keptList = early.before.get(head);
+      if (keptList !== undefined) {
+        // PHOTOS1 (a returning device, the installed app: its in-view photos still missing waited for every list): the shown
+        // images its kept list and its fresh one both name, not withheld, are fetched now; keptImages answers each as it
+        // lands, from the kept list. Neither is touched: an image its fresh list changes waits for every list, as does a
+        // figure ranked after it while it may still bring one.
+        const fresh = addressesOf(answerable(toCachedImages(images), options.choices?.get(head)));
+        const kept = new Set(addressesOf(answerable(keptList, options.choices?.get(head))).filter((u) => !early!.withheld.has(u)));
+        const now = fresh.filter((u) => kept.has(u) && !have.has(u));
+        for (const u of now) shownFor.set(u, [...(shownFor.get(u) ?? []), head]);
+        queue.add(now);
+        if (fresh.every((u) => kept.has(u))) unread.delete(head);
+        continue;
+      }
       const list = toCachedImages(images);
       const shown = answerable(list, options.choices?.get(head));
       if (shown.length === 0) {

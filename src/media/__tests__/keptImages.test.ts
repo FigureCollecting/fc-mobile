@@ -960,7 +960,46 @@ describe('syncKeptImages: the first figures\' images fetched while the other lis
     expect(told.some((k) => k.includes('h9'))).toBe(false);
   });
 
-  it('a figure the device kept a list for waits for every list (what it withholds is read from all of them), and what was kept stays shown meanwhile', async () => {
+  // PHOTOS1 fix round (S1: on a returning device, the installed app, the in-view photos still missing waited for every list)
+  /** A device whose last sync kept h1..h3's lists and the bytes of a only: b and c went missing since. */
+  const returning = async () => {
+    const storage = device();
+    await syncKeptImages(['h1', 'h2', 'h3'], async () => new Map(Object.entries(KEPT)), { storage });
+    const media = await storage.open(OWNED_MEDIA_CACHE);
+    await media.delete(url('b'));
+    await media.delete(url('c'));
+    storage.added.length = 0;
+    return storage;
+  };
+
+  it('a figure the device kept a list for: the shown image its kept and its fresh list both name is fetched and told once its batch is read, before the other lists arrive', async () => {
+    const storage = await returning();
+    const { fetchLists, release } = twoBatches();
+    const told: string[][] = [];
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, first: () => ['h2', 'h3', 'h1'], onKept: (k) => told.push([...k.keys()].sort()) });
+    await settle();
+    expect(storage.added.map((r) => r.url)).toEqual([url('b')]);
+    expect((await keptImage('h2', storage))?.url).toBe(url('b'));
+    expect(told.at(-1)).toEqual(['h1', 'h2']);
+    release();
+    expect(await sync).toEqual({ figures: 3, images: 3, added: 2, evicted: 0, failed: 0, absent: 0 });
+    expect(storage.added.map((r) => r.url)).toEqual([url('b'), url('c')]);
+  });
+
+  it('...but not one a sync recorded withheld: that waits for every list, which forget it before it is fetched', async () => {
+    const storage = await returning();
+    await (await storage.open(WITHHELD_CACHE)).put(withheldKey(url('b')), new Response(null));
+    const { fetchLists, release } = twoBatches();
+    const sync = syncKeptImages(['h1', 'h2', 'h3'], fetchLists, { storage, first: () => ['h2', 'h3', 'h1'] });
+    await settle();
+    expect(storage.added).toEqual([]);
+    release();
+    await sync;
+    expect(storage.added.map((r) => r.url)).toEqual([url('b'), url('c')]);
+    expect(await withheldAmong([url('b')], storage)).toEqual(new Set());
+  });
+
+  it('a figure the device kept a list for whose shown image changed waits for every list (what it withholds is read from all of them), and what was kept stays shown meanwhile', async () => {
     const storage = device();
     await syncKeptImages(['h1'], async () => new Map([['h1', [img('d', { primary: true })]]]), { storage });
     storage.added.length = 0;

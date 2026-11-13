@@ -253,12 +253,33 @@ describe('dolly: the eye forward and back along its heading', () => {
     }
   });
 
-  it('backing away from a display moves at the room behind, not the inches ahead', () => {
+  it('backing (turned round) toward a cabinet front eases in and stops on its margin', () => {
     const x = wall.cabinets[0].centerMm;
-    const p: Pose = { ...start, x, z: boxes[0].z1 + EYE_MARGIN_MM + 50 };
+    const face = boxes[0].z1 + EYE_MARGIN_MM;
+    let p: Pose = { ...start, x, z: face + 3000, yaw: Math.PI };
+    let last = 0;
+    for (let t = 0; t < 10_000; t += FRAME_MS) {
+      const n = dolly(p, -1, FRAME_MS, room);
+      const speed = ((p.z - n.z) * 1000) / FRAME_MS;
+      // never faster than the front behind allows (the last frame is cut short by the margin)
+      expect(speed).toBeLessThanOrEqual(DEPTH_RATE_PER_S * (p.z - boxes[0].z1) + 1e-6);
+      if (speed > 0) last = speed;
+      p = n;
+    }
+    expect(p.z).toBeCloseTo(face, 6);
+    expect(last).toBeGreaterThan(0);
+    expect(last).toBeLessThan(200);
+  });
+
+  it('backing away from a display 100 mm in front starts slow: the nearer of the room ahead and behind', () => {
+    const x = wall.cabinets[0].centerMm;
+    const p: Pose = { ...start, x, z: boxes[0].z1 + EYE_MARGIN_MM };
     const speed = ((dolly(p, -1, FRAME_MS, room).z - p.z) * 1000) / FRAME_MS;
-    expect(speed).toBeCloseTo(-depthSpeed(-1, aheadMm(p, space, boxes, -1)), 6);
-    expect(speed).toBe(DEPTH_MAX_MM_S);
+    expect(speed).toBeLessThanOrEqual(200);
+    expect(speed).toBeCloseTo(-depthSpeed(-1, Math.min(aheadMm(p, space, boxes), aheadMm(p, space, boxes, -1))), 6);
+    // and speeds up as the display falls away (2 m behind it after 2 s)
+    const away = hold(p, -1, 2000, room);
+    expect(((dolly(away, -1, FRAME_MS, room).z - away.z) * 1000) / FRAME_MS).toBeGreaterThan(1000);
   });
 
   it('a pose with a non-number in it moves nothing and comes back unchanged', () => {
@@ -270,7 +291,60 @@ describe('dolly: the eye forward and back along its heading', () => {
     }
   });
 
-  it('held against the budget, a frame makes at most 2 cost calls (and as many ok calls), the start cost passed in', () => {
+  it('a stale low v0 (the scene got heavier, now over the ceiling) never freezes the eye: the true cost comes back', () => {
+    const C = SCENE_CEILING_VIEWPORTS;
+    // the true cost is over the ceiling everywhere near and falls as the eye backs off (+z)
+    const vp = (q: Vec3) => C + 2 - (q[2] - 3000) / 10_000;
+    const first = dollyStep(start, -1, FRAME_MS, { ...open, vp }, 1);
+    expect(first.vp).toBe(vp(eye(first.pose)));
+    let p: Pose = start;
+    let v: number | undefined = 1;
+    for (let i = 0; i < 60; i++) {
+      const s = dollyStep(p, -1, FRAME_MS, { ...open, vp }, v);
+      expect(s.vp).toBe(vp(eye(s.pose)));
+      p = s.pose;
+      v = s.vp;
+    }
+    expect(p.z).toBeGreaterThan(start.z + 1000);
+  });
+
+  it('a stale high v0 (the scene got lighter) never lets a frame be drawn past the ceiling', () => {
+    const C = SCENE_CEILING_VIEWPORTS;
+    // the true cost is 2 here and reaches the ceiling 20 mm ahead (5.2 one full-speed frame ahead)
+    const vp = (q: Vec3) => 2 + (3000 - q[2]) / 20;
+    let p: Pose = start;
+    let v: number | undefined = 10;
+    for (let i = 0; i < 60; i++) {
+      const s = dollyStep(p, 1, FRAME_MS, { ...open, vp }, v);
+      expect(vp(eye(s.pose))).toBeLessThanOrEqual(C);
+      p = s.pose;
+      v = s.vp;
+    }
+    expect(start.z - p.z).toBeGreaterThan(19);
+    expect(start.z - p.z).toBeLessThanOrEqual(20);
+  });
+
+  it('a v0 that is no number (NaN, -Infinity) is asked again: the eye moves both ways and a real cost comes back', () => {
+    // under the ceiling, and on a flat cost over it (where a trusted -Infinity would hold the eye a frame)
+    for (const cost of [1, SCENE_CEILING_VIEWPORTS + 1]) {
+      const vp = () => cost;
+      for (const v0 of [Number.NaN, -Infinity]) {
+        for (const r of [1, -1]) {
+          const s = dollyStep(start, r, FRAME_MS, { ...open, vp }, v0);
+          expect(s.pose.z).not.toBe(start.z);
+          expect(s.vp).toBe(cost);
+        }
+      }
+    }
+  });
+
+  it('over the ceiling on a flat cost (the cost does not rise), the eye still moves both ways', () => {
+    const vp = () => SCENE_CEILING_VIEWPORTS + 1;
+    expect(dollyStep(start, 1, FRAME_MS, { ...open, vp }).pose.z).toBeLessThan(start.z);
+    expect(dollyStep(start, -1, FRAME_MS, { ...open, vp }).pose.z).toBeGreaterThan(start.z);
+  });
+
+  it('held against the budget, a frame makes at most 3 cost calls (2 ok calls), and hands back the true cost', () => {
     let vpCalls = 0;
     let okCalls = 0;
     const p = { ...start };
@@ -282,13 +356,18 @@ describe('dolly: the eye forward and back along its heading', () => {
       okCalls++;
       return true;
     };
-    for (const dt of [FRAME_MS, JOG_MAX_STEP_MS]) {
+    // a v0 that matches the scene, and one gone stale (2, under the ceiling; the true cost is 1)
+    for (const [dt, v0] of [
+      [FRAME_MS, 1],
+      [JOG_MAX_STEP_MS, 1],
+      [FRAME_MS, 2],
+    ]) {
       vpCalls = 0;
       okCalls = 0;
-      const held = dollyStep(p, 1, dt, { ...open, vp, ok }, 1);
+      const held = dollyStep(p, 1, dt, { ...open, vp, ok }, v0);
       expect(held.pose).toBe(p);
       expect(held.vp).toBe(1);
-      expect(vpCalls).toBeLessThanOrEqual(2);
+      expect(vpCalls).toBeLessThanOrEqual(3);
       expect(okCalls).toBeLessThanOrEqual(2);
     }
     // not passed in, it is asked once more

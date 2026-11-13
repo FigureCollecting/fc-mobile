@@ -1,10 +1,10 @@
 /**
  * NAV-DEPTH-1 (Ross 11-04, 11-13): the depth rocker's maths. A spring-centred rocker is a velocity, not a position:
  * pushed by r in [-1, 1] the eye moves forward (+) or back (-) along its HORIZONTAL heading, never the pitched view (a
- * look down then forward never dives to the floor), faster the farther the rocker goes and the more room lies the way
- * it moves (fast across a room, slow inches from a display or the room's bound). It moves through the rules a jog moves through: the room and the
- * furniture (slideEye with EYE_MARGIN_MM), the jog's `ok` (the Classic cap and the wall's ends, jogOk) and the GPU
- * budget (fitsCeiling). Pure maths, no DOM.
+ * look down then forward never dives to the floor), faster the farther the rocker goes and the more room there is
+ * (fast across a room, slow inches from a display or the room's bound). It moves through the rules a jog moves
+ * through: the room and the furniture (slideEye with EYE_MARGIN_MM), the jog's `ok` (the Classic cap and the wall's
+ * ends, jogOk) and the GPU budget (fitsCeiling). Pure maths, no DOM.
  */
 import type { Vec3 } from './caseCamera';
 import type { Box } from './caseFraming';
@@ -13,7 +13,7 @@ import { EYE_MARGIN_MM, JOG_MAX_STEP_MS, slideEye, type Pose } from './casePose'
 
 /** A rocker this far off centre (of 1) or less moves nothing: a resting thumb's wobble. */
 export const DEPTH_DEAD = 0.1;
-/** At full reach the eye moves this many times the distance the way it moves a second: an ease in toward what it nears. */
+/** At full reach the eye moves this many times the distance it is given a second: an ease in toward what it nears. */
 export const DEPTH_RATE_PER_S = 1.5;
 /**
  * Full reach's slowest speed (mm/s), for depthSpeed's own callers. Through dolly it never engages: the distance it is
@@ -42,9 +42,9 @@ export function heading(pose: Pose): Vec3 {
 }
 
 /**
- * The dolly's speed (mm/s, + forward) with the rocker at r and `aheadMm` of room the way it moves (dolly gives the
- * room behind for r < 0): none within DEPTH_DEAD; past it, the square of the reach to 1 times DEPTH_RATE_PER_S of that
- * distance, kept to [DEPTH_MIN_MM_S, DEPTH_MAX_MM_S].
+ * The dolly's speed (mm/s, + forward) with the rocker at r and `aheadMm` of room (dolly gives the room ahead, or for
+ * r < 0 the nearer of the room ahead and behind): none within DEPTH_DEAD; past it, the square of the reach to 1
+ * times DEPTH_RATE_PER_S of that distance, kept to [DEPTH_MIN_MM_S, DEPTH_MAX_MM_S].
  */
 export function depthSpeed(r: number, aheadMm: number): number {
   const off = Math.abs(r);
@@ -97,26 +97,33 @@ export function aheadMm(pose: Pose, space: Box, boxes: readonly Box[], sign: 1 |
 
 /**
  * The rocker held at r for dtMs (at most JOG_MAX_STEP_MS: a stalled phone never leaps): the eye moved along its heading
- * by depthSpeed of the room the way it moves (aheadMm ahead, or behind for r < 0), slid through the room and the
- * furniture (slideEye with EYE_MARGIN_MM). A move `ok` refuses, or whose scene passes the ceiling (fitsCeiling of
- * `vp`), stops at the last place on it that passes, to DEPTH_STOP_MM, never trading the depth for a sideways move as
- * capMove would; where even DEPTH_STOP_MM of it does not pass, the eye stays at once (held against the budget, a frame
- * asks two costs, not a search's). A start already over the ceiling (the budget narrowed: a look, a resize) moves only
+ * by depthSpeed of the room ahead (aheadMm), or for r < 0 the nearer of the room ahead and behind (backing away from a
+ * display inches off starts slow, and backing into the room's bound eases in), slid through the room and the furniture
+ * (slideEye with EYE_MARGIN_MM). A move `ok` refuses, or whose scene passes the ceiling (fitsCeiling of `vp`), stops at
+ * the last place on it that passes, to DEPTH_STOP_MM, never trading the depth for a sideways move as capMove would;
+ * where even DEPTH_STOP_MM of it does not pass, the eye stays at once (held against the budget, a frame asks three
+ * costs at most, not a search's). A start already over the ceiling (the budget narrowed: a look, a resize) moves only
  * where the cost does not rise, so it is never trapped. A pose with a non-number in it stays as it is.
  *
- * `v0` is the cost at `pose` where the caller has it (the `vp` the last frame returned); else it is asked. The cost
- * returned is the cost where the eye ends, where one was asked or given (undefined without `vp`).
+ * `v0` is the cost at `pose` where the caller has it: the `vp` the last frame returned, in the same scene. Callers
+ * drop it (pass undefined) on any change of the scene, the frame, the size or the budget. Only a finite v0 within the
+ * ceiling is trusted; any other is asked again (a stale one over it would let a frame pass the ceiling). Where the eye
+ * stays, the true cost at the start is handed back (asked once, where v0 was trusted), so a stale v0 lives one frame at
+ * most. Else the cost returned is the cost where the eye ends (undefined without `vp`). A frame that moves nothing for
+ * its time, rocker or pose hands v0 back as given.
  */
 export function dollyStep(pose: Pose, r: number, dtMs: number, scene: DollyScene, v0?: number): { pose: Pose; vp: number | undefined } {
   const dt = Math.min(dtMs, JOG_MAX_STEP_MS);
   if (!(dt > 0) || ![pose.x, pose.y, pose.z, pose.yaw, pose.pitch].every(Number.isFinite)) return { pose, vp: v0 };
-  const mm = (depthSpeed(r, aheadMm(pose, scene.space, scene.boxes, r < 0 ? -1 : 1)) * dt) / 1000;
+  const ahead = aheadMm(pose, scene.space, scene.boxes);
+  const mm = (depthSpeed(r, r < 0 ? Math.min(ahead, aheadMm(pose, scene.space, scene.boxes, -1)) : ahead) * dt) / 1000;
   if (mm === 0) return { pose, vp: v0 };
   const from: Vec3 = [pose.x, pose.y, pose.z];
   const [hx, , hz] = heading(pose);
   const at = (t: number): Vec3 => slideEye(from, [pose.x + hx * mm * t, pose.y, pose.z + hz * mm * t], scene.space, scene.boxes, EYE_MARGIN_MM);
   const { ok, vp } = scene;
-  const start = vp === undefined ? undefined : (v0 ?? vp(from));
+  const trusted = vp !== undefined && v0 !== undefined && Number.isFinite(v0) && fitsCeiling(v0);
+  const start = vp === undefined ? undefined : trusted ? v0 : vp(from);
   const over = start !== undefined && !fitsCeiling(start);
   // where ok holds and the cost fits (or, from over the ceiling, does not rise); `cost` is the last passing place's
   let cost = start;
@@ -140,7 +147,7 @@ export function dollyStep(pose: Pose, r: number, dtMs: number, scene: DollyScene
       else hi = mid;
     }
   }
-  if (lo === 0) return { pose, vp: cost };
+  if (lo === 0) return { pose, vp: trusted ? vp(from) : cost };
   const [x, y, z] = at(lo);
   return { pose: { ...pose, x, y, z }, vp: cost };
 }

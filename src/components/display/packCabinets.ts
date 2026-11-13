@@ -304,6 +304,8 @@ export interface PackResult {
 interface Building {
   /** The profile from the wall pattern, and the instance as it stands (its shelves taken out, CASE-FB2b). */
   stock: CabinetProfile;
+  /** Its stock's place in the wall pattern. */
+  pi: number;
   profile: CabinetProfile;
   slots: SurfaceSlot[];
   rows: CaseFigure[][];
@@ -523,8 +525,14 @@ function placeAll(
     return { tall, shelf, narrow, short };
   });
 
-  // the tall figures no place on the wall has room for yet, in list order
-  const waiting: CaseFigure[] = [];
+  // PACK-KIND-1: a figure is judged by the cabinet it lands in: its kind in that cabinet's profile
+  /** Whether place `k` of cabinet `b` may take figure `i`: a place kept for tall figures only one tall for that cabinet. */
+  const mayTake = (b: Building, k: number, i: number) => !b.tall.has(k) || kinds[b.pi][i] === 'tall';
+
+  // the tall figures no place on the wall has room for yet (their places in the list), in list order
+  const waiting: number[] = [];
+  /** The waiting figures of kind `kind` in profile `pi`. */
+  const waitingOf = (pi: number, kind: Kind) => waiting.filter((j) => kinds[pi][j] === kind).map((j) => items[j]);
   /** A tall figure's tier in a cabinet with room for it (PACK1: one of its places `allowed`), else -1. */
   const tierFor = (b: Building, item: CaseFigure, allowed: (k: number) => boolean = () => true): number => {
     const t = topOf(b);
@@ -535,30 +543,66 @@ function placeAll(
     const t = topOf(b);
     return t >= 0 && allowed(t) && fitsIn(b, t, item) ? t : -1;
   };
-  /** A tall figure's place on the wall: the earliest tier with room for it, else the earliest top (PACK1: from its group's mark on). */
-  const tallPlace = (item: CaseFigure): [Building, number] | null => {
+  /**
+   * What each cabinet's tiers and top have left: the most width any one has, and the tallest. Rows only grow, so a
+   * value once read stays an upper bound; tallPlace passes by a cabinet no figure as wide or as tall could stand in.
+   */
+  const roomBound: { widthMm: number; heightMm: number }[] = [];
+  const tallRoomOf = (b: Building) => {
+    let widthMm = 0;
+    let heightMm = 0;
+    const t = topOf(b);
+    for (const k of t >= 0 ? [...b.tall, t] : b.tall) {
+      widthMm = Math.max(widthMm, b.slots[k].widthMm - b.rows[k].reduce((x, it) => x + span(it), 0));
+      heightMm = Math.max(heightMm, b.slots[k].maxHeightMm);
+    }
+    return { widthMm, heightMm };
+  };
+  /**
+   * A tall figure's place on the wall: the earliest tier with room for it, else the earliest top (PACK1: from its group's
+   * mark on). A tier or top kept for tall figures takes only one tall for its own cabinet (PACK-KIND-1); with `tallThere`,
+   * figure `i` is a shelf figure where the shelves are and takes only a place in a cabinet it is tall for.
+   */
+  const tallPlace = (item: CaseFigure, i: number, tallThere = false): [Building, number] | null => {
     for (const place of [tierFor, topFor]) {
-      for (const [c, b] of building.entries()) {
-        const k = place(b, item, (j) => tallFrom(c, j));
+      // (PACK1: no place before the mark's cabinet is a group's)
+      for (let c = grouped ? mark.cab : 0; c < building.length; c++) {
+        const b = building[c];
+        const tall = kinds[b.pi][i] === 'tall';
+        if (tallThere && !tall) continue;
+        const bound = roomBound[c];
+        // (the bound's 1e-3 mm slack: never a figure passed by that the rows' own sums would let in)
+        if (bound !== undefined && (item.widthMm > bound.widthMm + 1e-3 || !within(item.heightMm, bound.heightMm))) continue;
+        const k = place(b, item, (j) => tallFrom(c, j) && (tall || (!tallThere && !b.tall.has(j))));
         if (k >= 0) return [b, k];
+        if (place === tierFor) roomBound[c] = tallRoomOf(b);
       }
     }
     return null;
   };
-  // a cabinet the shelves open gives its tiers and top to the waiting tall figures first, each in turn that fits
+  /** Where a waiting figure stands in a cabinet just opened: tall for it, a tier, else its top; a shelf figure for it, its first shelf with room (PACK-KIND-1). */
+  const waitingPlace = (b: Building, j: number): number => {
+    const kind = kinds[b.pi][j];
+    const item = items[j];
+    if (kind === 'shelf') return b.slots.findIndex((_, k) => !b.tall.has(k) && fitsIn(b, k, item));
+    if (kind === 'none') return -1;
+    const tier = tierFor(b, item);
+    return tier >= 0 ? tier : topFor(b, item);
+  };
+  // a cabinet the shelves open gives its places to the waiting tall figures first, each in turn that fits
   const giveTall = (b: Building) => {
     for (let i = 0; i < waiting.length; ) {
-      const tier = tierFor(b, waiting[i]);
-      const k = tier >= 0 ? tier : topFor(b, waiting[i]);
-      if (k >= 0) b.rows[k].push(...waiting.splice(i, 1));
+      const k = waitingPlace(b, waiting[i]);
+      if (k >= 0) b.rows[k].push(items[waiting.splice(i, 1)[0]]);
       else i++;
     }
   };
   /** The room left on the wall where the tall figures are kept: what they still want past it is what a new cabinet must take. */
   // (only room a tall figure still to come could stand in: as tall as the shortest of them, as wide as the narrowest)
   const keptRoom = (pi: number, at: number) => {
-    const narrow = Math.min(ahead[pi].narrow[at], ...waiting.map((i) => i.widthMm));
-    const short = Math.min(ahead[pi].short[at], ...waiting.map((i) => i.heightMm));
+    const tallWaiting = waitingOf(pi, 'tall');
+    const narrow = Math.min(ahead[pi].narrow[at], ...tallWaiting.map((i) => i.widthMm));
+    const short = Math.min(ahead[pi].short[at], ...tallWaiting.map((i) => i.heightMm));
     // (PACK1: room behind the group's mark is no room for it, nor for the groups after it)
     return building.reduce(
       (w, b, c) =>
@@ -575,7 +619,7 @@ function placeAll(
   const holdsRest = (stock: CabinetProfile, pi: number, a: Arrangement, keepTop: boolean, at: number): boolean => {
     const tall = new Set(a.tiers);
     if (keepTop) tall.add(a.slots.findIndex((x) => x.isTop));
-    const b: Building = { stock, profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall };
+    const b: Building = { stock, pi, profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall };
     const tallIn = (item: CaseFigure) => {
       const tier = tierFor(b, item);
       const k = tier >= 0 ? tier : topFor(b, item);
@@ -583,7 +627,12 @@ function placeAll(
       b.rows[k].push(item);
       return true;
     };
-    if (!waiting.every(tallIn)) return false;
+    const waitIn = (j: number) => {
+      const k = waitingPlace(b, j);
+      if (k >= 0) b.rows[k].push(items[j]);
+      return k >= 0;
+    };
+    if (!waiting.every(waitIn)) return false;
     let cursor = 0;
     for (let i = at; i < items.length; i++) {
       const kind = kinds[pi][i];
@@ -602,19 +651,22 @@ function placeAll(
   const arrange = (stock: CabinetProfile, at: number): { a: Arrangement; keepTop: boolean } => {
     const all = arrangements(stock, ceilingMm);
     const pi = pattern.indexOf(stock);
+    // PACK-KIND-1: of the waiting figures, only those tall for this profile want a tier or its top; its shelves hold the rest
+    const tallWaiting = waitingOf(pi, 'tall');
+    const widthOf = (list: readonly CaseFigure[]) => list.reduce((w, i) => w + span(i), 0);
     // past the last figure, the waiting ones fit nowhere on the wall: no room kept there counts for them
-    const tallW = Math.max(0, waiting.reduce((w, i) => w + span(i), 0) + ahead[pi].tall[at] - (at >= items.length ? 0 : keptRoom(pi, at)));
+    const tallW = Math.max(0, widthOf(tallWaiting) + ahead[pi].tall[at] - (at >= items.length ? 0 : keptRoom(pi, at)));
     if (!rules.shelfRemoval || tallW === 0) return { a: all[0], keepTop: false };
-    const shelfW = ahead[pi].shelf[at];
+    const shelfW = ahead[pi].shelf[at] + widthOf(waitingOf(pi, 'shelf'));
     // the next tall figure: a tier must fit it, or there is no use in one
-    let next = waiting[0];
+    let next = tallWaiting[0];
     for (let i = at; next === undefined && i < items.length; i++) if (kinds[pi][i] === 'tall') next = items[i];
     // a shelf figure opens this cabinet: one of its shelves (no top, no tier) must take it, so no cabinet is opened
     // for its glass to stand empty; past the last one, the first waiting figure must find a place
     const opener = at < items.length && kinds[pi][at] === 'shelf' ? items[at] : null;
     const atEnd = at >= items.length;
-    const shortest = Math.min(ahead[pi].short[at], ...waiting.map((i) => i.heightMm));
-    const narrowest = Math.min(ahead[pi].narrow[at], ...waiting.map((i) => i.widthMm));
+    const shortest = Math.min(ahead[pi].short[at], ...tallWaiting.map((i) => i.heightMm));
+    const narrowest = Math.min(ahead[pi].narrow[at], ...tallWaiting.map((i) => i.widthMm));
     const scored: { a: Arrangement; keepTop: boolean; tallCap: number; glassCap: number }[] = [];
     for (const a of all) {
       const tierW = a.tiers.map((k) => a.slots[k].widthMm);
@@ -658,11 +710,12 @@ function placeAll(
 
   const open = (c: number, at: number): Building => {
     while (building.length <= c) {
-      const stock = pattern[building.length % pattern.length];
+      const pi = building.length % pattern.length;
+      const stock = pattern[pi];
       const { a, keepTop } = arrange(stock, at);
       const tall = new Set(a.tiers);
       if (keepTop && a.slots.some((x) => x.isTop)) tall.add(a.slots.findIndex((x) => x.isTop));
-      const b: Building = { stock, profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall };
+      const b: Building = { stock, pi, profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall };
       building.push(b);
       if (rules.tallOnOpenedTops || rules.shelfRemoval) giveTall(b);
     }
@@ -708,10 +761,19 @@ function placeAll(
     // never the shelf cursor, which passes them by
     if ((tallHere || (kindHere === 'none' && kinds.some((ks) => ks[i] === 'tall'))) && (rules.tallOnOpenedTops || rules.shelfRemoval)) {
       // tall for the cursor's cabinet: the earliest place on the wall with room, else wait for the next cabinet
-      const place = tallPlace(item);
+      const place = tallPlace(item, i);
       if (place) place[0].rows[place[1]].push(item);
-      else waiting.push(item);
+      else waiting.push(i);
       continue;
+    }
+    // PACK-KIND-1: a shelf figure here that another cabinet of the pattern calls tall takes the earliest tier or top
+    // that cabinet keeps for it with room first, so no place kept for it stands empty behind the shelf cursor
+    if (kinds.some((ks) => ks[i] === 'tall') && (rules.tallOnOpenedTops || rules.shelfRemoval)) {
+      const place = tallPlace(item, i, true);
+      if (place) {
+        place[0].rows[place[1]].push(item);
+        continue;
+      }
     }
     if (tallHere) {
       // (off) the first top from here on with room
@@ -736,7 +798,7 @@ function placeAll(
           j = -1;
           continue;
         }
-        if (!b.tall.has(j) && fitsIn(b, j, item)) {
+        if (mayTake(b, j, i) && fitsIn(b, j, item)) {
           b.rows[j].push(item);
           if (c > cab || (c === cab && j > k)) [cab, k] = [c, j];
           break;
@@ -751,8 +813,8 @@ function placeAll(
         k = 0;
         continue;
       }
-      // the shelf figures pass by what is kept for the tall ones
-      if (!b.tall.has(k) && fitsIn(b, k, item)) {
+      // the shelf figures pass by what is kept for the tall ones (PACK-KIND-1: unless tall for this cabinet)
+      if (mayTake(b, k, i) && fitsIn(b, k, item)) {
         b.rows[k].push(item);
         break;
       }

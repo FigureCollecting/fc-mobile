@@ -6,6 +6,11 @@ import {
   ZOOM_MAX,
   ZOOM_SNAP,
   ZOOM_UNDER,
+  WHEEL_DELTA,
+  WHEEL_LINE_PX,
+  WHEEL_PINCH_MAX_PX,
+  WHEEL_PINCH_RATE,
+  WHEEL_ZOOM_RATE,
   clampZoom,
   easeOut,
   glideZoom,
@@ -15,6 +20,7 @@ import {
   settleZoom,
   toPicture,
   toScreen,
+  wheelZoom,
   zoomAt,
   zoomTransform,
   type Zoom,
@@ -227,5 +233,96 @@ describe('caseZoom: bounds, settling and the quick way back', () => {
     expect(half.y).toBeCloseTo(-600 * (1 - e), 9);
     // and the other way: a double-tap's 1x to 2x
     expect(glideZoom(UNZOOMED, { k: 2, x: -220, y: -260 }, 1)).toEqual({ k: 2, x: -220, y: -260 });
+  });
+});
+
+describe('wheelZoom (NAV-DESKTOP-ZOOM): the mouse wheel is the desktop pinch', () => {
+  const at = { x: 300, y: 140 };
+  const { PIXEL, LINE, PAGE } = WHEEL_DELTA;
+
+  it('the delta modes are the DOM WheelEvent constants', () => {
+    expect([PIXEL, LINE, PAGE]).toEqual([WheelEvent.DOM_DELTA_PIXEL, WheelEvent.DOM_DELTA_LINE, WheelEvent.DOM_DELTA_PAGE]);
+  });
+
+  it('a wheel turned away from the user (deltaY < 0) zooms in by exp(-deltaY * rate), the picture point under the cursor staying under it', () => {
+    const z = wheelZoom(UNZOOMED, -100, PIXEL, at, COVER);
+    expect(z.k).toBeGreaterThan(1);
+    expect(z.k).toBeCloseTo(Math.exp(100 * WHEEL_ZOOM_RATE), 9);
+    const q = toPicture(UNZOOMED, at);
+    const s = toScreen(z, q);
+    expect(Math.abs(s.x - at.x)).toBeLessThan(0.5);
+    expect(Math.abs(s.y - at.y)).toBeLessThan(0.5);
+  });
+
+  it('from any zoom and cursor, a wheel in keeps the cursor\'s picture point within 0.5 px of the cursor', () => {
+    fc.assert(
+      fc.property(zoom, point, fc.double({ min: -400, max: -1, noNaN: true }), (z, p, dy) => {
+        const next = wheelZoom(z, dy, PIXEL, p, COVER);
+        const s = toScreen(next, toPicture(z, p));
+        // at ZOOM_MAX the k stops: the point still stays (k unchanged, offsets unchanged)
+        expect(Math.abs(s.x - p.x)).toBeLessThan(0.5);
+        expect(Math.abs(s.y - p.y)).toBeLessThan(0.5);
+      }),
+    );
+  });
+
+  it('a wheel turned toward the user zooms out; the same turn back returns to the zoom it left', () => {
+    const z = wheelZoom({ k: 2, x: -300, y: -140 }, 100, PIXEL, at, COVER);
+    expect(z.k).toBeCloseTo(2 * Math.exp(-100 * WHEEL_ZOOM_RATE), 9);
+    const back = wheelZoom(z, -100, PIXEL, at, COVER);
+    expect(back.k).toBeCloseTo(2, 9);
+    expect(back.x).toBeCloseTo(-300, 6);
+    expect(back.y).toBeCloseTo(-140, 6);
+  });
+
+  it(`LINE mode is pixel mode x${WHEEL_LINE_PX}; PAGE mode is a frame height of pixels`, () => {
+    expect(wheelZoom(UNZOOMED, -3, LINE, at, COVER)).toEqual(wheelZoom(UNZOOMED, -3 * WHEEL_LINE_PX, PIXEL, at, COVER));
+    expect(wheelZoom(UNZOOMED, -0.25, PAGE, at, COVER)).toEqual(wheelZoom(UNZOOMED, -0.25 * COVER.height, PIXEL, at, COVER));
+  });
+
+  it('a trackpad pinch (ctrl+wheel) zooms at its own rate, the same way and at the same point', () => {
+    const z = wheelZoom(UNZOOMED, -10, PIXEL, at, COVER, true);
+    expect(z.k).toBeCloseTo(Math.exp(10 * WHEEL_PINCH_RATE), 9);
+    const s = toScreen(z, toPicture(UNZOOMED, at));
+    expect(Math.abs(s.x - at.x)).toBeLessThan(0.5);
+    expect(Math.abs(s.y - at.y)).toBeLessThan(0.5);
+  });
+
+  it(`clamps as a pinch does: no further in than ${ZOOM_MAX}x, no further out than ${ZOOM_UNDER}x until it settles at 1x`, () => {
+    let z: Zoom = UNZOOMED;
+    for (let i = 0; i < 50; i++) z = wheelZoom(z, -500, PIXEL, at, COVER);
+    expect(z.k).toBe(ZOOM_MAX);
+    covers(z);
+    for (let i = 0; i < 50; i++) z = wheelZoom(z, 500, PIXEL, at, COVER);
+    expect(z.k).toBe(ZOOM_UNDER);
+    expect(settleZoom(z, COVER)).toBe(UNZOOMED);
+  });
+
+  it('a wheel with no vertical turn (deltaY 0) changes nothing', () => {
+    const z: Zoom = { k: 2, x: -300, y: -140 };
+    expect(wheelZoom(z, 0, PIXEL, at, COVER)).toEqual(z);
+  });
+
+  it('the rates, the line and the ctrl cap are pinned to their values', () => {
+    // 0.01 is exact: Chromium sends a trackpad pinch as deltaY = -100 * ln(scale) (touchpad_pinch_event_queue.cc)
+    expect(WHEEL_PINCH_RATE).toBe(0.01);
+    expect(WHEEL_ZOOM_RATE).toBe(0.002);
+    expect(WHEEL_LINE_PX).toBe(16);
+    expect(WHEEL_PINCH_MAX_PX).toBe(50);
+    // and they act as those values: 3 lines are 48 px; a ctrl delta of -ln(1.5) * 100 is the pinch's 1.5x
+    expect(wheelZoom(UNZOOMED, -3, LINE, at, COVER).k).toBeCloseTo(Math.exp(48 * 0.002), 12);
+    expect(wheelZoom(UNZOOMED, -100 * Math.log(1.5), PIXEL, at, COVER, true).k).toBeCloseTo(1.5, 12);
+  });
+
+  it('a ctrl+wheel event moves at most 50 px (a mouse notch with Ctrl held), however it comes; a plain wheel is not held', () => {
+    expect(wheelZoom(UNZOOMED, -100, PIXEL, at, COVER, true).k).toBe(Math.exp(50 * 0.01));
+    expect(wheelZoom({ k: 2, x: -300, y: -140 }, 100, PIXEL, at, COVER, true).k).toBeCloseTo(2 * Math.exp(-50 * 0.01), 12);
+    expect(wheelZoom(UNZOOMED, -1, PAGE, at, COVER, true).k).toBe(Math.exp(50 * 0.01));
+    expect(wheelZoom(UNZOOMED, -1e306, LINE, at, COVER, true).k).toBe(Math.exp(50 * 0.01));
+    // under the cap a pinch's delta passes whole
+    expect(wheelZoom(UNZOOMED, -40, PIXEL, at, COVER, true).k).toBeCloseTo(Math.exp(0.4), 12);
+    expect(wheelZoom(UNZOOMED, -50, PIXEL, at, COVER, true).k).toBe(Math.exp(50 * 0.01));
+    // the plain wheel's notch is never held
+    expect(wheelZoom(UNZOOMED, -300, PIXEL, at, COVER).k).toBeCloseTo(Math.exp(0.6), 12);
   });
 });

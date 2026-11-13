@@ -1331,6 +1331,42 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(pose().x).toBeGreaterThan(before.x);
   });
 
+  // NAV-DESKTOP-ZOOM: the wheel's magnification keeps the jog's rule: no magnification rides a moving camera
+  const wheel = (deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
+  const k = () => (JSON.parse(host().dataset.zoom!) as { k: number }).k;
+
+  it('a wheel zoom, in or out under 1x and not yet settled, is dropped at a jog\'s start and never settles back after', () => {
+    scene();
+    wheel(300);
+    expect(k()).toBeLessThan(1);
+    begin();
+    expect(k()).toBe(1);
+    tick(500);
+    expect(k()).toBe(1);
+    end();
+    cleanup();
+    scene();
+    wheel(-300);
+    expect(k()).toBeGreaterThan(1);
+    begin();
+    expect(k()).toBe(1);
+    tick(500);
+    expect(k()).toBe(1);
+    end();
+  });
+
+  it('while the jog runs the wheel zooms nothing (the page still never scrolls); stopped, it zooms again', () => {
+    scene();
+    begin();
+    run(JOG_FULL_PX, 0, 5);
+    expect(wheel(-300)).toBe(false);
+    expect(k()).toBe(1);
+    end();
+    // a jog let go leaves no spring: the next notch zooms
+    wheel(-300);
+    expect(k()).toBeGreaterThan(1);
+  });
+
   it('gone mid-run: no frame runs on, and the withdrawn jog\'s calls do nothing', () => {
     const { unmount } = scene();
     begin();

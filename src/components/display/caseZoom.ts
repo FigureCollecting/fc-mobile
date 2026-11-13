@@ -63,6 +63,14 @@ function about(z: Zoom, p: Point, at: Point, k: number): Zoom {
 const mid = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
 /**
+ * A gesture's step (a pinch's, a wheel's): magnification k, within what a gesture may reach while it lasts
+ * ([ZOOM_UNDER, ZOOM_MAX]), the picture's point under `from` brought under `to`.
+ */
+function gestureZoom(start: Zoom, from: Point, to: Point, k: number, frame: Frame): Zoom {
+  return clampZoom(about(start, from, to, Math.min(ZOOM_MAX, Math.max(ZOOM_UNDER, k))), frame, ZOOM_UNDER);
+}
+
+/**
  * A pinch from `start`, its fingers first at a0 and b0, now at a1 and b1: magnified by how much farther apart
  * they are, the picture's point first under their midpoint now under their midpoint, like a photo viewer.
  */
@@ -70,8 +78,37 @@ export function pinchZoom(start: Zoom, a0: Point, b0: Point, a1: Point, b1: Poin
   const d0 = Math.hypot(b0.x - a0.x, b0.y - a0.y);
   if (d0 === 0) return start;
   const d1 = Math.hypot(b1.x - a1.x, b1.y - a1.y);
-  const k = Math.min(ZOOM_MAX, Math.max(ZOOM_UNDER, (start.k * d1) / d0));
-  return clampZoom(about(start, mid(a0, b0), mid(a1, b1), k), frame, ZOOM_UNDER);
+  return gestureZoom(start, mid(a0, b0), mid(a1, b1), (start.k * d1) / d0, frame);
+}
+
+/** WheelEvent.deltaMode: the unit a wheel's delta comes in (the DOM's DOM_DELTA_* values). */
+export const WHEEL_DELTA = { PIXEL: 0, LINE: 1, PAGE: 2 } as const;
+/** A LINE-mode wheel's line (Firefox's mouse wheel), in px. */
+export const WHEEL_LINE_PX = 16;
+/** A mouse wheel's zoom per px of its turn: a Chromium notch (100 px) is about 1.22x, a Firefox one (3 lines) 1.10x. */
+export const WHEEL_ZOOM_RATE = 0.002;
+/**
+ * A desktop trackpad's pinch arrives as ctrl+wheel: Chromium turns the pinch's scale into a wheel delta of
+ * 100 * log(scale), sign inverted for deltaY (components/input/touchpad_pinch_event_queue.cc), so exp(-deltaY * 0.01) is
+ * the pinch's own scale and the zoom tracks the fingers 1:1.
+ */
+export const WHEEL_PINCH_RATE = 0.01;
+/**
+ * A ctrl+wheel event moves at most this many px: a trackpad pinch's events are a few px each and pass whole, while a
+ * mouse notch with Ctrl held (100 px, 2.72x at the pinch rate) is held to exp(0.5), about 1.65x.
+ */
+export const WHEEL_PINCH_MAX_PX = 50;
+
+/**
+ * NAV-DESKTOP-ZOOM: one wheel event's zoom, the desktop's pinch: k times exp(-deltaY * rate) (a turn away from the user,
+ * deltaY < 0, zooms in), the picture's point under the cursor `at` (frame px) staying under it, within a pinch's bounds.
+ * A LINE delta is WHEEL_LINE_PX a line, a PAGE delta the frame's height; `pinch` is a trackpad's pinch (ctrl+wheel),
+ * each event held to WHEEL_PINCH_MAX_PX.
+ */
+export function wheelZoom(z: Zoom, deltaY: number, deltaMode: number, at: Point, frame: Frame, pinch = false): Zoom {
+  const px = deltaMode === WHEEL_DELTA.LINE ? deltaY * WHEEL_LINE_PX : deltaMode === WHEEL_DELTA.PAGE ? deltaY * frame.height : deltaY;
+  const step = pinch ? Math.min(WHEEL_PINCH_MAX_PX, Math.max(-WHEEL_PINCH_MAX_PX, px)) : px;
+  return gestureZoom(z, at, at, z.k * Math.exp(-step * (pinch ? WHEEL_PINCH_RATE : WHEEL_ZOOM_RATE)), frame);
 }
 
 /** One finger pans the magnified picture by (dx, dy), up to its edges. */

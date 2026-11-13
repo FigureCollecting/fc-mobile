@@ -36,8 +36,8 @@ export async function kept(head: string): Promise<string | null> {
 const client = new QueryClient();
 
 const pageKey = (head: string) => ['local', 'image', head, true];
-/** The case view's key in reach, its owned figures the one given (useCollectionImages). */
-const caseViewKey = (head: string) => ['local', 'kept-images', true, head];
+/** The case view's key, its owned figures the one given and no photo chosen (useCollectionImages; in reach or not, one key). */
+const caseViewKey = (head: string) => ['local', 'kept-images', head, ''];
 
 /** The figure page's answer for a figure, as useProductImage gives it (in reach), no page open; this client hears from then on. */
 export function answer(head: string, url: string): boolean {

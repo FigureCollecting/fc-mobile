@@ -501,6 +501,74 @@ describe('dolly: the eye forward and back along its heading', () => {
     expect(back.z).toBeGreaterThan(p.z);
   });
 
+  it('a search that ends on a failing probe hands back the cost where the eye ends, not the probe', () => {
+    // the challenger's shrunk frame (round 3): no v0, a wavy cost near the ceiling, one reverse frame that searches;
+    // at 2.698 under the ceiling (its search ends on a passing probe), and the scene a step heavier (3.398, over the
+    // ceiling: its search ends on a failing one)
+    for (const base of [2.698, 3.398]) {
+      let calls = 0;
+      const vp = (q: Vec3) => {
+        calls++;
+        return base + 0.4 * Math.sin(q[2] / 13 + q[0] / 17);
+      };
+      const p: Pose = { ...start, z: 1500, yaw: 0 };
+      const step = dollyStep(p, -0.6037, 94, { ...room, vp });
+      expect(step.pose).not.toBe(p);
+      expect(calls).toBeGreaterThan(3);
+      expect(step.vp).toBe(vp(eye(step.pose)));
+    }
+  });
+
+  it('property: every frame hands back the cost where the eye ends; a held frame asks at most 3 costs', () => {
+    const C = SCENE_CEILING_VIEWPORTS;
+    // whole percents of the rocker and whole ms, with the dead zone's edge; the caller may keep a v0 the scene changed
+    // under, or carry junk (a stale v0 lives one frame at most)
+    const step = fc.record({
+      r: fc.oneof(fc.integer({ min: -120, max: 120 }).map((n) => n / 100), fc.constantFrom(0, DEPTH_DEAD, -DEPTH_DEAD, -1, 1)),
+      dt: fc.integer({ min: 1, max: 150 }),
+      change: fc.boolean(),
+    });
+    const v0Arb = fc.oneof(fc.constant(undefined), fc.double({ min: -10, max: 10, noNaN: true }), fc.constantFrom(Number.NaN, Infinity, -Infinity, C, C + 1e-12));
+    fc.assert(
+      fc.property(
+        fc.array(step, { minLength: 1, maxLength: 40 }),
+        v0Arb,
+        fc.double({ min: 0, max: 6, noNaN: true }),
+        fc.double({ min: -0.02, max: 0.02, noNaN: true }),
+        fc.integer({ min: -600, max: 600 }),
+        (steps, v00, base, slope, yawTenths) => {
+          let k = 0;
+          const costOf = (n: number) => (q: Vec3) => base + n * 0.7 + slope * (3000 - q[2]) + 0.4 * Math.sin(q[2] / 13 + q[0] / 17);
+          let p: Pose = { ...start, z: 1500, yaw: (yawTenths / 10) * DEG };
+          let v = v00;
+          for (const { r, dt, change } of steps) {
+            if (change) k = (k + 1) % 3;
+            const f = costOf(k);
+            let calls = 0;
+            const vp = (q: Vec3) => {
+              calls++;
+              return f(q);
+            };
+            const before = f(eye(p));
+            const s = dollyStep(p, r, dt, { ...room, vp }, v);
+            if (!(Math.abs(r) > DEPTH_DEAD)) {
+              // moves nothing for its rocker: v0 back as given, no cost asked
+              if (s.pose !== p || !Object.is(s.vp, v) || calls !== 0) return false;
+            } else {
+              if (s.vp !== f(eye(s.pose))) return false;
+              if (s.pose === p && calls > 3) return false;
+              if (s.pose !== p && f(eye(s.pose)) > Math.max(C, before)) return false;
+            }
+            p = s.pose;
+            v = s.vp;
+          }
+          return true;
+        },
+      ),
+      { numRuns: 1500, seed: 1116 },
+    );
+  });
+
   it('property: any sequence of r and dt never leaves the eye space nor enters a grown cabinet box', () => {
     // fast-check's doubles lean on edge values (0, the bounds), so most steps would not move: whole percents and
     // milliseconds, forward-heavy so most runs reach the fronts, and the edge values besides

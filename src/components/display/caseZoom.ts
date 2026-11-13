@@ -88,19 +88,27 @@ export const WHEEL_LINE_PX = 16;
 /** A mouse wheel's zoom per px of its turn: a Chromium notch (100 px) is about 1.22x, a Firefox one (3 lines) 1.10x. */
 export const WHEEL_ZOOM_RATE = 0.002;
 /**
- * A desktop trackpad's pinch arrives as ctrl+wheel with small deltas (a few px an event, not a notch's 100): five times
- * the wheel's rate, so a pinch's spread zooms about as far on a trackpad as on a phone.
+ * A desktop trackpad's pinch arrives as ctrl+wheel: Chromium turns the pinch's scale into a wheel delta of
+ * 100 * log(scale), sign inverted for deltaY (components/input/touchpad_pinch_event_queue.cc), so exp(-deltaY * 0.01) is
+ * the pinch's own scale and the zoom tracks the fingers 1:1.
  */
 export const WHEEL_PINCH_RATE = 0.01;
+/**
+ * A ctrl+wheel event moves at most this many px: a trackpad pinch's events are a few px each and pass whole, while a
+ * mouse notch with Ctrl held (100 px, 2.72x at the pinch rate) is held to exp(0.5), about 1.65x.
+ */
+export const WHEEL_PINCH_MAX_PX = 50;
 
 /**
  * NAV-DESKTOP-ZOOM: one wheel event's zoom, the desktop's pinch: k times exp(-deltaY * rate) (a turn away from the user,
  * deltaY < 0, zooms in), the picture's point under the cursor `at` (frame px) staying under it, within a pinch's bounds.
- * A LINE delta is WHEEL_LINE_PX a line, a PAGE delta the frame's height; `pinch` is a trackpad's pinch (ctrl+wheel).
+ * A LINE delta is WHEEL_LINE_PX a line, a PAGE delta the frame's height; `pinch` is a trackpad's pinch (ctrl+wheel),
+ * each event held to WHEEL_PINCH_MAX_PX.
  */
 export function wheelZoom(z: Zoom, deltaY: number, deltaMode: number, at: Point, frame: Frame, pinch = false): Zoom {
   const px = deltaMode === WHEEL_DELTA.LINE ? deltaY * WHEEL_LINE_PX : deltaMode === WHEEL_DELTA.PAGE ? deltaY * frame.height : deltaY;
-  return gestureZoom(z, at, at, z.k * Math.exp(-px * (pinch ? WHEEL_PINCH_RATE : WHEEL_ZOOM_RATE)), frame);
+  const step = pinch ? Math.min(WHEEL_PINCH_MAX_PX, Math.max(-WHEEL_PINCH_MAX_PX, px)) : px;
+  return gestureZoom(z, at, at, z.k * Math.exp(-step * (pinch ? WHEEL_PINCH_RATE : WHEEL_ZOOM_RATE)), frame);
 }
 
 /** One finger pans the magnified picture by (dx, dy), up to its edges. */

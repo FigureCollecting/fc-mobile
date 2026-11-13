@@ -589,7 +589,7 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
 // NAV-DESKTOP-ZOOM (Ross 11-13: "Pinch zoom is just that... no desktop equiv yet"): the mouse wheel is the desktop's pinch,
 // the same magnification at the cursor; ctrl+wheel (a desktop trackpad's pinch) too; Shift+wheel is kept for depth (a later unit)
 describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)', () => {
-  type W = { deltaY: number; deltaMode?: number; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean };
+  type W = { deltaY: number; deltaX?: number; deltaMode?: number; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean };
   /** A wheel turn over `el` at p; true when the browser may act on it (its default not prevented). */
   const wheel = (el: Element, p: P, w: W) => fireEvent.wheel(el, { clientX: p.x, clientY: p.y, deltaMode: 0, ...w });
   const at = { x: 300, y: 140 };
@@ -614,11 +614,39 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
     expect(chip()).not.toBeNull();
   });
 
-  it('ctrl+wheel (a desktop trackpad pinch) zooms in at the cursor too, the page never zooming or scrolling', () => {
+  it('ctrl+wheel (a desktop trackpad pinch) zooms in at the cursor at the pinch\'s rate, the page never zooming or scrolling', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    // under the 50 px cap: exp(40 * 0.01); the plain wheel's rate would give exp(40 * 0.002)
+    expect(wheel(host, at, { deltaY: -40, ctrlKey: true })).toBe(false);
+    const z = zoomOf(host);
+    expect(z.k).toBeCloseTo(Math.exp(0.4), 3);
+    const under = toScreen(z, toPicture({ k: 1, x: 0, y: 0 }, at));
+    expect(Math.abs(under.x - at.x)).toBeLessThan(0.5);
+    expect(Math.abs(under.y - at.y)).toBeLessThan(0.5);
+  });
+
+  it('a mouse notch with Ctrl held (deltaY -100) zooms exp(50 * 0.01), not 2.72x', () => {
     vi.useFakeTimers();
     const { host } = scene(getFixtureFigures(8));
     expect(wheel(host, at, { deltaY: -100, ctrlKey: true })).toBe(false);
-    expect(zoomOf(host).k).toBeGreaterThan(1);
+    expect(zoomOf(host).k).toBeCloseTo(Math.exp(0.5), 3);
+  });
+
+  it('a wheel with no vertical turn (a trackpad\'s sideways swipe) keeps the page where it is (no back-swipe away), changes nothing and redraws nothing', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -300 });
+    idle();
+    const z = zoomOf(host);
+    const transform = layer.style.transform;
+    renders.mockClear();
+    expect(wheel(host, at, { deltaY: 0, deltaX: 120 })).toBe(false);
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(false);
+    idle();
+    expect(renders).not.toHaveBeenCalled();
+    expect(zoomOf(host)).toEqual(z);
+    expect(layer.style.transform).toBe(transform);
   });
 
   for (const key of ['shiftKey', 'altKey', 'metaKey'] as const) {

@@ -1694,6 +1694,8 @@ export function CabinetScene({
     if (e.shiftKey || e.altKey || e.metaKey || onSceneUi(e.target)) return;
     e.preventDefault();
     if (press.current || pinching.current || (freeRef.current && fc.live())) return;
+    // a sideways swipe (no vertical turn): the page stays put (a trackpad's back-swipe never leaves), nothing goes live or settles
+    if (e.deltaY === 0) return;
     showZoom(wheelZoom(zoom.current, e.deltaY, e.deltaMode, toFrame(e.clientX, e.clientY), picture.current, e.ctrlKey), 'live');
     clearTimeout(wheelIdle.current);
     wheelIdle.current = setTimeout(letGo, WHEEL_IDLE_MS);

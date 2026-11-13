@@ -649,6 +649,74 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
     expect(layer.style.transform).toBe(transform);
   });
 
+  /** The exact k on the layer (data-zoom is rounded): 1 with no transform. */
+  const layerK = (layer: HTMLElement) => {
+    const m = /scale\(([\d.e+-]+)\)/.exec(layer.style.transform);
+    return m ? Number(m[1]) : 1;
+  };
+
+  it('a sideways wheel mid-glide back from 0.8x neither stops nor jumps the glide: it ends at exactly 1x on time', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    for (let i = 0; i < 20; i++) wheel(host, at, { deltaY: 200 });
+    idle();
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
+    });
+    const mid = layerK(layer);
+    expect(wheel(host, at, { deltaY: 0, deltaX: 120 })).toBe(false);
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    expect(layerK(layer)).toBe(mid);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 4);
+    });
+    expect(layerK(layer)).toBeGreaterThan(mid);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+    expect(layer.style.transform).toBe('');
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+
+  it('a sideways wheel mid-glide of the Reset view chip leaves the glide running', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -300 });
+    idle();
+    fireEvent.click(chip()!);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
+    });
+    wheel(host, at, { deltaY: 0, deltaX: -80 });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(layer.style.transform).toBe('');
+  });
+
+  it('a sideways wheel while a let-go is pending (live at 0.8x) neither cancels nor postpones it', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    for (let i = 0; i < 20; i++) wheel(host, at, { deltaY: 200 });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    wheel(host, at, { deltaY: 0, deltaX: 50 });
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(WHEEL_IDLE_MS - 100);
+    });
+    // let go on the original schedule: settling back to 1x, not stuck live under 1x
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(false);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+    });
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+
   for (const key of ['shiftKey', 'altKey', 'metaKey'] as const) {
     it(`a wheel with ${key} is not the zoom's (Shift+wheel is kept for depth): nothing changes and the browser keeps it`, () => {
       vi.useFakeTimers();

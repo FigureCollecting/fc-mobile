@@ -75,9 +75,17 @@ const FRESH_FOR_MS = 10 * 60_000;
 const freshFor = (data: ReadonlyMap<string, CachedImage> | undefined): number =>
   data !== undefined && (partial.has(data) || unsynced.has(data)) ? 0 : FRESH_FOR_MS;
 /**
+ * SC-IMGKEY: whether an answer asks a sync when the server is reached: none yet; one given out of reach or partial, whatever
+ * its age; one FRESH_FOR_MS old; and one dated ahead of the clock (the clock stepped back), whose age cannot be told.
+ */
+function due(state: QueryState<ReadonlyMap<string, CachedImage>> | undefined): boolean {
+  if (state === undefined || state.data === undefined || freshFor(state.data) === 0) return true;
+  const age = Date.now() - state.dataUpdatedAt;
+  return age < 0 || age >= FRESH_FOR_MS;
+}
+/**
  * SC-IMGKEY: after a sync started by the server reached again, how long nothing syncs again: a recovery or pass due in that
- * time is owed, and rides the engine's first completed pass after it (its idle poll at the latest), so a flapping link costs
- * one sync, not one a flap.
+ * time is owed, and runs when it is over (no engine pass needed), so a flapping link costs one sync, not one a flap.
  */
 export const REACH_SETTLE_MS = 10_000;
 /** FETCH-FIRST: the heads the case view shows, then the rest as it stands them; the last case view's until another tells. */
@@ -179,6 +187,19 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   if (!reachable) syncedInReach.current = false;
   // SC-IMGKEY: whether the last run started began in reach: a sync, which the server reached again never stops (a run out of reach it does)
   const inReach = useRef(false);
+  /** SC-IMGKEY: when the last sync started by the server reached again began; whether one is owed from the wait after it. */
+  const recoveredAt = useRef(-Infinity);
+  const owed = useRef(false);
+  const owedTimer = useRef<ReturnType<typeof setTimeout>>();
+  /**
+   * SC-IMGKEY: any run pays a sync owed: one in reach (the case view opened again, the kept figures changed) syncs or answers
+   * from another document's sync; one out of reach is followed by a reach, which sees to an answer due itself.
+   */
+  const paid = () => {
+    owed.current = false;
+    clearTimeout(owedTimer.current);
+    owedTimer.current = undefined;
+  };
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: key,
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
@@ -186,6 +207,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     // fetches in flight are aborted and no other starts.
     queryFn: async ({ signal, client, queryKey }) => {
       inReach.current = reachable;
+      paid();
       hearKeptSyncs(client);
       await stopFill();
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
@@ -302,21 +324,40 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       filling?.stop();
     };
   }, []);
-  /** SC-IMGKEY: when the last sync started by the server reached again began, and whether one is owed from the wait after it. */
-  const recoveredAt = useRef(-Infinity);
-  const owed = useRef(false);
-  const due = (state: QueryState<ReadonlyMap<string, CachedImage>> | undefined): boolean =>
-    state?.data === undefined || Date.now() - state.dataUpdatedAt >= freshFor(state.data);
-  /** Sync again, at once or, inside REACH_SETTLE_MS of a recovery's sync, owed; `recovery` starts that wait. */
+  /** SC-IMGKEY: whether the server reached syncs: the case view enabled, no sync of its own under way, and its answer due. */
+  const wantsSync = (): boolean => {
+    const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
+    return enabled && !(state?.fetchStatus === 'fetching' && inReach.current) && due(state);
+  };
+  /** How long the wait after a recovery's sync has left; a clock stepped back behind that sync ends it, never stretches it. */
+  const settleLeft = (): number => {
+    const since = Date.now() - recoveredAt.current;
+    return since < 0 ? 0 : REACH_SETTLE_MS - since;
+  };
+  /**
+   * Sync again, at once or, inside REACH_SETTLE_MS of a recovery's sync, owed: paid when the wait is over (owedTimer, or the
+   * first render after it), or by any sync in reach before (paid). `recovery` starts that wait.
+   */
   const syncAgain = (recovery: boolean) => {
-    if (Date.now() < recoveredAt.current + REACH_SETTLE_MS) {
+    const left = settleLeft();
+    if (left > 0) {
       owed.current = true;
+      owedTimer.current ??= setTimeout(() => payOwed.current(), left);
       return;
     }
-    owed.current = false;
+    paid();
     if (recovery) recoveredAt.current = Date.now();
     void query.refetch();
   };
+  // SC-IMGKEY: the wait over, the owed sync runs, whether or not the engine's passes complete; what it cannot run then (the
+  // server lost, a sync under way, the answer no longer due) is owed no more: a recovery or that sync sees to it
+  const payOwed = useRef(() => {});
+  payOwed.current = () => {
+    const pay = reachable && wantsSync();
+    paid();
+    if (pay) void query.refetch();
+  };
+  useEffect(() => () => clearTimeout(owedTimer.current), []);
   // SC-IMGKEY: the server reached (the first time this case view sees it, or again after an outage) refetches an answer due,
   // stopping a run out of reach but never a sync under way; the answer shown meanwhile stands. Ahead of the pass below, so a
   // recovery and the pass that found the server, told in one render, sync once, as a recovery.
@@ -328,23 +369,24 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     if (!reachable || was) return;
     const recovery = everReached.current;
     everReached.current = true;
-    const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
-    if (!enabled || (state?.fetchStatus === 'fetching' && inReach.current) || !due(state)) return;
-    syncAgain(recovery);
+    if (wantsSync()) syncAgain(recovery);
   }, [reachable]);
+  // SC-IMGKEY: the first render after the wait (the engine telling anything: a pass begun, failed or completed) pays a sync
+  // owed, ahead of the pass below; the timer pays it where none comes
+  useEffect(() => {
+    if (owed.current && settleLeft() <= 0) payOwed.current();
+  });
   // NEWHOLD-IMG-1: a pass the engine completes after a sync that could not read the lists syncs again; never the failure
   // itself (a server still failing is asked again at the next pass, not at once), nor one already under way. PHOTOS1: after
-  // one that read them and left an image unfetched, the pass fills instead. SC-IMGKEY: a sync owed from REACH_SETTLE_MS
-  // rides the first such pass after it; one due inside it is owed too.
+  // one that read them and left an image unfetched, the pass fills instead. SC-IMGKEY: inside REACH_SETTLE_MS of a
+  // recovery's sync, such a sync is owed.
   const passedAt = session?.engine.state.value.lastSyncedAt ?? null;
   const seenPass = useRef(passedAt);
   useEffect(() => {
     if (seenPass.current === passedAt) return;
     seenPass.current = passedAt;
     const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
-    const idle = state?.fetchStatus === 'idle';
-    if (idle && owed.current && reachable && due(state)) syncAgain(false);
-    else if (idle && state.data !== undefined && unread.has(state.data)) syncAgain(false);
+    if (state?.fetchStatus === 'idle' && state.data !== undefined && unread.has(state.data)) syncAgain(false);
     else startFill();
   }, [passedAt]);
   return query.data ?? (signedIn ? LOADING : EMPTY);

@@ -1196,6 +1196,40 @@ describe('useCollectionImages', () => {
       unmount();
     });
 
+    /** Tell the hook one engine field, in a render of its own (the engine tells reach at its probe, a pass's end later). */
+    const tell = async (r: Awaited<ReturnType<typeof localRig>>, patch: Record<string, unknown>) => {
+      await act(() => {
+        (r.engine as unknown as { set: (p: Record<string, unknown>) => void }).set(patch);
+      });
+      await settle();
+    };
+
+    it('a sync owed, paid by a render once the wait is over before its timer fires: the timer pays nothing more', async () => {
+      const { r, unmount } = await owing();
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        await flap(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        // the clock past the wait, no timer fired: a render (the engine telling an error) pays the owed sync
+        vi.setSystemTime(Date.now() + REACH_SETTLE_MS + 1000);
+        await tell(r, { lastError: 'x' });
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+        await quiet();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3 * REACH_SETTLE_MS);
+        });
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+      unmount();
+    });
+
     it('the case view gone while a sync is owed: the wait running out asks nothing', async () => {
       const { r, unmount } = await owing();
       vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
@@ -1295,6 +1329,43 @@ describe('useCollectionImages', () => {
           expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
         } finally {
           vi.restoreAllMocks();
+        }
+        view.unmount();
+      } finally {
+        uninstall();
+      }
+    });
+
+    it('a sync owed that the wait could not pay (a fill completed the answer) is owed no more: ten minutes on, a render reads no list', async () => {
+      const uninstall = installFakeLocks();
+      try {
+        let serve = false;
+        const { r, client, view } = await leftAll(2, async () => (serve ? new Response('img') : new Response('', { status: 503 })));
+        const idle = () => waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+        await idle();
+        await quiet();
+        vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        try {
+          await flap(r);
+          await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+          await idle();
+          serve = true;
+          await flap(r);
+          await waitFor(() => expect(imagesComplete(view.result.current)).toBe(true));
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(REACH_SETTLE_MS);
+          });
+          await quiet();
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+          // ten minutes on, no reach: a render (the engine telling anything) syncs nothing
+          vi.setSystemTime(Date.now() + 11 * 60_000);
+          await tell(r, { lastError: 'x' });
+          await quiet();
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
         }
         view.unmount();
       } finally {

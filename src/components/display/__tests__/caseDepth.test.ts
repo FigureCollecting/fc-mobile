@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { DEPTH_DEAD, DEPTH_MAX_MM_S, DEPTH_MIN_MM_S, DEPTH_RATE_PER_S, DEPTH_STOP_MM, aheadMm, depthSpeed, dolly, heading, type DollyScene } from '../caseDepth';
+import { DEPTH_DEAD, DEPTH_MAX_MM_S, DEPTH_MIN_MM_S, DEPTH_RATE_PER_S, DEPTH_STOP_MM, aheadMm, depthSpeed, dolly, dollyStep, heading, type DollyScene } from '../caseDepth';
 import { EYE_MARGIN_MM, JOG_MAX_STEP_MS, eyeSpace, withPose, type Pose } from '../casePose';
 import { lensFocalPx, type Camera, type Vec3 } from '../caseCamera';
 import { cabinetBox, capSpanMm, frameSpanMm, frontsOf, roomBox, type Box } from '../caseFraming';
@@ -87,6 +87,50 @@ describe('depthSpeed: dead zone, r^2 curve, adaptive to the distance ahead, clam
   });
 });
 
+describe('the specified values (NAV-DEPTH-1 brief, Ross 11-13), pinned as numbers', () => {
+  it('dead zone 0.1, 1.5x the distance a second, 50 to 4000 mm/s, a 1 mm stop', () => {
+    expect([DEPTH_DEAD, DEPTH_RATE_PER_S, DEPTH_MIN_MM_S, DEPTH_MAX_MM_S, DEPTH_STOP_MM]).toEqual([0.1, 1.5, 50, 4000, 1]);
+  });
+
+  it('gives those speeds: none at 0.1, 1500 mm/s at 1 m, a quarter of it at half reach (r^2), 4000 and 50 at the clamps', () => {
+    expect(depthSpeed(0.1, 1000)).toBe(0);
+    expect(depthSpeed(0.05, 1000)).toBe(0);
+    expect(depthSpeed(1, 1000)).toBeCloseTo(1500, 9);
+    expect(depthSpeed(0.55, 1000)).toBeCloseTo(375, 9);
+    expect(depthSpeed(-0.55, 1000)).toBeCloseTo(-375, 9);
+    expect(depthSpeed(1, 1e6)).toBe(4000);
+    expect(depthSpeed(1, 10)).toBe(50);
+  });
+
+  it('a rocker at 0.05 is in the dead zone: the eye stays', () => {
+    const p: Pose = { x: 0, y: 1200, z: 1500, yaw: 0, pitch: 0 };
+    expect(dolly(p, 0.05, FRAME_MS, open)).toEqual(p);
+  });
+
+  it('straight at a cabinet front from 4.5 m: never faster than 4 m/s, and under 0.2 m/s in the last frame', () => {
+    const x = wall.cabinets[0].centerMm;
+    let p: Pose = { x, y: 1200, z: boxes[0].z1 + EYE_MARGIN_MM + 4500, yaw: 0, pitch: 0 };
+    let last = 0;
+    for (let t = 0; t < 10_000; t += FRAME_MS) {
+      const n = dolly(p, 1, FRAME_MS, room);
+      const step = p.z - n.z;
+      expect((step * 1000) / FRAME_MS).toBeLessThanOrEqual(4000 + 1e-9);
+      if (step > 0) last = step;
+      p = n;
+    }
+    expect(p.z).toBe(boxes[0].z1 + EYE_MARGIN_MM);
+    expect((last * 1000) / FRAME_MS).toBeLessThan(200);
+  });
+
+  it('a stop held against ok lands within 1 mm of it (not 10)', () => {
+    const ok = (q: Vec3) => q[2] >= 1003.37;
+    let p: Pose = { x: 0, y: 1200, z: 1500, yaw: 0, pitch: 0 };
+    for (let i = 0; i < 100; i++) p = dolly(p, 1, 100, { ...open, ok });
+    expect(p.z).toBeGreaterThanOrEqual(1003.37);
+    expect(p.z - 1003.37).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('aheadMm: the horizontal distance to the first surface ahead', () => {
   const front = boxes[0];
   const x = wall.cabinets[0].centerMm;
@@ -130,6 +174,12 @@ describe('aheadMm: the horizontal distance to the first surface ahead', () => {
   it('an eye past the room bound (where the bounds narrowed) is at the margin', () => {
     expect(aheadMm({ x: 0, y: 1200, z: OPEN.z0 - 50, yaw: 0, pitch: 0 }, OPEN, [])).toBe(EYE_MARGIN_MM);
   });
+
+  it('back (-1) measures the same way along -heading: the room behind, a cabinet behind', () => {
+    expect(aheadMm({ x, y: 1200, z: 3000, yaw: 0, pitch: 0 }, space, boxes, -1)).toBeCloseTo(space.z1 + EYE_MARGIN_MM - 3000, 9);
+    // turned all the way round, the fronts are behind
+    expect(aheadMm({ x, y: 1200, z: 3000, yaw: Math.PI, pitch: 0 }, space, boxes, -1)).toBeCloseTo(3000 - front.z1, 6);
+  });
 });
 
 describe('dolly: the eye forward and back along its heading', () => {
@@ -165,6 +215,126 @@ describe('dolly: the eye forward and back along its heading', () => {
     expect(next.z).toBeLessThan(start.z);
     const ahead = aheadMm(start, space, boxes);
     expect(start.z - next.z).toBeCloseTo((depthSpeed(0.8, ahead) * FRAME_MS) / 1000, 9);
+  });
+
+  it('eases in toward a cabinet front: each frame at depthSpeed of the distance to the front, not to the room', () => {
+    const x = wall.cabinets[0].centerMm;
+    const face = boxes[0].z1 + EYE_MARGIN_MM;
+    let p: Pose = { ...start, x, z: face + 3000 };
+    let prev = Infinity;
+    let at1000 = 0;
+    while (p.z > face) {
+      const n = dolly(p, 1, FRAME_MS, room);
+      const speed = ((p.z - n.z) * 1000) / FRAME_MS;
+      const toFront = p.z - boxes[0].z1;
+      expect(speed).toBeCloseTo(Math.min(depthSpeed(1, toFront), ((p.z - face) * 1000) / FRAME_MS), 6);
+      expect(speed).toBeLessThanOrEqual(prev + 1e-9);
+      if (toFront <= 1000 && at1000 === 0) at1000 = speed;
+      prev = speed;
+      p = n;
+    }
+    // 1 m from the front it moves at 1.5 m/s, though the room runs on behind the cabinet
+    expect(at1000).toBeGreaterThan(1300);
+    expect(at1000).toBeLessThanOrEqual(1500);
+  });
+
+  it('eases in backing toward the bound behind: never stops dead from more than 200 mm/s', () => {
+    for (const z of [space.z1 - 500, space.z1 - 3000]) {
+      let p: Pose = { ...start, x: wall.cabinets[0].centerMm, z };
+      let last = 0;
+      for (let t = 0; t < 10_000; t += FRAME_MS) {
+        const n = dolly(p, -1, FRAME_MS, room);
+        if (n.z !== p.z) last = ((n.z - p.z) * 1000) / FRAME_MS;
+        p = n;
+      }
+      expect(p.z).toBe(space.z1);
+      expect(last).toBeGreaterThan(0);
+      expect(last).toBeLessThan(200);
+    }
+  });
+
+  it('backing away from a display moves at the room behind, not the inches ahead', () => {
+    const x = wall.cabinets[0].centerMm;
+    const p: Pose = { ...start, x, z: boxes[0].z1 + EYE_MARGIN_MM + 50 };
+    const speed = ((dolly(p, -1, FRAME_MS, room).z - p.z) * 1000) / FRAME_MS;
+    expect(speed).toBeCloseTo(-depthSpeed(-1, aheadMm(p, space, boxes, -1)), 6);
+    expect(speed).toBe(DEPTH_MAX_MM_S);
+  });
+
+  it('a pose with a non-number in it moves nothing and comes back unchanged', () => {
+    for (const bad of [{ yaw: Number.NaN }, { yaw: Infinity }, { x: Number.NaN }, { z: -Infinity }, { y: Number.NaN }, { pitch: Number.NaN }]) {
+      const p: Pose = { ...start, ...bad };
+      expect(dolly(p, 1, FRAME_MS, open)).toBe(p);
+      expect(dolly(p, -1, FRAME_MS, room)).toBe(p);
+      expect(dollyStep(p, 1, FRAME_MS, { ...open, vp: () => 1 }, 1.5)).toEqual({ pose: p, vp: 1.5 });
+    }
+  });
+
+  it('held against the budget, a frame makes at most 2 cost calls (and as many ok calls), the start cost passed in', () => {
+    let vpCalls = 0;
+    let okCalls = 0;
+    const p = { ...start };
+    const vp = (q: Vec3) => {
+      vpCalls++;
+      return q[2] < p.z - 0.5 ? SCENE_CEILING_VIEWPORTS + 1 : 1;
+    };
+    const ok = () => {
+      okCalls++;
+      return true;
+    };
+    for (const dt of [FRAME_MS, JOG_MAX_STEP_MS]) {
+      vpCalls = 0;
+      okCalls = 0;
+      const held = dollyStep(p, 1, dt, { ...open, vp, ok }, 1);
+      expect(held.pose).toBe(p);
+      expect(held.vp).toBe(1);
+      expect(vpCalls).toBeLessThanOrEqual(2);
+      expect(okCalls).toBeLessThanOrEqual(2);
+    }
+    // not passed in, it is asked once more
+    vpCalls = 0;
+    expect(dollyStep(p, 1, FRAME_MS, { ...open, vp }).pose).toBe(p);
+    expect(vpCalls).toBeLessThanOrEqual(3);
+  });
+
+  it('one frame reaches a stop within DEPTH_STOP_MM of it (a search, not a 1 mm creep)', () => {
+    // from 100 mm out, and from 5 mm (past the first 1 mm the stop search asks)
+    for (const z of [1100, 1005]) {
+      const p = { ...start, z };
+      for (const scene of [{ ...open, ok: (q: Vec3) => q[2] >= 1000 }, { ...open, vp: (q: Vec3) => (q[2] < 1000 ? SCENE_CEILING_VIEWPORTS + 1 : 1) }]) {
+        const n = dolly(p, 1, JOG_MAX_STEP_MS, scene);
+        expect(n.z).toBeGreaterThanOrEqual(1000);
+        expect(n.z).toBeLessThan(1000 + DEPTH_STOP_MM);
+      }
+    }
+  });
+
+  it('returns the cost where it stopped, so the next frame need not ask for it again', () => {
+    let vpCalls = 0;
+    const vp = (q: Vec3) => {
+      vpCalls++;
+      return q[2] < 800 ? SCENE_CEILING_VIEWPORTS + 1 : 1 + q[2] / 10_000;
+    };
+    let p: Pose = { ...start };
+    let cost: number | undefined;
+    let free = 0;
+    for (let i = 0; i < 400; i++) {
+      vpCalls = 0;
+      const step = dollyStep(p, 1, FRAME_MS, { ...open, vp }, cost);
+      if (cost !== undefined && step.pose.z === p.z - (DEPTH_MAX_MM_S * FRAME_MS) / 1000) {
+        expect(vpCalls).toBe(1);
+        free++;
+      }
+      p = step.pose;
+      cost = step.vp;
+      expect(cost).toBe(1 + p.z / 10_000);
+    }
+    expect(free).toBeGreaterThan(10);
+    expect(p.z).toBeGreaterThanOrEqual(800);
+    expect(p.z).toBeLessThan(800 + DEPTH_STOP_MM);
+    // no vp, no cost; the dead zone hands the cost given back
+    expect(dollyStep(start, 1, FRAME_MS, open).vp).toBeUndefined();
+    expect(dollyStep(start, 0, FRAME_MS, { ...open, vp }, 1.25).vp).toBe(1.25);
   });
 
   it('inside the dead zone nothing moves', () => {

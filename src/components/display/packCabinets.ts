@@ -447,20 +447,69 @@ export function packCabinets(
   ceilingMm: number = CEILING_DEFAULT_MM,
   rules: PackRules = PACK_RULES,
   groups?: readonly (string | null)[],
+  options: PackOptions = {},
 ): PackResult {
   if (pattern.length === 0) throw new RangeError('packCabinets needs at least one cabinet profile');
   items = items.map((item) => oriented(item, pattern, ceilingMm, rules.shelfRemoval));
-  // CASE-FB2b: the first lean that leaves no cabinet before the last with nothing on its shelves, else the fewest such
-  let best: { building: Building[]; violators: Violator[]; bare: number } | null = null;
   const grouped = groups !== undefined && groups.some((g) => g !== null);
-  for (const lean of rules.shelfRemoval ? LEANS : [1]) {
-    const packed = placeAll(items, pattern, ceilingMm, rules, lean, groups);
-    const bare = bareCabinets(packed.building, grouped);
-    if (best === null || bare < best.bare) best = { ...packed, bare };
-    if (bare === 0) break;
+  const pass = (lean: number, leans: readonly number[], deviate: boolean) => {
+    const packed = placeAll(items, pattern, ceilingMm, rules, lean, leans, groups, deviate);
+    return { ...packed, bare: bareCabinets(packed.building, grouped) };
+  };
+  let best: ReturnType<typeof pass> | null = null;
+  if (pattern.every((p) => p === pattern[0])) {
+    // CASE-FB2b: the first lean that leaves no cabinet before the last with nothing on its shelves, else the fewest such
+    for (const lean of rules.shelfRemoval ? LEANS : [1]) {
+      const packed = pass(lean, LEANS, true);
+      if (best === null || packed.bare < best.bare) best = packed;
+      // (PACK-KIND-1: no lean would have stood a cabinet otherwise, so each later one packs the same, none with fewer bare)
+      if (packed.bare === 0 || !packed.leaned) break;
+    }
+  } else {
+    // PACK-KIND-1, a wall of more than one profile: the packing that stands in the fewest cabinets, then the fewest empty,
+    // then the fewest before the last with nothing on their shelves, of three leans, each with a shelf figure first
+    // taking a place another cabinet keeps for figures tall for it, and without (that place can be one a later figure,
+    // tall where the shelves are, needed). Each way is tried at the leans it would be alone, so the packing is never worse
+    // than either way's alone.
+    const ways = options.deviate === undefined ? [true, false] : [options.deviate];
+    const bestOf = new Map<boolean, ReturnType<typeof pass>>();
+    const done = new Set<boolean>();
+    for (const lean of rules.shelfRemoval ? MIXED_LEANS : [1]) {
+      let same: ReturnType<typeof pass> | null = null;
+      for (const deviate of ways) {
+        if (done.has(deviate)) continue;
+        // (no shelf figure took such a place: the packing without that step is the one just made)
+        const packed: ReturnType<typeof pass> = !deviate && same !== null ? same : pass(lean, MIXED_LEANS, deviate);
+        if (deviate && !packed.deviated) same = packed;
+        if (best === null || rankOf(packed) < rankOf(best)) best = packed;
+        const mine = bestOf.get(deviate);
+        if (mine === undefined || rankOf(packed) < rankOf(mine)) bestOf.set(deviate, packed);
+        // (this way's best with none empty and none before the last without figures on its shelves: its later leans are
+        // not tried, as above; nor when no other lean would have stood a cabinet otherwise, as each later one packs the same)
+        if (rankOf(bestOf.get(deviate)!) % 100_000_000 === 0 || !packed.leaned) done.add(deviate);
+      }
+      if (ways.every((w) => done.has(w))) break;
+    }
   }
-  const { building, violators } = best!;
-  return { cabinets: assemble(building), violators };
+  return { cabinets: assemble(best!.building), violators: best!.violators };
+}
+
+/** PACK-KIND-1: how a packing is made, for comparisons. */
+export interface PackOptions {
+  /**
+   * On a wall of more than one profile, whether a shelf figure where the shelves are first takes a place another cabinet
+   * keeps for figures tall for it: unset, the better of the packings with and without that step; true or false, only that one.
+   */
+  readonly deviate?: boolean;
+}
+
+/** PACK-KIND-1: the leans a wall of more than one profile is packed with (each packing twice, with and without the step above). */
+const MIXED_LEANS = [1, 1.35, 2];
+
+/** A packing's cost: its cabinets, then those standing empty, then those before the last with nothing on their shelves. */
+function rankOf(p: { building: readonly { readonly rows: readonly (readonly unknown[])[] }[]; bare: number }): number {
+  const empty = p.building.filter((b) => b.rows.every((row) => row.length === 0)).length;
+  return (p.building.length * 10_000 + empty) * 10_000 + p.bare;
 }
 
 /**
@@ -478,17 +527,25 @@ export function bareCabinets(
   return shelved.slice(0, Math.max(0, end)).filter((s) => !s).length;
 }
 
-/** One packing of `items` (packCabinets), the tall figures still to place counted `lean` times over. */
+/**
+ * One packing of `items` (packCabinets), the tall figures still to place counted `lean` times over; with `deviate`, a
+ * shelf figure where the shelves are first takes a place another cabinet keeps for figures tall for it (`deviated`: one did).
+ */
 function placeAll(
   items: readonly CaseFigure[],
   pattern: readonly CabinetProfile[],
   ceilingMm: number,
   rules: PackRules,
   lean: number,
-  groups?: readonly (string | null)[],
-): { building: Building[]; violators: Violator[] } {
+  leans: readonly number[],
+  groups: readonly (string | null)[] | undefined,
+  deviate: boolean,
+): { building: Building[]; violators: Violator[]; deviated: boolean; leaned: boolean } {
   const building: Building[] = [];
   const violators: Violator[] = [];
+  let deviated = false;
+  // whether the lean could change how a cabinet stands (else every lean packs the same)
+  let leaned = false;
   // PACK1: the figure being placed is of a group, which starts at `mark` (cabinet, place in its reading order)
   let grouped = false;
   let mark = { cab: 0, k: 0 };
@@ -580,21 +637,49 @@ function placeAll(
     }
     return null;
   };
-  /** Where a waiting figure stands in a cabinet just opened: tall for it, a tier, else its top; a shelf figure for it, its first shelf with room (PACK-KIND-1). */
-  const waitingPlace = (b: Building, j: number): number => {
+  /**
+   * Where a waiting figure stands in a cabinet just opened: tall for it, a tier, else its top; a shelf figure for it, the
+   * first place not kept for tall figures, in reading order (its top first when not kept), with room, that leaves the
+   * figure `opener`, a shelf figure there that opened it, a place (PACK-KIND-1: the waiting never crowd it out).
+   */
+  const waitingPlace = (b: Building, j: number, opener: number): number => {
     const kind = kinds[b.pi][j];
     const item = items[j];
-    if (kind === 'shelf') return b.slots.findIndex((_, k) => !b.tall.has(k) && fitsIn(b, k, item));
     if (kind === 'none') return -1;
-    const tier = tierFor(b, item);
-    return tier >= 0 ? tier : topFor(b, item);
+    if (kind === 'tall') {
+      const tier = tierFor(b, item);
+      return tier >= 0 ? tier : topFor(b, item);
+    }
+    const reserve = opener < items.length && kinds[b.pi][opener] === 'shelf';
+    for (let k = 0; k < b.slots.length; k++) {
+      if (b.tall.has(k) || !fitsIn(b, k, item)) continue;
+      if (!reserve) return k;
+      b.rows[k].push(item);
+      const room = b.slots.some((_, x) => !b.tall.has(x) && fitsIn(b, x, items[opener]));
+      b.rows[k].pop();
+      if (room) return k;
+    }
+    return -1;
   };
-  // a cabinet the shelves open gives its places to the waiting tall figures first, each in turn that fits
-  const giveTall = (b: Building) => {
-    for (let i = 0; i < waiting.length; ) {
-      const k = waitingPlace(b, waiting[i]);
-      if (k >= 0) b.rows[k].push(items[waiting.splice(i, 1)[0]]);
-      else i++;
+  // PACK-KIND-1: on a wall of more than one profile, a figure tall for profile `pi` that no other profile can hold at all
+  const mixed = pattern.some((p) => p !== pattern[0]);
+  const only = kinds.map((ks, pi) => ks.map((k, j) => mixed && k === 'tall' && kinds.every((qs, q) => pattern[q] === pattern[pi] || qs[j] === 'none')));
+  const onlyFor = (pi: number, j: number) => only[pi][j];
+  /** The waiting figures in the order a cabinet of profile `pi` takes them: those only it can hold first, then the rest. */
+  const waitingFor = (pi: number) => (mixed ? [...waiting.filter((j) => onlyFor(pi, j)), ...waiting.filter((j) => !onlyFor(pi, j))] : [...waiting]);
+  // a cabinet the shelves open (for figure `at`) gives its places to the waiting tall figures first, each in turn that fits
+  const giveTall = (b: Building, at: number) => {
+    // (no place left as wide as the narrowest waiting figure: none of the rest fits, so none is tried; 1e-3 mm slack)
+    let narrowest = Infinity;
+    for (const j of waiting) narrowest = Math.min(narrowest, items[j].widthMm);
+    const roomy = () => b.slots.some((s, k) => s.widthMm - b.rows[k].reduce((x, it) => x + span(it), 0) + 1e-3 >= narrowest);
+    for (const j of waitingFor(b.pi)) {
+      const k = waitingPlace(b, j, at);
+      if (k >= 0) {
+        b.rows[k].push(items[j]);
+        waiting.splice(waiting.indexOf(j), 1);
+        if (!roomy()) break;
+      }
     }
   };
   /** The room left on the wall where the tall figures are kept: what they still want past it is what a new cabinet must take. */
@@ -628,11 +713,11 @@ function placeAll(
       return true;
     };
     const waitIn = (j: number) => {
-      const k = waitingPlace(b, j);
+      const k = waitingPlace(b, j, at);
       if (k >= 0) b.rows[k].push(items[j]);
       return k >= 0;
     };
-    if (!waiting.every(waitIn)) return false;
+    if (!waitingFor(pi).every(waitIn)) return false;
     let cursor = 0;
     for (let i = at; i < items.length; i++) {
       const kind = kinds[pi][i];
@@ -658,8 +743,11 @@ function placeAll(
     const tallW = Math.max(0, widthOf(tallWaiting) + ahead[pi].tall[at] - (at >= items.length ? 0 : keptRoom(pi, at)));
     if (!rules.shelfRemoval || tallW === 0) return { a: all[0], keepTop: false };
     const shelfW = ahead[pi].shelf[at] + widthOf(waitingOf(pi, 'shelf'));
+    // PACK-KIND-1: a waiting figure only this profile can hold has a place made for it here (else it opens cabinets at
+    // the wall's end, the others of the pattern standing empty between)
+    const onlyHere = waiting.find((j) => onlyFor(pi, j));
     // the next tall figure: a tier must fit it, or there is no use in one
-    let next = tallWaiting[0];
+    let next = onlyHere !== undefined ? items[onlyHere] : tallWaiting[0];
     for (let i = at; next === undefined && i < items.length; i++) if (kinds[pi][i] === 'tall') next = items[i];
     // a shelf figure opens this cabinet: one of its shelves (no top, no tier) must take it, so no cabinet is opened
     // for its glass to stand empty; past the last one, the first waiting figure must find a place
@@ -676,7 +764,7 @@ function placeAll(
       if (tierW.length > 1 && tierW.reduce((x, y) => x + y, 0) - Math.min(...tierW) >= tallW) continue;
       const topSlot = a.slots.find((x) => x.isTop);
       const top = topSlot?.widthMm ?? 0;
-      if (atEnd && !tierFits && !(topSlot && fitsSlot(topSlot, next!))) continue;
+      if ((atEnd || onlyHere !== undefined) && !tierFits && !(topSlot && fitsSlot(topSlot, next!))) continue;
       const glass = a.slots.reduce((w, x, k) => w + (x.isTop || a.tiers.includes(k) ? 0 : x.widthMm), 0);
       // never so many shelves out that, while shelf figures are still to come, no glass inside the door is left for them
       if (shelfW > 0 && !a.slots.some((x, k) => !x.isTop && !a.tiers.includes(k) && !a.profile.surfaces[x.surfaceIndex].outsideDoor)) continue;
@@ -694,18 +782,24 @@ function placeAll(
       const holds = order.find((x) => holdsRest(stock, pi, x.a, x.keepTop, at));
       if (holds) return holds;
     }
-    // the tall figures' share of what is still to place (counted `lean` times over: a tall figure fills its place less
-    // fully than a shelf figure its shelf), against each layout's share of its width kept for them
-    const r = (lean * tallW) / (lean * tallW + shelfW);
     // only the layouts no other beats on both: as much kept for tall figures and as much shelf (a taller tier than the
     // next tall figure needs, at the cost of a shelf, is no use to it)
     const fair = scored.filter((x) => !scored.some((y) => y !== x && y.tallCap >= x.tallCap && y.glassCap >= x.glassCap && (y.tallCap > x.tallCap || y.glassCap > x.glassCap)));
-    const off = (x: (typeof scored)[number]) => Math.abs(x.tallCap / (x.tallCap + x.glassCap) - r);
-    const best = Math.min(...fair.map(off));
-    // of the layouts as near: the fewest shelves out, then no top kept unless needed, then the highest tier (their order, EYE-1)
-    const near = fair.filter((x) => off(x) <= best + IN_STEP_SLACK);
-    near.sort((x, y) => x.a.removed - y.a.removed || Number(x.keepTop) - Number(y.keepTop));
-    return near[0];
+    const pick = (l: number) => {
+      // the tall figures' share of what is still to place (counted `l` times over: a tall figure fills its place less
+      // fully than a shelf figure its shelf), against each layout's share of its width kept for them
+      const r = (l * tallW) / (l * tallW + shelfW);
+      const off = (x: (typeof scored)[number]) => Math.abs(x.tallCap / (x.tallCap + x.glassCap) - r);
+      const best = Math.min(...fair.map(off));
+      // of the layouts as near: the fewest shelves out, then no top kept unless needed, then the highest tier (their order, EYE-1)
+      const near = fair.filter((x) => off(x) <= best + IN_STEP_SLACK);
+      near.sort((x, y) => x.a.removed - y.a.removed || Number(x.keepTop) - Number(y.keepTop));
+      return near[0];
+    };
+    const chosen = pick(lean);
+    // (PACK-KIND-1: whether another lean to be tried would stand this cabinet otherwise)
+    leaned ||= leans.some((l) => l !== lean && pick(l) !== chosen);
+    return chosen;
   };
 
   const open = (c: number, at: number): Building => {
@@ -717,7 +811,7 @@ function placeAll(
       if (keepTop && a.slots.some((x) => x.isTop)) tall.add(a.slots.findIndex((x) => x.isTop));
       const b: Building = { stock, pi, profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall };
       building.push(b);
-      if (rules.tallOnOpenedTops || rules.shelfRemoval) giveTall(b);
+      if (rules.tallOnOpenedTops || rules.shelfRemoval) giveTall(b, at);
     }
     return building[c];
   };
@@ -768,10 +862,11 @@ function placeAll(
     }
     // PACK-KIND-1: a shelf figure here that another cabinet of the pattern calls tall takes the earliest tier or top
     // that cabinet keeps for it with room first, so no place kept for it stands empty behind the shelf cursor
-    if (kinds.some((ks) => ks[i] === 'tall') && (rules.tallOnOpenedTops || rules.shelfRemoval)) {
+    if (deviate && kinds.some((ks) => ks[i] === 'tall') && (rules.tallOnOpenedTops || rules.shelfRemoval)) {
       const place = tallPlace(item, i, true);
       if (place) {
         place[0].rows[place[1]].push(item);
+        deviated = true;
         continue;
       }
     }
@@ -823,7 +918,7 @@ function placeAll(
   }
   // the shelf figures all placed: the tall figures still waiting open cabinets at the wall's end
   while (waiting.length > 0) open(building.length, items.length);
-  return { building, violators };
+  return { building, violators, deviated, leaned };
 }
 
 /** The packed cabinets, each row centred on its surface, each figure centred in its depth (CASE-FB2a). */

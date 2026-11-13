@@ -78,7 +78,12 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
     hat.fc().jogStart();
     hat.fc().jogAim(JOG_FULL_PX, 0);
     hat.run(31);
-    expect(hat.pose().x).toBeCloseTo(p1.x, 6);
+    // both runs reach the wall's right end (jogOk); the hat at the nearer depth in finer steps, so closer to it (B1 pins
+    // the joined hat's step)
+    const right = hat.ref.current.wall.rightMm;
+    expect(hat.pose().x).toBeLessThanOrEqual(right);
+    expect(p1.x).toBeLessThanOrEqual(right);
+    expect(p1.x).toBeGreaterThan(hat.pose().x);
     expect(hat.pose().z).toBe(p0.z);
     hat.unmount();
 
@@ -176,6 +181,35 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
     expect(m.pose().x).toBeGreaterThan(at.x);
   });
 
+  it('B1: a hat joined to a depth drive walks at the depth the eye is at now: after the depth closes in, as a fresh hat there (within 25 %)', () => {
+    const scene = freeSceneOf({ figures: 0 });
+    const m = mount(scene);
+    m.fc().jogStart();
+    m.fc().depthStart(1);
+    m.run(121);
+    const near = m.pose();
+    expect(poseOf(scene.base).z - near.z).toBeGreaterThan(1000);
+    m.fc().depthStop();
+    m.fc().jogAim(JOG_FULL_PX, 0);
+    m.run(1);
+    const a0 = m.pose().x;
+    m.run(5);
+    const joined = (m.pose().x - a0) / 5;
+    m.unmount();
+
+    const f = mount(scene);
+    f.fc().hold(near);
+    f.fc().jogStart();
+    f.fc().jogAim(JOG_FULL_PX, 0);
+    f.run(2);
+    const b0 = f.pose().x;
+    f.run(5);
+    const fresh = (f.pose().x - b0) / 5;
+    expect(fresh).toBeGreaterThan(0);
+    expect(joined / fresh).toBeLessThan(1.25);
+    expect(joined / fresh).toBeGreaterThan(0.8);
+  });
+
   it('blur stops every drive and holds the pose: no drift after', () => {
     const m = mount();
     m.fc().jogStart();
@@ -191,46 +225,117 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
     expect(m.dom.hostEl.dataset.gesture).toBeUndefined();
     m.run(30);
     expect(m.pose()).toEqual(at);
-    // the thumbs lifting later find nothing to stop, and the rocker moving finds nothing to steer
-    expect(m.fc().jogStop()).toBeNull();
+    // the first lift after the halt returns where it held (CabinetScene sets the focus from it), once; the rocker moving
+    // finds nothing to steer
+    let left: Pose | null = null;
+    act(() => {
+      left = m.fc().jogStop();
+    });
+    expect(left).toEqual(at);
     m.fc().depthRate(1);
     expect(m.fc().depthStop()).toBeNull();
+    expect(m.fc().jogStop()).toBeNull();
     m.run(5);
     expect(m.pose()).toEqual(at);
   });
 
-  it('visibilitychange stops every drive and holds the pose: no drift after', () => {
+  it('B2: blur mid hat-only jog: the eye holds, and the lift returns the halted pose once (the focus follows it)', () => {
     const m = mount();
-    m.fc().depthStart(-1);
     m.fc().jogStart();
-    m.fc().jogAim(0, -JOG_FULL_PX);
+    m.fc().jogAim(JOG_FULL_PX, 0);
     m.run(11);
-    act(() => {
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
+    act(() => void window.dispatchEvent(new Event('blur')));
     const at = m.pose();
-    expect(m.fc().live()).toBe(false);
-    expect(m.fc().held()).toEqual(at);
-    m.run(30);
+    expect(at.x).toBeGreaterThan(poseOf(m.ref.current.base).x);
+    m.run(5);
     expect(m.pose()).toEqual(at);
+    // the depth was not running: its stop has nothing to return
+    expect(m.fc().depthStop()).toBeNull();
+    let left: Pose | null = null;
+    act(() => {
+      left = m.fc().jogStop();
+    });
+    expect(left).toEqual(at);
+    expect(m.fc().jogStop()).toBeNull();
   });
 
-  it('with no drive running, blur and visibilitychange change nothing; unmounted, they are not heard', () => {
+  it('B2: a halted depth drive\'s stop returns the pose once; a drive begun after a halt forgets it', () => {
     const m = mount();
-    const before = m.renders();
-    act(() => {
-      window.dispatchEvent(new Event('blur'));
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-    expect(m.renders()).toBe(before);
-    expect(m.fc().held()).toBeNull();
+    m.fc().depthStart(1);
+    m.run(6);
+    act(() => void window.dispatchEvent(new Event('blur')));
+    const at = m.pose();
+    expect(m.fc().jogStop()).toBeNull();
+    expect(m.fc().depthStop()).toEqual(at);
+    expect(m.fc().depthStop()).toBeNull();
+
+    // halted again, then a new drive: the old halt is no lift's to return
     m.fc().depthStart(1);
     m.run(3);
-    const fc = m.fc();
-    m.unmount();
-    expect(m.frames.pending()).toBe(0);
-    window.dispatchEvent(new Event('blur'));
-    expect(fc.held()).toBeNull();
+    act(() => void window.dispatchEvent(new Event('blur')));
+    expect(m.fc().jogStart()).toBe(true);
+    m.fc().jogAim(JOG_FULL_PX, 0);
+    m.run(4);
+    expect(m.fc().depthStop()).toBeNull();
+    const now = m.pose();
+    let left: Pose | null = null;
+    act(() => {
+      left = m.fc().jogStop();
+    });
+    expect(left).toEqual(now);
+  });
+
+  it('N1: visibilitychange to hidden stops every drive and holds the pose (no drift after); to visible it stops nothing', () => {
+    const state = (v: 'hidden' | 'visible') => Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v });
+    try {
+      const m = mount();
+      m.fc().depthStart(-1);
+      m.fc().jogStart();
+      m.fc().jogAim(0, -JOG_FULL_PX);
+      m.run(11);
+      state('visible');
+      act(() => void document.dispatchEvent(new Event('visibilitychange')));
+      expect(m.fc().live()).toBe(true);
+      state('hidden');
+      act(() => void document.dispatchEvent(new Event('visibilitychange')));
+      const at = m.pose();
+      expect(m.fc().live()).toBe(false);
+      expect(m.fc().held()).toEqual(at);
+      m.run(30);
+      expect(m.pose()).toEqual(at);
+    } finally {
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+
+  it('with no drive running, blur and a hidden page change nothing; unmounted, they are not heard (a drive the late target starts runs on)', () => {
+    const hide = Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    try {
+      const m = mount();
+      const before = m.renders();
+      act(() => {
+        window.dispatchEvent(new Event('blur'));
+        hide.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(m.renders()).toBe(before);
+      expect(m.fc().held()).toBeNull();
+      expect(m.fc().jogStop()).toBeNull();
+      m.fc().depthStart(1);
+      m.run(3);
+      const fc = m.fc();
+      m.unmount();
+      expect(m.frames.pending()).toBe(0);
+      // a withdrawn target's late start (N2, NAV-DEPTH-3) runs a drive no listener may stop
+      fc.depthStart(1);
+      m.run(1);
+      window.dispatchEvent(new Event('blur'));
+      expect(fc.live()).toBe(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(fc.live()).toBe(true);
+      fc.depthStop();
+    } finally {
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
   });
 
   it('a press on the scene while any drive runs is ignored (no gesture of its own); a drive is refused while a finger owns the scene', () => {
@@ -383,18 +488,48 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
     expect(p.z).toBeLessThan(m.pose().z - 300);
   });
 
-  it('backing away on a wall longer than the case draws at once, the depth keeps to the Classic cap (the jog\'s ok), as the hat does', () => {
+  it('turned 25 deg and backing away 10 s on a wall longer than the case draws at once, the depth stops at the Classic cap (the jog\'s ok), where the room would let it go on', () => {
     const scene = freeSceneOf({ wall: LONG_WALL, focus: 20 });
-    const span = Math.max(capSpanMm(LONG_WALL, DRAWN_CABINETS_LIMIT), frameSpanMm(scene.base, scene.fronts));
+    const start: Pose = { ...poseOf(scene.base), yaw: 25 * DEG };
+    const span = Math.max(capSpanMm(LONG_WALL, DRAWN_CABINETS_LIMIT), frameSpanMm(withPose(scene.base, start), scene.fronts));
     expect(span).toBeLessThan(Infinity);
     const m = mount(scene);
+    m.fc().hold(start);
     m.fc().depthStart(-1);
-    m.run(125, 16, () => expect(frameSpanMm(withPose(scene.base, m.pose()), scene.fronts)).toBeLessThanOrEqual(span));
+    let worst = 0;
+    m.run(625, 16, () => {
+      worst = Math.max(worst, frameSpanMm(withPose(scene.base, m.pose()), scene.fronts));
+      expect(worst).toBeLessThanOrEqual(span);
+    });
+    // it reached the cap, and the cap, not the room, held it
+    expect(worst).toBeGreaterThan(span * 0.99);
     const held = m.pose();
-    expect(held.z).toBeGreaterThan(poseOf(scene.base).z);
-    // the cap held it: the room alone would let it back on
-    const free = depth.dolly(held, -1, 16, { space: scene.space, boxes: scene.boxes });
-    expect(free.z).toBeGreaterThan(held.z + 1);
+    expect(held.z).toBeGreaterThan(start.z + 500);
+    let free = start;
+    for (let i = 0; i < 625; i++) free = depth.dolly(free, -1, 16, { space: scene.space, boxes: scene.boxes });
+    expect(frameSpanMm(withPose(scene.base, free), scene.fronts)).toBeGreaterThan(span);
+    expect(free.z).toBeGreaterThan(held.z + 50);
+  });
+
+  it('M05: the budget swapped mid-drive for a tighter one (a new render, a smaller screen): the dolly keeps to the new one, never the old projection', () => {
+    const loose = freeSceneOf({ figures: 622 });
+    const tight = freeSceneOf({ figures: 622, viewportPx: 180_000 });
+    const project = projector(tight.budget);
+    const vpAt = (p: Pose) => project(withPose(tight.base, p)).vp;
+    const m = mount(loose);
+    m.fc().depthStart(1);
+    m.run(3);
+    expect(vpAt(m.pose())).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+    m.ref.current = tight;
+    let worst = 0;
+    m.run(125, 16, () => (worst = Math.max(worst, vpAt(m.pose()))));
+    expect(worst).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+    // the loose budget would have let it on past the tight ceiling
+    const lone = mount(loose);
+    lone.fc().depthStart(1);
+    let looseWorst = 0;
+    lone.run(128, 16, () => (looseWorst = Math.max(looseWorst, vpAt(lone.pose()))));
+    expect(looseWorst).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
   });
 
   it('turned toward the wall\'s end, the depth never takes the eye farther past it than it stood (the jog\'s ok)', () => {
@@ -406,6 +541,121 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
     m.run(60, 16, () => expect(m.pose().x).toBeLessThanOrEqual(right));
     expect(m.pose().x).toBeGreaterThan(right - 50);
     expect(depth.dolly(m.pose(), 1, 16, { space: scene.space, boxes: scene.boxes }).x).toBeGreaterThan(right);
+  });
+
+  describe('item 7: held still against a limit, the depth asks nothing more until the pose, the rate\'s sign or the scene changes', () => {
+    /** Depth at r = 1 over 622 figures on a small screen, 2 s: held at the ceiling. */
+    const atCeiling = (viewportPx = 180_000) => {
+      const m = mount(freeSceneOf({ figures: 622, viewportPx }));
+      m.fc().depthStart(1);
+      m.run(125);
+      const held = m.pose();
+      m.run(2);
+      expect(m.pose()).toEqual(held);
+      return { m, held };
+    };
+    const calls = () => dollyStep.mock.calls.length;
+
+    it('held at the ceiling: no dolly (no projection) while nothing changes, a weaker push the same way included', () => {
+      const { m, held } = atCeiling();
+      const n = calls();
+      m.run(20);
+      m.fc().depthRate(0.5);
+      m.run(5);
+      m.fc().depthRate(0.05);
+      m.run(5);
+      m.fc().depthRate(1);
+      m.run(5);
+      expect(calls()).toBe(n);
+      expect(m.pose()).toEqual(held);
+    });
+
+    it('the rate turned back: asked again at once, and the eye backs away', () => {
+      const { m, held } = atCeiling();
+      const n = calls();
+      m.fc().depthRate(-1);
+      m.run(1);
+      expect(calls()).toBe(n + 1);
+      m.run(5);
+      expect(m.pose().z).toBeGreaterThan(held.z);
+    });
+
+    it('the hat moving the eye: asked again every frame', () => {
+      const { m } = atCeiling();
+      const n = calls();
+      m.fc().jogStart();
+      m.fc().jogAim(JOG_FULL_PX, 0);
+      m.run(1);
+      expect(calls()).toBe(n);
+      m.run(4);
+      expect(calls()).toBe(n + 4);
+    });
+
+    it('a resize or a new budget is a new scene: asked again; a tighter one never lets the cost rise, a looser one lets the eye on', () => {
+      const { m, held } = atCeiling();
+      const n = calls();
+      // the same budget, a new render: asked again (its cost asked afresh: no v0), and held as before
+      m.ref.current = { ...m.ref.current, budget: { ...m.ref.current.budget } };
+      m.run(1);
+      expect(calls()).toBe(n + 1);
+      expect(dollyStep.mock.calls[n][4]).toBeUndefined();
+      expect(m.pose()).toEqual(held);
+      // a smaller screen: the eye stands over the new ceiling; frame by frame its cost never rises
+      const tight = freeSceneOf({ figures: 622, viewportPx: 120_000 });
+      const project = projector(tight.budget);
+      const vpAt = (p: Pose) => project(withPose(tight.base, p)).vp;
+      m.ref.current = tight;
+      let last = vpAt(m.pose());
+      expect(last).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
+      const before = calls();
+      m.run(30, 16, () => {
+        const v = vpAt(m.pose());
+        expect(v).toBeLessThanOrEqual(last);
+        last = v;
+      });
+      expect(calls()).toBeGreaterThan(before);
+      // a bigger screen: the eye goes on in
+      const z = m.pose().z;
+      m.ref.current = freeSceneOf({ figures: 622, viewportPx: 400_000 });
+      m.run(10);
+      expect(m.pose().z).toBeLessThan(z);
+    });
+
+    it('a push from the dead zone is never taken for a hold: the eye moves as soon as the rocker leaves it', () => {
+      const m = mount(freeSceneOf({ figures: 622, viewportPx: 180_000 }));
+      const z = m.pose().z;
+      m.fc().depthStart(0.05);
+      m.run(6);
+      expect(m.pose().z).toBe(z);
+      m.fc().depthRate(1);
+      m.run(2);
+      expect(m.pose().z).toBeLessThan(z);
+    });
+
+    it('a frame with no time (two frames at one instant) is never taken for a hold', () => {
+      const m = mount(freeSceneOf({ figures: 0 }));
+      m.fc().depthStart(1);
+      m.run(2);
+      const z = m.pose().z;
+      m.frames.tick(0);
+      expect(m.pose().z).toBe(z);
+      m.run(1);
+      expect(m.pose().z).toBeLessThan(z);
+    });
+
+    it('held at the Classic cap backing away: no dolly while nothing changes', () => {
+      const scene = freeSceneOf({ wall: LONG_WALL, focus: 20 });
+      const m = mount(scene);
+      m.fc().hold({ ...poseOf(scene.base), yaw: 25 * DEG });
+      m.fc().depthStart(-1);
+      m.run(625);
+      const held = m.pose();
+      m.run(1);
+      const n = calls();
+      m.run(10);
+      expect(calls()).toBe(n);
+      expect(m.pose()).toEqual(held);
+    });
   });
 
   it('the hat alone never asks the budget (no dolly runs)', () => {

@@ -48,7 +48,7 @@
 // for about a minute, the images fetched in head-id order): the case view tells the heads it shows, then the rest as it
 // stands them (setFetchOrder), and a sync fetches what is missing in that order, followed as the view moves, then the
 // other kept figures'. What a sync keeps, and when its answer is complete, are the same in any order.
-import { useQuery, useQueryClient, type QueryClient, type QueryKey } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient, type QueryKey, type QueryState } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
@@ -68,6 +68,18 @@ const KEPT_SHOWN_EVERY_MS = 1000;
 const partial = new WeakSet<ReadonlyMap<string, CachedImage>>();
 /** The answers of syncs that could not read the lists: synced again after the sync engine's next completed pass. */
 const unread = new WeakSet<ReadonlyMap<string, CachedImage>>();
+/** SC-IMGKEY: the answers given out of reach, from what the device kept: synced once the server is reached. */
+const unsynced = new WeakSet<ReadonlyMap<string, CachedImage>>();
+/** How long a synced answer stands before the case view opened again, or the server reached again, syncs again. */
+const FRESH_FOR_MS = 10 * 60_000;
+const freshFor = (data: ReadonlyMap<string, CachedImage> | undefined): number =>
+  data !== undefined && (partial.has(data) || unsynced.has(data)) ? 0 : FRESH_FOR_MS;
+/**
+ * SC-IMGKEY: after a sync started by the server reached again, how long nothing syncs again: a recovery or pass due in that
+ * time is owed, and rides the engine's first completed pass after it (its idle poll at the latest), so a flapping link costs
+ * one sync, not one a flap.
+ */
+export const REACH_SETTLE_MS = 10_000;
 /** FETCH-FIRST: the heads the case view shows, then the rest as it stands them; the last case view's until another tells. */
 let fetchOrder: readonly string[] = [];
 /** PHOTOS1: told when the case view tells a new order. */
@@ -145,7 +157,9 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const online = useOnlineStatus().value;
   // STALE-CONTENT: in reach is the server having ANSWERED, not merely not having failed: before the first probe (a cold launch,
   // the radio warming) a sync would fail, and its answer would stand as fresh for ten minutes after the connection came
-  // back. The key changes when the server is reached, so the sync runs then, once, and again after any outage.
+  // back. SC-IMGKEY (Ross 11-13: the case stood as plates at each launch and each flap): reach is no part of the key, so the
+  // answer stands while the server is reached or lost; reaching it refetches an answer due (given out of reach, partial, or
+  // older than FRESH_FOR_MS), so the sync runs then, once, and again after any outage, a sync under way running on.
   const reachable = online && session?.engine.state.value.reachability === 'reachable';
   const keptHeads = useCallback(
     (s: Snapshot): string[] => [...new Set(KEPT_KINDS.flatMap((kind) => s.figures.filter((f) => f.local.kind === kind).map((f) => f.local.headId).sort()))],
@@ -158,17 +172,20 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const choiceKey = (heads ?? []).filter((h) => allChoices.has(h)).map((h) => `${h}=${allChoices.get(h)}`).join(',');
   const signedIn = session !== undefined && phase === 'signed-in';
   const enabled = signedIn && heads !== undefined;
-  const key = ['local', 'kept-images', reachable, heads?.join(',') ?? '', choiceKey];
+  const key = ['local', 'kept-images', heads?.join(',') ?? '', choiceKey];
   // PHOTOS1 (X2): whether this case view has synced in reach since it opened, the server not lost since; a sync after that
   // (the kept figures or choices changed) backs off on the addresses refused, as a fill does (keptImages.ts SyncOptions.backOff)
   const syncedInReach = useRef(false);
   if (!reachable) syncedInReach.current = false;
+  // SC-IMGKEY: whether the last run started began in reach: a sync, which the server reached again never stops (a run out of reach it does)
+  const inReach = useRef(false);
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: key,
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
     // replaces it: aborted while it reads the lists, it touches no cache but a new figure's; while it fetches images, the
     // fetches in flight are aborted and no other starts.
     queryFn: async ({ signal, client, queryKey }) => {
+      inReach.current = reachable;
       hearKeptSyncs(client);
       await stopFill();
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
@@ -222,13 +239,14 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         }
       }
       const answer = await keptImages(kept, undefined, allChoices);
+      if (!reachable) unsynced.add(answer);
       if (incomplete) partial.add(answer);
       if (listsUnread) unread.add(answer);
       if (left !== undefined) leftover.set(answer, left);
       return answer;
     },
     enabled,
-    staleTime: (q) => (q.state.data !== undefined && partial.has(q.state.data) ? 0 : 10 * 60_000),
+    staleTime: (q) => freshFor(q.state.data),
     retry: false,
   });
   const client = useQueryClient();
@@ -284,16 +302,49 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       filling?.stop();
     };
   }, []);
+  /** SC-IMGKEY: when the last sync started by the server reached again began, and whether one is owed from the wait after it. */
+  const recoveredAt = useRef(-Infinity);
+  const owed = useRef(false);
+  const due = (state: QueryState<ReadonlyMap<string, CachedImage>> | undefined): boolean =>
+    state?.data === undefined || Date.now() - state.dataUpdatedAt >= freshFor(state.data);
+  /** Sync again, at once or, inside REACH_SETTLE_MS of a recovery's sync, owed; `recovery` starts that wait. */
+  const syncAgain = (recovery: boolean) => {
+    if (Date.now() < recoveredAt.current + REACH_SETTLE_MS) {
+      owed.current = true;
+      return;
+    }
+    owed.current = false;
+    if (recovery) recoveredAt.current = Date.now();
+    void query.refetch();
+  };
+  // SC-IMGKEY: the server reached (the first time this case view sees it, or again after an outage) refetches an answer due,
+  // stopping a run out of reach but never a sync under way; the answer shown meanwhile stands. Ahead of the pass below, so a
+  // recovery and the pass that found the server, told in one render, sync once, as a recovery.
+  const wasReachable = useRef(reachable);
+  const everReached = useRef(reachable);
+  useEffect(() => {
+    const was = wasReachable.current;
+    wasReachable.current = reachable;
+    if (!reachable || was) return;
+    const recovery = everReached.current;
+    everReached.current = true;
+    const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
+    if (!enabled || (state?.fetchStatus === 'fetching' && inReach.current) || !due(state)) return;
+    syncAgain(recovery);
+  }, [reachable]);
   // NEWHOLD-IMG-1: a pass the engine completes after a sync that could not read the lists syncs again; never the failure
   // itself (a server still failing is asked again at the next pass, not at once), nor one already under way. PHOTOS1: after
-  // one that read them and left an image unfetched, the pass fills instead.
+  // one that read them and left an image unfetched, the pass fills instead. SC-IMGKEY: a sync owed from REACH_SETTLE_MS
+  // rides the first such pass after it; one due inside it is owed too.
   const passedAt = session?.engine.state.value.lastSyncedAt ?? null;
   const seenPass = useRef(passedAt);
   useEffect(() => {
     if (seenPass.current === passedAt) return;
     seenPass.current = passedAt;
     const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
-    if (state?.fetchStatus === 'idle' && state.data !== undefined && unread.has(state.data)) void client.refetchQueries({ queryKey: key, exact: true });
+    const idle = state?.fetchStatus === 'idle';
+    if (idle && owed.current && reachable && due(state)) syncAgain(false);
+    else if (idle && state.data !== undefined && unread.has(state.data)) syncAgain(false);
     else startFill();
   }, [passedAt]);
   return query.data ?? (signedIn ? LOADING : EMPTY);

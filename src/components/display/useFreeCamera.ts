@@ -8,7 +8,8 @@
  * old path's) has no say here.
  */
 import { useCallback, useEffect, useRef } from 'preact/hooks';
-import { cssSceneTransform, type Camera } from './caseCamera';
+import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
+import { dollyStep } from './caseDepth';
 import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
 import { DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
@@ -82,13 +83,32 @@ interface Gesture {
   cone?: { start: Pose; scene: FreeScene; limits: YawCone };
 }
 
-/** NAV-JOG: a jog running: the pose it has got to, the thumb's offset, the last frame's time, and a MOVE's depth and cap. */
-interface Jog {
-  pose: Pose;
+/** NAV-JOG: the hat (the bottom-centre button's jog) running: the thumb's offset, its last frame's time, and a MOVE's depth and cap. */
+interface Hat {
   aim: Point;
   last: number | undefined;
   readonly anchor: number;
   readonly span: number;
+}
+
+/**
+ * NAV-DEPTH-2: the depth drive running: the rocker's reach, its last frame's time, the Classic cap, and the cost the
+ * last dolly handed back (v0) with the scene and pose it is the cost at, and the projector for that scene.
+ */
+interface Depth {
+  r: number;
+  last: number | undefined;
+  readonly span: number;
+  v0: number | undefined;
+  at: { readonly scene: FreeScene; readonly pose: Pose } | null;
+  project: { readonly scene: FreeScene; readonly fn: Projector } | null;
+}
+
+/** NAV-DEPTH-2: the drives of one pose, either or both held at once: each frame the hat walks it, then the depth dollies it. */
+interface Drives {
+  pose: Pose;
+  hat: Hat | null;
+  depth: Depth | null;
 }
 
 const num = (v: number): number => {
@@ -189,8 +209,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   /** NAV-1A (a): where the turn left yaw 0 (the start of the look that left it); turned, the scene's px per mm is held from it. */
   const unturned = useRef<Pose | null>(null);
   const gesture = useRef<Gesture | null>(null);
-  /** NAV-JOG: the bottom-centre button's jog, while a thumb holds it. */
-  const jog = useRef<Jog | null>(null);
+  /** NAV-JOG, NAV-DEPTH-2: the hat (the bottom-centre button's jog) and the depth rocker, while either is held. */
+  const drives = useRef<Drives | null>(null);
   /** A look let go past its soft limit easing back (spec 1.5) over SPRING_MS from t0, the lift (a late first frame catches up). */
   const spring = useRef<{ from: Pose; to: Pose; t0: number } | null>(null);
   const raf = useRef<number | undefined>(undefined);
@@ -200,7 +220,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const drawn = (now?: number): Pose | null => {
     const g = gesture.current;
     if (g?.mode) return g.shown;
-    if (jog.current) return jog.current.pose;
+    if (drives.current) return drives.current.pose;
     const sp = spring.current;
     if (sp) {
       const t = (now ?? performance.now()) - sp.t0;
@@ -232,27 +252,58 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) !== culled.current) onRender();
   };
 
+  /**
+   * NAV-DEPTH-2: the depth drive's frame from `pose` (where the hat left it this frame): dollyStep through the jog's
+   * rules (the room, the furniture, jogOk) and the scene's budget, projected at the camera the scene renders with (the
+   * framing's lens and frame at the pose, its px per mm held from where the turn left yaw 0: freeTexelScale's). The cost
+   * the last dolly handed back is trusted only at the same scene (a render, a resize or a new budget is a new scene)
+   * and the same place (the hat has not moved the eye since).
+   */
+  const depthFrame = (s: FreeScene, d: Depth, pose: Pose, dtMs: number): Pose => {
+    if (d.project?.scene !== s) d.project = { scene: s, fn: projector(s.budget) };
+    const project = d.project.fn;
+    const held = unturned.current === null ? undefined : withPose(s.base, unturned.current);
+    const vp = (p: Vec3) => project(withPose(s.base, { ...pose, x: p[0], y: p[1], z: p[2] }), held).vp;
+    const v0 = d.at !== null && d.at.scene === s && samePlace(d.at.pose, pose) ? d.v0 : undefined;
+    const step = dollyStep(pose, d.r, dtMs, { space: s.space, boxes: s.boxes, ok: jogOk(s, pose, d.span), vp }, v0);
+    d.v0 = step.vp;
+    d.at = { scene: s, pose: step.pose };
+    return step.pose;
+  };
+
   const loop = (now: number) => {
     raf.current = undefined;
-    const j = jog.current;
-    if (j) {
+    const d = drives.current;
+    if (d) {
+      const s = scene.current;
+      let pose = d.pose;
+      const hat = d.hat;
       // NAV-JOG: a MOVE each frame by the time since the last (jogStep), as a swipe's: slid along the room and the
-      // furniture, within the Classic cap and the wall's ends (jogOk); written only when it moved
-      if (j.last !== undefined) {
-        const s = scene.current;
-        const step = jogStep(j.aim.x, j.aim.y, now - j.last, s.base.frame.width, s.jogMax);
-        if (step.x !== 0 || step.y !== 0) {
-          const ok = jogOk(s, j.pose, j.span);
-          let next = walk(j.pose, -step.x, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, ok);
-          // at a wall's end a diagonal keeps its rise
-          if (samePlace(next, j.pose) && step.x !== 0 && step.y !== 0) next = walk(j.pose, 0, -step.y, j.anchor, s.base.focalPx, s.space, s.boxes, ok);
-          if (!samePlace(next, j.pose)) {
-            j.pose = next;
-            write(cameraOf(next));
+      // furniture, within the Classic cap and the wall's ends (jogOk)
+      if (hat) {
+        if (hat.last !== undefined) {
+          const step = jogStep(hat.aim.x, hat.aim.y, now - hat.last, s.base.frame.width, s.jogMax);
+          if (step.x !== 0 || step.y !== 0) {
+            const ok = jogOk(s, pose, hat.span);
+            let next = walk(pose, -step.x, -step.y, hat.anchor, s.base.focalPx, s.space, s.boxes, ok);
+            // at a wall's end a diagonal keeps its rise
+            if (samePlace(next, pose) && step.x !== 0 && step.y !== 0) next = walk(pose, 0, -step.y, hat.anchor, s.base.focalPx, s.space, s.boxes, ok);
+            if (!samePlace(next, pose)) pose = next;
           }
         }
+        hat.last = now;
       }
-      j.last = now;
+      // NAV-DEPTH-2: then the depth, from where the hat left the eye
+      const depth = d.depth;
+      if (depth) {
+        if (depth.last !== undefined) pose = depthFrame(s, depth, pose, now - depth.last);
+        depth.last = now;
+      }
+      // the pose written once a frame, only when it moved
+      if (!samePlace(pose, d.pose)) {
+        d.pose = pose;
+        write(cameraOf(pose));
+      }
       raf.current = requestAnimationFrame(loop);
       return;
     }
@@ -269,16 +320,35 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const schedule = () => {
     if (raf.current === undefined) raf.current = requestAnimationFrame(loop);
   };
-  useEffect(
-    () => () => {
+  /** NAV-DEPTH-2: the last drive stops: the eye stays where the drives got it, held. Returns that pose. */
+  const endDrives = (d: Drives): Pose => {
+    drives.current = null;
+    // a running drive always has its next frame asked for (beginDrives, the loop)
+    cancelAnimationFrame(raf.current!);
+    raf.current = undefined;
+    setGesture(null);
+    held.current = d.pose;
+    write(cameraOf(d.pose));
+    onRender();
+    return d.pose;
+  };
+  useEffect(() => {
+    // NAV-DEPTH-2: the window losing focus or the page hidden stops every drive where it is (no lift will come)
+    const halt = () => {
+      if (drives.current) endDrives(drives.current);
+    };
+    window.addEventListener('blur', halt);
+    document.addEventListener('visibilitychange', halt);
+    return () => {
+      window.removeEventListener('blur', halt);
+      document.removeEventListener('visibilitychange', halt);
       if (raf.current !== undefined) cancelAnimationFrame(raf.current);
       raf.current = undefined;
-      jog.current = null;
+      drives.current = null;
       const g = gesture.current;
       if (g?.timer !== undefined) clearTimeout(g.timer);
-    },
-    [],
-  );
+    };
+  }, []);
 
   /** NAV-1A (a+b): a look's cone from `start`, held from where it leaves yaw 0 (a drag comes from a pointer on the host). */
   const coneFrom = (s: FreeScene, start: Pose): YawCone => {
@@ -296,7 +366,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     el.style.top = `${at.y}px`;
     el.dataset.on = '';
   };
-  const setGesture = (mode: 'move' | 'look' | 'jog' | null) => {
+  const setGesture = (mode: 'move' | 'look' | 'jog' | 'depth' | null) => {
     const host = dom.host.current;
     if (!host) return;
     if (mode === null) delete host.dataset.gesture;
@@ -305,8 +375,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
 
   /** A finger down on the scene (not on a control, not zoomed, not a pinch): Look arms if it stays still LOOK_HOLD_MS. */
   const press = useCallback((e: FreePress, at: Point) => {
-    // NAV-JOG: while the jog moves the eye, a finger on the scene is no gesture of its own
-    if (jog.current) return;
+    // NAV-JOG, NAV-DEPTH-2: while a drive moves the eye, a finger on the scene is no gesture of its own
+    if (drives.current) return;
     const prev = gesture.current;
     if (prev?.timer !== undefined) clearTimeout(prev.timer);
     const s = scene.current;
@@ -439,44 +509,84 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   }, []);
 
   /**
-   * NAV-JOG: a thumb has started the bottom-centre button's jog: from the pose drawn now (a look easing back, from where
-   * it rests), at the depth the frame centre looks at. Refused (false) while a finger is on the scene or a jog runs.
+   * NAV-DEPTH-2: the drives running, or (none yet) begun from the pose held, a look easing back from where it rests,
+   * with their first frame asked for.
    */
-  const jogStart = useCallback((): boolean => {
-    if (gesture.current !== null || jog.current !== null) return false;
-    const s = scene.current;
+  const beginDrives = (): Drives => {
+    if (drives.current) return drives.current;
     const easing = spring.current;
     spring.current = null;
-    const pose = held.current ?? poseOf(s.base);
-    const camera = cameraOf(pose);
-    const anchor = anchorDepth(camera, camera.frame.width / 2, camera.frame.height / 2, { x0: s.wall.leftMm, x1: s.wall.rightMm }, s.zBack);
-    jog.current = { pose, aim: { x: 0, y: 0 }, last: undefined, anchor, span: spanOf(s, camera) };
-    setGesture('jog');
-    // a look easing back is done: the jog starts from where it rests (held already)
-    if (easing) write(camera);
+    const d: Drives = { pose: held.current ?? poseOf(scene.current.base), hat: null, depth: null };
+    drives.current = d;
+    // a look easing back is done: the drive starts from where it rests (held already)
+    if (easing) write(cameraOf(d.pose));
     if (raf.current !== undefined) cancelAnimationFrame(raf.current);
     raf.current = requestAnimationFrame(loop);
+    return d;
+  };
+
+  /**
+   * NAV-JOG: a thumb has started the bottom-centre button's jog: from the pose drawn now (a look easing back, from where
+   * it rests; a depth drive running, from where it has got), at the depth the frame centre looks at. Refused (false)
+   * while a finger is on the scene or a jog runs.
+   */
+  const jogStart = useCallback((): boolean => {
+    if (gesture.current !== null || drives.current?.hat) return false;
+    const s = scene.current;
+    const d = beginDrives();
+    const camera = cameraOf(d.pose);
+    const anchor = anchorDepth(camera, camera.frame.width / 2, camera.frame.height / 2, { x0: s.wall.leftMm, x1: s.wall.rightMm }, s.zBack);
+    d.hat = { aim: { x: 0, y: 0 }, last: undefined, anchor, span: spanOf(s, camera) };
+    setGesture('jog');
     return true;
   }, []);
 
   /** NAV-JOG: the thumb's offset (px) from where it went down: the way the eye moves, and how fast (jogStep). */
   const jogAim = useCallback((dxPx: number, dyPx: number) => {
-    if (jog.current) jog.current.aim = { x: dxPx, y: dyPx };
+    const hat = drives.current?.hat;
+    if (hat) hat.aim = { x: dxPx, y: dyPx };
   }, []);
 
-  /** NAV-JOG: the thumb lifts: the eye stops where the jog got it, held. Returns that pose (null: no jog ran). */
+  /**
+   * NAV-JOG: the thumb lifts: the hat stops. The last drive stopping, the eye stays where they got it, held, and that
+   * pose is returned; null while the depth still moves it (its stop returns it), or when no jog ran.
+   */
   const jogStop = useCallback((): Pose | null => {
-    const j = jog.current;
-    if (!j) return null;
-    jog.current = null;
-    // a running jog always has its next frame asked for (jogStart, the loop)
-    cancelAnimationFrame(raf.current!);
-    raf.current = undefined;
-    setGesture(null);
-    held.current = j.pose;
-    write(cameraOf(j.pose));
-    onRender();
-    return j.pose;
+    const d = drives.current;
+    if (!d?.hat) return null;
+    d.hat = null;
+    if (d.depth) {
+      setGesture('depth');
+      return null;
+    }
+    return endDrives(d);
+  }, []);
+
+  /**
+   * NAV-DEPTH-2: the depth rocker leaves its centre at reach r in [-1, 1] (+ forward): the eye dollies along its
+   * horizontal heading (dollyStep) from the pose drawn now, with the hat or alone. Refused (false) while a finger is on
+   * the scene or a depth drive runs.
+   */
+  const depthStart = useCallback((r: number): boolean => {
+    if (gesture.current !== null || drives.current?.depth) return false;
+    const d = beginDrives();
+    d.depth = { r, last: undefined, span: spanOf(scene.current, cameraOf(d.pose)), v0: undefined, at: null, project: null };
+    if (!d.hat) setGesture('depth');
+    return true;
+  }, []);
+
+  /** NAV-DEPTH-2: the rocker's reach now (DEPTH_DEAD and under moves nothing). */
+  const depthRate = useCallback((r: number) => {
+    const depth = drives.current?.depth;
+    if (depth) depth.r = r;
+  }, []);
+
+  /** NAV-DEPTH-2: the rocker springs back to its centre: as jogStop, for the depth (null while the hat still moves the eye). */
+  const depthStop = useCallback((): Pose | null => {
+    const d = drives.current;
+    if (!d?.depth) return null;
+    d.depth = null;
+    return d.hat ? null : endDrives(d);
   }, []);
 
   return {
@@ -485,8 +595,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       const pose = drawn();
       return pose === null ? base : withPose(base, pose);
     },
-    /** A gesture moves the pose, or a look let go eases back. */
-    live: (): boolean => gesture.current?.mode != null || jog.current !== null || spring.current !== null,
+    /** A gesture or a drive moves the pose, or a look let go eases back. */
+    live: (): boolean => gesture.current?.mode != null || drives.current !== null || spring.current !== null,
     /** A pose held off the framing (null: the framing). */
     held: (): Pose | null => held.current,
     /** NAV-1A (a): the camera where the turn left yaw 0 (freeTexelScale holds a turned scene's px per mm from it). */
@@ -502,6 +612,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     jogStart,
     jogAim,
     jogStop,
+    depthStart,
+    depthRate,
+    depthStop,
     /** Write the drawn pose to the DOM again (after a render, which may have rewritten it). */
     sync: () => {
       const pose = drawn();

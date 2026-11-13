@@ -4,7 +4,7 @@ import { DEPTH_DEAD, DEPTH_MAX_MM_S, DEPTH_MIN_MM_S, DEPTH_RATE_PER_S, DEPTH_STO
 import { EYE_MARGIN_MM, JOG_MAX_STEP_MS, eyeSpace, withPose, type Pose } from '../casePose';
 import { lensFocalPx, type Camera, type Vec3 } from '../caseCamera';
 import { cabinetBox, capSpanMm, frameSpanMm, frontsOf, roomBox, type Box } from '../caseFraming';
-import { SCENE_CEILING_VIEWPORTS } from '../caseBudget';
+import { SCENE_CEILING_VIEWPORTS, fitsCeiling } from '../caseBudget';
 import { wallLayout } from '../packCabinets';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 
@@ -271,6 +271,20 @@ describe('dolly: the eye forward and back along its heading', () => {
     expect(last).toBeLessThan(200);
   });
 
+  it('a light reverse (r = -0.3) takes the nearer distance too: 100 mm from a front ahead, 300 mm from one behind', () => {
+    const x = wall.cabinets[0].centerMm;
+    const speedAt = (p: Pose) => (Math.abs(dolly(p, -0.3, FRAME_MS, room).z - p.z) * 1000) / FRAME_MS;
+    const nearer = (p: Pose) => -depthSpeed(-0.3, Math.min(aheadMm(p, space, boxes), aheadMm(p, space, boxes, -1)));
+    // facing the front, at its margin: the room ahead (100 mm) is the nearer
+    const facing: Pose = { ...start, x, z: boxes[0].z1 + EYE_MARGIN_MM };
+    expect(speedAt(facing)).toBeCloseTo(nearer(facing), 9);
+    expect(speedAt(facing)).toBeCloseTo(1.5 * 100 * (0.2 / 0.9) ** 2, 9);
+    // turned away from it, 300 mm out: the front behind is the nearer, never the room ahead
+    const away: Pose = { ...start, x, z: boxes[0].z1 + 300, yaw: Math.PI };
+    expect(speedAt(away)).toBeCloseTo(nearer(away), 6);
+    expect(speedAt(away)).toBeCloseTo(1.5 * 300 * (0.2 / 0.9) ** 2, 6);
+  });
+
   it('backing away from a display 100 mm in front starts slow: the nearer of the room ahead and behind', () => {
     const x = wall.cabinets[0].centerMm;
     const p: Pose = { ...start, x, z: boxes[0].z1 + EYE_MARGIN_MM };
@@ -322,6 +336,26 @@ describe('dolly: the eye forward and back along its heading', () => {
     }
     expect(start.z - p.z).toBeGreaterThan(19);
     expect(start.z - p.z).toBeLessThanOrEqual(20);
+  });
+
+  it('v0 is trusted exactly up to the ceiling fitsCeiling uses: at it, kept; any hair over it, asked again', () => {
+    const C = SCENE_CEILING_VIEWPORTS;
+    const over = [C + 1e-3, C + 1e-9, C + C * Number.EPSILON];
+    expect(over.every((v) => v > C && !fitsCeiling(v))).toBe(true);
+    expect(fitsCeiling(C)).toBe(true);
+    const askedAtStart = (v0: number) => {
+      let asked = false;
+      const vp = (q: Vec3) => {
+        if (q[0] === start.x && q[1] === start.y && q[2] === start.z) asked = true;
+        return 1;
+      };
+      const s = dollyStep(start, 1, FRAME_MS, { ...open, vp }, v0);
+      expect(s.pose.z).toBeLessThan(start.z);
+      return asked;
+    };
+    expect(askedAtStart(C)).toBe(false);
+    expect(askedAtStart(1)).toBe(false);
+    for (const v0 of over) expect(askedAtStart(v0)).toBe(true);
   });
 
   it('a v0 that is no number (NaN, -Infinity) is asked again: the eye moves both ways and a real cost comes back', () => {

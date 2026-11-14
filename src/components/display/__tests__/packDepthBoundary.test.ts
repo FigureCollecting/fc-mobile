@@ -7,8 +7,8 @@ import { packCabinets, PACK_RULES, surfaceSlots, type CaseFigure, type PackResul
 /**
  * PACK-KIND-1 round 4: on a wall of more than one profile a figure exactly as deep as its only place stands there. FIT-CHECK
  * calls it a fit by the same `within` the placing uses; were the placing stricter at the boundary, the figure would wait
- * for a cabinet that never takes it and the wall would open cabinets for it without end. (Its own file: a runaway here
- * never hides the other packer tests' results.)
+ * for a cabinet that never takes it: the wall's end would open cabinets for it without end but for the round-5 guard,
+ * which lists it in "Doesn't fit" (these tests then fail on its violators, not on a runaway).
  */
 
 const CEILING_MM = 2438.4;
@@ -38,6 +38,17 @@ describe('PACK-KIND-1: a figure exactly as deep as its only place', () => {
     const r = packCabinets([one(300, 500, rackTop)], [K, D, R], CEILING_MM, PACK_RULES);
     expect(r.violators).toEqual([]);
     expect(placeOf(r)).toMatchObject({ id: R.id, slot: { isTop: true, depthMm: rackTop }, turned: false });
+  });
+
+  it('stands on the rack’s top beside a 406 mm deep figure, on a wall 363ba92 packed with that one overhanging a KLINGSBO’s top', () => {
+    // (363ba92's packing overhangs, so it is never the one kept: the figure stands there by the placing's own check)
+    const rackTop = deepest(R, true);
+    const deep = { ...one(433, 397, 406), index: 1, figure: { _id: 'f1', name: 'f1' } as Figure };
+    const r = packCabinets([deep, one(300, 500, rackTop)], [K, D, R], CEILING_MM, PACK_RULES);
+    expect(r.violators).toEqual([]);
+    expect(r.cabinets.flatMap((c) => c.surfaces.flatMap((s) => s.items.filter((p) => p.tooDeep)))).toEqual([]);
+    const rack = r.cabinets.find((c) => c.profile.id === R.id)!;
+    expect(rack.surfaces.find((s) => s.slot.isTop)!.items.map((p) => p.item.index).sort()).toEqual([0, 1]);
   });
 
   it('stands in a KLINGSBO’s 335 mm deep tier (a 939 mm statue, K-D-R), never in “Doesn’t fit”', () => {

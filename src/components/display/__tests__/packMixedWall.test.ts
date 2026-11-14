@@ -123,19 +123,28 @@ describe('PACK-KIND-1: the mixed wall judges each figure by the cabinet it lands
     }
   });
 
-  it('T2: across mixed walls, a figure the stock Detolf or rack holds never stands in a tier one of them made', () => {
+  it('T2: across mixed walls, a figure the stock Detolf or rack holds never stands in a tier one of them made (round 5: unless that saves a cabinet, or an empty one)', () => {
+    let saved = 0;
     fc.assert(
       fc.property(fc.array(fc.record({ h: fc.integer({ min: 120, max: 720 }), w: fc.integer({ min: 50, max: 330 }) }), { minLength: 1, maxLength: 40 }), (specs) => {
-        const r = pack(specs.map((s, i) => fig(i, s.h, s.w)));
+        const items = specs.map((s, i) => fig(i, s.h, s.w));
+        const r = pack(items);
+        let inTier = false;
         for (const c of r.cabinets.filter((x) => x.profile.id !== K.id)) {
           c.surfaces.forEach((s, k) => {
-            if (!isTier(c, k)) return;
-            for (const p of s.items) expect(fitCheck(stockOf(c), p.item, CEILING_MM, false).verdict).not.toBe('fits');
+            if (isTier(c, k) && s.items.some((p) => fitCheck(stockOf(c), p.item, CEILING_MM, false).verdict === 'fits')) inTier = true;
           });
         }
+        if (!inTier) return;
+        // (the packing 363ba92 made, kept only as it stands in fewer cabinets than PACK-KIND-1's, or as many and fewer empty)
+        const kind = [true, false].map((deviate) => pack(items, undefined, WALL, { deviate })).reduce((a, b) => (noWorse(a, b) ? a : b));
+        expect(r.cabinets.length < kind.cabinets.length || emptyOf(r) < emptyOf(kind)).toBe(true);
+        saved++;
       }),
       { numRuns: 150, seed: 1113 },
     );
+    // (and the exception is rare: of the 150 walls)
+    expect(saved).toBeLessThanOrEqual(15);
   });
 
   it("T3: fixture b, ungrouped: the first KLINGSBO's tiers and top that a 300 mm figure fits each hold one", () => {
@@ -815,6 +824,31 @@ describe('PACK-KIND-1 round 3: every place a figure takes is as deep as the figu
     expect(whereIs(r, 1)).toMatchObject({ id: D.id, slot: { isTop: false, depthMm: plate } });
   });
   // (a figure exactly as deep as its only place: packDepthBoundary.test.ts)
+});
+
+// round 5 (the challenger's walls, labeled sizes h x w x d mm, as the app orders them): the app's K-D-R wall, where
+// 363ba92 stood them in fewer cabinets (or as many, fewer empty), none overhanging
+const ROUND5: readonly { id: string; clear: number; items: [number, number, number][]; groups: (string | null)[]; base: [number, number] }[] = [
+  // a Detolf holding all four 1/4 figures in its two tiers and on its top, the 1/6 one with them: no rack opened for it
+  { id: 'pure-963', clear: 25.4, base: [2, 0], items: [[475, 322, 372], [459, 217, 255], [450, 244, 271], [461, 401, 260], [265, 118, 109]], groups: ['scale:4', 'scale:4', 'scale:4', 'scale:4', 'scale:6'] },
+  { id: 'pure-2968', clear: 25.4, base: [3, 0], items: [[269, 137, 89], [443, 328, 213], [578, 206, 134], [234, 140, 63], [175, 148, 130], [255, 122, 80], [382, 314, 204], [203, 135, 88], [228, 170, 192], [244, 155, 78], [93, 71, 37], [199, 157, 111], [528, 263, 171], [206, 145, 92], [239, 218, 170], [580, 470, 306], [247, 122, 119], [94, 86, 42], [459, 406, 330], [249, 179, 116], [266, 131, 122], [294, 228, 148], [239, 183, 127], [231, 157, 179], [261, 204, 133]], groups: Array<null>(25).fill(null) },
+  { id: 'pure-948', clear: 25.4, base: [3, 0], items: [[471, 333, 217], [175, 126, 71], [249, 221, 155], [272, 260, 165], [101, 78, 80], [380, 314, 185], [245, 206, 134], [223, 220, 143], [230, 199, 129], [313, 202, 98], [243, 86, 56], [449, 403, 414], [473, 353, 363]], groups: ['series 1', 'series 2', 'series 2', 'series 2', 'series 3', 'series 3', 'series 3', 'series 3', 'series 5', 'series 7', 'series 7', 'series 9', 'series 9'] },
+  { id: 'realistic-1375', clear: 25.4, base: [3, 0], items: [[238, 88, 57], [250, 124, 101], [681, 322, 209], [235, 133, 137], [415, 160, 132], [195, 153, 80], [236, 129, 84], [282, 172, 112], [252, 96, 114], [455, 374, 243], [103, 93, 61], [253, 122, 79], [390, 325, 349], [314, 178, 116], [231, 148, 96], [477, 179, 116], [246, 185, 180], [241, 151, 120], [419, 196, 120], [544, 527, 342]], groups: ['series 1', 'series 2', 'series 2', 'series 2', 'series 2', 'series 2', 'series 3', 'series 4', 'series 5', 'series 6', 'series 6', 'series 6', 'series 6', 'series 6', 'series 7', 'series 7', 'series 7', 'series 7', 'series 7', 'series 8'] },
+  // three 1/3 statues at 1.5 in of clearance
+  { id: 'realistic-1570', clear: 38.1, base: [7, 1], items: [[1137, 362, 332], [577, 515, 335], [1190, 270, 333], [380, 148, 96], [423, 399, 175], [466, 357, 232], [194, 169, 110]], groups: ['scale:3', 'scale:3', 'scale:3', 'scale:4', 'scale:4', 'scale:4', 'No scale'] },
+];
+
+describe('PACK-KIND-1 round 5: never more cabinets, nor more empty, than 363ba92 where it overhangs nothing', () => {
+  for (const wall of ROUND5) {
+    it(`${wall.id}: ${wall.items.length} figures in no more than ${wall.base[0]} cabinets, ${wall.base[1]} empty, none overhanging`, () => {
+      const items = wall.items.map(([h, w, d], i) => ({ ...fig(i, h, w), depthMm: d, heightEstimated: false }));
+      const r = packCabinets(items, wallAt(wall.clear, 'K', 'D', 'R'), CEILING_MM, PACK_RULES, wall.groups);
+      expect(overhangs(r)).toEqual([]);
+      expect(r.violators).toEqual([]);
+      expect(r.cabinets.length).toBeLessThanOrEqual(wall.base[0]);
+      if (r.cabinets.length === wall.base[0]) expect(emptyOf(r)).toBeLessThanOrEqual(wall.base[1]);
+    });
+  }
 });
 
 describe('PACK-KIND-1: a wall of one profile packs exactly as before', () => {

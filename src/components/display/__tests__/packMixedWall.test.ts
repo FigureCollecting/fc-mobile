@@ -801,6 +801,20 @@ describe('PACK-KIND-1 round 3: every place a figure takes is as deep as the figu
     expect(r.cabinets.length).toBeLessThanOrEqual(15);
     expect(emptyOf(r)).toBeLessThanOrEqual(10);
   });
+
+  // round 4: a figure exactly as deep as a place fits it (the same `within` FIT-CHECK calls it a fit by)
+  const whereIs = (r: PackResult, index: number) => {
+    for (const c of r.cabinets) for (const s of c.surfaces) if (s.items.some((p) => p.item.index === index)) return { id: c.profile.id, slot: s.slot };
+    return null;
+  };
+
+  it('a figure exactly as deep as a Detolf’s 290 mm glass shelf stands on it, not on the deeper bottom shelf (D-K-R, its top taken)', () => {
+    const plate = Math.min(...surfaceSlots(D, CEILING_MM).filter((s) => !s.isTop).map((s) => s.depthMm));
+    const r = pack([{ ...fig(0, 300, 400), depthMm: 300 }, { ...fig(1, 300, 300), depthMm: plate }], undefined, wallAt(25.4, 'D', 'K', 'R'));
+    expect(r.violators).toEqual([]);
+    expect(whereIs(r, 1)).toMatchObject({ id: D.id, slot: { isTop: false, depthMm: plate } });
+  });
+  // (a figure exactly as deep as its only place: packDepthBoundary.test.ts)
 });
 
 describe('PACK-KIND-1: a wall of one profile packs exactly as before', () => {

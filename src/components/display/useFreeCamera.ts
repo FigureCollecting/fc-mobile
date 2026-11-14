@@ -9,10 +9,10 @@
  */
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
-import { DEPTH_DEAD, dollyStep } from './caseDepth';
+import { DEPTH_STOP_MM, aheadMm, depthSpeed, dollyStep } from './caseDepth';
 import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
-import { DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
+import { DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, JOG_MAX_STEP_MS, SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling, projector, type BudgetScene, type Projector, type SceneCost } from './caseBudget';
 import type { WallLayout, WallSlot } from './packCabinets';
 import type { Point } from './caseZoom';
@@ -105,8 +105,27 @@ interface Depth {
   v0: number | undefined;
   at: { readonly scene: FreeScene; readonly pose: Pose } | null;
   project: { readonly scene: FreeScene; readonly fn: Projector } | null;
-  stuck: { readonly scene: FreeScene; readonly pose: Pose; readonly sign: number } | null;
+  stuck: Stuck | null;
 }
+
+/**
+ * NAV-DEPTH-2: a dolly that asked for DEPTH_STOP_MM or more and was held still: at this scene, place, reach and px per
+ * mm (unturned), at each of these frame lengths (as dollyStep caps them). dollyStep is a pure function of exactly these
+ * and the cost it was handed (here the true cost at the place, as the hold handed back), so a frame that matches them
+ * all would hold the eye there again: it is not asked.
+ */
+interface Stuck {
+  readonly scene: FreeScene;
+  readonly pose: Pose;
+  readonly r: number;
+  readonly unturned: Pose | null;
+  readonly dts: number[];
+}
+
+/** The most frame lengths a hold keeps (a display's frames come in a few: 16.6 and 16.7 ms at 60 Hz). */
+const STUCK_DTS = 4;
+
+const samePose = (a: Pose, b: Pose) => a.x === b.x && a.y === b.y && a.z === b.z && a.yaw === b.yaw && a.pitch === b.pitch;
 
 /** NAV-DEPTH-2: the drives of one pose, either or both held at once: each frame the hat walks it, then the depth dollies it. */
 interface Drives {
@@ -269,14 +288,16 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
    * rules (the room, the furniture, jogOk) and the scene's budget, projected at the camera the scene renders with (the
    * framing's lens and frame at the pose, its px per mm held from where the turn left yaw 0: freeTexelScale's). The cost
    * the last dolly handed back is trusted only at the same scene (a render, a resize or a new budget is a new scene)
-   * and the same place (the hat has not moved the eye since). A dolly pushed past the dead zone that held the eye still
-   * (against the budget, the cap, a wall's end or the room) is not asked again while the scene, the place and the way
-   * it is pushed all stand: it would hold it there again, and at the ceiling that costs three projections a frame.
+   * and the same place (the hat has not moved the eye since). A dolly that held the eye still (against the budget, the
+   * cap, a wall's end or the room: Stuck) is not asked again for a frame with all the same inputs: it would hold it there
+   * again, and at the ceiling that costs three projections a frame. Any other frame (a longer or shorter one included)
+   * asks it.
    */
   const depthFrame = (s: FreeScene, d: Depth, pose: Pose, dtMs: number): Pose => {
-    const sign = Math.sign(d.r);
-    const stuck = d.stuck;
-    if (stuck !== null && stuck.scene === s && stuck.sign === sign && samePlace(stuck.pose, pose)) return pose;
+    const dt = Math.min(dtMs, JOG_MAX_STEP_MS);
+    const st = d.stuck;
+    const same = st !== null && st.scene === s && Object.is(st.r, d.r) && st.unturned === unturned.current && samePose(st.pose, pose);
+    if (same && st.dts.includes(dt)) return pose;
     if (d.project?.scene !== s) d.project = { scene: s, fn: projector(s.budget) };
     const project = d.project.fn;
     const held = unturned.current === null ? undefined : withPose(s.base, unturned.current);
@@ -285,8 +306,17 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const step = dollyStep(pose, d.r, dtMs, { space: s.space, boxes: s.boxes, ok: jogOk(s, pose, d.span), vp }, v0);
     d.v0 = step.vp;
     d.at = { scene: s, pose: step.pose };
-    // past the dead zone with time to move (depthSpeed is then never 0), a dolly that left the eye where it was held it
-    d.stuck = Math.abs(d.r) > DEPTH_DEAD && dtMs > 0 && samePlace(step.pose, pose) ? { scene: s, pose, sign } : null;
+    // held: it asked for a millimetre or more (as dollyStep works it out) and the eye stayed
+    if (!samePlace(step.pose, pose) || !(dt > 0)) d.stuck = null;
+    else {
+      const ahead = aheadMm(pose, s.space, s.boxes);
+      const asked = Math.abs(depthSpeed(d.r, d.r < 0 ? Math.min(ahead, aheadMm(pose, s.space, s.boxes, -1)) : ahead) * dt) / 1000;
+      if (!(asked >= DEPTH_STOP_MM)) d.stuck = null;
+      else if (same) {
+        if (st.dts.length === STUCK_DTS) st.dts.shift();
+        st.dts.push(dt);
+      } else d.stuck = { scene: s, pose, r: d.r, unturned: unturned.current, dts: [dt] };
+    }
     return step.pose;
   };
 
@@ -373,6 +403,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       if (raf.current !== undefined) cancelAnimationFrame(raf.current);
       raf.current = undefined;
       drives.current = null;
+      // gone, the scene has no focus left to set from a halt
+      halted.current = null;
       const g = gesture.current;
       if (g?.timer !== undefined) clearTimeout(g.timer);
     };
@@ -545,7 +577,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const h = halted.current;
     if (h === null || !h[which]) return null;
     halted.current = null;
-    return h.pose;
+    // only while the eye still stands there: a swipe, a look, Reset view or any pose held since set the focus their own way
+    const now = drawn() ?? poseOf(scene.current.base);
+    return samePose(now, h.pose) ? h.pose : null;
   };
 
   const beginDrives = (): Drives => {

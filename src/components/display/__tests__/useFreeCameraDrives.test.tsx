@@ -285,6 +285,98 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
     expect(left).toEqual(now);
   });
 
+  describe('round 2: the halted pose goes back to a lift only while the eye still stands there', () => {
+    /** A hat-only jog halted by a blur: the hook, and where it held the eye. */
+    const halted = () => {
+      const m = mount();
+      m.fc().jogStart();
+      m.fc().jogAim(JOG_FULL_PX, 0);
+      m.run(20);
+      act(() => void window.dispatchEvent(new Event('blur')));
+      return { m, at: m.pose() };
+    };
+    const lift = (m: ReturnType<typeof mount>) => {
+      let left: Pose | null = poseOf(m.ref.current.base);
+      act(() => {
+        left = m.fc().jogStop();
+      });
+      return left;
+    };
+
+    it('a press that never became a drag left the eye where it was: the lift still gets the pose', () => {
+      const { m, at } = halted();
+      act(() => m.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+      act(() => void m.fc().release(5, true));
+      expect(lift(m)).toEqual(at);
+    });
+
+    it('a swipe walked the eye on: the lift gets nothing (the swipe set its own focus)', () => {
+      const { m, at } = halted();
+      act(() => m.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+      for (const x of [380, 340, 300, 260, 220]) {
+        act(() => m.fc().drag(5, { x, y: 200 }, 'x'));
+        m.run(1);
+      }
+      act(() => void m.fc().release(5, true));
+      expect(m.pose().x).not.toBe(at.x);
+      expect(lift(m)).toBeNull();
+    });
+
+    it('a swipe still under the finger at the lift: nothing', () => {
+      const { m } = halted();
+      act(() => m.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+      act(() => m.fc().drag(5, { x: 300, y: 200 }, 'x'));
+      expect(lift(m)).toBeNull();
+    });
+
+    it('Reset view (hold(null), the framing) or another pose held: nothing; the same pose held again: the pose', () => {
+      const reset = halted();
+      reset.m.fc().hold(null);
+      expect(lift(reset.m)).toBeNull();
+      const other = halted();
+      other.m.fc().hold({ ...other.at, x: other.at.x - 300 });
+      expect(lift(other.m)).toBeNull();
+      const same = halted();
+      same.m.fc().hold({ ...same.at });
+      expect(lift(same.m)).toEqual(same.at);
+    });
+
+    it('a look turned the eye (lifted past its soft limit, easing back, and once it rests): nothing', () => {
+      for (const wait of [0, 2000]) {
+        const { m } = halted();
+        act(() => m.fc().press({ pointerId: 1, clientX: 400, clientY: 200, button: 2 }, { x: 400, y: 200 }));
+        act(() => m.fc().drag(1, { x: 860, y: 200 }, 'x'));
+        act(() => void m.fc().release(1, true));
+        m.run(wait / 16);
+        expect(m.pose().yaw).not.toBe(0);
+        expect(lift(m)).toBeNull();
+      }
+    });
+
+    it('a drive begun after the halt ends with its own lift: the halted hat\'s late lift then gets nothing', () => {
+      const { m, at } = halted();
+      expect(m.fc().depthStart(0.05)).toBe(true);
+      m.run(3);
+      expect(m.fc().depthStop()).toEqual(at);
+      expect(lift(m)).toBeNull();
+    });
+
+    it('a second blur leaves it as it was (one pose, then nothing); unmounted, nothing', () => {
+      const twice = halted();
+      act(() => void window.dispatchEvent(new Event('blur')));
+      expect(lift(twice.m)).toEqual(twice.at);
+      expect(lift(twice.m)).toBeNull();
+      const gone = halted();
+      const fc = gone.m.fc();
+      gone.m.unmount();
+      let left: Pose | null = gone.at;
+      act(() => {
+        left = fc.jogStop();
+      });
+      expect(left).toBeNull();
+    });
+  });
+
   it('N1: visibilitychange to hidden stops every drive and holds the pose (no drift after); to visible it stops nothing', () => {
     const state = (v: 'hidden' | 'visible') => Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v });
     try {
@@ -556,17 +648,22 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
     };
     const calls = () => dollyStep.mock.calls.length;
 
-    it('held at the ceiling: no dolly (no projection) while nothing changes, a weaker push the same way included', () => {
+    it('held at the ceiling: no dolly (no projection) while nothing changes; a new reach is asked once, then held again', () => {
       const { m, held } = atCeiling();
       const n = calls();
       m.run(20);
+      expect(calls()).toBe(n);
+      // a weaker push the same way: asked (it is a new input), held, then not asked again
       m.fc().depthRate(0.5);
       m.run(5);
+      expect(calls()).toBe(n + 1);
+      // inside the dead zone it asks for nothing, so it is never a hold: asked every frame (no projection: no travel)
       m.fc().depthRate(0.05);
       m.run(5);
+      expect(calls()).toBe(n + 6);
       m.fc().depthRate(1);
       m.run(5);
-      expect(calls()).toBe(n);
+      expect(calls()).toBe(n + 7);
       expect(m.pose()).toEqual(held);
     });
 
@@ -642,6 +739,114 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
       m.run(1);
       expect(m.pose().z).toBeLessThan(z);
     });
+
+    it('K3: a push a hair past the dead zone (it asks less than a mm) is never taken for a hold: pushed hard, the eye moves', () => {
+      for (const r0 of [0.1 + 1e-9, 0.1 + 1e-7, 0.1 + 1e-6]) {
+        const m = mount(freeSceneOf({ figures: 0 }));
+        m.fc().depthStart(r0);
+        m.run(4);
+        const z = m.pose().z;
+        m.fc().depthRate(1);
+        m.run(5);
+        expect(m.pose().z).toBeLessThan(z - 10);
+        m.unmount();
+      }
+    });
+
+    it('a longer frame than any the hold was proved at asks again (seed 16: a 120 ms frame backing off a hold moves)', () => {
+      const { m, held } = atCeiling();
+      m.fc().depthRate(-1);
+      m.run(1);
+      // backing away is asked and moves; turned forward again it holds at the ceiling at 16 ms frames
+      m.fc().depthRate(1);
+      m.run(130);
+      const at = m.pose();
+      expect(at.z).toBeLessThanOrEqual(held.z + 1);
+      const n = calls();
+      m.run(3);
+      expect(calls()).toBe(n);
+      // a 120 ms frame was never proved held: the dolly is asked (it is capped at 100 ms, a longer step than 16 ms)
+      m.frames.tick(120);
+      expect(calls()).toBe(n + 1);
+      // and a 100 ms frame is the same capped step: proved now, not asked again
+      m.frames.tick(100);
+      expect(calls()).toBe(n + 1);
+    });
+
+    it('K4: skipped frames still pass time: turned back after a long hold, the first frame steps as a fresh 16 ms frame', () => {
+      const { m, held } = atCeiling();
+      m.run(62);
+      m.fc().depthRate(-1);
+      m.run(1);
+      const back = m.pose().z - held.z;
+      const f = mount(m.ref.current);
+      f.fc().hold(held);
+      f.fc().depthStart(-1);
+      f.run(2);
+      const fresh = f.pose().z - held.z;
+      expect(back).toBeGreaterThan(0);
+      expect(back).toBe(fresh);
+    });
+
+    it('equivalence: 24 seeded runs (rates past and inside the dead zone, NaN and Infinity, dt spikes, scene swaps, the hat, blur) land on the very poses of a hook that never skips', () => {
+      const RATES = [1, 1, 1, 0.6, 0.3, -1, -0.5, 0.05, 2, 0.1 + 1e-9, 0.1 + 1e-7, Number.NaN, Infinity, -Infinity];
+      const DTS = [16, 16, 16, 16, 16.6, 16.7, 8, 33, 0, -5, 3, 100, 120, 500, 1e6];
+      const pool = [
+        freeSceneOf({ figures: 622, viewportPx: 180_000 }),
+        freeSceneOf({ figures: 622, viewportPx: 150_000 }),
+        freeSceneOf({ figures: 622, viewportPx: 260_000 }),
+        freeSceneOf({ figures: 622, frame: { width: 412, height: 780 }, viewportPx: 140_000 }),
+        freeSceneOf({ wall: LONG_WALL, focus: 20, figures: 0 }),
+      ];
+      /** One seeded run; `never` clones the scene before every frame, so no hold is ever trusted (the reference). */
+      const run = (seed: number, never: boolean) => {
+        let a = seed >>> 0;
+        const rand = () => {
+          a = (a + 0x6d2b79f5) >>> 0;
+          let t = a;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
+        const m = mount({ ...pool[seed % 2 === 0 ? 0 : 4] });
+        if (seed % 3 === 0) m.fc().hold({ ...m.pose(), yaw: (seed % 2 ? -25 : 15) * DEG, pitch: -15 * DEG });
+        m.fc().depthStart(seed % 2 === 0 ? 1 : -1);
+        const tick = (dt: number) => {
+          if (never) m.ref.current = { ...m.ref.current };
+          m.frames.tick(dt);
+        };
+        for (let i = 0; i < 150; i++) tick(16);
+        const out: number[][] = [];
+        const c0 = calls();
+        for (let step = 0; step < 300; step++) {
+          const op = rand();
+          if (op < 0.08) m.fc().depthRate(pick(RATES));
+          else if (op < 0.1) m.fc().depthStop();
+          else if (op < 0.13) m.fc().depthStart(pick(RATES));
+          else if (op < 0.16) m.fc().jogStart();
+          else if (op < 0.2) m.fc().jogAim((rand() - 0.5) * 160, (rand() - 0.5) * 160);
+          else if (op < 0.22) m.fc().jogStop();
+          else if (op < 0.26) m.ref.current = { ...pick(pool) };
+          else if (op < 0.27) act(() => void window.dispatchEvent(new Event('blur')));
+          else tick(pick(DTS));
+          const p = m.pose();
+          out.push([step, p.x, p.y, p.z, p.yaw, p.pitch]);
+        }
+        const asked = calls() - c0;
+        m.unmount();
+        return { out, asked };
+      };
+      let skipped = 0;
+      for (let seed = 1; seed <= 24; seed++) {
+        const real = run(seed, false);
+        const ref = run(seed, true);
+        expect(real.out, `seed ${seed}`).toEqual(ref.out);
+        skipped += ref.asked - real.asked;
+      }
+      // the skip did engage (a vacuous comparison would prove nothing)
+      expect(skipped).toBeGreaterThan(50);
+    }, 120_000);
 
     it('held at the Classic cap backing away: no dolly while nothing changes', () => {
       const scene = freeSceneOf({ wall: LONG_WALL, focus: 20 });

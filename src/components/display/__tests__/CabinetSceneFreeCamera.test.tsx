@@ -1381,6 +1381,50 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     raf.mockRestore();
   });
 
+  // NAV-DEPTH-2: the window losing focus mid-jog halts it; the lift that comes later sets the focus from where the eye
+  // stands, never from a halted pose the eye has since left (a second finger's swipe)
+  describe('NAV-DEPTH-2: a blur mid-jog, then the lift', () => {
+    /** The cabinet whose span is nearest the eye's x (data-wall's [x0, x1, ...] per cabinet). */
+    const nearest = () => {
+      const boxes = JSON.parse(host().dataset.wall!) as number[][];
+      const x = cam().x;
+      return boxes.map((b, i) => [Math.max(0, b[0] - x, x - b[1]), i]).sort((a, b) => a[0] - b[0])[0][1];
+    };
+    const jogAlong = () => {
+      scene({ view: 'cabinet' });
+      expect(host().dataset.focus).toBe('0');
+      begin();
+      act(() => jog().aim(JOG_FULL_PX, 0));
+      frames(3000);
+      act(() => void window.dispatchEvent(new Event('blur')));
+    };
+
+    it('the eye holds where the blur found it, and the lift moves the focus to the cabinet it stands at', () => {
+      jogAlong();
+      const at = cam().x;
+      frames(10);
+      expect(cam().x).toBe(at);
+      end();
+      frames(1);
+      expect(Number(host().dataset.focus)).toBeGreaterThan(0);
+      expect(Number(host().dataset.focus)).toBe(nearest());
+    });
+
+    it('a second finger swipes the eye elsewhere before the lift: the focus is the cabinet the eye stands at now', () => {
+      jogAlong();
+      const halted = cam().x;
+      for (let k = 0; k < 6; k++) {
+        drag({ x: 100, y: 200 }, { x: 700, y: 200 }, { id: 2 });
+        tick(16);
+      }
+      tick(500);
+      expect(cam().x).not.toBe(halted);
+      end();
+      frames(1);
+      expect(Number(host().dataset.focus)).toBe(nearest());
+    });
+  });
+
   // NAV-2B: Ross tunes the top speed on the device with ?jogmax=1|1.5|2 (as ?lookhold=), no roll; 2 unless it says 1 to 2
   it('?jogmax= sets the top speed: 1 is today\'s, 1.5, 2 the default; outside 1 to 2 or not a number, 2; the button is told it', () => {
     onTestFinished(() => window.history.replaceState(null, '', '/'));

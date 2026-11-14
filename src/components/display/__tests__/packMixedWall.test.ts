@@ -288,39 +288,45 @@ describe('PACK-KIND-1 round 1: walls the challenger shrank', () => {
     );
   });
 
-  it('SHOULD 2: every reachable K-D-R wall (6 orders x 5 clearances x 4 seeds, 622 figures) stands in no more cabinets, and no more empty, than on 363ba92', () => {
+  it('SHOULD 2: every reachable K-D-R wall (6 orders x 5 clearances x 4 seeds, 622 figures; sizes estimated, and labeled) stands in no more cabinets, and no more empty, than on 363ba92, no figure overhanging', () => {
     const worse: string[] = [];
     const unfaithful: string[] = [];
-    let cabinets = 0;
-    let empty = 0;
+    const total = { estimated: [0, 0], labeled: [0, 0] };
     let skipped = 0;
-    for (const clear of [0, 12.7, 25.4, 38.1, 50.8]) {
-      const wall = wallAt(clear, 'K', 'D', 'R');
-      for (const arrangement of CASE_ARRANGEMENTS) {
-        for (const seed of [1, 8, 9, 10]) {
-          const { figures, items } = synthetic(622, seed);
-          const { order, groups } = arrangeOrder(figures, arrangement);
-          const r = packCabinets(order.map((i) => items[i]), wall, CEILING_MM, PACK_RULES, groups);
-          const key = `${clear} ${arrangement} ${seed}`;
-          // every wall: no cabinet empty with shelves out, no figure overhanging its surface
-          unfaithful.push(...emptyShelvesOut(r).map((x) => `${key}: ${x} empty, shelves out`), ...overhangs(r).map((x) => `${key}: ${x} overhangs`));
-          cabinets += r.cabinets.length;
-          empty += emptyOf(r);
-          // (a wall 363ba92 packed only by standing a figure over its surface's edge is no measure)
-          if (BASE_OVERHANGS.includes(key)) {
-            skipped++;
-            continue;
+    for (const labeled of [false, true]) {
+      for (const clear of [0, 12.7, 25.4, 38.1, 50.8]) {
+        const wall = wallAt(clear, 'K', 'D', 'R');
+        for (const arrangement of CASE_ARRANGEMENTS) {
+          for (const seed of [1, 8, 9, 10]) {
+            const { figures, items } = synthetic(622, seed, labeled);
+            const { order, groups } = arrangeOrder(figures, arrangement);
+            const r = packCabinets(order.map((i) => items[i]), wall, CEILING_MM, PACK_RULES, groups);
+            const key = `${clear} ${arrangement} ${seed}`;
+            // every wall: no cabinet empty with shelves out, no figure overhanging its surface
+            unfaithful.push(...emptyShelvesOut(r).map((x) => `${key}: ${x} empty, shelves out`), ...overhangs(r).map((x) => `${key}: ${x} overhangs`));
+            const sum = total[labeled ? 'labeled' : 'estimated'];
+            sum[0] += r.cabinets.length;
+            sum[1] += emptyOf(r);
+            // (a wall 363ba92 packed only by standing a figure over its surface's edge is no measure; with labeled depths it
+            // overhangs on 117 of the 120, and none stands in more cabinets, nor more empty, here even so)
+            if (!labeled && BASE_OVERHANGS.includes(key)) {
+              skipped++;
+              continue;
+            }
+            const [baseCabs, baseEmpty] = (labeled ? BASE_363BA92_LABELED : BASE_363BA92)[key];
+            if (r.cabinets.length > baseCabs || emptyOf(r) > baseEmpty) worse.push(`${labeled ? 'labeled' : 'estimated'} ${key}: ${costOf(r)} against ${baseCabs},${baseEmpty}`);
           }
-          const [baseCabs, baseEmpty] = BASE_363BA92[key];
-          if (r.cabinets.length > baseCabs || emptyOf(r) > baseEmpty) worse.push(`${key}: ${costOf(r)} against ${baseCabs},${baseEmpty}`);
         }
       }
     }
     expect(unfaithful).toEqual([]);
     expect({ worse, skipped }).toEqual({ worse: [], skipped: BASE_OVERHANGS.length });
-    // all 120 walls: 12,824 cabinets, 2,460 empty on 363ba92; no more than PACK-KIND-1 stands them in (round 2: 9,049 and 30)
-    expect({ cabinets, empty }).toEqual({ cabinets: Math.min(cabinets, 9_049), empty: Math.min(empty, 30) });
-  }, 60_000);
+    // all 120 walls each way, on 363ba92: 12,824 cabinets, 2,460 empty (estimated); 13,218 and 2,571 (labeled). No more
+    // than PACK-KIND-1 stands them in (round 3: 9,049 and 30; 9,167 and 6)
+    const [ec, ee] = total.estimated;
+    const [lc, le] = total.labeled;
+    expect(total).toEqual({ estimated: [Math.min(ec, 9_049), Math.min(ee, 30)], labeled: [Math.min(lc, 9_167), Math.min(le, 6)] });
+  }, 120_000);
 });
 
 // the reachable walls 363ba92 packed with a figure overhanging its surface (none of the 360, seeds 1-12: the comparison skips 0)
@@ -450,6 +456,130 @@ const BASE_363BA92: Record<string, readonly [number, number]> = {
   '50.8 date-added 10': [156, 55],
 };
 
+// the same walls with labeled depths (estimates off), packed by 363ba92: cabinets, empty cabinets (most with a figure overhanging)
+const BASE_363BA92_LABELED: Record<string, readonly [number, number]> = {
+  '0 series-scale-name 1': [99, 14],
+  '0 series-scale-name 8': [111, 27],
+  '0 series-scale-name 9': [111, 15],
+  '0 series-scale-name 10': [102, 16],
+  '0 scale-series-name 1': [93, 24],
+  '0 scale-series-name 8': [75, 6],
+  '0 scale-series-name 9': [114, 34],
+  '0 scale-series-name 10': [96, 16],
+  '0 series-name 1': [96, 15],
+  '0 series-name 8': [102, 24],
+  '0 series-name 9': [138, 46],
+  '0 series-name 10': [117, 31],
+  '0 scale-name 1': [93, 20],
+  '0 scale-name 8': [72, 3],
+  '0 scale-name 9': [120, 27],
+  '0 scale-name 10': [99, 16],
+  '0 name 1': [108, 17],
+  '0 name 8': [90, 6],
+  '0 name 9': [106, 16],
+  '0 name 10': [123, 25],
+  '0 date-added 1': [96, 11],
+  '0 date-added 8': [84, 3],
+  '0 date-added 9': [120, 16],
+  '0 date-added 10': [126, 30],
+  '12.7 series-scale-name 1': [99, 20],
+  '12.7 series-scale-name 8': [111, 20],
+  '12.7 series-scale-name 9': [117, 19],
+  '12.7 series-scale-name 10': [114, 22],
+  '12.7 scale-series-name 1': [93, 22],
+  '12.7 scale-series-name 8': [75, 5],
+  '12.7 scale-series-name 9': [117, 31],
+  '12.7 scale-series-name 10': [105, 19],
+  '12.7 series-name 1': [111, 29],
+  '12.7 series-name 8': [102, 17],
+  '12.7 series-name 9': [132, 34],
+  '12.7 series-name 10': [117, 23],
+  '12.7 scale-name 1': [96, 24],
+  '12.7 scale-name 8': [75, 5],
+  '12.7 scale-name 9': [126, 33],
+  '12.7 scale-name 10': [105, 19],
+  '12.7 name 1': [108, 17],
+  '12.7 name 8': [96, 9],
+  '12.7 name 9': [117, 22],
+  '12.7 name 10': [123, 24],
+  '12.7 date-added 1': [111, 23],
+  '12.7 date-added 8': [87, 7],
+  '12.7 date-added 9': [126, 17],
+  '12.7 date-added 10': [129, 31],
+  '25.4 series-scale-name 1': [99, 17],
+  '25.4 series-scale-name 8': [111, 21],
+  '25.4 series-scale-name 9': [126, 28],
+  '25.4 series-scale-name 10': [117, 18],
+  '25.4 scale-series-name 1': [105, 27],
+  '25.4 scale-series-name 8': [87, 8],
+  '25.4 scale-series-name 9': [132, 34],
+  '25.4 scale-series-name 10': [117, 25],
+  '25.4 series-name 1': [108, 22],
+  '25.4 series-name 8': [102, 14],
+  '25.4 series-name 9': [135, 32],
+  '25.4 series-name 10': [114, 21],
+  '25.4 scale-name 1': [102, 23],
+  '25.4 scale-name 8': [87, 7],
+  '25.4 scale-name 9': [126, 28],
+  '25.4 scale-name 10': [96, 10],
+  '25.4 name 1': [102, 13],
+  '25.4 name 8': [93, 3],
+  '25.4 name 9': [111, 13],
+  '25.4 name 10': [129, 32],
+  '25.4 date-added 1': [93, 6],
+  '25.4 date-added 8': [87, 8],
+  '25.4 date-added 9': [126, 18],
+  '25.4 date-added 10': [138, 38],
+  '38.1 series-scale-name 1': [98, 16],
+  '38.1 series-scale-name 8': [103, 21],
+  '38.1 series-scale-name 9': [126, 37],
+  '38.1 series-scale-name 10': [144, 39],
+  '38.1 scale-series-name 1': [108, 33],
+  '38.1 scale-series-name 8': [93, 15],
+  '38.1 scale-series-name 9': [126, 35],
+  '38.1 scale-series-name 10': [123, 34],
+  '38.1 series-name 1': [102, 14],
+  '38.1 series-name 8': [105, 25],
+  '38.1 series-name 9': [135, 35],
+  '38.1 series-name 10': [141, 35],
+  '38.1 scale-name 1': [108, 33],
+  '38.1 scale-name 8': [93, 16],
+  '38.1 scale-name 9': [132, 36],
+  '38.1 scale-name 10': [123, 34],
+  '38.1 name 1': [105, 18],
+  '38.1 name 8': [99, 11],
+  '38.1 name 9': [120, 18],
+  '38.1 name 10': [132, 38],
+  '38.1 date-added 1': [87, 0],
+  '38.1 date-added 8': [90, 6],
+  '38.1 date-added 9': [129, 22],
+  '38.1 date-added 10': [138, 39],
+  '50.8 series-scale-name 1': [112, 25],
+  '50.8 series-scale-name 8': [105, 22],
+  '50.8 series-scale-name 9': [144, 47],
+  '50.8 series-scale-name 10': [119, 19],
+  '50.8 scale-series-name 1': [111, 34],
+  '50.8 scale-series-name 8': [93, 15],
+  '50.8 scale-series-name 9': [120, 25],
+  '50.8 scale-series-name 10': [123, 34],
+  '50.8 series-name 1': [105, 21],
+  '50.8 series-name 8': [101, 14],
+  '50.8 series-name 9': [141, 26],
+  '50.8 series-name 10': [120, 20],
+  '50.8 scale-name 1': [108, 30],
+  '50.8 scale-name 8': [93, 17],
+  '50.8 scale-name 9': [114, 14],
+  '50.8 scale-name 10': [123, 32],
+  '50.8 name 1': [99, 9],
+  '50.8 name 8': [102, 12],
+  '50.8 name 9': [111, 17],
+  '50.8 name 10': [114, 18],
+  '50.8 date-added 1': [114, 21],
+  '50.8 date-added 8': [87, 6],
+  '50.8 date-added 9': [135, 27],
+  '50.8 date-added 10': [138, 40],
+};
+
 /** Where every figure stands, and how each cabinet stands (shelves out), as one digest. */
 function digestOf(r: PackResult): string {
   const shape = {
@@ -534,6 +664,13 @@ const SAME_OUT = 'f1:1489x377x290/g1 f3:497x578x430/g1 f4:491x741x412/g2 f7:563x
 const NO_STRAND = 'f101:315x205x133/series-33 f100:314x265x172/series-33 f288:195x89x58/series-93 f292:172x165x107/series-94 f295:271x174x113/series-96 f294:315x162x105/series-96 f298:212x184x119/series-97 f299:245x154x100/series-98 f300:251x230x150/series-98 f305:251x146x95/series-100 f307:252x147x95/series-101 f309:188x121x79/series-101 f315:466x323x210/series-103 f312:316x211x137/series-103 f313:244x162x105/series-103 f316:303x134x87/series-104 f317:268x189x123/series-105 f318:257x190x123/series-106 f319:232x214x139/series-106 f321:194x144x94/series-106 f324:237x225x147/series-107 f323:109x89x58/series-107 f327:218x115x75/series-107 f325:188x85x55/series-107 f330:629x517x336/series-108 f331:457x450x293/series-108 f329:460x186x121/series-108 f339:405x254x165/series-108 f336:256x91x59/series-108 f338:258x111x72/series-108 f332:255x252x164/series-108 f337:110x76x49/series-108 f333:203x111x72/series-108 f334:188x89x58/series-108 f335:210x86x56/series-108 f341:298x130x84/series-109 f340:314x189x123/series-109 f342:239x152x99/series-109 f343:251x199x129/series-109 f347:232x204x133/series-112 f354:208x117x76/series-113 f348:222x148x96/series-113 f352:214x188x122/series-113 f349:227x201x131/series-113 f353:211x140x91/series-113 f356:405x242x157/series-114 f357:238x217x141/series-114 f355:237x132x86/series-114 f358:520x456x296/series-115 f360:243x192x125/series-115 f362:240x141x92/series-115 f574:464x286x186/series-184 f572:414x252x164/series-184 f573:443x186x121/series-184 f613:450x322x210/series-190';
 // K-D-R, 1 in: a 406 mm deep figure only the rack's top is deep enough for (363ba92 stood it on a KLINGSBO's 400 mm deep top)
 const DEEP = 'f5:433x397x406 f7:387x289x363';
+// round 3 (the challenger's walls), labeled depths. The app's K-D-R wall at 1 in, by scale: a 310 mm deep figure a Detolf
+// holds only on its 330 mm deep bottom shelf (or its 370 mm top), never on a 290 mm shelf
+const OVERHANG = 'f25:442x248x227/scale:4 f176:401x320x255/scale:4 f45:477x311x177/scale:4 f141:445x302x328/scale:4 f165:299x298x310/scale:6';
+const OVERHANG_EXACT =
+  'f25:441.8124008178711x248.173382562607x226.92585794403396/scale:4 f176:401.2135672569275x319.98539359021794x254.78289526610246/scale:4 f45:477.19483852386475x310.93586343209637x176.61789396988308/scale:4 f141:444.94436264038086x301.694734368858x327.6704795339632/scale:4 f165:298.53363037109375x297.55467616269016x309.86024652757226/scale:6';
+// K-D-R by series, 1 in (case 786 of the 2,400): a 436 mm deep figure only a rack's 457 mm top holds, never a KLINGSBO's 400 mm one
+const DEEP_TOP = 'f0:712x578x48/g1 f8:760x642x293/g2 f22:51x688x11/g5 f24:78x606x55/g5 f25:427x518x363/g5 f26:135x660x394/g5 f29:361x348x415/g6 f32:379x593x357/g6 f34:268x576x60/g6 f35:393x522x122/g7 f37:465x408x436/g7';
 
 describe('PACK-KIND-1 round 2: no cabinet stands empty where 363ba92 filled it', () => {
   it("the app's K-D-R wall, 2 in of clearance: 24 figures of a 622-figure collection stand in 12 cabinets, none empty, as on 363ba92 (12, 2 to 4 empty at e02fdc9)", () => {
@@ -640,6 +777,29 @@ describe('PACK-KIND-1 round 2: no cabinet stands empty where 363ba92 filled it',
     expect(overhangs(r)).toEqual([]);
     expect(r.cabinets.map((c) => c.profile.id)).toEqual([K.id, D.id, R.id]);
     expect(r.cabinets[2].surfaces.flatMap((s) => s.items.map((p) => p.item.index))).toContain(5);
+  });
+});
+
+describe('PACK-KIND-1 round 3: every place a figure takes is as deep as the figure', () => {
+  it('a 310 mm deep figure stands on no 290 mm Detolf shelf: two cabinets, none overhanging (as on 363ba92), integer and exact sizes', () => {
+    const wall = wallPatternProfiles(WALL_PATTERNS.find((p) => p.profiles.length > 1)!.id).map((p) => withClearance(p, 25.4));
+    for (const spec of [OVERHANG, OVERHANG_EXACT]) {
+      const { items, groups } = parse(spec);
+      const r = pack(items, groups, wall);
+      expect(overhangs(r), spec.slice(0, 30)).toEqual([]);
+      expect(costOf(r)).toEqual([2, 0]);
+    }
+  });
+
+  it('a 436 mm deep figure no KLINGSBO top holds stands on a rack top, not a KLINGSBO’s (case 786)', () => {
+    const { items, groups } = parse(DEEP_TOP);
+    const r = pack(items, groups, wallAt(25.4, 'K', 'D', 'R'));
+    expect(overhangs(r)).toEqual([]);
+    const at = r.cabinets.find((c) => c.surfaces.some((s) => s.items.some((p) => p.item.index === 37)))!;
+    expect(at.profile.id).toBe(R.id);
+    // (no more cabinets, nor empty, than 363ba92's fifteen and ten)
+    expect(r.cabinets.length).toBeLessThanOrEqual(15);
+    expect(emptyOf(r)).toBeLessThanOrEqual(10);
   });
 });
 

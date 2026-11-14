@@ -553,8 +553,12 @@ function placeAll(
   const fromMark = (c: number, k: number) => !grouped || c > mark.cab || (c === mark.cab && k >= mark.k);
   /** A tall figure's places: from the mark on, and a tier or top left empty in the mark's cabinet (no group's gap). */
   const tallFrom = (c: number, k: number) => fromMark(c, k) || (c === mark.cab && building[c].rows[k].length === 0);
+  // PACK-KIND-1: a wall of more than one profile
+  const mixed = pattern.some((p) => p !== pattern[0]);
+  // (PACK-KIND-1: and as deep as the figure on a wall of more than one profile, where a figure goes to whichever cabinet
+  // holds it; a wall of one profile packs as it did)
   const fitsIn = (b: Building, k: number, item: CaseFigure) =>
-    within(item.heightMm, b.slots[k].maxHeightMm) && within(rowWidth(b.rows[k], item), b.slots[k].widthMm);
+    within(item.heightMm, b.slots[k].maxHeightMm) && within(rowWidth(b.rows[k], item), b.slots[k].widthMm) && (!mixed || within(item.depthMm, b.slots[k].depthMm));
   const topOf = (b: Building) => b.slots.findIndex((s) => s.isTop);
   const span = (item: CaseFigure) => item.widthMm + FIGURE_GAP_MM;
 
@@ -662,7 +666,6 @@ function placeAll(
     return -1;
   };
   // PACK-KIND-1: on a wall of more than one profile, a figure tall for profile `pi` that no other profile can hold at all
-  const mixed = pattern.some((p) => p !== pattern[0]);
   const only = kinds.map((ks, pi) => ks.map((k, j) => mixed && k === 'tall' && kinds.every((qs, q) => pattern[q] === pattern[pi] || qs[j] === 'none')));
   const onlyFor = (pi: number, j: number) => only[pi][j];
   /** The waiting figures in the order a cabinet of profile `pi` takes them: those only it can hold first, then the rest. */

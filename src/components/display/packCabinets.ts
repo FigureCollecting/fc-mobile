@@ -918,6 +918,122 @@ function placeAll(
   }
   // the shelf figures all placed: the tall figures still waiting open cabinets at the wall's end
   while (waiting.length > 0) open(building.length, items.length);
+  const isEmpty = (b: Building) => b.rows.every((row) => row.length === 0);
+  /** A cabinet as it was bought: its stock shelves, nothing kept for tall figures. */
+  const restock = (b: Building) => {
+    const a = arrangements(b.stock, ceilingMm)[0];
+    Object.assign(b, { profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall: new Set<number>() });
+  };
+  if (mixed) {
+    // PACK-KIND-1: a cabinet the wall stands only to reach a later one (for the figures only that one holds) takes a
+    // figure from before it: the last one on a place not kept for tall figures (the shelf figures keep their order), else
+    // one from a tier, its cabinet then standing with as few shelves out as hold the rest; never one that empties its own
+    // cabinet, nor one that leaves a top or tier it is tall for empty behind it
+    const at = new Map(items.map((item, j) => [item, j] as const));
+    const count = (b: Building) => b.rows.reduce((n, row) => n + row.length, 0);
+    // PACK1: each figure's series as the arrangement orders them: where its group starts (one of no group, where it is)
+    const starts = new Map<string, number>();
+    const series = items.map((_, j) => {
+      const g = groups?.[j] ?? null;
+      if (g !== null && !starts.has(g)) starts.set(g, j);
+      return g === null ? j : starts.get(g)!;
+    });
+    /** Whether a shelf figure everywhere, `j`, would pass a figure of a later series standing from cabinet `c` to before `e`. */
+    const passesLater = (c: number, e: number, j: number) =>
+      groups !== undefined &&
+      kinds.every((ks) => ks[j] === 'shelf') &&
+      building.slice(c, e).some((x) => x.rows.some((row) => row.some((it) => series[at.get(it)!] > series[j])));
+    /**
+     * Stands `b`, whose figures all stand where it keeps room for tall ones (so all are tall for it), again in the
+     * arrangement with the fewest shelves out, fewer than now, that holds them: each in a tier, else on its top.
+     */
+    const relayout = (b: Building) => {
+      const figs = b.rows.flat();
+      for (const a of arrangements(b.stock, ceilingMm)) {
+        if (a.removed >= (b.profile.layout?.removed.length ?? 0)) return;
+        const trial: Building = { stock: b.stock, pi: b.pi, profile: a.profile, slots: a.slots, rows: a.slots.map(() => []), tall: new Set(a.tiers) };
+        const placed = figs.every((f) => {
+          const tier = tierFor(trial, f);
+          const t = tier >= 0 ? tier : topFor(trial, f);
+          if (t >= 0) {
+            trial.rows[t].push(f);
+            trial.tall.add(t);
+          }
+          return t >= 0;
+        });
+        if (placed) {
+          Object.assign(b, trial);
+          return;
+        }
+      }
+    };
+    /** Whether figure `j` would leave a top or tier it is tall for, and fits, empty in a cabinet from `c` to before `e`. */
+    const leavesBehind = (c: number, e: number, j: number) =>
+      building
+        .slice(c, e)
+        .some((x) => kinds[x.pi][j] === 'tall' && x.slots.some((s, q) => (s.isTop || x.tall.has(q)) && x.rows[q].length === 0 && fitsIn(x, q, items[j])));
+    /**
+     * Moves the figure last in row `k` of cabinet `c` to empty cabinet `e`, if it may go, and returns how to put it back
+     * (else changes nothing): `emptying`, even the only figure of its cabinet.
+     */
+    const move = (c: number, k: number, e: number, emptying = false): (() => void) | null => {
+      const src = building[c];
+      const b = building[e];
+      if (!emptying && count(src) < 2) return null;
+      const j = at.get(src.rows[k][src.rows[k].length - 1])!;
+      if (passesLater(c, e, j)) return null;
+      const place = kinds[b.pi][j] === 'shelf' ? b.slots.findIndex((_, x) => fitsIn(b, x, items[j])) : kinds[b.pi][j] === 'tall' ? topFor(b, items[j]) : -1;
+      if (place < 0) return null;
+      const was = { profile: src.profile, slots: src.slots, rows: src.rows.map((row) => [...row]), tall: new Set(src.tall) };
+      src.rows[k].pop();
+      if (src.tall.has(k)) relayout(src);
+      if (leavesBehind(c, e, j)) {
+        Object.assign(src, was);
+        return null;
+      }
+      b.rows[place].push(items[j]);
+      return () => {
+        b.rows[place].pop();
+        Object.assign(src, was);
+      };
+    };
+    /**
+     * Fills empty cabinet `e` with the last figure before it on a place not kept for tall figures (the shelf figures keep
+     * their order); when that is its cabinet's only figure, that cabinet is filled the same way in turn, each figure
+     * stepping one cabinet on, else nothing moves.
+     */
+    const fillFrom = (e: number): boolean => {
+      let c = e - 1;
+      let k = -1;
+      for (; c >= 0 && k < 0; c--) k = building[c].rows.findLastIndex((row, x) => row.length > 0 && !building[c].tall.has(x));
+      if (k < 0) return false;
+      if (count(building[++c]) >= 2) return move(c, k, e) !== null;
+      const undo = move(c, k, e, true);
+      if (undo === null) return false;
+      restock(building[c]);
+      if (fillFrom(c)) return true;
+      undo();
+      return false;
+    };
+    let last = building.length - 1;
+    while (last > 0 && isEmpty(building[last])) last--;
+    for (let e = 1; e < last; e++) {
+      if (!isEmpty(building[e])) continue;
+      restock(building[e]);
+      if (fillFrom(e)) continue;
+      // else one from a tier, the latest first, of a cabinet with no figure on a place not kept for tall ones (standing it
+      // with fewer shelves out moves no shelf figure, so no series starts anywhere else)
+      search: for (let c = e - 1; c >= 0; c--) {
+        const src = building[c];
+        if (src.rows.some((row, x) => row.length > 0 && !src.tall.has(x))) continue;
+        for (let k = src.slots.length - 1; k >= 0; k--) {
+          if (src.tall.has(k) && !src.slots[k].isTop && src.rows[k].length > 0 && move(c, k, e) !== null) break search;
+        }
+      }
+    }
+  }
+  // CASE-FB2b: a cabinet left empty stands with its stock shelves
+  for (const b of building) if (isEmpty(b) && (b.profile.layout?.removed.length ?? 0) > 0) restock(b);
   return { building, violators, deviated, leaned };
 }
 

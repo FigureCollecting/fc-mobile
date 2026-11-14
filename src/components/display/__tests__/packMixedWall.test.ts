@@ -3,8 +3,9 @@ import fc from 'fast-check';
 import { createHash } from 'node:crypto';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import { FIT_EPSILON_MM, withClearance, type CabinetProfile } from '../cabinetProfile';
+import { CEILING_DEFAULT_MM, FIT_EPSILON_MM, withClearance, type CabinetProfile } from '../cabinetProfile';
 import { arrangeOrder, CASE_ARRANGEMENTS, type CaseArrangement } from '../caseArrangement';
+import { WALL_PATTERNS, wallPatternProfiles } from '../casePrefs';
 import { FIGURE_GAP_MM, fitCheck, packCabinets, PACK_RULES, surfaceSlots, type CaseFigure, type PackedCabinet, type PackOptions, type PackResult } from '../packCabinets';
 import { synthetic } from './syntheticWall';
 
@@ -92,7 +93,7 @@ function parse(spec: string): { items: CaseFigure[]; groups: string[] } {
   const items: CaseFigure[] = [];
   const groups: string[] = [];
   for (const tok of spec.split(' ')) {
-    const [, i, h, w, d, g] = /^f(\d+):(\d+)x(\d+)x(\d+)(?:\/(.+))?$/.exec(tok)!;
+    const [, i, h, w, d, g] = /^f(\d+):([\d.]+)x([\d.]+)x([\d.]+)(?:\/(.+))?$/.exec(tok)!;
     items.push({ ...fig(Number(i), Number(h), Number(w), g ?? 'g'), depthMm: Number(d) });
     groups.push(g ?? 'g');
   }
@@ -289,8 +290,10 @@ describe('PACK-KIND-1 round 1: walls the challenger shrank', () => {
 
   it('SHOULD 2: every reachable K-D-R wall (6 orders x 5 clearances x 4 seeds, 622 figures) stands in no more cabinets, and no more empty, than on 363ba92', () => {
     const worse: string[] = [];
+    const unfaithful: string[] = [];
     let cabinets = 0;
     let empty = 0;
+    let skipped = 0;
     for (const clear of [0, 12.7, 25.4, 38.1, 50.8]) {
       const wall = wallAt(clear, 'K', 'D', 'R');
       for (const arrangement of CASE_ARRANGEMENTS) {
@@ -298,20 +301,30 @@ describe('PACK-KIND-1 round 1: walls the challenger shrank', () => {
           const { figures, items } = synthetic(622, seed);
           const { order, groups } = arrangeOrder(figures, arrangement);
           const r = packCabinets(order.map((i) => items[i]), wall, CEILING_MM, PACK_RULES, groups);
-          const [baseCabs, baseEmpty] = BASE_363BA92[`${clear} ${arrangement} ${seed}`];
-          if (r.cabinets.length > baseCabs || emptyOf(r) > baseEmpty) worse.push(`${clear} ${arrangement} ${seed}: ${costOf(r)} against ${baseCabs},${baseEmpty}`);
+          const key = `${clear} ${arrangement} ${seed}`;
+          // every wall: no cabinet empty with shelves out, no figure overhanging its surface
+          unfaithful.push(...emptyShelvesOut(r).map((x) => `${key}: ${x} empty, shelves out`), ...overhangs(r).map((x) => `${key}: ${x} overhangs`));
           cabinets += r.cabinets.length;
           empty += emptyOf(r);
+          // (a wall 363ba92 packed only by standing a figure over its surface's edge is no measure)
+          if (BASE_OVERHANGS.includes(key)) {
+            skipped++;
+            continue;
+          }
+          const [baseCabs, baseEmpty] = BASE_363BA92[key];
+          if (r.cabinets.length > baseCabs || emptyOf(r) > baseEmpty) worse.push(`${key}: ${costOf(r)} against ${baseCabs},${baseEmpty}`);
         }
       }
     }
-    expect(worse).toEqual([]);
-    // all 120 walls: 12,824 cabinets, 2,460 empty on 363ba92; no more than PACK-KIND-1 round 1 stands them in (a figure only
-    // a rack holds placed when one opens, not left for the wall's end: 9,720 and 536 without; those a cabinet alone holds
-    // given its places first: 9,052 and 161 without)
-    expect({ cabinets, empty }).toEqual({ cabinets: Math.min(cabinets, 9_049), empty: Math.min(empty, 160) });
+    expect(unfaithful).toEqual([]);
+    expect({ worse, skipped }).toEqual({ worse: [], skipped: BASE_OVERHANGS.length });
+    // all 120 walls: 12,824 cabinets, 2,460 empty on 363ba92; no more than PACK-KIND-1 stands them in (round 2: 9,049 and 30)
+    expect({ cabinets, empty }).toEqual({ cabinets: Math.min(cabinets, 9_049), empty: Math.min(empty, 30) });
   }, 60_000);
 });
+
+// the reachable walls 363ba92 packed with a figure overhanging its surface (none of the 360, seeds 1-12: the comparison skips 0)
+const BASE_OVERHANGS: readonly string[] = [];
 
 // cabinets and empty cabinets of each reachable wall packed by 363ba92 (before PACK-KIND-1), same synthetic walls
 const BASE_363BA92: Record<string, readonly [number, number]> = {
@@ -483,6 +496,152 @@ const GOLDEN_ALL: Record<string, string> = {
   'open-steel-rack name': 'e9816975b0f5e778',
   'open-steel-rack date-added': '57332256d12a18af',
 };
+
+/** The cabinets standing empty with shelves taken out (an empty cabinet stands as it was bought). */
+const emptyShelvesOut = (r: PackResult) =>
+  r.cabinets.filter((c) => c.surfaces.every((s) => s.items.length === 0) && (c.profile.layout?.removed.length ?? 0) > 0).map((c) => `${c.profile.id} ${c.index}`);
+/** The figures standing deeper than their surface (overhanging it). */
+const overhangs = (r: PackResult) => r.cabinets.flatMap((c) => c.surfaces.flatMap((s) => s.items.filter((p) => p.tooDeep).map((p) => `f${p.item.index} on ${c.profile.id} ${c.index}`)));
+
+// round 2 (the challenger's walls): K-D-R by series, 1 in of clearance: five 800-1,000 mm statues only a KLINGSBO's tier
+// takes (thirteen cabinets whatever stands between them), and figures tall for a KLINGSBO, a shelf figure in a Detolf or rack
+const STATUES = 'f0:892.9950493387878x299.4643338024616x334.91765120159835/g0 f1:849.753696937114x251.84354004450142x333.0462355534546/g0 f2:300x160x104/g1 f3:300x160x104/g2 f4:300x160x104/g3 f5:300x160x104/g4 f6:180x92.26647728122771x59.97321023279801/g4 f7:880.4614904336631x273.18993965163827x334.29076175182126/g4 f8:245x172.6198336109519x112.20289184711874/g5 f9:180x123.79674034193158x80.46788122225553/g6 f10:245x127.38845311105251x82.80249452218413/g7 f11:245x130.8069495111704x85.02451718226075/g7 f12:300x160x104/g7 f13:300x160x104/g7 f14:838.5078973602504x263.01924029830843x333.0043096607551/g8 f15:180x127.89445543661714x83.13139603380114/g8 f16:816.6208393871784x260.1348247611895x333.7965496981051/g8 f17:531.9895398453809x269.971371057909x175.48139118764084/g9';
+// K-D-R by series, 1 in: a KLINGSBO opened for a 664 mm figure that a rack's tier takes instead
+const GLASS_OUT = 'f47:471x464x301/series-15 f50:223x80x52/series-15 f59:664x478x311/series-16 f58:232x217x141/series-16 f57:233x172x112/series-16 f56:109x87x56/series-16 f60:523x330x214/series-17 f65:556x497x323/series-18 f100:314x265x172/series-33';
+// D-K-R by series, 1 in: a KLINGSBO opened with a tier for the 1,200 mm figure a Detolf's tier takes
+const SHELVES_OUT = 'f2:87x457x393/g1 f3:361x267x281/g1 f6:152x180x481/g1 f17:1200x238x190/g3';
+// K-D-R by series, 1 in: series g5 starts on a KLINGSBO shelf of its own, below g1's; its 605 mm figure in that KLINGSBO's
+// tier could fill an empty Detolf, but the KLINGSBO standing again with its shelves would run g5 onto g1's shelf
+const OWN_SHELF = 'f0:180x109.9579896312207x71.47269326029345/g1 f1:180x106.96002161130309x69.52401404734701/g1 f2:604.6812810702249x280.31111885793507x182.2022272576578/g2 f3:845.2740258071572x298.6810020636767x333.8411399219185/g3 f4:300x160x104/g4 f5:300x160x104/g4 f6:953.7538511212915x281.95249253185466x334.59733526804484/g5 f7:875.7554921787232x284.9577867425978x334.78274276363663/g5 f8:180x92.13572996668518x59.888224478345364/g5 f9:180x127.70476944744587x83.00810014083982/g5 f10:300x160x104/g5';
+// K-D-R, 1 in: a 939 mm statue only a KLINGSBO's tier takes; the Detolf's only figure steps on to the rack, the KLINGSBO's
+// last shelf figure to the Detolf (363ba92: two cabinets empty; one without the step)
+const CHAIN = 'f4:198x133x86.45 f5:171x102x66.3 f6:254x125x81.25 f7:939x251x334';
+// K-D-R by series, 2 in: the rack's only figure (f6) could step on to the empty rack after it, but series g4's f5 may not
+// follow it past g5, so neither moves
+const NO_STEP = 'f5:199x98x86/g4 f6:193x104x122/g5 f7:903x257x321/g5 f8:266x156x42/g5 f9:520x241x251/g5 f10:798x270x69/g5 f11:829x269x332/g5 f21:907x250x316/g8';
+// 52 figures of a K-D-R app wall (series, scale, name; seed 7; no clearance): a KLINGSBO opened with tiers whose only figure
+// steps on takes a figure from before it on its top, standing with its stock shelves
+const RESTOCKED = 'f0:319x251x163/series-1 f1:91x91x59/series-1 f7:418x228x148/series-2 f9:278x249x162/series-2 f4:257x101x66/series-2 f5:251x209x136/series-2 f12:182x78x51/series-3 f17:256x204x133/series-4 f14:236x177x115/series-4 f16:239x214x139/series-4 f13:244x148x96/series-4 f20:247x182x118/series-4 f38:245x95x62/series-10 f39:236x132x86/series-10 f45:605x483x314/series-11 f82:250x233x152/series-20 f84:253x237x154/series-21 f89:679x562x365/series-23 f91:238x230x149/series-24 f97:238x213x138/series-25 f103:253x179x117/series-27 f105:280x266x173/series-28 f109:380x320x208/series-29 f115:233x152x99/series-31 f114:208x182x118/series-31 f118:432x221x143/series-32 f117:235x197x128/series-32 f126:243x217x141/series-36 f138:388x240x156/series-37 f143:257x173x112/series-40 f145:212x85x55/series-41 f146:254x126x82/series-42 f147:309x224x146/series-43 f148:223x90x59/series-43 f155:403x378x246/series-44 f156:288x236x154/series-44 f153:320x301x195/series-44 f157:451x408x265/series-45 f167:251x192x125/series-46 f161:239x218x141/series-46 f162:245x209x136/series-46 f178:439x342x222/series-49 f172:244x198x129/series-49 f176:246x241x156/series-49 f174:194x184x120/series-49 f179:298x213x138/series-50 f183:252x240x156/series-51 f185:472x455x296/series-52 f184:244x174x113/series-52 f312:531x374x243/series-81 f330:425x411x267/series-85 f349:471x281x182/series-92';
+// K-R by series, 1 in: a KLINGSBO opened with a tier for the 1,060 mm figure the next KLINGSBO's tier takes
+const FIRST_EMPTY = 'f4:465x611x187/g2 f12:1060x89x306/g3';
+// D-K-R by series, 1 in: the 383 mm figure in the Detolf's tier, tall for a Detolf, may not leave the Detolf's top empty for
+// the KLINGSBO's top
+const OWN_TOP = 'f0:759x88x250/g1 f7:383x16x114/g2 f13:317x213x451/g3';
+// D-R-K by series, 1 in: standing a KLINGSBO otherwise with as many shelves out is no fewer out (one empty cabinet, not two)
+const SAME_OUT = 'f1:1489x377x290/g1 f3:497x578x430/g1 f4:491x741x412/g2 f7:563x285x394/g3 f10:349x769x348/g3 f11:405x400x84/g3 f12:618x651x334/g3 f16:321x227x446/g6 f18:674x453x22/g8 f19:145x163x455/g9 f20:363x572x264/g9 f21:1144x122x325/g9 f24:555x203x309/g10 f31:355x218x87/g12';
+// 55 figures of a K-D-R app wall (series, scale, name; seed 6; 1 in): the figures the fill could move would each leave a
+// top or tier behind them empty that they are tall for
+const NO_STRAND = 'f101:315x205x133/series-33 f100:314x265x172/series-33 f288:195x89x58/series-93 f292:172x165x107/series-94 f295:271x174x113/series-96 f294:315x162x105/series-96 f298:212x184x119/series-97 f299:245x154x100/series-98 f300:251x230x150/series-98 f305:251x146x95/series-100 f307:252x147x95/series-101 f309:188x121x79/series-101 f315:466x323x210/series-103 f312:316x211x137/series-103 f313:244x162x105/series-103 f316:303x134x87/series-104 f317:268x189x123/series-105 f318:257x190x123/series-106 f319:232x214x139/series-106 f321:194x144x94/series-106 f324:237x225x147/series-107 f323:109x89x58/series-107 f327:218x115x75/series-107 f325:188x85x55/series-107 f330:629x517x336/series-108 f331:457x450x293/series-108 f329:460x186x121/series-108 f339:405x254x165/series-108 f336:256x91x59/series-108 f338:258x111x72/series-108 f332:255x252x164/series-108 f337:110x76x49/series-108 f333:203x111x72/series-108 f334:188x89x58/series-108 f335:210x86x56/series-108 f341:298x130x84/series-109 f340:314x189x123/series-109 f342:239x152x99/series-109 f343:251x199x129/series-109 f347:232x204x133/series-112 f354:208x117x76/series-113 f348:222x148x96/series-113 f352:214x188x122/series-113 f349:227x201x131/series-113 f353:211x140x91/series-113 f356:405x242x157/series-114 f357:238x217x141/series-114 f355:237x132x86/series-114 f358:520x456x296/series-115 f360:243x192x125/series-115 f362:240x141x92/series-115 f574:464x286x186/series-184 f572:414x252x164/series-184 f573:443x186x121/series-184 f613:450x322x210/series-190';
+// K-D-R, 1 in: a 406 mm deep figure only the rack's top is deep enough for (363ba92 stood it on a KLINGSBO's 400 mm deep top)
+const DEEP = 'f5:433x397x406 f7:387x289x363';
+
+describe('PACK-KIND-1 round 2: no cabinet stands empty where 363ba92 filled it', () => {
+  it("the app's K-D-R wall, 2 in of clearance: 24 figures of a 622-figure collection stand in 12 cabinets, none empty, as on 363ba92 (12, 2 to 4 empty at e02fdc9)", () => {
+    const ids = [333, 373, 413, 453, 493, 533, 573, 613, 516, 556, 29, 83, 123, 163, 203, 243, 283, 323, 363, 403, 443, 483, 523, 563];
+    const { figures, items } = synthetic(622, 9);
+    const sub = ids.map((i) => figures[i]);
+    const subItems = ids.map((i, j) => ({ ...items[i], index: j }));
+    const id = WALL_PATTERNS.find((p) => p.profiles.length > 1)!.id;
+    const wall = wallPatternProfiles(id).map((p) => withClearance(p, 50.8));
+    for (const arrangement of ['scale-name', 'name', 'date-added'] as CaseArrangement[]) {
+      const { order, groups } = arrangeOrder(sub, arrangement);
+      const r = packCabinets(order.map((i) => subItems[i]), wall, CEILING_DEFAULT_MM, PACK_RULES, groups);
+      expect(r.violators, arrangement).toEqual([]);
+      expect(r.cabinets.length, arrangement).toBeLessThanOrEqual(12);
+      expect(emptyOf(r), arrangement).toBe(0);
+    }
+  });
+
+  it('five statues force thirteen cabinets: no more stand empty than on 363ba92 (6; 7 at e02fdc9)', () => {
+    const { items, groups } = parse(STATUES);
+    const r = pack(items, groups, wallAt(25.4, 'K', 'D', 'R'));
+    expect(r.cabinets).toHaveLength(13);
+    expect(emptyOf(r)).toBeLessThanOrEqual(6);
+  });
+
+  it('a cabinet left empty stands with its stock shelves (a KLINGSBO opened for a figure the rack took; a KLINGSBO opened for the Detolf’s)', () => {
+    for (const [spec, wall] of [
+      [GLASS_OUT, wallAt(25.4, 'K', 'D', 'R')],
+      [SHELVES_OUT, wallAt(25.4, 'D', 'K', 'R')],
+    ] as const) {
+      const { items, groups } = parse(spec);
+      for (const deviate of [undefined, true, false]) {
+        const r = pack(items, groups, [...wall], { deviate });
+        expect(emptyShelvesOut(r), `${spec.slice(0, 12)} deviate ${deviate}`).toEqual([]);
+      }
+    }
+  });
+
+  it('PACK1: filling an empty cabinet never runs a series onto the shelf of the one before (g1 and g5 keep a shelf each)', () => {
+    const { items, groups } = parse(OWN_SHELF);
+    const r = pack(items, groups, wallAt(25.4, 'K', 'D', 'R'));
+    // the first KLINGSBO's rows below its top, in reading order: its tier (f2), g1's shelf, g5's shelf
+    expect(r.cabinets[0].surfaces.flatMap((s) => (s.slot.isTop || s.items.length === 0 ? [] : [s.items.map((p) => p.item.index)]))).toEqual([[2], [0, 1], [8, 9]]);
+    // (no more empty than on 363ba92: 5)
+    expect(emptyOf(r)).toBeLessThanOrEqual(5);
+  });
+
+  it('PACK1: filling an empty cabinet never moves a shelf figure past a figure of a later series (packGroups counterexample)', () => {
+    // series a's 20 mm cube on a KLINGSBO shelf; series c's figure just over the KLINGSBO's 335 mm on its deeper top; one 430 mm wide
+    const items = [{ ...fig(0, 40, 20), depthMm: 20 }, { ...fig(1, 40, 20), depthMm: 335.00000100000005 }, { ...fig(2, 40, 430.00000100000005), depthMm: 20 }];
+    const groups = ['a', 'c', null];
+    const r = packCabinets(items, [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK], CEILING_DEFAULT_MM, PACK_RULES, groups);
+    const cabOf = (i: number) => r.cabinets.findIndex((c) => c.surfaces.some((s) => s.items.some((p) => p.item.index === i)));
+    expect(cabOf(1)).toBeGreaterThanOrEqual(cabOf(0));
+  });
+
+  it('a cabinet whose only figure fills the one after it is filled in turn from before it, in order: four cabinets, none empty', () => {
+    const { items } = parse(CHAIN);
+    const r = pack(items, undefined, wallAt(25.4, 'K', 'D', 'R'));
+    expect(costOf(r)).toEqual([4, 0]);
+    expect(r.cabinets.map((c) => c.surfaces.flatMap((s) => s.items.map((p) => p.item.index)))).toEqual([[6], [4], [5], [7]]);
+  });
+
+  it('a step that cannot be filled in turn moves nothing: the rack’s only figure keeps its place', () => {
+    const { items, groups } = parse(NO_STEP);
+    const r = pack(items, groups, wallAt(50.8, 'K', 'D', 'R'));
+    expect(costOf(r)).toEqual([7, 1]);
+    const cabOf = (i: number) => r.cabinets.findIndex((c) => c.surfaces.some((s) => s.items.some((p) => p.item.index === i)));
+    expect(cabOf(6)).toBe(2);
+  });
+
+  it('a cabinet its only figure steps out of stands with its stock shelves for the figure that fills it in turn', () => {
+    const { items, groups } = parse(RESTOCKED);
+    const wall = wallPatternProfiles(WALL_PATTERNS.find((p) => p.profiles.length > 1)!.id).map((p) => withClearance(p, 0));
+    const r = pack(items, groups, wall);
+    const k = r.cabinets.find((c) => c.surfaces.some((s) => s.items.some((p) => p.item.index === 183)))!;
+    expect(k.profile.layout?.removed ?? []).toEqual([]);
+    expect(costOf(r)).toEqual([12, 0]);
+  });
+
+  it('the first cabinet too stands with its stock shelves when it is left empty', () => {
+    const { items, groups } = parse(FIRST_EMPTY);
+    const r = pack(items, groups, wallAt(25.4, 'K', 'R'));
+    expect(emptyShelvesOut(r)).toEqual([]);
+  });
+
+  it('filling an empty cabinet strands no figure: none leaves a top or tier it is tall for, and fits, empty behind it', () => {
+    const own = parse(OWN_TOP);
+    expect(strandedHeld(pack(own.items, own.groups, wallAt(25.4, 'D', 'K', 'R')), true)).toEqual([]);
+    // (by series, a place a later series' start passes stays empty until PACK-GAP: the count before the fill, not none)
+    const app = parse(NO_STRAND);
+    const wall = wallPatternProfiles(WALL_PATTERNS.find((p) => p.profiles.length > 1)!.id).map((p) => withClearance(p, 25.4));
+    expect(strandedHeld(pack(app.items, app.groups, wall), true).length).toBeLessThanOrEqual(50);
+  });
+
+  it('a cabinet a figure leaves stands with fewer shelves out, never as many otherwise: one cabinet empty, not two', () => {
+    const { items, groups } = parse(SAME_OUT);
+    expect(emptyOf(pack(items, groups, wallAt(25.4, 'D', 'R', 'K')))).toBe(1);
+  });
+
+  it('CASE-FAITH: no figure overhangs its surface: the 406 mm deep figure stands on the rack, three cabinets (363ba92: two, overhanging)', () => {
+    const { items } = parse(DEEP);
+    const r = pack(items, undefined, wallAt(25.4, 'K', 'D', 'R'));
+    expect(overhangs(r)).toEqual([]);
+    expect(r.cabinets.map((c) => c.profile.id)).toEqual([K.id, D.id, R.id]);
+    expect(r.cabinets[2].surfaces.flatMap((s) => s.items.map((p) => p.item.index))).toContain(5);
+  });
+});
 
 describe('PACK-KIND-1: a wall of one profile packs exactly as before', () => {
   for (const p of [K, D, R]) {

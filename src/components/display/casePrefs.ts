@@ -42,6 +42,12 @@ export const WALL_PATTERNS: readonly WallPattern[] = [
 export type CaseTab = 'view' | 'reserved' | 'info' | 'refine';
 export const CASE_TABS: readonly CaseTab[] = ['view', 'reserved', 'info', 'refine'];
 
+/**
+ * NAV-ROCKER (Ross 11-14): the depth control's shape: a vertical rocker rising above the slot left of the hat (up =
+ * closer; the default), or a horizontal slider in the slot (toward the hat = closer).
+ */
+export type DepthRockerShape = 'vertical' | 'horizontal';
+
 export function wallPatternProfiles(id: string): CabinetProfile[] {
   return [...(WALL_PATTERNS.find((p) => p.id === id)?.profiles ?? [DEFAULT_CABINET_PROFILE])];
 }
@@ -72,6 +78,8 @@ export interface CasePrefs {
   readonly freeCamera: boolean;
   /** PACK1 (Ross 10-26): the order the case stands its figures in, apart from the list's sort (caseArrangement.ts). */
   readonly arrange: CaseArrangement;
+  /** NAV-ROCKER: the depth rocker's shape, per device; only a stored 'horizontal' is the slider. */
+  readonly depthRocker: DepthRockerShape;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -86,6 +94,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   wallCustom: DEFAULT_WALL_CUSTOM,
   freeCamera: true,
   arrange: DEFAULT_CASE_ARRANGEMENT,
+  depthRocker: 'vertical',
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -130,6 +139,7 @@ export function readCasePrefs(): CasePrefs {
     wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
     freeCamera: stored.freeCamera !== false,
     arrange: isCaseArrangement(stored.arrange) ? stored.arrange : d.arrange,
+    depthRocker: stored.depthRocker === 'horizontal' ? 'horizontal' : d.depthRocker,
   };
 }
 

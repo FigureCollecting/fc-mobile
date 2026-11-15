@@ -396,6 +396,7 @@ export function Collection() {
       {/* both layouts: Refine's way in now the filter row comes and goes; the View card is the case's */}
       <CaseTabs
         order={casePrefs.tabOrder}
+        rocker={casePrefs.depthRocker}
         viewEnabled={shownLayout === 'case'}
         infoEnabled={lastOpened >= 0}
         open={caseCard ?? (filterOpen ? 'refine' : null)}

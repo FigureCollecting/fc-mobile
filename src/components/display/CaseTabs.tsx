@@ -3,10 +3,13 @@
  * two each side of the raised + of the tab bar: View, Reserved | + | Info,
  * Refine. Reserved is held as an empty slot until it has a job (IC1-R3), so
  * the others never move. The order is kept per device (CC14); the View card
- * can swap the sides.
+ * can swap the sides. NAV-DEPTH-3: while the case on show offers a depth drive
+ * (a Free camera's jog), the Reserved slot holds the depth rocker.
  */
 import { createPortal } from 'preact/compat';
-import type { CaseTab } from './casePrefs';
+import type { CaseTab, DepthRockerShape } from './casePrefs';
+import { useJogStore } from '../../stores/jog';
+import { DepthRocker } from './DepthRocker';
 import { Style } from '../../styles/Style';
 
 export type CaseCard = Exclude<CaseTab, 'reserved'>;
@@ -62,10 +65,21 @@ interface CaseTabsProps {
   infoEnabled: boolean;
   open: CaseCard | null;
   onTab: (tab: CaseCard) => void;
+  /** NAV-ROCKER: the depth rocker's shape (the View card's setting); vertical unless it says. */
+  rocker?: DepthRockerShape;
 }
 
-export function CaseTabs({ order, viewEnabled = true, infoEnabled, open, onTab }: CaseTabsProps) {
+export function CaseTabs({ order, viewEnabled = true, infoEnabled, open, onTab, rocker = 'vertical' }: CaseTabsProps) {
+  const depth = useJogStore((s) => s.target?.depth ?? null);
   const slot = (tab: CaseTab) => {
+    if (tab === 'reserved' && depth) {
+      // the slot's side of the dock: across, toward the hat is closer
+      return (
+        <span key={tab} class="case-tabs__slot case-tabs__slot--reserved case-tabs__slot--rocker" data-tab={tab}>
+          <DepthRocker depth={depth} shape={rocker} toward={order.indexOf('reserved') < 2 ? 1 : -1} />
+        </span>
+      );
+    }
     if (tab === 'reserved' || (tab === 'view' && !viewEnabled)) return <span key={tab} class="case-tabs__slot case-tabs__slot--reserved" data-tab={tab} aria-hidden="true" />;
     return (
       <button
@@ -111,6 +125,7 @@ const styles = `
   }
   .case-tabs__slot { flex: 0 1 84px; min-width: 0; height: 32px; }
   .case-tabs__dock { flex: none; width: calc(var(--fab-size) + 8px); }
+  .case-tabs__slot--rocker { position: relative; }
   .case-tabs__tab {
     pointer-events: auto;
     display: inline-flex;

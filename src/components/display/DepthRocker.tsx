@@ -32,15 +32,7 @@ interface Push {
 
 export function DepthRocker({ depth, shape, toward }: DepthRockerProps) {
   const push = useRef<Push | null>(null);
-  const el = useRef<HTMLDivElement>(null);
   const vertical = shape === 'vertical';
-
-  const rest = () => {
-    const node = el.current;
-    if (!node) return;
-    delete node.dataset.rocking;
-    node.style.removeProperty('--depth-k');
-  };
 
   // withdrawn mid-push (the case gone, the Free camera off): no lift will come, so the drive it started stops here
   useEffect(
@@ -56,7 +48,10 @@ export function DepthRocker({ depth, shape, toward }: DepthRockerProps) {
     const p = push.current;
     if (!p || p.id !== e.pointerId) return;
     push.current = null;
-    rest();
+    // the spring back to the centre
+    const node = e.currentTarget as HTMLElement;
+    delete node.dataset.rocking;
+    node.style.removeProperty('--depth-k');
     if (p.on) p.depth.stop();
   };
 
@@ -96,7 +91,6 @@ export function DepthRocker({ depth, shape, toward }: DepthRockerProps) {
   const [first, last]: [Way, Way] = vertical ? ['up', 'down'] : ['left', 'right'];
   return (
     <div
-      ref={el}
       class={`depth-rocker depth-rocker--${shape}`}
       role="slider"
       aria-label={vertical ? 'Move closer or back: hold and push up or down' : 'Move closer or back: hold and slide toward the move button or away'}

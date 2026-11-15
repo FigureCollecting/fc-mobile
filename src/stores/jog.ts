@@ -13,6 +13,19 @@ export interface JogTarget {
   stop(): void;
   /** NAV-2B: its top speed in the 10-28 jog's (?jogmax=; JOG_MAX_X when absent): where the button's detents tick (jogSpeed). */
   readonly max?: number;
+  /**
+   * NAV-DEPTH-2: the depth rocker's drive of the same camera, held with the jog or alone (useFreeCamera's depthStart,
+   * depthRate, depthStop): the rocker leaves its centre at reach r in [-1, 1] (+ forward; false: the scene is busy with
+   * a finger of its own), its reach now, and its spring back to the centre. Absent, the jog offers no depth.
+   */
+  readonly depth?: DepthDrive;
+}
+
+/** NAV-DEPTH-2: what the depth rocker drives (JogTarget's depth). */
+export interface DepthDrive {
+  start(r: number): boolean;
+  rate(r: number): void;
+  stop(): void;
 }
 
 interface JogState {

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
-import { CabinetScene, ZOOM_SETTLE_MS } from '../CabinetScene';
+import { CabinetScene, WHEEL_IDLE_MS, ZOOM_SETTLE_MS } from '../CabinetScene';
 import type { CasePrefs } from '../casePrefs';
 import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
-import { ZOOM_MAX, ZOOM_UNDER, toScreen, type Zoom } from '../caseZoom';
+import { WHEEL_LINE_PX, ZOOM_MAX, ZOOM_UNDER, toPicture, toScreen, type Zoom } from '../caseZoom';
 
 // PINCH-1 (Ross 10-16): a photo-style pinch zoom toward the pinch point, a one-finger pan while zoomed that never
 // walks, and quick ways back to 1x. jsdom has no layout, so the frame's top-left is the client origin (its
@@ -583,5 +583,277 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
       window.dispatchEvent(new Event('resize'));
     });
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+});
+
+// NAV-DESKTOP-ZOOM (Ross 11-13: "Pinch zoom is just that... no desktop equiv yet"): the mouse wheel is the desktop's pinch,
+// the same magnification at the cursor; ctrl+wheel (a desktop trackpad's pinch) too; Shift+wheel is kept for depth (a later unit)
+describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)', () => {
+  type W = { deltaY: number; deltaX?: number; deltaMode?: number; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean };
+  /** A wheel turn over `el` at p; true when the browser may act on it (its default not prevented). */
+  const wheel = (el: Element, p: P, w: W) => fireEvent.wheel(el, { clientX: p.x, clientY: p.y, deltaMode: 0, ...w });
+  const at = { x: 300, y: 140 };
+  const idle = () =>
+    act(() => {
+      vi.advanceTimersByTime(WHEEL_IDLE_MS);
+    });
+
+  it('a wheel turned away zooms in at the cursor, as one transform on the zoom layer; the page never scrolls; the camera, the walk and the pan stay', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8), { view: 'cabinet' });
+    const before = still(host);
+    expect(wheel(host, at, { deltaY: -100 })).toBe(false);
+    const z = zoomOf(host);
+    expect(z.k).toBeGreaterThan(1);
+    const under = toScreen(z, toPicture({ k: 1, x: 0, y: 0 }, at));
+    expect(Math.abs(under.x - at.x)).toBeLessThan(0.5);
+    expect(Math.abs(under.y - at.y)).toBeLessThan(0.5);
+    // data-zoom is rounded; the layer carries the exact zoom: one notch (100 px) is exp(0.2), about 1.221x
+    expect(layer.style.transform).toMatch(/^translate\(-[\d.]+px, -[\d.]+px\) scale\(1\.221\d*\)$/);
+    expect(still(host)).toEqual(before);
+    expect(chip()).not.toBeNull();
+  });
+
+  it('ctrl+wheel (a desktop trackpad pinch) zooms in at the cursor at the pinch\'s rate, the page never zooming or scrolling', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    // under the 50 px cap: exp(40 * 0.01); the plain wheel's rate would give exp(40 * 0.002)
+    expect(wheel(host, at, { deltaY: -40, ctrlKey: true })).toBe(false);
+    const z = zoomOf(host);
+    expect(z.k).toBeCloseTo(Math.exp(0.4), 3);
+    const under = toScreen(z, toPicture({ k: 1, x: 0, y: 0 }, at));
+    expect(Math.abs(under.x - at.x)).toBeLessThan(0.5);
+    expect(Math.abs(under.y - at.y)).toBeLessThan(0.5);
+  });
+
+  it('a mouse notch with Ctrl held (deltaY -100) zooms exp(50 * 0.01), not 2.72x', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    expect(wheel(host, at, { deltaY: -100, ctrlKey: true })).toBe(false);
+    expect(zoomOf(host).k).toBeCloseTo(Math.exp(0.5), 3);
+  });
+
+  it('a wheel with no vertical turn (a trackpad\'s sideways swipe) keeps the page where it is (no back-swipe away), changes nothing and redraws nothing', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -300 });
+    idle();
+    const z = zoomOf(host);
+    const transform = layer.style.transform;
+    renders.mockClear();
+    expect(wheel(host, at, { deltaY: 0, deltaX: 120 })).toBe(false);
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(false);
+    idle();
+    expect(renders).not.toHaveBeenCalled();
+    expect(zoomOf(host)).toEqual(z);
+    expect(layer.style.transform).toBe(transform);
+  });
+
+  /** The exact k on the layer (data-zoom is rounded): 1 with no transform. */
+  const layerK = (layer: HTMLElement) => {
+    const m = /scale\(([\d.e+-]+)\)/.exec(layer.style.transform);
+    return m ? Number(m[1]) : 1;
+  };
+
+  it('a sideways wheel mid-glide back from 0.8x neither stops nor jumps the glide: it ends at exactly 1x on time', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    for (let i = 0; i < 20; i++) wheel(host, at, { deltaY: 200 });
+    idle();
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
+    });
+    const mid = layerK(layer);
+    expect(wheel(host, at, { deltaY: 0, deltaX: 120 })).toBe(false);
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    expect(layerK(layer)).toBe(mid);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 4);
+    });
+    expect(layerK(layer)).toBeGreaterThan(mid);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+    expect(layer.style.transform).toBe('');
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+
+  it('a sideways wheel mid-glide of the Reset view chip leaves the glide running', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -300 });
+    idle();
+    fireEvent.click(chip()!);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
+    });
+    wheel(host, at, { deltaY: 0, deltaX: -80 });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(layer.style.transform).toBe('');
+  });
+
+  it('a sideways wheel while a let-go is pending (live at 0.8x) neither cancels nor postpones it', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    for (let i = 0; i < 20; i++) wheel(host, at, { deltaY: 200 });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    wheel(host, at, { deltaY: 0, deltaX: 50 });
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(WHEEL_IDLE_MS - 100);
+    });
+    // let go on the original schedule: settling back to 1x, not stuck live under 1x
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(false);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS * 2);
+    });
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+
+  for (const key of ['shiftKey', 'altKey', 'metaKey'] as const) {
+    it(`a wheel with ${key} is not the zoom's (Shift+wheel is kept for depth): nothing changes and the browser keeps it`, () => {
+      vi.useFakeTimers();
+      const { host, layer } = scene(getFixtureFigures(8));
+      expect(wheel(host, at, { deltaY: -100, [key]: true })).toBe(true);
+      expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+      expect(layer.style.transform).toBe('');
+      idle();
+      expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    });
+  }
+
+  it('a wheel over the scene\'s own controls is theirs (a list in them scrolls): no zoom, the browser keeps it', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    const ui = host.querySelector('[data-scene-ui]')!;
+    expect(ui).not.toBeNull();
+    expect(wheel(ui, at, { deltaY: -100 })).toBe(true);
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+
+  it(`a LINE-mode wheel (Firefox) zooms as ${WHEEL_LINE_PX} px a line`, () => {
+    vi.useFakeTimers();
+    const lines = scene(getFixtureFigures(8));
+    wheel(lines.host, at, { deltaY: -3, deltaMode: 1 });
+    const byLine = zoomOf(lines.host);
+    cleanup();
+    const px = scene(getFixtureFigures(8));
+    wheel(px.host, at, { deltaY: -3 * WHEEL_LINE_PX });
+    expect(byLine.k).toBeGreaterThan(1);
+    expect(byLine).toEqual(zoomOf(px.host));
+  });
+
+  it(`while the wheel turns the layer is live; ${WHEEL_IDLE_MS} ms after its last notch it settles, as a pinch let go does, and the figures are drawn sharp at the zoom`, () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    const s = Number(host.dataset.pxPerMm);
+    const scales = () => figureButtons(host).map((b) => Number(b.style.getPropertyValue('--s')));
+    for (let i = 0; i < 4; i++) {
+      wheel(host, at, { deltaY: -100 });
+      act(() => {
+        vi.advanceTimersByTime(WHEEL_IDLE_MS - 50);
+      });
+    }
+    // each notch put the settle off: still live, the figures not redrawn
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(true);
+    expect(Math.max(...scales())).toBe(s);
+    const k = zoomOf(host).k;
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(layer.classList.contains('cabinet-scene__zoom--live')).toBe(false);
+    expect(zoomOf(host).k).toBeCloseTo(k, 3);
+    expect(Math.max(...scales())).toBeCloseTo(k * s, 2);
+  });
+
+  it(`stops at ${ZOOM_MAX}x however far the wheel turns in; out, no further than ${ZOOM_UNDER}x, settling back at exactly 1x, animated`, () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    for (let i = 0; i < 30; i++) wheel(host, at, { deltaY: -200 });
+    expect(zoomOf(host).k).toBe(ZOOM_MAX);
+    for (let i = 0; i < 60; i++) wheel(host, at, { deltaY: 200 });
+    expect(zoomOf(host).k).toBe(ZOOM_UNDER);
+    idle();
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    expect(chip()).toBeNull();
+  });
+
+  it('a wheel while a finger or the mouse button is down on the scene changes nothing (the page still never scrolls)', () => {
+    vi.useFakeTimers();
+    const { host } = scene(getFixtureFigures(8));
+    down(host, 1, { x: 200, y: 200 });
+    expect(wheel(host, at, { deltaY: -100 })).toBe(false);
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    up(host, 1, { x: 200, y: 200 });
+    pinch(host, { x: 180, y: 260 }, { x: 260, y: 260 }, { x: 140, y: 260 }, { x: 300, y: 260 }, false);
+    const pinched = zoomOf(host);
+    expect(wheel(host, at, { deltaY: -100 })).toBe(false);
+    expect(zoomOf(host)).toEqual(pinched);
+  });
+
+  it('a press before the wheel settles settles it at once: a press after a wheel out starts from 1x, a pan from the zoom', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: 100 });
+    expect(zoomOf(host).k).toBeLessThan(1);
+    down(host, 1, { x: 200, y: 200 });
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+    up(host, 1, { x: 200, y: 200 });
+    wheel(host, at, { deltaY: -300 });
+    const z = zoomOf(host);
+    drag(host, -40, 0);
+    expect(zoomOf(host).k).toBeCloseTo(z.k, 3);
+    expect(zoomOf(host).x).toBeCloseTo(z.x - 40, 3);
+    // the settle the wheel left never fires after the press took over
+    const panned = zoomOf(host);
+    idle();
+    expect(zoomOf(host)).toEqual(panned);
+  });
+
+  it('the Reset view chip, taken from the keyboard before the wheel settles, glides back to 1x undisturbed by the wheel\'s settle', () => {
+    vi.useFakeTimers();
+    const { host, layer } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -300 });
+    // Enter on the focused chip: a click with no press before it
+    fireEvent.click(chip()!);
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    // the wheel's settle would have fired by now: the glide runs on to its end
+    idle();
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS - WHEEL_IDLE_MS);
+    });
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+  });
+
+  it('a new view wins over a wheel\'s pending settle', () => {
+    vi.useFakeTimers();
+    const { host, again } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -300 });
+    again({ prefs: prefs({ view: 'cabinet' }) });
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    idle();
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+  });
+
+  it('gone, the scene leaves no wheel listener and no settle behind', () => {
+    vi.useFakeTimers();
+    const { host, unmount } = scene(getFixtureFigures(8));
+    wheel(host, at, { deltaY: -100 });
+    const k = zoomOf(host).k;
+    unmount();
+    expect(() => idle()).not.toThrow();
+    expect(wheel(host, at, { deltaY: -100 })).toBe(true);
+    expect(zoomOf(host).k).toBe(k);
   });
 });

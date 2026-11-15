@@ -1331,6 +1331,42 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(pose().x).toBeGreaterThan(before.x);
   });
 
+  // NAV-DESKTOP-ZOOM: the wheel's magnification keeps the jog's rule: no magnification rides a moving camera
+  const wheel = (deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
+  const k = () => (JSON.parse(host().dataset.zoom!) as { k: number }).k;
+
+  it('a wheel zoom, in or out under 1x and not yet settled, is dropped at a jog\'s start and never settles back after', () => {
+    scene();
+    wheel(300);
+    expect(k()).toBeLessThan(1);
+    begin();
+    expect(k()).toBe(1);
+    tick(500);
+    expect(k()).toBe(1);
+    end();
+    cleanup();
+    scene();
+    wheel(-300);
+    expect(k()).toBeGreaterThan(1);
+    begin();
+    expect(k()).toBe(1);
+    tick(500);
+    expect(k()).toBe(1);
+    end();
+  });
+
+  it('while the jog runs the wheel zooms nothing (the page still never scrolls); stopped, it zooms again', () => {
+    scene();
+    begin();
+    run(JOG_FULL_PX, 0, 5);
+    expect(wheel(-300)).toBe(false);
+    expect(k()).toBe(1);
+    end();
+    // a jog let go leaves no spring: the next notch zooms
+    wheel(-300);
+    expect(k()).toBeGreaterThan(1);
+  });
+
   it('gone mid-run: no frame runs on, and the withdrawn jog\'s calls do nothing', () => {
     const { unmount } = scene();
     begin();
@@ -1343,6 +1379,50 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     act(() => held.stop());
     expect(raf).not.toHaveBeenCalled();
     raf.mockRestore();
+  });
+
+  // NAV-DEPTH-2: the window losing focus mid-jog halts it; the lift that comes later sets the focus from where the eye
+  // stands, never from a halted pose the eye has since left (a second finger's swipe)
+  describe('NAV-DEPTH-2: a blur mid-jog, then the lift', () => {
+    /** The cabinet whose span is nearest the eye's x (data-wall's [x0, x1, ...] per cabinet). */
+    const nearest = () => {
+      const boxes = JSON.parse(host().dataset.wall!) as number[][];
+      const x = cam().x;
+      return boxes.map((b, i) => [Math.max(0, b[0] - x, x - b[1]), i]).sort((a, b) => a[0] - b[0])[0][1];
+    };
+    const jogAlong = () => {
+      scene({ view: 'cabinet' });
+      expect(host().dataset.focus).toBe('0');
+      begin();
+      act(() => jog().aim(JOG_FULL_PX, 0));
+      frames(3000);
+      act(() => void window.dispatchEvent(new Event('blur')));
+    };
+
+    it('the eye holds where the blur found it, and the lift moves the focus to the cabinet it stands at', () => {
+      jogAlong();
+      const at = cam().x;
+      frames(10);
+      expect(cam().x).toBe(at);
+      end();
+      frames(1);
+      expect(Number(host().dataset.focus)).toBeGreaterThan(0);
+      expect(Number(host().dataset.focus)).toBe(nearest());
+    });
+
+    it('a second finger swipes the eye elsewhere before the lift: the focus is the cabinet the eye stands at now', () => {
+      jogAlong();
+      const halted = cam().x;
+      for (let k = 0; k < 6; k++) {
+        drag({ x: 100, y: 200 }, { x: 700, y: 200 }, { id: 2 });
+        tick(16);
+      }
+      tick(500);
+      expect(cam().x).not.toBe(halted);
+      end();
+      frames(1);
+      expect(Number(host().dataset.focus)).toBe(nearest());
+    });
   });
 
   // NAV-2B: Ross tunes the top speed on the device with ?jogmax=1|1.5|2 (as ?lookhold=), no roll; 2 unless it says 1 to 2

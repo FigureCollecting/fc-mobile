@@ -100,7 +100,7 @@ import { alphaDrawsNothing, alphaPictureLoaded, rereadUndecoded, useAlphaMargins
 import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
-import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
+import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, wheelZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
 import { offerJog } from '../../stores/jog';
@@ -110,6 +110,8 @@ import { useBrokenImages } from '../../hooks/useBrokenImages';
 export const SWIPE_START_PX = 8;
 /** PINCH-1: a double-tap and the way back to 1x (the chip, a pinch let go under it) glide this long, unless motion is reduced. */
 export const ZOOM_SETTLE_MS = 200;
+/** NAV-DESKTOP-ZOOM: a mouse wheel this long (ms) without a notch is let go, as a pinch's fingers lifting. */
+export const WHEEL_IDLE_MS = 150;
 /** Two taps on the room this close in time (ms) and place (CSS px) are a double-tap. */
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 40;
@@ -1346,6 +1348,12 @@ export function CabinetScene({
   // zoom's scale, 3 to 5x the tiles for seconds on the open Fold8 (e2e/case-zoom-return), so a settle is frames of the
   // layer's transform, as the fingers' moves are
   const glide = useRef<number | undefined>(undefined);
+  // NAV-DESKTOP-ZOOM: a wheel's let-go, due once it has turned no notch for WHEEL_IDLE_MS
+  const wheelIdle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const stopWheel = () => {
+    clearTimeout(wheelIdle.current);
+    wheelIdle.current = undefined;
+  };
   const stopGlide = () => {
     if (glide.current !== undefined) cancelAnimationFrame(glide.current);
     glide.current = undefined;
@@ -1366,6 +1374,7 @@ export function CabinetScene({
   useEffect(
     () => () => {
       clearTimeout(settling.current);
+      stopWheel();
       stopGlide();
     },
     [],
@@ -1381,6 +1390,8 @@ export function CabinetScene({
     clearTimeout(settling.current);
     settling.current = undefined;
     stopGlide();
+    // any zoom set other than by a gesture's move ends the wheel's (it has nothing left to let go)
+    if (how !== 'live') stopWheel();
     const layer = zoomRef.current!;
     const animate = how === 'settle' && !prefersReducedMotion();
     layer.classList.toggle('cabinet-scene__zoom--live', how === 'live');
@@ -1399,6 +1410,13 @@ export function CabinetScene({
       settling.current = setTimeout(settled, ZOOM_SETTLE_MS);
     } else if (how !== 'live') setSharp(z);
   }, [settled]);
+  // a gesture lets go (a pinch's fingers lift, a wheel stops): under 1x, or nearly, it settles back at 1x, animated
+  const letGo = useCallback((): Zoom => {
+    const now = zoom.current;
+    const settled = settleZoom(now, picture.current);
+    showZoom(settled, settled.k === now.k && settled.x === now.x && settled.y === now.y ? 'still' : 'settle');
+    return settled;
+  }, [showZoom]);
   // a new view, wall, filter, arrangement (PACK1) or frame starts the picture at 1x, at once
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
@@ -1464,6 +1482,8 @@ export function CabinetScene({
   }, []);
   // a finger down on the scene; or, NAV-PTR-1, one that began on an arrow and left it as a drag, from where it began
   const startPress = (e: PressStart) => {
+    // NAV-DESKTOP-ZOOM: a press lets go of a wheel's zoom at once, and the press takes it up from there
+    if (wheelIdle.current !== undefined) letGo();
     // a new touch cuts a settling zoom short
     settled();
     if (pinching.current) {
@@ -1542,9 +1562,7 @@ export function CabinetScene({
       if (e.pointerId !== pin.a && e.pointerId !== pin.b) return;
       // let go: under 1x, or nearly, it settles back at 1x; the finger left down pans the picture, never walks
       pinching.current = null;
-      const now = zoom.current;
-      const settled = settleZoom(now, picture.current);
-      showZoom(settled, settled.k === now.k && settled.x === now.x && settled.y === now.y ? 'still' : 'settle');
+      const settled = letGo();
       const other = e.pointerId === pin.a ? pin.b : pin.a;
       const at = fingers.current.get(other)!;
       press.current = { id: other, x0: at.x, y0: at.y, axis: null, zoom: settled, pinched: true };
@@ -1650,7 +1668,8 @@ export function CabinetScene({
     return offerJog({
       start: () => {
         if (!fc.jogStart()) return false;
-        if (isZoomed(zoom.current)) showZoom(UNZOOMED, 'still');
+        // NAV-DESKTOP-ZOOM: a wheel's zoom under 1x, not yet let go, is dropped too
+        if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
         return true;
       },
       aim: fc.jogAim,
@@ -1664,6 +1683,30 @@ export function CabinetScene({
       },
     });
   }, [free]);
+
+  // NAV-DESKTOP-ZOOM (Ross 11-13: "Pinch zoom is just that... no desktop equiv yet"): the mouse wheel is the desktop's
+  // pinch, the same magnification, at the cursor; ctrl+wheel is a desktop trackpad's pinch. Shift+wheel is kept for depth
+  // (a later unit) and Alt or Meta for the browser: those, and a wheel over the scene's own controls, are left alone. The
+  // page never scrolls under the zoom's wheel; while a finger, a pinch or a moving camera (the jog, a look easing back)
+  // has the scene the wheel zooms nothing, as a jog drops a magnification at its start.
+  const onWheel = useRef<(e: WheelEvent) => void>(() => undefined);
+  onWheel.current = (e: WheelEvent) => {
+    if (e.shiftKey || e.altKey || e.metaKey || onSceneUi(e.target)) return;
+    e.preventDefault();
+    if (press.current || pinching.current || (freeRef.current && fc.live())) return;
+    // a sideways swipe (no vertical turn): the page stays put (a trackpad's back-swipe never leaves), nothing goes live or settles
+    if (e.deltaY === 0) return;
+    showZoom(wheelZoom(zoom.current, e.deltaY, e.deltaMode, toFrame(e.clientX, e.clientY), picture.current, e.ctrlKey), 'live');
+    clearTimeout(wheelIdle.current);
+    wheelIdle.current = setTimeout(letGo, WHEEL_IDLE_MS);
+  };
+  useEffect(() => {
+    const host = hostRef.current!;
+    const wheel = (e: WheelEvent) => onWheel.current(e);
+    // passive: false, or the browser scrolls (or zooms) the page before the scene can say no
+    host.addEventListener('wheel', wheel, { passive: false });
+    return () => host.removeEventListener('wheel', wheel);
+  }, []);
 
   // --- figures
   const draws: { draw: FigureDraw; cab: number }[] = [];

@@ -8,7 +8,7 @@ import { create } from '@bufbuild/protobuf';
 import { Code, ConnectError } from '@connectrpc/connect';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { SyncEngine } from '../../sync/engine';
-import { FILL_AFTER_ORDER_MS, REFILL_AFTER_MS, imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
+import { FILL_AFTER_ORDER_MS, REACH_SETTLE_MS, REFILL_AFTER_MS, imagesComplete, setFetchOrder, useCollectionImages } from '../useCollectionImages';
 import { useOnlineStatus } from '../useOnlineStatus';
 import { localRig, queryWrapper } from '../../local/__tests__/localHarness';
 import { seedFigures } from '../../local/__tests__/seedFigures';
@@ -867,5 +867,618 @@ describe('useCollectionImages', () => {
     const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper() });
     await new Promise((res) => setTimeout(res, 20));
     expect(result.current.size).toBe(0);
+  });
+
+  // SC-IMGKEY (Ross 11-13, "everything seems to be reloading just about every time"): the server reached or lost was a new
+  // answer, under a new key with nothing in it, so the case stood as plates at each launch and each flap of the link until its
+  // sync showed what the device had kept all along; and each flap stopped the sync under way and asked the lists again.
+  describe('the server reached and lost (SC-IMGKEY)', () => {
+    /** Two figures, each with its list and its primary's bytes kept. */
+    const twoKept = async () => {
+      const r = await localRig();
+      await seedFigures(r, [{ title: 'One' }, { title: 'Two' }]);
+      await keep(headOf(0), 'a');
+      await keep(headOf(1), 'b');
+      return r;
+    };
+    const lose = async (r: Awaited<ReturnType<typeof localRig>>) => {
+      r.server.fault('status', { kind: 'throw', error: new ConnectError('down', Code.Unavailable) });
+      await act(() => r.engine.trigger('manual'));
+      expect(r.engine.state.value.reachability).toBe('unreachable');
+    };
+    /** Reached again: a completed pass, a second on. */
+    const reach = async (r: Awaited<ReturnType<typeof localRig>>) => {
+      r.clock.advance(1000);
+      await act(() => r.engine.trigger('manual'));
+      expect(r.engine.state.value.reachability).toBe('reachable');
+    };
+    /** A list call on a link that never answers, until the sync lets go of it. */
+    const stalled = (_req: unknown, opts?: { signal?: AbortSignal }) =>
+      new Promise((_res, rej) => opts?.signal?.addEventListener('abort', () => rej(opts.signal!.reason)));
+    /** The case view, with every answer it was given. */
+    const caseView = (client = appClient()) => {
+      const sizes: number[] = [];
+      const view = renderHook(
+        () => {
+          const answer = useCollectionImages();
+          sizes.push(answer.size);
+          return answer;
+        },
+        { wrapper: queryWrapper(client) },
+      );
+      return { sizes, client, ...view };
+    };
+
+    it('reached, lost and reached again, the case keeps every kept picture: it never answers fewer than the device kept', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockImplementation(stalled);
+      await lose(r);
+      const { sizes, result, unmount } = caseView();
+      await waitFor(() => expect(result.current.size).toBe(2));
+      const from = sizes.length;
+      await reach(r);
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+      await lose(r);
+      await reach(r);
+      await quiet();
+      expect(sizes.length).toBeGreaterThan(from);
+      expect(Math.min(...sizes.slice(from))).toBe(2);
+      unmount();
+    });
+
+    it('a sync that could not read the lists, the link flapping twice inside REACH_SETTLE_MS: one more sync, not one a flap; the one owed rides the first pass after', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockRejectedValue(new ConnectError('display restrictions are unavailable', Code.Unavailable));
+      await r.engine.trigger('manual');
+      const { sizes, result, unmount } = caseView();
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+      await quiet();
+      expect(result.current.size).toBe(2);
+      const from = sizes.length;
+      const t = Date.now();
+      await lose(r);
+      await reach(r);
+      // the first recovery syncs at once (STALE-CONTENT)
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+      await quiet();
+      await lose(r);
+      await reach(r);
+      await quiet();
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+      expect(Math.min(...sizes.slice(from))).toBe(2);
+      vi.spyOn(Date, 'now').mockReturnValue(t + REACH_SETTLE_MS + 1000);
+      try {
+        await nextPass(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    it('a sync that left images unfetched, the link flapping twice inside REACH_SETTLE_MS: the second recovery is owed, and the first pass after the wait syncs it, lists and all', async () => {
+      const uninstall = installFakeLocks();
+      try {
+        const { r, client, view } = await leftAll(2, async () => new Response('', { status: 503 }));
+        const idle = () => waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+        await quiet();
+        const t = Date.now();
+        await lose(r);
+        await reach(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await idle();
+        await lose(r);
+        await reach(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        vi.spyOn(Date, 'now').mockReturnValue(t + REACH_SETTLE_MS + 1000);
+        try {
+          await nextPass(r);
+          await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+          await idle();
+        } finally {
+          vi.restoreAllMocks();
+        }
+        view.unmount();
+      } finally {
+        uninstall();
+      }
+    });
+
+    it('a sync under way on a slow link runs on through an outage and back: the flaps ask the lists nothing more', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockImplementation(stalled);
+      await r.engine.trigger('manual');
+      const { sizes, unmount } = caseView();
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+      await quiet();
+      const from = sizes.length;
+      const inFlight = r.clients.getProductImages.mock.calls[0]![1] as { signal: AbortSignal };
+      for (let flap = 0; flap < 2; flap++) {
+        await lose(r);
+        await reach(r);
+      }
+      await quiet();
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+      expect(inFlight.signal.aborted).toBe(false);
+      expect(Math.min(...sizes.slice(from))).toBe(2);
+      unmount();
+    });
+
+    it('a sync that completed is not asked again for a flap of the link: its answer stands, every picture with it', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockResolvedValue(
+        create(GetProductImagesResponseSchema, {
+          products: [0, 1].map((i) => ({ headId: headOf(i), images: [{ derivativeId: 'ab'[i]!.repeat(64), role: 'gallery', url: url('ab'[i]!), width: 1, height: 1 }] })),
+        }),
+      );
+      await r.engine.trigger('manual');
+      const { sizes, result, unmount } = caseView();
+      await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+      expect(result.current.size).toBe(2);
+      const from = sizes.length;
+      await lose(r);
+      await reach(r);
+      await quiet();
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+      expect(Math.min(...sizes.slice(from))).toBe(2);
+      unmount();
+    });
+
+    /** Both figures' lists, each image's bytes on the device. */
+    const bothLists = () =>
+      create(GetProductImagesResponseSchema, {
+        products: [0, 1].map((i) => ({ headId: headOf(i), images: [{ derivativeId: 'ab'[i]!.repeat(64), role: 'gallery', url: url('ab'[i]!), width: 1, height: 1 }] })),
+      });
+    /** How long a synced answer stands (Ross 10-18, STALE-CONTENT: ten minutes; the hook's FRESH_FOR_MS). */
+    const TEN_MINUTES = 10 * 60_000;
+    const unavailable = () => new ConnectError('display restrictions are unavailable', Code.Unavailable);
+    /** When the open case view's answer was given (an earlier key, the kept figures not yet read, may stand in the cache too). */
+    const answeredAt = (client: QueryClient) => {
+      const open = client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], type: 'active' });
+      expect(open).toHaveLength(1);
+      return open[0]!.state.dataUpdatedAt;
+    };
+    /** A case view whose first sync could not read the lists, then a recovery's sync, then a flap inside the wait: one owed. */
+    const owing = async (client = appClient()) => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockRejectedValue(unavailable());
+      await r.engine.trigger('manual');
+      const view = caseView(client);
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+      await quiet();
+      return { r, ...view };
+    };
+    const flap = async (r: Awaited<ReturnType<typeof localRig>>) => {
+      await lose(r);
+      await reach(r);
+    };
+
+    it('the clock stepped back as the link comes up: an answer given out of reach is synced on reach all the same', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockResolvedValue(bothLists());
+      await lose(r);
+      const { result, unmount } = caseView();
+      await waitFor(() => expect(result.current.size).toBe(2));
+      await quiet();
+      expect(r.clients.getProductImages).not.toHaveBeenCalled();
+      const real = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValue(real - 5_000);
+      try {
+        await reach(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    it('a complete answer dated ahead of the clock (the clock stepped back) is synced again on reach: its age cannot be told', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockResolvedValue(bothLists());
+      await r.engine.trigger('manual');
+      const { result, client, unmount } = caseView();
+      await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+      await lose(r);
+      vi.spyOn(Date, 'now').mockReturnValue(answeredAt(client) - 5_000);
+      try {
+        await reach(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    it('a complete answer is synced again on reach once TEN_MINUTES old (a device asleep out of reach), not a millisecond before', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockResolvedValue(bothLists());
+      await r.engine.trigger('manual');
+      const { result, client, unmount } = caseView();
+      await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+      const at = answeredAt(client);
+      const now = vi.spyOn(Date, 'now').mockReturnValue(at + TEN_MINUTES - 1);
+      try {
+        await flap(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+        now.mockReturnValue(at + TEN_MINUTES);
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    it('the wait after a recovery\'s sync ends at REACH_SETTLE_MS; a clock stepped back behind that sync ends it at once, never stretches it', async () => {
+      const { r, unmount } = await owing();
+      const t = Date.now();
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t);
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        // inside the wait: owed
+        now.mockReturnValue(t + 1);
+        await flap(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        // the wait just over: the recovery syncs, and a new wait starts
+        now.mockReturnValue(t + REACH_SETTLE_MS);
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+        await quiet();
+        // the clock steps back behind that sync: the next recovery syncs at once
+        now.mockReturnValue(t);
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(4));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    it('a sync owed while every engine pass fails after its probe (the server reached, its pulls refused) runs when the wait is over: no pass needed', async () => {
+      const { r, unmount } = await owing();
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        r.server.fault('delta', ...Array.from({ length: 50 }, () => ({ kind: 'throw' as const, error: new ConnectError('boom', Code.Internal) })));
+        const passed = r.engine.state.value.lastSyncedAt;
+        await flap(r);
+        expect(r.engine.state.value.lastError).not.toBeNull();
+        expect(r.engine.state.value.lastSyncedAt).toBe(passed);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(REACH_SETTLE_MS);
+        });
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+        expect(r.engine.state.value.lastSyncedAt).toBe(passed);
+      } finally {
+        vi.useRealTimers();
+      }
+      unmount();
+    });
+
+    it('a sync owed while every engine pass fails after its probe: the first pass begun once the wait is over, failing too, pays it', async () => {
+      const { r, unmount } = await owing();
+      const t = Date.now();
+      const now = vi.spyOn(Date, 'now').mockReturnValue(t);
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        r.server.fault('delta', ...Array.from({ length: 50 }, () => ({ kind: 'throw' as const, error: new ConnectError('boom', Code.Internal) })));
+        const passed = r.engine.state.value.lastSyncedAt;
+        now.mockReturnValue(t + 1);
+        await flap(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        // a pass begun a millisecond before the wait is over pays nothing; the first begun as it ends does
+        now.mockReturnValue(t + REACH_SETTLE_MS - 1);
+        r.clock.advance(60_000);
+        await act(() => r.engine.trigger('retry'));
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        now.mockReturnValue(t + REACH_SETTLE_MS);
+        r.clock.advance(60_000);
+        await act(() => r.engine.trigger('retry'));
+        expect(r.engine.state.value.reachability).toBe('reachable');
+        expect(r.engine.state.value.lastSyncedAt).toBe(passed);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    /** Tell the hook one engine field, in a render of its own (the engine tells reach at its probe, a pass's end later). */
+    const tell = async (r: Awaited<ReturnType<typeof localRig>>, patch: Record<string, unknown>) => {
+      await act(() => {
+        (r.engine as unknown as { set: (p: Record<string, unknown>) => void }).set(patch);
+      });
+      await settle();
+    };
+
+    it('a sync owed, paid by a render once the wait is over before its timer fires: the timer pays nothing more', async () => {
+      const { r, unmount } = await owing();
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        await flap(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        // the clock past the wait, no timer fired: a render (the engine telling an error) pays the owed sync
+        vi.setSystemTime(Date.now() + REACH_SETTLE_MS + 1000);
+        await tell(r, { lastError: 'x' });
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+        await quiet();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3 * REACH_SETTLE_MS);
+        });
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+      unmount();
+    });
+
+    it('the case view gone while a sync is owed: the wait running out asks nothing', async () => {
+      const { r, unmount } = await owing();
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        await flap(r);
+        await quiet();
+        unmount();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(REACH_SETTLE_MS);
+        });
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a sync owed is paid by the next sync in reach (the kept figures changed): no full sync is owed when the answer ages', async () => {
+      const { r, result, unmount } = await owing();
+      const t = Date.now();
+      await flap(r);
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+      await quiet();
+      await flap(r);
+      await quiet();
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+      r.clients.getProductImages.mockResolvedValue(bothLists());
+      await act(async () => {
+        await r.engine.write((store) => store.createCopy(headOf(2), 'owned'));
+      });
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+      await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+      vi.spyOn(Date, 'now').mockReturnValue(t + TEN_MINUTES + 60_000);
+      try {
+        await act(async () => {
+          await nextPass(r);
+        });
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.restoreAllMocks();
+      }
+      unmount();
+    });
+
+    it('the browser offline then online (a radio hand-over, the server reached throughout): the case keeps every kept picture', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockResolvedValue(bothLists());
+      await r.engine.trigger('manual');
+      const { sizes, result, unmount } = caseView();
+      await waitFor(() => expect(imagesComplete(result.current)).toBe(true));
+      const from = sizes.length;
+      try {
+        act(() => {
+          window.dispatchEvent(new Event('offline'));
+        });
+        await settle();
+      } finally {
+        act(() => {
+          window.dispatchEvent(new Event('online'));
+        });
+      }
+      await quiet();
+      expect(sizes.length).toBeGreaterThan(from);
+      expect(Math.min(...sizes.slice(from))).toBe(2);
+      unmount();
+    });
+
+    it('a sync owed and run at a pass is paid: a later pass over its answer, images left, fills them and reads no list', async () => {
+      const uninstall = installFakeLocks();
+      try {
+        const { r, client, view } = await leftAll(2, async () => new Response('', { status: 503 }));
+        const idle = () => waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+        await quiet();
+        const t = Date.now();
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await idle();
+        await flap(r);
+        await quiet();
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        const now = vi.spyOn(Date, 'now').mockReturnValue(t + REACH_SETTLE_MS + 1000);
+        try {
+          await nextPass(r);
+          await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+          await idle();
+          await quiet();
+          const filled = storage.added.length;
+          now.mockReturnValue(t + REACH_SETTLE_MS + 2 * 60_000);
+          await nextPass(r);
+          await waitFor(() => expect(storage.added.length).toBeGreaterThan(filled));
+          await idle();
+          await quiet();
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+        } finally {
+          vi.restoreAllMocks();
+        }
+        view.unmount();
+      } finally {
+        uninstall();
+      }
+    });
+
+    it('a sync owed that the wait could not pay (a fill completed the answer) is owed no more: ten minutes on, a render reads no list', async () => {
+      const uninstall = installFakeLocks();
+      try {
+        let serve = false;
+        const { r, client, view } = await leftAll(2, async () => (serve ? new Response('img') : new Response('', { status: 503 })));
+        const idle = () => waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+        await idle();
+        await quiet();
+        vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        try {
+          await flap(r);
+          await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+          await idle();
+          serve = true;
+          await flap(r);
+          await waitFor(() => expect(imagesComplete(view.result.current)).toBe(true));
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(REACH_SETTLE_MS);
+          });
+          await quiet();
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+          // ten minutes on, no reach: a render (the engine telling anything) syncs nothing
+          vi.setSystemTime(Date.now() + 11 * 60_000);
+          await tell(r, { lastError: 'x' });
+          await quiet();
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+        view.unmount();
+      } finally {
+        uninstall();
+      }
+    });
+
+    it('a run out of reach still reading the device\'s caches when the server is reached is stopped, and the server asked', async () => {
+      const r = await twoKept();
+      r.clients.getProductImages.mockResolvedValue(bothLists());
+      await lose(r);
+      const { result, client, unmount } = caseView();
+      await waitFor(() => expect(result.current.size).toBe(2));
+      await quiet();
+      // the device's caches answer slowly from here on, until released
+      const open = storage.open.bind(storage);
+      let release!: () => void;
+      const gate = new Promise<void>((res) => (release = res));
+      storage.open = async (name: string) => {
+        await gate;
+        return open(name);
+      };
+      // another document's sync drops this one's answers: the case view asks again, out of reach, and waits on the caches
+      await act(() => {
+        void client.invalidateQueries({ queryKey: ['local', 'kept-images'] });
+      });
+      await settle();
+      const fetching = () => client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' }).length;
+      expect(fetching()).toBe(1);
+      // the engine's pass waits on the caches too (released on a timer): the reach is told while that run still waits
+      const whenReached: number[] = [];
+      const stop = r.engine.state.subscribe((s) => {
+        if (s.reachability === 'reachable') whenReached.push(fetching());
+      });
+      setTimeout(release, 400);
+      try {
+        await reach(r);
+      } finally {
+        stop();
+      }
+      expect(whenReached[0]).toBe(1);
+      await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(1));
+      unmount();
+    });
+
+    it('signed out (nothing to answer): the server reached again asks nothing, not even the device\'s caches', async () => {
+      const r = await twoKept();
+      r.status.value = 'signed-out';
+      const { result, client, unmount } = caseView();
+      await flap(r);
+      await quiet();
+      expect(r.clients.getProductImages).not.toHaveBeenCalled();
+      expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'] }).map((q) => q.state.dataUpdatedAt)).toEqual([0]);
+      expect(result.current.size).toBe(0);
+      unmount();
+    });
+
+    it('a sync owed, the server lost again before the wait is over: the wait running out runs nothing; the next reach syncs', async () => {
+      const { r, client, unmount } = await owing();
+      vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      try {
+        await flap(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+        await quiet();
+        await flap(r);
+        await quiet();
+        await lose(r);
+        await quiet();
+        const answered = answeredAt(client);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(REACH_SETTLE_MS);
+        });
+        await quiet();
+        expect(answeredAt(client)).toBe(answered);
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        await reach(r);
+        await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(3));
+      } finally {
+        vi.useRealTimers();
+      }
+      unmount();
+    });
+
+    it('a sync owed whose answer a fill completed in the wait is owed no more: the wait running out reads no list', async () => {
+      const uninstall = installFakeLocks();
+      try {
+        let serve = false;
+        const { r, client, view } = await leftAll(2, async () => (serve ? new Response('img') : new Response('', { status: 503 })));
+        const idle = () => waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'fetching' })).toHaveLength(0));
+        await quiet();
+        vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        try {
+          await flap(r);
+          await waitFor(() => expect(r.clients.getProductImages).toHaveBeenCalledTimes(2));
+          await idle();
+          // the link serves again: the flap's pass fills what was left, inside the wait
+          serve = true;
+          await flap(r);
+          await waitFor(() => expect(imagesComplete(view.result.current)).toBe(true));
+          expect(view.result.current.size).toBe(2);
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(REACH_SETTLE_MS);
+          });
+          await quiet();
+          expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+        } finally {
+          vi.useRealTimers();
+        }
+        view.unmount();
+      } finally {
+        uninstall();
+      }
+    });
   });
 });

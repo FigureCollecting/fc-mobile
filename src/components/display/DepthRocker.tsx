@@ -3,7 +3,7 @@
  * speed and not a place: the finger's reach from where it went down, over DEPTH_FULL_PX, is r in [-1, 1] (+ closer),
  * the scene's depth drive (JogTarget's depth: depthStart, depthRate, depthStop). It starts once the reach leaves
  * DEPTH_DEAD, takes the reach at every move after (back inside the dead zone the drive moves nothing), and the lift, a
- * pointercancel or the drive's withdrawal springs it back to the centre and stops it. Vertical by default, rising above
+ * pointercancel, the capture lost or the drive's withdrawal springs it back to the centre and stops it. Vertical by default, rising above
  * the slot (up = closer); horizontal, a slider in the slot (toward the hat = closer). The press is the rocker's own
  * (pointer capture), so it drives with the hat's at once, each finger its own.
  */
@@ -85,6 +85,8 @@ export function DepthRocker({ depth, shape, toward }: DepthRockerProps) {
     },
     onPointerUp: end,
     onPointerCancel: end,
+    // the capture lost mid-push (the browser or a script released it): no lift will reach the rocker, so it springs back here
+    onLostPointerCapture: end,
   };
 
   // a chevron at each end, pointing out (up is closer; across, the end toward the hat is)

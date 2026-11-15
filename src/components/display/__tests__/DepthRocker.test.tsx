@@ -272,3 +272,72 @@ describe('the rocker and the hat held together (NAV-DEPTH-2: two fingers, two dr
     expect(t.stop).toHaveBeenCalledTimes(1);
   });
 });
+
+// chal1 S1/S2: the drive starts from rest either way, with the reach the finger has: a first push back is back, in both
+// shapes and with the sides swapped; the dead zone is 3.6 px (DEPTH_DEAD of 36) wide and full reach is 36 px, in figures.
+describe('the start from rest: either way, just past the dead zone', () => {
+  // (from 0, 0: the travel is the exact figure, with no rounding from a subtraction)
+  type Case = { shape: 'vertical' | 'horizontal'; order: readonly CaseTab[]; way: string; at: (px: number) => [number, number] };
+  const swapped = [...CASE_TABS].reverse();
+  const cases: Case[] = [
+    { shape: 'vertical', order: CASE_TABS, way: 'up (closer)', at: (px) => [0, -px] },
+    { shape: 'vertical', order: CASE_TABS, way: 'down (back)', at: (px) => [0, px] },
+    { shape: 'horizontal', order: CASE_TABS, way: 'right, toward the hat (closer)', at: (px) => [px, 0] },
+    { shape: 'horizontal', order: CASE_TABS, way: 'left, away from the hat (back)', at: (px) => [-px, 0] },
+    { shape: 'horizontal', order: swapped, way: 'sides swapped: left, toward the hat (closer)', at: (px) => [-px, 0] },
+    { shape: 'horizontal', order: swapped, way: 'sides swapped: right, away from the hat (back)', at: (px) => [px, 0] },
+  ];
+  for (const c of cases) {
+    const sign = c.way.includes('closer') ? 1 : -1;
+    it(`${c.shape}, ${c.way}: 3.6 px starts nothing, 4 px starts at r = ${sign > 0 ? '+' : '-'}4 / 36; 18 px is half reach, 36 px full`, () => {
+      tabs({ rocker: c.shape, order: c.order });
+      const d = drive();
+      offer(jogOf(d));
+      fireEvent.pointerDown(rocker()!, { pointerId: 1, clientX: 0, clientY: 0, button: 0 });
+      move(...c.at(3.6));
+      expect(d.start).not.toHaveBeenCalled();
+      move(...c.at(4));
+      expect(d.start).toHaveBeenCalledTimes(1);
+      expect(d.start.mock.calls[0][0]).toBeCloseTo((sign * 4) / 36, 9);
+      move(...c.at(18));
+      expect(d.rate.mock.calls.at(-1)![0]).toBeCloseTo(sign * 0.5, 9);
+      move(...c.at(36));
+      expect(d.rate).toHaveBeenLastCalledWith(sign);
+      up(...c.at(36));
+      expect(d.stop).toHaveBeenCalledTimes(1);
+    });
+  }
+});
+
+// chal1 NOTE-1 (ruled a fix for the rocker): the capture lost mid-push (the browser or a script releases it), no lift
+// will reach the rocker: it springs back and the drive stops there.
+describe('the capture lost mid-push', () => {
+  it('springs back and stops the drive, once; the lift that comes later stops nothing more', () => {
+    tabs();
+    const d = drive();
+    offer(jogOf(d));
+    down(100, 400);
+    move(100, 380);
+    expect(rocker()!.dataset.rocking).toBe('');
+    fireEvent.lostPointerCapture(rocker()!, { pointerId: 1 });
+    expect(d.stop).toHaveBeenCalledTimes(1);
+    expect(knob()).toBe('');
+    expect(rocker()!.hasAttribute('data-rocking')).toBe(false);
+    move(100, 360);
+    up(100, 360);
+    expect(d.rate).not.toHaveBeenCalled();
+    expect(d.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('another pointer\'s lost capture is not its own', () => {
+    tabs();
+    const d = drive();
+    offer(jogOf(d));
+    down(100, 400, 1);
+    move(100, 380, 1);
+    fireEvent.lostPointerCapture(rocker()!, { pointerId: 2 });
+    expect(d.stop).not.toHaveBeenCalled();
+    up(100, 380, 1);
+    expect(d.stop).toHaveBeenCalledTimes(1);
+  });
+});

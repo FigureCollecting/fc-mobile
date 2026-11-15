@@ -37,14 +37,14 @@ const hold = (page: Page, ms: number) =>
   );
 
 /** The case in Free camera (the default) at `size`; the prefs are seeded once a tab, so a reload keeps what the page saved. */
-async function openFree(page: Page, size: { width: number; height: number }) {
-  await page.addInitScript(() => {
+async function openFree(page: Page, size: { width: number; height: number }, shape: 'vertical' | 'horizontal' = 'vertical') {
+  await page.addInitScript((depthRocker) => {
     if (sessionStorage.getItem('seeded') === '1') return;
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0 }));
-  });
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0, depthRocker }));
+  }, shape);
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=40');
   await ready(page);
@@ -179,5 +179,57 @@ for (const panel of PANELS) {
     const c3 = await cameraOf(page);
     await settle(page, 500);
     expect(await cameraOf(page)).toEqual(c3);
+  });
+
+  // chal1 S1: the drive starts from rest the back way too (down, or away from the hat), from a pose close enough to back away
+  for (const shape of ['vertical', 'horizontal'] as const) {
+    test(`NAV-DEPTH-3 ${panel.name}, ${shape}: from rest the first push back backs away: z rises, x kept`, async ({ page }) => {
+      await openFree(page, panel, shape);
+      const at = await centreOf(page, '.depth-rocker');
+      const closer = shape === 'vertical' ? { x: at.x, y: at.y - DEPTH_FULL_PX } : { x: at.x + DEPTH_FULL_PX, y: at.y };
+      const back = shape === 'vertical' ? { x: at.x, y: at.y + DEPTH_FULL_PX } : { x: at.x - DEPTH_FULL_PX, y: at.y };
+      const f = await touchFingers(page);
+      await f.down(1, at.x, at.y);
+      await f.to(1, closer.x, closer.y, 6);
+      await hold(page, 500);
+      await f.up(1);
+      await settle(page);
+      const c0 = await cameraOf(page);
+      await f.down(2, at.x, at.y);
+      await f.to(2, back.x, back.y, 6);
+      await hold(page, 500);
+      await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'depth');
+      const c1 = await cameraOf(page);
+      expect(c1.z, 'back from rest: farther').toBeGreaterThan(c0.z + 20);
+      expect(c1.x).toBe(c0.x);
+      await f.up(2);
+    });
+  }
+
+  // chal1 NOTE-1 (ruled a fix): the capture released mid-push and the finger lifted off the rocker: no lift reaches it, so
+  // the lost capture springs it back and stops the drive
+  test(`NAV-DEPTH-3 ${panel.name}: the capture lost mid-push stops the drive; the lift elsewhere leaves nothing moving`, async ({ page }) => {
+    await openFree(page, panel);
+    await page.evaluate(() => {
+      const w = window as unknown as { __rockerPid?: number };
+      document.addEventListener('pointerdown', (e) => {
+        if ((e.target as Element).closest?.('.depth-rocker')) w.__rockerPid = e.pointerId;
+      }, true);
+    });
+    const at = await centreOf(page, '.depth-rocker');
+    const f = await touchFingers(page);
+    await f.down(1, at.x, at.y);
+    await f.to(1, at.x, at.y - DEPTH_FULL_PX, 6);
+    await hold(page, 200);
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'depth');
+    await page.evaluate(() => document.querySelector('.depth-rocker')!.releasePointerCapture((window as unknown as { __rockerPid: number }).__rockerPid));
+    await f.to(1, at.x + 200, at.y - 150, 6);
+    await f.up(1);
+    await settle(page, 200);
+    const a = await cameraOf(page);
+    await hold(page, 800);
+    expect(await cameraOf(page), 'nothing moving after the lift').toEqual(a);
+    expect(await page.locator('.cabinet-scene').getAttribute('data-gesture')).toBeNull();
+    expect(await rocker(page).getAttribute('data-rocking')).toBeNull();
   });
 }

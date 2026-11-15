@@ -27,6 +27,7 @@ describe('case prefs, kept per device (CC14)', () => {
       wallCustom: '#d8d2c4',
       freeCamera: true,
       arrange: 'series-scale-name',
+      depthRocker: 'vertical',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -44,6 +45,7 @@ describe('case prefs, kept per device (CC14)', () => {
       wallCustom: '#336699',
       freeCamera: false,
       arrange: 'scale-name',
+      depthRocker: 'horizontal',
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);

@@ -81,3 +81,39 @@ export async function touchDoubleTap(page: Page, x: number, y: number, gapMs = 8
   await page.waitForTimeout(gapMs);
   await touchTap(page, x, y);
 }
+
+/** Several fingers, each down, moved and lifted on its own while the others stay down (CDP keeps every finger's place). */
+export interface TouchFingers {
+  /** Put finger `id` down at (x, y). */
+  down(id: number, x: number, y: number): Promise<void>;
+  /** Move finger `id` to (x, y) in `steps` moves, `stepMs` apart; the others stay put. */
+  to(id: number, x: number, y: number, steps?: number, stepMs?: number): Promise<void>;
+  /** Lift finger `id`; the others stay down. */
+  up(id: number): Promise<void>;
+}
+
+export async function touchFingers(page: Page): Promise<TouchFingers> {
+  const session = await cdp(page);
+  const down = new Map<number, TouchPoint>();
+  const points = () => [...down].map(([id, p]) => ({ ...p, id }));
+  return {
+    async down(id, x, y) {
+      down.set(id, { x, y });
+      await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points() });
+    },
+    async to(id, x1, y1, steps = 8, stepMs = 16) {
+      const from = down.get(id)!;
+      for (let i = 1; i <= steps; i++) {
+        down.set(id, { x: from.x + ((x1 - from.x) * i) / steps, y: from.y + ((y1 - from.y) * i) / steps });
+        await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points() });
+        await page.waitForTimeout(stepMs);
+      }
+    },
+    async up(id) {
+      // Chromium lifts the fingers a touchEnd lists (a touchMove that leaves one out lifts nothing: measured 11-15)
+      const at = down.get(id)!;
+      down.delete(id);
+      await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [{ ...at, id }] });
+    },
+  };
+}

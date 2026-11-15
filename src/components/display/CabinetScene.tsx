@@ -101,7 +101,7 @@ import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, wheelZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
-import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose } from './casePose';
+import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose, type Pose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
 import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -1663,23 +1663,31 @@ export function CabinetScene({
   };
   // NAV-JOG (Ross 10-28): while a Free camera case is shown, the bottom-centre button is its jog (the side arrows retire):
   // a jog drops a magnification first, and its lift leaves the focus on the cabinet the frame centre shows, as a drag's
+  // NAV-DEPTH-3: its depth is the depth rocker's (useFreeCamera's depth drive), by the same rules: a magnification is
+  // dropped at its start, and the last of the two let go leaves the focus where the eye stands
   useEffect(() => {
     if (!free) return;
+    /** A drive let go: the pose the last one left (null: the other still moves the eye) sets the focus. */
+    const settle = (left: Pose | null) => {
+      if (left === null) return;
+      const s = freeScene.current!;
+      setFocus(centreCabinet(withPose(s.base, left), s.wall));
+      setFramedFocus(null);
+    };
+    /** A drive's start: refused, nothing; begun, a wheel's or pinch's magnification goes (NAV-DESKTOP-ZOOM: under 1x too). */
+    const begun = (ok: boolean) => {
+      if (ok && zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
+      return ok;
+    };
     return offerJog({
-      start: () => {
-        if (!fc.jogStart()) return false;
-        // NAV-DESKTOP-ZOOM: a wheel's zoom under 1x, not yet let go, is dropped too
-        if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-        return true;
-      },
+      start: () => begun(fc.jogStart()),
       aim: fc.jogAim,
       max: jogMax(),
-      stop: () => {
-        const left = fc.jogStop();
-        if (left === null) return;
-        const s = freeScene.current!;
-        setFocus(centreCabinet(withPose(s.base, left), s.wall));
-        setFramedFocus(null);
+      stop: () => settle(fc.jogStop()),
+      depth: {
+        start: (r) => begun(fc.depthStart(r)),
+        rate: fc.depthRate,
+        stop: () => settle(fc.depthStop()),
       },
     });
   }, [free]);

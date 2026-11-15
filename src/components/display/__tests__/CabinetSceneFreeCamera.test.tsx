@@ -13,6 +13,7 @@ import { wallLayout } from '../packCabinets';
 import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
 import { frameMargins, project } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT } from '../caseCull';
+import { DEPTH_DEAD } from '../caseDepth';
 
 // NAV-1A, the Free camera, in the scene: MOVE and LOOK from one finger, the hold that arms Look without swallowing
 // a tap, the realism cone and its ease back, the pose held across a fold, the arrows and Reset from the frame-centre
@@ -1449,6 +1450,119 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
       window.history.replaceState(null, '', `/${query}`);
       expect(topSpeed(), query || 'no knob').toEqual({ speed: x * JOG_FRAMES_PER_S, max: x });
     }
+  });
+});
+
+// NAV-DEPTH-3: the jog the scene offers carries the depth rocker's drive (useFreeCamera's depthStart / depthRate /
+// depthStop): forward the eye nears the wall along its level heading, back it leaves it, with the hat or alone; the
+// last drive let go moves the focus to the cabinet the eye stands at, as the jog's lift does.
+describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth moves the eye toward and away from the wall', () => {
+  const jog = () => useJogStore.getState().target!;
+  const depth = () => jog().depth!;
+  const frames = (n: number) => {
+    for (let i = 0; i < n; i++) tick(16);
+  };
+  const press = (r: number) => {
+    let ok = false;
+    act(() => {
+      ok = depth().start(r);
+    });
+    frames(1);
+    return ok;
+  };
+  const lift = () => act(() => depth().stop());
+
+  beforeEach(() => useJogStore.setState({ target: null }));
+
+  it('offered with the jog in Free camera; off, none', () => {
+    const { again } = scene();
+    expect(typeof depth().start).toBe('function');
+    again({ freeCamera: false });
+    expect(useJogStore.getState().target).toBeNull();
+  });
+
+  it('forward (r > 0): z falls every frame, x, y, yaw and pitch kept; back (r < 0) z rises; the stop holds where it got to', () => {
+    scene();
+    const before = pose();
+    expect(press(1)).toBe(true);
+    expect(host().dataset.gesture).toBe('depth');
+    frames(20);
+    const near = pose();
+    expect(near.z).toBeLessThan(before.z);
+    expect([near.x, near.y, near.yaw, near.pitch]).toEqual([before.x, before.y, before.yaw, before.pitch]);
+    act(() => depth().rate(-1));
+    frames(20);
+    expect(pose().z).toBeGreaterThan(near.z);
+    expect(pose().x).toBe(before.x);
+    const running = pose();
+    lift();
+    expect(pose()).toEqual(running);
+    expect(host().dataset.gesture).toBeUndefined();
+    frames(20);
+    expect(pose()).toEqual(running);
+  });
+
+  it('inside the dead zone the drive runs and moves nothing', () => {
+    scene();
+    const before = pose();
+    press(DEPTH_DEAD);
+    frames(20);
+    expect(pose()).toEqual(before);
+    lift();
+  });
+
+  it('refused while a finger is on the scene', () => {
+    scene();
+    down(1, { x: 200, y: 200 });
+    expect(press(1)).toBe(false);
+    up(1, { x: 200, y: 200 });
+  });
+
+  it('zoomed, the depth\'s start drops the magnification and moves the eye', () => {
+    scene();
+    fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY: -300, deltaMode: 0 });
+    expect(JSON.parse(host().dataset.zoom!).k).toBeGreaterThan(1);
+    const before = pose();
+    press(1);
+    expect(JSON.parse(host().dataset.zoom!).k).toBe(1);
+    frames(10);
+    lift();
+    expect(pose().z).toBeLessThan(before.z);
+  });
+
+  it('held with the hat: x and z both move; the hat\'s lift leaves the depth running; its stop, the last, moves the focus to the cabinet the eye stands at', () => {
+    scene({ view: 'cabinet' });
+    expect(host().dataset.focus).toBe('0');
+    const before = pose();
+    act(() => {
+      jog().start();
+      jog().aim(JOG_FULL_PX, 0);
+    });
+    press(0.5);
+    frames(3000);
+    const both = pose();
+    expect(both.x).toBeGreaterThan(before.x);
+    expect(both.z).not.toBe(before.z);
+    act(() => jog().stop());
+    expect(host().dataset.gesture).toBe('depth');
+    // the hat's lift was not the last: the focus waits
+    expect(host().dataset.focus).toBe('0');
+    lift();
+    frames(1);
+    const boxes = JSON.parse(host().dataset.wall!) as number[][];
+    const x = cam().x;
+    const nearest = boxes.map((b, i) => [Math.max(0, b[0] - x, x - b[1]), i]).sort((a, b) => a[0] - b[0])[0][1];
+    expect(Number(host().dataset.focus)).toBeGreaterThan(0);
+    expect(Number(host().dataset.focus)).toBe(nearest);
+  });
+
+  it('a stop with no depth drive running (after the hat alone) changes nothing', () => {
+    scene({ view: 'cabinet' });
+    const before = pose();
+    lift();
+    frames(2);
+    expect(pose()).toEqual(before);
+    expect(host().dataset.focus).toBe('0');
   });
 });
 

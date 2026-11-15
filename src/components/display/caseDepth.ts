@@ -13,6 +13,11 @@ import { EYE_MARGIN_MM, JOG_MAX_STEP_MS, slideEye, type Pose } from './casePose'
 
 /** A rocker this far off centre (of 1) or less moves nothing: a resting thumb's wobble. */
 export const DEPTH_DEAD = 0.1;
+/**
+ * NAV-DEPTH-3: how far (CSS px) the finger goes from where it went down on the depth rocker for full reach (r = 1); its
+ * dead zone is DEPTH_DEAD of it.
+ */
+export const DEPTH_FULL_PX = 36;
 /** At full reach the eye moves this many times the distance it is given a second: an ease in toward what it nears. */
 export const DEPTH_RATE_PER_S = 1.5;
 /**

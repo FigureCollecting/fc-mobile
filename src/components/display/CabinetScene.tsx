@@ -789,7 +789,8 @@ function SceneFigure({
         data-size-estimated={sizeEstimated(item)}
         // FIT1: the photo is over 15 % off the listed width: 'wider:23', 'narrower:18'
         data-photo-fit={item.photoFit ? `${item.photoFit.dir}:${item.photoFit.pct}` : undefined}
-        data-grounded={grounded ? '1' : '0'}        data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
+        data-grounded={grounded ? '1' : '0'}
+        data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
         data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
         data-depth={JSON.stringify({ front: num(placed.base.frontMm), back: num(placed.base.backMm), slotFront: num(slot.frontZMm), slotBack: num(slotBack) })}
         onClick={onSelect}

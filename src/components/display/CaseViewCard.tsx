@@ -24,6 +24,9 @@ import { IN_MM } from './caseCamera';
 import { ARRANGEMENT_LABEL, CASE_ARRANGEMENTS } from './caseArrangement';
 import { WALL_PATTERNS, type CasePrefs } from './casePrefs';
 import { WALL_PRESETS, swatchStyle } from './wallColour';
+import { FIGURE_TURNS, type FigureTurn } from './figureTurn';
+
+const FIGURE_TURN_LABEL: Readonly<Record<FigureTurn, string>> = { off: 'Off', subtle: 'Subtle', strong: 'Strong' };
 
 interface CaseViewCardProps {
   open: boolean;
@@ -159,6 +162,17 @@ export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, 
             </label>
           </fieldset>
         )}
+
+        {/* NAV-FLAT (Ross 11-15): how far each figure turns toward where you stand, so a cut-out seen from the side still reads as a figure */}
+        <fieldset class="case-card__group">
+          <legend>Turn figures toward you</legend>
+          {FIGURE_TURNS.map((turn) => (
+            <label key={turn} class="case-card__choice">
+              <input type="radio" name="case-figure-turn" checked={prefs.figureTurn === turn} onChange={() => onChange({ figureTurn: turn })} />
+              {FIGURE_TURN_LABEL[turn]}
+            </label>
+          ))}
+        </fieldset>
 
         {misfitCount > 0 && onShowMisfits !== undefined && (
           <button type="button" class="case-card__misfits" onClick={onShowMisfits}>

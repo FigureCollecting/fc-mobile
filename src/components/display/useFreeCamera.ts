@@ -42,6 +42,8 @@ export interface FreeScene {
   readonly reducedMotion: boolean;
   /** What a look's projected scene is worked out from (NAV-1A b): a look stops where it would pass the ceiling. */
   readonly budget: BudgetScene;
+  /** NAV-FLAT: turns the drawn figures toward the eye of the camera written (figureTurn.ts applyTurns): no layout read. */
+  readonly turnFigures?: (camera: Camera) => void;
 }
 
 /** The DOM the writer writes to. */
@@ -262,11 +264,15 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     return held.current;
   };
 
-  /** Write the camera to the DOM: the root's transform, data-camera, the dimming veils; ask for a render when the cull must change. */
+  /**
+   * Write the camera to the DOM: the root's transform, the figures' turns (NAV-FLAT), data-camera, the dimming veils; ask
+   * for a render when the cull must change.
+   */
   const write = (camera: Camera) => {
     const { host, root } = dom;
     if (!host.current || !root.current) return;
     root.current.style.transform = cssSceneTransform(camera, scene.current.s, scene.current.reach);
+    scene.current.turnFigures?.(camera);
     host.current.dataset.camera = cameraData(camera);
     host.current.dataset.cameraX = String(num(camera.x));
     const slot = scene.current.dimmed;

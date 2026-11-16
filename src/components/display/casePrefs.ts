@@ -14,6 +14,7 @@ import type { CabinetProfile } from './cabinetProfile';
 import { CABINET_PRESETS, DEFAULT_CABINET_PROFILE, IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from './cabinetPresets';
 import { DEFAULT_CASE_ARRANGEMENT, isCaseArrangement, type CaseArrangement } from './caseArrangement';
 import { DEFAULT_WALL, DEFAULT_WALL_CUSTOM, isHexColour, isWallPreset, type WallPreset } from './wallColour';
+import { DEFAULT_FIGURE_TURN, FIGURE_TURNS, type FigureTurn } from './figureTurn';
 
 export const CASE_PREFS_KEY = 'fc-case-prefs';
 
@@ -80,6 +81,8 @@ export interface CasePrefs {
   readonly arrange: CaseArrangement;
   /** NAV-ROCKER: the depth rocker's shape, per device; only a stored 'horizontal' is the slider. */
   readonly depthRocker: DepthRockerShape;
+  /** NAV-FLAT (Ross 11-15): how far each figure turns toward where the eye stands (figureTurn.ts); subtle unless another is stored. */
+  readonly figureTurn: FigureTurn;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -95,6 +98,7 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   freeCamera: true,
   arrange: DEFAULT_CASE_ARRANGEMENT,
   depthRocker: 'vertical',
+  figureTurn: DEFAULT_FIGURE_TURN,
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -140,6 +144,7 @@ export function readCasePrefs(): CasePrefs {
     freeCamera: stored.freeCamera !== false,
     arrange: isCaseArrangement(stored.arrange) ? stored.arrange : d.arrange,
     depthRocker: stored.depthRocker === 'horizontal' ? 'horizontal' : d.depthRocker,
+    figureTurn: FIGURE_TURNS.includes(stored.figureTurn as FigureTurn) ? (stored.figureTurn as FigureTurn) : d.figureTurn,
   };
 }
 

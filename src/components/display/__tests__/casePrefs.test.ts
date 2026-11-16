@@ -28,6 +28,7 @@ describe('case prefs, kept per device (CC14)', () => {
       freeCamera: true,
       arrange: 'series-scale-name',
       depthRocker: 'vertical',
+      figureTurn: 'subtle',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -46,6 +47,7 @@ describe('case prefs, kept per device (CC14)', () => {
       freeCamera: false,
       arrange: 'scale-name',
       depthRocker: 'horizontal',
+      figureTurn: 'strong',
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);

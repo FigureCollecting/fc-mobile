@@ -25,7 +25,7 @@
  */
 import { createContext } from 'preact';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ComponentChildren, JSX } from 'preact';
+import type { ComponentChildren, JSX, Ref } from 'preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { Style } from '../../styles/Style';
 import { getDisplayMeta } from './displayMeta';
@@ -103,6 +103,7 @@ import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, wheelZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose, type Pose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
+import { FIGURE_TURN_K, applyTurns, figureYaw, turnKey, turnLimits, turnStyle, writeTurn, type TurnTarget } from './figureTurn';
 import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -205,7 +206,7 @@ const times = (u: V3, k: number): V3 => [u[0] * k, u[1] * k, u[2] * k];
  * A face, cut to the part that draws in the frame and its margin (nothing when none does); a cut face's
  * background is laid on the whole face, its element a window onto it, so a gradient stays where it was.
  */
-function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid }) {
+function Quad({ a, u, v, cls, style, grid, elRef }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid; elRef?: Ref<HTMLDivElement> }) {
   // every face is drawn inside the scene, which provides what it draws
   const draw = useContext(DrawContext)!;
   const { s } = draw;
@@ -222,7 +223,7 @@ function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string;
     const [pu, pv] = [parseFloat(q.width) / ds, parseFloat(q.height) / dt];
     window = { backgroundSize: `${fmt(pu)}px ${fmt(pv)}px`, backgroundPosition: `${fmt(-cut.s0 * pu)}px ${fmt(-cut.t0 * pv)}px` };
   }
-  return <div class={`q ${cls}`} style={{ ...q, ...window, ...style }} />;
+  return <div ref={elRef} class={`q ${cls}`} style={{ ...q, ...window, ...style }} />;
 }
 
 interface BoxProps {
@@ -551,6 +552,33 @@ interface FigureDraw {
   readonly slot: SurfaceSlot;
   /** World x of the footprint's centre. */
   readonly cx: number;
+  /** World x of the surface's usable left edge (its usable width runs right from it): the inner side a turn keeps within. */
+  readonly left: number;
+}
+
+/** NAV-FLAT: what every drawn figure is turned by this render: where the eye stands, k, and the frame writer's targets. */
+interface Turning {
+  readonly eye: { readonly x: number; readonly z: number };
+  readonly k: number;
+  /** By figure id: each drawn figure's shadow and picture, its pivot and limits, kept by the figure as it renders. */
+  readonly targets: Map<string, TurnTarget>;
+}
+
+/**
+ * NAV-FLAT: a figure's turn, worked out as it renders: its pivot (the centre of its picture's plane, at its base's
+ * front), its limits (its footprint and picture kept on its surface: inside its usable width, in front of its inner
+ * back, behind its front edge) and the style for the eye drawn now.
+ */
+function figureTurnOf(draw: FigureDraw, g: ReturnType<typeof figureGeometry>, turning: Turning, s: number) {
+  const { placed, slot, cx, left } = draw;
+  const artLeft = g.artCx - g.boxW / 2 + g.clear.left * g.boxW - cx;
+  const artRight = g.artCx + g.boxW / 2 - g.clear.right * g.boxW - cx;
+  const pivot = { x: cx, z: placed.zMm };
+  const limits = turnLimits(
+    { ...pivot, widthMm: placed.item.widthMm, depthMm: placed.item.depthMm, artLeftMm: artLeft, artRightMm: artRight },
+    { x0: left, x1: left + slot.widthMm, zBack: slot.frontZMm - slot.depthMm, zFront: slot.frontZMm },
+  );
+  return { ...pivot, limits, style: turnStyle(figureYaw(turning.eye, pivot, turning.k, limits), pivot.x, pivot.z, s) };
 }
 
 /**
@@ -690,6 +718,7 @@ function SceneFigure({
   margins,
   scale,
   plate,
+  turning,
   onSelect,
   onBroken,
 }: {
@@ -702,6 +731,8 @@ function SceneFigure({
   scale: number;
   /** Its name plate, when labels are on and the plate draws into the frame and its margin (SHOULD 29); else none. */
   plate: { a: Vec3; u: Vec3; v: Vec3 } | null;
+  /** NAV-FLAT: what turns it toward the eye (its name plate stays square on its lip). */
+  turning: Turning;
   onSelect: () => void;
   onBroken: (url: string) => void;
 }) {
@@ -709,7 +740,23 @@ function SceneFigure({
   const { item } = placed;
   const { s } = useContext(DrawContext)!;
   const band = useContactBand(art.contactBand ? undefined : art.alphaUrl);
-  const { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0, clear } = figureGeometry(draw, art, aspect, margins);
+  const g = figureGeometry(draw, art, aspect, margins);
+  const { grounded, drawnKind, boxW, boxH, artCx, yBottom, tapW, tapX0, clear } = g;
+  // NAV-FLAT: its picture and its shadow turn together, as rotate and translate after their own transforms (none at 0)
+  const turn = figureTurnOf(draw, g, turning, s);
+  const turned = turn.style ? { rotate: turn.style.rotate, translate: turn.style.translate } : undefined;
+  const shadowRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const id = item.figure._id;
+  useLayoutEffect(() => {
+    const parts = [shadowRef.current, buttonRef.current].filter((el): el is HTMLDivElement | HTMLButtonElement => el !== null);
+    // the DOM as this render draws it: a frame's write since the last render may have left a turn Preact sees no change in
+    for (const el of parts) if (el.style.rotate !== (turned?.rotate ?? '') || el.style.translate !== (turned?.translate ?? '')) writeTurn(el, turn.style);
+    turning.targets.set(id, { x: turn.x, z: turn.z, limits: turn.limits, parts, shown: turnKey(turn.style) });
+    return () => {
+      turning.targets.delete(id);
+    };
+  });
   const z = placed.zMm;
   const k = scale;
   const q = quadStyle([tapX0, slot.topMm + placed.heightMm, z], [tapW, 0, 0], [0, -placed.heightMm, 0], { u: tapW * k, v: placed.heightMm * k }, s);
@@ -728,11 +775,12 @@ function SceneFigure({
     JSON.stringify({ x0: num(x0), x1: num(x1), y0: num(y0), y1: num(y1), z: num(z), surface: slot.topMm });
   return (
     <>
-      <Quad grid={GRADIENT_GRID} cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, shadowZ]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} />
+      <Quad elRef={shadowRef} grid={GRADIENT_GRID} cls="cab-shadow" a={[shadowX - shadowW / 2, slot.topMm + 0.6, shadowZ]} u={[shadowW, 0, 0]} v={[0, 0, shadowD]} style={turned} />
       <button
+        ref={buttonRef}
         type="button"
         class={`q cab-figure ${placed.tooDeep ? 'cab-figure--overhang' : ''}`}
-        style={q ? { ...q, '--s': String(k) } : undefined}
+        style={q ? { ...q, '--s': String(k), ...turned } : undefined}
         aria-label={item.figure.name}
         data-art={art.kind}
         data-figure-id={item.figure._id}
@@ -741,8 +789,7 @@ function SceneFigure({
         data-size-estimated={sizeEstimated(item)}
         // FIT1: the photo is over 15 % off the listed width: 'wider:23', 'narrower:18'
         data-photo-fit={item.photoFit ? `${item.photoFit.dir}:${item.photoFit.pct}` : undefined}
-        data-grounded={grounded ? '1' : '0'}
-        data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
+        data-grounded={grounded ? '1' : '0'}        data-world={box(tapX0, tapX0 + tapW, slot.topMm, slot.topMm + placed.heightMm)}
         data-art-box={box(artCx - boxW / 2, artCx + boxW / 2, yBottom, yBottom + boxH)}
         data-depth={JSON.stringify({ front: num(placed.base.frontMm), back: num(placed.base.backMm), slotFront: num(slot.frontZMm), slotBack: num(slotBack) })}
         onClick={onSelect}
@@ -1717,6 +1764,11 @@ export function CabinetScene({
   }, []);
 
   // --- figures
+  // NAV-FLAT (Ross 11-15): each drawn figure turned part of the way toward where the eye stands, at the View card's k:
+  // drawn so at each render, and by the Free camera's writer frame by frame in between (turnFigures)
+  const turnTargets = useRef(new Map<string, TurnTarget>());
+  const turnK = FIGURE_TURN_K[prefs.figureTurn];
+  const turning: Turning = { eye: { x: camera.x, z: camera.z }, k: turnK, targets: turnTargets.current };
   const draws: { draw: FigureDraw; cab: number }[] = [];
   cabinets.forEach((cab, ci) => {
     if (!cab) return;
@@ -1724,7 +1776,7 @@ export function CabinetScene({
     for (const surf of cab.surfaces) {
       const left = ws.centerMm - surf.slot.widthMm / 2;
       for (const placed of surf.items) {
-        draws.push({ cab: ci, draw: { placed, slot: surf.slot, cx: left + placed.xMm + placed.item.widthMm / 2 } });
+        draws.push({ cab: ci, draw: { placed, slot: surf.slot, cx: left + placed.xMm + placed.item.widthMm / 2, left } });
       }
     }
   });
@@ -1841,6 +1893,7 @@ export function CabinetScene({
     lookHoldMs: lookHoldMs(),
     jogMax: jogMax(),
     reducedMotion: prefersReducedMotion(),
+    turnFigures: (at) => applyTurns(turnTargets.current.values(), at, turnK, s),
     // NAV-1A (b): what a look projects the scene's cost from: the figures as this render draws them, listed only when asked
     budget: {
       span,
@@ -1972,6 +2025,7 @@ export function CabinetScene({
                       margins={margins}
                       scale={scales[n]}
                       plate={plates[n]}
+                      turning={turning}
                       onSelect={() => onSelect(figure, index)}
                       onBroken={images.failed}
                     />

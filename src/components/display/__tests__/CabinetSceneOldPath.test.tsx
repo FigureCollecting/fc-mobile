@@ -36,10 +36,15 @@ function pinch(el: Element) {
 // NAV-DEPTH-OCCL (Ross 11-15): the root's transform gained a scale about the eye that moves only the CSS z = 0 plane, past
 // the room (the picture unchanged), in every view: the hash is taken with it lifted out, once it is seen there.
 const PLANE_SCALE = / scale3d\(([^,)]+), \1, \1\)/;
-function hash(el: Element): string {
+// NAV-FLAT (Ross 11-15): the figures (their pictures and shadows) turn toward the eye by CSS rotate and translate, after
+// their own transforms: with the setting off the DOM is today's to the byte; on, it is today's once those two are lifted out.
+const TURN = / ?(rotate: y -?[\d.e-]+deg|translate: -?[\d.e-]+px 0px -?[\d.e-]+px);/g;
+function hash(el: Element, unturned = false): string {
   const root = el.querySelector<HTMLElement>('.cabinet-scene__root')!;
   expect(root.style.transform).toMatch(PLANE_SCALE);
-  return createHash('sha256').update(el.outerHTML.replace(PLANE_SCALE, '')).digest('hex').slice(0, 16);
+  let html = el.outerHTML.replace(PLANE_SCALE, '');
+  if (unturned) html = html.replace(TURN, '');
+  return createHash('sha256').update(html).digest('hex').slice(0, 16);
 }
 
 beforeEach(() => {
@@ -51,7 +56,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function script(patch: Partial<CasePrefs>): string[] {
+/** The script's hashes; `seen` hears how many figures each step draws turned. */
+function script(patch: Partial<CasePrefs>, unturned = false, seen?: (turned: number) => void): string[] {
   const figures = getFixtureFigures(40);
   const prefs = (p: Partial<CasePrefs>): CasePrefs => ({ ...LEGACY_PREFS, ...patch, ...p });
   const props = { figures, onSelect: vi.fn(), frameFallback: FRAME };
@@ -62,7 +68,8 @@ function script(patch: Partial<CasePrefs>): string[] {
     act(() => {
       vi.advanceTimersByTime(1000);
     });
-    out.push(hash(host()));
+    seen?.(host().querySelectorAll('button.cab-figure[style*="rotate:"]').length);
+    out.push(hash(host(), unturned));
   };
   const button = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
   snap();
@@ -113,13 +120,23 @@ const GOLDEN: string[] = ["2888a7a00b0df2eb","d58102745749a335","f39c54394a517da
 const SCRIPT_MS = 20_000;
 
 describe('the old path, Free camera off: the scene\'s DOM is today\'s at every step', () => {
-  it('prefs with no freeCamera', () => {
-    const got = script({ freeCamera: undefined });
+  it('prefs with no freeCamera (figures not turned)', () => {
+    const got = script({ freeCamera: undefined, figureTurn: 'off' });
     if (process.env.PRINT_GOLDEN) console.log(JSON.stringify(got));
     expect(got).toEqual(GOLDEN);
   }, SCRIPT_MS);
 
-  it('prefs with freeCamera: false', () => {
-    expect(script({ freeCamera: false })).toEqual(GOLDEN);
+  it('prefs with freeCamera: false (figures not turned)', () => {
+    expect(script({ freeCamera: false, figureTurn: 'off' })).toEqual(GOLDEN);
   }, SCRIPT_MS);
+
+  it('NAV-FLAT: the figures turned (subtle, the default) change nothing else: with their rotate and translate lifted out, today\'s at every step', () => {
+    const turned: number[] = [];
+    expect(script({ freeCamera: false }, true, (n) => turned.push(n))).toEqual(GOLDEN);
+    // and turned they were, at every step
+    expect(turned).toHaveLength(GOLDEN.length);
+    expect(Math.min(...turned)).toBeGreaterThan(0);
+    cleanup();
+    expect(script({ freeCamera: false })).not.toEqual(GOLDEN);
+  }, 2 * SCRIPT_MS);
 });

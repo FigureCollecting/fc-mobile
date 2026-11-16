@@ -159,9 +159,10 @@ describe('framing (G4, CC8 / CC15)', () => {
 });
 
 describe('cssSceneTransform', () => {
-  it('puts the camera at the perspective eye: translate to the frame centre, tilt, then move the world', () => {
+  it('puts the camera at the perspective eye: translate to the frame centre, tilt, scale about the eye, then move the world', () => {
     const cam: Camera = { x: 100, y: 1339.53, z: 1647.7, pitch: (12.8 * Math.PI) / 180, focalPx: 337.2, frame: COVER };
-    const t = cssSceneTransform(cam, 0.5);
-    expect(t).toBe('translate3d(221.5px, 227px, 337.2px) rotateX(-12.8000deg) translate3d(-50.000px, 669.765px, -823.850px)');
+    // NAV-DEPTH-OCCL: the Detolf's farthest corner (back, floor) is 2,264 mm deep; 1/8 puts the CSS z = 0 plane 5,395 mm out
+    const t = cssSceneTransform(cam, 0.5, DETOLF_BOX);
+    expect(t).toBe('translate3d(221.5px, 227px, 337.2px) rotateX(-12.8000deg) scale3d(0.125, 0.125, 0.125) translate3d(-50.000px, 669.765px, -823.850px)');
   });
 });

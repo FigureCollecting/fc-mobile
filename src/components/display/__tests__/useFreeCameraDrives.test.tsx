@@ -68,7 +68,7 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
       before = writes.mock.calls.length;
     });
     const p1 = both.pose();
-    expect(both.dom.rootEl.style.transform).toBe(camera.cssSceneTransform(withPose(both.ref.current.base, p1), both.ref.current.s));
+    expect(both.dom.rootEl.style.transform).toBe(camera.cssSceneTransform(withPose(both.ref.current.base, p1), both.ref.current.s, both.ref.current.reach));
     expect(p1.x).toBeGreaterThan(p0.x + 100);
     expect(p1.z).toBeLessThan(p0.z - 100);
     expect([p1.yaw, p1.pitch]).toEqual([p0.yaw, p0.pitch]);

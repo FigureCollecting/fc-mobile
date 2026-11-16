@@ -32,6 +32,8 @@ export interface FreeScene {
   readonly boxes: readonly Box[];
   readonly space: Box;
   readonly zBack: number;
+  /** NAV-DEPTH-OCCL: the room's corners (everything drawn stands among them): the root's transform puts the CSS z = 0 plane past them. */
+  readonly reach: readonly Vec3[];
   /** The one-cabinet view's focus cabinet, whose neighbours are dimmed; null in the other views. */
   readonly dimmed: WallSlot | null;
   readonly lookHoldMs: number;
@@ -264,7 +266,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const write = (camera: Camera) => {
     const { host, root } = dom;
     if (!host.current || !root.current) return;
-    root.current.style.transform = cssSceneTransform(camera, scene.current.s);
+    root.current.style.transform = cssSceneTransform(camera, scene.current.s, scene.current.reach);
     host.current.dataset.camera = cameraData(camera);
     host.current.dataset.cameraX = String(num(camera.x));
     const slot = scene.current.dimmed;

@@ -5,7 +5,7 @@
  */
 import { vi } from 'vitest';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
-import type { Frame, Vec3 } from '../caseCamera';
+import { boxCorners, type Frame, type Vec3 } from '../caseCamera';
 import { cabinetBox, frameCase, frontsOf, roomBox } from '../caseFraming';
 import { opaqueBoards, texelScale } from '../caseCull';
 import { eyeSpace } from '../casePose';
@@ -85,6 +85,7 @@ export function freeSceneOf(opts: SceneOpts = {}): FreeScene {
     boxes: wall.cabinets.map((slot, i) => cabinetBox(slot, headroom[i])),
     space: eyeSpace(room, CEILING_MM),
     zBack: room.zBack,
+    reach: boxCorners(room.x0, room.x1, 0, room.y1, room.zBack, room.zFront),
     dimmed: null,
     lookHoldMs: 500,
     jogMax: 2,

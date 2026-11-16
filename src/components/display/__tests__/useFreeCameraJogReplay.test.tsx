@@ -96,6 +96,19 @@ const WALL_END_ROUTE: readonly Step[] = [
   ['stop'],
 ];
 
+/**
+ * NAV-DEPTH-OCCL: every transform now carries the scale about the eye that puts the CSS z = 0 plane past the room (a
+ * whole power of two, the same three times); the replay checks it is there and compares the rest with the recording.
+ */
+const PLANE_SCALE = / scale3d\(([^,)]+), \1, \1\)/;
+function unscaled(transform: string): string {
+  if (transform === '') return transform;
+  const m = PLANE_SCALE.exec(transform);
+  expect(m, transform).not.toBeNull();
+  expect(Number.isInteger(Math.log2(Number(m![1]))), transform).toBe(true);
+  return transform.replace(PLANE_SCALE, '');
+}
+
 /** Drive the hat along `route` and record every frame's writes: the transform, data-camera, gesture and renders asked. */
 function replay(scene: FreeScene, route: readonly Step[], from?: Partial<Pose>) {
   const frames = handFrames();
@@ -106,7 +119,7 @@ function replay(scene: FreeScene, route: readonly Step[], from?: Partial<Pose>) 
   if (from !== undefined) result.current.hold({ ...poseOf(scene.base), ...from });
   const out: Row[] = [];
   const snap = (what: string) =>
-    out.push([what, dom.rootEl.style.transform, dom.hostEl.dataset.camera ?? null, dom.hostEl.dataset.gesture ?? null, renders, result.current.live()]);
+    out.push([what, unscaled(dom.rootEl.style.transform), dom.hostEl.dataset.camera ?? null, dom.hostEl.dataset.gesture ?? null, renders, result.current.live()]);
   for (const step of route) {
     if (step[0] === 'start') {
       let ok = false;

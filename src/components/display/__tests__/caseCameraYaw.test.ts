@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { castRay, cssSceneTransform, lensFocalPx, lookToward, pitchToward, project, rayHitPlane, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
+import { boxCorners, castRay, cssSceneTransform, lensFocalPx, lookToward, pitchToward, project, rayHitPlane, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
 
 // NAV-1A (Free camera): the camera gains a yaw (rulings R0.1, spec 1.2). With the yaw 0 or absent every output must be
 // today's to the bit, which is what keeps the 28 Classic baselines and every string-matching test untouched.
@@ -79,12 +79,13 @@ describe('yaw 0 or absent: project and unprojectToPlaneZ are today\'s to the bit
     );
   });
 
-  it('cssSceneTransform writes no rotateY at yaw 0 or absent: the string is today\'s', () => {
+  it('cssSceneTransform writes no rotateY at yaw 0 or absent: the string is today\'s (with NAV-DEPTH-OCCL\'s plane scale)', () => {
     const cam: Camera = { x: 100, y: 1339.53, z: 1647.7, pitch: 12.8 * DEG, focalPx: 337.2, frame: { width: 443, height: 454 } };
-    const today = 'translate3d(221.5px, 227px, 337.2px) rotateX(-12.8000deg) translate3d(-50.000px, 669.765px, -823.850px)';
-    expect(cssSceneTransform(cam, 0.5)).toBe(today);
-    expect(cssSceneTransform({ ...cam, yaw: 0 }, 0.5)).toBe(today);
-    expect(cssSceneTransform({ ...cam, yaw: -0 }, 0.5)).toBe(today);
+    const detolf = boxCorners(-215, 215, 0, 1930, -370, 0);
+    const today = 'translate3d(221.5px, 227px, 337.2px) rotateX(-12.8000deg) scale3d(0.125, 0.125, 0.125) translate3d(-50.000px, 669.765px, -823.850px)';
+    expect(cssSceneTransform(cam, 0.5, detolf)).toBe(today);
+    expect(cssSceneTransform({ ...cam, yaw: 0 }, 0.5, detolf)).toBe(today);
+    expect(cssSceneTransform({ ...cam, yaw: -0 }, 0.5, detolf)).toBe(today);
   });
 });
 
@@ -203,6 +204,7 @@ function cssOracle(transform: string, focalPx: number, frame: { width: number; h
     const v = args.split(',').map((a) => parseFloat(a));
     const t = I();
     if (fn === 'translate3d') [t[0][3], t[1][3], t[2][3]] = v;
+    else if (fn === 'scale3d') [t[0][0], t[1][1], t[2][2]] = v;
     else {
       const a = (v[0] * Math.PI) / 180;
       const [c, sn] = [Math.cos(a), Math.sin(a)];
@@ -219,6 +221,8 @@ function cssOracle(transform: string, focalPx: number, frame: { width: number; h
   return { x: frame.width / 2 + (q[0] - frame.width / 2) * k, y: frame.height / 2 + (q[1] - frame.height / 2) * k };
 }
 
+const ROOM = boxCorners(-8000, 8000, 0, 2500, -600, 300);
+
 describe('cssSceneTransform with yaw: the browser\'s matrices draw where project says (the sign of rotateY)', () => {
   it('a turned, tilted camera: every point of a random set within 0.01 px of project', () => {
     fc.assert(
@@ -228,8 +232,9 @@ describe('cssSceneTransform with yaw: the browser\'s matrices draw where project
         const w = camera.frame.width;
         const h = camera.frame.height;
         if (want.depth < 200 || want.x < -w || want.x > 2 * w || want.y < -h || want.y > 2 * h) return;
-        const t = cssSceneTransform(camera, s);
-        if (camera.yaw !== 0) expect(t).toMatch(/rotateX\([^)]*\) rotateY\([^)]*\) translate3d/);
+        // NAV-DEPTH-OCCL: a room round every point drawn, whose corners the scale about the eye puts the plane past
+        const t = cssSceneTransform(camera, s, ROOM);
+        if (camera.yaw !== 0) expect(t).toMatch(/rotateX\([^)]*\) rotateY\([^)]*\) scale3d\([^)]*\) translate3d/);
         const got = cssOracle(t, camera.focalPx, camera.frame, p, s);
         // the string rounds the angles to 1e-4 deg and the move to 1e-3 px: well under 0.05 px here
         expect(Math.abs(got.x - want.x)).toBeLessThan(0.05);

@@ -43,7 +43,7 @@ import {
   type SurfaceSlot,
   type WallSlot,
 } from './packCabinets';
-import { cssSceneTransform, type Vec3 } from './caseCamera';
+import { boxCorners, cssSceneTransform, type Vec3 } from './caseCamera';
 import {
   atX,
   cabinetBox,
@@ -1821,6 +1821,8 @@ export function CabinetScene({
   const room = roomBox(wall, ceilingMm);
   const roomW = room.x1 - room.x0;
   const roomD = room.zFront - room.zBack;
+  // NAV-DEPTH-OCCL: the room's corners, which the root's transform puts the CSS z = 0 plane past (cssSceneTransform)
+  const roomCorners = useMemo(() => boxCorners(room.x0, room.x1, 0, room.y1, room.zBack, room.zFront), [room.x0, room.x1, room.y1, room.zBack, room.zFront]);
   // the camera's frame is centred in the scene: on a wide panel, these px of the scene on each side are outside it
   const side = (frame.width - camera.frame.width) / 2;
   // NAV-1A: what the Free camera's gestures move through, for this render
@@ -1834,6 +1836,7 @@ export function CabinetScene({
     boxes,
     space: eyeSpace(room, ceilingMm),
     zBack: room.zBack,
+    reach: roomCorners,
     dimmed: prefs.view === 'cabinet' ? wall.cabinets[focusIdx] : null,
     lookHoldMs: lookHoldMs(),
     jogMax: jogMax(),
@@ -1946,7 +1949,7 @@ export function CabinetScene({
             class="cabinet-scene__viewport"
             style={{ perspective: `${fmt(camera.focalPx)}px`, transform: panPx || panYPx ? `translate(${panPx}px, ${panYPx}px)` : undefined }}
           >
-            <div ref={rootRef} class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s), '--s': String(s) }}>
+            <div ref={rootRef} class="cabinet-scene__root" style={{ transform: cssSceneTransform(camera, s, roomCorners), '--s': String(s) }}>
               <DrawContext.Provider value={draw}>
                 <Quad cls="room-wall" a={[room.x0, room.y1, room.zBack]} u={[roomW, 0, 0]} v={[0, -room.y1, 0]} grid={ROOM_GRID} />
                 <Quad cls="room-floor" a={[room.x0, 0, room.zBack]} u={[roomW, 0, 0]} v={[0, 0, roomD]} grid={ROOM_GRID} />

@@ -4,7 +4,7 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { IN_MM, frameMargins, lensFocalPx, project, startCameraY, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
 import { surfaceSlots, wallLayout, type WallLayout } from '../packCabinets';
-import { sideOverhangMm, withShelfLayout, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
+import { DETOLF_PAIR_GAP_MM, sideOverhangMm, withShelfLayout, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
 import { WALL_PATTERNS } from '../casePrefs';
 import {
   FRAME_CEILING_MAX_MM,
@@ -508,7 +508,8 @@ describe('capSpanMm: the longest stretch of a wall a frame may show and still sh
   it('short of the narrowest run from one cabinet to the fifth after it, splayed feet and all', () => {
     // a KLINGSBO stands in its 545 mm of splayed feet, side by side: four of them between the first and the sixth
     expect(capSpanMm(wallLayout(Array(6).fill(IKEA_KLINGSBO)))).toBe(4 * 545 - 1);
-    expect(capSpanMm(wallLayout(Array(30).fill(IKEA_DETOLF)))).toBe(1719);
+    // four Detolfs between the first and the sixth, and the five gaps around them (Ross 2026-11-15: half an inch each)
+    expect(capSpanMm(wallLayout(Array(30).fill(IKEA_DETOLF)))).toBeCloseTo(4 * 430 + 5 * DETOLF_PAIR_GAP_MM - 1, 9);
     // a mixed wall is held to its narrowest run
     const mixed = wallLayout(Array.from({ length: 12 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
     const boxes = mixed.cabinets.map((slot) => cabinetBox(slot, 0));
@@ -1548,7 +1549,7 @@ describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wal
   // TOP_CLEARANCE_CAP_MM, and the camera steps back to frame it, so the panel shows more fronts
   const HEADROOMS = [HEADROOM_MIN_MM, 350, 400, 450, 500, 550, 600, TOP_CLEARANCE_CAP_MM];
 
-  it('G2: DRAWN_CABINETS_LIMIT is the most cabinets any Fold8 panel needs for any wall pattern at any headroom up to TOP_CLEARANCE_CAP_MM (the measurement: 20, the Detolf wall on the sideways cover)', () => {
+  it('G2: DRAWN_CABINETS_LIMIT covers the most cabinets any Fold8 panel needs for any wall pattern at any headroom up to TOP_CLEARANCE_CAP_MM (the measurement: 19, the Detolf wall on the sideways cover; 20 before the half-inch Detolf gap)', () => {
     let most = 0;
     let where = '';
     for (const pattern of WALL_PATTERNS) {
@@ -1561,8 +1562,10 @@ describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wal
       }
     }
     expect(where).toBe('ikea-detolf 616x217');
-    expect(most).toBe(20);
-    expect(DRAWN_CABINETS_LIMIT).toBe(most);
+    expect(most).toBe(19);
+    // the limit stays at the 20 measured when Detolfs butted together: lowering it would crop wider (desktop) frames sooner
+    expect(DRAWN_CABINETS_LIMIT).toBe(20);
+    expect(DRAWN_CABINETS_LIMIT).toBeGreaterThanOrEqual(most);
   });
 
   it('G2: so no Fold8 panel is ever cropped, for any wall pattern and headroom up to TOP_CLEARANCE_CAP_MM, in any view; the cap is what the panel needs', () => {

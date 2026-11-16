@@ -542,11 +542,21 @@ export function sideOverhangMm(profile: CabinetProfile): number {
 }
 
 /**
+ * Two DETOLFs side by side stand half an inch apart, body to body (Ross
+ * 2026-11-15: "a minimal space separation between detolf units, perhaps half
+ * an inch or so ... or even a quarter inch ... but something slight, at
+ * least"; this replaces the 2026-10-11 butt-together gap 0). The one place to
+ * change it.
+ */
+export const DETOLF_PAIR_GAP_MM = inchesToMm(0.5);
+
+/**
  * The closest two cabinets can stand side by side, body to body: the left
  * one's feet plus the right one's (Ross 2026-10-11: splayed legs keep two
- * KLINGSBOs from touching; Detolf owners butt theirs together, gap 0).
+ * KLINGSBOs from touching), and two DETOLFs DETOLF_PAIR_GAP_MM apart.
  */
 export function adjacencyGapMm(left: CabinetProfile, right: CabinetProfile): number {
+  if (left.id === 'ikea-detolf' && right.id === 'ikea-detolf') return DETOLF_PAIR_GAP_MM;
   return sideOverhangMm(left) + sideOverhangMm(right);
 }
 

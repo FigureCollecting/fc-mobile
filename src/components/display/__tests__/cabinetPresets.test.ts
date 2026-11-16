@@ -10,6 +10,7 @@ import {
   getCabinetPreset,
 } from '../cabinetPresets';
 import {
+  DETOLF_PAIR_GAP_MM,
   adjacencyGapMm,
   buyLink,
   checkCabinetProfile,
@@ -256,10 +257,13 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
     expect(Math.abs(framingHeadroomMm(IKEA_DETOLF, 600) - 609.6)).toBeLessThanOrEqual(GOLDEN_EPS);
   });
 
-  it('butts Detolfs together (adjacency gap 0: owners line them up touching); the glass shelves are its plate', () => {
+  it('stands two Detolfs half an inch apart (Ross 2026-11-15), still touching the rack; the glass shelves are its plate', () => {
     expect(IKEA_DETOLF.footprint).toBeUndefined();
-    expect(adjacencyGapMm(IKEA_DETOLF, IKEA_DETOLF)).toBe(0);
+    expect(DETOLF_PAIR_GAP_MM).toBe(12.7);
+    expect(adjacencyGapMm(IKEA_DETOLF, IKEA_DETOLF)).toBe(12.7);
     expect(adjacencyGapMm(IKEA_DETOLF, OPEN_STEEL_RACK)).toBe(0);
+    expect(adjacencyGapMm(OPEN_STEEL_RACK, IKEA_DETOLF)).toBe(0);
+    expect(adjacencyGapMm(IKEA_DETOLF, IKEA_KLINGSBO)).toBe(47.5);
     expect(IKEA_DETOLF.surfaces.map((s) => s.plate === true)).toEqual([false, true, true, true, false]);
   });
 

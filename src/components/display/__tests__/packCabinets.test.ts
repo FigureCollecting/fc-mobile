@@ -255,6 +255,26 @@ describe('wallLayout (side by side, the adjacency gap between neighbours)', () =
     expect(wall.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, 95, 47.5, 0]);
   });
 
+  it('stands Detolfs half an inch apart (Ross 2026-11-15): each one after the first widens the wall by 430 + 12.7 mm', () => {
+    const three = wallLayout([IKEA_DETOLF, IKEA_DETOLF, IKEA_DETOLF]);
+    expect(three.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, 12.7, 12.7]);
+    three.cabinets.forEach((c, i) => {
+      expect(c.leftMm).toBeCloseTo(i * 442.7, 9);
+      expect(c.rightMm).toBeCloseTo(i * 442.7 + 430, 9);
+      expect(c.centerMm).toBeCloseTo(i * 442.7 + 215, 9);
+    });
+    expect(three.leftMm).toBe(0);
+    for (let n = 1; n <= 6; n++) {
+      expect(wallLayout(Array(n).fill(IKEA_DETOLF)).rightMm).toBeCloseTo(n * 430 + (n - 1) * 12.7, 9);
+    }
+  });
+
+  it('keeps every mixed pair as it was: a Detolf 47.5 mm from a KLINGSBO and touching the rack, either side', () => {
+    const wall = wallLayout([IKEA_DETOLF, IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK, IKEA_DETOLF, IKEA_DETOLF]);
+    expect(wall.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, 47.5, 47.5, 0, 0, 12.7]);
+    expect(wallLayout([OPEN_STEEL_RACK, OPEN_STEEL_RACK]).cabinets[1].gapBeforeMm).toBe(0);
+  });
+
   it("reaches out to the first and last cabinet's feet", () => {
     const wall = wallLayout([IKEA_KLINGSBO, IKEA_DETOLF]);
     expect(wall.leftMm).toBe(-47.5);

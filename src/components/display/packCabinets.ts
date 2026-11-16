@@ -1274,8 +1274,8 @@ export interface WallLayout {
 
 /**
  * Cabinets side by side, left to right, each as close to its neighbour as
- * their legs allow (adjacencyGapMm: two KLINGSBOs never touch, Detolfs butt
- * together). Positions are in the real world, never fitted to a screen.
+ * their legs allow (adjacencyGapMm: two KLINGSBOs never touch, two Detolfs
+ * stand half an inch apart). Positions are in the real world, never fitted to a screen.
  */
 export function wallLayout(profiles: readonly CabinetProfile[]): WallLayout {
   const cabinets: WallSlot[] = [];

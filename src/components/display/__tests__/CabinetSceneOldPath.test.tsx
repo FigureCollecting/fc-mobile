@@ -33,7 +33,14 @@ function pinch(el: Element) {
   up(el, 12, { x: 300, y: 260 });
 }
 
-const hash = (el: Element) => createHash('sha256').update(el.outerHTML).digest('hex').slice(0, 16);
+// NAV-DEPTH-OCCL (Ross 11-15): the root's transform gained a scale about the eye that moves only the CSS z = 0 plane, past
+// the room (the picture unchanged), in every view: the hash is taken with it lifted out, once it is seen there.
+const PLANE_SCALE = / scale3d\(([^,)]+), \1, \1\)/;
+function hash(el: Element): string {
+  const root = el.querySelector<HTMLElement>('.cabinet-scene__root')!;
+  expect(root.style.transform).toMatch(PLANE_SCALE);
+  return createHash('sha256').update(el.outerHTML.replace(PLANE_SCALE, '')).digest('hex').slice(0, 16);
+}
 
 beforeEach(() => {
   __clearAlphaMarginCache();

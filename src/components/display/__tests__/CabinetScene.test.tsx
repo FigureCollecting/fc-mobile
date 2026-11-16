@@ -1504,8 +1504,12 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
       expect(s).toBeGreaterThanOrEqual(Math.min(1, camera.focalPx / project(camera, [camera.x, camera.y, 0]).depth) - 1e-9);
       expect(Math.log2(s) * 4).toBeCloseTo(Math.round(Math.log2(s) * 4), 9);
       const root = host.querySelector<HTMLElement>('.cabinet-scene__root')!;
-      const numbers = (t: string) => t.replace(/translate3d|rotateX/g, '').match(/-?\d+(\.\d+)?(e-?\d+)?/g)!.map(Number);
-      const want = numbers(cssSceneTransform(camera, s));
+      const numbers = (t: string) => t.replace(/translate3d|rotateX|scale3d/g, '').match(/-?\d+(\.\d+)?(e-?\d+)?/g)!.map(Number);
+      // NAV-DEPTH-OCCL: the room's corners (unturned, a corner's depth does not hang on its x): the plane stands past them
+      const room = JSON.parse(host.dataset.room!) as { ceilingMm: number; zBack: number };
+      const reach = boxCorners(camera.x, camera.x, 0, room.ceilingMm, room.zBack, room.zBack + 6500);
+      const want = numbers(cssSceneTransform(camera, s, reach));
+      expect(root.style.transform).toMatch(/ scale3d\(/);
       numbers(root.style.transform).forEach((v, i) => expect(v, `term ${i}`).toBeCloseTo(want[i], 2));
       expect(root.style.getPropertyValue('--s')).toBe(String(s));
       // a figure's element is its world box at its own px per mm (that scale, or whole octaves under it past the figures'

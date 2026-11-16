@@ -212,19 +212,40 @@ export function fitDistance(o: FitOptions): { distance: number; camera: Camera }
 
 const fixed = (n: number, digits: number) => (Object.is(Math.round(n * 10 ** digits), -0) ? 0 : n).toFixed(digits);
 
+/** NAV-DEPTH-OCCL: the CSS z = 0 plane stands at least this many times the depth of the farthest point of the room. */
+export const PLANE_PAST = 1.5;
+/** ...and never nearer the eye than PLANE_PAST times this (a room wholly behind the eye). */
+const PLANE_FAR_MIN_MM = 1000;
+
+/**
+ * NAV-DEPTH-OCCL (Ross 11-15): the scale about the eye that puts the CSS z = 0 plane (where an element draws at its own
+ * size: f / (k s) mm in front of the eye) past every point of `reach`, the corners of the box everything drawn stands in
+ * (the room). Chromium stops drawing parts of the scene when that plane runs through or near them; without the scale it
+ * stood f / s mm out, between the eye and the cabinets' feet, and swept through their fronts as the eye came in. A whole
+ * power of two (exact in the matrices and the string), so the plane is 1.5x to 3x the farthest corner's depth.
+ */
+export function planeScale(camera: Camera, pxPerMm: number, reach: readonly Vec3[]): number {
+  const far = Math.max(PLANE_FAR_MIN_MM, ...reach.map((p) => project(camera, p).depth));
+  return 2 ** Math.floor(Math.log2(camera.focalPx / (pxPerMm * PLANE_PAST * far)));
+}
+
 /**
  * The CSS transform of the scene root (transform-origin 0 0 0, placed at the
  * frame's top-left) under a viewport with `perspective: focalPx` and its
  * origin at the frame centre: the world authored at pxPerMm (x * s, -y * s,
- * z * s) then draws exactly where project() says, for any s.
+ * z * s) then draws exactly where project() says, for any s. The scale about
+ * the eye (planeScale over `reach`) leaves the picture as it is and moves only
+ * the CSS z = 0 plane, past the room.
  */
-export function cssSceneTransform(camera: Camera, pxPerMm: number): string {
+export function cssSceneTransform(camera: Camera, pxPerMm: number, reach: readonly Vec3[]): string {
   const { frame } = camera;
+  const k = planeScale(camera, pxPerMm, reach);
   return (
     `translate3d(${frame.width / 2}px, ${frame.height / 2}px, ${camera.focalPx}px) ` +
     `rotateX(${fixed(-deg(camera.pitch), 4)}deg) ` +
     // NAV-1A: the turn, written only for a turned camera so every unturned string stays as it was
     (camera.yaw ? `rotateY(${fixed(deg(camera.yaw), 4)}deg) ` : '') +
+    `scale3d(${k}, ${k}, ${k}) ` +
     `translate3d(${fixed(-camera.x * pxPerMm, 3)}px, ${fixed(camera.y * pxPerMm, 3)}px, ${fixed(-camera.z * pxPerMm, 3)}px)`
   );
 }

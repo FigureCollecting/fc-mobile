@@ -23,8 +23,9 @@ export const MAX_DRAWN_CABINETS = 5;
  * its sides: each panel draws as many as its frame shows fronts (wallCamera), up to this; the scene's layers stay
  * under the 3-viewport ceiling (e2e/case-budget). CF1 (b), the frame cropped to five, is this set to MAX_DRAWN_CABINETS.
  * G2 (close-out 2): the most any of the Fold8's four panels needs for any wall pattern at any headroom up to
- * TOP_CLEARANCE_CAP_MM (fullHeightCap; measured in caseFraming.test: the Detolf wall on the sideways cover, 20), so
- * no Fold8 panel is ever cropped; only a wider frame (a desktop window) is.
+ * TOP_CLEARANCE_CAP_MM (fullHeightCap; measured in caseFraming.test: the Detolf wall on the sideways cover, 20 when
+ * Detolfs butted together, 19 since they stand half an inch apart; kept at 20), so no Fold8 panel is ever cropped; only
+ * a wider frame (a desktop window) is.
  */
 export const DRAWN_CABINETS_LIMIT = 20;
 /** What the case draws past the frame on each side, as a share of the frame: half a viewport. */

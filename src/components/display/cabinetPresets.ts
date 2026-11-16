@@ -135,8 +135,9 @@ export const IKEA_KLINGSBO: CabinetProfile = {
 // measurements (three independent posts agree within 7 mm) and exact-fit
 // glass shops. IKEA withdrew it in 2024: the product page redirects to the
 // catalogue (fetched 2026-10-11; Wayback has the redirect from 2024-08-15),
-// so the sizes cite the last snapshot. Owners butt Detolfs together: no
-// footprint beyond the body, adjacency gap 0. Not modelled yet (render units): the four ~6 mm
+// so the sizes cite the last snapshot. No footprint beyond the body; two
+// Detolfs side by side stand half an inch apart (DETOLF_PAIR_GAP_MM, Ross
+// 2026-11-15), a Detolf beside the rack touches it. Not modelled yet (render units): the four ~6 mm
 // corner rods of the shelf-support ladders.
 const DETOLF_INTERIOR_STACK: Provenance = {
   kind: 'derived',

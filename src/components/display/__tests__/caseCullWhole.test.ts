@@ -43,7 +43,7 @@ describe('frontShown: whether the frame shows a cabinet\'s front (feet to top, o
   });
 
   it('a fresh cull draws every front its frame shows (the cap is what the frame needs, fronts first)', () => {
-    for (const patch of [{}, { x: framed.camera.x + 160 }, { yaw: -41 * DEG, x: framed.camera.x - 400 }, { yaw: 30 * DEG }]) {
+    for (const patch of [{}, { x: framed.camera.x + 240 }, { yaw: -41 * DEG, x: framed.camera.x - 400 }, { yaw: 30 * DEG }]) {
       const view = viewOf(patch);
       expect(missing(drawnFor(view), view)).toEqual([]);
     }
@@ -51,9 +51,10 @@ describe('frontShown: whether the frame shows a cabinet\'s front (feet to top, o
 });
 
 describe('stickyWhole (NAV-JOG): the last cull while it still draws every front the new frame shows', () => {
-  it('the gap it closes: stickyPose keeps a cull that leaves a shown front out, walking 160 mm or looking from -37 to -41 deg', () => {
+  it('the gap it closes: stickyPose keeps a cull that leaves a shown front out, walking 240 mm or looking from -37 to -41 deg', () => {
     for (const [a, b] of [
-      [viewOf(), viewOf({ x: framed.camera.x + 160 })],
+      // 240 mm, not 160: the half-inch Detolf gap (Ross 2026-11-15) widens the pitch, so a front first goes missing further on
+      [viewOf(), viewOf({ x: framed.camera.x + 240 })],
       [viewOf({ x: framed.camera.x - 400, yaw: -37 * DEG }), viewOf({ x: framed.camera.x - 400, yaw: -41 * DEG })],
     ]) {
       expect(stickyPose(a, b)).toBe(a);

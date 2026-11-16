@@ -580,11 +580,18 @@ export function wholeCabinets(camera: Camera, wall: WallLayout, lookY: number, p
   );
 }
 
-/** The cabinet (by wall index) whose centre is nearest x: the focus a walk leaves (the first of two as near). */
+/**
+ * Two cabinets whose centres' distances from x differ by less than this are as near (a nanometre, the goldens'
+ * tolerance): the centres are sums of decimal mm (430 + 12.7 + ...) that carry float noise, so the midpoint a walk stops
+ * at between two cabinets measures a hair nearer one or the other; without it a halfway stop could focus the right one.
+ */
+export const NEAREST_TIE_MM = 1e-6;
+
+/** The cabinet (by wall index) whose centre is nearest x: the focus a walk leaves (the first of two as near, within NEAREST_TIE_MM). */
 export function nearestCabinet(wall: WallLayout, x: number): number {
   let nearest = 0;
   wall.cabinets.forEach((c, i) => {
-    if (Math.abs(c.centerMm - x) < Math.abs(wall.cabinets[nearest].centerMm - x)) nearest = i;
+    if (Math.abs(c.centerMm - x) < Math.abs(wall.cabinets[nearest].centerMm - x) - NEAREST_TIE_MM) nearest = i;
   });
   return nearest;
 }

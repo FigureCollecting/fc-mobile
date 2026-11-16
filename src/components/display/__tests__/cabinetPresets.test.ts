@@ -259,12 +259,22 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
 
   it('stands two Detolfs half an inch apart (Ross 2026-11-15), still touching the rack; the glass shelves are its plate', () => {
     expect(IKEA_DETOLF.footprint).toBeUndefined();
-    expect(DETOLF_PAIR_GAP_MM).toBe(12.7);
-    expect(adjacencyGapMm(IKEA_DETOLF, IKEA_DETOLF)).toBe(12.7);
+    // Ross 2026-11-15: "something slight, at least": half an inch, or even a quarter
+    expect(DETOLF_PAIR_GAP_MM).toBeGreaterThanOrEqual(0.25 * IN);
+    expect(DETOLF_PAIR_GAP_MM).toBeLessThanOrEqual(0.5 * IN);
+    expect(adjacencyGapMm(IKEA_DETOLF, IKEA_DETOLF)).toBe(DETOLF_PAIR_GAP_MM);
     expect(adjacencyGapMm(IKEA_DETOLF, OPEN_STEEL_RACK)).toBe(0);
     expect(adjacencyGapMm(OPEN_STEEL_RACK, IKEA_DETOLF)).toBe(0);
     expect(adjacencyGapMm(IKEA_DETOLF, IKEA_KLINGSBO)).toBe(47.5);
     expect(IKEA_DETOLF.surfaces.map((s) => s.plate === true)).toEqual([false, true, true, true, false]);
+  });
+
+  it('never stands two Detolfs closer than their feet would: a footed copy keeps the old rule when its feet need more', () => {
+    const footed = (widthMm: number) => ({ ...IKEA_DETOLF, footprint: { widthMm, depthMm: IKEA_DETOLF.outer.depthMm, frontOverhangMm: 0 } });
+    // 50 mm of feet each side: 100 apart, not the pair gap
+    expect(adjacencyGapMm(footed(530), footed(530))).toBe(100);
+    // feet narrower than the pair gap together: the pair gap, not the feet plus the gap
+    expect(adjacencyGapMm(footed(432), footed(432))).toBe(DETOLF_PAIR_GAP_MM);
   });
 
   it('cites the last IKEA page before it was withdrawn (the live page now redirects to the catalogue)', () => {

@@ -29,6 +29,7 @@ import {
   walkDeadPx,
   atX,
   nearestCabinet,
+  NEAREST_TIE_MM,
   WALK_MIN_PX,
   panStops,
   settlePan,
@@ -1014,6 +1015,54 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
     expect(nearestCabinet(wall, -1e6)).toBe(0);
     expect(nearestCabinet(wall, 1e6)).toBe(3);
   });
+
+  it('every halfway walk stop focuses the left cabinet on a Detolf, KLINGSBO, rack and mixed wall: the centres\' float noise is a tie', () => {
+    const walls = [[IKEA_DETOLF], [IKEA_KLINGSBO], [OPEN_STEEL_RACK], [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]];
+    for (const profiles of walls) {
+      const wall = wallLayout(Array.from({ length: 40 }, (_, i) => profiles[i % profiles.length]));
+      const c = wall.cabinets.map((slot) => slot.centerMm);
+      const sides = c.slice(0, -1).map((x, i) => (nearestCabinet(wall, (x + c[i + 1]) / 2) === i ? 'L' : 'R')).join('');
+      expect(sides, profiles.map((p) => p.id).join('+')).toBe('L'.repeat(39));
+    }
+  });
+
+  it(`NEAREST_TIE_MM (${NEAREST_TIE_MM} mm): nearer by less is a tie (the first wins), nearer by more is nearer`, () => {
+    const wall = wallLayout(Array(4).fill(IKEA_DETOLF));
+    const mid = (wall.cabinets[1].centerMm + wall.cabinets[2].centerMm) / 2;
+    // x off the midpoint by d is nearer the right one by 2d
+    expect(nearestCabinet(wall, mid + NEAREST_TIE_MM / 4)).toBe(1);
+    expect(nearestCabinet(wall, mid + NEAREST_TIE_MM)).toBe(2);
+    expect(nearestCabinet(wall, mid - NEAREST_TIE_MM)).toBe(1);
+  });
+
+  it('a walk that settles on the stop between two pages counts the page it leaves, so Next opens the very next page (every pattern, panel and headroom)', () => {
+    const frames = [...PANELS, { width: 1536, height: 730 }, { width: 1920, height: 760 }, { width: 1280, height: 600 }];
+    const walls = [[IKEA_DETOLF], [IKEA_KLINGSBO], [OPEN_STEEL_RACK], [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]];
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const profiles of walls) {
+      const wall = wallLayout(Array.from({ length: 40 }, (_, i) => profiles[i % profiles.length]));
+      for (const frame of frames) {
+        for (const h of [80, 300, 600]) {
+          const input = { frame, wall, headroomMm: wall.cabinets.map(() => h), view: 'wall' as const, focus: 0, shelf: 0 };
+          const pages = wallPages(input);
+          const stops = walkStops(input);
+          const framed = frameCase(input);
+          for (let k = 0; k + 1 < pages.length; k++) {
+            const b = pages[k][pages[k].length - 1];
+            const x = (wall.cabinets[b].centerMm + wall.cabinets[b + 1].centerMm) / 2;
+            const stop = stops.find((s) => s.x === x);
+            if (!stop) continue;
+            checked++;
+            const at = pageInView(pages, wall, atX(framed, x));
+            if (at !== k || stop.focus !== b) wrong.push(`${profiles.map((p) => p.id).join('+')} ${frame.width}x${frame.height} h${h} ${b}|${b + 1}: page ${at}, focus ${stop.focus}`);
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+    expect(wrong).toEqual([]);
+  }, 60_000);
 
   it(`NOTE 30: a drag must move ${WALK_MIN_PX} px or a quarter of the cabinet's width net before the walk steps; one that comes back near where it started settles back`, () => {
     const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));

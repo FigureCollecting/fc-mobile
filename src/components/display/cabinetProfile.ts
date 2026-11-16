@@ -553,11 +553,12 @@ export const DETOLF_PAIR_GAP_MM = inchesToMm(0.5);
 /**
  * The closest two cabinets can stand side by side, body to body: the left
  * one's feet plus the right one's (Ross 2026-10-11: splayed legs keep two
- * KLINGSBOs from touching), and two DETOLFs DETOLF_PAIR_GAP_MM apart.
+ * KLINGSBOs from touching); two DETOLFs at least DETOLF_PAIR_GAP_MM apart,
+ * never closer than their feet would stand them.
  */
 export function adjacencyGapMm(left: CabinetProfile, right: CabinetProfile): number {
-  if (left.id === 'ikea-detolf' && right.id === 'ikea-detolf') return DETOLF_PAIR_GAP_MM;
-  return sideOverhangMm(left) + sideOverhangMm(right);
+  const feet = sideOverhangMm(left) + sideOverhangMm(right);
+  return left.id === 'ikea-detolf' && right.id === 'ikea-detolf' ? Math.max(DETOLF_PAIR_GAP_MM, feet) : feet;
 }
 
 /** The cabinet's buy link, or null: never one for a discontinued cabinet (Ross 2026-10-11), nor when none is known. */

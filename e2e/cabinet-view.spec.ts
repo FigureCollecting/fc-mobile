@@ -341,6 +341,37 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
   });
 }
 
+// DETOLF-GAP S1: the half-inch gap leaves float noise in the Detolf centres, so a walk that settled halfway between the
+// last cabinet of one page and the first of the next once focused the right one, and Next skipped a page (NEAREST_TIE_MM)
+test('the Detolf wall: a walk of four stops settles between cabinets 3 and 4, focusing 3, and Next opens cabinets 4-7: fold8-cover', async ({ page }) => {
+  test.setTimeout(120_000);
+  await openCase(page, FOLD8.find((v) => v.name === 'fold8-cover')!, '&fx=40', { view: 'wall', pattern: 'ikea-detolf' });
+  const host = page.locator('.cabinet-scene');
+  await expect(host).toHaveAttribute('data-pattern', 'ikea-detolf');
+  await expect(host).not.toHaveAttribute('data-free-camera', '1');
+  const next = page.getByRole('button', { name: 'Next cabinet' });
+  const prev = page.getByRole('button', { name: 'Previous cabinet' });
+  const x = async () => (await cameraOf(page)).x;
+  // where the second page opens, then back to the first
+  const first = await x();
+  await next.click();
+  await expect.poll(x).toBeGreaterThan(first);
+  const second = await x();
+  await expect(host).toHaveAttribute('data-focus', '4');
+  await prev.click();
+  await expect.poll(x).toBe(first);
+  for (let s = 0; s < 4; s++) {
+    await swipe(page, -45);
+    await page.waitForTimeout(120);
+  }
+  const c = wallLayout(Array(8).fill(IKEA_DETOLF)).cabinets.map((slot) => slot.centerMm);
+  expect(await x()).toBeCloseTo((c[3] + c[4]) / 2, 6);
+  await expect(host).toHaveAttribute('data-focus', '3');
+  await next.click();
+  await expect.poll(x).toBe(second);
+  await expect(host).toHaveAttribute('data-focus', '4');
+});
+
 // the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
 for (const size of FOLD8.filter((v) => v.name === 'fold8-open' || v.name === 'fold8-open-rotated')) {
   test(`still above the tabs with the detail pane open, then offline: ${size.name}`, async ({ page, context }) => {

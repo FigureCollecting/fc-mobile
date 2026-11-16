@@ -4,7 +4,7 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { IN_MM, frameMargins, lensFocalPx, project, startCameraY, unprojectToPlaneZ, type Camera, type Vec3 } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, trimFace } from '../caseCull';
 import { surfaceSlots, wallLayout, type WallLayout } from '../packCabinets';
-import { sideOverhangMm, withShelfLayout, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
+import { DETOLF_PAIR_GAP_MM, sideOverhangMm, withShelfLayout, CEILING_DEFAULT_MM, HEADROOM_MIN_MM, TOP_CLEARANCE_CAP_MM } from '../cabinetProfile';
 import { WALL_PATTERNS } from '../casePrefs';
 import {
   FRAME_CEILING_MAX_MM,
@@ -29,6 +29,7 @@ import {
   walkDeadPx,
   atX,
   nearestCabinet,
+  NEAREST_TIE_MM,
   WALK_MIN_PX,
   panStops,
   settlePan,
@@ -508,7 +509,8 @@ describe('capSpanMm: the longest stretch of a wall a frame may show and still sh
   it('short of the narrowest run from one cabinet to the fifth after it, splayed feet and all', () => {
     // a KLINGSBO stands in its 545 mm of splayed feet, side by side: four of them between the first and the sixth
     expect(capSpanMm(wallLayout(Array(6).fill(IKEA_KLINGSBO)))).toBe(4 * 545 - 1);
-    expect(capSpanMm(wallLayout(Array(30).fill(IKEA_DETOLF)))).toBe(1719);
+    // four Detolfs between the first and the sixth, and the five gaps around them (Ross 2026-11-15: half an inch each)
+    expect(capSpanMm(wallLayout(Array(30).fill(IKEA_DETOLF)))).toBeCloseTo(4 * 430 + 5 * DETOLF_PAIR_GAP_MM - 1, 9);
     // a mixed wall is held to its narrowest run
     const mixed = wallLayout(Array.from({ length: 12 }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
     const boxes = mixed.cabinets.map((slot) => cabinetBox(slot, 0));
@@ -1013,6 +1015,59 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
     expect(nearestCabinet(wall, -1e6)).toBe(0);
     expect(nearestCabinet(wall, 1e6)).toBe(3);
   });
+
+  it('every halfway walk stop focuses the left cabinet on a Detolf, KLINGSBO, rack and mixed wall: the centres\' float noise is a tie', () => {
+    const walls = [[IKEA_DETOLF], [IKEA_KLINGSBO], [OPEN_STEEL_RACK], [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]];
+    for (const profiles of walls) {
+      const wall = wallLayout(Array.from({ length: 40 }, (_, i) => profiles[i % profiles.length]));
+      const c = wall.cabinets.map((slot) => slot.centerMm);
+      const sides = c.slice(0, -1).map((x, i) => (nearestCabinet(wall, (x + c[i + 1]) / 2) === i ? 'L' : 'R')).join('');
+      expect(sides, profiles.map((p) => p.id).join('+')).toBe('L'.repeat(39));
+    }
+  });
+
+  it(`NEAREST_TIE_MM (${NEAREST_TIE_MM} mm): nearer by less is a tie (the first wins), nearer by more is nearer`, () => {
+    const wall = wallLayout(Array(4).fill(IKEA_DETOLF));
+    const mid = (wall.cabinets[1].centerMm + wall.cabinets[2].centerMm) / 2;
+    // x off the midpoint by d is nearer the right one by 2d
+    expect(nearestCabinet(wall, mid + NEAREST_TIE_MM / 4)).toBe(1);
+    expect(nearestCabinet(wall, mid + NEAREST_TIE_MM)).toBe(2);
+    expect(nearestCabinet(wall, mid - NEAREST_TIE_MM)).toBe(1);
+  });
+
+  it('NEAREST_TIE_MM is a hair, not a reach: under 0.01 mm, far below the 430 mm and more between two real centres', () => {
+    expect(NEAREST_TIE_MM).toBeGreaterThan(0);
+    expect(NEAREST_TIE_MM).toBeLessThan(0.01);
+  });
+
+  it('a walk that settles on the stop between two pages counts the page it leaves, so Next opens the very next page (every pattern, panel and headroom)', () => {
+    const frames = [...PANELS, { width: 1536, height: 730 }, { width: 1920, height: 760 }, { width: 1280, height: 600 }];
+    const walls = [[IKEA_DETOLF], [IKEA_KLINGSBO], [OPEN_STEEL_RACK], [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]];
+    const wrong: string[] = [];
+    let checked = 0;
+    for (const profiles of walls) {
+      const wall = wallLayout(Array.from({ length: 40 }, (_, i) => profiles[i % profiles.length]));
+      for (const frame of frames) {
+        for (const h of [80, 300, 600]) {
+          const input = { frame, wall, headroomMm: wall.cabinets.map(() => h), view: 'wall' as const, focus: 0, shelf: 0 };
+          const pages = wallPages(input);
+          const stops = walkStops(input);
+          const framed = frameCase(input);
+          for (let k = 0; k + 1 < pages.length; k++) {
+            const b = pages[k][pages[k].length - 1];
+            const x = (wall.cabinets[b].centerMm + wall.cabinets[b + 1].centerMm) / 2;
+            const stop = stops.find((s) => s.x === x);
+            if (!stop) continue;
+            checked++;
+            const at = pageInView(pages, wall, atX(framed, x));
+            if (at !== k || stop.focus !== b) wrong.push(`${profiles.map((p) => p.id).join('+')} ${frame.width}x${frame.height} h${h} ${b}|${b + 1}: page ${at}, focus ${stop.focus}`);
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+    expect(wrong).toEqual([]);
+  }, 60_000);
 
   it(`NOTE 30: a drag must move ${WALK_MIN_PX} px or a quarter of the cabinet's width net before the walk steps; one that comes back near where it started settles back`, () => {
     const wall = wallLayout(Array(18).fill(IKEA_KLINGSBO));
@@ -1548,7 +1603,7 @@ describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wal
   // TOP_CLEARANCE_CAP_MM, and the camera steps back to frame it, so the panel shows more fronts
   const HEADROOMS = [HEADROOM_MIN_MM, 350, 400, 450, 500, 550, 600, TOP_CLEARANCE_CAP_MM];
 
-  it('G2: DRAWN_CABINETS_LIMIT is the most cabinets any Fold8 panel needs for any wall pattern at any headroom up to TOP_CLEARANCE_CAP_MM (the measurement: 20, the Detolf wall on the sideways cover)', () => {
+  it('G2: DRAWN_CABINETS_LIMIT covers the most cabinets any Fold8 panel needs for any wall pattern at any headroom up to TOP_CLEARANCE_CAP_MM (the measurement: 19, the Detolf wall on the sideways cover; 20 before the half-inch Detolf gap)', () => {
     let most = 0;
     let where = '';
     for (const pattern of WALL_PATTERNS) {
@@ -1561,8 +1616,10 @@ describe('CF1 (a): the drawn-cabinet cap rises per panel, so the full-height wal
       }
     }
     expect(where).toBe('ikea-detolf 616x217');
-    expect(most).toBe(20);
-    expect(DRAWN_CABINETS_LIMIT).toBe(most);
+    expect(most).toBe(19);
+    // the limit stays at the 20 measured when Detolfs butted together: lowering it would crop wider (desktop) frames sooner
+    expect(DRAWN_CABINETS_LIMIT).toBe(20);
+    expect(DRAWN_CABINETS_LIMIT).toBeGreaterThanOrEqual(most);
   });
 
   it('G2: so no Fold8 panel is ever cropped, for any wall pattern and headroom up to TOP_CLEARANCE_CAP_MM, in any view; the cap is what the panel needs', () => {

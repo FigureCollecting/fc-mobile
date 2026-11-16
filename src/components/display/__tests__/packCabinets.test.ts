@@ -15,7 +15,7 @@ import {
 } from '../packCabinets';
 import { UNMATTED_META } from '../displayMeta';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT } from '../caseInterim';
-import { DEFAULT_CLEARANCE_MM, clearHeightsMm, inchesToMm, liftOutShelves, stableLayout, withClearance, withShelfLayout } from '../cabinetProfile';
+import { DEFAULT_CLEARANCE_MM, DETOLF_PAIR_GAP_MM, clearHeightsMm, inchesToMm, liftOutShelves, stableLayout, withClearance, withShelfLayout } from '../cabinetProfile';
 
 /** The rules before CASE-FB2a and FB2b: tall figures on the first top from the shelf cursor on, no shelf taken out. */
 const AS_BEFORE = { tallOnOpenedTops: false, shelfRemoval: false } as const;
@@ -253,6 +253,27 @@ describe('wallLayout (side by side, the adjacency gap between neighbours)', () =
     ]);
     expect(wall.cabinets.map((c) => c.centerMm)).toEqual([225, 770, 1257.5, 1472.5 + 457.2]);
     expect(wall.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, 95, 47.5, 0]);
+  });
+
+  it('stands Detolfs DETOLF_PAIR_GAP_MM apart (Ross 2026-11-15): each one after the first widens the wall by 430 mm and the gap', () => {
+    const gap = DETOLF_PAIR_GAP_MM;
+    const three = wallLayout([IKEA_DETOLF, IKEA_DETOLF, IKEA_DETOLF]);
+    expect(three.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, gap, gap]);
+    three.cabinets.forEach((c, i) => {
+      expect(c.leftMm).toBeCloseTo(i * (430 + gap), 9);
+      expect(c.rightMm).toBeCloseTo(i * (430 + gap) + 430, 9);
+      expect(c.centerMm).toBeCloseTo(i * (430 + gap) + 215, 9);
+    });
+    expect(three.leftMm).toBe(0);
+    for (let n = 1; n <= 6; n++) {
+      expect(wallLayout(Array(n).fill(IKEA_DETOLF)).rightMm).toBeCloseTo(n * 430 + (n - 1) * gap, 9);
+    }
+  });
+
+  it('keeps every mixed pair as it was: a Detolf 47.5 mm from a KLINGSBO and touching the rack, either side', () => {
+    const wall = wallLayout([IKEA_DETOLF, IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK, IKEA_DETOLF, IKEA_DETOLF]);
+    expect(wall.cabinets.map((c) => c.gapBeforeMm)).toEqual([0, 47.5, 47.5, 0, 0, DETOLF_PAIR_GAP_MM]);
+    expect(wallLayout([OPEN_STEEL_RACK, OPEN_STEEL_RACK]).cabinets[1].gapBeforeMm).toBe(0);
   });
 
   it("reaches out to the first and last cabinet's feet", () => {

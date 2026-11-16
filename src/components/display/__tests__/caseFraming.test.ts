@@ -1035,6 +1035,11 @@ describe('the wall view reaches every cabinet (close-out 3, ruling 27): the page
     expect(nearestCabinet(wall, mid - NEAREST_TIE_MM)).toBe(1);
   });
 
+  it('NEAREST_TIE_MM is a hair, not a reach: under 0.01 mm, far below the 430 mm and more between two real centres', () => {
+    expect(NEAREST_TIE_MM).toBeGreaterThan(0);
+    expect(NEAREST_TIE_MM).toBeLessThan(0.01);
+  });
+
   it('a walk that settles on the stop between two pages counts the page it leaves, so Next opens the very next page (every pattern, panel and headroom)', () => {
     const frames = [...PANELS, { width: 1536, height: 730 }, { width: 1920, height: 760 }, { width: 1280, height: 600 }];
     const walls = [[IKEA_DETOLF], [IKEA_KLINGSBO], [OPEN_STEEL_RACK], [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]];

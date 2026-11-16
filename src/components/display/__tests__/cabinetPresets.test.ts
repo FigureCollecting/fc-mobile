@@ -275,6 +275,11 @@ describe('G18 IKEA Detolf (detolf-facts.json, DETOLF-VERIFY 2026-09-30)', () => 
     expect(adjacencyGapMm(footed(530), footed(530))).toBe(100);
     // feet narrower than the pair gap together: the pair gap, not the feet plus the gap
     expect(adjacencyGapMm(footed(432), footed(432))).toBe(DETOLF_PAIR_GAP_MM);
+    // feet that differ: each one's own, whichever side the wider stands (50 + 1, and 50 + none)
+    expect(adjacencyGapMm(footed(530), footed(432))).toBe(51);
+    expect(adjacencyGapMm(footed(432), footed(530))).toBe(51);
+    expect(adjacencyGapMm(footed(530), IKEA_DETOLF)).toBe(50);
+    expect(adjacencyGapMm(IKEA_DETOLF, footed(530))).toBe(50);
   });
 
   it('cites the last IKEA page before it was withdrawn (the live page now redirects to the catalogue)', () => {

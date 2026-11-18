@@ -4,11 +4,10 @@ const RUNTIME_IMAGE_MANAGER_URL_KEY = 'fc.imageManagerUrl';
 const PRODUCTION_IMAGE_MANAGER_URL = 'https://images.figurecollecting.com';
 
 /**
- * image-manager base URL resolution precedence (mirrors src/api/client.ts's
- * resolveApiBaseUrl):
+ * image-manager base URL resolution precedence:
  *   1. Runtime override — localStorage.getItem('fc.imageManagerUrl')
- *      Same escape hatch as the API URL override, for flipping a deployed
- *      build to a staging image-manager without a rebuild.
+ *      An escape hatch for flipping a deployed build to a staging
+ *      image-manager without a rebuild.
  *   2. Build-time env — import.meta.env.VITE_IMAGE_MANAGER_URL
  *      Set in .env.development / .env.test / .env.production.
  *   3. Fallback — PRODUCTION_IMAGE_MANAGER_URL.

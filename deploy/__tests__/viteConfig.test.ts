@@ -27,7 +27,7 @@ describe('vite dev proxy', () => {
     const conf = readFileSync(NGINX_CONF, 'utf8');
     const headers = resolve('development').server?.headers;
     expect(headers).toEqual(
-      devServerHeaders(conf, { VITE_API_URL: 'http://localhost:5080/api', VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' }),
+      devServerHeaders(conf, { VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' }),
     );
     expect(headers?.['Content-Security-Policy']).toMatch(/^default-src 'self';/);
   });
@@ -42,7 +42,7 @@ describe('vite preview', () => {
   it("serves the mode's build under the nginx headers", () => {
     const conf = readFileSync(NGINX_CONF, 'utf8');
     expect(resolve('test').preview?.headers).toEqual(
-      previewHeaders(conf, { VITE_API_URL: 'http://localhost:5080/api', VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' }),
+      previewHeaders(conf, { VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' }),
     );
   });
 });

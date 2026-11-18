@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
-// The legacy API client loads only when push is used (legacy screens): never in the running app.
-const legacyApi = async () => (await import('../api/client')).api;
 
 /**
- * Hook for managing Web Push notification subscriptions.
+ * The browser's notification permission and push subscription.
  *
- * Provides permission state, subscription status, and controls
- * to request/revoke notification permissions.
+ * No server holds push subscriptions, so nothing here sends a request: requestPermission asks the
+ * browser and stops there, and unsubscribe drops a subscription the browser still holds.
  *
  * Usage: Call requestPermission() after a meaningful user interaction,
  * not on page load.
@@ -20,7 +18,7 @@ export function usePushNotifications() {
 
   // Check current subscription status on mount
   useEffect(() => {
-    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    if (!('serviceWorker' in navigator)) return;
 
     navigator.serviceWorker.ready.then(async (registration) => {
       const existing = await registration.pushManager.getSubscription();
@@ -30,65 +28,11 @@ export function usePushNotifications() {
     });
   }, []);
 
-  const subscribe = useCallback(async () => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      console.warn('[Push] Push notifications not supported');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // Fetch VAPID public key from backend
-      const { data: vapidData } = await (await legacyApi()).get<{ success: boolean; vapidPublicKey: string }>(
-        '/push/vapid-key',
-      );
-
-      if (!vapidData.success || !vapidData.vapidPublicKey) {
-        console.warn('[Push] Push notifications not configured on server');
-        return;
-      }
-
-      const registration = await navigator.serviceWorker.ready;
-
-      // Convert VAPID key to Uint8Array
-      const applicationServerKey = urlBase64ToUint8Array(vapidData.vapidPublicKey);
-
-      // Subscribe via the Push API
-      const pushSubscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: applicationServerKey.buffer as ArrayBuffer,
-      });
-
-      const subscriptionJson = pushSubscription.toJSON();
-
-      // Send subscription to backend
-      await (await legacyApi()).post('/push/subscribe', {
-        endpoint: subscriptionJson.endpoint,
-        keys: {
-          p256dh: subscriptionJson.keys?.p256dh,
-          auth: subscriptionJson.keys?.auth,
-        },
-        userAgent: navigator.userAgent,
-      });
-
-      setIsSubscribed(true);
-    } catch (err) {
-      console.error('[Push] Failed to subscribe:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   const requestPermission = useCallback(async () => {
     if (typeof Notification === 'undefined') return;
 
-    const result = await Notification.requestPermission();
-    setPermission(result);
-
-    if (result === 'granted') {
-      await subscribe();
-    }
-  }, [subscribe]);
+    setPermission(await Notification.requestPermission());
+  }, []);
 
   const unsubscribe = useCallback(async () => {
     if (!('serviceWorker' in navigator)) return;
@@ -97,16 +41,7 @@ export function usePushNotifications() {
     try {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
-
-      if (subscription) {
-        const endpoint = subscription.endpoint;
-
-        // Unsubscribe from push manager
-        await subscription.unsubscribe();
-
-        // Remove from backend (axios DELETE with body requires { data })
-        await (await legacyApi()).delete('/push/unsubscribe', { data: { endpoint } });
-      }
+      if (subscription) await subscription.unsubscribe();
 
       setIsSubscribed(false);
     } catch (err) {
@@ -125,19 +60,4 @@ export function usePushNotifications() {
     /** Whether the browser supports push notifications */
     isSupported: typeof window !== 'undefined' && 'PushManager' in window,
   };
-}
-
-/**
- * Convert a base64url-encoded string to a Uint8Array
- * (needed for applicationServerKey)
- */
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; i++) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
 }

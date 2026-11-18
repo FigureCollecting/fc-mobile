@@ -95,6 +95,64 @@ describe('the privacy text (src/content/privacy.md)', () => {
     expect(FILE.match(/[\w.+-]+@[\w.-]+\.\w+/g)).toEqual([CONTACT_ADDRESS, CONTACT_ADDRESS]);
   });
 
+  // Challenge round 1: sentences that were false or said less than is recorded. Each is pinned by what it must
+  // and must not say; the proof that each is true is FACTS.md, not this test.
+  const section = (heading: string) => JSON.stringify(PRIVACY.sections.find((s) => s.heading === heading)!.blocks);
+
+  it('says a signed-in search is sent to the server, and does not list searches among what is never sent', () => {
+    const device = section('What stays on your device');
+    expect(device).toMatch(/signed in, what you type in Search is also sent to our server to search the catalogue/);
+    expect(device).toMatch(/barcode/);
+    const neverSent = FILE.split('\n').filter((line) => /never sent/.test(line));
+    expect(neverSent).toHaveLength(1);
+    expect(neverSent[0]).not.toMatch(/search/i);
+  });
+
+  it('tells the reader how to clear the device, and does not promise that removing the app clears it', () => {
+    const device = section('What stays on your device');
+    expect(device).toMatch(/clear this site's data in your browser's site settings/);
+    expect(FILE).not.toMatch(/or removing the app, deletes/);
+    expect(device).toMatch(/Removing the app or its icon may leave/);
+  });
+
+  it('the short version agrees with the body: no other account can read a collection, the person running the servers can', () => {
+    const short = section('The short version');
+    expect(FILE).not.toMatch(/Only your account can read/);
+    expect(short).toMatch(/No other account can read your collection/);
+    expect(short).toMatch(/person who runs the servers/);
+    expect(section('Your collection')).toMatch(/whoever runs it can technically read it/);
+  });
+
+  it('lists what the web server logs and what the sign-in server records', () => {
+    const logs = section('Server logs');
+    for (const field of [/the time/, /the address asked for/, /the result/, /referrer/, /user agent/, /IP address/]) expect(logs).toMatch(field);
+    const account = section('Your account');
+    for (const field of [/sign-in name/, /email address/, /IP address/, /city/, /browser and device/]) expect(account).toMatch(field);
+  });
+
+  it('gives no backup period it cannot keep: none of the old three-month claims, and the collection copies have no limit yet', () => {
+    expect(FILE).not.toMatch(/kept for three months|after three months/);
+    const kept = section('Where it is kept');
+    expect(kept).toMatch(/sign-in database/);
+    expect(kept).toMatch(/30 days/);
+    expect(kept).toMatch(/collection database/);
+    expect(kept).toMatch(/until we delete them by hand/);
+    expect(kept).toMatch(/We are setting a limit/);
+  });
+
+  it('does not mention the Sync switches or the Delete Account button', () => {
+    expect(FILE).not.toMatch(/Delete Account|Sync (switch|Owned|Ordered|Wished)/i);
+    expect(section('A copy of your data, or deleting it')).toMatch(/privacy@figurecollecting\.com/);
+  });
+
+  it('describes getting an account as the invitation flow runs: one-time link, the four fields, second step, email confirmation', () => {
+    const account = section('Getting an account');
+    for (const part of [/by invitation/, /works once/, /sign-in name, your name, your email address and a password/, /second sign-in step/, /follow the link in the email/]) {
+      expect(account).toMatch(part);
+    }
+    expect(FILE).not.toMatch(/When invitations start/);
+  });
+
   it('has no note that one language is the official one, and no markup left for the reader to see', () => {
     expect(FILE).not.toMatch(/official (version|language|wording)|English (version|wording|text)/i);
     const shown = [PRIVACY.title, ...PRIVACY.intro, ...PRIVACY.sections.flatMap((s) => [s.heading, ...s.blocks])]

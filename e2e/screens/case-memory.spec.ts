@@ -449,20 +449,26 @@ async function drawnShare(page: Page, id: string): Promise<number | null> {
   return changed(shown, hidden);
 }
 
-/** The cabinet the walk ends on (data-focus): what it holds is drawn, each imaged figure as its cut-out, drawing its art. */
-async function endCabinet(page: Page): Promise<string[]> {
+/** The focus cabinet (data-focus): its figures drawn, and its imaged ones whole across the frame, nearest its middle first. */
+async function focusCabinet(page: Page): Promise<{ focus: number; mine: Drawn[]; near: Drawn[] }> {
   const scene = page.locator('.cabinet-scene');
   const focus = Number(await scene.getAttribute('data-focus'));
   const [x0, x1] = (JSON.parse((await scene.getAttribute('data-wall'))!) as number[][])[focus]!;
   const frame = await frameBox(page);
   const mine = (await drawn(page)).filter((d) => d.xMm >= x0! && d.xMm <= x1!);
-  const out: string[] = [];
-  if (mine.length === 0) out.push(`cabinet ${focus}: no figure drawn`);
-  for (const d of mine) if (imaged(d.id) ? !cutOut(d) : d.art !== 'plate') out.push(`${d.id}: ${d.art}${d.grounded ? '' : ' (reading)'}`);
   const mid = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
   const near = mine
     .filter((d) => imaged(d.id) && d.tap.x >= frame.x && d.tap.x + d.tap.width <= frame.x + frame.width && d.tap.height >= 24)
     .sort((a, b) => Math.hypot(a.tap.x - mid.x, a.tap.y - mid.y) - Math.hypot(b.tap.x - mid.x, b.tap.y - mid.y));
+  return { focus, mine, near };
+}
+
+/** The cabinet the walk ends on (data-focus): what it holds is drawn, each imaged figure as its cut-out, drawing its art. */
+async function endCabinet(page: Page): Promise<string[]> {
+  const { focus, mine, near } = await focusCabinet(page);
+  const out: string[] = [];
+  if (mine.length === 0) out.push(`cabinet ${focus}: no figure drawn`);
+  for (const d of mine) if (imaged(d.id) ? !cutOut(d) : d.art !== 'plate') out.push(`${d.id}: ${d.art}${d.grounded ? '' : ' (reading)'}`);
   let read = 0;
   for (const d of near) {
     if (read === 4) break;
@@ -550,18 +556,40 @@ test('walking the wall end to end and back keeps only what the case draws, the c
   const scene = page.locator('.cabinet-scene');
   const at = async () => Number(await scene.getAttribute('data-camera-x'));
   const lastIndex = JSON.parse((await scene.getAttribute('data-wall'))!).length - 1;
-  // from the start: where walks back left stop (NAV-GRAD: the Free camera's swipe stops at the room's side wall, past the
-  // wall's first cabinet, as its walk out stops at the room's other side, past the last)
+  // NAV-GRAD: the Free camera's swipe walks past the wall's ends to the room's side walls, where the frame holds nothing
+  // of the wall (the left stop is 5.9 m left of the first cabinet). So the start is the first swipe right from the left
+  // stop that frames the first cabinet's figures; the walk back goes on to that stop and comes back to the start by the
+  // same swipes, which land on the same pose from the same stop.
   for (let before = NaN, n = 0; (await at()) !== before && n < 40; n++) {
     before = await at();
     await walk(page, -1);
+  }
+  let home = 0;
+  for (; (await focusCabinet(page)).near.length === 0; home++) {
+    if (home === 10) throw new Error(`ten swipes right of the left stop frame no figure of the first cabinet (camera x ${await at()})`);
+    await walk(page, 1);
   }
   const start = await at();
   const steps: Step[] = [await measure(page, 0, 'at the start')];
   const failures: string[] = overruns(steps[0]!);
   let rates: Rates | undefined;
 
-  // out to the far end, a pinch on the way, then back to the start, each swipe a step
+  /** What the page holds after a swipe, a step. */
+  const record = async (what: string) => {
+    let s = await measure(page, steps.length, what);
+    if (rates !== undefined && domOverruns(s, rates).length > 0) {
+      // requests in flight (the sync's IndexedDB, a fetch) hold listeners for a moment: a second on, what the page keeps
+      // (its layers as read: an idle page commits no new layer tree)
+      await page.waitForTimeout(1000);
+      s = { ...s, dom: await domState(page), ...(await retained(page)) };
+    }
+    steps.push(s);
+    failures.push(...overruns(s), ...(rates === undefined ? [] : domOverruns(s, rates)));
+    if (steps.length === WARM_UP) rates = ratesOf(steps);
+    if (steps.length > 400) throw new Error('the walk never reached the end of the wall');
+  };
+
+  // out to the far end, a pinch on the way, then back to the left stop and on to the start, each swipe a step
   let pinched = false;
   let lastDrawn = false;
   for (const dir of [1, -1] as const) {
@@ -577,19 +605,13 @@ test('walking the wall end to end and back keeps only what the case draws, the c
       moved = (await at()) !== before;
       // the wall's last cabinet, drawn as the walk out comes to it (the walk goes on past it, to the room's side)
       if (dir > 0 && !lastDrawn) lastDrawn = (await page.locator(`.cabinet-scene .cab[data-index="${lastIndex}"]`).count()) === 1;
-      let s = await measure(page, steps.length, what);
-      if (rates !== undefined && domOverruns(s, rates).length > 0) {
-        // requests in flight (the sync's IndexedDB, a fetch) hold listeners for a moment: a second on, what the page keeps
-        // (its layers as read: an idle page commits no new layer tree)
-        await page.waitForTimeout(1000);
-        s = { ...s, dom: await domState(page), ...(await retained(page)) };
-      }
-      steps.push(s);
-      failures.push(...overruns(s), ...(rates === undefined ? [] : domOverruns(s, rates)));
-      if (steps.length === WARM_UP) rates = ratesOf(steps);
-      if (steps.length > 400) throw new Error('the walk never reached the end of the wall');
+      await record(what);
     }
     if (dir > 0) failures.push(...(await undrawn(page)).map((c) => `at the far end (cabinet ${steps[steps.length - 1]!.dom.focus}): ${c} not drawn`));
+  }
+  for (let i = 0; i < home; i++) {
+    await walk(page, 1);
+    await record('right, to the start');
   }
   await attachSteps(testInfo, steps);
   expect(lastDrawn, `the walk out draws the last cabinet (${lastIndex})`).toBe(true);

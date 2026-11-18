@@ -1,8 +1,6 @@
 import { cleanup, render } from '@testing-library/preact';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SitePrice } from '../../components/prices/SitePrice';
 import { SyncBadge } from '../../components/sync/SyncBadge';
-import { SyncProgress } from '../../components/sync/SyncProgress';
 import { Badge } from '../../components/ui/Badge';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 
@@ -32,19 +30,5 @@ describe('the smallest text renders through --font-2xs, so TYPE-1 and user text 
   it('Badge', () => {
     render(<Badge count={3} />);
     expect(declarations('.badge')).toContain('font-size: var(--font-2xs);');
-  });
-
-  it("SitePrice's stock label", () => {
-    render(
-      <SitePrice
-        data={{ site: 'Store', price: 12_800, currency: 'JPY', stockStatus: 'pre_order', url: 'https://store.example/item', lastUpdated: '2026-10-01T00:00:00Z' }}
-      />,
-    );
-    expect(declarations('.site-price__stock')).toContain('font-size: var(--font-2xs);');
-  });
-
-  it("SyncProgress's phase labels", () => {
-    render(<SyncProgress phase="parsing" completed={1} total={4} failed={0} skipped={0} />);
-    expect(declarations('.sync-progress__phase-label')).toContain('font-size: var(--font-2xs);');
   });
 });

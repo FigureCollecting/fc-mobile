@@ -17,14 +17,6 @@ import { Style } from '../styles/Style';
 import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
 import { localSession } from '../local/session';
 
-const SYNC_INTERVALS = [
-  { value: 'manual', label: 'Manual' },
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-] as const;
-
-type SyncInterval = (typeof SYNC_INTERVALS)[number]['value'];
-
 /** Back arrow for header navigation */
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
@@ -150,15 +142,10 @@ export function Settings() {
   const [cacheClearing, setCacheClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
-  // Notifications
+  // Notifications: only the legacy screens' push switch and its blocked hint, so the section shows only with one of them
   const push = usePushNotifications();
-  const [priceAlerts, setPriceAlerts] = useState(() => localStorage.getItem('fc-price-alerts') !== 'false');
-  const [syncNotifs, setSyncNotifs] = useState(() => localStorage.getItem('fc-sync-notifs') !== 'false');
-
-  // Sync preferences
-  const [syncInterval, setSyncInterval] = useState<SyncInterval>(
-    () => (localStorage.getItem('fc-sync-interval') as SyncInterval) || 'manual',
-  );
+  const showPushRow = LEGACY_SCREENS_ENABLED && push.isSupported;
+  const showPushBlocked = LEGACY_SCREENS_ENABLED && push.permission === 'denied';
 
   // Privacy: the Diagnostic ids choice, read from and written through src/auth/diagIds.ts
   const [diagIds, setDiagIdsShown] = useState(diagIdsOn);
@@ -182,25 +169,6 @@ export function Settings() {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   useEffect(() => {
     readStorageStatus().then(setStorage).catch(() => {});
-  }, []);
-
-  // Persist notification preferences
-  const handlePriceAlerts = useCallback((v: boolean) => {
-    setPriceAlerts(v);
-    localStorage.setItem('fc-price-alerts', String(v));
-  }, []);
-
-  const handleSyncNotifs = useCallback((v: boolean) => {
-    setSyncNotifs(v);
-    localStorage.setItem('fc-sync-notifs', String(v));
-  }, []);
-
-  // Persist sync preferences
-  const handleSyncInterval = useCallback((e: Event) => {
-    const val = (e.target as HTMLSelectElement).value as SyncInterval;
-    hapticLight();
-    setSyncInterval(val);
-    localStorage.setItem('fc-sync-interval', val);
   }, []);
 
   // Shows what now applies to the next request, and whether this browser kept the choice. Off also
@@ -304,53 +272,27 @@ export function Settings() {
           </button>
         </section>
 
-        {/* ── Notifications ── */}
-        <section class="settings__section">
-          <h3 class="settings__section-title">Notifications</h3>
+        {/* ── Notifications: only with the legacy screens' push switch or its blocked hint ── */}
+        {(showPushRow || showPushBlocked) && (
+          <section class="settings__section">
+            <h3 class="settings__section-title">Notifications</h3>
 
-          {LEGACY_SCREENS_ENABLED && push.isSupported && (
-            <div class="settings__row">
-              <span class="settings__label">Push Notifications</span>
-              <Toggle
-                checked={push.isSubscribed}
-                onChange={(v) => v ? push.requestPermission() : push.unsubscribe()}
-                disabled={push.loading || push.permission === 'denied'}
-              />
-            </div>
-          )}
+            {showPushRow && (
+              <div class="settings__row">
+                <span class="settings__label">Push Notifications</span>
+                <Toggle
+                  checked={push.isSubscribed}
+                  onChange={(v) => v ? push.requestPermission() : push.unsubscribe()}
+                  disabled={push.loading || push.permission === 'denied'}
+                />
+              </div>
+            )}
 
-          {LEGACY_SCREENS_ENABLED && push.permission === 'denied' && (
-            <p class="settings__hint">Push notifications are blocked in browser settings.</p>
-          )}
-
-          <div class="settings__row">
-            <span class="settings__label">Price Alerts</span>
-            <Toggle checked={priceAlerts} onChange={handlePriceAlerts} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Complete</span>
-            <Toggle checked={syncNotifs} onChange={handleSyncNotifs} />
-          </div>
-        </section>
-
-        {/* ── Sync ── */}
-        <section class="settings__section">
-          <h3 class="settings__section-title">Sync</h3>
-
-          <div class="settings__row">
-            <span class="settings__label">Auto-Sync Interval</span>
-            <select
-              class="settings__select"
-              value={syncInterval}
-              onChange={handleSyncInterval}
-            >
-              {SYNC_INTERVALS.map((i) => (
-                <option key={i.value} value={i.value}>{i.label}</option>
-              ))}
-            </select>
-          </div>
-        </section>
+            {showPushBlocked && (
+              <p class="settings__hint">Push notifications are blocked in browser settings.</p>
+            )}
+          </section>
+        )}
 
         {/* ── Privacy: only in a build with diagnostic ids (VITE_DIAG_IDS=true) ── */}
         {diagIdsEnabled() && (
@@ -570,17 +512,6 @@ const styles = `
 
   .settings__hint:empty {
     padding: 0;
-  }
-
-  .settings__select {
-    min-height: 36px;
-    padding: var(--space-1) var(--space-3);
-    font-size: var(--font-sm);
-    border-radius: var(--radius-sm);
-    background: var(--surface-secondary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    min-width: 100px;
   }
 
   /* Toggle */

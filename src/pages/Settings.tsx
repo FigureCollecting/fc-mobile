@@ -12,7 +12,7 @@ import { APP_VERSION } from '../config/version';
 import type { CacheStats } from '../storage/cacheManager';
 import { readStorageStatus, type StorageStatus } from '../pwa/storage';
 import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
-import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
+import { hapticLight, hapticMedium } from '../utils/haptics';
 import { Style } from '../styles/Style';
 import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
 import { localSession } from '../local/session';
@@ -156,9 +156,6 @@ export function Settings() {
   const [syncNotifs, setSyncNotifs] = useState(() => localStorage.getItem('fc-sync-notifs') !== 'false');
 
   // Sync preferences
-  const [syncOwned, setSyncOwned] = useState(() => localStorage.getItem('fc-sync-owned') !== 'false');
-  const [syncOrdered, setSyncOrdered] = useState(() => localStorage.getItem('fc-sync-ordered') !== 'false');
-  const [syncWished, setSyncWished] = useState(() => localStorage.getItem('fc-sync-wished') !== 'false');
   const [syncInterval, setSyncInterval] = useState<SyncInterval>(
     () => (localStorage.getItem('fc-sync-interval') as SyncInterval) || 'manual',
   );
@@ -175,9 +172,6 @@ export function Settings() {
     window.addEventListener('storage', storage);
     return () => window.removeEventListener('storage', storage);
   }, []);
-
-  // Delete account
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   // Load cache stats
   useEffect(() => {
@@ -202,21 +196,6 @@ export function Settings() {
   }, []);
 
   // Persist sync preferences
-  const handleSyncOwned = useCallback((v: boolean) => {
-    setSyncOwned(v);
-    localStorage.setItem('fc-sync-owned', String(v));
-  }, []);
-
-  const handleSyncOrdered = useCallback((v: boolean) => {
-    setSyncOrdered(v);
-    localStorage.setItem('fc-sync-ordered', String(v));
-  }, []);
-
-  const handleSyncWished = useCallback((v: boolean) => {
-    setSyncWished(v);
-    localStorage.setItem('fc-sync-wished', String(v));
-  }, []);
-
   const handleSyncInterval = useCallback((e: Event) => {
     const val = (e.target as HTMLSelectElement).value as SyncInterval;
     hapticLight();
@@ -252,13 +231,6 @@ export function Settings() {
       setClearConfirmOpen(false);
     }
   }, [queryClient]);
-
-  // Delete account (placeholder)
-  const handleDeleteAccount = useCallback(() => {
-    hapticHeavy();
-    // TODO: integrate with backend DELETE /auth/account
-    setDeleteConfirmOpen(false);
-  }, []);
 
   const formatBytes = (bytes: number) => {
     if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -367,21 +339,6 @@ export function Settings() {
           <h3 class="settings__section-title">Sync</h3>
 
           <div class="settings__row">
-            <span class="settings__label">Sync Owned</span>
-            <Toggle checked={syncOwned} onChange={handleSyncOwned} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Ordered</span>
-            <Toggle checked={syncOrdered} onChange={handleSyncOrdered} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Wished</span>
-            <Toggle checked={syncWished} onChange={handleSyncWished} />
-          </div>
-
-          <div class="settings__row">
             <span class="settings__label">Auto-Sync Interval</span>
             <select
               class="settings__select"
@@ -477,17 +434,6 @@ export function Settings() {
               <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
-
-          <button
-            class="settings__row settings__row--action"
-            type="button"
-            onClick={() => { hapticHeavy(); setDeleteConfirmOpen(true); }}
-          >
-            <span class="settings__label settings__label--danger">Delete Account</span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
         </section>
       </div>
 
@@ -510,35 +456,6 @@ export function Settings() {
             class="settings__confirm-btn settings__confirm-btn--cancel"
             type="button"
             onClick={() => setClearConfirmOpen(false)}
-          >
-            Cancel
-          </button>
-        </div>
-      </BottomSheet>
-
-      {/* Delete account confirmation */}
-      <BottomSheet open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} snapPoint="half">
-        <div class="settings__confirm">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent-danger)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <h3 class="settings__confirm-title">Delete Account?</h3>
-          <p class="settings__confirm-text">
-            This action is permanent and cannot be undone. All your data, collection, and preferences will be permanently deleted.
-          </p>
-          <button
-            class="settings__confirm-btn settings__confirm-btn--danger"
-            type="button"
-            onClick={handleDeleteAccount}
-          >
-            Delete My Account
-          </button>
-          <button
-            class="settings__confirm-btn settings__confirm-btn--cancel"
-            type="button"
-            onClick={() => setDeleteConfirmOpen(false)}
           >
             Cancel
           </button>
@@ -633,10 +550,6 @@ const styles = `
 
   .settings__label--warning {
     color: var(--accent-warning);
-  }
-
-  .settings__label--danger {
-    color: var(--accent-danger);
   }
 
   .settings__label--muted {
@@ -787,15 +700,6 @@ const styles = `
 
   .settings__confirm-btn--warning:disabled {
     opacity: 0.6;
-  }
-
-  .settings__confirm-btn--danger {
-    background: var(--accent-danger);
-    color: white;
-  }
-
-  .settings__confirm-btn--danger:active {
-    background: #dc2626;
   }
 
   .settings__confirm-btn--cancel {

@@ -166,6 +166,63 @@ describe('Settings page', () => {
   });
 });
 
+// DEAD-CONTROLS: nothing read the three Sync switches' keys and the Delete Account button reached no server, so
+// neither is shown. The other controls stay.
+describe('Settings shows no control that does nothing', () => {
+  const DEAD_SYNC_KEYS = ['fc-sync-owned', 'fc-sync-ordered', 'fc-sync-wished'];
+  const section = (title: string) => screen.getByRole('heading', { level: 3, name: title }).closest('section')!;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('keeps every section, in order', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'Appearance', 'Data & Storage', 'Notifications', 'Sync', 'About', 'Account',
+    ]);
+  });
+
+  it('shows no Sync Owned, Sync Ordered or Sync Wished switch; Sync keeps only Auto-Sync Interval', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    for (const label of ['Sync Owned', 'Sync Ordered', 'Sync Wished']) expect(screen.queryByText(label)).toBeNull();
+    const sync = section('Sync');
+    expect(sync.querySelectorAll('[role="switch"]')).toHaveLength(0);
+    expect(Array.from(sync.querySelectorAll('.settings__label'), (l) => l.textContent)).toEqual(['Auto-Sync Interval']);
+    expect(sync.querySelector('select')).not.toBeNull();
+  });
+
+  it('reads and writes none of their keys, rendering or using the controls that stay', async () => {
+    for (const k of DEAD_SYNC_KEYS) localStorage.setItem(k, 'false');
+    const get = vi.spyOn(Storage.prototype, 'getItem');
+    const set = vi.spyOn(Storage.prototype, 'setItem');
+    const remove = vi.spyOn(Storage.prototype, 'removeItem');
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    for (const s of screen.getAllByRole('switch')) await user.click(s);
+    await user.selectOptions(section('Sync').querySelector('select')!, 'daily');
+    const dead = (calls: unknown[][]) => calls.filter(([k]) => DEAD_SYNC_KEYS.includes(String(k)));
+    expect(dead(get.mock.calls)).toEqual([]);
+    expect(dead(set.mock.calls)).toEqual([]);
+    expect(dead(remove.mock.calls)).toEqual([]);
+    // The switches that stay still save: the page was used, not just drawn.
+    expect(set.mock.calls.map(([k]) => k)).toEqual(expect.arrayContaining(['fc-price-alerts', 'fc-sync-notifs', 'fc-sync-interval']));
+  });
+
+  it('shows no Delete Account button or confirmation; Account keeps Change Password, which still opens security', async () => {
+    const user = userEvent.setup();
+    const { history } = renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull();
+    expect(screen.queryByText(/delete account/i)).toBeNull();
+    expect(screen.queryByText(/delete my account/i)).toBeNull();
+    const account = section('Account');
+    expect(Array.from(account.querySelectorAll('button'), (b) => b.textContent)).toEqual(['Change Password']);
+    await user.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(history.at(-1)).toBe('/profile/security');
+  });
+});
+
 // LGMOB: a build without VITE_DIAG_IDS=true has no Diagnostic ids switch and no /privacy link (P1 ships the page).
 describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
   beforeEach(() => vi.stubEnv('VITE_DIAG_IDS', undefined));

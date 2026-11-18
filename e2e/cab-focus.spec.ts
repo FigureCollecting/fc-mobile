@@ -1,11 +1,11 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { frameMargins } from '../src/components/display/caseCamera';
 import { DRAG_WALK_GAIN_X } from '../src/components/display/casePose';
 import { decodePng } from './paintCheck';
 import { touchPinch } from './touch';
+import { stepByKey } from './stepKeys';
 
 /**
  * CAB-FOCUS-1 (Ross 10-18, Fold8): the one-cabinet view's arrows snap to the straight-on view that fits the whole focus
@@ -30,10 +30,11 @@ async function openCabinetView(page: Page, size: { width: number; height: number
       localStorage.setItem('fc-fixture-mode', 'on');
       localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
     },
-    legacyPrefs({ view, pattern: PATTERN, ...more }),
+    { view, pattern: PATTERN, ...more },
   );
   await page.setViewportSize(size);
-  await page.goto('/?layout=case&fx=8');
+  // NAV-GRAD: Look arms after a 1 s hold here, so on a loaded host a drag whose first move comes late still walks
+  await page.goto('/?layout=case&fx=8&lookhold=1000');
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   await page.waitForTimeout(300);
@@ -48,7 +49,7 @@ interface Cam {
   height: number;
 }
 const camera = async (page: Page): Promise<Cam> => JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!);
-const next = (page: Page) => page.getByRole('button', { name: 'Next cabinet' }).click();
+const next = (page: Page) => stepByKey(page, 'Next cabinet');
 
 async function lift(page: Page, dy: number) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
@@ -107,7 +108,7 @@ test('an arrow press snaps a lifted camera back to the straight-on fit of the ca
   expect(straight.pitch).toBe(0);
   await lift(page, -120);
   expect((await camera(page)).y, 'a drag lifts the camera').not.toBeCloseTo(straight.y, 0);
-  await page.getByRole('button', { name: 'Previous cabinet' }).click();
+  await stepByKey(page, 'Previous cabinet');
   await next(page);
   await expect(host).toHaveAttribute('data-focus', '1');
   expect(await camera(page), 'back at the straight-on fit').toEqual(straight);
@@ -277,7 +278,7 @@ for (const size of FOLD8) {
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
   test(`Free camera: past the wall's ends dims as past a neighbour, straight on, turned and zoomed: ${size.name}`, async ({ page }) => {
     test.setTimeout(60_000);
-    await openCabinetView(page, size, 'cabinet', { freeCamera: true });
+    await openCabinetView(page, size);
     const host = page.locator('.cabinet-scene');
     await expect(host).toHaveAttribute('data-free-camera', '1');
     await expect(host).toHaveAttribute('data-focus', '0');

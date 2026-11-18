@@ -23,7 +23,6 @@ import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { expect, test } from '../fixtures';
-import { pinLegacyCamera } from '../legacyCamera';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
@@ -530,7 +529,6 @@ test("(e) a case view moved far along while its sync fetches: the figures it dra
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
   // NAV-2A0: it steps with the side arrows, which Free camera retires
-  await pinLegacyCamera(context);
   // every image 1.5 s late (a slow link), the figures recorded in the order first asked
   const asked: string[] = [];
   await imageHost(context, async (head) => {
@@ -543,7 +541,8 @@ test("(e) a case view moved far along while its sync fetches: the figures it dra
 
   const next = page.getByRole('button', { name: 'Next cabinet' });
   for (let i = 0; i < 12 && !(await next.isDisabled()); i++) {
-    await next.tap();
+    // NAV-GRAD: the arrows are the keyboard's alone (the Free camera's: unseen, and no finger meets them)
+    await next.press('Enter');
     await page.waitForTimeout(450);
   }
   await page.waitForTimeout(1200);

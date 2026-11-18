@@ -220,11 +220,11 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   /** The view a scene of `figures` starts with, on its own. */
   function fresh(figures: Figure[], patch: Partial<CasePrefs>) {
     const { host, unmount } = scene(figures, patch);
-    const out = { camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY };
+    const out = { camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf };
     unmount();
     return out;
   }
-  const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY });
+  const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf });
 
   it('camera mode: a walk along the wall and a lift, then a filter: the camera stands where a scene of the filtered figures starts', () => {
     const patch = { view: 'cabinet' } as const;

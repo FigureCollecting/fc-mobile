@@ -35,14 +35,14 @@ afterEach(() => {
 
 describe('NAV-2A2: Collection hands the header no swipe props', () => {
   for (const freeCamera of [false, true]) {
-    it(`Free camera ${freeCamera ? 'on' : 'off'}, Pan the wall stored before: no swipe, onSwipe or freeCamera prop, and no swipe button`, async () => {
+    it(`Free camera ${freeCamera ? 'on' : 'off'} and Pan the wall stored before: the Free camera all the same (NAV-GRAD); no swipe, onSwipe or freeCamera prop, and no swipe button`, async () => {
       localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera, swipe: 'pan' }));
       const r = await localRig();
       await seedFigures(r, [{ title: 'Figure 1', manufacturer: 'Good Smile' }]);
       renderWithProviders(<Collection />, { initialPath: '/' });
       // a cold first render of the page on a loaded host takes past findBy's 1 s default
       await screen.findByRole('button', { name: 'Figure 1' }, { timeout: 5000 });
-      expect(document.querySelector('.cabinet-scene[data-free-camera]') !== null).toBe(freeCamera);
+      expect(document.querySelector('.cabinet-scene[data-free-camera="1"]')).not.toBeNull();
       expect(seen.length).toBeGreaterThan(0);
       for (const props of seen) {
         expect(props.layout).toBe('case');

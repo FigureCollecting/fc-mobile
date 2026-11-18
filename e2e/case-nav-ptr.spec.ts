@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchSwipe } from './touch';
 import { watchPull } from './pullWatch';
@@ -28,10 +27,11 @@ async function openCase(page: Page, size: { width: number; height: number }) {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'wall' }));
+  }, { view: 'wall' });
   await page.setViewportSize(size);
   // a wall of several pages, so a sideways swipe walks
-  await page.goto('/?layout=case&fx=40');
+  // (NAV-GRAD: Look arms after a 1 s hold here, so on a loaded host a drag whose first move comes late still walks)
+  await page.goto('/?layout=case&fx=40&lookhold=1000');
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
   await settle(page, 800);
@@ -71,7 +71,7 @@ async function expectNoPull(page: Page, seen: () => Promise<{ tallestPx: number;
 }
 
 for (const panel of FOLD8) {
-  test(`NAV-PTR-1 ${panel.name}: a drag down in camera mode raises the camera and never pulls to refresh`, async ({ page }) => {
+  test(`NAV-PTR-1 ${panel.name}: a drag down raises the camera and never pulls to refresh`, async ({ page }) => {
     await openCase(page, panel);
     const before = await sceneState(page);
     const seen = await watchPull(page);
@@ -112,31 +112,10 @@ test('NAV-PTR-1 fold8-cover: a walk shows no Reset view; a 200 px raise shows a 
   expect(Math.abs(s.x + s.width - (b.x + b.width) - 24), "24 px in from the scene's right").toBeLessThanOrEqual(2);
 });
 
-// NAV-PTR-1 (Ross 10-25: "arrow movements weren't working"): a press on an arrow was also the scene's, so a thumb that
-// travelled 8 px lifted the camera instead, and Chrome makes no click past its own tap slop; an arrow now steps on its pointerup
+// NAV-GRAD: the side arrows are the keyboard's alone (unseen, and no finger meets them), so a swipe that starts where
+// Next stands is the scene's own, as one that starts beside it
 for (const panel of FOLD8) {
-  test(`NAV-PTR-1 ${panel.name}: a tap on Next whose finger travels 10 px pages on once, and a tap on Previous comes back`, async ({ page }) => {
-    await openCase(page, panel);
-    const next = page.locator('.cabinet-scene__step--next');
-    await expect(next).toBeEnabled();
-    const b = (await next.boundingBox())!;
-    const at = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-    const before = await sceneState(page);
-    const finger = await touchDown(page, at.x, at.y);
-    await finger.to(at.x, at.y + 10, 4, 16);
-    await finger.end();
-    await settle(page);
-    const after = await sceneState(page);
-    expect(after.x, 'the page advanced').toBeGreaterThan(before.x);
-    expect(after.y, 'the camera did not rise').toBe(before.y);
-    // one step, not two: a plain tap on Previous is back where the wall opened
-    await page.locator('.cabinet-scene__step--prev').tap();
-    await settle(page);
-    expect((await sceneState(page)).x, 'back at the first page').toBe(before.x);
-  });
-
-  // a walk started at the edge, on the arrow, leaves it as a drag: the scene's, as if it had started there
-  test(`NAV-PTR-1 ${panel.name}: a swipe that starts on Next walks the wall as the same swipe on the scene does`, async ({ page }) => {
+  test(`NAV-PTR-1 ${panel.name}: a swipe that starts where the unseen Next stands walks the wall as the same swipe beside it does`, async ({ page }) => {
     await openCase(page, panel);
     const f = await frameBox(page);
     const swipeFrom = async (x: number, y: number) => {

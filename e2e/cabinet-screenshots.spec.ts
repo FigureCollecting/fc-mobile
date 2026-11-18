@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, type CaseViewport } from './caseViewports';
 
 /**
@@ -47,7 +46,7 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
     localStorage.setItem('fc-fixture-mode', 'on');
     // the baselines are of the wall as it was packed with no clearance above a figure; the new 1 in default (CLEAR-1) has its own e2e
     localStorage.setItem('fc-case-prefs', JSON.stringify({ clearanceMm: 0, ...p }));
-  }, legacyPrefs(prefs));
+  }, prefs);
   await page.setViewportSize({ width: size.width, height: size.height });
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');

@@ -10,12 +10,12 @@
 // the chrome at all.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures';
-import { legacyPrefs, pinLegacyCamera } from '../legacyCamera';
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng, inkShare } from '../paintCheck';
 import { atRest, takesTap } from '../sheetRest';
+import { DRAG_WALK_GAIN_X } from '../../src/components/display/casePose';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
 import type { StackUser } from '../stack/src/issuer.js';
@@ -108,7 +108,6 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
-  await pinLegacyCamera(context);
   await stack.edge.clearFaults();
   await stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -213,7 +212,10 @@ async function checkViewCard(page: Page, testInfo: TestInfo, failures: string[],
   }
 }
 
-/** A finger's sideways swipe of dx px across the middle of the case. */
+/**
+ * A finger's sideways swipe of dx px across the middle of the case. NAV-GRAD: the Free camera walks DRAG_WALK_GAIN_X
+ * the finger's travel, so the walks below swipe 400 px of the wall with a finger that travels 400 / DRAG_WALK_GAIN_X.
+ */
 async function swipe(page: Page, dx: number): Promise<void> {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const x = scene.x + scene.width * (dx < 0 ? 0.75 : 0.25);
@@ -303,7 +305,7 @@ test('after the wall is walked far (CC4, 20 swipes of 400 px; NAV-2A2: the pan m
   inks.length = 0;
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view: 'wall' }));
+  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), { view: 'wall' });
   await openApp(page);
   await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 60_000 });
   const failures: string[] = [];
@@ -311,13 +313,13 @@ test('after the wall is walked far (CC4, 20 swipes of 400 px; NAV-2A2: the pan m
 
   const farthest = () => page.locator('.cab').evaluateAll((els) => Math.max(...els.map((e) => Number((e as HTMLElement).dataset.index))));
   const before = await farthest();
-  for (let i = 0; i < 20; i++) await swipe(page, -400);
+  for (let i = 0; i < 20; i++) await swipe(page, -400 / DRAG_WALK_GAIN_X);
   // 8,000 px along a wall of some hundred cabinets: cabinets far down the wall are drawn now
   await expect.poll(farthest).toBeGreaterThan(before + 5);
   await check(page, testInfo, failures, 'after 20 swipes', chrome(page));
   for (const name of ['Wished', 'Owned'] as const) {
     await showTab(page, name);
-    for (let i = 0; i < 20; i++) await swipe(page, -400);
+    for (let i = 0; i < 20; i++) await swipe(page, -400 / DRAG_WALK_GAIN_X);
     await check(page, testInfo, failures, `after ${name} and 20 swipes`, chrome(page));
   }
   await page.locator('.case-tabs__tab[data-tab="view"]').tap();

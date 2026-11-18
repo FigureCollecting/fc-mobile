@@ -15,7 +15,6 @@
 // (its picture stood at the middle of the depth); and Ordered after a walk drew none of the 8 (an empty room past the
 // one-cabinet wall, data-focus 3). Ordered from the wall's start was already packed alone, without gaps.
 import { expect, test } from '../fixtures';
-import { pinLegacyCamera } from '../legacyCamera';
 import type { Page, TestInfo } from '@playwright/test';
 import { SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
@@ -40,7 +39,6 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
-  await pinLegacyCamera(context);
   await held.stack.edge.clearFaults();
   await held.stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -292,7 +290,10 @@ async function zoomedLabels(page: Page, testInfo: TestInfo, labels: readonly Lab
   await shot(page, testInfo, name);
 }
 
-/** A walk along the wall to its far end: sideways swipes until the camera stops. */
+/**
+ * A walk along the wall to its far end: sideways swipes until the camera stops, eight at the most (NAV-GRAD: the Free
+ * camera's own swipe may walk on past the wall's end, where the old camera stopped; far down the wall is what is wanted).
+ */
 async function walkToEnd(page: Page): Promise<void> {
   const box = (await scene(page).boundingBox())!;
   for (let i = 0; i < 8; i++) {

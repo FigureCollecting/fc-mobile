@@ -2,8 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, NEIGHBOUR_DIM } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { project } from '../caseCamera';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
@@ -17,7 +16,7 @@ afterEach(() => cleanup());
 
 const COVER = { width: 443, height: 558 };
 const OPEN = { width: 870, height: 475 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, frame = COVER) {
   const onSelect = vi.fn();
@@ -131,14 +130,6 @@ describe('CAB-FOCUS-1 (1): an arrow press snaps to the straight-on fit of the wh
     const fresh = scene(MANY, { view: 'cabinet' }).host;
     next(k + 1);
     expect(cameraOf(fresh)).toEqual(got);
-  });
-
-  it('the wall view\'s arrows do not snap (its one camera is the wall\'s): a lift survives Next', () => {
-    const { host } = scene(MANY, { view: 'wall' });
-    drag(host, 0, -150);
-    const lifted = cameraOf(host).y;
-    next();
-    expect(cameraOf(host).y).toBeCloseTo(lifted, 6);
   });
 });
 

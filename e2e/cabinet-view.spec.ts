@@ -221,23 +221,64 @@ async function expectReframedAboveTabs(page: Page, view: View, label: string) {
   await expect(async () => expectFramedAboveTabs(page, view, label)).toPass({ timeout: 5_000 });
 }
 
-// NAV-RESET-FRAME (found in NAV-GRAD, on develop's Free camera as well; a unit of its own): after a change of the frame
-// the eye is pinned to the old frame's framing, so the cabinet is not fitted to the new frame, and Reset view (shown for
-// it) stands the eye there again instead of at the new frame's framing; only a new view, pattern or filter re-fits it.
-// The tests it fails are marked test.fail, each naming it: they turn red the moment it is fixed, and the marks go then.
-const NAV_RESET_FRAME = "NAV-RESET-FRAME: after a change of the frame the eye keeps the old frame's framing";
-const RESET_FRAME_BUG = new Set([
-  'offline: cabinet, fold8-cover-sideways',
-  'offline: cabinet, fold8-open',
-  'offline: shelf, fold8-cover-sideways',
-  'offline: shelf, fold8-open',
-  'turn: wall, fold8-cover to fold8-cover-sideways',
-  'turn: cabinet, fold8-cover to fold8-cover-sideways',
-  'turn: shelf, fold8-cover to fold8-cover-sideways',
+/** The eye's pose: x, y, z, yaw and pitch (spec 6.6 keeps these through a fold; the frame and the lens's px follow it). */
+async function eyeOf(page: Page) {
+  const c = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!);
+  return { pose: [c.x, c.y, c.z, c.yaw, c.pitch] as number[], frame: { width: c.width, height: c.height } };
+}
+
+type Eye = Awaited<ReturnType<typeof eyeOf>>;
+
+/** The eye once it stands still: the same pose read twice, longer than a spring (200 ms) apart. */
+async function steadyEye(page: Page): Promise<Eye> {
+  let eye = await eyeOf(page);
+  await expect(async () => {
+    await page.waitForTimeout(250);
+    const again = await eyeOf(page);
+    const same = JSON.stringify(again) === JSON.stringify(eye);
+    eye = again;
+    expect(same, 'the eye stands still').toBe(true);
+  }).toPass({ timeout: 5_000 });
+  return eye;
+}
+
+// Spec 6.6, by design: a fold, a banner or a turn of the phone keeps the eye's pose (CabinetScene's frame-change hold;
+// also CabinetSceneFreeCamera.test.tsx and case-free-camera.spec.ts). Where the new frame is shorter than the old one,
+// the cabinet therefore stays at the old frame's framing and its feet (the shelf's edge) end below the scene. These 7
+// combinations assert that: the pose unchanged and the miss below the scene's bottom as measured (CSS px). They turn red
+// if a frame change ever re-fits the eye; the NAV-RESET-FRAME fix leaves them as they are.
+const KEPT_POSE_MISS_PX = new Map([
+  ['offline: cabinet, fold8-cover-sideways', 2.996],
+  ['offline: cabinet, fold8-open', 2.6],
+  ['offline: shelf, fold8-cover-sideways', 2.996],
+  ['offline: shelf, fold8-open', 2.6],
+  ['turn: wall, fold8-cover to fold8-cover-sideways', 71.457],
+  ['turn: cabinet, fold8-cover to fold8-cover-sideways', 102.741],
+  ['turn: shelf, fold8-cover to fold8-cover-sideways', 36.203],
 ]);
+// identical to 1e-6 px in every run so far; half a CSS px leaves room for sub-pixel layout and float rounding, still
+// fails on a layout a whole px off, and keeps the smallest miss, 2.6 px, clearly below the scene
+const KEPT_POSE_MISS_TOLERANCE_PX = 0.5;
+
+/** After a change of the frame: the scene above the tabs, the pose as `before`, the framed bottom `missPx` below the scene. */
+async function expectPoseKeptAboveTabs(page: Page, view: View, label: string, before: Eye, missPx: number) {
+  await expect(async () => {
+    const { scene, sceneBottom } = await expectSceneAboveTabs(page, label);
+    const now = await eyeOf(page);
+    expect(now.frame, `${label}: the frame changed`).not.toEqual(before.frame);
+    expect(now.pose, `${label}: the pose kept (spec 6.6)`).toEqual(before.pose);
+    const miss = scene.y + (await framedBottomPx(page, view)) - sceneBottom;
+    expect(miss, `${label}: the framed bottom below the scene`).toBeGreaterThanOrEqual(missPx - KEPT_POSE_MISS_TOLERANCE_PX);
+    expect(miss, `${label}: the framed bottom below the scene`).toBeLessThanOrEqual(missPx + KEPT_POSE_MISS_TOLERANCE_PX);
+  }).toPass({ timeout: 5_000 });
+}
+
+// NAV-RESET-FRAME (found in NAV-GRAD, on develop's Free camera as well; a unit of its own): after a change of the frame
+// Reset view (shown for the kept pose) stands the eye at the old frame's framing again instead of at the new frame's.
+const NAV_RESET_FRAME = "NAV-RESET-FRAME: Reset view after a change of the frame stands the eye at the old frame's framing";
 
 test('Reset view after a turn of the phone stands the eye at the new frame\'s framing', async ({ page }) => {
-  // NAV-RESET-FRAME: Reset view stays shown after its tap, the eye still at the cover's framing
+  // NAV-RESET-FRAME: Reset view stays shown after its tap, the eye still at the cover's framing; flags when it is fixed
   test.fail(true, NAV_RESET_FRAME);
   const cover = FOLD8.find((v) => v.name === 'fold8-cover')!;
   const sideways = FOLD8.find((v) => v.name === 'fold8-cover-sideways')!;
@@ -258,16 +299,19 @@ for (const size of FOLD8) {
     });
 
     test(`still above the tabs when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
-      // NAV-RESET-FRAME: under the banner's shorter frame the eye keeps the taller one's framing (the feet below the scene)
-      test.fail(RESET_FRAME_BUG.has(`offline: ${view}, ${size.name}`), NAV_RESET_FRAME);
+      const kept = KEPT_POSE_MISS_PX.get(`offline: ${view}, ${size.name}`);
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'online');
+      const online = await steadyEye(page);
       await context.setOffline(true);
       await expect(page.locator('.offline-banner')).toBeVisible();
-      await expectReframedAboveTabs(page, view, 'offline');
+      // spec 6.6: under the banner's shorter frame the eye keeps the taller one's pose
+      if (kept === undefined) await expectReframedAboveTabs(page, view, 'offline');
+      else await expectPoseKeptAboveTabs(page, view, 'offline', online, kept);
       await context.setOffline(false);
       await expect(page.locator('.offline-banner')).toHaveCount(0);
       await expectReframedAboveTabs(page, view, 'back online');
+      if (kept !== undefined) expect((await eyeOf(page)).pose, 'back online: the pose kept').toEqual(online.pose);
     });
 
     test(`still above the tabs when the chips row comes and goes above the scene: ${view}, ${size.name}`, async ({ page }) => {
@@ -399,11 +443,13 @@ for (const [from, to] of [
 ] as const) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
     test(`turning the phone with the case open re-fits the scene above the tabs: ${view}, ${from} to ${to}`, async ({ page }) => {
-      // NAV-RESET-FRAME: turned sideways the eye keeps the upright cover's framing (the feet far below the scene)
-      test.fail(RESET_FRAME_BUG.has(`turn: ${view}, ${from} to ${to}`), NAV_RESET_FRAME);
+      const kept = KEPT_POSE_MISS_PX.get(`turn: ${view}, ${from} to ${to}`);
       await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
+      const upright = await steadyEye(page);
       await page.setViewportSize(FOLD8.find((v) => v.name === to)!);
-      await expectReframedAboveTabs(page, view, to);
+      // spec 6.6: turned sideways the eye keeps the upright cover's pose (the feet far below the scene)
+      if (kept === undefined) await expectReframedAboveTabs(page, view, to);
+      else await expectPoseKeptAboveTabs(page, view, to, upright, kept);
     });
   }
 }

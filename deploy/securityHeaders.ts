@@ -42,9 +42,9 @@ function crossOrigin(url: string | undefined): string | undefined {
 }
 
 /**
- * The nginx headers, with a build mode's cross-origin API and image hosts
- * added to connect-src and img-src (the test build mocks a legacy API on
- * :5080). Nothing else is widened.
+ * The nginx headers, with a build mode's cross-origin image hosts added to
+ * img-src (and the public image address to connect-src). Nothing else is
+ * widened: the API is the app's own origin, under /api.
  */
 export function previewHeaders(conf: string, env: Record<string, string | undefined>): Headers {
   const headers = readNginxHeaders(conf);
@@ -53,7 +53,6 @@ export function previewHeaders(conf: string, env: Record<string, string | undefi
     const sources = csp[directive] as string[];
     if (origin !== undefined && !sources.includes(origin)) sources.push(origin);
   };
-  add('connect-src', crossOrigin(env['VITE_API_URL']));
   add('img-src', crossOrigin(env['VITE_IMAGE_MANAGER_URL']));
   // The public image address (ADDR-1): images load from it and the service worker fetches them.
   add('img-src', crossOrigin(env['VITE_MEDIA_PUBLIC_BASE_URL']));

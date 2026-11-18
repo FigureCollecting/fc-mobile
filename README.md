@@ -9,13 +9,14 @@ npm install
 npm run dev
 ```
 
-The dev server expects a backend on the URL set by `VITE_API_URL`.
-`.env.development` defaults to `http://localhost:5080/api`.
+The API is the origin the app is served from, under `/api`. The dev server
+proxies `/api` to a local coordinator (`FC_COORDINATOR_URL`,
+`http://127.0.0.1:5052` unless set).
 
 Every page the dev server serves gets the preview CSP plus inline styles
 (`devServerHeaders` in `deploy/securityHeaders.ts`). The CSP refuses images,
 scripts, fetches and WebSockets from any host but the page's own origin, the
-mode's `VITE_API_URL` and `VITE_IMAGE_MANAGER_URL` and the production hosts,
+mode's `VITE_IMAGE_MANAGER_URL` and the production hosts,
 so never from a hands-off host (sites that bar AI agents by name,
 `e2e/handsOff.ts`). A CSP does not stop a navigation: a link, a `location`
 change, `window.open` or a meta refresh still leaves. The CSP, like the e2e
@@ -311,15 +312,12 @@ says the build changed, not that it is newer. Settings > About shows
 package.json's version (injected at build as `__APP_VERSION__`) and the build id
 (`VITE_BUILD_ID`).
 
-## API URL configuration
+## API URL
 
-`src/api/client.ts` resolves its base URL with the following precedence:
-
-1. `localStorage.getItem('fc.apiUrl')` — runtime override, handy for beta
-   testers who want to point a deployed build at staging without rebuilding.
-2. `import.meta.env.VITE_API_URL` — build-time default from
-   `.env.development` / `.env.production`.
-3. `https://figurecollecting.com/api` — hard-coded production fallback.
+There is none to configure: `src/api/transport.ts` calls the coordinator at
+`/api` on the origin the app is served from. The REST client that read
+`VITE_API_URL` and `localStorage` `fc.apiUrl` is gone
+(`deploy/__tests__/legacyRestGone.test.ts`).
 
 ## Running tests
 

@@ -60,10 +60,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      // --mode test loads .env.test (VITE_API_URL=http://localhost:5080/api),
-      // NOT .env.production's real https://figurecollecting.com/api. Without
-      // this, a production build talks to the live backend for real — the
-      // network mocks below are anchored to :5080 and silently never match it.
+      // --mode test loads .env.test: local image hosts, fixture mode allowed
+      // (VITE_ALLOW_FIXTURE_OVERRIDE) and the synthetic fixture art, none of
+      // which .env.production has.
       command: `npm run build -- --mode test && npm run preview -- --mode test --port ${servers.appPort} --strictPort`,
       url: servers.appUrl,
       reuseExistingServer: servers.reuseExistingServer,

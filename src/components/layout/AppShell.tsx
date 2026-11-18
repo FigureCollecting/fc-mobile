@@ -20,13 +20,6 @@ import { Review } from '../../pages/Review';
 import { Style } from '../../styles/Style';
 
 const FigureDetail = lazy(() => import('../../pages/FigureDetail').then((m) => ({ default: m.FigureDetail })));
-// No backend anywhere (src/config/features.ts) — lazy so a default build,
-// where LEGACY_SCREENS_ENABLED is off, never pulls these into the main chunk.
-const Sync = lazy(() => import('../../pages/Sync').then((m) => ({ default: m.Sync })));
-const Export = lazy(() => import('../../pages/Export').then((m) => ({ default: m.Export })));
-const Notifications = lazy(() =>
-  import('../../pages/Notifications').then((m) => ({ default: m.Notifications })),
-);
 const OidcCallbackRoute = lazy(() => import('../auth/OidcCallbackRoute'));
 
 const AUTH_ROUTES = ['/callback'];
@@ -97,19 +90,14 @@ export function AppShell() {
             <Route path="/settings" component={Settings} />
             <Route path="/import" component={Import} />
             <Route path="/review" component={Review} />
+            {/* Their screens called the old REST client and went with it: the links land on the collection. */}
+            <Route path="/sync"><Redirect to="/" /></Route>
+            <Route path="/export"><Redirect to="/" /></Route>
+            <Route path="/notifications"><Redirect to="/" /></Route>
             {/* No backend anywhere (src/config/features.ts): off by default,
                 deep links land back on the collection instead of a dead screen. */}
             {LEGACY_SCREENS_ENABLED ? (
               <>
-                <Route path="/sync">
-                  <Suspense fallback={<PageFallback />}><Sync /></Suspense>
-                </Route>
-                <Route path="/export">
-                  <Suspense fallback={<PageFallback />}><Export /></Suspense>
-                </Route>
-                <Route path="/notifications">
-                  <Suspense fallback={<PageFallback />}><Notifications /></Suspense>
-                </Route>
                 <Route path="/prices">{() => <GatedScreen feature="Price Tracker" />}</Route>
                 <Route path="/prices/:figureId">{() => <GatedScreen feature="Price Tracker" />}</Route>
                 <Route path="/analytics">{() => <GatedScreen feature="Analytics" />}</Route>
@@ -118,9 +106,6 @@ export function AppShell() {
               </>
             ) : (
               <>
-                <Route path="/sync"><Redirect to="/" /></Route>
-                <Route path="/export"><Redirect to="/" /></Route>
-                <Route path="/notifications"><Redirect to="/" /></Route>
                 <Route path="/prices"><Redirect to="/" /></Route>
                 <Route path="/prices/:figureId"><Redirect to="/" /></Route>
                 <Route path="/analytics"><Redirect to="/" /></Route>

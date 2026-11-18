@@ -35,8 +35,8 @@ afterEach(() => {
 });
 
 /** The hook at `scene`, its DOM, frames by hand, and what it wrote. */
-function mount(scene: FreeScene = freeSceneOf()) {
-  const frames = handFrames();
+function mount(scene: FreeScene = freeSceneOf(), clock = false) {
+  const frames = handFrames(1000, clock);
   const dom = freeDom();
   const ref = { current: scene };
   let renders = 0;
@@ -452,8 +452,9 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
     expect(m.fc().depthStart(1)).toBe(true);
   });
 
-  it('a depth drive started while a look eases back starts from where the ease rests', () => {
-    const m = mount();
+  it('a depth drive started while a look eases back starts from where the ease rests, the view still easing to it (NAV-LOOKDRIVE: no jump)', () => {
+    // (the ease is timed on the frames' clock here)
+    const m = mount(freeSceneOf(), true);
     const p0 = m.pose();
     act(() => m.fc().press({ pointerId: 1, clientX: 400, clientY: 200, button: 2 }, { x: 400, y: 200 }));
     // a right drag looks at once: far right, past the soft limit, then let go: it eases back
@@ -463,10 +464,15 @@ describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', ()
     });
     const rest = m.fc().held()!;
     expect(rest.yaw).not.toBe(0);
+    const shown = m.pose().yaw;
+    expect(Math.abs(shown)).toBeGreaterThan(Math.abs(rest.yaw));
     expect(m.fc().depthStart(1)).toBe(true);
-    // the ease is done at once: the eye is drawn at its rest
-    expect(m.pose().yaw).toBeCloseTo(rest.yaw, 6);
+    // the eye is drawn where the ease had it, and comes to its rest under the drive, 200 ms from the lift
+    expect(m.pose().yaw).toBe(shown);
     m.run(11);
+    expect(Math.abs(m.pose().yaw)).toBeGreaterThan(Math.abs(rest.yaw));
+    expect(Math.abs(m.pose().yaw)).toBeLessThan(Math.abs(shown));
+    m.run(2);
     const p = m.pose();
     expect(p.yaw).toBeCloseTo(rest.yaw, 6);
     // along the turned heading: it went sideways too

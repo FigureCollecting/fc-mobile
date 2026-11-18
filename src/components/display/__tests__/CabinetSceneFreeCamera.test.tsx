@@ -947,7 +947,8 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     host().removeAttribute('data-yaw-budget');
     move(1, { x: 290, y: 200 });
     expect(host().hasAttribute('data-yaw-budget')).toBe(false);
-    // the turn goes on from the rest (the band past it), not from where the ease had got to
+    // the turn goes on from the rest's cone, drawn from where the ease had got to (NAV-LOOKDRIVE: no jump): 140 ms in,
+    // a hair past the rest
     expect(pose().yaw / DEG).toBeGreaterThan(armed.start!.yaw);
     expect(pose().yaw / DEG).toBeLessThan(armed.start!.yaw + 1);
     up(1, { x: 290, y: 200 });
@@ -1299,14 +1300,24 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(pxPerMm(), 'let go turned').toBeLessThanOrEqual(opening);
   });
 
-  it('a jog while a look eases back starts from where the ease rests (the soft limit)', () => {
+  it('a jog while a look eases back starts from where the ease rests (the soft limit), the view easing on to it under the jog (NAV-LOOKDRIVE: no jump)', () => {
     scene();
     const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
     drag({ x: 440, y: 200 }, { x: 0, y: 200 }, { button: 2, steps: 20, lift: false });
     up(1, { x: 0, y: 200 });
     tick(16);
-    begin();
-    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+    const easing = pose().yaw;
+    expect(easing / DEG).toBeGreaterThan(cone.soft + 1);
+    let ok = false;
+    act(() => {
+      ok = jog().start();
+    });
+    expect(ok).toBe(true);
+    // drawn where the ease had it, and a frame on a little nearer its rest
+    expect(pose().yaw).toBe(easing);
+    frames(1);
+    expect(pose().yaw).toBeLessThan(easing);
+    expect(pose().yaw / DEG).toBeGreaterThan(cone.soft);
     run(JOG_FULL_PX, 0, 20);
     expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
     end();
@@ -1332,8 +1343,50 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(pose().x).toBeGreaterThan(before.x);
   });
 
+  // NAV-LOOKDRIVE: the same button in Look mode drives the scene's camera by rate (useFreeCamera's lookStart, lookAim, lookStop)
+  it('the jog offers the hat\'s Look: held right the eye turns right where it stands; let go past the soft limit it eases back to it; zoomed, its start drops the magnification', () => {
+    scene();
+    const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
+    down(11, { x: 180, y: 260 });
+    down(12, { x: 260, y: 260 });
+    move(11, { x: 140, y: 260 });
+    move(12, { x: 300, y: 260 });
+    up(11, { x: 140, y: 260 });
+    up(12, { x: 300, y: 260 });
+    tick(500);
+    expect(JSON.parse(host().dataset.zoom!).k).toBeGreaterThan(1);
+    const before = pose();
+    const look = jog().look!;
+    let ok = false;
+    act(() => {
+      ok = look.start();
+    });
+    expect(ok).toBe(true);
+    expect(JSON.parse(host().dataset.zoom!).k).toBe(1);
+    expect(host().dataset.gesture).toBe('jog-look');
+    act(() => look.aim(JOG_FULL_PX, 0));
+    frames(61);
+    expect(pose().yaw / DEG).toBeGreaterThan(cone.soft);
+    expect(pose().yaw / DEG).toBeLessThan(cone.hard);
+    expect([pose().x, pose().y, pose().z]).toEqual([before.x, before.y, before.z]);
+    act(() => look.stop());
+    expect(host().hasAttribute('data-gesture')).toBe(false);
+    // easing back: still past the soft limit a frame in, at it once the ease is over
+    tick(16);
+    expect(pose().yaw / DEG).toBeGreaterThan(cone.soft);
+    tick(250);
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+    // a finger on the scene owns it: the Look is refused
+    down(1, { x: 200, y: 200 });
+    act(() => {
+      ok = look.start();
+    });
+    expect(ok).toBe(false);
+    up(1, { x: 200, y: 200 });
+  });
+
   // NAV-DESKTOP-ZOOM: the wheel's magnification keeps the jog's rule: no magnification rides a moving camera
-  const wheel = (deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
+  const wheel =(deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
   const k = () => (JSON.parse(host().dataset.zoom!) as { k: number }).k;
 
   it('a wheel zoom, in or out under 1x and not yet settled, is dropped at a jog\'s start and never settles back after', () => {

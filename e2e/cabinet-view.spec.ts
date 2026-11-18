@@ -299,8 +299,10 @@ for (const size of FOLD8) {
       await expectFramedAboveTabs(page, view, 'at load');
     });
 
-    test(`the pose is kept above the tabs when the phone goes offline and the banner pushes the page down (spec 6.6): ${view}, ${size.name}`, async ({ page, context }) => {
-      const kept = KEPT_POSE_MISS_PX.get(`offline: ${view}, ${size.name}`);
+    const offlineKey = `offline: ${view}, ${size.name}`;
+    const offlineWhat = KEPT_POSE_MISS_PX.has(offlineKey) ? 'the pose is kept above the tabs (spec 6.6)' : 'the scene is re-fitted above the tabs';
+    test(`${offlineWhat} when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+      const kept = KEPT_POSE_MISS_PX.get(offlineKey);
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'online');
       const online = await steadyEye(page);
@@ -443,8 +445,10 @@ for (const [from, to] of [
   ['fold8-open', 'fold8-open-rotated'],
 ] as const) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-    test(`turning the phone with the case open keeps the pose above the tabs (spec 6.6): ${view}, ${from} to ${to}`, async ({ page }) => {
-      const kept = KEPT_POSE_MISS_PX.get(`turn: ${view}, ${from} to ${to}`);
+    const turnKey = `turn: ${view}, ${from} to ${to}`;
+    const turnWhat = KEPT_POSE_MISS_PX.has(turnKey) ? 'keeps the pose above the tabs (spec 6.6)' : 're-fits the scene above the tabs';
+    test(`turning the phone with the case open ${turnWhat}: ${view}, ${from} to ${to}`, async ({ page }) => {
+      const kept = KEPT_POSE_MISS_PX.get(turnKey);
       await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
       const upright = await steadyEye(page);
       await page.setViewportSize(FOLD8.find((v) => v.name === to)!);

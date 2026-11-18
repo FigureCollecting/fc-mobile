@@ -92,8 +92,8 @@ describe('CabinetScene: the case arrangement (PACK1)', () => {
     expect(order(host)).toEqual(['r', 's', 'a', 'e', 'm']);
   });
 
-  it('in the Free camera too', () => {
-    const { host } = scene({ freeCamera: true, arrange: 'scale-name' });
+  it('in the Free camera (the only camera, NAV-GRAD)', () => {
+    const { host } = scene({ arrange: 'scale-name' });
     expect(host.dataset.freeCamera).toBe('1');
     expect(order(host)).toEqual(['s', 'a', 'r', 'm', 'e']);
   });

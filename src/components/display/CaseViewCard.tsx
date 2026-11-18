@@ -139,12 +139,6 @@ export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, 
           )}
         </div>
 
-        {/* NAV-2A (NAVDEF a): the Free camera, per device, on until unticked here */}
-        <label class="case-card__choice">
-          <input type="checkbox" checked={prefs.freeCamera} onChange={() => onChange({ freeCamera: !prefs.freeCamera })} />
-          Free camera
-        </label>
-
         {misfitCount > 0 && onShowMisfits !== undefined && (
           <button type="button" class="case-card__misfits" onClick={onShowMisfits}>
             {`Doesn't fit (${misfitCount})`}

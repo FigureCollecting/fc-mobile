@@ -2,8 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { IKEA_DETOLF } from '../cabinetPresets';
 import { project } from '../caseCamera';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
@@ -19,7 +18,7 @@ afterEach(() => cleanup());
 const COVER = { width: 443, height: 418 };
 const OPEN = { width: 870, height: 335 };
 // the steps are about the wall's levels, with its figures sized for no clearance above them (CLEAR-1's default would move shelves out)
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, clearanceMm: 0, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, frameFallback = COVER) {
   const { container } = render(<CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frameFallback} />);
@@ -154,15 +153,6 @@ describe('SHELF-STEPS-1 (b) TOP1: an arrow press in the one-shelf view snaps to 
     expect(cameraOf(camera).y).not.toBe(snapped);
     pinchOut(camera);
     expect(zoomK(camera)).toBeGreaterThan(1);
-  });
-
-  // CAB-FOCUS-1 (Ross 10-18): the one-cabinet view's arrows snap too (CabinetSceneCabFocus.test.tsx); the wall view's do not
-  it('the shelf and the one-cabinet views snap: in the wall view a lifted camera keeps its height through the arrows', () => {
-    const host = scene(fixtures, { view: 'wall' });
-    drag(host, 0, -120);
-    const lifted = cameraOf(host).y;
-    tapButton('Next cabinet');
-    expect(cameraOf(host).y).toBe(lifted);
   });
 });
 

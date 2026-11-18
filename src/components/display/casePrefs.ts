@@ -6,7 +6,8 @@
  * the order the case stands its figures in (PACK1).
  * One localStorage entry; unreadable or unknown values fall back per field.
  * NAV-2A2 (Ross 11-04): no swipe mode any more (CC4's pan the wall or move the camera): a stored one is not read, and the
- * next write drops it.
+ * next write drops it. NAV-GRAD: the same for freeCamera (the Free camera is the only camera: a stored false, the old
+ * View card's box unticked, turns nothing off).
  * NAV-FLOAT (11-18): likewise the depth rocker's shape (NAV-ROCKER's depthRocker): the floating Z is vertical only.
  */
 import { useCallback, useState } from 'preact/hooks';
@@ -66,11 +67,6 @@ export interface CasePrefs {
   readonly wall: WallPreset;
   /** The custom wall colour, #rrggbb (its light-theme colour; the dark one is mixed from it). */
   readonly wallCustom: string;
-  /**
-   * NAV-1A: the Free camera (a camera that turns, walks without snapping and never traps you), per device. NAV-2A (NAVDEF
-   * a, Ross 10-31): on by default; only a stored false (the View card's box, unticked) keeps this device on the old path.
-   */
-  readonly freeCamera: boolean;
   /** PACK1 (Ross 10-26): the order the case stands its figures in, apart from the list's sort (caseArrangement.ts). */
   readonly arrange: CaseArrangement;
 }
@@ -85,7 +81,6 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   showEstimated: false,
   wall: DEFAULT_WALL,
   wallCustom: DEFAULT_WALL_CUSTOM,
-  freeCamera: true,
   arrange: DEFAULT_CASE_ARRANGEMENT,
 };
 
@@ -138,7 +133,6 @@ export function readCasePrefs(): CasePrefs {
     showEstimated: stored.showEstimated === true,
     wall: isWallPreset(stored.wall) ? stored.wall : d.wall,
     wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
-    freeCamera: stored.freeCamera !== false,
     arrange: isCaseArrangement(stored.arrange) ? stored.arrange : d.arrange,
   };
 }

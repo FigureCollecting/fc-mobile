@@ -12,7 +12,6 @@
 // on a top, a cabinet of empty glass under them), no figure too tall for a stock shelf stood inside, and no cabinet
 // took a shelf out (no data-removed).
 import { expect, test } from '../fixtures';
-import { legacyPrefs } from '../legacyCamera';
 import type { Page, TestInfo } from '@playwright/test';
 import { SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
@@ -35,7 +34,7 @@ test.beforeEach(async ({ context }) => {
   await context.addInitScript((prefs) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'cabinet' }));
+  }, { view: 'cabinet' });
   await owned.stack.edge.clearFaults();
   await owned.stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -117,7 +116,8 @@ async function held(page: Page): Promise<[number, number, number[]][]> {
 async function stepTo(page: Page, to: number): Promise<void> {
   const scene = page.locator('.cabinet-scene');
   for (let i = Number(await scene.getAttribute('data-focus')); i < to; i++) {
-    await page.getByRole('button', { name: 'Next cabinet' }).click();
+    // NAV-GRAD: the arrows are the keyboard's alone (the Free camera's: unseen, and no pointer meets them)
+    await page.getByRole('button', { name: 'Next cabinet' }).press('Enter');
     await expect(scene).toHaveAttribute('data-focus', String(i + 1));
   }
 }
@@ -171,7 +171,7 @@ test('(a) every cabinet before the last has figures on its shelves, the tall one
 test('(c) the open panel pages the wall view to its end, each page drawing figures on the shelves of the cabinets it shows whole; (b) one with one shelf out', async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('open'), 'the open panel shows the most cabinets a page: the fewest pages');
   test.setTimeout(300_000);
-  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view: 'wall' }));
+  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), { view: 'wall' });
   await heldImages(context, page, owned.heads);
   await openOwned(page, owned);
   const scene = page.locator('.cabinet-scene');
@@ -215,7 +215,7 @@ test('(c) the open panel pages the wall view to its end, each page drawing figur
     }
     if (await next.isDisabled()) break;
     const focus = await scene.getAttribute('data-focus');
-    await next.click();
+    await next.press('Enter');
     await expect(scene).not.toHaveAttribute('data-focus', focus!);
   }
   testInfo.annotations.push({ type: 'paged', description: JSON.stringify({ pages: pages + 1, cabinets: wall.length }) });

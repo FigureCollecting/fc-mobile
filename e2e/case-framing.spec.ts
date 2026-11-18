@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
@@ -39,9 +38,10 @@ async function openCase(page: Page, size: { width: number; height: number }, pre
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(p));
-  }, legacyPrefs(prefs));
+  }, prefs);
   await page.setViewportSize(size);
-  await page.goto(`/?layout=case${query}`);
+  // NAV-GRAD: Look arms after a 1 s hold here, so on a loaded host a drag whose first move comes late still walks
+  await page.goto(`/?layout=case&lookhold=1000${query}`);
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   await page.waitForTimeout(300);
@@ -52,8 +52,9 @@ async function picture(page: Page) {
   const host = page.locator('.cabinet-scene');
   const c = JSON.parse((await host.getAttribute('data-camera'))!);
   const camera: Camera = { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
-  const panX = Number(await host.getAttribute('data-pan'));
-  const panY = Number((await host.getAttribute('data-pan-y')) ?? 0);
+  // NAV-GRAD: the photo's slide went with the old camera; the picture is never slid
+  const panX = 0;
+  const panY = 0;
   // the drawn frame on the page: the scene, or the part of it the picture is drawn in
   const frame = await host.evaluate((h) => {
     const r = (h.querySelector('.cabinet-scene__frame') ?? h).getBoundingClientRect();
@@ -181,7 +182,7 @@ for (const size of FOLD8) {
 
 /** The room's back wall as the browser draws it: its top and its height on the page. */
 async function roomWall(page: Page) {
-  return page.locator('.cabinet-scene .room-wall').evaluate((el) => {
+  return page.locator('.cabinet-scene .room-wall:not(.room-side)').evaluate((el) => {
     const r = el.getBoundingClientRect();
     return { top: r.top, height: r.height };
   });
@@ -336,7 +337,8 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
     const up = await picture(page);
     expect(up.camera.y, 'a finger down raises the camera').toBeGreaterThan(start.camera.y + 20);
     expect(up.camera.x).toBe(start.camera.x);
-    await touchDrag(page, -40, -120);
+    // (a drift inside the Free camera's 24 px axis lock; past it the finger moves the eye both ways)
+    await touchDrag(page, -20, -120);
     const down = await picture(page);
     expect(down.camera.y, 'a finger up lowers it again').toBeLessThan(up.camera.y - 20);
     expect(down.camera.x, 'never sideways').toBe(start.camera.x);

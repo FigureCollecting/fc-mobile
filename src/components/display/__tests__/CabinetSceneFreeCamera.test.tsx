@@ -23,7 +23,7 @@ const COVER = { width: 443, height: 418 };
 const DEG = Math.PI / 180;
 const sized = (i: number): Figure => ({ _id: `s${i}`, name: `Figure ${i}`, dimensions: { heightMm: 200, widthMm: 100 } }) as Figure;
 const FIGURES = Array.from({ length: 120 }, (_, i) => sized(i));
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, freeCamera: true, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, ...patch });
 
 type P = { x: number; y: number };
 type Opts = { button?: number; shiftKey?: boolean };
@@ -70,7 +70,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('Free camera on: what the scene publishes and draws', () => {
+describe('Free camera (the only camera, NAV-GRAD): what the scene publishes and draws', () => {
   it('a level opening (rulings R0.3); data-camera with its yaw; no pan; the cone; the two side walls', () => {
     scene();
     expect(host().dataset.freeCamera).toBe('1');
@@ -90,15 +90,6 @@ describe('Free camera on: what the scene publishes and draws', () => {
     expect(host().querySelectorAll('.room-side').length).toBeGreaterThanOrEqual(1);
     // the viewport never slides
     expect((host().querySelector('.cabinet-scene__viewport') as HTMLElement).style.transform).toBe('');
-  });
-
-  it('off: none of it', () => {
-    scene({ freeCamera: false });
-    expect(host().hasAttribute('data-free-camera')).toBe(false);
-    expect(host().hasAttribute('data-cone')).toBe(false);
-    expect(cam()).not.toHaveProperty('yaw');
-    expect(host().querySelectorAll('.room-side')).toHaveLength(0);
-    expect(host().querySelector('.cabinet-scene__look-ring')).toBeNull();
   });
 });
 
@@ -436,19 +427,15 @@ describe('the arrows and Reset from where you look (rulings S7, spec 4)', () => 
     expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
   });
 
-  it('NAV-JOG: the side arrows retire from sight in Free camera (the jog moves it), kept for the keyboard alone (NAV-2A); the shelf view keeps its shelf steps; off, the arrows stay as they were', () => {
+  it('NAV-JOG: the side arrows retire from sight (the jog moves the camera), kept for the keyboard alone (NAV-2A), in every view; the shelf view keeps its shelf steps', () => {
     const keysOnly = (name: string) => screen.getByRole('button', { name }).classList.contains('cabinet-scene__step--keys');
-    scene({ view: 'cabinet' });
-    expect(keysOnly('Next cabinet')).toBe(true);
-    expect(keysOnly('Previous cabinet')).toBe(true);
-    cleanup();
-    scene({ view: 'shelf' });
-    expect(keysOnly('Next cabinet')).toBe(true);
-    expect(screen.getByRole('button', { name: 'Shelf below' })).toBeInTheDocument();
-    cleanup();
-    scene({ freeCamera: false });
-    expect(keysOnly('Next cabinet')).toBe(false);
-    expect(keysOnly('Previous cabinet')).toBe(false);
+    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+      scene({ view });
+      expect(keysOnly('Next cabinet'), view).toBe(true);
+      expect(keysOnly('Previous cabinet'), view).toBe(true);
+      expect(screen.queryByRole('button', { name: 'Shelf below' }) !== null, view).toBe(view === 'shelf');
+      cleanup();
+    }
   });
 
   it('NAV-2A: unseen, the arrows hide from the eye and the finger only, until focused; Tab reaches Next and Enter stands the eye at the next cabinet', async () => {
@@ -953,8 +940,8 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     up(1, { x: 290, y: 200 });
   });
 
-  it('off: no budget published and the px per mm is today\'s', () => {
-    scene({ freeCamera: false });
+  it('at the opening, before any look: no budget published and no turned px per mm', () => {
+    scene();
     expect(host().hasAttribute('data-yaw-budget')).toBe(false);
     expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
   });
@@ -985,17 +972,17 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
 
   beforeEach(() => useJogStore.setState({ target: null }));
 
-  it('Free camera offers a jog while it is shown; turned off or gone, it is withdrawn; off, none', () => {
+  it('the case offers a jog while it is shown, the same one through new prefs and views; gone, it is withdrawn; shown again, offered again', () => {
     const { again, unmount } = scene();
-    expect(useJogStore.getState().target).not.toBeNull();
-    again({ freeCamera: false });
-    expect(useJogStore.getState().target).toBeNull();
-    again({ freeCamera: true });
-    expect(useJogStore.getState().target).not.toBeNull();
+    const offered = useJogStore.getState().target;
+    expect(offered).not.toBeNull();
+    again({ view: 'cabinet' });
+    again({ ceilingMm: 2700 });
+    expect(useJogStore.getState().target, 'offered once, not again at each render').toBe(offered);
     unmount();
     expect(useJogStore.getState().target).toBeNull();
-    scene({ freeCamera: false });
-    expect(useJogStore.getState().target).toBeNull();
+    scene({ view: 'shelf' });
+    expect(useJogStore.getState().target).not.toBeNull();
   });
 
   it('held right: the eye trucks right every frame, as much faster at full reach than half way as jogSpeed says (NAV-2B: 7.5x); the lift stops it there', () => {
@@ -1474,10 +1461,10 @@ describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth move
 
   beforeEach(() => useJogStore.setState({ target: null }));
 
-  it('offered with the jog in Free camera; off, none', () => {
-    const { again } = scene();
+  it('offered with the jog; gone with the case', () => {
+    const { unmount } = scene();
     expect(typeof depth().start).toBe('function');
-    again({ freeCamera: false });
+    unmount();
     expect(useJogStore.getState().target).toBeNull();
   });
 
@@ -1599,12 +1586,6 @@ describe('NAV3-TOP (b): the one-cabinet view shows the tallest top figure whole;
     scene({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { figures: [tall] });
     const { y, margin } = head();
     expect(y).toBeGreaterThanOrEqual(margin - 1e-6);
-  });
-
-  it('off: the cabinet view keeps the crop, as before', () => {
-    scene({ view: 'cabinet', pattern: IKEA_DETOLF.id, freeCamera: false }, { figures: [tall], frameFallback: { width: 870, height: 475 } });
-    const { y, margin } = head();
-    expect(y).toBeLessThan(margin - 1);
   });
 });
 

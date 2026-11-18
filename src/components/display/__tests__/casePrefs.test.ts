@@ -14,7 +14,7 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 beforeEach(() => localStorage.clear());
 
 describe('case prefs, kept per device (CC14)', () => {
-  it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, an 8 ft ceiling, IC1-R1 tab order, Free camera on (NAVDEF a)', () => {
+  it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, an 8 ft ceiling, IC1-R1 tab order; no freeCamera field (NAV-GRAD)', () => {
     expect(DEFAULT_CASE_PREFS).toEqual({
       pattern: 'ikea-klingsbo',
       view: 'wall',
@@ -25,7 +25,6 @@ describe('case prefs, kept per device (CC14)', () => {
       showEstimated: false,
       wall: 'cream',
       wallCustom: '#d8d2c4',
-      freeCamera: true,
       arrange: 'series-scale-name',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
@@ -42,7 +41,6 @@ describe('case prefs, kept per device (CC14)', () => {
       showEstimated: true,
       wall: 'custom',
       wallCustom: '#336699',
-      freeCamera: false,
       arrange: 'scale-name',
     } as const;
     writeCasePrefs(prefs);
@@ -199,38 +197,7 @@ describe('the back wall colour (WALL-COLOUR-1)', () => {
 });
 
 
-// NAV-2A (NAVDEF a, Ross 10-31): Free camera is on unless this device turned it off, and a turn-off is kept
-describe('Free camera (NAV-2A)', () => {
-  it('a fresh device has it on, and so does a record from before it existed', () => {
-    expect(readCasePrefs().freeCamera).toBe(true);
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', ceilingMm: 2700 }));
-    expect(readCasePrefs()).toMatchObject({ view: 'shelf', ceilingMm: 2700, freeCamera: true });
-  });
-
-  it('turned off, it stays off through later writes of the other prefs', () => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: false }));
-    writeCasePrefs({ view: 'cabinet' });
-    expect(readCasePrefs().freeCamera).toBe(false);
-    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).freeCamera, 'the turn-off is stored').toBe(false);
-    writeCasePrefs({ freeCamera: true });
-    writeCasePrefs({ view: 'shelf' });
-    expect(readCasePrefs().freeCamera).toBe(true);
-  });
-
-  it('the hook keeps a turn-off across its own later updates', () => {
-    const { result } = renderHook(() => useCasePrefs());
-    expect(result.current[0].freeCamera).toBe(true);
-    act(() => result.current[1]({ freeCamera: false }));
-    act(() => result.current[1]({ view: 'shelf' }));
-    expect(result.current[0].freeCamera).toBe(false);
-    expect(readCasePrefs().freeCamera).toBe(false);
-  });
-
-  it.each([[1], [0], ['true'], ['false'], ['no'], [null], [{}], [[false]]])('reads %j as on: only an explicit false turns it off', (bad) => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: bad, view: 'shelf' }));
-    expect(readCasePrefs()).toMatchObject({ freeCamera: true, view: 'shelf' });
-  });
-});
+// NAV-GRAD: no freeCamera pref any more (the Free camera is the only camera): freeCameraOnly.test.tsx
 
 // PACK1 (Ross 10-26): the order the case stands its figures in, per device, apart from the list's sort
 describe('the case arrangement (PACK1)', () => {
@@ -250,7 +217,7 @@ describe('the case arrangement (PACK1)', () => {
   it('an explicit choice survives later writes of the other prefs, the default included', () => {
     writeCasePrefs({ arrange: 'date-added' });
     writeCasePrefs({ view: 'shelf' });
-    writeCasePrefs({ freeCamera: true });
+    writeCasePrefs({ ceilingMm: 2700 });
     writeCasePrefs({ showEstimated: false });
     expect(readCasePrefs().arrange).toBe('date-added');
     writeCasePrefs({ arrange: 'series-scale-name' });
@@ -279,7 +246,7 @@ describe('no swipe mode (NAV-2A2)', () => {
     localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ swipe, view: 'shelf', freeCamera: false }));
     const read = readCasePrefs();
     expect('swipe' in read).toBe(false);
-    expect(read).toEqual({ ...DEFAULT_CASE_PREFS, view: 'shelf', freeCamera: false });
+    expect(read).toEqual({ ...DEFAULT_CASE_PREFS, view: 'shelf' });
     writeCasePrefs({ wall: 'seafoam' });
     expect('swipe' in JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toBe(false);
     expect('swipe' in DEFAULT_CASE_PREFS).toBe(false);

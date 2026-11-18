@@ -33,9 +33,9 @@ type View = 'wall' | 'cabinet' | 'shelf';
 
 const settle = (page: Page, ms = 300) => page.evaluate((m) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, m)))), ms);
 
-async function openFree(page: Page, size: { width: number; height: number }, opts: { view?: View; query?: string; free?: boolean } = {}) {
-  // NAV-2A: Free camera is the default; off is a stored false
-  const prefs = { view: opts.view ?? 'wall', clearanceMm: 0, freeCamera: opts.free !== false };
+async function openFree(page: Page, size: { width: number; height: number }, opts: { view?: View; query?: string; storedOff?: boolean } = {}) {
+  // NAV-GRAD: the Free camera is the only camera; storedOff is a device that turned it off before (read past)
+  const prefs = { view: opts.view ?? 'wall', clearanceMm: 0, ...(opts.storedOff ? { freeCamera: false } : {}) };
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
@@ -299,7 +299,7 @@ async function jogSpeed(page: Page) {
   };
 }
 
-test('NAV-JOG: in Free camera the side arrows are gone from sight and touch (NAV-2A: kept for the keyboard) and the floating hat is the jog; off, the arrows as they were and no hat', async ({ page }) => {
+test('NAV-JOG: the side arrows are gone from sight and touch (NAV-2A: kept for the keyboard) and the floating hat is the jog; the same on a device that stored Free camera off (NAV-GRAD)', async ({ page }) => {
   await openFree(page, COVER, { view: 'cabinet' });
   const next = page.locator('.cabinet-scene__step--next');
   await expect(next).toHaveCSS('opacity', '0');
@@ -313,13 +313,15 @@ test('NAV-JOG: in Free camera the side arrows are gone from sight and touch (NAV
   await expect(jogButton(page)).toHaveCount(1);
   await expect(page.getByRole('group', { name: /move the camera/i })).toHaveCount(1);
   await expect(page.locator('[data-jog]')).toHaveCount(0);
+  // NAV-GRAD: a device that stored Free camera off gets the same (the Free camera is the only camera)
   const off = await page.context().newPage();
-  await openFree(off, COVER, { free: false });
-  await expect(off.locator('.cabinet-scene')).not.toHaveAttribute('data-free-camera', /./);
-  await expect(off.locator('.cabinet-scene__step--prev')).toHaveCount(1);
-  await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('opacity', '1');
-  await expect(off.locator('.cabinet-scene__step--keys')).toHaveCount(0);
-  await expect(navControls(off)).toHaveCount(0);
+  await openFree(off, COVER, { view: 'cabinet', storedOff: true });
+  await expect(off.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
+  await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('opacity', '0');
+  await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('pointer-events', 'none');
+  await expect(off.locator('.cabinet-scene__step:not(.cabinet-scene__step--keys)')).toHaveCount(0);
+  await expect(jogButton(off)).toHaveCount(1);
+  await expect(off.locator('[data-jog]')).toHaveCount(0);
   await expect(off.getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
   await off.close();
 });

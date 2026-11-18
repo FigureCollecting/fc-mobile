@@ -8,9 +8,9 @@ import { JOG_FULL_PX } from '../src/components/display/casePose';
 /**
  * NAV-2A (NAVDEF a, Ross 10-31): Free camera is the case's default on every device, and the header's swipe button (the
  * camera icon) goes with it: one finger moves, a hold looks, the jog is always on and a tap on it is the menu. A swipe
- * mode stored before changes nothing in Free camera. The View card's box turns Free camera off on this device: the old
- * path comes back and is kept, with no swipe button (NAV-2A2, Ross 11-04: its pan mode is gone too). At the Fold8's four
- * panels under a real finger (Chromium's touch pipeline), and on a desktop with a mouse and a keyboard.
+ * mode stored before changes nothing in Free camera. NAV-GRAD: it is the only camera; the View card has no box for it,
+ * and a device that stored it off opens in it all the same. At the Fold8's four panels under a real finger (Chromium's
+ * touch pipeline), and on a desktop with a mouse and a keyboard.
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -62,11 +62,8 @@ async function closeSheet(page: Page) {
   await expect(page.locator('.bottom-sheet')).toHaveCount(0);
 }
 
-/** The View card's "Free camera" box. */
-async function freeCameraBox(page: Page) {
-  await page.getByRole('button', { name: 'View' }).click();
-  return page.getByRole('checkbox', { name: 'Free camera', exact: true });
-}
+/** What the device has stored for the case. */
+const storedPrefs = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('fc-case-prefs') ?? '{}') as Record<string, unknown>);
 
 /** A quick one-finger drag across the middle of the frame, from 70 % to 30 % of its width (no hold: Look never arms). */
 async function quickDrag(page: Page) {
@@ -78,7 +75,7 @@ async function quickDrag(page: Page) {
 }
 
 for (const panel of FOLD8) {
-  test(`a fresh device: Free camera, no swipe icon, the hat on and Add in the header; unticked, the old path is kept, with no swipe icon either (NAV-2A2): ${panel.name}`, async ({ page }) => {
+  test(`a fresh device: Free camera, no swipe icon, the hat on and Add in the header; the View card has no Free camera box, and a reload keeps the view (NAV-GRAD): ${panel.name}`, async ({ page }) => {
     test.setTimeout(90_000);
     await openCase(page, panel);
     const scene = page.locator('.cabinet-scene');
@@ -103,18 +100,18 @@ for (const panel of FOLD8) {
     await expect(addSheet(page)).toBeVisible();
     await page.locator('.bottom-sheet__handle-area').click();
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
-    // the View card offers no pan, and its box is ticked; unticked, the case is the old path's, with no swipe icon (NAV-2A2)
-    const box = await freeCameraBox(page);
-    await expect(box).toBeChecked();
+    // the View card offers no pan and no Free camera box (NAV-GRAD: the Free camera is the only camera), and no depth
+    // control choice either (NAV-FLOAT: the floating Z is vertical only)
+    await page.getByRole('button', { name: 'View' }).click();
+    await expect(page.getByRole('group', { name: 'Arrange by' })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: /free camera/i })).toHaveCount(0);
+    await expect(page.getByText(/free camera/i)).toHaveCount(0);
     await expect(page.getByText(/pan the wall/i)).toHaveCount(0);
-    await box.click();
-    await expect(box).not.toBeChecked();
+    await expect(page.getByRole('group', { name: 'Depth control' })).toHaveCount(0);
     await closeSheet(page);
-    await expect(scene).not.toHaveAttribute('data-free-camera', /./);
-    await expect(swipeButton(page)).toHaveCount(0);
-    expect(await headerControls(page)).toEqual(['display-toggle__btn:Case', 'display-toggle__btn:Tiles', 'display-toggle__cycle:Labels: off']);
-    await expect(jogButton(page)).toHaveCount(0);
-    // kept through a view change and a reload
+    await expect(scene).toHaveAttribute('data-free-camera', '1');
+    await expect(jogButton(page)).toHaveCount(1);
+    // the Free camera through a view change and a reload
     await page.getByRole('button', { name: /^Case,/ }).click();
     await page.getByRole('menuitemradio', { name: 'One cabinet' }).click();
     await expect(scene).toHaveAttribute('data-view', 'cabinet');
@@ -122,13 +119,14 @@ for (const panel of FOLD8) {
     await page.reload();
     await waitForCase(page);
     await expect(scene).toHaveAttribute('data-view', 'cabinet');
-    await expect(scene).not.toHaveAttribute('data-free-camera', /./);
+    await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(swipeButton(page)).toHaveCount(0);
-    await expect(await freeCameraBox(page)).not.toBeChecked();
+    await expect(jogButton(page)).toHaveCount(1);
+    expect('freeCamera' in (await storedPrefs(page)), 'the device stores no freeCamera').toBe(false);
   });
 
-  test(`a device that stored Pan the wall: in Free camera no icon, and a quick drag moves the eye, never turns it: ${panel.name}`, async ({ page }) => {
-    await openCase(page, panel, { freeCamera: true, swipe: 'pan', view: 'wall' });
+  test(`a device that stored Pan the wall: no icon, and a quick drag moves the eye, never turns it: ${panel.name}`, async ({ page }) => {
+    await openCase(page, panel, { swipe: 'pan', view: 'wall' });
     const scene = page.locator('.cabinet-scene');
     await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(swipeButton(page)).toHaveCount(0);
@@ -139,18 +137,48 @@ for (const panel of FOLD8) {
     expect([moved.yaw ?? 0, moved.pitch], 'and never turned it').toEqual([0, 0]);
   });
 
-  test(`NAV-2A2: a device that stored Pan the wall with Free camera off: no icon, and a quick drag walks the camera, never pans: ${panel.name}`, async ({ page }) => {
+  // NAV-GRAD: the device that turned Free camera off before (Ross's own Fold8 may have) opens in the Free camera all the
+  // same, every gesture of it working; what it stored is read past, and dropped the next time the case stores anything
+  test(`NAV-GRAD: a device that stored Free camera off (and Pan the wall): the Free camera, its hold-Look and its jog; the next write drops the field: ${panel.name}`, async ({ page }) => {
     await openCase(page, panel, { freeCamera: false, swipe: 'pan', view: 'wall' });
     const scene = page.locator('.cabinet-scene');
-    await expect(scene).not.toHaveAttribute('data-free-camera', /./);
+    await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(scene).not.toHaveAttribute('data-swipe', /./);
+    await expect(scene).not.toHaveAttribute('data-pan', /./);
     await expect(swipeButton(page)).toHaveCount(0);
+    await expect(jogButton(page)).toHaveCount(1);
     expect(await headerControls(page)).toEqual(['display-toggle__btn:Case', 'display-toggle__btn:Tiles', 'display-toggle__cycle:Labels: off']);
+    // one finger moves the eye
     const start = await cameraOf(page);
     await quickDrag(page);
-    expect((await cameraOf(page)).x, 'the drag walked the camera').toBeGreaterThan(start.x);
-    await expect(scene).toHaveAttribute('data-pan', '0');
-    await expect(scene).toHaveAttribute('data-pan-y', '0');
+    const moved = await cameraOf(page);
+    expect(moved.x, 'the drag walked the eye').toBeGreaterThan(start.x);
+    expect([moved.yaw ?? 0, moved.pitch], 'and never turned it').toEqual([0, 0]);
+    // a finger held still, then dragged, turns it where it stands
+    const f = await frameBox(page);
+    const finger = await touchDown(page, f.x + f.width / 2, f.y + f.height / 2);
+    await page.waitForTimeout(300);
+    // waited for, not timed: the hold's timer fires late on a loaded host
+    await expect(scene, 'Look armed').toHaveAttribute('data-gesture', 'look', { timeout: 10_000 });
+    await finger.to(f.x + f.width / 2 - 80, f.y + f.height / 2, 8, 16);
+    await finger.end();
+    await settle(page);
+    const turned = await cameraOf(page);
+    expect(turned.yaw ?? 0, 'the held drag turned the eye').not.toBe(0);
+    expect(turned.x, 'where it stood').toBe(moved.x);
+    // nothing written yet: the stored field is still there, only read past
+    expect((await storedPrefs(page)).freeCamera).toBe(false);
+    // the next write (a view change) drops it; the reload is the Free camera still
+    await page.getByRole('button', { name: /^Case,/ }).click();
+    await page.getByRole('menuitemradio', { name: 'One cabinet' }).click();
+    await expect(scene).toHaveAttribute('data-view', 'cabinet');
+    const stored = await storedPrefs(page);
+    expect(stored.view).toBe('cabinet');
+    expect('freeCamera' in stored, 'freeCamera dropped on the write').toBe(false);
+    await page.reload();
+    await waitForCase(page);
+    await expect(scene).toHaveAttribute('data-view', 'cabinet');
+    await expect(scene).toHaveAttribute('data-free-camera', '1');
   });
 }
 

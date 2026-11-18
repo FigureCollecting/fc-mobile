@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, type CaseViewport } from './caseViewports';
+import { navControls } from './navControls';
 
 /**
  * Screenshot baselines of the faithful cabinets (CASE-CABINET, CASE-ADAPT,
@@ -47,7 +47,7 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
     localStorage.setItem('fc-fixture-mode', 'on');
     // the baselines are of the wall as it was packed with no clearance above a figure; the new 1 in default (CLEAR-1) has its own e2e
     localStorage.setItem('fc-case-prefs', JSON.stringify({ clearanceMm: 0, ...p }));
-  }, legacyPrefs(prefs));
+  }, prefs);
   await page.setViewportSize({ width: size.width, height: size.height });
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
@@ -67,6 +67,8 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
  * default per-pixel threshold (0.2), hence 0.05.
  */
 const SHOT = { animations: 'disabled', caret: 'hide', scale: 'css', maxDiffPixels: 10, threshold: 0.05 } as const;
+/** NAV-FLOAT: the scene's baseline is the scene's alone: the floating hat and Z rail over it are masked. */
+const shot = (page: Page) => ({ ...SHOT, mask: [navControls(page)] });
 
 for (const size of CASE_VIEWPORTS) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
@@ -74,7 +76,7 @@ for (const size of CASE_VIEWPORTS) {
       // three walls' worth of figures: several cabinets side by side, neighbours drawn true (CC4a)
       await openCase(page, size, '&fx=3', { view });
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', view);
-      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-${view}-${size.name}.png`, SHOT);
+      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-${view}-${size.name}.png`, shot(page));
     });
   }
 }
@@ -92,7 +94,7 @@ for (const size of FOLD8_PAIR) {
     test(`cabinets, ${branch} branch, ${size.name}`, async ({ page }) => {
       await openCase(page, size, `&fxbranch=${branch}`, { view: 'cabinet' });
       await expect(page.locator(`button.cab-figure[data-art="${art}"]`)).toHaveCount(7);
-      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-branch-${branch}-${size.name}.png`, SHOT);
+      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-branch-${branch}-${size.name}.png`, shot(page));
     });
   }
 }
@@ -108,7 +110,7 @@ for (const size of FOLD8_PAIR) {
     test(`cabinets, ${name} wall, ${size.name}`, async ({ page }) => {
       await openCase(page, size, '&fx=3', { view: 'wall', pattern });
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-pattern', pattern);
-      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-pattern-${name}-${size.name}.png`, SHOT);
+      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-pattern-${name}-${size.name}.png`, shot(page));
     });
   }
 }
@@ -116,7 +118,7 @@ for (const size of FOLD8_PAIR) {
 test('IC1 tabs over the tab bar (NAV-FLOAT: three together, no raised + among them), fold8-cover', async ({ page }) => {
   await openCase(page, CASE_VIEWPORTS[0]);
   await expect(page).toHaveScreenshot('cabinet-ic1-tabs-fold8-cover.png', {
-    ...SHOT,
+    ...shot(page),
     clip: await page.locator('.case-tabs').evaluate((tabs) => {
       const bar = document.querySelector('.tab-bar')!.getBoundingClientRect();
       const t = tabs.getBoundingClientRect();

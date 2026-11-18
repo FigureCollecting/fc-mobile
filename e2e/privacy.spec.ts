@@ -123,7 +123,7 @@ for (const typed of ['/privacy/', '/Privacy']) {
   }
 }
 
-test('the page shows the text of src/content/privacy.md, word for word, with the contact address as a mail link',async ({ page }) => {
+test('the page shows the text of src/content/privacy.md, word for word, with the contact address as a mail link', async ({ page }) => {
   await page.goto('/privacy');
   await expectThePage(page);
   expect(TEXT_LINES[0]).toBe('Privacy');

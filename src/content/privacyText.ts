@@ -1,6 +1,6 @@
 // The privacy page's text (P1) is privacy.md beside this file, in the few marks read here: a `# ` title on the
-// first line, `## ` section headings, `- ` list items, and paragraphs of one line each. A second title, a deeper
-// heading and an empty heading or item are refused at load; other marks show as typed, and the file's test refuses them.
+// first line, `## ` section headings, `- ` list items, and one-line paragraphs. A second title, a deeper heading and an
+// empty heading or item are refused at load. Other marks show as typed; the test refuses only *_`#[]<> and a leading "- ".
 import source from './privacy.md?raw';
 
 export type PrivacyBlock = { kind: 'p'; text: string } | { kind: 'ul'; items: string[] };

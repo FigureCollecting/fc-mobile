@@ -144,8 +144,8 @@ describe('the privacy text (src/content/privacy.md)', () => {
   it('says only the sign-in backups made since the move expire, and that the older sign-in copies stay until deleted by hand', () => {
     const kept = section('Where it is kept');
     expect(kept).not.toMatch(/Backups of the sign-in database reach back/);
-    expect(kept).toMatch(/sign-in database made since 5 November 2026 reach back three months, and a backup older than that is removed 30 days later/);
-    expect(kept).toMatch(/sign-in database from before 5 November 2026 are kept until we delete them by hand/);
+    expect(kept).toMatch(/sign-in database made since the move to a new backup store on 5 November 2026 reach back three months, and a backup older than that is removed 30 days later/);
+    expect(kept).toMatch(/Copies made before that move are kept until we delete them by hand/);
   });
 
   it('does not mention the Sync switches or the Delete Account button', () => {

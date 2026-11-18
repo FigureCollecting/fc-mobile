@@ -66,7 +66,7 @@ We are adding one central copy of these logs so we can trace a problem. It will 
 
 The servers are in Virginia, USA, rented from OVH. Backups and picture files are in Helsinki, Finland, at Hetzner.
 
-Backups of the sign-in database made since 5 November 2026 reach back three months, and a backup older than that is removed 30 days later. Copies of the sign-in database from before 5 November 2026 are kept until we delete them by hand. Backups of the collection database also reach back three months, but the storage keeps the older copies until we delete them by hand. We are setting a limit.
+Backups of the sign-in database made since the move to a new backup store on 5 November 2026 reach back three months, and a backup older than that is removed 30 days later. Copies made before that move are kept until we delete them by hand. Backups of the collection database also reach back three months, but the storage keeps the older copies until we delete them by hand. We are setting a limit.
 
 Traffic reaches our servers through Cloudflare. Cloudflare can see your IP address and the traffic it carries for us.
 

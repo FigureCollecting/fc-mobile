@@ -216,20 +216,29 @@ async function expectSheetAtRest(page: Page) {
     .toBe(true);
 }
 
-/**
- * After a change of layout (a banner, a row, a pane, a turn of the phone): the scene has followed it and ends above the
- * tabs. NAV-GRAD: the Free camera keeps the eye where it stood through a change of the frame (spec 6.6: "a fold or
- * unfold keeps the pose"), where the old camera fitted the cabinet to the new frame again; so what is checked after
- * the change is the scene's own place, and the fit is checked where the case opens at each size (the tests above).
- */
-async function expectReframedAboveTabs(page: Page, _view: View, label: string) {
-  await expect(async () => expectSceneAboveTabs(page, label)).toPass({ timeout: 5_000 });
+/** expectFramedAboveTabs once the scene and its camera have followed a change of layout. */
+async function expectReframedAboveTabs(page: Page, view: View, label: string) {
+  await expect(async () => expectFramedAboveTabs(page, view, label)).toPass({ timeout: 5_000 });
 }
 
-// NAV-GRAD, found while moving these tests to the Free camera and left as it is (out of this unit's scope): after a
-// change of the frame the eye is pinned to the old frame's framing, and Reset view (shown for it) stands it there again
-// instead of at the new frame's framing; only a new view, pattern or filter re-fits it.
-test.fixme('Reset view after a turn of the phone stands the eye at the new frame\'s framing', async ({ page }) => {
+// NAV-RESET-FRAME (found in NAV-GRAD, on develop's Free camera as well; a unit of its own): after a change of the frame
+// the eye is pinned to the old frame's framing, so the cabinet is not fitted to the new frame, and Reset view (shown for
+// it) stands the eye there again instead of at the new frame's framing; only a new view, pattern or filter re-fits it.
+// The tests it fails are marked test.fail, each naming it: they turn red the moment it is fixed, and the marks go then.
+const NAV_RESET_FRAME = "NAV-RESET-FRAME: after a change of the frame the eye keeps the old frame's framing";
+const RESET_FRAME_BUG = new Set([
+  'offline: cabinet, fold8-cover-sideways',
+  'offline: cabinet, fold8-open',
+  'offline: shelf, fold8-cover-sideways',
+  'offline: shelf, fold8-open',
+  'turn: wall, fold8-cover to fold8-cover-sideways',
+  'turn: cabinet, fold8-cover to fold8-cover-sideways',
+  'turn: shelf, fold8-cover to fold8-cover-sideways',
+]);
+
+test('Reset view after a turn of the phone stands the eye at the new frame\'s framing', async ({ page }) => {
+  // NAV-RESET-FRAME: Reset view stays shown after its tap, the eye still at the cover's framing
+  test.fail(true, NAV_RESET_FRAME);
   const cover = FOLD8.find((v) => v.name === 'fold8-cover')!;
   const sideways = FOLD8.find((v) => v.name === 'fold8-cover-sideways')!;
   await openFramed(page, cover, 'cabinet');
@@ -249,6 +258,8 @@ for (const size of FOLD8) {
     });
 
     test(`still above the tabs when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+      // NAV-RESET-FRAME: under the banner's shorter frame the eye keeps the taller one's framing (the feet below the scene)
+      test.fail(RESET_FRAME_BUG.has(`offline: ${view}, ${size.name}`), NAV_RESET_FRAME);
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'online');
       await context.setOffline(true);
@@ -388,6 +399,8 @@ for (const [from, to] of [
 ] as const) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
     test(`turning the phone with the case open re-fits the scene above the tabs: ${view}, ${from} to ${to}`, async ({ page }) => {
+      // NAV-RESET-FRAME: turned sideways the eye keeps the upright cover's framing (the feet far below the scene)
+      test.fail(RESET_FRAME_BUG.has(`turn: ${view}, ${from} to ${to}`), NAV_RESET_FRAME);
       await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
       await page.setViewportSize(FOLD8.find((v) => v.name === to)!);
       await expectReframedAboveTabs(page, view, to);

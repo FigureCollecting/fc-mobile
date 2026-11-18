@@ -34,6 +34,7 @@ import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng, inkShare } from '../paintCheck';
 import { touchPinch, touchSwipe } from '../touch';
+import { DRAG_WALK_GAIN_X } from '../../src/components/display/casePose';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
 import type { StackUser } from '../stack/src/issuer.js';
@@ -73,7 +74,7 @@ const DETACHED_MAX = 100;
 const GROWTH = 0.1;
 /** The swipes, the open, and the two after it whose largest DOM for what the page held is the warm-up. */
 const WARM_UP = 3;
-/** A finger's swipe across this share of the frame: about 7 cabinets on the open panel, 3 on the cover. */
+/** The share of the frame a swipe walks along the wall: about 7 cabinets on the open panel, 3 on the cover. */
 const SWIPE_SHARE = 0.85;
 /** A cut-out is drawn when hiding its art changes at least this share of its box on screen (e2e/screens/case-images). */
 const MIN_DRAWN_SHARE = 0.05;
@@ -326,11 +327,16 @@ const frameBox = async (page: Page): Promise<Box> => (await page.locator('.cabin
 /** Settled: a swipe's walk lands at once; a zoom's settle takes 200 ms. */
 const settle = (page: Page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250)))));
 
-/** One finger across SWIPE_SHARE of the frame: from its right to its left walks right (dir 1), the other way left. */
+/**
+ * One finger's swipe that walks SWIPE_SHARE of the frame along the wall: from right to left walks right (dir 1), the
+ * other way left. NAV-GRAD: the Free camera walks DRAG_WALK_GAIN_X the finger's travel, so the finger crosses
+ * SWIPE_SHARE / DRAG_WALK_GAIN_X of the frame; a finger across the whole share skipped cabinets between two steps.
+ */
 async function walk(page: Page, dir: 1 | -1): Promise<void> {
   const f = await frameBox(page);
-  const x = f.x + f.width * (0.5 + (dir * SWIPE_SHARE) / 2);
-  await touchSwipe(page, x, f.y + f.height * 0.5, -dir * f.width * SWIPE_SHARE, 0, 10, 16);
+  const share = SWIPE_SHARE / DRAG_WALK_GAIN_X;
+  const x = f.x + f.width * (0.5 + (dir * share) / 2);
+  await touchSwipe(page, x, f.y + f.height * 0.5, -dir * f.width * share, 0, 10, 16);
   await settle(page);
 }
 

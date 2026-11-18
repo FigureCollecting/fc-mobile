@@ -528,7 +528,6 @@ test("(d) filtered to Ordered and to Wished, figures not owned stand as their cu
 test("(e) a case view moved far along while its sync fetches: the figures it draws there are fetched next, not those next in the case's order", async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
-  // NAV-2A0: it steps with the side arrows, which Free camera retires
   // every image 1.5 s late (a slow link), the figures recorded in the order first asked
   const asked: string[] = [];
   await imageHost(context, async (head) => {

@@ -256,8 +256,9 @@ const KEPT_POSE_MISS_PX = new Map([
   ['turn: cabinet, fold8-cover to fold8-cover-sideways', 102.741],
   ['turn: shelf, fold8-cover to fold8-cover-sideways', 36.203],
 ]);
-// identical to 1e-6 px in every run so far; half a CSS px leaves room for sub-pixel layout and float rounding, still
-// fails on a layout a whole px off, and keeps the smallest miss, 2.6 px, clearly below the scene
+// identical to 1e-6 px in every run so far; the +-0.5 px band absorbs sub-pixel layout, float rounding and a 1 px layout
+// change (the lens follows the frame size, so the miss moves about 0.4 px) and fails from 2 px; a re-fit moves the miss
+// 12 px or more. It keeps the smallest miss, 2.6 px, clearly below the scene
 const KEPT_POSE_MISS_TOLERANCE_PX = 0.5;
 
 /** After a change of the frame: the scene above the tabs, the pose as `before`, the framed bottom `missPx` below the scene. */
@@ -298,7 +299,7 @@ for (const size of FOLD8) {
       await expectFramedAboveTabs(page, view, 'at load');
     });
 
-    test(`still above the tabs when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+    test(`the pose is kept above the tabs when the phone goes offline and the banner pushes the page down (spec 6.6): ${view}, ${size.name}`, async ({ page, context }) => {
       const kept = KEPT_POSE_MISS_PX.get(`offline: ${view}, ${size.name}`);
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'online');
@@ -442,7 +443,7 @@ for (const [from, to] of [
   ['fold8-open', 'fold8-open-rotated'],
 ] as const) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-    test(`turning the phone with the case open re-fits the scene above the tabs: ${view}, ${from} to ${to}`, async ({ page }) => {
+    test(`turning the phone with the case open keeps the pose above the tabs (spec 6.6): ${view}, ${from} to ${to}`, async ({ page }) => {
       const kept = KEPT_POSE_MISS_PX.get(`turn: ${view}, ${from} to ${to}`);
       await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
       const upright = await steadyEye(page);

@@ -704,6 +704,85 @@ describe('(h) a drive or a drag begun while a look eases back never makes the vi
     }
   });
 
+  /**
+   * The hat's Look takes over a scene Look's ease deep in its band (a right drag to x = 3000 let go `ms` before), its
+   * thumb held out (the side the view is on) or at its centre; then the depth moves the eye `frames` frames at `r` and
+   * rests. Per frame: how far the view moved against the thumb (in, toward straight), how far the hard limit where the
+   * eye is (the realism cone's, no nearer than the soft limit a turn rests at) closed in that frame, and how far the view
+   * stands past it.
+   */
+  const takeOver = (scene: FreeScene, ms: number, out: 0 | 1, r: number, frames: number) => {
+    const m = mount(scene);
+    const begun = coneAt(scene, m.pose());
+    m.sceneLook(3000);
+    act(() => {
+      m.fc().release(1, true);
+    });
+    m.frames.tick(ms);
+    const mid = m.pose();
+    const s = Math.sign(mid.yaw);
+    const side = (s > 0 ? begun.right : begun.left) ?? begun;
+    const hardHere = () => Math.max(coneOf(withPose(scene.base, { ...m.pose(), yaw: 0 }), scene.wall, scene.fronts).hard, side.soft);
+    expect(m.fc().lookStart()).toBe(true);
+    m.fc().lookAim(out * s * JOG_FULL_PX, 0);
+    const rows: { against: number; closed: number; past: number }[] = [];
+    let last = m.pose();
+    let hard = hardHere();
+    const frame = () => {
+      m.run(1);
+      const p = m.pose();
+      const here = hardHere();
+      rows.push({ against: s * (last.yaw - p.yaw), closed: hard - here, past: s * p.yaw - here });
+      last = p;
+      hard = here;
+    };
+    for (let i = 0; i < 3; i++) frame();
+    expect(m.fc().depthStart(r)).toBe(true);
+    for (let i = 0; i < frames; i++) frame();
+    m.fc().depthRate(0);
+    for (let i = 0; i < 4; i++) frame();
+    return { m, s, rows, deep: (s * mid.yaw - side.soft) / (side.hard - side.soft) };
+  };
+
+  it('the hat\'s Look takes over an ease deep in its band, then the depth moves: on a wall where nothing closes in, the view never moves against the thumb, held out or at its centre, at any working-out of the cone', () => {
+    for (const ms of [0, 8, 16]) {
+      for (const out of [0, 1] as const) {
+        // 20 frames: the 200 ms working-out while the eye moves; 2: the one once it rests
+        for (const frames of [20, 2]) {
+          const { rows, deep } = takeOver(freeSceneOf(), ms, out, 1, frames);
+          if (ms === 0) expect(deep).toBeGreaterThan(0.9);
+          for (const row of rows) {
+            expect(row.closed).toBe(0);
+            expect(row.past).toBeLessThan(0);
+            expect(row.against).toBeLessThanOrEqual(1e-12);
+          }
+        }
+      }
+    }
+  });
+
+  it('the same on a wall under the Classic cap, the depth backing the eye away: the view is never past the hard limit where the eye is, never moves against the thumb by more than that limit closed in that frame, and the first frame back moves it', () => {
+    for (const ms of [0, 8]) {
+      for (const out of [0, 1] as const) {
+        const scene = freeSceneOf({ wall: LONG_WALL, focus: 20 });
+        const { m, s, rows, deep } = takeOver(scene, ms, out, -1, 60);
+        if (ms === 0) expect(deep).toBeGreaterThan(0.9);
+        let closed = 0;
+        for (const row of rows) {
+          expect(row.past).toBeLessThan(0);
+          expect(row.against).toBeLessThanOrEqual(Math.max(0, row.closed) + 1e-12);
+          closed += row.closed;
+        }
+        // the cap did close in, past where the view was taken over
+        expect(closed).toBeGreaterThan(1 * DEG);
+        const at = m.pose();
+        m.fc().lookAim(-s * JOG_FULL_PX, 0);
+        m.run(1);
+        expect(s * (at.yaw - m.pose().yaw)).toBeGreaterThan(0.01 * DEG);
+      }
+    }
+  });
+
   it('a MOVE drag begun mid-ease: the view stays where it is drawn and eases on to its rest under the drag; lifted mid-ease it still rests; cancelled, it goes back at once', () => {
     const { m, rest, mid } = easing(48);
     act(() => m.fc().press({ pointerId: 2, clientX: 400, clientY: 200 }, { x: 400, y: 200 }));

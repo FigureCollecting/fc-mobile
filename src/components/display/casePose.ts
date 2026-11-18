@@ -196,22 +196,34 @@ export function turnRaw(start: Pose, yaw: number, pitch: number, limits: YawCone
 }
 
 /**
- * NAV-LOOKDRIVE: turnRaw for the hat's Look, which stores nothing up (lookWind): the turn that shows (yaw, pitch), but
- * no further than a hard limit. Where the cone has closed in on the view (the depth backed the eye away under the
- * Classic cap) the view comes in to where its band rests, and the first step back moves it. `taken`: a Look taking a
- * drawn view over (lookStart) keeps a view inside its band where it is drawn, however deep; only a view at or past
- * the hard limit, which no turn shows, is brought in.
+ * NAV-LOOKDRIVE: turnRaw for the hat's Look, which stores nothing up (lookWind): the turn that shows (yaw, pitch) in
+ * `limits` from `start`. A view deeper in its band than where a held hat rests (the turn asked for past the hard limit)
+ * comes in by as far as that side's hard limit closed in since `was`, the cone it was drawn in from its start, and no
+ * further than that rest: where the cone closed in (the depth backed the eye away under the Classic cap) it follows
+ * the cap, never moved against the thumb by more than the cap closed; where nothing closed in (a Look that took a view
+ * over mid-ease, a cone worked out again on a wall with no cap) it stays where it is drawn. A view at or past the hard
+ * limit, which no turn shows, comes in to the rest; with no `was`, so does any view deeper than it.
  */
-export function lookRaw(start: Pose, yaw: number, pitch: number, limits: YawCone, taken = false): { dYaw: number; dPitch: number } {
+export function lookRaw(start: Pose, yaw: number, pitch: number, limits: YawCone, was?: { readonly start: Pose; readonly limits: YawCone }): { dYaw: number; dPitch: number } {
   const at = spansOf(start, limits);
+  const before = was && spansOf(was.start, was.limits);
   const raw = turnRaw(start, yaw, pitch, limits);
-  const kept = (v: number, from: number, d: number, s: Span): number => {
-    if (taken && v > s.hardLo && v < s.hardHi) return d;
-    if (from + d > s.hardHi) return s.hardHi - from;
-    if (from + d < s.hardLo) return s.hardLo - from;
+  // the view comes in to t (`turned(t)`: the turn that shows it on this axis), no further than the rest
+  const kept = (v: number, from: number, d: number, s: Span, b: Span | undefined, turned: (t: number) => number): number => {
+    if (from + d > s.hardHi) {
+      const t = b ? v - Math.max(0, b.hardHi - s.hardHi) : s.hardHi;
+      return t < s.hardHi ? Math.max(turned(t), s.hardHi - from) : s.hardHi - from;
+    }
+    if (from + d < s.hardLo) {
+      const t = b ? v + Math.max(0, s.hardLo - b.hardLo) : s.hardLo;
+      return t > s.hardLo ? Math.min(turned(t), s.hardLo - from) : s.hardLo - from;
+    }
     return d;
   };
-  return { dYaw: kept(yaw, start.yaw, raw.dYaw, at.yaw), dPitch: kept(pitch, start.pitch, raw.dPitch, at.pitch) };
+  return {
+    dYaw: kept(yaw, start.yaw, raw.dYaw, at.yaw, before?.yaw, (t) => turnRaw(start, t, pitch, limits).dYaw),
+    dPitch: kept(pitch, start.pitch, raw.dPitch, at.pitch, before?.pitch, (t) => turnRaw(start, yaw, t, limits).dPitch),
+  };
 }
 
 /**

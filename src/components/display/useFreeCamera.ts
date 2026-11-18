@@ -503,12 +503,14 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   };
   /**
    * NAV-LOOKDRIVE: the Look goes on from the committed pose `at` through `limits`, the turn asked for the one that shows
-   * `shown` there, never past a hard limit (lookRaw: a cone that closed in on the view leaves nothing wound up).
+   * `shown` there, never past a hard limit (lookRaw: a cone that closed in on the view leaves nothing wound up, and
+   * brings it in by no more than it closed). `taken`: a drawn view taken over (lookStart), drawn in this very cone.
    */
   const keep = (look: Look, at: Pose, shown: Pose, limits: YawCone, taken: boolean) => {
+    const was = taken ? { start: at, limits } : { start: look.start, limits: look.limits };
     look.start = at;
     look.limits = limits;
-    Object.assign(look, lookRaw(at, shown.yaw, shown.pitch, limits, taken));
+    Object.assign(look, lookRaw(at, shown.yaw, shown.pitch, limits, was));
   };
   /** NAV-LOOKDRIVE: the Look's cone worked out from the committed pose `at` (keep). `taken`: a drawn view taken over (lookStart). */
   const rebase = (s: FreeScene, look: Look, at: Pose, shown: Pose, now: number, taken = false) => {

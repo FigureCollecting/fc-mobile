@@ -307,15 +307,78 @@ describe('lookRaw: the turn the hat\'s Look keeps for a view drawn, never past a
   }, 60_000);
 
   it('taken over (a Look begun on a view drawn mid-ease): a view inside its band keeps the turn that shows it, however deep; one at or past the hard limit asks for the hard limit', () => {
-    expect(lookRaw(POSE, 44 * DEG, 0, limits, true)).toEqual(turnRaw(POSE, 44 * DEG, 0, limits));
-    expect(lookRaw(POSE, 44 * DEG, 0, limits, true).dYaw).toBeGreaterThan(45 * DEG);
-    expect(lookRaw(POSE, -19 * DEG, 64 * DEG, limits, true)).toEqual(turnRaw(POSE, -19 * DEG, 64 * DEG, limits));
-    expect(lookRaw(POSE, 45 * DEG, 0, limits, true).dYaw).toBe(45 * DEG);
-    expect(lookRaw(POSE, 50 * DEG, 0, limits, true).dYaw).toBe(45 * DEG);
-    expect(lookRaw(POSE, -20 * DEG, 0, limits, true).dYaw).toBe(-20 * DEG);
-    expect(lookRaw(POSE, 0, 80 * DEG, limits, true).dPitch).toBe(PITCH.downHard);
-    expect(lookRaw(POSE, 0, -45 * DEG, limits, true).dPitch).toBe(-PITCH.upHard);
+    // taken over: drawn in the cone it goes on in (nothing closed in on it)
+    const taken = { start: POSE, limits };
+    expect(lookRaw(POSE, 44 * DEG, 0, limits, taken)).toEqual(turnRaw(POSE, 44 * DEG, 0, limits));
+    expect(lookRaw(POSE, 44 * DEG, 0, limits, taken).dYaw).toBeGreaterThan(45 * DEG);
+    expect(lookRaw(POSE, -19 * DEG, 64 * DEG, limits, taken)).toEqual(turnRaw(POSE, -19 * DEG, 64 * DEG, limits));
+    expect(lookRaw(POSE, 45 * DEG, 0, limits, taken).dYaw).toBe(45 * DEG);
+    expect(lookRaw(POSE, 50 * DEG, 0, limits, taken).dYaw).toBe(45 * DEG);
+    expect(lookRaw(POSE, -20 * DEG, 0, limits, taken).dYaw).toBe(-20 * DEG);
+    expect(lookRaw(POSE, 0, 80 * DEG, limits, taken).dPitch).toBe(PITCH.downHard);
+    expect(lookRaw(POSE, 0, -45 * DEG, limits, taken).dPitch).toBe(-PITCH.upHard);
   });
+
+  it('worked out again (chal2 S1): a view deeper than its rest comes in by as far as its side\'s hard limit closed in since the cone it was drawn in, never further than the rest; where nothing closed in it stays, bit for bit', () => {
+    const shownBy = (raw: { dYaw: number; dPitch: number }) => turnBy(POSE, raw.dYaw, raw.dPitch, limits).shown;
+    // the right side's hard limit closed 1 deg: a view at 44.5 deg comes in to 43.5, the turn asked for still past the hard limit
+    const closed1 = { start: POSE, limits: { ...limits, hard: 46 * DEG } };
+    expect(shownBy(lookRaw(POSE, 44.5 * DEG, 0, limits, closed1)).yaw).toBeCloseTo(43.5 * DEG, 9);
+    expect(lookRaw(POSE, 44.5 * DEG, 0, limits, closed1).dYaw).toBeGreaterThan(45 * DEG);
+    // closed 15 deg: no further than the band's rest
+    expect(lookRaw(POSE, 44.5 * DEG, 0, limits, { start: POSE, limits: { ...limits, hard: 60 * DEG } }).dYaw).toBe(45 * DEG);
+    // nothing closed, or the cone opened: where it is drawn, bit for bit (the pitch's cone never closes)
+    for (const was of [{ start: POSE, limits }, { start: POSE, limits: { ...limits, hard: 44.9 * DEG, left: { soft: 12 * DEG, hard: 19.9 * DEG } } }]) {
+      expect(lookRaw(POSE, 44.5 * DEG, 66 * DEG, limits, was)).toEqual(turnRaw(POSE, 44.5 * DEG, 66 * DEG, limits));
+      expect(lookRaw(POSE, -19.5 * DEG, -43 * DEG, limits, was)).toEqual(turnRaw(POSE, -19.5 * DEG, -43 * DEG, limits));
+    }
+    // the left side (its own budget side) the same way: closed 0.5 deg, in 0.5 deg
+    const left = { start: POSE, limits: { ...limits, left: { soft: 12 * DEG, hard: 20.5 * DEG } } };
+    expect(shownBy(lookRaw(POSE, -19.5 * DEG, 0, limits, left)).yaw).toBeCloseTo(-19 * DEG, 9);
+    // the other side closing moves nothing on this one
+    expect(lookRaw(POSE, -19.5 * DEG, 0, limits, closed1)).toEqual(turnRaw(POSE, -19.5 * DEG, 0, limits));
+    // no deeper than its rest: turnRaw itself, however far the cone closed
+    expect(lookRaw(POSE, 36 * DEG, 0, limits, closed1)).toEqual(turnRaw(POSE, 36 * DEG, 0, limits));
+  });
+
+  it('10,000 random views drawn in a side\'s band, the side closed in by up to 6 deg or opened by up to 3: never past the hard limit, in by no more than it closed, never out, no further in than the rest; the pitch where it was', () => {
+    /** A uniform double in [lo, hi] (fc.double leans to its ends). */
+    const uni = (lo: number, hi: number) => fc.integer({ min: 0, max: 1_000_000 }).map((i) => lo + ((hi - lo) * i) / 1_000_000);
+    fc.assert(
+      fc.property(
+        fc.constantFrom(-1, 1),
+        uni(12, 45),
+        uni(0.5, 15),
+        uni(-3, 6),
+        uni(0, 1),
+        uni(-1, 0.995),
+        uni(-5, 5),
+        uni(-89, 89),
+        (sgn, soft, band, close, softShare, depth, startYaw, dPitch) => {
+          const hardNow = soft + band - close;
+          const was = { soft: soft * DEG, hard: (soft + band) * DEG };
+          const now = { soft: Math.min(soft - close * softShare, hardNow) * DEG, hard: hardNow * DEG };
+          const cone = (side: { soft: number; hard: number }): YawCone => ({ soft: 40 * DEG, hard: 50 * DEG, ...(sgn > 0 ? { right: side } : { left: side }) });
+          const start = { ...POSE, yaw: startYaw * DEG };
+          // a view drawn `depth` of the way into its band (the turn that shows it there; under 0, inside the soft limit), and a pitch
+          const v = sgn * (depth < 0 ? soft * (1 + depth) : soft - band * Math.log(1 - depth)) * DEG;
+          const drawn = turnBy(start, v - start.yaw, dPitch * DEG, cone(was)).shown;
+          const raw = lookRaw(start, drawn.yaw, drawn.pitch, cone(now), { start, limits: cone(was) });
+          const shown = turnBy(start, raw.dYaw, raw.dPitch, cone(now)).shown;
+          const moved = sgn * (drawn.yaw - shown.yaw);
+          const rest = now.soft + (now.hard - now.soft) * (1 - Math.exp(-1));
+          return (
+            sgn * shown.yaw <= now.hard &&
+            moved >= -1e-9 &&
+            moved <= Math.max(0, close * DEG) + 1e-9 &&
+            (sgn * drawn.yaw <= rest || sgn * shown.yaw >= rest - 1e-9) &&
+            Math.abs(shown.pitch - drawn.pitch) <= 1e-9
+          );
+        },
+      ),
+      { numRuns: 10_000, seed: 11 },
+    );
+  }, 60_000);
 });
 
 describe('coneIn: a Look\'s cone kept inside the realism cone of where the eye has got to', () => {

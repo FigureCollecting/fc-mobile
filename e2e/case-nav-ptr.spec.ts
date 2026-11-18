@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchSwipe } from './touch';
 import { watchPull } from './pullWatch';
+import { hat } from './navControls';
 
 /**
  * NAV-PTR-1 (Ross 10-25, his Fold8): "when dragging to pan/move to a higher vantage point, it would activate refresh".
@@ -109,7 +110,10 @@ test('NAV-PTR-1 fold8-cover: a walk shows no Reset view; a 200 px raise shows a 
   expect(b.width, 'small').toBeLessThanOrEqual(44);
   expect(b.height, 'small').toBeLessThanOrEqual(44);
   expect(b.y + b.height / 2, "in the scene's lower quarter").toBeGreaterThan(s.y + s.height * 0.75);
-  expect(Math.abs(s.x + s.width - (b.x + b.width) - 24), "24 px in from the scene's right").toBeLessThanOrEqual(2);
+  // NAV-FLOAT: the hat floats at the scene's lower right, so the button stands 12 px inboard of it
+  const h = (await hat(page).boundingBox())!;
+  expect(Math.abs(h.x - (b.x + b.width) - 12), '12 px inboard of the hat').toBeLessThanOrEqual(2);
+  expect(h.x + h.width, 'the hat inside the scene').toBeLessThanOrEqual(s.x + s.width);
 });
 
 // NAV-GRAD: the side arrows are the keyboard's alone (unseen, and no finger meets them), so a swipe that starts where
@@ -127,7 +131,16 @@ for (const panel of FOLD8) {
     };
     const start = await sceneState(page);
     const b = (await page.locator('.cabinet-scene__step--next').boundingBox())!;
-    const fromScene = await swipeFrom(b.x - 24, b.y + b.height / 2);
+    const y = b.y + b.height / 2;
+    // NAV-FLOAT: on the cover held sideways the scene is so short that the hat floats over where Next stands or right
+    // beside it: a touch there is the hat's by design (nav-float.spec), so there is no pair of scene swipes to compare
+    const underHat = await page.evaluate(
+      ({ xs, y }) => xs.some((x) => document.elementFromPoint(x, y)?.closest('[data-nav="hat"]') != null),
+      { xs: [b.x - 24, b.x + b.width / 2], y },
+    );
+    expect(underHat, 'the hat lies over Next only on the cover held sideways').toBe(panel.name === 'fold8-cover-sideways');
+    if (underHat) return;
+    const fromScene = await swipeFrom(b.x - 24, y);
     expect(fromScene.x, 'a swipe on the scene walks').toBeGreaterThan(start.x);
     await page.reload();
     await page.waitForSelector('button.cab-figure');
@@ -135,7 +148,7 @@ for (const panel of FOLD8) {
     await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
     await settle(page, 800);
     expect((await sceneState(page)).x).toBe(start.x);
-    const fromArrow = await swipeFrom(b.x + b.width / 2, b.y + b.height / 2);
+    const fromArrow = await swipeFrom(b.x + b.width / 2, y);
     expect(fromArrow, 'walked, as from the scene').toEqual(fromScene);
   });
 }

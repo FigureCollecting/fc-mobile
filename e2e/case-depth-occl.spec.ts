@@ -71,6 +71,14 @@ const setTransform = (page: Page, t: string) =>
     document.querySelector<HTMLElement>('.cabinet-scene__root')!.style.transform = t;
   }, t);
 
+/** Takes the pull-up tabs out of the page, or puts them back (the CSSOM: the CSP allows no style element). */
+const showTabs = (page: Page, shown: boolean) =>
+  page.evaluate((shown) => {
+    const tabs = document.querySelector<HTMLElement>('.case-tabs')!;
+    if (shown) tabs.style.removeProperty('display');
+    else tabs.style.setProperty('display', 'none', 'important');
+  }, shown);
+
 const differs = (a: Rgba, b: Rgba, i: number) =>
   Math.abs(a.data[i] - b.data[i]) > DELTA || Math.abs(a.data[i + 1] - b.data[i + 1]) > DELTA || Math.abs(a.data[i + 2] - b.data[i + 2]) > DELTA;
 
@@ -127,7 +135,7 @@ for (const size of SIZES) {
     const box = { x: frame.x, y: frame.y, width: frame.width, height: Math.min(frame.height, size.height - frame.y) };
     const wall = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-wall'))!) as number[][];
     const rows: { z: number; s: number; plane: number; lost: number; elements: number }[] = [];
-    const control: { z: number; plane: number; lost: number }[] = [];
+    const control: { z: number; plane: number; lost: number; drawn: number }[] = [];
     let st = await state(page);
     const z0 = st.cam.z;
     let hold = 120;
@@ -152,11 +160,21 @@ for (const size of SIZES) {
       // the positive control: where the plane stood before (f / s mm out, k = 1) is 60 to 180 mm in front of the fronts,
       // the same DOM drawn with that plane loses parts here, so a step that lost them would have been seen
       const oldPlane = st.cam.z - st.cam.focalPx / st.s;
+      // (NAV-FLOAT: whether Chromium drops them depends on what else lies over the scene. With the rocker in the tabs it
+      // did as the page stood; with the floating controls it does only with the pull-up tabs out of the way, so the
+      // control is taken there, with its own references, and the page's own plane is held to no loss there too.)
       if (oldPlane >= 60 && oldPlane <= 180 && control.length < 4) {
-        await setTransform(page, withScale(st.transform, 1));
-        await settle(page, 150);
-        control.push({ z: Math.round(st.cam.z), plane: Math.round(oldPlane), lost: lostPx(decodePng(await page.screenshot()), refs, box) });
-        await setTransform(page, st.transform);
+        await showTabs(page, false);
+        const shot = async (t: string) => {
+          await setTransform(page, t);
+          await settle(page, 150);
+          return decodePng(await page.screenshot());
+        };
+        const bare = [await shot(withScale(st.transform, 4)), await shot(withScale(st.transform, 1 / 16))] as const;
+        const old = lostPx(await shot(withScale(st.transform, 1)), bare, box);
+        const drawn = lostPx(await shot(st.transform), bare, box);
+        control.push({ z: Math.round(st.cam.z), plane: Math.round(oldPlane), lost: old, drawn });
+        await showTabs(page, true);
         await settle(page, 150);
       }
       rows.push({ z: Math.round(st.cam.z), s: st.s, plane: Math.round(st.cam.z - st.cam.focalPx / (k * st.s)), lost, elements: st.elements });
@@ -177,5 +195,6 @@ for (const size of SIZES) {
     // the detector sees a loss in this browser: the old plane, at a step it fell in front of the fronts, loses parts
     expect(control.length, 'steps with the old plane in front of the fronts').toBeGreaterThan(0);
     expect(Math.max(...control.map((c) => c.lost)), JSON.stringify(control)).toBeGreaterThan(LOST_PX);
+    expect(Math.max(...control.map((c) => c.drawn)), `the page's own plane, tabs out of the way: ${JSON.stringify(control)}`).toBeLessThanOrEqual(LOST_PX);
   });
 }

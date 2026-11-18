@@ -80,6 +80,39 @@ describe('/privacy opened by its address', () => {
   });
 });
 
+// The address as people type or paste it: a trailing slash, another letter case. Each is the same page.
+describe.each(['/privacy/', '/Privacy', '/PRIVACY//'])('/privacy typed as %s', (typed) => {
+  it('a first-time visitor reads the page, not the onboarding, and nothing is marked as seen', async () => {
+    const view = renderWithProviders(<App />, { initialPath: typed });
+    expect(heading()).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open FigureCollecting' })).toBeInTheDocument();
+    expect(screen.queryByText(/your collection, anywhere/i)).toBeNull();
+    expect(view.history).toEqual([typed]);
+    expect(localStorage.getItem('onboarding_complete')).toBeNull();
+  });
+
+  it('a returning visitor reads the page alone: no session, no sync, no sign-in prompt, no Back to nowhere', async () => {
+    localStorage.setItem('onboarding_complete', '1');
+    renderWithProviders(<App />, { initialPath: typed });
+    expect(heading()).toBeInTheDocument();
+    await flushAll();
+    await flushAll();
+    expect(fake.sessions).toBe(0);
+    expect(fake.syncs).toBe(0);
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open FigureCollecting' })).toBeInTheDocument();
+  });
+});
+
+describe('an address that only resembles /privacy', () => {
+  it.each(['/privacy/more', '/privacyx', '/x/privacy', '//'])('%s is not the page: the onboarding shows for a first-time visitor', (path) => {
+    renderWithProviders(<App />, { initialPath: path });
+    expect(heading()).toBeNull();
+    expect(screen.getByText(/your collection, anywhere/i)).toBeInTheDocument();
+  });
+});
+
 describe('/privacy reached inside the app', () => {
   it('from the onboarding: the link opens the page alone, and its link back returns to the onboarding', async () => {
     const user = userEvent.setup();

@@ -29,6 +29,13 @@ const queryClient = new QueryClient({
   },
 });
 
+/** /privacy as it gets typed or pasted: in any letter case, with or without slashes after it. */
+function isPrivacyAddress(location: string): boolean {
+  let end = location.length;
+  while (end > 1 && location[end - 1] === '/') end -= 1;
+  return location.slice(0, end).toLowerCase() === '/privacy';
+}
+
 function AppInner() {
   // Shown once (tracked in localStorage); fixture mode skips it so dev boots into the fixtures.
   const [showOnboarding, setShowOnboarding] = useState(() => !isFixtureMode() && !localStorage.getItem(ONBOARDING_KEY));
@@ -49,7 +56,7 @@ function AppInner() {
 
   // P1: /privacy opened by its address, or from the onboarding, is the page alone. Anyone can read it: it waits for
   // no account, starts no session and asks the server for nothing. Inside the running app it is a screen (AppShell).
-  if (location === '/privacy' && !appUp.current) {
+  if (isPrivacyAddress(location) && !appUp.current) {
     return <Privacy standalone />;
   }
 

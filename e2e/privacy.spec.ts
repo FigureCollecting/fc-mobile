@@ -96,7 +96,34 @@ for (const build of [
   }
 }
 
-test('the page shows the text of src/content/privacy.md, word for word, with the contact address as a mail link', async ({ page }) => {
+// The address as it gets typed or pasted: a trailing slash, another letter case. On the real production build each is
+// the page alone, for a visitor who has never opened the app and for one who has.
+for (const typed of ['/privacy/', '/Privacy']) {
+  for (const visitor of ['first-time', 'returning'] as const) {
+    test(`signed out, ${visitor} visitor, real production build: ${typed} is the page alone, with no request to /api and none off this origin`, async ({ context, page }) => {
+      if (visitor === 'returning') await page.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
+      const seen = await watch(context, page, servers.prodUrl);
+
+      const response = await page.goto(`${servers.prodUrl}${typed}`);
+      await expectThePage(page);
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(1500);
+
+      expect(response!.status()).toBe(200);
+      expect(seen.shown.map((u) => new URL(u).pathname)).toEqual([typed]);
+      expect(seen.requests.filter((u) => new URL(u).pathname.startsWith('/api'))).toEqual([]);
+      expect(seen.offOrigin).toEqual([]);
+      await expect(page.locator('.onboarding')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Sign in' })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Back' })).toHaveCount(0);
+      await expect(page.getByRole('link', { name: 'Open FigureCollecting' })).toBeVisible();
+      expect(await page.evaluate(() => localStorage.getItem('onboarding_complete'))).toBe(visitor === 'returning' ? '1' : null);
+      expect(await shownText(page)).toEqual(TEXT_LINES);
+    });
+  }
+}
+
+test('the page shows the text of src/content/privacy.md, word for word, with the contact address as a mail link',async ({ page }) => {
   await page.goto('/privacy');
   await expectThePage(page);
   expect(TEXT_LINES[0]).toBe('Privacy');

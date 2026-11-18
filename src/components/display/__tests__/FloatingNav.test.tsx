@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, cleanup, fireEvent, render } from '@testing-library/preact';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { useRef } from 'preact/hooks';
 import { FloatingNav } from '../FloatingNav';
 import { DEPTH_RAIL_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY } from '../navTuning';
@@ -54,6 +54,12 @@ describe('the floating controls: when they show', () => {
     expect(container.querySelector('.floating-nav')).toBeNull();
     // the layer itself is no control: a screenshot's mask over [data-nav] covers the two controls, not the scene
     expect(layer()!.hasAttribute('data-nav')).toBe(false);
+  });
+
+  it('the two controls are one named landmark, "Camera controls" (axe region: no page content outside a landmark)', () => {
+    render(<FloatingNav />);
+    offer(jogOf(drive()));
+    expect(screen.getByRole('region', { name: 'Camera controls' })).toBe(layer());
   });
 
   it('a card of the page lies over the case (hidden): both go, a drive held then is stopped once; the card closed, they are back', () => {
@@ -129,16 +135,22 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     expect(sheet).not.toMatch(/box-shadow|drop-shadow|filter:/);
   });
 
-  it('sizes and anchors: the ring 104 px (120 from 600 px wide), the rail 28 x 92 in a 56 x 132 target, both 16 px above the case tabs, 20 px in from the safe area', () => {
+  it('each control is a compositing layer of its own (chal1 item 2): Chromium never squashes the hat, the rail and the tabs into one box', () => {
+    for (const control of ['.nav-hat', '.nav-depth']) expect(rule(control), control).toMatch(/will-change:\s*transform;/);
+  });
+
+  it('sizes and anchors: the ring 104 px (120 once the case\'s shorter side reaches 600 px), the rail 28 x 92 in a 56 x 132 target, both 16 px above the case tabs, 20 px in from the safe area', () => {
     expect([HAT_RING_PX.compact, HAT_RING_PX.wide, HAT_RING_PX.wideFrom, HAT_KNOB_PX]).toEqual([104, 120, 600, 36]);
     expect(DEPTH_RAIL_PX).toEqual({ width: 28, height: 92, hitWidth: 56, hitHeight: 132, knob: 24, travel: 34 });
     expect([NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE]).toEqual([20, 16, 0.85]);
     // the sizes are the page's while the controls float, so the scene's chips can stand clear of them
     const root = rule(':root');
     expect(root).toContain('--nav-k: 1;');
-    expect(root).toContain('--hat-size: calc(104px * var(--nav-k));');
+    // the ring is the one the case's column chose by its shorter side (below); none chosen, the compact one
+    expect(root).toContain('--hat-size: calc(var(--hat-ring, 104px) * var(--nav-k));');
     expect(root).toContain('--nav-base: calc(var(--bottom-nav-height) + var(--safe-area-bottom, 0px) + 32px + 16px);');
-    expect(css()).toMatch(/@media \(min-width: 600px\)\s*\{\s*:root\s*\{\s*--hat-size: calc\(120px \* var\(--nav-k\)\);/);
+    // no longer by the window's width alone (chal1: a wide, short scene got the big ring over its figures)
+    expect(css()).not.toMatch(/@media \(min-width/);
     // a mouse-only desktop: both shown, smaller
     expect(css()).toMatch(/@media \(hover: hover\) and \(pointer: fine\)\s*\{\s*:root\s*\{\s*--nav-k: 0\.85;/);
     expect(rule('.nav-hat')).toContain('right: calc(max(var(--safe-area-right, 0px), var(--nav-right, 0px)) + 20px);');
@@ -173,11 +185,11 @@ describe('the floating controls: beside a pane', () => {
       </div>
     );
   }
-  let box = { left: 0, right: 870 };
+  let box = { left: 0, right: 870, height: 400 };
   beforeEach(() => {
-    box = { left: 0, right: 870 };
+    box = { left: 0, right: 870, height: 400 };
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      return (this.dataset.testid === 'col' ? { left: box.left, right: box.right, top: 0, bottom: 400, width: box.right - box.left, height: 400, x: box.left, y: 0 } : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0 }) as DOMRect;
+      return (this.dataset.testid === 'col' ? { left: box.left, right: box.right, top: 0, bottom: box.height, width: box.right - box.left, height: box.height, x: box.left, y: 0 } : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0 }) as DOMRect;
     });
     vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(870);
   });
@@ -188,13 +200,13 @@ describe('the floating controls: beside a pane', () => {
     offer(jogOf(drive()));
     expect([layer()!.style.getPropertyValue('--nav-left'), layer()!.style.getPropertyValue('--nav-right')]).toEqual(['0px', '0px']);
     // the Info pane opens beside the case (Fold open): the hat stays over the case, not over the pane
-    box = { left: 0, right: 510 };
+    box = { left: 0, right: 510, height: 400 };
     act(() => {
       window.dispatchEvent(new Event('resize'));
     });
     expect([layer()!.style.getPropertyValue('--nav-left'), layer()!.style.getPropertyValue('--nav-right')]).toEqual(['0px', '360px']);
     // a column that runs past the window's edges insets nothing
-    box = { left: -12, right: 900 };
+    box = { left: -12, right: 900, height: 400 };
     act(() => {
       window.dispatchEvent(new Event('resize'));
     });
@@ -218,7 +230,7 @@ describe('the floating controls: beside a pane', () => {
     const { unmount } = render(<Host />);
     const withdraw = offer(jogOf(drive()));
     expect(observed.map((el) => (el as HTMLElement).dataset.testid)).toEqual(['col']);
-    box = { left: 40, right: 510 };
+    box = { left: 40, right: 510, height: 400 };
     act(() => fire());
     expect([layer()!.style.getPropertyValue('--nav-left'), layer()!.style.getPropertyValue('--nav-right')]).toEqual(['40px', '360px']);
     withdraw();
@@ -231,6 +243,41 @@ describe('the floating controls: beside a pane', () => {
     render(<FloatingNav />);
     offer(jogOf(drive()));
     expect(layer()!.style.getPropertyValue('--nav-left')).toBe('');
+    expect(document.documentElement.style.getPropertyValue('--hat-ring')).toBe('');
+  });
+
+  // chal1 item 4: the ring is chosen by the case column's SHORTER side, not the window's width: the cover held sideways
+  // (616 x 217) and the open panel (870 x 335) are wide but short, and the 120 px ring lay wholly over figures there
+  it('the ring is chosen by the column\'s shorter side: the wide one only when both sides reach wideFrom; re-chosen as it resizes; gone, the choice goes too', () => {
+    const ring = () => document.documentElement.style.getPropertyValue('--hat-ring');
+    const resize = (next: typeof box) => {
+      box = next;
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+    };
+    const { unmount } = render(<Host />);
+    const withdraw = offer(jogOf(drive()));
+    // 870 x 400: wide, but short
+    expect(ring()).toBe(`${HAT_RING_PX.compact}px`);
+    resize({ left: 0, right: 616, height: 217 });
+    expect(ring()).toBe(`${HAT_RING_PX.compact}px`);
+    // both sides at wideFrom: the wide ring; one px short on either side: the compact one
+    resize({ left: 0, right: HAT_RING_PX.wideFrom, height: HAT_RING_PX.wideFrom });
+    expect(ring()).toBe(`${HAT_RING_PX.wide}px`);
+    resize({ left: 0, right: HAT_RING_PX.wideFrom - 1, height: 900 });
+    expect(ring()).toBe(`${HAT_RING_PX.compact}px`);
+    resize({ left: 0, right: 900, height: HAT_RING_PX.wideFrom - 1 });
+    expect(ring()).toBe(`${HAT_RING_PX.compact}px`);
+    resize({ left: 0, right: 1536, height: 700 });
+    expect(ring()).toBe(`${HAT_RING_PX.wide}px`);
+    // the controls go (the case does): the page keeps no ring of theirs
+    withdraw();
+    expect(ring()).toBe('');
+    offer(jogOf(drive()));
+    expect(ring()).toBe(`${HAT_RING_PX.wide}px`);
+    unmount();
+    expect(ring()).toBe('');
   });
 });
 

@@ -13,7 +13,10 @@ export const NAV_BLUE = '205 65% 60%';
  */
 export const NAV_OPACITY = { fill: 0.14, line: 0.25, knob: 0.55, active: 0.8 } as const;
 
-/** The hat's ring (CSS px across): on a compact width, and from `wideFrom` px of viewport up. Its hit shape is the ring's circle. */
+/**
+ * The hat's ring (CSS px across): compact, and wide once the case's SHORTER side is `wideFrom` px or more (not the width
+ * alone: a wide but short scene keeps the compact ring). Its hit shape is the ring's circle.
+ */
 export const HAT_RING_PX = { compact: 104, wide: 120, wideFrom: 600 } as const;
 /** The hat's knob (px across): at full reach (JOG_FULL_PX of thumb travel) its edge touches the ring's. */
 export const HAT_KNOB_PX = 36;

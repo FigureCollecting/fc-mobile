@@ -22,7 +22,7 @@ interface FloatingNavProps {
   /** The column the case is drawn in: the controls keep inside its left and right edges. Absent: the window's. */
   within?: RefObject<HTMLElement>;
   /**
-   * A card of the page's own lies over the case (the View card, the do-not-fit list): the controls go while it does, or
+   * A card or menu of the page's own lies over the case (the View card, the do-not-fit list, the header's views menu): the controls go while it does, or
    * they would float over it (they are in document.body, above the page) and take its touches. A drive held then stops.
    */
   hidden?: boolean;
@@ -34,15 +34,21 @@ export function FloatingNav({ within, hidden = false }: FloatingNavProps) {
   const layer = useRef<HTMLDivElement>(null);
   const shown = target !== null;
 
-  // the column's insets from the window's sides, kept as it resizes (the Info pane opening beside it) and as the window does
+  // the column's insets from the window's sides, kept as it resizes (the Info pane opening beside it) and as the window does;
+  // and the hat's ring, chosen by the column's SHORTER side: a wide but short scene (the cover held sideways, the open
+  // panel) keeps the compact ring, which lies over fewer of its figures. On the page's root, where the scene's own chips
+  // read --hat-size too.
   useLayoutEffect(() => {
     const column = within?.current;
     const node = layer.current;
     if (!shown || !column || !node) return;
+    const root = document.documentElement;
     const place = () => {
       const box = column.getBoundingClientRect();
       node.style.setProperty('--nav-left', `${Math.max(0, box.left)}px`);
-      node.style.setProperty('--nav-right', `${Math.max(0, document.documentElement.clientWidth - box.right)}px`);
+      node.style.setProperty('--nav-right', `${Math.max(0, root.clientWidth - box.right)}px`);
+      const ring = Math.min(box.width, box.height) >= HAT_RING_PX.wideFrom ? HAT_RING_PX.wide : HAT_RING_PX.compact;
+      root.style.setProperty('--hat-ring', `${ring}px`);
     };
     place();
     const observer = new ResizeObserver(place);
@@ -51,12 +57,13 @@ export function FloatingNav({ within, hidden = false }: FloatingNavProps) {
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', place);
+      root.style.removeProperty('--hat-ring');
     };
   }, [shown, within]);
 
   if (target === null) return null;
   return createPortal(
-    <div class="floating-nav" ref={layer}>
+    <div class="floating-nav" ref={layer} role="region" aria-label="Camera controls">
       {target.depth && <NavDepth depth={target.depth} />}
       <NavHat jog={target} />
       <Style css={styles} />
@@ -76,12 +83,9 @@ const EYE_AT = { x: 50 + 50 * Math.cos((EYE_SLOT_DEG * Math.PI) / 180), y: 50 - 
 const styles = `
   :root {
     --nav-k: 1;
-    --hat-size: calc(${HAT_RING_PX.compact}px * var(--nav-k));
+    --hat-size: calc(var(--hat-ring, ${HAT_RING_PX.compact}px) * var(--nav-k));
     --hat-reach: calc((var(--hat-size) - ${HAT_KNOB_PX}px * var(--nav-k)) / 2);
     --nav-base: calc(var(--bottom-nav-height) + var(--safe-area-bottom, 0px) + ${CASE_TABS_HEIGHT_PX}px + ${NAV_LIFT_PX}px);
-  }
-  @media (min-width: ${HAT_RING_PX.wideFrom}px) {
-    :root { --hat-size: calc(${HAT_RING_PX.wide}px * var(--nav-k)); }
   }
   @media (hover: hover) and (pointer: fine) {
     :root { --nav-k: ${NAV_MOUSE_SCALE}; }
@@ -95,9 +99,12 @@ const styles = `
     --nav-knob: ${hsl(NAV_OPACITY.knob)};
     --nav-active: ${hsl(NAV_OPACITY.active)};
   }
+  /* will-change: each control is a compositing layer of its own, the size of its box; without it Chromium squashed the
+     hat, the rail and the pull-up tabs into one layer the width of the screen, from the rail's top down to the tab bar */
   .nav-hat {
     position: fixed;
     z-index: 98;
+    will-change: transform;
     right: calc(max(var(--safe-area-right, 0px), var(--nav-right, 0px)) + ${NAV_EDGE_PX}px);
     bottom: var(--nav-base);
     width: var(--hat-size);
@@ -141,6 +148,7 @@ const styles = `
   .nav-depth {
     position: fixed;
     z-index: 98;
+    will-change: transform;
     left: calc(max(var(--safe-area-left, 0px), var(--nav-left, 0px)) + ${NAV_EDGE_PX}px - ${RAIL_PAD_X}px * var(--nav-k));
     bottom: calc(var(--nav-base) - ${RAIL_PAD_Y}px * var(--nav-k));
     width: calc(${rail.hitWidth}px * var(--nav-k));

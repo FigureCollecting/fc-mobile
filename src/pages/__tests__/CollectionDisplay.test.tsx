@@ -394,6 +394,23 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(currentPath()).toContain('layout=rows');
   });
 
+  // NAV-FLOAT (chal1 S7): the hat floats in document.body above the header's menus, so it goes while a views menu is open
+  it('NAV-FLOAT: the floating hat and Z rail go while the Case views menu is open and come back once a view is picked', async () => {
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
+    await waitFor(() => expect(floating()).toBe(2));
+    await user.click(screen.getByRole('button', { name: /^Case/ }));
+    expect(screen.getByRole('menu', { name: 'Case views' })).toBeInTheDocument();
+    expect(floating()).toBe(0);
+    await user.click(screen.getByRole('menuitemradio', { name: 'One shelf' }));
+    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-view="shelf"]')).not.toBeNull());
+    expect(screen.queryByRole('menu')).toBeNull();
+    await waitFor(() => expect(floating()).toBe(2));
+  });
+
   it('honors the layout URL param for Display B', async () => {
     await respondWith([makeFigure('1')]);
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
@@ -654,6 +671,19 @@ describe('MISFIT-CHIP-1: the do-not-fit chip on the case page, its list, and the
     await user.click(screen.getByRole('button', { name: 'View' }));
     await user.click(await screen.findByRole('button', { name: "Doesn't fit (16)" }));
     expect((await screen.findByRole('region', { name: 'Figures that do not fit' })).querySelectorAll('li')).toHaveLength(16);
+  });
+
+  // NAV-FLOAT (chal1 S4): the list lies over the case, so the floating controls go while it is open and come back after
+  it('the floating hat and Z rail go while the list is open and come back when it closes', async () => {
+    const { user } = await openCaseWithMisfits(16);
+    const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
+    await waitFor(() => expect(floating()).toBe(2));
+    await user.click(screen.getByRole('button', { name: '16 figures do not fit' }));
+    await screen.findByRole('region', { name: 'Figures that do not fit' });
+    expect(floating()).toBe(0);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(list()).toBeNull());
+    await waitFor(() => expect(floating()).toBe(2));
   });
 
   it('no entry in the card, no chip, when every figure fits', async () => {

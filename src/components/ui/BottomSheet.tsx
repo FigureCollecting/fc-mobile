@@ -3,6 +3,7 @@ import { type ComponentChildren } from 'preact';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Style } from '../../styles/Style';
 import { offScreenY, useSheetDrag } from './useSheetDrag';
+import { CASE_TABS_HEIGHT_PX } from '../display/CaseTabs';
 
 /** 'fit': as tall as its content, at most 85 % of the space it opens in and never past its top, its body scrolling the rest; its bottom just above the case's pull-up tabs. */
 type SnapPoint = 'closed' | 'half' | 'full' | 'fit';
@@ -90,13 +91,13 @@ export function BottomSheet({ open, onClose, snapPoint = 'half', children }: Bot
               touch-action: none;
             }
 
-            /* it ends above the case's pull-up tabs (32 px and a 4 px gap; NAV-FLOAT: no raised + stands among them any
-               more), so nothing covers them; on a short panel it stops 8px below the top of the space above the tab bar,
-               never past it */
+            /* it ends above the case's pull-up tabs (their height and a 4 px gap; NAV-FLOAT: no raised + stands among
+               them any more), so nothing covers them; on a short panel it stops 8px below the top of the space above the
+               tab bar, never past it */
             .bottom-sheet--fit {
-              bottom: calc(32px + 4px);
+              bottom: calc(${CASE_TABS_HEIGHT_PX}px + 4px);
               height: auto;
-              max-height: min(85%, calc(100% - 32px - 4px - 8px));
+              max-height: min(85%, calc(100% - ${CASE_TABS_HEIGHT_PX}px - 4px - 8px));
             }
 
             .bottom-sheet--fit .bottom-sheet__content {

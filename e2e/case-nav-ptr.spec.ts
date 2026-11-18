@@ -132,15 +132,15 @@ for (const panel of FOLD8) {
     const start = await sceneState(page);
     const b = (await page.locator('.cabinet-scene__step--next').boundingBox())!;
     const y = b.y + b.height / 2;
-    // NAV-FLOAT: on the cover held sideways the scene is so short that the hat floats over where Next stands or right
-    // beside it: a touch there is the hat's by design (nav-float.spec), so there is no pair of scene swipes to compare
-    const underHat = await page.evaluate(
-      ({ xs, y }) => xs.some((x) => document.elementFromPoint(x, y)?.closest('[data-nav="hat"]') != null),
-      { xs: [b.x - 24, b.x + b.width / 2], y },
+    // NAV-FLOAT: on the cover held sideways the scene is short and the hat floats near Next's left, so the scene's swipe
+    // starts 16 px above Next's top there instead of 24 px left of its middle; both start points are the scene's own
+    const sceneAt = panel.name === 'fold8-cover-sideways' ? { x: b.x - 24, y: b.y - 16 } : { x: b.x - 24, y };
+    const onHat = await page.evaluate(
+      (points) => points.map(({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-nav]') != null),
+      [sceneAt, { x: b.x + b.width / 2, y }],
     );
-    expect(underHat, 'the hat lies over Next only on the cover held sideways').toBe(panel.name === 'fold8-cover-sideways');
-    if (underHat) return;
-    const fromScene = await swipeFrom(b.x - 24, y);
+    expect(onHat, 'neither start point is a floating control\'s').toEqual([false, false]);
+    const fromScene = await swipeFrom(sceneAt.x, sceneAt.y);
     expect(fromScene.x, 'a swipe on the scene walks').toBeGreaterThan(start.x);
     await page.reload();
     await page.waitForSelector('button.cab-figure');

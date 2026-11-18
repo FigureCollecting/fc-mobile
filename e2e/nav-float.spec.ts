@@ -110,7 +110,8 @@ test('NAV-FLOAT (a): on every Fold8 panel the hat sits lower-right and the Z rai
       const r = (await depth(page).boundingBox())!;
       const scene = (await page.locator('.cabinet-scene').boundingBox())!;
       const strip = (await page.locator('.case-tabs').boundingBox())!;
-      const ring = panel.width >= HAT_RING_PX.wideFrom ? HAT_RING_PX.wide : HAT_RING_PX.compact;
+      // chosen by the case's shorter side, not the width alone (fix1): a wide but short scene keeps the compact ring
+      const ring = Math.min(scene.width, scene.height) >= HAT_RING_PX.wideFrom ? HAT_RING_PX.wide : HAT_RING_PX.compact;
       const what = `${panel.name} inset ${inset}`;
       // the ring: its size, 20 px in from the right safe edge, 16 px above the case tabs
       expect([h.width, h.height], `${what}: the ring`).toEqual([ring, ring]);
@@ -568,6 +569,87 @@ test('NAV-FLOAT: while the View card is open the controls are away (they would f
   expect('depthRocker' in stored).toBe(false);
 });
 
+// chal1 S7: the hat is in document.body above the header, whose views menu drops over the scene's top right; on a short
+// scene the two met and the hat took the menu's touches. While a views menu is open the controls are away.
+for (const panel of FOLD8) {
+  test(`NAV-FLOAT ${panel.name}: while the Case views menu is open the controls are away, and a tap at the right end of "One shelf" picks it`, async ({ page }) => {
+    await openFree(page, panel);
+    await expect(navControls(page)).toHaveCount(2);
+    await page.getByRole('button', { name: /^Case,/ }).click();
+    const item = page.getByRole('menuitemradio', { name: 'One shelf' });
+    await expect(item).toBeVisible();
+    await expect(navControls(page)).toHaveCount(0);
+    // the item's right end, where the hat stood on the cover held sideways: the item is the top element there
+    const b = (await item.boundingBox())!;
+    const at = { x: b.x + b.width - 8, y: b.y + b.height / 2 };
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="menuitemradio"]')?.textContent ?? 'not the item', at)).toContain('One shelf');
+    await touchTap(page, at.x, at.y);
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', 'shelf');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(navControls(page)).toHaveCount(2);
+  });
+}
+
+// chal1 item 4 / S3: no figure in view at the opening is under the controls alone. An 8 x 8 grid over each figure's visible
+// box: a figure none of whose points is its own while some are a control's (or the tabs') cannot be tapped. Base: 0 on
+// every panel; with the 120 px ring by width alone the cover held sideways had 30 of 139 and the open panel 12 of 122.
+const NAV_FLOAT_COVERS =
+  'NAV-FLOAT-COVERS: on a short scene the hat lies wholly over some figures at the opening view, and no ring size clears them ' +
+  '(fix1, ring forced on ad1a3fb: sideways 25 at 104 px, 11 at 80; open 8 at 104, 3 at 80). A decision for the desk.';
+const SHORT = ['fold8-cover-sideways', 'fold8-open'];
+for (const panel of FOLD8) {
+  test(`NAV-FLOAT ${panel.name}: at the opening view every figure in view can still be tapped somewhere (none lies wholly under the controls)`, async ({ page }) => {
+    test.fail(SHORT.includes(panel.name), NAV_FLOAT_COVERS);
+    await openFree(page, panel);
+    await expect(navControls(page)).toHaveCount(2);
+    const { inView, untappable } = await page.evaluate(() => {
+      const scene = document.querySelector('.cabinet-scene')!.getBoundingClientRect();
+      let inView = 0;
+      const untappable: string[] = [];
+      for (const fig of document.querySelectorAll<HTMLElement>('button.cab-figure')) {
+        const b = fig.getBoundingClientRect();
+        const x0 = Math.max(b.left, scene.left, 0);
+        const x1 = Math.min(b.right, scene.right, innerWidth);
+        const y0 = Math.max(b.top, scene.top, 0);
+        const y1 = Math.min(b.bottom, scene.bottom, innerHeight);
+        if (x1 - x0 < 2 || y1 - y0 < 2) continue;
+        inView++;
+        let own = 0;
+        let covered = 0;
+        for (let i = 0; i < 8; i++)
+          for (let j = 0; j < 8; j++) {
+            const el = document.elementFromPoint(x0 + ((i + 0.5) * (x1 - x0)) / 8, y0 + ((j + 0.5) * (y1 - y0)) / 8);
+            if (el?.closest('button.cab-figure') === fig) own++;
+            else if (el && !el.closest('.cabinet-scene')) covered++;
+          }
+        if (own === 0 && covered > 0) untappable.push(fig.getAttribute('aria-label') ?? '?');
+      }
+      return { inView, untappable };
+    });
+    console.log(`NAV-UNTAPPABLE ${panel.name}: ${untappable.length} of ${inView} in view`);
+    expect(inView, 'figures in view').toBeGreaterThan(20);
+    expect(untappable, `of ${inView} in view`).toEqual([]);
+  });
+}
+
+// chal1 S5 (plan U3 Screenshots): the scene shots mask the controls, so this pins their own look, unmasked: the rail and
+// the hat at rest over the opening view, one shot per Fold8 panel, clipped to the box round both
+for (const panel of FOLD8) {
+  test(`NAV-FLOAT ${panel.name}: the control cluster's look at rest, unmasked`, async ({ page }) => {
+    await openFree(page, panel);
+    await expect(navControls(page)).toHaveCount(2);
+    const clip = await page.evaluate(() => {
+      const boxes = Array.from(document.querySelectorAll('[data-nav]')).map((e) => e.getBoundingClientRect());
+      const x0 = Math.max(0, Math.floor(Math.min(...boxes.map((b) => b.left)) - 8));
+      const y0 = Math.max(0, Math.floor(Math.min(...boxes.map((b) => b.top)) - 8));
+      const x1 = Math.min(innerWidth, Math.ceil(Math.max(...boxes.map((b) => b.right)) + 8));
+      const y1 = Math.min(innerHeight, Math.ceil(Math.max(...boxes.map((b) => b.bottom)) + 8));
+      return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+    });
+    await expect(page).toHaveScreenshot(`nav-cluster-${panel.name}.png`, { animations: 'disabled', caret: 'hide', scale: 'css', maxDiffPixels: 10, threshold: 0.05, clip });
+  });
+}
+
 // --- a mouse-only desktop --------------------------------------------------------------------------------------------------
 
 test.describe('a mouse-only desktop', () => {
@@ -578,7 +660,9 @@ test.describe('a mouse-only desktop', () => {
     await openFree(page, DESKTOP);
     const h = (await hat(page).boundingBox())!;
     const r = (await depth(page).boundingBox())!;
-    expect(h.width, 'the ring, scaled').toBeCloseTo(HAT_RING_PX.wide * NAV_MOUSE_SCALE, 1);
+    const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+    const ring = Math.min(scene.width, scene.height) >= HAT_RING_PX.wideFrom ? HAT_RING_PX.wide : HAT_RING_PX.compact;
+    expect(h.width, 'the ring (by the case\'s shorter side), scaled').toBeCloseTo(ring * NAV_MOUSE_SCALE, 1);
     expect(r.width, 'the rail\'s target, scaled').toBeCloseTo(DEPTH_RAIL_PX.hitWidth * NAV_MOUSE_SCALE, 1);
     expect(h.x + h.width / 2).toBeGreaterThan(DESKTOP.width / 2);
     expect(r.x + r.width / 2).toBeLessThan(DESKTOP.width / 2);

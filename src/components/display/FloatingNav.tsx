@@ -2,8 +2,8 @@
  * NAV-FLOAT (handoff FINAL 11-17): the case's two floating controls: the left Z rail (NavDepth) and the right XY hat
  * (NavHat), where the centre cluster was (the depth rocker in the tabs' Reserved slot and the tab bar's raised + as the
  * jog). Shown only while a Free camera case offers its jog (stores/jog). They sit in document.body, like the case tabs:
- * the scene never sees a pointer of theirs, so two thumbs on the two controls are never its pinch. The layer covers the
- * viewport and takes no touch; only the hat's circle and the rail's box do, so a figure beside either is still tapped.
+ * the scene never sees a pointer of theirs, so two thumbs on the two controls are never its pinch. Their wrapper has
+ * no box; only the hat's circle and the rail's box, each fixed by itself, take a touch: a figure beside either is tapped.
  * They float lower-left and lower-right, above the pull-up tabs and inside the safe area, over the column the case is in
  * (`within`: beside an open Info pane the hat stays over the case). Drawn in one subdued blue, largely transparent at
  * rest (navTuning), with no backdrop-filter and no shadow: they composite over a scene near its GPU budget.
@@ -86,18 +86,18 @@ const styles = `
   @media (hover: hover) and (pointer: fine) {
     :root { --nav-k: ${NAV_MOUSE_SCALE}; }
   }
+  /* no box of its own: each control is fixed by itself, so nothing lies across the scene between them (a box over the
+     whole scene changed what Chromium drew of the 3D scene under it: e2e/case-depth-occl) and no touch can land on it */
   .floating-nav {
-    position: fixed;
-    inset: 0;
-    z-index: 98;
-    pointer-events: none;
+    display: contents;
     --nav-fill: ${hsl(NAV_OPACITY.fill)};
     --nav-line: ${hsl(NAV_OPACITY.line)};
     --nav-knob: ${hsl(NAV_OPACITY.knob)};
     --nav-active: ${hsl(NAV_OPACITY.active)};
   }
   .nav-hat {
-    position: absolute;
+    position: fixed;
+    z-index: 98;
     right: calc(max(var(--safe-area-right, 0px), var(--nav-right, 0px)) + ${NAV_EDGE_PX}px);
     bottom: var(--nav-base);
     width: var(--hat-size);
@@ -139,7 +139,8 @@ const styles = `
     pointer-events: none;
   }
   .nav-depth {
-    position: absolute;
+    position: fixed;
+    z-index: 98;
     left: calc(max(var(--safe-area-left, 0px), var(--nav-left, 0px)) + ${NAV_EDGE_PX}px - ${RAIL_PAD_X}px * var(--nav-k));
     bottom: calc(var(--nav-base) - ${RAIL_PAD_Y}px * var(--nav-k));
     width: calc(${rail.hitWidth}px * var(--nav-k));

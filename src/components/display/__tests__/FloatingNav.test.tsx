@@ -83,8 +83,10 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     offer(jogOf(drive()));
   });
 
-  it('the layer covers the viewport and takes no touch; only the hat\'s circle and the rail\'s box do', () => {
-    expect(rule('.floating-nav')).toMatch(/position:\s*fixed;[^}]*inset:\s*0;[^}]*pointer-events:\s*none;/);
+  it('their wrapper has no box (nothing lies across the scene between them); only the hat\'s circle and the rail\'s box, each fixed by itself, take a touch', () => {
+    expect(rule('.floating-nav')).toMatch(/display:\s*contents;/);
+    expect(rule('.floating-nav')).not.toMatch(/position|inset|z-index/);
+    for (const control of ['.nav-hat', '.nav-depth']) expect(rule(control), control).toMatch(/position:\s*fixed;\s*z-index:\s*98;/);
     expect(rule('.nav-hat')).toMatch(/pointer-events:\s*auto;/);
     expect(rule('.nav-hat')).toMatch(/border-radius:\s*50%;/);
     expect(rule('.nav-hat')).toMatch(/touch-action:\s*none;/);

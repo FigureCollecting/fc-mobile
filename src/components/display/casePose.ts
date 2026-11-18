@@ -195,6 +195,39 @@ export function turnRaw(start: Pose, yaw: number, pitch: number, limits: YawCone
   return { dYaw: raw(yaw, at.yaw) - start.yaw, dPitch: raw(pitch, at.pitch) - start.pitch };
 }
 
+/**
+ * NAV-LOOKDRIVE: turnRaw for the hat's Look, which stores nothing up (lookWind): the turn that shows (yaw, pitch), but
+ * no further than a hard limit. Where the cone has closed in on the view (the depth backed the eye away under the
+ * Classic cap) the view comes in to where its band rests, and the first step back moves it. `taken`: a Look taking a
+ * drawn view over (lookStart) keeps a view inside its band where it is drawn, however deep; only a view at or past
+ * the hard limit, which no turn shows, is brought in.
+ */
+export function lookRaw(start: Pose, yaw: number, pitch: number, limits: YawCone, taken = false): { dYaw: number; dPitch: number } {
+  const at = spansOf(start, limits);
+  const raw = turnRaw(start, yaw, pitch, limits);
+  const kept = (v: number, from: number, d: number, s: Span): number => {
+    if (taken && v > s.hardLo && v < s.hardHi) return d;
+    if (from + d > s.hardHi) return s.hardHi - from;
+    if (from + d < s.hardLo) return s.hardLo - from;
+    return d;
+  };
+  return { dYaw: kept(yaw, start.yaw, raw.dYaw, at.yaw), dPitch: kept(pitch, start.pitch, raw.dPitch, at.pitch) };
+}
+
+/**
+ * NAV-LOOKDRIVE: a Look's cone kept inside the realism cone `to` of where the eye has got to (each side's soft and
+ * hard limit no further than its): the cone itself where no side is past it. What the depth asks every frame it moves
+ * the eye under a hat's Look, between two workings-out of the whole cone (budgetCone's projections).
+ */
+export function coneIn(cone: YawCone, to: YawSide): YawCone {
+  const side = <S extends YawSide>(s: S): S | YawSide => (s.soft <= to.soft && s.hard <= to.hard ? s : { soft: Math.min(s.soft, to.soft), hard: Math.min(s.hard, to.hard) });
+  const both = side(cone);
+  const left = cone.left && side(cone.left);
+  const right = cone.right && side(cone.right);
+  if (both === cone && left === cone.left && right === cone.right) return cone;
+  return { soft: both.soft, hard: both.hard, ...(left ? { left } : {}), ...(right ? { right } : {}) };
+}
+
 /** NAV-LOOKDRIVE: the turn asked for is inside both axes' soft limits by `by` (radians) or more. */
 export function turnInside(start: Pose, dYaw: number, dPitch: number, limits: YawCone, by: number): boolean {
   const at = spansOf(start, limits);
@@ -247,9 +280,12 @@ export function budgetCone(cone: YawSide, startYaw: number, fits: (yaw: number) 
   return { soft: cone.soft, hard: cone.hard, ...(left ? { left } : {}), ...(right ? { right } : {}) };
 }
 
-/** Spec 1.5: the shown value `elapsedMs` into its ease (out, cubic) back from `from` to the committed `to`. */
+/**
+ * Spec 1.5: the shown value `elapsedMs` into its ease (out, cubic) back from `from` to the committed `to`. A time before
+ * its start (a frame stamped before the lift that began it) is the start: never further out than `from`.
+ */
 export function springBack(from: number, to: number, elapsedMs: number): number {
-  const t = Math.min(1, elapsedMs / SPRING_MS);
+  const t = Math.min(1, Math.max(0, elapsedMs) / SPRING_MS);
   return t >= 1 ? to : to + (from - to) * (1 - t) ** 3;
 }
 
@@ -399,10 +435,11 @@ export function lookSpeed(d: number, max: number = LOOK_MAX_X): number {
 /**
  * NAV-LOOKDRIVE: the turn (radians) a hat's Look held at (dxPx, dyPx) from where the thumb went down makes in `dtMs`:
  * the jog's step (jogStep: its axis snap and its longest frame) at lookSpeed. Thumb right turns right (yaw +), thumb up
- * (dy < 0) looks up (pitch -): a camera stick, where a finger on the scene drags the picture.
+ * (dy < 0) looks up (pitch -): a camera stick, where a finger on the scene drags the picture. A `max` that is no
+ * number, or below none, is refused for LOOK_MAX_X (it would turn the eye by NaN, or the other way).
  */
 export function lookStep(dxPx: number, dyPx: number, dtMs: number, max: number = LOOK_MAX_X): { yaw: number; pitch: number } {
-  const step = jogStep(dxPx, dyPx, dtMs, (LOOK_DEG_PER_S * DEG) / JOG_FRAMES_PER_S, max);
+  const step = jogStep(dxPx, dyPx, dtMs, (LOOK_DEG_PER_S * DEG) / JOG_FRAMES_PER_S, max >= 0 ? max : LOOK_MAX_X);
   return { yaw: step.x, pitch: step.y };
 }
 

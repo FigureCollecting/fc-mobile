@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/preact';
 import * as depth from '../caseDepth';
 import * as camera from '../caseCamera';
 import { JOG_DEAD_PX, JOG_FULL_PX, LOOK_REBASE_MS, PITCH, SPRING_MS, lookSpeed, poseOf, springBack, withPose, type Pose } from '../casePose';
-import { lookCone, useFreeCamera, type FreeScene } from '../useFreeCamera';
+import { coneOf, lookCone, useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { hapticLight } from '../../../utils/haptics';
 import { LONG_WALL, freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
@@ -228,6 +228,78 @@ describe('(b) held against a limit', () => {
     });
     expect(low).toBeGreaterThan(PITCH.downSoft);
     expect(m.pose().yaw).toBe(0);
+  });
+
+  /**
+   * A wall under the Classic cap, the Look held right 2 s at `inMm` in from the framing (its view at rest in the band),
+   * then the depth pulled back at full rate: the cap closes in on the view as the eye backs away.
+   */
+  const narrowing = (inMm: number) => {
+    const scene = freeSceneOf({ wall: LONG_WALL, focus: 20 });
+    const at = { ...poseOf(scene.base), z: poseOf(scene.base).z - inMm };
+    const begun = coneAt(scene, at);
+    const m = mount(scene);
+    m.fc().hold(at);
+    m.lookFor(JOG_FULL_PX, 0, 125);
+    expect(m.pose().yaw).toBeCloseTo(begun.soft + (begun.hard - begun.soft) * (1 - Math.exp(-1)), 9);
+    expect(m.fc().depthStart(-1)).toBe(true);
+    /** The hard limit a Look has where the eye is now: the realism cone's there, no nearer than where the turn rests. */
+    const hardHere = () => Math.max(coneOf(withPose(scene.base, { ...m.pose(), yaw: 0 }), scene.wall, scene.fronts).hard, begun.soft);
+    return { m, begun, hardHere };
+  };
+
+  it('against a cone that narrows (the depth backs the eye away under the Classic cap): the view is never past the hard limit of where the eye is, and never moves against the thumb by more than that limit closed in', () => {
+    for (const inMm of [400, 0, -500]) {
+      const { m, begun, hardHere } = narrowing(inMm);
+      let last = m.pose();
+      let hard = hardHere();
+      let closed = 0;
+      m.run(60, 16, () => {
+        const p = m.pose();
+        const here = hardHere();
+        expect(p.yaw).toBeLessThanOrEqual(here + 1e-12);
+        expect(last.yaw - p.yaw).toBeLessThanOrEqual(hard - here + 1e-12);
+        closed += hard - here;
+        last = p;
+        hard = here;
+      });
+      // the cap did close in on it, down to where the turn rests
+      expect(closed).toBeGreaterThan(1 * DEG);
+      expect(last.z).toBeGreaterThan(poseOf(m.ref.current.base).z - inMm + 200);
+      expect(last.yaw).toBeGreaterThanOrEqual(begun.soft);
+      m.stop('depthStop');
+      expect(m.stop()!.yaw).toBe(begun.soft);
+    }
+  });
+
+  it('no windup against a cone that narrowed: the depth let go after 3, 9, 15, 16 or 22 frames, the first frame of the thumb reversed moves the view', () => {
+    for (const frames of [3, 9, 15, 16, 22]) {
+      const { m, hardHere } = narrowing(400);
+      m.run(frames);
+      m.fc().depthRate(0);
+      m.run(1);
+      const rest = m.pose().yaw;
+      expect(rest).toBeLessThanOrEqual(hardHere() + 1e-12);
+      m.fc().lookAim(-JOG_FULL_PX, 0);
+      m.run(1);
+      expect(m.pose().yaw).toBeLessThan(rest - 0.5 * DEG);
+    }
+  });
+
+  it('between two workings-out of the cone the view follows a cap that closes in, with no cone worked out for it (no projection, nothing published)', () => {
+    const { m } = narrowing(400);
+    const host = m.dom.hostEl;
+    // the depth's first frame only starts its clock; the first frame the eye moves works the cone out
+    m.run(1);
+    host.removeAttribute('data-yaw-budget');
+    m.run(1);
+    expect(host.hasAttribute('data-yaw-budget')).toBe(true);
+    host.removeAttribute('data-yaw-budget');
+    const before = m.pose().yaw;
+    m.run(5);
+    // five frames on, the view has followed the cap in with no cone worked out
+    expect(m.pose().yaw).toBeLessThan(before - 0.5 * DEG);
+    expect(host.hasAttribute('data-yaw-budget')).toBe(false);
   });
 
   it('the soft limit ticks once a crossing: held past it, and wobbling within a degree of it, no second tick; back a degree inside and out again, one more', () => {

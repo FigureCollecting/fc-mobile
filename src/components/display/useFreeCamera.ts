@@ -23,7 +23,9 @@ import {
   anchorDepth,
   axisGate,
   budgetCone,
+  coneIn,
   jogStep,
+  lookRaw,
   lookStep,
   lookWind,
   poseOf,
@@ -438,7 +440,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       if (look) {
         // NAV-LOOKDRIVE: the depth moved the eye under the Look: its cone stands at the place it was worked out at. It
         // is worked out again from where the eye is (as the hat's anchor is), the view drawn kept as it is: at most
-        // every LOOK_REBASE_MS while the eye moves (a cone is a dozen projections or more), and once it rests
+        // every LOOK_REBASE_MS while the eye moves (a cone is a dozen projections or more), and once it rests. Every
+        // frame between, the cone is kept inside the realism cone of where the eye is (coneOf: the Classic cap, no
+        // projection), so a cap that closes in never leaves the view standing past it till the next working-out
         if (moved) {
           look.start = { ...look.start, x: pose.x, y: pose.y, z: pose.z };
           look.stale = true;
@@ -449,6 +453,14 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
           const t = lookTurn(look);
           pose = t.committed;
           shown = t.shown;
+        } else if (moved) {
+          const within = coneIn(look.limits, coneOf(withPose(s.base, pose), s.wall, s.fronts));
+          if (within !== look.limits) {
+            keep(look, pose, shown as Pose, within, false);
+            const t = lookTurn(look);
+            pose = t.committed;
+            shown = t.shown;
+          }
         }
       } else if (spring.current) {
         // NAV-LOOKDRIVE: a look let go still easing back when the drive began goes on easing under it: no jump
@@ -489,11 +501,18 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     } else if (look.crossed && turnInside(look.start, look.dYaw, look.dPitch, look.limits, LOOK_TICK_BACK)) look.crossed = false;
     return t;
   };
-  /** NAV-LOOKDRIVE: the Look's cone worked out from the committed pose `at`, the turn asked for the one that shows `shown` there. */
-  const rebase = (s: FreeScene, look: Look, at: Pose, shown: Pose, now: number) => {
+  /**
+   * NAV-LOOKDRIVE: the Look goes on from the committed pose `at` through `limits`, the turn asked for the one that shows
+   * `shown` there, never past a hard limit (lookRaw: a cone that closed in on the view leaves nothing wound up).
+   */
+  const keep = (look: Look, at: Pose, shown: Pose, limits: YawCone, taken: boolean) => {
     look.start = at;
-    look.limits = coneFrom(s, at);
-    Object.assign(look, turnRaw(at, shown.yaw, shown.pitch, look.limits));
+    look.limits = limits;
+    Object.assign(look, lookRaw(at, shown.yaw, shown.pitch, limits, taken));
+  };
+  /** NAV-LOOKDRIVE: the Look's cone worked out from the committed pose `at` (keep). `taken`: a drawn view taken over (lookStart). */
+  const rebase = (s: FreeScene, look: Look, at: Pose, shown: Pose, now: number, taken = false) => {
+    keep(look, at, shown, coneFrom(s, at), taken);
     look.coneAt = now;
     look.stale = false;
   };
@@ -811,7 +830,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const d = beginDrives();
     spring.current = null;
     const look: Look = { aim: { x: 0, y: 0 }, last: undefined, start: d.pose, limits: { soft: 0, hard: 0 }, dYaw: 0, dPitch: 0, crossed: false, coneAt: 0, stale: false };
-    rebase(scene.current, look, d.pose, d.shown, performance.now());
+    rebase(scene.current, look, d.pose, d.shown, performance.now(), true);
     // drawn past a soft limit already (the ease taken over): this crossing's tick was the look's before
     look.crossed = turnBy(look.start, look.dYaw, look.dPitch, look.limits).past;
     d.look = look;

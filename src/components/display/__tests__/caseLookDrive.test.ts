@@ -9,9 +9,11 @@ import {
   LOOK_TICK_BACK,
   PITCH,
   cone,
+  coneIn,
   jogSpeed,
   jogStep,
   look,
+  lookRaw,
   lookSpeed,
   lookStep,
   lookWind,
@@ -60,7 +62,7 @@ function same(a: Turned, b: Turned): boolean {
   return a.past === b.past;
 }
 
-const sideArb =fc.record({ soft: fc.double({ min: 0, max: 45, noNaN: true }), band: fc.double({ min: 0, max: 15, noNaN: true }) }).map(({ soft, band }) => ({ soft: soft * DEG, hard: (soft + band) * DEG }));
+const sideArb = fc.record({ soft: fc.double({ min: 0, max: 45, noNaN: true }), band: fc.double({ min: 0, max: 15, noNaN: true }) }).map(({ soft, band }) => ({ soft: soft * DEG, hard: (soft + band) * DEG }));
 const limitsArb: fc.Arbitrary<YawCone> = fc
   .record({ both: sideArb, left: fc.option(sideArb, { nil: undefined }), right: fc.option(sideArb, { nil: undefined }) })
   .map(({ both, left, right }) => ({ ...both, ...(left ? { left } : {}), ...(right ? { right } : {}) }));
@@ -243,6 +245,130 @@ describe('turnRaw: the turn asked for that shows a given aim (a look taken over 
     const flat: YawCone = { soft: 20 * DEG, hard: 20 * DEG };
     expect(turnRaw(POSE, 25 * DEG, 0, flat).dYaw).toBe(20 * DEG);
     expect(turnRaw(POSE, -25 * DEG, 0, flat).dYaw).toBe(-20 * DEG);
+  });
+});
+
+describe('lookRaw: the turn the hat\'s Look keeps for a view drawn, never past a hard limit (nothing wound up when its cone closes in)', () => {
+  const limits: YawCone = { soft: 30 * DEG, hard: 45 * DEG, left: { soft: 12 * DEG, hard: 20 * DEG } };
+  /** Where a band rests with the turn asked for at its hard limit: soft + (hard - soft)(1 - 1/e). */
+  const rest = (soft: number, hard: number) => soft + (hard - soft) * (1 - Math.exp(-1));
+
+  it('inside the cone, and in a band no deeper than its rest, turnRaw itself, bit for bit', () => {
+    for (const [yaw, pitch] of [
+      [10, -5],
+      [-11, 40],
+      [36, 0],
+      [-15, -32],
+      [0, 55],
+    ]) {
+      expect(lookRaw(POSE, yaw * DEG, pitch * DEG, limits)).toEqual(turnRaw(POSE, yaw * DEG, pitch * DEG, limits));
+    }
+  });
+
+  it('deeper in a band than its rest, at the hard limit or past it: the hard limit, either way on both axes, and the view it shows is the band\'s rest', () => {
+    for (const yaw of [41, 44.999, 45, 80]) {
+      const raw = lookRaw(POSE, yaw * DEG, 0, limits);
+      expect(raw.dYaw).toBe(45 * DEG);
+      expect(turnBy(POSE, raw.dYaw, raw.dPitch, limits).shown.yaw).toBeCloseTo(rest(30 * DEG, 45 * DEG), 12);
+    }
+    for (const yaw of [-18, -20, -50]) expect(lookRaw(POSE, yaw * DEG, 0, limits).dYaw).toBe(-20 * DEG);
+    expect(lookRaw(POSE, 0, 69 * DEG, limits).dPitch).toBe(PITCH.downHard);
+    expect(lookRaw(POSE, 0, -44 * DEG, limits).dPitch).toBe(-PITCH.upHard);
+    // from a start that is not straight ahead the turn is counted from it
+    const start = { ...POSE, yaw: 10 * DEG, pitch: -5 * DEG };
+    const turned = lookRaw(start, 44 * DEG, 69 * DEG, limits);
+    expect(start.yaw + turned.dYaw).toBeCloseTo(45 * DEG, 12);
+    expect(start.pitch + turned.dPitch).toBeCloseTo(PITCH.downHard, 12);
+  });
+
+  it('no windup: from a view anywhere, the first full-reach frame back moves the view, and a frame further out asks nothing more', () => {
+    fc.assert(
+      fc.property(startArb, fc.double({ min: -89, max: 89, noNaN: true }), fc.double({ min: -89, max: 89, noNaN: true }), limitsArb, (start, yaw, pitch, cone) => {
+        const raw = lookRaw(start, yaw * DEG, pitch * DEG, cone);
+        const held = turnBy(start, raw.dYaw, raw.dPitch, cone);
+        // a full-reach frame toward straight ahead on each axis (asked only of a view 2 deg or more off it: nearer, the
+        // frame would carry it across to the other side's limit)
+        const frame = lookStep(JOG_FULL_PX, 0, 16).yaw;
+        const back = { yaw: -Math.sign(held.shown.yaw) * frame, pitch: -Math.sign(held.shown.pitch) * frame };
+        const next = lookWind(start, raw.dYaw, raw.dPitch, back, cone);
+        const moved = turnBy(start, next.dYaw, next.dPitch, cone);
+        const out = lookWind(start, raw.dYaw, raw.dPitch, { yaw: -back.yaw, pitch: -back.pitch }, cone);
+        const far = turnBy(start, out.dYaw, out.dPitch, cone);
+        const hard = turnBy(start, 1e6 * Math.sign(held.shown.yaw), 1e6 * Math.sign(held.shown.pitch), cone).shown;
+        return (
+          (Math.abs(held.shown.yaw) < 2 * DEG || Math.abs(moved.shown.yaw - held.shown.yaw) > 0.2 * DEG) &&
+          (Math.abs(held.shown.pitch) < 2 * DEG || Math.abs(moved.shown.pitch - held.shown.pitch) > 0.2 * DEG) &&
+          Math.abs(far.shown.yaw) <= Math.abs(hard.yaw) &&
+          Math.abs(far.shown.pitch) <= Math.abs(hard.pitch)
+        );
+      }),
+      { numRuns: 10_000, seed: 7 },
+    );
+  }, 60_000);
+
+  it('taken over (a Look begun on a view drawn mid-ease): a view inside its band keeps the turn that shows it, however deep; one at or past the hard limit asks for the hard limit', () => {
+    expect(lookRaw(POSE, 44 * DEG, 0, limits, true)).toEqual(turnRaw(POSE, 44 * DEG, 0, limits));
+    expect(lookRaw(POSE, 44 * DEG, 0, limits, true).dYaw).toBeGreaterThan(45 * DEG);
+    expect(lookRaw(POSE, -19 * DEG, 64 * DEG, limits, true)).toEqual(turnRaw(POSE, -19 * DEG, 64 * DEG, limits));
+    expect(lookRaw(POSE, 45 * DEG, 0, limits, true).dYaw).toBe(45 * DEG);
+    expect(lookRaw(POSE, 50 * DEG, 0, limits, true).dYaw).toBe(45 * DEG);
+    expect(lookRaw(POSE, -20 * DEG, 0, limits, true).dYaw).toBe(-20 * DEG);
+    expect(lookRaw(POSE, 0, 80 * DEG, limits, true).dPitch).toBe(PITCH.downHard);
+    expect(lookRaw(POSE, 0, -45 * DEG, limits, true).dPitch).toBe(-PITCH.upHard);
+  });
+});
+
+describe('coneIn: a Look\'s cone kept inside the realism cone of where the eye has got to', () => {
+  const realism = { soft: 30 * DEG, hard: 37 * DEG };
+
+  it('a cone no wider anywhere is the cone itself (the same object: nothing to do)', () => {
+    const cone: YawCone = { soft: 30 * DEG, hard: 37 * DEG, left: { soft: 2 * DEG, hard: 9 * DEG } };
+    expect(coneIn(cone, realism)).toBe(cone);
+    expect(coneIn(cone, { soft: 31 * DEG, hard: 45 * DEG })).toBe(cone);
+    const plain: YawCone = { soft: 20 * DEG, hard: 35 * DEG };
+    expect(coneIn(plain, realism)).toBe(plain);
+  });
+
+  it('a hard limit past it comes in to it, and a soft limit with it; a side the budget moved in further stays where it is', () => {
+    expect(coneIn({ soft: 30 * DEG, hard: 45 * DEG }, realism)).toEqual({ soft: 30 * DEG, hard: 37 * DEG });
+    expect(coneIn({ soft: 30 * DEG, hard: 37 * DEG }, { soft: 25 * DEG, hard: 25 * DEG })).toEqual({ soft: 25 * DEG, hard: 25 * DEG });
+    const sided: YawCone = { soft: 30 * DEG, hard: 45 * DEG, left: { soft: 2 * DEG, hard: 9 * DEG }, right: { soft: 33 * DEG, hard: 40 * DEG } };
+    const kept = coneIn(sided, realism);
+    expect(kept).toEqual({ soft: 30 * DEG, hard: 37 * DEG, left: { soft: 2 * DEG, hard: 9 * DEG }, right: { soft: 30 * DEG, hard: 37 * DEG } });
+    expect(kept.left).toBe(sided.left);
+    // one side alone past it
+    const one: YawCone = { soft: 30 * DEG, hard: 37 * DEG, left: { soft: 31 * DEG, hard: 36 * DEG } };
+    expect(coneIn(one, realism)).toEqual({ soft: 30 * DEG, hard: 37 * DEG, left: { soft: 30 * DEG, hard: 36 * DEG } });
+    expect(coneIn({ soft: 30 * DEG, hard: 37 * DEG, right: { soft: 30 * DEG, hard: 40 * DEG } }, realism).right).toEqual(realism);
+  });
+
+  it('10,000 random cones: every side ends no further than the realism cone, soft never past hard, and never wider than it was', () => {
+    fc.assert(
+      fc.property(limitsArb, sideArb, (cone, to) => {
+        const kept = coneIn(cone, to);
+        const pairs: [{ soft: number; hard: number }, { soft: number; hard: number }][] = [[kept, cone]];
+        if (cone.left) pairs.push([kept.left!, cone.left]);
+        if (cone.right) pairs.push([kept.right!, cone.right]);
+        return (
+          (kept.left === undefined) === (cone.left === undefined) &&
+          (kept.right === undefined) === (cone.right === undefined) &&
+          pairs.every(([k, c]) => k.soft <= k.hard && k.soft <= to.soft && k.hard <= to.hard && k.soft <= c.soft && k.hard <= c.hard)
+        );
+      }),
+      { numRuns: 10_000, seed: 9 },
+    );
+  }, 60_000);
+});
+
+describe('lookStep: a top speed that is no number, or below none, is refused for LOOK_MAX_X', () => {
+  it('NaN and a negative lookMax turn as the default does (never a NaN turn, never the other way); 0 and 1 are taken', () => {
+    const usual = lookStep(JOG_FULL_PX, -JOG_FULL_PX, 16);
+    expect(usual.yaw).toBeGreaterThan(0);
+    expect(lookStep(JOG_FULL_PX, -JOG_FULL_PX, 16, NaN)).toEqual(usual);
+    expect(lookStep(JOG_FULL_PX, -JOG_FULL_PX, 16, -1)).toEqual(usual);
+    expect(lookStep(JOG_FULL_PX, -JOG_FULL_PX, 16, -Infinity)).toEqual(usual);
+    expect(lookStep(JOG_FULL_PX, 0, 16, 1).yaw).toBeCloseTo(LOOK_DEG_PER_S * DEG * 0.016, 12);
+    expect(lookStep(JOG_FULL_PX, 0, 16, 0).yaw).toBe(0);
   });
 });
 

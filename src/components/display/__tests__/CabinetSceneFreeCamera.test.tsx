@@ -1386,7 +1386,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
   });
 
   // NAV-DESKTOP-ZOOM: the wheel's magnification keeps the jog's rule: no magnification rides a moving camera
-  const wheel =(deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
+  const wheel = (deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
   const k = () => (JSON.parse(host().dataset.zoom!) as { k: number }).k;
 
   it('a wheel zoom, in or out under 1x and not yet settled, is dropped at a jog\'s start and never settles back after', () => {

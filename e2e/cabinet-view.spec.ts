@@ -217,19 +217,40 @@ async function expectSheetAtRest(page: Page) {
 }
 
 /**
- * After a change of layout (a banner, a row, a pane, a turn of the phone): the scene has followed it and ends above the
- * tabs. NAV-GRAD: the Free camera keeps the eye where it stood through a change of the frame (spec 6.6: "a fold or
- * unfold keeps the pose"), where the old camera fitted the cabinet to the new frame again; so what is checked after
- * the change is the scene's own place, and the fit is checked where the case opens at each size (the tests above).
+ * expectFramedAboveTabs once the scene and its camera have followed a change of layout (a banner, a row, a pane, a turn
+ * of the phone). The Free camera keeps the eye where it stood through a change of the frame (spec 6.6: "a fold or
+ * unfold keeps the pose") and offers Reset view where that pose is off the new frame's framing: a tap on it is the
+ * re-fit (NAV-RESET-FRAME).
  */
-async function expectReframedAboveTabs(page: Page, _view: View, label: string) {
-  await expect(async () => expectSceneAboveTabs(page, label)).toPass({ timeout: 5_000 });
+async function expectReframedAboveTabs(page: Page, view: View, label: string) {
+  await expect(async () => {
+    const reset = page.getByRole('button', { name: 'Reset view' });
+    if ((await reset.count()) > 0) await reset.click({ timeout: 1_000 });
+    await expectFramedAboveTabs(page, view, label);
+  }).toPass({ timeout: 5_000 });
 }
 
-// NAV-GRAD, found while moving these tests to the Free camera and left as it is (out of this unit's scope): after a
-// change of the frame the eye is pinned to the old frame's framing, and Reset view (shown for it) stands it there again
-// instead of at the new frame's framing; only a new view, pattern or filter re-fits it.
-test.fixme('Reset view after a turn of the phone stands the eye at the new frame\'s framing', async ({ page }) => {
+/**
+ * The panels whose one-shelf view the offline banner leaves a few px low: the eye keeps its pose (spec 6.6), the pose is
+ * within the glance Reset view is not offered for (casePose resetApplies: 150 mm), and so nothing re-fits it. Left as
+ * it is (NAV-RESET-FRAME mends Reset view, not when it is offered).
+ */
+const KEPT_LOW_UNDER_BANNER = ['fold8-cover-sideways', 'fold8-open'];
+
+/** The scene has followed a change of layout, no Reset view is offered, and the kept pose frames the shelf within 4 px. */
+async function expectKeptWithinAGlance(page: Page, view: View, label: string) {
+  await expect(async () => {
+    const { scene, sceneBottom } = await expectSceneAboveTabs(page, label);
+    const bottom = scene.y + (await framedBottomPx(page, view));
+    expect(bottom, `${label}: the kept pose is not inside the scene (or this exception is stale)`).toBeGreaterThan(sceneBottom);
+    expect(bottom, `${label}: framed within 4 px of the scene`).toBeLessThanOrEqual(sceneBottom + 4);
+  }).toPass({ timeout: 5_000 });
+  await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
+}
+
+// NAV-RESET-FRAME: after a change of the frame the eye keeps its pose, and Reset view (shown for it) stands it at the
+// new frame's framing
+test('Reset view after a turn of the phone stands the eye at the new frame\'s framing', async ({ page }) => {
   const cover = FOLD8.find((v) => v.name === 'fold8-cover')!;
   const sideways = FOLD8.find((v) => v.name === 'fold8-cover-sideways')!;
   await openFramed(page, cover, 'cabinet');
@@ -253,7 +274,8 @@ for (const size of FOLD8) {
       await expectFramedAboveTabs(page, view, 'online');
       await context.setOffline(true);
       await expect(page.locator('.offline-banner')).toBeVisible();
-      await expectReframedAboveTabs(page, view, 'offline');
+      if (view === 'shelf' && KEPT_LOW_UNDER_BANNER.includes(size.name)) await expectKeptWithinAGlance(page, view, 'offline');
+      else await expectReframedAboveTabs(page, view, 'offline');
       await context.setOffline(false);
       await expect(page.locator('.offline-banner')).toHaveCount(0);
       await expectReframedAboveTabs(page, view, 'back online');

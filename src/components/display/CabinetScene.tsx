@@ -1208,8 +1208,12 @@ export function CabinetScene({
     pinnedAt.current = null;
   }
   rebasedFor.current = rebaseKey;
-  if (fc.held() === null && laidOut && pinnedAt.current !== null && (pinnedAt.current.width !== frame.width || pinnedAt.current.height !== frame.height)) {
+  // NAV-RESET-FRAME: the pin is the framing the eye stood at with no pose held, so a held pose spends it (the fold's own
+  // hold too): Reset view and the arrows then let go to this frame's framing, never to the pinned one again
+  if (fc.held() !== null) pinnedAt.current = null;
+  else if (laidOut && pinnedAt.current !== null && (pinnedAt.current.width !== frame.width || pinnedAt.current.height !== frame.height)) {
     fc.hold(poseOf(pinnedAt.current.camera));
+    pinnedAt.current = null;
   }
   // NAV-1A: the camera is the pose (on the framing's lens and frame); the pager pages from what its frame centre looks
   // at (rulings S7)

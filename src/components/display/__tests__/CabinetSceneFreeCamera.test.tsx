@@ -553,6 +553,193 @@ describe('a fold or an unfold keeps the pose (spec 6.6)', () => {
   });
 });
 
+// NAV-RESET-FRAME: the pose a fold keeps is let go by Reset view and by the arrows as any other pose is: they stand the
+// eye at the framing of the frame the scene has now, not at the one it had when the fold came
+describe('after a fold, Reset view and the arrows stand the eye at the new frame\'s framing (NAV-RESET-FRAME)', () => {
+  const COVER_HOST = { width: 443, height: 418 };
+  const SIDEWAYS = { width: 870, height: 335 };
+  const TALL = { width: 360, height: 640 };
+  let size = COVER_HOST;
+  /** The scene's host measures `size` (jsdom lays nothing out); a resize event makes the scene read it again. */
+  function measuredHost() {
+    size = COVER_HOST;
+    const proto = Element.prototype;
+    const w = Object.getOwnPropertyDescriptor(proto, 'clientWidth')!;
+    const h = Object.getOwnPropertyDescriptor(proto, 'clientHeight')!;
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.classList.contains('cabinet-scene') ? size.width : 0; } });
+    Object.defineProperty(proto, 'clientHeight', { configurable: true, get(this: HTMLElement) { return this.classList.contains('cabinet-scene') ? size.height : 0; } });
+    onTestFinished(() => {
+      Object.defineProperty(proto, 'clientWidth', w);
+      Object.defineProperty(proto, 'clientHeight', h);
+    });
+  }
+  const fold = (to: { width: number; height: number }) => {
+    size = to;
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+    });
+    tick();
+  };
+  /** The camera a scene opened at `at` stands at, after `then` (a fresh scene: no fold in its past). */
+  function openedAt(at: { width: number; height: number }, patch: Partial<CasePrefs>, then: () => void = () => {}) {
+    size = at;
+    const { unmount } = scene(patch);
+    tick();
+    then();
+    const c = cam();
+    unmount();
+    return c;
+  }
+  const resetChip = () => screen.queryByRole('button', { name: 'Reset view' });
+  const zoomOf = () => JSON.parse(host().dataset.zoom!) as { k: number };
+
+  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+    it(`${view} view: the fold keeps the pose, Reset view shows, and a tap stands the eye at the new frame's framing and goes`, () => {
+      measuredHost();
+      const framing = openedAt(SIDEWAYS, { view });
+      size = COVER_HOST;
+      scene({ view });
+      tick();
+      const opened = pose();
+      fold(SIDEWAYS);
+      expect(cam().width).toBe(870);
+      expect(pose()).toEqual(opened);
+      tick(500);
+      fireEvent.click(resetChip()!);
+      tick();
+      expect(cam()).toEqual(framing);
+      expect(resetChip()).toBeNull();
+      // and it stays there: a later render does not pin the old frame's pose again
+      tick(500);
+      expect(cam()).toEqual(framing);
+    });
+  }
+
+  it('magnified after the fold: Reset view clears the zoom and stands the eye at the new frame\'s framing', () => {
+    measuredHost();
+    const framing = openedAt(SIDEWAYS, { view: 'cabinet' });
+    size = COVER_HOST;
+    scene({ view: 'cabinet' });
+    tick();
+    fold(SIDEWAYS);
+    fireEvent.wheel(host(), { clientX: 400, clientY: 160, deltaMode: 0, deltaY: -300 });
+    tick(500);
+    expect(zoomOf().k).toBeGreaterThan(1);
+    fireEvent.click(resetChip()!);
+    tick(500);
+    expect(zoomOf().k).toBe(1);
+    expect(cam()).toEqual(framing);
+    expect(resetChip()).toBeNull();
+  });
+
+  it('a pose held through the fold (a look): Reset view stands the eye at the new frame\'s framing', () => {
+    measuredHost();
+    const framing = openedAt(SIDEWAYS, { view: 'cabinet' });
+    size = COVER_HOST;
+    scene({ view: 'cabinet' });
+    tick();
+    // a glance: the frame's centre stays on the first cabinet, so Reset view's framing is the opening's
+    drag({ x: 300, y: 200 }, { x: 260, y: 200 }, { button: 2 });
+    tick(500);
+    const looked = pose();
+    expect(looked.yaw).not.toBe(0);
+    expect(host().dataset.focus).toBe('0');
+    fold(SIDEWAYS);
+    expect(pose()).toEqual(looked);
+    fireEvent.click(resetChip()!);
+    tick();
+    expect(cam()).toEqual(framing);
+    expect(resetChip()).toBeNull();
+  });
+
+  it('the next fold after a Reset keeps that Reset\'s pose, and the Reset after it fits the newest frame', () => {
+    measuredHost();
+    const sideways = openedAt(SIDEWAYS, { view: 'cabinet' });
+    const tall = openedAt(TALL, { view: 'cabinet' });
+    size = COVER_HOST;
+    scene({ view: 'cabinet' });
+    tick();
+    fold(SIDEWAYS);
+    tick(500);
+    fireEvent.click(resetChip()!);
+    tick();
+    fold(TALL);
+    expect(cam().width).toBe(360);
+    expect(pose()).toEqual({ x: sideways.x, y: sideways.y, z: sideways.z, yaw: sideways.yaw, pitch: sideways.pitch });
+    tick(500);
+    fireEvent.click(resetChip()!);
+    tick();
+    expect(cam()).toEqual(tall);
+  });
+
+  it('two folds with no Reset between keep the first pose; one Reset then fits the frame it is pressed in', () => {
+    measuredHost();
+    const tall = openedAt(TALL, { view: 'cabinet' });
+    size = COVER_HOST;
+    scene({ view: 'cabinet' });
+    tick();
+    const opened = pose();
+    fold(SIDEWAYS);
+    fold(TALL);
+    expect(pose()).toEqual(opened);
+    tick(500);
+    fireEvent.click(resetChip()!);
+    tick();
+    expect(cam()).toEqual(tall);
+  });
+
+  it('the keyboard\'s Next after a fold stands the eye at the next cabinet\'s framing in the new frame', () => {
+    measuredHost();
+    const next = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
+      tick();
+    };
+    const framing = openedAt(SIDEWAYS, { view: 'cabinet' }, next);
+    size = COVER_HOST;
+    scene({ view: 'cabinet' });
+    tick();
+    fold(SIDEWAYS);
+    next();
+    expect(host().dataset.focus).toBe('1');
+    expect(cam()).toEqual(framing);
+  });
+
+  it('the shelf arrows after a fold stand the eye at that shelf\'s framing in the new frame', () => {
+    measuredHost();
+    const below = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Shelf below' }));
+      tick();
+    };
+    const framing = openedAt(SIDEWAYS, { view: 'shelf' }, below);
+    size = COVER_HOST;
+    scene({ view: 'shelf' });
+    tick();
+    fold(SIDEWAYS);
+    below();
+    expect(host().dataset.shelf).toBe('1');
+    expect(cam()).toEqual(framing);
+  });
+
+  it('a fold while the wall is not laid out is answered once it is: the pose kept, and Reset view fits the new frame', () => {
+    measuredHost();
+    const framing = openedAt(SIDEWAYS, { view: 'cabinet' });
+    size = COVER_HOST;
+    const { again } = scene({ view: 'cabinet' });
+    tick();
+    const opened = pose();
+    again({}, { figures: [] });
+    fold(SIDEWAYS);
+    again({}, { figures: FIGURES });
+    tick();
+    expect(cam().width).toBe(870);
+    expect(pose()).toEqual(opened);
+    tick(500);
+    fireEvent.click(resetChip()!);
+    tick();
+    expect(cam()).toEqual(framing);
+  });
+});
+
 describe('Go to (CARD-VIEW-1) in Free camera', () => {
   it('stands the camera at the framing Go to gives', () => {
     const onWentTo = vi.fn();

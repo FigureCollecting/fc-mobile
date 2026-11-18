@@ -7,6 +7,8 @@ import { ErrorState } from '../components/ui/ErrorState';
 import { LastSyncedBadge } from '../components/ui/LastSyncedBadge';
 import { CabinetScene } from '../components/display/CabinetScene';
 import { CaseTabs, type CaseCard } from '../components/display/CaseTabs';
+import { FloatingNav } from '../components/display/FloatingNav';
+import { HeaderAdd } from '../components/layout/HeaderAdd';
 import { CaseViewCard } from '../components/display/CaseViewCard';
 import { notShelvedLine, splitForShelves } from '../components/display/shelved';
 import { countEstimated } from '../components/display/sizeBasis';
@@ -143,6 +145,8 @@ export function Collection() {
   const online = useOnlineStatus();
   const pageRef = useRef<HTMLDivElement>(null);
   const pageWidth = useElementWidth(pageRef, 360);
+  // NAV-FLOAT: the column the case is drawn in; its floating controls keep inside it (beside the Info pane, not over it)
+  const caseColRef = useRef<HTMLDivElement>(null);
   const dualPane = pageWidth >= DUAL_PANE_MIN_WIDTH;
 
   const fixtureFigures = useMemo(() => getFixtureFigures(), []);
@@ -280,6 +284,8 @@ export function Collection() {
         onCaseView={(view) => setCasePrefs({ view })}
         onLabels={setLabels}
       />
+      {/* ADDFAB b: Add sits here on the collection, so the pull-up tabs have the strip's whole width */}
+      <HeaderAdd />
     </>
   );
 
@@ -334,7 +340,7 @@ export function Collection() {
       </CatalogueLoadStrip>
 
       <div class={`page-collection__body ${showDetailPane ? 'page-collection__body--split' : ''}`}>
-        <div class="page-collection__grid-col">
+        <div class="page-collection__grid-col" ref={caseColRef}>
           <PullToRefresh onRefresh={handleRefresh}>
             {scoped.length === 0 ? (
               <p class="page-collection__empty">{emptyText}</p>
@@ -396,7 +402,6 @@ export function Collection() {
       {/* both layouts: Refine's way in now the filter row comes and goes; the View card is the case's */}
       <CaseTabs
         order={casePrefs.tabOrder}
-        rocker={casePrefs.depthRocker}
         viewEnabled={shownLayout === 'case'}
         infoEnabled={lastOpened >= 0}
         open={caseCard ?? (filterOpen ? 'refine' : null)}
@@ -406,6 +411,10 @@ export function Collection() {
           else if (lastOpened >= 0) setViewerIndex(lastOpened);
         }}
       />
+
+      {/* NAV-FLOAT: the Free camera's left Z and right XY hat, floating over the case while it offers its jog; away
+          while the View card or the do-not-fit list lies over the case */}
+      <FloatingNav within={caseColRef} hidden={caseCard === 'view' || misfitsOpen} />
 
       <CaseViewCard
         open={caseCard === 'view'}

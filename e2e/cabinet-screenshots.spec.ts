@@ -113,7 +113,7 @@ for (const size of FOLD8_PAIR) {
   }
 }
 
-test('IC1 tabs over the tab bar with the raised +, fold8-cover', async ({ page }) => {
+test('IC1 tabs over the tab bar (NAV-FLOAT: three together, no raised + among them), fold8-cover', async ({ page }) => {
   await openCase(page, CASE_VIEWPORTS[0]);
   await expect(page).toHaveScreenshot('cabinet-ic1-tabs-fold8-cover.png', {
     ...SHOT,

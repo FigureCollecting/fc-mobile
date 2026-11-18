@@ -1,8 +1,9 @@
 import { writeFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { CASE_VIEWPORTS, FOLD8_DPR, SHOT_VIEWPORTS } from './caseViewports';
+import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown } from './touch';
+import { hat, navControls } from './navControls';
 import { watchPull } from './pullWatch';
 import { decodePng } from './paintCheck';
 import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
@@ -212,8 +213,8 @@ test('hold: the contextmenu a 1,000 ms hold raises is prevented on the scene; th
 
 // --- 13: the arrows retire (NAV-JOG): the bottom-centre button's jog moves the Free camera ---------------------------------
 
-/** The bottom-centre button while a Free camera case offers its jog. */
-const jogButton = (page: Page) => page.locator('.tab-bar__add[data-jog]');
+/** The jog while a Free camera case offers it: the floating hat (NAV-FLOAT; it was the bottom-centre button). */
+const jogButton = hat;
 
 /**
  * NAV-JOG: `ms` and as many frames as the jog counts in `ms` (a late frame as JOG_MAX_STEP_MS): a loaded runner's frames
@@ -298,7 +299,7 @@ async function jogSpeed(page: Page) {
   };
 }
 
-test('NAV-JOG: in Free camera the side arrows are gone from sight and touch (NAV-2A: kept for the keyboard) and the bottom-centre button is the jog; off, the arrows and the + as they were', async ({ page }) => {
+test('NAV-JOG: in Free camera the side arrows are gone from sight and touch (NAV-2A: kept for the keyboard) and the floating hat is the jog; off, the arrows as they were and no hat', async ({ page }) => {
   await openFree(page, COVER, { view: 'cabinet' });
   const next = page.locator('.cabinet-scene__step--next');
   await expect(next).toHaveCSS('opacity', '0');
@@ -310,25 +311,21 @@ test('NAV-JOG: in Free camera the side arrows are gone from sight and touch (NAV
   }, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
   expect(hit, 'a finger where Next stood lands on the picture').toBe(true);
   await expect(jogButton(page)).toHaveCount(1);
-  await expect(page.getByRole('button', { name: /move the camera/i })).toHaveCount(1);
+  await expect(page.getByRole('group', { name: /move the camera/i })).toHaveCount(1);
+  await expect(page.locator('[data-jog]')).toHaveCount(0);
   const off = await page.context().newPage();
   await openFree(off, COVER, { free: false });
   await expect(off.locator('.cabinet-scene')).not.toHaveAttribute('data-free-camera', /./);
   await expect(off.locator('.cabinet-scene__step--prev')).toHaveCount(1);
   await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('opacity', '1');
   await expect(off.locator('.cabinet-scene__step--keys')).toHaveCount(0);
-  await expect(off.locator('.tab-bar__add[data-jog]')).toHaveCount(0);
+  await expect(navControls(off)).toHaveCount(0);
   await expect(off.getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
   await off.close();
 });
 
-const boxesOf = async (page: Page, selector: string) =>
-  (await page.locator(selector).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as { x: number; y: number; width: number; height: number })));
-const overlaps = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
-  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
-
 for (const panel of FOLD8) {
-  test(`NAV-JOG ${panel.name}: held, the eye goes the way the thumb holds it and on while it is still, faster the farther; the lift stops it; a tap opens the menu`, async ({ page }) => {
+  test(`NAV-JOG ${panel.name}: held, the eye goes the way the thumb holds it and on while it is still, faster the farther; the lift stops it; a tap opens nothing`, async ({ page }) => {
     test.setTimeout(90_000);
     // NAV-2B: the 170-figure wall, so twice the speed meets no end of it while the frames are counted (on the 40-figure
     // wall a loaded runner logged 4 and 5 moving frames before the eye stopped at its end)
@@ -375,19 +372,14 @@ for (const panel of FOLD8) {
     // the drags crossed the tab bar and the case tabs: none pressed, nothing opened
     expect(page.url()).toBe(url);
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
-    // a quick tap is the menu (the Add sheet); its close is the jog again
+    // NAV-FLOAT: a quick tap on the hat is nothing (no menu: Add is the header's), and it moves nothing
     await settle(page, 400);
+    const rest = await cameraOf(page);
     await jogButton(page).tap();
-    await expect(page.getByText(/import your mfc export/i)).toBeVisible();
-    await page.locator('.bottom-sheet__handle-area').click();
+    await settle(page, 300);
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    expect(await cameraOf(page)).toEqual(rest);
     await expect(jogButton(page)).toHaveCount(1);
-    // a touch jog raises no click of its own: the button's next click (Enter here) is the menu, not swallowed
-    await jogBy(page, JOG_FULL_PX, 0, { holdMs: 100 });
-    await expect(page.locator('.bottom-sheet')).toHaveCount(0);
-    await jogButton(page).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByText(/import your mfc export/i)).toBeVisible();
   });
 }
 
@@ -425,41 +417,7 @@ for (const panel of FOLD8) {
   });
 }
 
-/**
- * NAV3-JOG's collision check (Ross: "a if needed, else right to b"): on every Fold8 panel, the browser's and the
- * installed app's, the jog's button is clear of every tab and case tab, and a thumb's full reach below its centre stays
- * inside the tab bar, above Android's gesture area. That area is outside the page in Chrome; in an edge-to-edge app the
- * page pads it (env(safe-area-inset-bottom)), modelled here as a 48 px inset (gesture navigation's 48 dp frame).
- */
-test('NAV-JOG: on every Fold8 panel the jog is clear of the tabs and the case tabs, and its reach stays above the gesture area', async ({ page }, testInfo) => {
-  test.setTimeout(90_000);
-  await openFree(page, COVER);
-  const rows: { panel: string; inset: number; jog: number[]; reachBottom: number; gestureTop: number; hits: string[] }[] = [];
-  const panels = [...FOLD8, ...SHOT_VIEWPORTS.filter((v) => v.mobile)];
-  for (const panel of panels) {
-    await page.setViewportSize({ width: panel.width, height: panel.height });
-    for (const inset of [0, 48]) {
-      await page.evaluate((px) => document.documentElement.style.setProperty('--safe-area-bottom', `${px}px`), inset);
-      await settle(page, 200);
-      const jog = (await jogButton(page).boundingBox())!;
-      const others = [
-        ...(await boxesOf(page, '.tab-bar__item')).map((b) => ({ b, what: 'tab' })),
-        ...(await boxesOf(page, '.case-tabs__tab')).map((b) => ({ b, what: 'case tab' })),
-      ];
-      const reachBottom = jog.y + jog.height / 2 + JOG_FULL_PX;
-      const gestureTop = panel.height - inset;
-      rows.push({ panel: panel.name, inset, jog: [jog.x, jog.y, jog.width, jog.height].map(Math.round), reachBottom: Math.round(reachBottom), gestureTop, hits: others.filter((o) => overlaps(jog, o.b)).map((o) => o.what) });
-    }
-  }
-  await testInfo.attach('jog-geometry', { body: JSON.stringify(rows), contentType: 'application/json' });
-  console.log(`JOG-GEOMETRY ${JSON.stringify(rows)}`);
-  expect(rows).toHaveLength(panels.length * 2);
-  for (const r of rows) {
-    expect(r.hits, `${r.panel} inset ${r.inset}: the jog over another control`).toEqual([]);
-    expect(r.reachBottom, `${r.panel} inset ${r.inset}: full reach below the jog, above the gesture area`).toBeLessThanOrEqual(r.gestureTop);
-    expect(r.jog[1] + r.jog[3], `${r.panel} inset ${r.inset}: the jog above the gesture area`).toBeLessThanOrEqual(r.gestureTop - 40);
-  }
-});
+// (NAV3-JOG's collision check of the bottom-centre button went with it: the floating hat's place is e2e/nav-float (a).)
 
 // --- 15: Reset ----------------------------------------------------------------------------------------------------------
 
@@ -585,13 +543,8 @@ test.describe('desktop, no touch', () => {
     expect(walked.yaw).toBe(shift.yaw);
   });
 
-  test('NAV-JOG with a mouse: a drag on the bottom-centre button moves the eye and its own click opens no menu; a click then does', async ({ page }) => {
+  test('NAV-JOG with a mouse: a drag on the hat moves the eye and opens no menu; nor does a click on it', async ({ page }) => {
     await openFree(page, COVER);
-    await page.evaluate(() => {
-      const seen: number[] = [];
-      (window as unknown as { __clicks: number[] }).__clicks = seen;
-      document.querySelector('.tab-bar__add')!.addEventListener('click', (e) => seen.push(e.timeStamp), true);
-    });
     const b = (await jogButton(page).boundingBox())!;
     const at = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
     const start = await cameraOf(page);
@@ -602,11 +555,12 @@ test.describe('desktop, no touch', () => {
     await page.mouse.up();
     await settle(page);
     expect((await cameraOf(page)).x, 'the drag jogged the eye right').toBeGreaterThan(start.x);
-    const clicks = await page.evaluate(() => (window as unknown as { __clicks: number[] }).__clicks.length);
-    console.log(`JOG-MOUSE clicks raised by the drag: ${clicks}`);
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    const rest = await cameraOf(page);
     await jogButton(page).click();
-    await expect(page.getByText(/import your mfc export/i)).toBeVisible();
+    await settle(page, 300);
+    await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    expect(await cameraOf(page)).toEqual(rest);
   });
 });
 
@@ -1301,7 +1255,9 @@ test.describe('baselines: the Free camera opening (level), every view, the four 
           document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
         });
         await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
-        await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`free-camera-${view}-${panel.name}.png`, SHOT);
+        // NAV-FLOAT: the floating controls lie over the scene's box: masked, so these baselines are the scene's alone
+        await expect(navControls(page)).toHaveCount(2);
+        await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`free-camera-${view}-${panel.name}.png`, { ...SHOT, mask: [navControls(page)] });
       });
     }
   }

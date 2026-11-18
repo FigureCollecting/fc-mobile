@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/preact';
-import { CaseTabs } from '../CaseTabs';
+import { CASE_TABS_HEIGHT_PX, CaseTabs } from '../CaseTabs';
 import { CaseViewCard } from '../CaseViewCard';
 import { DEFAULT_CASE_PREFS } from '../casePrefs';
 
@@ -8,10 +8,12 @@ vi.mock('framer-motion', () => import('../../../test/framerMotionMock'));
 
 const slots = (_root: ParentNode, root: ParentNode = document.body) => Array.from(root.querySelectorAll<HTMLElement>('.case-tabs > [data-tab]')).map((el) => el.dataset.tab);
 
-describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
-  it('lays the four slots out around the dock of the raised +', () => {
+describe('CaseTabs (IC1-R1; NAV-FLOAT: View, Info, Refine together at the centre)', () => {
+  it('lays the three headers out side by side: no Reserved slot and no dock for a raised + between them', () => {
     const { container } = render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} infoEnabled onTab={() => {}} open={null} />);
-    expect(slots(container)).toEqual(['view', 'reserved', 'dock', 'info', 'refine']);
+    expect(slots(container)).toEqual(['view', 'info', 'refine']);
+    expect(document.body.querySelector('.case-tabs__dock, [data-tab="dock"], [data-tab="reserved"]')).toBeNull();
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['View', 'Info', 'Refine']);
   });
 
   it('sits in document.body, so the page\'s own transforms never carry the fixed bar away from the tab bar', () => {
@@ -20,18 +22,26 @@ describe('CaseTabs (IC1-R1: View, Reserved | raised + | Info, Refine)', () => {
     expect(document.body.querySelector(':scope > .case-tabs')).not.toBeNull();
   });
 
-  it('IC1-R3: the Reserved slot is held empty, with nothing to press or read', () => {
+  it('the headers stand centred, each 112 px at most and free to narrow, so a fourth and a fifth still fit the strip', () => {
     render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} infoEnabled onTab={() => {}} open={null} />);
-    const reserved = document.body.querySelector('[data-tab="reserved"]') as HTMLElement;
-    expect(reserved.tagName).toBe('SPAN');
-    expect(reserved.textContent).toBe('');
-    expect(reserved.getAttribute('aria-hidden')).toBe('true');
-    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['View', 'Info', 'Refine']);
+    const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent ?? '').join('\n');
+    expect(css).toMatch(/\.case-tabs\s*\{[^}]*justify-content:\s*center;/);
+    expect(css).toMatch(new RegExp(`\\.case-tabs__slot\\s*\\{\\s*flex:\\s*0 1 112px;\\s*min-width:\\s*0;\\s*height:\\s*${CASE_TABS_HEIGHT_PX}px;`));
+    expect(css).not.toMatch(/case-tabs__dock|case-tabs__slot--rocker/);
+  });
+
+  it('the tiles: the View slot stays, empty, with nothing to press or read, so the others never move', () => {
+    render(<CaseTabs order={DEFAULT_CASE_PREFS.tabOrder} viewEnabled={false} infoEnabled onTab={() => {}} open={null} />);
+    const view = document.body.querySelector('[data-tab="view"]') as HTMLElement;
+    expect(view.tagName).toBe('SPAN');
+    expect(view.textContent).toBe('');
+    expect(view.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Info', 'Refine']);
   });
 
   it('follows the order kept on this device (CC14), e.g. swapped sides', () => {
-    const { container } = render(<CaseTabs order={['refine', 'info', 'reserved', 'view']} infoEnabled onTab={() => {}} open={null} />);
-    expect(slots(container)).toEqual(['refine', 'info', 'dock', 'reserved', 'view']);
+    const { container } = render(<CaseTabs order={['refine', 'info', 'view']} infoEnabled onTab={() => {}} open={null} />);
+    expect(slots(container)).toEqual(['refine', 'info', 'view']);
   });
 
   it('opens a card on tap and marks the open one; Info waits for a tapped figure', () => {
@@ -172,12 +182,13 @@ describe('CaseViewCard (the View tab: back wall, cabinets, ceiling, tab sides)',
     expect(screen.getByRole('button', { name: 'Swap tab sides' })).toBeInTheDocument();
   });
 
-  it('CC5: the card fits its content above the raised + of the tab bar and scrolls its body, never running under the bar', () => {
+  it('CC5: the card fits its content above the pull-up tabs (NAV-FLOAT: no raised + among them) and scrolls its body, never running under the bar', () => {
     card();
     const sheet = document.querySelector('.bottom-sheet') as HTMLElement;
     expect(sheet.classList.contains('bottom-sheet--fit')).toBe(true);
     const css = Array.from(document.querySelectorAll('style')).map((s) => s.textContent ?? '').join('\n');
-    expect(css).toMatch(/\.bottom-sheet--fit\s*\{[^}]*bottom:\s*calc\(var\(--fab-size\) \/ 1\.25 \+ 4px\);[^}]*height:\s*auto;[^}]*max-height:\s*min\(85%, calc\(100% - var\(--fab-size\) \/ 1\.25 - 4px - 8px\)\);/);
+    expect(css).toMatch(/\.bottom-sheet--fit\s*\{[^}]*bottom:\s*calc\(32px \+ 4px\);[^}]*height:\s*auto;[^}]*max-height:\s*min\(85%, calc\(100% - 32px - 4px - 8px\)\);/);
+    expect(CASE_TABS_HEIGHT_PX).toBe(32);
     expect(css).toMatch(/\.bottom-sheet--fit \.bottom-sheet__content\s*\{[^}]*min-height:\s*0;/);
   });
 
@@ -196,6 +207,13 @@ describe('CaseViewCard (the View tab: back wall, cabinets, ceiling, tab sides)',
   it('swaps the tab sides', () => {
     const onChange = card();
     fireEvent.click(screen.getByRole('button', { name: /swap tab sides/i }));
-    expect(onChange).toHaveBeenCalledWith({ tabOrder: ['refine', 'info', 'reserved', 'view'] });
+    expect(onChange).toHaveBeenCalledWith({ tabOrder: ['refine', 'info', 'view'] });
+  });
+
+  // NAV-FLOAT: the depth control is the floating Z, vertical only: the card offers no shape for it
+  it('offers no "Depth control" choice any more', () => {
+    card();
+    expect(screen.queryByRole('group', { name: 'Depth control' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /rocker|slider/i })).toBeNull();
   });
 });

@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 
 /**
- * NAV-JOG (Ross 10-28): what the bottom-centre button drives as a jog. A Free camera case offers one while it is shown;
- * the button then moves its camera the way the thumb holds it from where it went down (CabinetScene, useFreeCamera).
+ * NAV-JOG (Ross 10-28): what the hat drives as a jog. A Free camera case offers one while it is shown; the hat then moves
+ * its camera the way the thumb holds it from where it went down (CabinetScene, useFreeCamera). NAV-FLOAT (11-18): the hat
+ * is the floating control lower-right of the case (NavHat), no longer the tab bar's bottom-centre button.
  */
 export interface JogTarget {
   /** The thumb has left the dead zone: the jog begins (false: the scene is busy with a finger of its own). */
@@ -29,13 +30,13 @@ export interface DepthDrive {
 }
 
 interface JogState {
-  /** The jog on offer; null: the button is the Add button. */
+  /** The jog on offer; null: no control floats. */
   target: JogTarget | null;
 }
 
 export const useJogStore = create<JogState>(() => ({ target: null }));
 
-/** Offer this jog to the bottom-centre button; the call returned takes it back (unless another has been offered since). */
+/** Offer this jog to the floating controls; the call returned takes it back (unless another has been offered since). */
 export function offerJog(target: JogTarget): () => void {
   useJogStore.setState({ target });
   return () => {

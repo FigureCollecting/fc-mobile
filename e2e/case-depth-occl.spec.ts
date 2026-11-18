@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { decodePng, type Rgba } from './paintCheck';
+import { depth } from './navControls';
 
 /**
  * NAV-DEPTH-OCCL (Ross 11-15): walking the Free camera in with the depth rocker near the cabinets, parts of them (a
@@ -92,7 +93,7 @@ async function open(page: Page, size: { width: number; height: number }) {
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0, depthRocker: 'vertical', pattern }));
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0, pattern }));
   }, PATTERN);
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=40');
@@ -108,7 +109,7 @@ async function open(page: Page, size: { width: number; height: number }) {
 
 /** One push of the rocker toward the wall (up = closer), held `ms`, then let go and settled. */
 async function push(page: Page, ms: number) {
-  const b = (await page.locator('.depth-rocker').boundingBox())!;
+  const b = (await depth(page).boundingBox())!;
   const [cx, cy] = [b.x + b.width / 2, b.y + b.height / 2];
   await page.mouse.move(cx, cy);
   await page.mouse.down();

@@ -92,28 +92,38 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(rows.container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(false);
   });
 
-  it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the tiles Info and Refine, View kept as an empty slot (SHEETS-FB1)', async () => {
+  it('IC1: the case shows the pull-up tabs View, Info, Refine together; the tiles Info and Refine, View kept as an empty slot (SHEETS-FB1)', async () => {
     await respondWith([makeFigure('1')]);
     const { unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
-      'view',
-      'reserved',
-      'dock',
-      'info',
-      'refine',
-    ]);
+    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual(['view', 'info', 'refine']);
     unmount();
     renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
     await screen.findByRole('button', { name: 'Figure 1' });
     // the tiles keep their way into Refine now the filter row comes and goes; the case's View card is not theirs
     expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => `${e.dataset.tab}:${e.tagName}`)).toEqual([
       'view:SPAN',
-      'reserved:SPAN',
-      'dock:SPAN',
       'info:BUTTON',
       'refine:BUTTON',
     ]);
+  });
+
+  // NAV-FLOAT (a, the page's half): with a Free camera case shown, the hat and the Z rail float in document.body and the
+  // header carries Add; the tiles float nothing
+  it('NAV-FLOAT: the Free camera case floats its hat and Z rail over the page and puts Add in the header; the tiles float neither', async () => {
+    await respondWith([makeFigure('1')]);
+    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    await waitFor(() => expect(document.body.querySelector(':scope > .floating-nav [data-nav="hat"]')).not.toBeNull());
+    expect(document.body.querySelector(':scope > .floating-nav [data-nav="depth"]')).not.toBeNull();
+    expect(container.querySelector('[data-nav]')).toBeNull();
+    expect(container.querySelector('.slim-header__actions .header-add')).toBe(screen.getByRole('button', { name: 'Add figures' }));
+    unmount();
+    expect(document.querySelector('[data-nav]')).toBeNull();
+    renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(document.querySelector('[data-nav]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add figures' })).toBeInTheDocument();
   });
 
   it('the View tab opens the case card; its choices are kept on this device (CC14)', async () => {

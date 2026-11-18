@@ -19,7 +19,7 @@ describe('case prefs, kept per device (CC14)', () => {
       pattern: 'ikea-klingsbo',
       view: 'wall',
       ceilingMm: 2438.4,
-      tabOrder: ['view', 'reserved', 'info', 'refine'],
+      tabOrder: ['view', 'info', 'refine'],
       misfitsDismissed: [],
       clearanceMm: 25.4,
       showEstimated: false,
@@ -27,7 +27,6 @@ describe('case prefs, kept per device (CC14)', () => {
       wallCustom: '#d8d2c4',
       freeCamera: true,
       arrange: 'series-scale-name',
-      depthRocker: 'vertical',
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
   });
@@ -37,7 +36,7 @@ describe('case prefs, kept per device (CC14)', () => {
       pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack',
       view: 'shelf',
       ceilingMm: 2700,
-      tabOrder: ['refine', 'info', 'reserved', 'view'],
+      tabOrder: ['refine', 'info', 'view'],
       misfitsDismissed: ['fig-a', 'fig-b'],
       clearanceMm: 6.35,
       showEstimated: true,
@@ -45,7 +44,6 @@ describe('case prefs, kept per device (CC14)', () => {
       wallCustom: '#336699',
       freeCamera: false,
       arrange: 'scale-name',
-      depthRocker: 'horizontal',
     } as const;
     writeCasePrefs(prefs);
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toEqual(prefs);
@@ -57,10 +55,36 @@ describe('case prefs, kept per device (CC14)', () => {
     expect(readCasePrefs()).toEqual({ ...DEFAULT_CASE_PREFS, view: 'cabinet' });
   });
 
+  // NAV-FLOAT (e): the Reserved slot is gone from the tabs; an order stored with it is read without it, so sides a
+  // device swapped stay swapped (dropping 'reserved' from the tabs alone would have reset every stored order)
+  it('a stored tabOrder with "reserved" keeps its swapped sides: it is read without the slot, and the next write stores it so', () => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ tabOrder: ['refine', 'info', 'reserved', 'view'] }));
+    expect(readCasePrefs().tabOrder).toEqual(['refine', 'info', 'view']);
+    // the default order of old reads as today's default
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ tabOrder: ['view', 'reserved', 'info', 'refine'] }));
+    expect(readCasePrefs().tabOrder).toEqual(['view', 'info', 'refine']);
+    // any place the slot stood in
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ tabOrder: ['reserved', 'info', 'refine', 'view'] }));
+    expect(readCasePrefs().tabOrder).toEqual(['info', 'refine', 'view']);
+    writeCasePrefs({ clearanceMm: 0 });
+    expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).tabOrder).toEqual(['info', 'refine', 'view']);
+    // an order broken apart from the slot is still broken
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ tabOrder: ['refine', 'reserved', 'view'] }));
+    expect(readCasePrefs().tabOrder).toEqual(DEFAULT_CASE_PREFS.tabOrder);
+  });
+
+  it('NAV-FLOAT: a stored depth rocker shape is not read (the floating Z is vertical only), and the next write drops it', () => {
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: 'horizontal', view: 'cabinet' }));
+    expect(readCasePrefs()).toEqual({ ...DEFAULT_CASE_PREFS, view: 'cabinet' });
+    expect('depthRocker' in readCasePrefs()).toBe(false);
+    writeCasePrefs({ clearanceMm: 0 });
+    expect('depthRocker' in JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toBe(false);
+  });
+
   it('anything unknown or broken falls back field by field', () => {
     localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ pattern: 'nope', view: 'aerial', ceilingMm: -3, tabOrder: ['view', 'view', 'info', 'refine'] }));
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
-    for (const tabOrder of [['view', 'info', 'refine'], 'view', ['view', 'reserved', 'info', 'refine', 'more'], ['view', 'reserved', 'info', 7]]) {
+    for (const tabOrder of [['view', 'info'], 'view', ['view', 'info', 'refine', 'more'], ['view', 'info', 7], ['refine', 'refine', 'view'], ['reserved', 'reserved', 'reserved'], null]) {
       localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ tabOrder }));
       expect(readCasePrefs().tabOrder).toEqual(DEFAULT_CASE_PREFS.tabOrder);
     }

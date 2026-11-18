@@ -2,14 +2,15 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchFingers } from './touch';
+import { centreOf, depth, hat } from './navControls';
 import { DEPTH_FULL_PX } from '../src/components/display/caseDepth';
 import { JOG_FULL_PX, JOG_MAX_STEP_MS } from '../src/components/display/casePose';
 
 /**
- * NAV-DEPTH-3 (Ross 11-13; NAV-ROCKER 11-14), in Chromium at the Fold8's open and cover panels, fixture mode, through
- * Chromium's own touch pipeline (CDP touches): the depth rocker in the slot left of the hat moves the eye toward the wall
- * (data-camera z falls) and away (z rises), never sideways (x kept); the lift stops it; held with the hat, both move; the
- * View card's setting makes it a horizontal slider in the slot (toward the hat = closer), kept on the device.
+ * NAV-DEPTH-3 (Ross 11-13), in Chromium at the Fold8's open and cover panels, fixture mode, through Chromium's own touch
+ * pipeline (CDP touches): the depth control moves the eye toward the wall (data-camera z falls) and away (z rises), never
+ * sideways (x kept); the lift stops it; held with the hat, both move. NAV-FLOAT (handoff FINAL 11-17): it is the floating
+ * Z rail, lower-left, vertical only (the View card's horizontal slider is retired, and its test with it).
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -37,14 +38,14 @@ const hold = (page: Page, ms: number) =>
   );
 
 /** The case in Free camera (the default) at `size`; the prefs are seeded once a tab, so a reload keeps what the page saved. */
-async function openFree(page: Page, size: { width: number; height: number }, shape: 'vertical' | 'horizontal' = 'vertical') {
-  await page.addInitScript((depthRocker) => {
+async function openFree(page: Page, size: { width: number; height: number }) {
+  await page.addInitScript(() => {
     if (sessionStorage.getItem('seeded') === '1') return;
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0, depthRocker }));
-  }, shape);
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0 }));
+  });
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=40');
   await ready(page);
@@ -63,26 +64,20 @@ async function ready(page: Page) {
 
 type Cam = { x: number; y: number; z: number; yaw: number; pitch: number };
 const cameraOf = async (page: Page) => JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!) as Cam;
-const rocker = (page: Page) => page.locator('.depth-rocker');
-const centreOf = async (page: Page, selector: string) => {
-  const b = (await page.locator(selector).boundingBox())!;
-  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-};
+const rocker = depth;
 
 for (const panel of PANELS) {
-  test(`NAV-DEPTH-3 ${panel.name}: the vertical rocker left of the hat: up moves closer, down backs away, x kept; the lift stops it`, async ({ page }) => {
+  test(`NAV-DEPTH-3 ${panel.name}: the Z rail left of the hat: up moves closer, down backs away, x kept; the lift stops it`, async ({ page }) => {
     await openFree(page, panel);
-    await expect(rocker(page)).toHaveAttribute('data-shape', 'vertical');
-    // left of the hat, clear of it, a thumb's target (>= 44 px) and rising above the slot
+    await expect(rocker(page)).toHaveAttribute('aria-orientation', 'vertical');
+    // left of the hat, clear of it, a thumb's target (>= 44 px) and taller than wide
     const r = (await rocker(page).boundingBox())!;
-    const hat = (await page.locator('.tab-bar__add[data-jog]').boundingBox())!;
-    const slot = (await page.locator('.case-tabs [data-tab="reserved"]').boundingBox())!;
-    expect(r.x + r.width).toBeLessThan(hat.x);
+    const h = (await hat(page).boundingBox())!;
+    expect(r.x + r.width).toBeLessThan(h.x);
     expect(Math.min(r.width, r.height)).toBeGreaterThanOrEqual(44);
-    expect(r.y).toBeLessThan(slot.y);
     expect(r.height).toBeGreaterThan(r.width);
 
-    const at = await centreOf(page, '.depth-rocker');
+    const at = await centreOf(rocker(page));
     const c0 = await cameraOf(page);
     const f = await touchFingers(page);
     await f.down(1, at.x, at.y);
@@ -111,8 +106,8 @@ for (const panel of PANELS) {
 
   test(`NAV-DEPTH-3 ${panel.name}: the rocker and the hat held together: x and z both move; each lift stops its own`, async ({ page }) => {
     await openFree(page, panel);
-    const hatAt = await centreOf(page, '.tab-bar__add[data-jog]');
-    const at = await centreOf(page, '.depth-rocker');
+    const hatAt = await centreOf(hat(page));
+    const at = await centreOf(rocker(page));
     const c0 = await cameraOf(page);
     const f = await touchFingers(page);
     await f.down(1, hatAt.x, hatAt.y);
@@ -139,55 +134,13 @@ for (const panel of PANELS) {
     expect(await cameraOf(page)).toEqual(c4);
   });
 
-  test(`NAV-ROCKER ${panel.name}: the View card's horizontal slider sits in the slot, toward the hat is closer, and a reload keeps it`, async ({ page }) => {
-    await openFree(page, panel);
-    await page.getByRole('button', { name: 'View', exact: true }).click();
-    const group = page.getByRole('group', { name: 'Depth control' });
-    await expect(group.getByRole('radio', { name: /vertical rocker/i })).toBeChecked();
-    await group.getByRole('radio', { name: /horizontal slider/i }).click();
-    await page.locator('.bottom-sheet__backdrop').click({ position: { x: 5, y: 5 } });
-    await expect(group).toHaveCount(0);
-    await expect(rocker(page)).toHaveAttribute('data-shape', 'horizontal');
-
-    await page.reload();
-    await ready(page);
-    await expect(rocker(page)).toHaveAttribute('data-shape', 'horizontal');
-    const r = (await rocker(page).boundingBox())!;
-    const slot = (await page.locator('.case-tabs [data-tab="reserved"]').boundingBox())!;
-    const hat = (await page.locator('.tab-bar__add[data-jog]').boundingBox())!;
-    expect(r.x).toBeGreaterThanOrEqual(slot.x - 0.5);
-    expect(r.x + r.width).toBeLessThanOrEqual(slot.x + slot.width + 0.5);
-    expect(r.x + r.width).toBeLessThan(hat.x);
-    expect(r.height).toBeGreaterThanOrEqual(44);
-
-    const at = await centreOf(page, '.depth-rocker');
-    const c0 = await cameraOf(page);
-    const f = await touchFingers(page);
-    await f.down(1, at.x, at.y);
-    await f.to(1, at.x + DEPTH_FULL_PX, at.y, 6);
-    await hold(page, 600);
-    const c1 = await cameraOf(page);
-    expect(c1.z, 'toward the hat: closer').toBeLessThan(c0.z - 20);
-    expect(c1.x).toBe(c0.x);
-    await f.to(1, at.x - DEPTH_FULL_PX, at.y, 6);
-    await hold(page, 600);
-    const c2 = await cameraOf(page);
-    expect(c2.z, 'away from the hat: back').toBeGreaterThan(c1.z + 20);
-    expect(c2.x).toBe(c0.x);
-    await f.up(1);
-    await settle(page);
-    const c3 = await cameraOf(page);
-    await settle(page, 500);
-    expect(await cameraOf(page)).toEqual(c3);
-  });
-
-  // chal1 S1: the drive starts from rest the back way too (down, or away from the hat), from a pose close enough to back away
-  for (const shape of ['vertical', 'horizontal'] as const) {
-    test(`NAV-DEPTH-3 ${panel.name}, ${shape}: from rest the first push back backs away: z rises, x kept`, async ({ page }) => {
-      await openFree(page, panel, shape);
-      const at = await centreOf(page, '.depth-rocker');
-      const closer = shape === 'vertical' ? { x: at.x, y: at.y - DEPTH_FULL_PX } : { x: at.x + DEPTH_FULL_PX, y: at.y };
-      const back = shape === 'vertical' ? { x: at.x, y: at.y + DEPTH_FULL_PX } : { x: at.x - DEPTH_FULL_PX, y: at.y };
+  // chal1 S1: the drive starts from rest the back way too (down), from a pose close enough to back away
+  {
+    test(`NAV-DEPTH-3 ${panel.name}: from rest the first push back backs away: z rises, x kept`, async ({ page }) => {
+      await openFree(page, panel);
+      const at = await centreOf(rocker(page));
+      const closer = { x: at.x, y: at.y - DEPTH_FULL_PX };
+      const back = { x: at.x, y: at.y + DEPTH_FULL_PX };
       const f = await touchFingers(page);
       await f.down(1, at.x, at.y);
       await f.to(1, closer.x, closer.y, 6);
@@ -213,16 +166,16 @@ for (const panel of PANELS) {
     await page.evaluate(() => {
       const w = window as unknown as { __rockerPid?: number };
       document.addEventListener('pointerdown', (e) => {
-        if ((e.target as Element).closest?.('.depth-rocker')) w.__rockerPid = e.pointerId;
+        if ((e.target as Element).closest?.('[data-nav="depth"]')) w.__rockerPid = e.pointerId;
       }, true);
     });
-    const at = await centreOf(page, '.depth-rocker');
+    const at = await centreOf(rocker(page));
     const f = await touchFingers(page);
     await f.down(1, at.x, at.y);
     await f.to(1, at.x, at.y - DEPTH_FULL_PX, 6);
     await hold(page, 200);
     await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'depth');
-    await page.evaluate(() => document.querySelector('.depth-rocker')!.releasePointerCapture((window as unknown as { __rockerPid: number }).__rockerPid));
+    await page.evaluate(() => document.querySelector('[data-nav="depth"]')!.releasePointerCapture((window as unknown as { __rockerPid: number }).__rockerPid));
     await f.to(1, at.x + 200, at.y - 150, 6);
     await f.up(1);
     await settle(page, 200);

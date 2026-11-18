@@ -5,8 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 
 afterEach(cleanup);
 
@@ -21,7 +20,7 @@ const FIGURES = [
 ];
 
 const scene = (patch: Partial<CasePrefs> = {}) => {
-  const { container } = render(<CabinetScene figures={FIGURES} onSelect={vi.fn()} prefs={{ ...LEGACY_PREFS, ...patch }} />);
+  const { container } = render(<CabinetScene figures={FIGURES} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, ...patch }} />);
   const host = container.querySelector<HTMLElement>('.cabinet-scene')!;
   const estimated = Object.fromEntries(Array.from(container.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => [b.getAttribute('aria-label'), b.dataset.sizeEstimated]));
   return { host, estimated };

@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { decodePng } from './paintCheck';
 import { touchSwipe } from './touch';
@@ -50,7 +49,7 @@ async function openRack(page: Page, size: { width: number; height: number }): Pr
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'wall', pattern: 'open-steel-rack' }));
+  }, { view: 'wall', pattern: 'open-steel-rack' });
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=170&labels=1');
   await page.waitForSelector('button.cab-figure');

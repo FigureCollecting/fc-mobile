@@ -28,6 +28,8 @@ test.beforeEach(({}, testInfo) => {
 interface Prefs {
   view?: 'wall' | 'cabinet' | 'shelf';
   pattern?: string;
+  /** NAV-FLAT: 'off' where a test compares the drawing with the camera maths of a figure standing square to the wall. */
+  figureTurn?: 'off' | 'subtle' | 'strong';
 }
 
 /** Open the case and settle it: every figure, or every one but those named `stalled` (whose pictures are held back). */
@@ -127,7 +129,7 @@ for (const size of CASE_VIEWPORTS) {
 for (const size of FOLD8) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
     test(`the browser draws every figure where the camera maths puts it: ${view}, ${size.name}`, async ({ page }) => {
-      await openCase(page, size, '', { view });
+      await openCase(page, size, '', { view, figureTurn: 'off' });
       const rows = await drawnVsPredicted(page);
       expect(rows.length).toBeGreaterThan(0);
       for (const r of rows) {
@@ -1044,7 +1046,7 @@ async function swipe(page: Page, dx: number) {
 }
 
 test('CC4 camera: a sideways swipe walks the camera along the wall; the perspective re-renders', async ({ page }) => {
-  await openCase(page, FOLD8[0], '&fx=6', { view: 'cabinet' });
+  await openCase(page, FOLD8[0], '&fx=6', { view: 'cabinet', figureTurn: 'off' });
   const before = await cameraOf(page);
   await swipe(page, -160);
   const after = await cameraOf(page);

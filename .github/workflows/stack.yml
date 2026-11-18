@@ -12,8 +12,8 @@ jobs:
   stack:
     name: Stack harness
     runs-on: ubuntu-latest
-    # 55 left no room when the runner's apt mirror made the browser install take 29-33 min (11-18); the install step has its own 30 min cap
-    timeout-minutes: 80
+    # 55 left no room when the runner's apt mirror made the browser install take 29-33 min (11-18); the install step has its own 40 min cap
+    timeout-minutes: 90
     if: >-
       github.event_name != 'push'
       || (github.repository_owner == 'FigureCollecting' && (github.ref_name == 'develop' || github.ref_name == 'main'))
@@ -95,9 +95,9 @@ jobs:
           path: ~/.cache/apt-debs
           key: playwright-debs-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ steps.pw.outputs.codename }}
 
-      # The runner's apt mirror served ~180 WebKit debs at ~7 s each; with the debs cached, apt downloads nothing.
+      # The runner's apt mirror served ~180 WebKit debs at ~7 s each; with the debs cached, apt fetches only its package lists.
       - name: Install Playwright Chromium and WebKit
-        timeout-minutes: 30
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.cache/apt-debs"

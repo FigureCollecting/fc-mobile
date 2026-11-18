@@ -140,6 +140,14 @@ describe('the privacy text (src/content/privacy.md)', () => {
     expect(kept).toMatch(/We are setting a limit/);
   });
 
+  // Challenge round 2: the sign-in copies made before the 5 November 2026 move to the new store have no expiry rule.
+  it('says only the sign-in backups made since the move expire, and that the older sign-in copies stay until deleted by hand', () => {
+    const kept = section('Where it is kept');
+    expect(kept).not.toMatch(/Backups of the sign-in database reach back/);
+    expect(kept).toMatch(/sign-in database made since 5 November 2026 reach back three months, and a backup older than that is removed 30 days later/);
+    expect(kept).toMatch(/sign-in database from before 5 November 2026 are kept until we delete them by hand/);
+  });
+
   it('does not mention the Sync switches or the Delete Account button', () => {
     expect(FILE).not.toMatch(/Delete Account|Sync (switch|Owned|Ordered|Wished)/i);
     expect(section('A copy of your data, or deleting it')).toMatch(/privacy@figurecollecting\.com/);

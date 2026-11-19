@@ -24,12 +24,12 @@ async function expectPrivacy(page: Page) {
   const titles = await page.getByRole('heading', { level: 3 }).allTextContents();
   const privacyLinks = page.locator('a[href="/privacy"]');
   if (WITH_IDS) {
-    expect(titles.slice(titles.indexOf('Sync'), titles.indexOf('About') + 1)).toEqual(['Sync', 'Privacy', 'About']);
+    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'Privacy', 'About']);
     await expect(page.getByRole('switch', { name: 'Diagnostic ids' })).toBeVisible();
     await expect(privacyLinks).toHaveCount(1);
   } else {
     expect(titles).not.toContain('Privacy');
-    expect(titles.slice(titles.indexOf('Sync'), titles.indexOf('About') + 1)).toEqual(['Sync', 'About']);
+    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'About']);
     await expect(page.getByRole('switch', { name: 'Diagnostic ids' })).toHaveCount(0);
     await expect(privacyLinks).toHaveCount(0);
   }

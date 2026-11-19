@@ -49,7 +49,8 @@ for (const size of FOLD8) {
     expect(c.width, 'small').toBeLessThanOrEqual(110);
     expect(c.y, 'in the lower half').toBeGreaterThan(scene.y + scene.height / 2);
     expect(c.y + c.height, 'inside the scene').toBeLessThanOrEqual(scene.y + scene.height);
-    for (const other of ['.case-tabs', '.tab-bar', '.case-tabs__dock', '.cabinet-scene__step', '.cabinet-scene__reset', 'button[aria-label="Add figures"]']) {
+    // (NAV-SCOPE: the step keys are gone)
+    for (const other of ['.case-tabs', '.tab-bar', '.case-tabs__dock', '.cabinet-scene__reset', 'button[aria-label="Add figures"]']) {
       for (const el of await page.locator(other).all()) {
         const b = await el.boundingBox();
         if (b) expect(overlap(c, b), `the chip over ${other}`).toBe(false);

@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR, SHOT_VIEWPORTS } from './caseViewports';
-import { touchDown } from './touch';
+import { touchDown, touchPinch } from './touch';
 import { watchPull } from './pullWatch';
 import { decodePng } from './paintCheck';
 import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
@@ -28,13 +28,12 @@ test.beforeEach(({}, testInfo) => {
 
 const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 const DEG = Math.PI / 180;
-type View = 'wall' | 'cabinet' | 'shelf';
-
 const settle = (page: Page, ms = 300) => page.evaluate((m) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, m)))), ms);
 
-async function openFree(page: Page, size: { width: number; height: number }, opts: { view?: View; query?: string; storedOff?: boolean } = {}) {
-  // NAV-GRAD: the Free camera is the only camera; storedOff is a device that turned it off before (read past)
-  const prefs = { view: opts.view ?? 'wall', clearanceMm: 0, ...(opts.storedOff ? { freeCamera: false } : {}) };
+async function openFree(page: Page, size: { width: number; height: number }, opts: { query?: string; storedOff?: boolean } = {}) {
+  // NAV-GRAD: the Free camera is the only camera; storedOff is a device that turned it off before (read past).
+  // NAV-SCOPE (Ross 11-18): the wall is the case's one view; no view is stored
+  const prefs = { clearanceMm: 0, ...(opts.storedOff ? { freeCamera: false } : {}) };
   await page.addInitScript((p) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
@@ -152,7 +151,7 @@ const OPEN = FOLD8.find((v) => v.name === 'fold8-open')!;
 
 for (const holdMs of [270, 440]) {
   test(`hold: a ${holdMs} ms still press then release opens the figure under it`, async ({ page }) => {
-    await openFree(page, COVER, { view: 'cabinet' });
+    await openFree(page, COVER);
     const at = await figureInFrame(page);
     const finger = await touchDown(page, at.x, at.y);
     await page.waitForTimeout(holdMs);
@@ -162,7 +161,7 @@ for (const holdMs of [270, 440]) {
 }
 
 test('hold: 300 ms still, then a 30 px drag turns the eye and opens nothing; the ring shows while held', async ({ page }) => {
-  await openFree(page, COVER, { view: 'cabinet' });
+  await openFree(page, COVER);
   const before = await cameraOf(page);
   const at = await figureInFrame(page);
   const finger = await touchDown(page, at.x, at.y);
@@ -298,26 +297,25 @@ async function jogSpeed(page: Page) {
   };
 }
 
-test('NAV-JOG: the side arrows are gone from sight and touch (NAV-2A: kept for the keyboard) and the bottom-centre button is the jog; the same on a device that stored Free camera off (NAV-GRAD)', async ({ page }) => {
-  await openFree(page, COVER, { view: 'cabinet' });
-  const next = page.locator('.cabinet-scene__step--next');
-  await expect(next).toHaveCSS('opacity', '0');
-  await expect(next).toHaveCSS('pointer-events', 'none');
-  const b = (await next.boundingBox())!;
+// NAV-SCOPE (Ross 11-18): the side arrows, kept for the keyboard since NAV-2A, are gone with the one-cabinet view: no step
+// key is in the page at all, and a finger at the scene's right edge, where Next stood, lands on the picture
+test('NAV-JOG: no side arrows at all, and the bottom-centre button is the jog; the same on a device that stored Free camera off (NAV-GRAD)', async ({ page }) => {
+  await openFree(page, COVER);
+  await expect(page.locator('.cabinet-scene__step')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^(Next|Previous) cabinet$/ })).toHaveCount(0);
+  const f = await frameBox(page);
   const hit = await page.evaluate(({ x, y }) => {
     const el = document.elementFromPoint(x, y);
-    return el !== null && el.closest('.cabinet-scene__step') === null && document.querySelector('.cabinet-scene')!.contains(el);
-  }, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+    return el !== null && document.querySelector('.cabinet-scene')!.contains(el) && el.closest('button:not(.cab-figure)') === null;
+  }, { x: f.x + f.width - 26, y: f.y + f.height / 2 });
   expect(hit, 'a finger where Next stood lands on the picture').toBe(true);
   await expect(jogButton(page)).toHaveCount(1);
   await expect(page.getByRole('button', { name: /move the camera/i })).toHaveCount(1);
   // NAV-GRAD: a device that stored Free camera off gets the same (the Free camera is the only camera)
   const off = await page.context().newPage();
-  await openFree(off, COVER, { view: 'cabinet', storedOff: true });
+  await openFree(off, COVER, { storedOff: true });
   await expect(off.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
-  await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('opacity', '0');
-  await expect(off.locator('.cabinet-scene__step--next')).toHaveCSS('pointer-events', 'none');
-  await expect(off.locator('.cabinet-scene__step:not(.cabinet-scene__step--keys)')).toHaveCount(0);
+  await expect(off.locator('.cabinet-scene__step')).toHaveCount(0);
   await expect(off.locator('.tab-bar__add[data-jog]')).toHaveCount(1);
   await off.close();
 });
@@ -463,34 +461,38 @@ test('NAV-JOG: on every Fold8 panel the jog is clear of the tabs and the case ta
 
 // --- 15: Reset ----------------------------------------------------------------------------------------------------------
 
-test('Reset: none after a 2,000 mm walk at the opening height; there within 500 ms of a 15 deg look; it lands straight', async ({ page }) => {
-  await openFree(page, COVER, { view: 'cabinet' });
+// NAV-SCOPE (plan section 9, Ross 11-17: "reset view would only be used for pinch zoom"): the chip shows only while zoomed
+// and clears only the zoom; the eye stays where the walk and the look left it
+test('Reset: none after a 2,000 mm walk, none after a 15 deg look; there once pinched, and its tap clears only the zoom', async ({ page }) => {
+  await openFree(page, COVER);
   const start = await cameraOf(page);
   const f = await frameBox(page);
   while (Math.abs((await cameraOf(page)).x - start.x) < 2000) {
     await fingerDrag(page, { x: f.x + f.width * 0.85, y: f.y + f.height / 2 }, { x: f.x + f.width * 0.15, y: f.y + f.height / 2 });
   }
   await page.waitForTimeout(500);
-  await expect(page.locator('.cabinet-scene__reset')).toHaveCount(0);
+  const reset = page.locator('.cabinet-scene__reset');
+  await expect(reset).toHaveCount(0);
   // a 15 deg look with a held finger (right of centre: the finger moves left to turn right)
   const c = await cameraOf(page);
   const finger = await touchDown(page, f.x + f.width / 2, f.y + f.height / 2);
   await page.waitForTimeout(300);
   await finger.to(f.x + f.width / 2 - c.focalPx * Math.tan(15 * DEG), f.y + f.height / 2, 8, 16);
-  // never during the gesture
-  await expect(page.locator('.cabinet-scene__reset')).toBeHidden();
-  const lifted = Date.now();
   await finger.end();
-  await expect(page.locator('.cabinet-scene__reset')).toBeVisible({ timeout: 500 });
-  console.log(`RESET shown ${Date.now() - lifted} ms after the lift`);
-  // Chromium takes a tap within a moment of a lifted drag as the end of its fling and makes no click of it (measured:
-  // pointerdown and pointerup on the button 20 ms after the lift, no click), so the press waits for the fling to pass
+  await settle(page, 600);
+  expect((await cameraOf(page)).yaw, 'the look turned the eye').not.toBe(0);
+  await expect(reset, 'a look is no zoom').toHaveCount(0);
+  // a pinch out about the frame's middle: the chip
+  const m = { x: f.x + f.width / 2, y: f.y + f.height * 0.55 };
+  await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 60, y: m.y }, { x: m.x + 60, y: m.y });
   await settle(page, 400);
-  await page.locator('.cabinet-scene__reset').tap();
+  await expect(reset).toBeVisible();
+  const looked = await page.locator('.cabinet-scene').getAttribute('data-camera');
+  await reset.tap();
   await settle(page);
-  const reset = await cameraOf(page);
-  expect(reset.yaw ?? 0).toBe(0);
-  await expect(page.locator('.cabinet-scene__reset')).toHaveCount(0);
+  await expect(reset).toHaveCount(0);
+  expect((JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-zoom'))!) as { k: number }).k).toBe(1);
+  await expect(page.locator('.cabinet-scene'), 'the eye stays where it was').toHaveAttribute('data-camera', looked!);
 });
 
 // --- 16: no pull-to-refresh ---------------------------------------------------------------------------------------------
@@ -681,15 +683,29 @@ async function holdAndSweep(page: Page, from: { x: number; y: number }, path: { 
 }
 
 /**
- * Reset view, which a pose off the framing shows (a look, a raise): it must be there, and its tap must take the pose
- * back (it goes). Past a fling's end first: Chromium makes no click of a tap a moment after a lifted drag.
+ * NAV-SCOPE (plan section 9): Reset view is zoom-only and never moves the eye, so a look is undone the way a user undoes
+ * it: a held finger from the frame's centre, looked back by the yaw and pitch the eye stands at. look() turns by
+ * atan(a0) - atan(a1) from a press at the centre (a0 = 0), so a finger at f tan(yaw) right of it (and f tan(pitch) below
+ * it: a finger moving up looks up) turns the eye straight; each pass is held inside the frame, so a wide turn takes two
+ * or three.
  */
-async function resetView(page: Page) {
-  const reset = page.locator('.cabinet-scene__reset');
-  await expect(reset, 'Reset view shown').toHaveCount(1);
-  await settle(page, 400);
-  await reset.tap({ timeout: 5_000 });
-  await expect(reset, 'Reset view took the pose back').toHaveCount(0);
+async function lookStraight(page: Page) {
+  await expect(page.locator('.cabinet-scene__reset'), 'no Reset view for a look (zoom-only)').toHaveCount(0);
+  for (let pass = 0; pass < 4; pass++) {
+    const c = await cameraOf(page);
+    if (Math.abs(c.yaw ?? 0) < 1e-3 && Math.abs(c.pitch) < 1e-3) break;
+    const f = await frameBox(page);
+    const centre = { x: f.x + f.width / 2, y: f.y + f.height / 2 };
+    const dx = Math.max(-0.45 * f.width, Math.min(0.45 * f.width, c.focalPx * Math.tan(c.yaw ?? 0)));
+    const dy = Math.max(-0.45 * f.height, Math.min(0.45 * f.height, c.focalPx * Math.tan(c.pitch)));
+    await settle(page, 400);
+    // held past the longest Look arm any spec here sets (?lookhold=1000)
+    await holdAndSweep(page, centre, [{ x: centre.x + dx, y: centre.y + dy }], { holdMs: 1100 });
+    await settle(page, 300);
+  }
+  const straight = await cameraOf(page);
+  expect(Math.abs(straight.yaw ?? 0), 'looked straight again (yaw)').toBeLessThan(2e-3);
+  expect(Math.abs(straight.pitch), 'looked straight again (pitch)').toBeLessThan(2e-3);
 }
 
 /**
@@ -804,7 +820,7 @@ for (const panel of FOLD8) {
       await settle(page, 0);
       settledYaw.push((await cameraOf(page)).yaw! / DEG);
       // back to straight for the other side
-      await resetView(page);
+      await lookStraight(page);
       await settle(page, 400);
     }
 
@@ -1091,7 +1107,7 @@ for (const panel of FOLD8) {
         row.letGo = Number((((await cameraOf(page)).yaw ?? 0) / DEG).toFixed(2));
         await unfold(page, panel);
         out.push(row);
-        await resetView(page);
+        await lookStraight(page);
         await settle(page, 400);
       }
       const caps = await page.evaluate(() => (window as unknown as { __caps: [number, number][] }).__caps);
@@ -1151,7 +1167,7 @@ for (const panel of FOLD8) {
           turnedTo.push(turned);
           await unfold(page, panel);
         }
-        await resetView(page);
+        await lookStraight(page);
         await settle(page, 400);
       }
       for (const [what, x0, y0, x1, y1] of [
@@ -1163,7 +1179,7 @@ for (const panel of FOLD8) {
         await record(what, await freshAt(page, panel));
         await finger.end();
         await unfold(page, panel);
-        await resetView(page);
+        await lookStraight(page);
         await settle(page, 400);
       }
       const summary = { panel: panel.name, wall: wall.name, openingS, rows };
@@ -1206,7 +1222,15 @@ for (const panel of FOLD8) {
       // grounded one's picture has loaded, one still being read stands as its plate. A framed one's mat is drawn with it
       // and stands in until its photo loads, as a plate does: counted apart (10-31, the open panel's framed wall under a
       // load of 40-77: 2 and 1 figure-frames in 1.2-1.4 million at 2x, none in one run at ?jogmax=1)
-      await page.evaluate(() => {
+      type Blank = { frames: number; figures: number; blank: number; framedPending: number; at: string[] };
+      const blank: Blank = { frames: 0, figures: 0, blank: 0, framedPending: 0, at: [] };
+      // NAV-SCOPE: a reopen (below) starts a new page; what its watch saw so far is added up first
+      const takeBlank = async () => {
+        const seen = await page.evaluate(() => (window as unknown as { __blank: Blank }).__blank);
+        for (const k of ['frames', 'figures', 'blank', 'framedPending'] as const) blank[k] += seen[k];
+        blank.at.push(...seen.at.slice(0, 5 - blank.at.length));
+      };
+      const watchBlank = () => page.evaluate(() => {
         const watch = { frames: 0, figures: 0, blank: 0, framedPending: 0, at: [] as string[] };
         (window as unknown as { __blank: typeof watch }).__blank = watch;
         const onFrame = () => {
@@ -1227,6 +1251,7 @@ for (const panel of FOLD8) {
         };
         requestAnimationFrame(onFrame);
       });
+      await watchBlank();
       let from = await cameraOf(page);
       await jogBy(page, JOG_FULL_PX, 0, { holdMs: 1200 });
       await record('jog right', from);
@@ -1241,9 +1266,13 @@ for (const panel of FOLD8) {
         await jogToEnd(page, dir);
         await record(what, from);
       }
-      await resetView(page);
-      await settle(page, 400);
       for (const dir of ['right', 'left'] as const) {
+        // NAV-SCOPE: the old Reset view stood the eye back at its opening (Reset is zoom-only now): each turn starts
+        // from a fresh open of the same wall, which stands the eye there
+        await takeBlank();
+        await openFree(page, panel, { query: `${wall.query}&lookhold=1000` });
+        expect(await cameraOf(page), 'reopened at the opening').toEqual(open);
+        await watchBlank();
         const [x0, x1] = dir === 'right' ? [f.x + f.width - 3, f.x + 3] : [f.x + 3, f.x + f.width - 3];
         await holdAndSweep(page, { x: x0, y }, [{ x: x1, y }], { holdMs: 1100 });
         await settle(page, 500);
@@ -1251,10 +1280,8 @@ for (const panel of FOLD8) {
         // turned right, the jog left walks the eye toward the fronts (and mirrored)
         await jogBy(page, dir === 'right' ? -JOG_FULL_PX : JOG_FULL_PX, 0, { holdMs: 1200 });
         await record(`turned ${dir}, jog toward the fronts`, from);
-        await resetView(page);
-        await settle(page, 400);
       }
-      const blank = await page.evaluate(() => (window as unknown as { __blank: { frames: number; figures: number; blank: number; framedPending: number; at: string[] } }).__blank);
+      await takeBlank();
       const summary = { panel: panel.name, wall: wall.name, openingS, open: { x: open.x, z: open.z }, ends, rows, blank };
       await testInfo.attach('jog', { body: JSON.stringify(summary), contentType: 'application/json' });
       console.log(`JOG-BUDGET ${JSON.stringify(summary)}`);
@@ -1287,22 +1314,22 @@ for (const panel of FOLD8) {
 
 // --- 18: the Free camera's openings, new baselines (the old 28 untouched) ------------------------------------------------
 
-test.describe('baselines: the Free camera opening (level), every view, the four panels', () => {
+// NAV-SCOPE (Ross 11-18): the wall is the case's one view; the cabinet and shelf views' eight baselines are retired
+test.describe('baselines: the Free camera opening (level), the wall, the four panels', () => {
   test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
   const SHOT = { animations: 'disabled', caret: 'hide', scale: 'css', maxDiffPixels: 10, threshold: 0.05 } as const;
   for (const panel of FOLD8) {
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      test(`free camera, ${view} view, ${panel.name}`, async ({ page }) => {
-        await openFree(page, panel, { view, query: 'fx=3' });
-        // the plates' and the arrows' text is whatever font the machine has: hidden, as in cabinet-screenshots.spec.ts
-        await page.evaluate(() => {
-          const sheet = new CSSStyleSheet();
-          sheet.replaceSync('.cabinet-scene__step, .cabinet-scene__shelves button, .cab-figure__plate, .cab-plate, .cabinet-scene__fit, .cabinet-scene__fit *, .case-tabs *, .tab-bar * { color: transparent !important; }');
-          document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-        });
-        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
-        await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`free-camera-${view}-${panel.name}.png`, SHOT);
+    const view = 'wall';
+    test(`free camera, ${view} view, ${panel.name}`, async ({ page }) => {
+      await openFree(page, panel, { query: 'fx=3' });
+      // the plates' text is whatever font the machine has: hidden, as in cabinet-screenshots.spec.ts
+      await page.evaluate(() => {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('.cab-figure__plate, .cab-plate, .cabinet-scene__fit, .cabinet-scene__fit *, .case-tabs *, .tab-bar * { color: transparent !important; }');
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
       });
-    }
+      await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
+      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`free-camera-${view}-${panel.name}.png`, SHOT);
+    });
   }
 });

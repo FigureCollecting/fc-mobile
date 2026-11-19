@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { touchDown } from './touch';
+import { touchDown, touchPinch } from './touch';
 
 /**
  * NAV-1A: a recorded run of the Free camera (trial) for Ross, at the Fold8's four panels: a video of each and a PNG
@@ -38,7 +38,6 @@ for (const panel of FOLD8) {
     await page.addInitScript(() => {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
-      localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall' }));
     });
     await page.setViewportSize({ width: panel.width, height: panel.height });
     await page.goto('/?layout=case&fx=40');
@@ -67,9 +66,12 @@ for (const panel of FOLD8) {
     await held.end();
     await page.waitForTimeout(400);
     await shot('6-let-go-eased-back');
+    // NAV-SCOPE (plan section 9): Reset view is zoom-only: a pinch shows it, and its tap clears the zoom, the eye unmoved
+    await touchPinch(page, { x: f.x + f.width / 2 - 20, y }, { x: f.x + f.width / 2 + 20, y }, { x: f.x + f.width / 2 - 60, y }, { x: f.x + f.width / 2 + 60, y });
+    await settle(page);
     await page.locator('.cabinet-scene__reset').tap();
     await settle(page);
-    await shot('7-reset');
+    await shot('7-pinched-then-reset');
     // NAV-JOG: the thumb on the bottom-centre button, dragged right and held: the eye walks right until the lift
     const jog = (await page.locator('.tab-bar__add[data-jog]').boundingBox())!;
     const thumb = await touchDown(page, jog.x + jog.width / 2, jog.y + jog.height / 2);

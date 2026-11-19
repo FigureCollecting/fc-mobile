@@ -24,7 +24,7 @@ import { SyncEngine } from '../../sync/engine';
 import { CASE_PREFS_KEY } from '../../components/display/casePrefs';
 
 /** What this device keeps for the case: nothing here is a default. */
-const STORED = { pattern: 'ikea-detolf', view: 'shelf', ceilingMm: 2743.2 };
+const STORED = { pattern: 'ikea-detolf', ceilingMm: 2743.2 };
 
 beforeEach(() => {
   localStorage.setItem(CASE_PREFS_KEY, JSON.stringify(STORED));
@@ -38,7 +38,6 @@ afterEach(() => {
 /** The prefs a case scene stands under, as it publishes them. */
 const prefsOf = (scene: HTMLElement) => ({
   pattern: scene.dataset.pattern,
-  view: scene.dataset.view,
   ceilingMm: JSON.parse(scene.dataset.room!).ceilingMm as number,
 });
 
@@ -79,7 +78,8 @@ describe('a cold launch: the case under the prefs this device keeps, whatever th
     await seedFigures(r, [{ title: 'Figure 0', manufacturer: 'Good Smile' }]);
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 0' });
-    expect(screen.getByRole('button', { name: /^Case, One shelf/ })).toHaveAttribute('aria-pressed', 'true');
+    // NAV-SCOPE: the case has one view, so its button names none
+    expect(screen.getByRole('button', { name: 'Case' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   // STALE-CONTENT (Ross 10-18: "I had to change the pan mode before it redrew and honored the current settings", after a cold

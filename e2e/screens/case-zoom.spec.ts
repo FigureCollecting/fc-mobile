@@ -492,7 +492,8 @@ test('(c) a double-tap on an empty spot returns to 1x, animated, and the Reset v
   expect(Math.max(c.width, c.height)).toBeLessThanOrEqual(44);
   expect(c.y + c.height / 2).toBeGreaterThanOrEqual(scene.y + scene.height * 0.75);
   expect(Math.abs(scene.x + scene.width - (c.x + c.width) - 24)).toBeLessThanOrEqual(2);
-  for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__step:not(:disabled)', '.cabinet-scene__shelves', '.cabinet-scene__misfit']) {
+  // (NAV-SCOPE: the step keys and the shelf arrows are gone)
+  for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__misfit']) {
     for (const box of await page.locator(clear).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as Box))) {
       expect(meets(c, box), `the chip meets ${clear}`).toBe(false);
     }

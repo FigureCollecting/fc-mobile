@@ -77,36 +77,10 @@ jobs:
       - name: Build the app for the stack's auth suite
         run: npm run build:stack
 
-      - name: Read the Playwright version
-        id: pw
-        run: |
-          echo "version=$(node -p "require('./node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-          echo "codename=$(lsb_release -cs)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache the Playwright browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-browsers-${{ runner.os }}-${{ steps.pw.outputs.version }}
-
-      - name: Cache the system packages' .deb files
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: ~/.cache/apt-debs
-          key: playwright-debs-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ steps.pw.outputs.codename }}
-
-      # The runner's apt mirror served ~180 WebKit debs at ~7 s each; with the debs cached, apt fetches only its package lists.
+      # 40 min: on 11-18 the runner's apt mirror stretched this install (WebKit's system packages) from about 1 min to 29-33 min.
       - name: Install Playwright Chromium and WebKit
         timeout-minutes: 40
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.cache/apt-debs"
-          echo 'APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/99keep-debs >/dev/null
-          sudo cp -n "$HOME"/.cache/apt-debs/*.deb /var/cache/apt/archives/ 2>/dev/null || true
-          npx playwright install-deps chromium webkit
-          sudo cp -n /var/cache/apt/archives/*.deb "$HOME/.cache/apt-debs/" 2>/dev/null || true
-          sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/apt-debs"
-          npx playwright install chromium webkit
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Auth and sync e2e on the stack (mobile-chromium; sync at the Fold8 sizes, Chromium and WebKit)
         run: npm run test:e2e:stack

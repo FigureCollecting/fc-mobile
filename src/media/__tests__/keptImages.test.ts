@@ -242,14 +242,71 @@ describe('keepChosenPhotos (PICK-CASE-1)', () => {
 
   it('starts no fetch once its signal aborts, keeping what it fetched', async () => {
     const stop = new AbortController();
-    // the case view goes away while the photo comes (this network answers it all the same); its mask is not asked
+    // the case view goes away while the mask comes (this network answers it all the same); the photo is not asked
     const storage = await synced(async (r) => {
-      if (r.url === url('c')) stop.abort();
+      if (r.url === url('f')) stop.abort();
       return new Response('img');
     });
     expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage, signal: stop.signal })).toBe(1);
-    expect(storage.added.map((r) => r.url)).toEqual([url('c')]);
-    expect(owned(storage)).not.toContain(url('f'));
+    expect(storage.added.map((r) => r.url)).toEqual([url('f')]);
+    expect(owned(storage)).not.toContain(url('c'));
+  });
+
+  it('PICK-SLOW: keeps a chosen photo the Photos sheet loaded from its bytes on the device, fetching only its mask', async () => {
+    const storage = await synced();
+    // the sheet's <img crossorigin> of photo c, kept by the worker in the browsed cache
+    await (await storage.open(BROWSED_MEDIA_CACHE)).put(url('c'), new Response('c-bytes', { status: 200 }));
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage })).toBe(2);
+    expect(storage.added.map((r) => r.url)).toEqual([url('f')]);
+    expect(await (await (await storage.open(OWNED_MEDIA_CACHE)).match(url('c')))?.text()).toBe('c-bytes');
+    expect((await keptImages(['h1'], storage, choose('h1', 'c'))).get('h1')).toMatchObject({ url: url('c'), maskUrl: url('f') });
+  });
+
+  it('PICK-SLOW: keeps a pick\'s mask before its photo, so the figure is never answered as the pick while its mask is still to come', async () => {
+    const answered: (string | undefined)[] = [];
+    let storage: ReturnType<typeof fakeCaches> | undefined;
+    storage = await synced(async (r) => {
+      // what the case would be answered while the mask is on its way
+      if (r.url === url('f') && storage !== undefined) answered.push((await keptImages(['h1'], storage, choose('h1', 'c'))).get('h1')?.url);
+      return new Response('img');
+    });
+    await (await storage.open(BROWSED_MEDIA_CACHE)).put(url('c'), new Response('c-bytes', { status: 200 }));
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'c'), { storage })).toBe(2);
+    expect(answered).toEqual([url('a')]);
+    expect((await keptImages(['h1'], storage, choose('h1', 'c'))).get('h1')).toMatchObject({ url: url('c'), maskUrl: url('f') });
+  });
+
+  it('PICK-SLOW: fetches a browsed copy that is no image (not ok) as before', async () => {
+    const storage = await synced();
+    await (await storage.open(BROWSED_MEDIA_CACHE)).put(url('b'), new Response('nope', { status: 500 }));
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'b'), { storage })).toBe(1);
+    expect(storage.added.map((r) => r.url)).toEqual([url('b')]);
+  });
+
+  it('PICK-SLOW: keeps the newest choice first and tells each figure as soon as it is kept, before an older choice is fetched', async () => {
+    const storage = device();
+    const two = lists({ h1: [img('a', { primary: true }), img('b')], h2: [img('c', { primary: true }), img('d', { mask: mask('f') })] });
+    await syncKeptImages(['h1', 'h2'], two, { storage });
+    storage.added.length = 0;
+    // h1's choice is the older one; h2 was chosen last (a Map keeps the order the choices were made in)
+    const choices = new Map([
+      ['h1', url('b')],
+      ['h2', url('d')],
+    ]);
+    const told: [string, string[]][] = [];
+    expect(await keepChosenPhotos(['h1', 'h2'], choices, { storage, onKept: (head) => void told.push([head, storage.added.map((r) => r.url)]) })).toBe(3);
+    expect(storage.added.map((r) => r.url)).toEqual([url('f'), url('d'), url('b')]);
+    expect(told).toEqual([
+      ['h2', [url('f'), url('d')]],
+      ['h1', [url('f'), url('d'), url('b')]],
+    ]);
+  });
+
+  it('PICK-SLOW: tells nothing for a figure it kept nothing for', async () => {
+    const storage = await synced();
+    const onKept = vi.fn();
+    expect(await keepChosenPhotos(['h1'], choose('h1', 'a'), { storage, onKept })).toBe(0);
+    expect(onKept).not.toHaveBeenCalled();
   });
 
   it('does nothing where the browser has no Cache API, and reads the browser\'s caches when given none', async () => {

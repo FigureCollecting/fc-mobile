@@ -302,6 +302,47 @@ describe('keepChosenPhotos (PICK-CASE-1)', () => {
     ]);
   });
 
+  describe('PICK-SLOW: a pick\'s mask not kept leaves its photo unkept too, so no cut-out is answered without its mask', () => {
+    /** Picks c (mask f) whose mask the link `fails`, the photo too from the sheet's bytes when `browsed`; what follows. */
+    const pickWithFailingMask = async (fails: (request: Request) => Promise<Response>, { browsed = false, advance = 0 } = {}) => {
+      const storage = await synced((r) => (r.url === url('f') ? fails(r) : Promise.resolve(new Response('img'))));
+      if (browsed) await (await storage.open(BROWSED_MEDIA_CACHE)).put(url('c'), new Response('c-bytes', { status: 200 }));
+      const told: string[] = [];
+      const keeping = keepChosenPhotos(['h1'], choose('h1', 'c'), { storage, onKept: (head) => void told.push(head) });
+      if (advance > 0) await vi.advanceTimersByTimeAsync(advance);
+      const kept = await keeping;
+      const answer = (await keptImages(['h1'], storage, choose('h1', 'c'))).get('h1');
+      return { kept, told, answered: answer?.url, asked: storage.added.map((r) => r.url), owned: owned(storage) };
+    };
+    const untouched = { kept: 0, told: [], answered: url('a'), asked: [url('f')], owned: [url('a'), url('e')] };
+
+    it('the mask answered 503', async () => {
+      expect(await pickWithFailingMask(async () => new Response('down', { status: 503 }))).toEqual(untouched);
+    });
+
+    it('the mask lost at the wire (a network error)', async () => {
+      expect(
+        await pickWithFailingMask(async () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      ).toEqual(untouched);
+    });
+
+    it('the mask stalled: nothing came for 20 s, so its fetch gave up', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const stalls = (r: Request) => new Promise<Response>((_, fail) => r.signal.addEventListener('abort', () => fail(r.signal.reason)));
+        expect(await pickWithFailingMask(stalls, { advance: KEPT_SYNC_STEP_MS })).toEqual(untouched);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('the mask answered 503 though the sheet loaded the photo', async () => {
+      expect(await pickWithFailingMask(async () => new Response('down', { status: 503 }), { browsed: true })).toEqual(untouched);
+    });
+  });
+
   it('PICK-SLOW: tells nothing for a figure it kept nothing for', async () => {
     const storage = await synced();
     const onKept = vi.fn();

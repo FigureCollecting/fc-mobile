@@ -53,7 +53,7 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
 import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImage, keptImages, syncKeptImages, ABSENT_RECHECK_MS, MAX_KEPT_FIGURES, type CachedImage, type KeptImageFill } from '../media/keptImages';
-import { usePhotoChoices } from '../media/photoChoice';
+import { usePhotoChoices, type PhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
 
@@ -163,6 +163,11 @@ function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal, base:
       latest = withPicks(latest);
       flush();
     },
+    /** A figure's picture whose bytes the device already holds, drawn at once over the answer on screen (the run's reads answer it too). */
+    lay: (head: string, image: CachedImage) => {
+      latest = new Map(latest).set(head, image);
+      flush();
+    },
     stop: () => clearTimeout(timer),
   };
 }
@@ -195,7 +200,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const choiceKey = (heads ?? []).filter((h) => allChoices.has(h)).map((h) => `${h}=${allChoices.get(h)}`).join(',');
   const signedIn = session !== undefined && phase === 'signed-in';
   const enabled = signedIn && heads !== undefined;
-  const key = ['local', 'kept-images', heads?.join(',') ?? '', choiceKey];
+  // PICK-SLOW: whose answer it is, so another user's is a new key, and never a placeholder (below)
+  const key = ['local', 'kept-images', heads?.join(',') ?? '', choiceKey, session?.sub() ?? ''];
   // PHOTOS1 (X2): whether this case view has synced in reach since it opened, the server not lost since; a sync after that
   // (the kept figures or choices changed) backs off on the addresses refused, as a fill does (keptImages.ts SyncOptions.backOff)
   const syncedInReach = useRef(false);
@@ -217,12 +223,14 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   };
   /** PICK-SLOW: the answer this case view draws now, which a pick is laid over (showKept). */
   const onScreen = useRef<ReadonlyMap<string, CachedImage>>(EMPTY);
+  /** PICK-SLOW: whose choices the last run of this case view read, so the next one knows which figures' pictures changed. */
+  const ranWith = useRef<{ sub: unknown; choices: PhotoChoices }>();
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: key,
     // PICK-SLOW (Ross 11-19: the case stood as plates for seconds after a pick): a change of choice is a new key, whose first
-    // answer comes only after the read of every kept figure; till then the answer drawn stands. Only for the same kept
-    // figures: a new collection (another user signed in) is never drawn with the last one's pictures.
-    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[2] === key[2] ? previous : undefined),
+    // answer comes only after the read of every kept figure; till then the answer drawn stands. Only for the same user and the
+    // same kept figures: another user (even on the same figures) or a new collection is never drawn with the last one's pictures.
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[2] === key[2] && previousQuery.queryKey[4] === key[4] ? previous : undefined),
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
     // replaces it: aborted while it reads the lists, it touches no cache but a new figure's; while it fetches images, the
     // fetches in flight are aborted and no other starts.
@@ -232,11 +240,25 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       hearKeptSyncs(client);
       await stopFill();
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
+      // PICK-SLOW: the figures whose choice changed since this user's last run ("Use default", a pick), none for another user
+      const before = ranWith.current;
+      ranWith.current = { sub: queryKey[4], choices: allChoices };
+      const changed = before !== undefined && before.sub === queryKey[4] ? kept.filter((h) => before.choices.get(h) !== allChoices.get(h)) : [];
       let incomplete = false;
       let listsUnread = false;
       let left: number | undefined;
       if (reachable && !answersFromKept(client, queryKey)) {
         const shown = showKept(client, queryKey, signal, onScreen.current);
+        // PICK-SLOW (CHAL1 SHOULD-4): a changed figure whose shown photo is on the device already (the primary after "Use
+        // default", a photo picked again) is drawn at once: keepChosenPhotos keeps nothing for it, so tells nothing
+        const laid = (async () => {
+          for (const head of changed) {
+            const image = await keptImage(head, undefined, allChoices);
+            const choice = allChoices.get(head);
+            // a chosen photo not here yet is keepChosenPhotos's to draw, once kept
+            if (image !== undefined && (choice === undefined || image.url === choice)) shown.lay(head, image);
+          }
+        })().catch(() => undefined);
         // PICK-CASE-1: a chosen photo the device lacks is fetched first, from the figure's kept list, so a pick is shown
         // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails).
         // PICK-SLOW: begun before the read of every kept figure (seconds for a large collection), the newest choice first, each
@@ -258,6 +280,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         const backOff = syncedInReach.current;
         syncedInReach.current = true;
         try {
+          await laid;
           await picks;
           const synced = await duringOwnSync(client, queryKey, () =>
             syncKeptImages(kept, (h, onBatch, order) => fetchImageLists(session!.clients.catalog, h, signal, onBatch, order), {

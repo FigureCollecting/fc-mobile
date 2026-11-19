@@ -12,8 +12,9 @@ import { seedFigures } from '../../local/__tests__/seedFigures';
 import { localSession } from '../../local/session';
 import { headOf } from '../../sync/__tests__/engineSupport';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { BROWSED_MEDIA_CACHE, OWNED_MEDIA_CACHE, rememberImages } from '../../media/keptImages';
+import { BROWSED_MEDIA_CACHE, IMAGE_LISTS_CACHE, OWNED_MEDIA_CACHE, rememberImages } from '../../media/keptImages';
 import { __resetPhotoChoices, setPhotoChoice } from '../../media/photoChoice';
+import { makeTestQueryClient } from '../../test/testUtils';
 
 const D = 'https://images.figurecollecting.com/d';
 const url = (c: string) => `${D}/${c.repeat(64)}`;
@@ -205,6 +206,42 @@ describe('the case (useCollectionImages)', () => {
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
   });
 
+  it('PICK-SLOW: another user signed in on the same kept figures is never drawn with the last user\'s chosen photo', async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(photos());
+    await seedFigures(r, [{ title: 'Kurumi' }]);
+    setPhotoChoice(SUB, headOf(0), url('c'));
+    const seen: (string | undefined)[] = [];
+    const { result } = renderHook(
+      () => {
+        const answer = useCollectionImages();
+        seen.push(answer.get(headOf(0))?.url);
+        return answer;
+      },
+      { wrapper: queryWrapper() },
+    );
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('c')), { timeout: 3000 });
+    // the device's caches hold still: user B's own answer cannot come yet
+    let release: () => void = () => {};
+    const held = new Promise<void>((res) => (release = res));
+    const read = storage.open.bind(storage);
+    vi.spyOn(storage, 'open').mockImplementation(async (name: string) => {
+      await held;
+      return read(name);
+    });
+    seen.length = 0;
+    // user B signed in (another tab signed A out and B in; the session's sub is read again): the same kept figures, no choice
+    act(() => {
+      localSession.value = { ...r.session, sub: () => 'user-b' };
+    });
+    await new Promise((res) => setTimeout(res, 300));
+    const whileHeld = [...seen];
+    release();
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    expect(whileHeld.length).toBeGreaterThan(0);
+    expect(whileHeld).not.toContain(url('c'));
+  });
+
   it('goes back to the primary when the choice is forgotten', async () => {
     const r = await localRig();
     r.clients.getProductImages.mockResolvedValue(photos());
@@ -245,6 +282,165 @@ describe('the case (useCollectionImages)', () => {
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(url('a')));
     await settle();
     expect(result.current.get(headOf(0))?.url).toBe(url('a'));
+  });
+});
+
+// PICK-SLOW (Ross 11-19): a change of a figure's picture is drawn without waiting on the read of every kept figure (seconds for
+// 1,200 figures). Each check holds every kept list read but the changed figure's, so only the draw-at-once path can draw it.
+describe('the case (useCollectionImages): a changed picture drawn while every other kept figure is still being read', () => {
+  const N = 20;
+  const hx = (n: number, salt: string) => `${salt}${n.toString(16).padStart(4, '0')}`.padEnd(64, salt);
+  const at = (n: number, salt: string) => `${D}/${hx(n, salt)}`;
+  const lists = () =>
+    create(GetProductImagesResponseSchema, {
+      products: Array.from({ length: N }, (_, i) => ({
+        headId: headOf(i),
+        images: [
+          { derivativeId: hx(i, 'a'), role: 'gallery', primary: true, url: at(i, 'a'), width: 600, height: 800 },
+          { derivativeId: hx(i, 'b'), role: 'gallery', primary: false, url: at(i, 'b'), width: 600, height: 800 },
+          { derivativeId: hx(i, 'c'), role: 'gallery', primary: false, url: at(i, 'c'), width: 600, height: 800 },
+        ],
+      })),
+    });
+  const a0 = at(0, 'a');
+  const b0 = at(0, 'b');
+  const c0 = at(0, 'c');
+
+  /** The case of N kept figures, drawn as their primaries, its sync done. */
+  const opened = async () => {
+    const r = await localRig();
+    r.clients.getProductImages.mockResolvedValue(lists());
+    await seedFigures(r, Array.from({ length: N }, (_, i) => ({ title: `F${i}` })));
+    const client = makeTestQueryClient();
+    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    await waitFor(() => expect(result.current.size).toBe(N), { timeout: 5000 });
+    const idle = () => waitFor(() => expect(client.isFetching()).toBe(0), { timeout: 5000 });
+    await idle();
+    return { r, result, idle };
+  };
+
+  /** From now on every kept list read but figure 0's waits; the hold ends with the function answered. */
+  const holdOtherLists = (): (() => void) => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((res) => (release = res));
+    const own = new URL(`/__fc/image-list/${encodeURIComponent(headOf(0))}`, self.location.href).href;
+    const open = storage.open.bind(storage);
+    const spy = vi.spyOn(storage, 'open').mockImplementation(async (name: string) => {
+      const cache = await open(name);
+      if (name !== IMAGE_LISTS_CACHE) return cache;
+      const match = cache.match.bind(cache);
+      return Object.assign(Object.create(cache) as Cache, {
+        match: async (...args: Parameters<Cache['match']>) => {
+          if ((args[0] instanceof Request ? args[0].url : String(args[0])) !== own) await held;
+          return match(...args);
+        },
+        keys: cache.keys.bind(cache),
+      });
+    });
+    return () => {
+      release();
+      spy.mockRestore();
+    };
+  };
+
+  /** Whether figure 0 is drawn as `want` after `change`, while every other kept list read is held. */
+  const drawnWhileHeld = async (result: { current: ReadonlyMap<string, { url: string }> }, want: string, change: () => void) => {
+    const release = holdOtherLists();
+    try {
+      act(change);
+      await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(want), { timeout: 2000 });
+    } finally {
+      release();
+    }
+  };
+
+  it('a pick the Photos sheet loaded', async () => {
+    const { result, idle } = await opened();
+    await (await storage.open(BROWSED_MEDIA_CACHE)).put(b0, new Response('b0', { status: 200 }));
+    await drawnWhileHeld(result, b0, () => setPhotoChoice(SUB, headOf(0), b0));
+    await idle();
+    expect(result.current.get(headOf(0))?.url).toBe(b0);
+    expect(result.current.size).toBe(N);
+  });
+
+  it('"Use default": the primary, its bytes on the device', async () => {
+    const { result, idle } = await opened();
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    await drawnWhileHeld(result, a0, () => setPhotoChoice(SUB, headOf(0), null));
+    await idle();
+    expect(result.current.get(headOf(0))?.url).toBe(a0);
+  });
+
+  it('a pick again of a photo already on the device', async () => {
+    const { result, idle } = await opened();
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    act(() => setPhotoChoice(SUB, headOf(0), null));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(a0), { timeout: 3000 });
+    await idle();
+    // its bytes still on the device (picked again before a sync let them go): nothing is kept anew, so nothing is told
+    await (await storage.open(OWNED_MEDIA_CACHE)).put(b0, new Response('b0'));
+    await drawnWhileHeld(result, b0, () => setPhotoChoice(SUB, headOf(0), b0));
+    await idle();
+    expect(result.current.get(headOf(0))?.url).toBe(b0);
+  });
+
+  it('a pick not on the device yet is not laid as the primary: the chosen photo on screen stands while the pick comes', async () => {
+    const { result, idle } = await opened();
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    // photo c is not on the device, and its fetch hangs till let through
+    let letC: () => void = () => {};
+    const fetchAll = storage.fetch;
+    vi.stubGlobal('fetch', (request: Request) =>
+      request.url === c0
+        ? new Promise<Response>((res, rej) => {
+            letC = () => res(new Response('c0'));
+            request.signal.addEventListener('abort', () => rej(request.signal.reason));
+          })
+        : fetchAll(request),
+    );
+    const release = holdOtherLists();
+    const seen: (string | undefined)[] = [];
+    try {
+      act(() => setPhotoChoice(SUB, headOf(0), c0));
+      for (let i = 0; i < 10; i += 1) {
+        await new Promise((res) => setTimeout(res, 30));
+        seen.push(result.current.get(headOf(0))?.url);
+      }
+      expect(seen.every((u) => u === b0)).toBe(true);
+      letC();
+      await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(c0), { timeout: 2000 });
+    } finally {
+      release();
+    }
+    await idle();
+  });
+
+  it('another user signed in is drawn nothing piecemeal from the last user\'s choices: only its own read draws', async () => {
+    const { r, result, idle } = await opened();
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    const release = holdOtherLists();
+    const seen: number[] = [];
+    try {
+      act(() => {
+        localSession.value = { ...r.session, sub: () => 'user-b' };
+      });
+      for (let i = 0; i < 10; i += 1) {
+        await new Promise((res) => setTimeout(res, 30));
+        seen.push(result.current.size);
+      }
+    } finally {
+      release();
+    }
+    expect(seen.every((size) => size === 0)).toBe(true);
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(a0), { timeout: 3000 });
   });
 });
 

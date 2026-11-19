@@ -2,8 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LABEL_HEIGHT_MM, LABEL_LIFT_MM, LABEL_LINE_MM, LABEL_PAD_MM } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { FIGURE_GAP_MM, surfaceSlots } from '../packCabinets';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
@@ -25,7 +24,7 @@ afterEach(() => {
 const COVER = { width: 443, height: 558 };
 const OPEN = { width: 870, height: 475 };
 
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial<Parameters<typeof CabinetScene>[0]> = {}) {
   const onSelect = vi.fn();
@@ -221,11 +220,11 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   /** The view a scene of `figures` starts with, on its own. */
   function fresh(figures: Figure[], patch: Partial<CasePrefs>) {
     const { host, unmount } = scene(figures, patch);
-    const out = { camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY };
+    const out = { camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf };
     unmount();
     return out;
   }
-  const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY });
+  const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf });
 
   it('camera mode: a walk along the wall and a lift, then a filter: the camera stands where a scene of the filtered figures starts', () => {
     const patch = { view: 'cabinet' } as const;

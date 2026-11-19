@@ -19,7 +19,6 @@ import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { expect, test } from '../fixtures';
-import { pinLegacyCamera } from '../legacyCamera';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
@@ -112,7 +111,6 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
-  await pinLegacyCamera(context);
   await stack.edge.clearFaults();
   await stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -251,11 +249,11 @@ async function zoomOf(page: Page): Promise<Zoom> {
   return z === null ? { k: Number.NaN, x: Number.NaN, y: Number.NaN } : (JSON.parse(z) as Zoom);
 }
 
-/** What a zoom must never change: the camera, the walk, the pan, the cull and the drawn cabinets. */
+/** What a zoom must never change: the camera, the walk, the cull and the drawn cabinets (NAV-GRAD: the pan is gone). */
 const still = (page: Page) =>
   page.locator('.cabinet-scene').evaluate((el) => {
     const d = (el as HTMLElement).dataset;
-    return { camera: d.camera, focus: d.focus, pan: d.pan, panY: d.panY, cullX: d.cullX, cullPan: d.cullPan, view: d.view };
+    return { camera: d.camera, focus: d.focus, cullX: d.cullX, cullPan: d.cullPan, view: d.view };
   });
 
 const frameBox = async (page: Page): Promise<Box> => (await page.locator('.cabinet-scene__frame').boundingBox())!;
@@ -456,7 +454,7 @@ test('(b) zoomed, one finger pans the magnified picture to its edges and never w
 
 // ------------------------------------------------------------------ (c)
 
-test('(c) a double-tap on an empty spot and the Reset view chip each return to 1x, animated; a double-tap at 1x zooms 2x there', async ({ context, page }) => {
+test('(c) a double-tap on an empty spot returns to 1x, animated, and the Reset view chip at once; a double-tap at 1x zooms 2x there', async ({ context, page }) => {
   test.setTimeout(240_000);
   await openCase(context, page);
   const frame = await frameBox(page);
@@ -499,11 +497,13 @@ test('(c) a double-tap on an empty spot and the Reset view chip each return to 1
       expect(meets(c, box), `the chip meets ${clear}`).toBe(false);
     }
   }
+  // NAV-GRAD: the Free camera's Reset view (NAV-1A) is at once, with no glide back (the old camera's chip animated it)
   await watchSettles(page);
   await touchTap(page, c.x + c.width / 2, c.y + c.height / 2);
   expect(await zoomOf(page)).toEqual({ k: 1, x: 0, y: 0 });
-  await expect.poll(async () => (await settles(page)).end.length, { timeout: 2_000 }).toBe(1);
   await expect(chip).toHaveCount(0);
+  expect(await layerTransform(page)).toBe('none');
+  expect(await settles(page), 'no settle run for the chip').toEqual({ run: [], end: [] });
   await expect(opened(page)).toHaveCount(0);
 
   // at 1x, a double-tap zooms 2x at the tapped point: the point stays where it was

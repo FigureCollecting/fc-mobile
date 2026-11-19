@@ -2,8 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, WHEEL_IDLE_MS, ZOOM_SETTLE_MS } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 import { WHEEL_LINE_PX, ZOOM_MAX, ZOOM_UNDER, toPicture, toScreen, type Zoom } from '../caseZoom';
@@ -26,7 +25,7 @@ vi.mock('../caseCull', async (importOriginal) => {
 });
 
 const FRAME = { width: 443, height: 454 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 const realMatchMedia = window.matchMedia;
 
 beforeEach(() => {
@@ -53,8 +52,8 @@ function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial
 const zoomOf = (host: HTMLElement): Zoom => JSON.parse(host.dataset.zoom!) as Zoom;
 const figureButtons = (root: ParentNode) => Array.from(root.querySelectorAll<HTMLButtonElement>('button.cab-figure'));
 const chip = () => screen.queryByRole('button', { name: 'Reset view' });
-/** What the camera, the walk and the pan are: none of it may change while zoomed. */
-const still = (host: HTMLElement) => ({ camera: host.dataset.camera, focus: host.dataset.focus, pan: host.dataset.pan, panY: host.dataset.panY });
+/** What the camera and the focus are: none of it may change while zoomed. */
+const still = (host: HTMLElement) => ({ camera: host.dataset.camera, focus: host.dataset.focus });
 
 type P = { x: number; y: number };
 const down = (el: Element, id: number, p: P) => fireEvent.pointerDown(el, { pointerId: id, clientX: p.x, clientY: p.y, button: 0 });
@@ -90,6 +89,12 @@ function tap(el: Element, p: P = { x: 120, y: 90 }) {
   down(el, 3, p);
   up(el, 3, p);
   fireEvent.click(el);
+}
+
+/** The animated way back to 1x: a double-tap on the room (NAV-GRAD: the Free camera's Reset view chip goes back at once). */
+function doubleTapBack(host: Element) {
+  tap(host);
+  tap(host);
 }
 
 function reducedMotion() {
@@ -147,9 +152,9 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   it('a second finger landing mid-swipe stops the walk where it started: a two-finger gesture never walks', () => {
     const { host, onSelect } = scene(getFixtureFigures(8), { view: 'cabinet' });
     const before = still(host);
+    // (the same swipe let go by its one finger does walk: CabinetScene.test.tsx; the pose mid-swipe: CabinetSceneFreeCamera.test.tsx)
     down(host, 11, { x: 300, y: 200 });
     move(host, 11, { x: 240, y: 200 });
-    expect(host.dataset.camera).not.toBe(before.camera);
     down(host, 12, { x: 340, y: 200 });
     expect(still(host)).toEqual(before);
     move(host, 11, { x: 200, y: 200 });
@@ -214,7 +219,7 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
     up(host, 12, { x: 300, y: 260 });
     expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
     // the way back animates on the zoom layer alone: the scene is redrawn at 1x once it ends
-    tap(chip()!);
+    doubleTapBack(host);
     expect(chip()).toBeNull();
     expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
     act(() => {
@@ -228,7 +233,7 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
     const { host } = scene(getFixtureFigures(8));
     const s = sceneScale(host);
     zoomIn(host);
-    tap(chip()!);
+    doubleTapBack(host);
     expect(Math.max(...layerScales(host))).toBeCloseTo(2 * s, 9);
     down(host, 1, { x: 100, y: 100 });
     expect(Math.max(...layerScales(host))).toBe(s);
@@ -251,7 +256,7 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
     up(host, 12, { x: 300, y: 260 });
     expect(renders).toHaveBeenCalledTimes(1);
     renders.mockClear();
-    tap(chip()!);
+    doubleTapBack(host);
     expect(chip()).toBeNull();
     expect(renders).not.toHaveBeenCalled();
     act(() => {
@@ -379,7 +384,7 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     vi.useFakeTimers();
     const { host, layer } = scene(getFixtureFigures(8));
     zoomIn(host);
-    tap(chip()!);
+    doubleTapBack(host);
     // the scene's state is the target at once; the layer is still where the picture was
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
     expect(layer.style.transform).toBe('translate(-220px, -260px) scale(2)');
@@ -426,7 +431,7 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     vi.useFakeTimers();
     const { host, layer } = scene(getFixtureFigures(8));
     zoomIn(host);
-    tap(chip()!);
+    doubleTapBack(host);
     act(() => {
       vi.advanceTimersByTime(ZOOM_SETTLE_MS / 4);
     });
@@ -504,14 +509,15 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
     expect(zoomOf(host).k).toBe(1);
   });
 
-  it('the Reset view chip shows while zoomed and returns to 1x, animated', () => {
+  it('the Reset view chip shows while zoomed and returns to 1x, at once (the Free camera\'s Reset: no glide)', () => {
     const { host, layer } = scene(getFixtureFigures(8));
     zoomIn(host);
     const reset = chip()!;
     expect(reset.className).toContain('cabinet-scene__reset');
     tap(reset);
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
-    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
+    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+    expect(layer.style.transform).toBe('');
     expect(chip()).toBeNull();
   });
 
@@ -680,12 +686,12 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
   });
 
-  it('a sideways wheel mid-glide of the Reset view chip leaves the glide running', () => {
+  it('a sideways wheel mid-glide of the double-tap back to 1x leaves the glide running', () => {
     vi.useFakeTimers();
     const { host, layer } = scene(getFixtureFigures(8));
     wheel(host, at, { deltaY: -300 });
     idle();
-    fireEvent.click(chip()!);
+    doubleTapBack(host);
     act(() => {
       vi.advanceTimersByTime(ZOOM_SETTLE_MS / 2);
     });
@@ -819,21 +825,24 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
     expect(zoomOf(host)).toEqual(panned);
   });
 
-  it('the Reset view chip, taken from the keyboard before the wheel settles, glides back to 1x undisturbed by the wheel\'s settle', () => {
+  it('the Reset view chip, taken from the keyboard before the wheel settles, is back at 1x at once, undisturbed by the wheel\'s settle', () => {
     vi.useFakeTimers();
     const { host, layer } = scene(getFixtureFigures(8));
     wheel(host, at, { deltaY: -300 });
+    expect(zoomOf(host).k).toBeGreaterThan(1);
     // Enter on the focused chip: a click with no press before it
     fireEvent.click(chip()!);
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
-    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
-    // the wheel's settle would have fired by now: the glide runs on to its end
-    idle();
-    expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(true);
-    act(() => {
-      vi.advanceTimersByTime(ZOOM_SETTLE_MS - WHEEL_IDLE_MS);
-    });
     expect(layer.classList.contains('cabinet-scene__zoom--settling')).toBe(false);
+    expect(layer.style.transform).toBe('');
+    // the wheel's settle would have fired by now: nothing of it is left to move the picture
+    idle();
+    act(() => {
+      vi.advanceTimersByTime(ZOOM_SETTLE_MS);
+    });
+    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    expect(layer.style.transform).toBe('');
+    expect(chip()).toBeNull();
   });
 
   it('a new view wins over a wheel\'s pending settle', () => {

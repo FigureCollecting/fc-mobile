@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs, pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 
 /**
@@ -26,7 +25,6 @@ async function openCase(page: Page, size: { width: number; height: number }, sch
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-theme', theme);
   }, scheme);
-  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=6');
   await page.waitForSelector('button.cab-figure');
@@ -104,10 +102,11 @@ for (const size of FOLD8) {
 
   test(`the wall colour is drawn in every view, the wall, one cabinet and one shelf: ${size.name}`, async ({ page }) => {
     for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      await page.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view, wall: 'seafoam' }));
+      await page.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), { view, wall: 'seafoam' });
       await openCase(page, size, 'light');
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', view);
-      await expect(page.locator('.cabinet-scene .room-wall')).toHaveCount(1);
+      // the back wall (the Free camera draws the room's side walls too, where the frame sees them)
+      await expect(page.locator('.cabinet-scene .room-wall:not(.room-side)')).toHaveCount(1);
       expect(await wallVar(page), view).toBe('#a8d8cc');
       expect(await wallBrightness(page), `${view}: the wall is drawn in Seafoam, a light colour`).toBeGreaterThan(150);
     }

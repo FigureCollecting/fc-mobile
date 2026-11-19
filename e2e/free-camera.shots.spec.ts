@@ -20,7 +20,7 @@ for (const view of ['wall', 'cabinet', 'shelf'] as const) {
   test(`free camera, ${view} view: a full-frame sign-off PNG at the panel's own pixels`, async ({ page }, testInfo) => {
     const v = SHOT_VIEWPORTS.find((s) => s.name === testInfo.project.name);
     if (v === undefined) throw new Error(`${testInfo.project.name} is not a SHOT_VIEWPORTS project`);
-    await page.addInitScript((p) => localStorage.setItem('fc-case-prefs', JSON.stringify(p)), { view, freeCamera: true });
+    await page.addInitScript((p) => localStorage.setItem('fc-case-prefs', JSON.stringify(p)), { view });
     await page.goto('/?layout=case');
     await page.waitForSelector('button.cab-figure');
     await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });

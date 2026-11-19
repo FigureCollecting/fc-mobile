@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS } from '../casePrefs';
 import type { FigureImageRef } from '../figureArt';
 import type { AlphaMargins } from '../alphaMargin';
 import { HUSH_MS, REVEAL_MAX_MS } from '../layoutBasis';
@@ -69,7 +69,7 @@ type SceneProps = Partial<Parameters<typeof CabinetScene>[0]>;
 const props = (extra: SceneProps = {}): Parameters<typeof CabinetScene>[0] => ({
   figures: FIGURES,
   onSelect: vi.fn(),
-  prefs: LEGACY_PREFS,
+  prefs: DEFAULT_CASE_PREFS,
   steadyLayout: true,
   ...extra,
 });

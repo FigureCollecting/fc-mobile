@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 
 /**
  * LAYOUT-STABLE-1 (Ross 10-18, a first launch: the larger figures "flash into and out of place while it works out what goes
@@ -55,7 +54,7 @@ async function watch(page: Page): Promise<void> {
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-  }, legacyPrefs({ view: 'wall' }));
+  }, { view: 'wall' });
 }
 
 const frames = (page: Page) => page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames);

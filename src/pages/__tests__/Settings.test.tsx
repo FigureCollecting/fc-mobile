@@ -166,6 +166,68 @@ describe('Settings page', () => {
   });
 });
 
+// DEAD-CONTROLS: nothing but Settings read the keys of the Sync Owned / Ordered / Wished, Price Alerts and Sync
+// Complete switches or the Auto-Sync Interval choice, and the Delete Account button reached no server, so none is
+// shown. Without the legacy screens that leaves Notifications and Sync with nothing in them, so neither is shown.
+describe('Settings shows no control that does nothing', () => {
+  const DEAD_KEYS = ['fc-sync-owned', 'fc-sync-ordered', 'fc-sync-wished', 'fc-price-alerts', 'fc-sync-notifs', 'fc-sync-interval'];
+  const DEAD_LABELS = ['Sync Owned', 'Sync Ordered', 'Sync Wished', 'Price Alerts', 'Sync Complete', 'Auto-Sync Interval'];
+  const section = (title: string) => screen.getByRole('heading', { level: 3, name: title }).closest('section')!;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('keeps the sections that still have something in them, in order', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
+      'Appearance', 'Data & Storage', 'About', 'Account',
+    ]);
+  });
+
+  it('shows no Notifications or Sync section, and none of their six controls', () => {
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.queryByRole('heading', { level: 3, name: 'Notifications' })).toBeNull();
+    expect(screen.queryByRole('heading', { level: 3, name: 'Sync' })).toBeNull();
+    for (const label of DEAD_LABELS) expect(screen.queryByText(label)).toBeNull();
+    expect(screen.queryAllByRole('switch')).toEqual([]);
+    expect(screen.queryAllByRole('combobox')).toEqual([]);
+  });
+
+  it('reads and writes none of their keys, rendering or using the controls that stay', async () => {
+    for (const k of DEAD_KEYS) localStorage.setItem(k, k === 'fc-sync-interval' ? 'daily' : 'false');
+    const get = vi.spyOn(Storage.prototype, 'getItem');
+    const set = vi.spyOn(Storage.prototype, 'setItem');
+    const remove = vi.spyOn(Storage.prototype, 'removeItem');
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />, { initialPath: '/settings' });
+    await user.click(screen.getByRole('button', { name: 'Light' }));
+    await user.click(screen.getByRole('button', { name: 'Dark' }));
+    await user.click(screen.getByRole('button', { name: 'Check for update' }));
+    await user.click(screen.getByRole('button', { name: /^clear cache$/i }));
+    const dead = (calls: unknown[][]) => calls.filter(([k]) => DEAD_KEYS.includes(String(k)));
+    expect(dead(get.mock.calls)).toEqual([]);
+    expect(dead(set.mock.calls)).toEqual([]);
+    expect(dead(remove.mock.calls)).toEqual([]);
+    // The controls that stay were used, not just drawn: the theme choice saved.
+    expect(set.mock.calls.map(([k]) => k)).toContain('fc-theme');
+    expect(await screen.findByText(/clear cache\?/i)).toBeInTheDocument();
+  });
+
+  it('shows no Delete Account button or confirmation; Account keeps Change Password, which still opens security', async () => {
+    const user = userEvent.setup();
+    const { history } = renderWithProviders(<Settings />, { initialPath: '/settings' });
+    expect(screen.queryByRole('button', { name: /delete/i })).toBeNull();
+    expect(screen.queryByText(/delete account/i)).toBeNull();
+    expect(screen.queryByText(/delete my account/i)).toBeNull();
+    const account = section('Account');
+    expect(Array.from(account.querySelectorAll('button'), (b) => b.textContent)).toEqual(['Change Password']);
+    await user.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(history.at(-1)).toBe('/profile/security');
+  });
+});
+
 // LGMOB: a build without VITE_DIAG_IDS=true has no Diagnostic ids switch and no /privacy link (P1 ships the page).
 describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
   beforeEach(() => vi.stubEnv('VITE_DIAG_IDS', undefined));
@@ -174,11 +236,11 @@ describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
     vi.unstubAllEnvs();
   });
 
-  it('shows no Privacy section: Sync is followed by About, with no switch, wording or /privacy link', () => {
+  it('shows no Privacy section: Data & Storage is followed by About, with no switch, wording or /privacy link', () => {
     renderWithProviders(<Settings />, { initialPath: '/settings' });
     const titles = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     expect(titles).not.toContain('Privacy');
-    expect(titles.slice(titles.indexOf('Sync'), titles.indexOf('About') + 1)).toEqual(['Sync', 'About']);
+    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'About']);
     expect(screen.queryByRole('switch', { name: DIAG_IDS_TEXT.label })).toBeNull();
     expect(screen.queryByText(DIAG_IDS_TEXT.label)).toBeNull();
     expect(screen.queryByText(DIAG_IDS_TEXT.description)).toBeNull();
@@ -224,10 +286,10 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
     });
   });
 
-  it('renders a Privacy section between Sync and About, with the label, description and per-device hint', () => {
+  it('renders a Privacy section between Data & Storage and About, with the label, description and per-device hint', () => {
     renderWithProviders(<Settings />, { initialPath: '/settings' });
     const titles = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(titles.slice(titles.indexOf('Sync'), titles.indexOf('About') + 1)).toEqual(['Sync', 'Privacy', 'About']);
+    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'Privacy', 'About']);
     const section = screen.getByRole('heading', { name: 'Privacy' }).closest('section')!;
     expect(section).toContainElement(diagSwitch());
     expect(screen.getByText(DIAG_IDS_TEXT.label)).toBeInTheDocument();

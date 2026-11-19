@@ -114,7 +114,7 @@ test('a full session in fixture mode at the apex sends nothing to /api and never
   await page.goto(`${APEX}/profile`);
   await expect(page.locator('.page-profile')).toBeVisible({ timeout: 15_000 });
   await page.goto(`${APEX}/settings`);
-  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'About' })).toBeVisible({ timeout: 15_000 });
 
   // The retired screens' links land on the collection.
   for (const path of ['/sync', '/export', '/notifications', '/prices', '/prices/fig-1', '/analytics', '/calendar', '/collection-dna']) {

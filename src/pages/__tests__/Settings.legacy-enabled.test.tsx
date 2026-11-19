@@ -74,4 +74,32 @@ describe('Settings page (LEGACY_SCREENS_ENABLED=true)', () => {
     expect(screen.getByText(/blocked in browser settings/i)).toBeInTheDocument();
     expect(pushToggle()).toBeDisabled();
   });
+
+  // DEAD-CONTROLS: Price Alerts and Sync Complete saved keys nothing read, so they are gone; Push Notifications stays.
+  describe('Notifications holds only the push switch and its hint', () => {
+    const notifications = () => screen.queryByRole('heading', { level: 3, name: 'Notifications' })?.closest('section') ?? null;
+    const labels = (s: Element) => Array.from(s.querySelectorAll('.settings__label'), (l) => l.textContent);
+
+    it('push supported: the one row is Push Notifications', () => {
+      Object.assign(pushState, { isSupported: true, isSubscribed: false, permission: 'default', loading: false });
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      expect(labels(notifications()!)).toEqual(['Push Notifications']);
+      expect(notifications()!.querySelectorAll('[role="switch"]')).toHaveLength(1);
+      expect(screen.queryByText('Price Alerts')).toBeNull();
+      expect(screen.queryByText('Sync Complete')).toBeNull();
+    });
+
+    it('push unsupported and not blocked: no Notifications section at all', () => {
+      Object.assign(pushState, { isSupported: false, isSubscribed: false, permission: 'default', loading: false });
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      expect(notifications()).toBeNull();
+    });
+
+    it('push unsupported but blocked: the section shows only the blocked hint', () => {
+      Object.assign(pushState, { isSupported: false, isSubscribed: false, permission: 'denied', loading: false });
+      renderWithProviders(<Settings />, { initialPath: '/settings' });
+      expect(labels(notifications()!)).toEqual([]);
+      expect(notifications()!.textContent).toContain('Push notifications are blocked in browser settings.');
+    });
+  });
 });

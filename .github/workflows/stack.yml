@@ -12,8 +12,8 @@ jobs:
   stack:
     name: Stack harness
     runs-on: ubuntu-latest
-    # the job took 38m59s of its 40 on #63 (e2e/screens/case-memory's walk out and back at two panels: about 8 of them)
-    timeout-minutes: 55
+    # 55 left no room when the runner's apt mirror made the browser install take 29-33 min (11-18); the install step has its own 40 min cap
+    timeout-minutes: 90
     if: >-
       github.event_name != 'push'
       || (github.repository_owner == 'FigureCollecting' && (github.ref_name == 'develop' || github.ref_name == 'main'))
@@ -77,7 +77,9 @@ jobs:
       - name: Build the app for the stack's auth suite
         run: npm run build:stack
 
+      # 40 min: on 11-18 the runner's apt mirror stretched this install (WebKit's system packages) from about 1 min to 29-33 min.
       - name: Install Playwright Chromium and WebKit
+        timeout-minutes: 40
         run: npx playwright install --with-deps chromium webkit
 
       - name: Auth and sync e2e on the stack (mobile-chromium; sync at the Fold8 sizes, Chromium and WebKit)

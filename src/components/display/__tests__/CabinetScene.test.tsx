@@ -3,7 +3,6 @@ import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-libra
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LABEL_HEIGHT_MM, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { CASE_PREFS_KEY, DEFAULT_CASE_PREFS, readCasePrefs, type CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 import { FIXTURE_FIGURES, getFixtureFigures, getFixtureImageRef } from '../../../dev-fixtures/fixtures';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, MAX_DRAWN_FIGURES, cullRect, hiddenUnder, nearestCabinets, opaqueBoards, texelScale, trimFace } from '../caseCull';
@@ -23,7 +22,7 @@ afterEach(() => {
   window.history.pushState({}, '', '/');
 });
 
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial<Parameters<typeof CabinetScene>[0]> = {}) {
   const onSelect = vi.fn();
@@ -233,8 +232,9 @@ describe('CabinetScene: figure art (CASE-ADAPT)', () => {
     // each plate centred under its figure, as wide as the figure (CASE-FB2a: its brass face as wide as the name within it)
     for (const p of plates) {
       const t = tap.get(p.name)!;
-      expect((p.x0 + p.x1) / 2, p.name!).toBeCloseTo((t.x0 + t.x1) / 2, 6);
-      expect(p.x1 - p.x0, p.name!).toBeCloseTo(p.name === 'Nendoroid 10' ? 150 : 60, 6);
+      // (to 5e-6 mm: the styles are written to 1e-6 px, and read back over the scene's px per mm)
+      expect((p.x0 + p.x1) / 2, p.name!).toBeCloseTo((t.x0 + t.x1) / 2, 5);
+      expect(p.x1 - p.x0, p.name!).toBeCloseTo(p.name === 'Nendoroid 10' ? 150 : 60, 5);
     }
   });
 });
@@ -247,13 +247,13 @@ describe('CabinetScene: taps and the CC4 swipe', () => {
     expect(onSelect).toHaveBeenCalledWith(FIXTURE_FIGURES[3], 3);
   });
 
-  it('camera mode: a sideways drag walks the camera along the wall, and the click after it opens nothing', () => {
+  it('a sideways drag walks the camera along the wall, and the click after it opens nothing', () => {
     const many = getFixtureFigures(8);
     const { host, onSelect } = scene(many, { view: 'cabinet' });
     const x0 = Number(host.dataset.cameraX);
     drag(host, -150);
     expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
-    expect(host.dataset.pan).toBe('0');
+    expect(host.hasAttribute('data-pan')).toBe(false);
     fireEvent.click(figureButtons(host)[0]);
     expect(onSelect).not.toHaveBeenCalled();
     // the next tap, without a drag, opens
@@ -261,95 +261,51 @@ describe('CabinetScene: taps and the CC4 swipe', () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
-  it('camera mode, wall view: a walk settles on a stop where three cabinets or more stand whole (Ross 12:1xC, desk MN2 a); the cabinet view walks as the finger says', () => {
-    const many = getFixtureFigures(60);
-    const wallOf = (host: HTMLElement) => (JSON.parse(host.dataset.wall!) as number[][]).map(([x0, x1]) => (x0 + x1) / 2);
-    for (const frame of [{ width: 443, height: 454 }, { width: 870, height: 400 }]) {
-      const { host } = scene(many, { view: 'wall' }, { frameFallback: frame });
-      const centres = wallOf(host);
-      const stops = centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
-      let x0 = Number(host.dataset.cameraX);
-      for (let k = 0; k < 4; k++) {
-        // past the dead zone (a quarter of a cabinet, at least 40 px: NOTE 30)
-        drag(host, -80);
-        const camera = cameraOf(host);
-        expect(camera.x, `${frame.width} ${k}`).toBeGreaterThan(x0);
-        expect(stops.some((x) => Math.abs(x - camera.x) < 1e-6), `${camera.x}`).toBe(true);
-        const lookY = unprojectToPlaneZ(camera, frame.width / 2, frame.height / 2, 0)![1];
-        // whole: the body (the box less its splayed feet), side to side at the height the frame aims at
-        const whole = (JSON.parse(host.dataset.wall!) as number[][]).filter(([b0, b1]) => {
-          const feet = (b1 - b0 - IKEA_KLINGSBO.outer.widthMm) / 2;
-          return [b0 + feet, b1 - feet].every((x) => {
-            const p = project(camera, [x, lookY, 0]).x;
-            return p >= 0 && p <= frame.width;
-          });
-        });
-        expect(whole.length, `${frame.width} ${k}`).toBeGreaterThanOrEqual(3);
-        x0 = camera.x;
-      }
-      cleanup();
-    }
-    const { host } = scene(many, { view: 'cabinet' }, { frameFallback: { width: 443, height: 454 } });
-    const before = cameraOf(host);
-    drag(host, -40);
-    expect(Number(host.dataset.cameraX)).toBeCloseTo(before.x + (40 * before.z) / before.focalPx, 6);
-  });
-
-  it('camera mode, wall view (NOTE 30): a drag short of the dead zone, or one that comes back near its start, settles back; it is still a swipe, not a tap', () => {
-    const { host, onSelect } = scene(getFixtureFigures(60), { view: 'wall' }, { frameFallback: { width: 443, height: 454 } });
-    const x0 = host.dataset.cameraX;
-    drag(host, -30);
-    expect(host.dataset.cameraX).toBe(x0);
-    expect(host.dataset.focus).toBe('0');
-    fireEvent.click(figureButtons(host)[0]);
-    expect(onSelect).not.toHaveBeenCalled();
-    // out a long way and back to 10 px from where it started
-    fireEvent.pointerDown(host, { pointerId: 1, clientX: 300, clientY: 200, button: 0 });
-    fireEvent.pointerMove(host, { pointerId: 1, clientX: 100, clientY: 200 });
-    expect(host.dataset.cameraX).not.toBe(x0);
-    fireEvent.pointerMove(host, { pointerId: 1, clientX: 290, clientY: 200 });
-    fireEvent.pointerUp(host, { pointerId: 1, clientX: 290, clientY: 200 });
-    expect(host.dataset.cameraX).toBe(x0);
-    drag(host, -80);
-    expect(Number(host.dataset.cameraX)).toBeGreaterThan(Number(x0));
-  });
-
-  it('NAV-2A2 (Ross 11-04): the old camera has no pan mode: with Pan the wall stored on this device, or handed it, a one-finger drag moves the camera (sideways walks it, up and down lifts it); nothing pans', () => {
+  it('NAV-2A2 (Ross 11-04), NAV-GRAD: no pan mode and no old camera: with Pan the wall and Free camera off stored on this device, or handed it, a one-finger drag moves the Free camera (sideways and up and down); nothing pans', () => {
     localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: false, swipe: 'pan', view: 'cabinet' }));
     const stored = readCasePrefs();
     localStorage.clear();
-    const handed = { ...LEGACY_PREFS, view: 'cabinet', swipe: 'pan' } as CasePrefs;
+    const handed = { ...DEFAULT_CASE_PREFS, view: 'cabinet', swipe: 'pan', freeCamera: false } as CasePrefs;
+    const pans = (host: HTMLElement) => [host.hasAttribute('data-pan'), host.hasAttribute('data-pan-y'), (host.querySelector('.cabinet-scene__viewport') as HTMLElement).style.transform];
     for (const [how, p] of [['stored', stored], ['handed', handed]] as const) {
       const { container, unmount } = render(<CabinetScene figures={getFixtureFigures(8)} onSelect={vi.fn()} prefs={p} />);
       const host = container.querySelector('.cabinet-scene') as HTMLElement;
-      expect(host.dataset.freeCamera, how).toBeUndefined();
+      expect(host.dataset.freeCamera, how).toBe('1');
       const before = cameraOf(host);
       drag(host, -150);
       expect(cameraOf(host).x, how).toBeGreaterThan(before.x);
-      expect([host.dataset.pan, host.dataset.panY], how).toEqual(['0', '0']);
+      expect(pans(host), how).toEqual([false, false, '']);
       const walked = cameraOf(host);
       fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
       for (const y of [230, 260]) fireEvent.pointerMove(host, { pointerId: 1, clientX: 200, clientY: y });
       fireEvent.pointerUp(host, { pointerId: 1, clientX: 200, clientY: 260 });
       expect(cameraOf(host).y, how).not.toBe(walked.y);
-      expect([host.dataset.pan, host.dataset.panY], how).toEqual(['0', '0']);
+      expect(pans(host), how).toEqual([false, false, '']);
       expect(host.dataset.swipe, how).toBeUndefined();
       unmount();
     }
   });
 
-  it('a cancelled swipe moves nothing; another finger never steers this one', () => {
+  it('a cancelled swipe moves nothing, where the same swipe let go moves the camera; another finger never steers this one', () => {
     const many = getFixtureFigures(8);
     const { host } = scene(many, { view: 'cabinet' });
     const x0 = host.dataset.cameraX;
     fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
     fireEvent.pointerMove(host, { pointerId: 2, clientX: 40, clientY: 200 });
-    expect(host.dataset.cameraX).toBe(x0);
     fireEvent.pointerMove(host, { pointerId: 1, clientX: 60, clientY: 200 });
-    expect(host.dataset.cameraX).not.toBe(x0);
     fireEvent.pointerCancel(host, { pointerId: 1, clientX: 60, clientY: 200 });
     expect(host.dataset.cameraX).toBe(x0);
     expect(host.dataset.focus).toBe('0');
+    // a stray finger's move alone, between a press and its lift, steers nothing
+    fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
+    fireEvent.pointerMove(host, { pointerId: 2, clientX: 40, clientY: 200 });
+    fireEvent.pointerUp(host, { pointerId: 1, clientX: 200, clientY: 200 });
+    expect(host.dataset.cameraX).toBe(x0);
+    // let go instead of cancelled, the same swipe moves the camera
+    fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
+    fireEvent.pointerMove(host, { pointerId: 1, clientX: 60, clientY: 200 });
+    fireEvent.pointerUp(host, { pointerId: 1, clientX: 60, clientY: 200 });
+    expect(host.dataset.cameraX).not.toBe(x0);
   });
 
   it(`a move under ${SWIPE_START_PX} px is still a tap`, () => {
@@ -379,8 +335,8 @@ describe('CabinetScene: views and navigation', () => {
     expect(host.dataset.focus).toBe('0');
     expect(screen.getByRole('button', { name: 'Previous cabinet' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
-    // two cabinets a page at this width: the next page starts at the third, never the second
-    expect(host.dataset.focus).toBe('2');
+    // three cabinets a page at this width, from the level opening: the next page starts at the fourth, never the second
+    expect(host.dataset.focus).toBe('3');
     fireEvent.click(screen.getByRole('button', { name: 'Previous cabinet' }));
     expect(host.dataset.focus).toBe('0');
   });
@@ -758,11 +714,6 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     }
   }, 60_000);
 
-  /** The wall x the scene's frame centres on, on the cabinets' front: its camera's, less what the photo is slid. */
-  const centreX = (host: HTMLElement) => {
-    const camera = cameraOf(host);
-    return unprojectToPlaneZ(camera, camera.frame.width / 2 - Number(host.dataset.pan), camera.frame.height / 2, 0)![0];
-  };
 
   const mixedWallPager = (clearanceMm: number) => () => {
     // the Fold8 cover's frame, where the challenger's walk (70 px) then Next went nowhere; the walk and pager property
@@ -851,19 +802,6 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
     }
   }, 120_000);
 
-  it('the pager answers to the settled picture (close-out 4, ruling 32): mid-swipe, out past the far end, Next and Prev hold until the finger lifts', () => {
-    const { host } = scene(getFixtureFigures(120), { view: 'wall' }, { frameFallback: { width: 657, height: 473 } });
-    const next = screen.getByRole('button', { name: 'Next cabinet' }) as HTMLButtonElement;
-    const prev = screen.getByRole('button', { name: 'Previous cabinet' }) as HTMLButtonElement;
-    fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
-    fireEvent.pointerMove(host, { pointerId: 1, clientX: -20_000, clientY: 200 });
-    // the picture is out past the far end of the first page
-    expect(centreX(host)).toBeGreaterThan(5_000);
-    expect([next.disabled, prev.disabled], 'mid-swipe').toEqual([false, true]);
-    fireEvent.pointerUp(host, { pointerId: 1, clientX: -20_000, clientY: 200 });
-    expect(prev.disabled, 'settled').toBe(false);
-  });
-
   for (const view of ['cabinet', 'shelf'] as const) {
     it(`${view} view: Next is disabled on the last cabinet, Previous on the first`, () => {
       const { host } = scene(getFixtureFigures(8), { view });
@@ -910,7 +848,6 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       for (const dx of [0, -300, -300, -900, 250, -1200]) {
         if (dx !== 0) drag(host, dx);
         const camera = cameraOf(host);
-        const pan = Number(host.dataset.pan);
         const drawn = new Set(Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
         const cap = Number(host.dataset.drawnCap);
         expect(cap, `${v} after ${dx}`).toBeGreaterThanOrEqual(MAX_DRAWN_CABINETS);
@@ -920,8 +857,8 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
           const b = cabinetBox(wall.cabinets[i], 0);
           const pts = boxCorners(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1).map((c) => project(camera, c));
           if (pts.some((p) => p.depth <= 0)) continue;
-          const x0 = Math.min(...pts.map((p) => p.x)) + pan;
-          const x1 = Math.max(...pts.map((p) => p.x)) + pan;
+          const x0 = Math.min(...pts.map((p) => p.x));
+          const x1 = Math.max(...pts.map((p) => p.x));
           if (x1 > 0 && x0 < camera.frame.width) shows.push(i);
         }
         if (shows.length > cap) continue;
@@ -941,13 +878,12 @@ describe('CabinetScene: where a walk, the wall ends and a change of view leave t
       for (const dx of [0, -300, -300, -900, 250, -1200]) {
         if (dx !== 0) drag(host, dx);
         const camera = cameraOf(host);
-        const pan = Number(host.dataset.pan);
         const rect = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
         const drawn = new Set(Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)));
         // each cabinet's front, feet to top, splayed feet and all, on the front plane
         const fronts = wall.cabinets.slice(0, 20).flatMap((slot, i) => {
           const b = cabinetBox(slot, 0);
-          return trimFace({ camera, panPx: pan }, [b.x0, b.y0, 0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0], rect) ? [i] : [];
+          return trimFace({ camera, panPx: 0 }, [b.x0, b.y0, 0], [b.x1 - b.x0, 0, 0], [0, b.y1 - b.y0, 0], rect) ? [i] : [];
         });
         expect(fronts.length, `${v} after ${dx}: ${fronts.join(',')}`).toBeLessThanOrEqual(Number(host.dataset.drawnCap));
         for (const i of fronts) expect(drawn.has(i), `${v} after ${dx}: cabinet ${i}`).toBe(true);
@@ -1099,10 +1035,11 @@ describe("CabinetScene: the room's wall and floor never cost the screen its chro
       [ww, wh],
     ]) {
       const [wx, wy] = world(back, x, y);
-      expect(wx).toBeGreaterThanOrEqual(x0 - 1e-6);
-      expect(wx).toBeLessThanOrEqual(x1 + 1e-6);
-      expect(wy).toBeGreaterThanOrEqual(-ceiling - 1e-6);
-      expect(wy).toBeLessThanOrEqual(1e-6);
+      // (to the hundredth of a mm a corner reads back to, as above)
+      expect(wx).toBeGreaterThanOrEqual(x0 - 0.01);
+      expect(wx).toBeLessThanOrEqual(x1 + 0.01);
+      expect(wy).toBeGreaterThanOrEqual(-ceiling - 0.01);
+      expect(wy).toBeLessThanOrEqual(0.01);
     }
   });
 });
@@ -1111,7 +1048,8 @@ describe('CabinetScene: the numbers the e2e checks the drawing against', () => {
   it('publishes its camera and, per figure, the world box it draws and the surface it stands on', () => {
     const { host } = scene(FIXTURE_FIGURES);
     const cam = JSON.parse(host.dataset.camera!);
-    expect(Object.keys(cam).sort()).toEqual(['focalPx', 'height', 'pitch', 'width', 'x', 'y', 'z']);
+    expect(Object.keys(cam).sort()).toEqual(['focalPx', 'height', 'pitch', 'width', 'x', 'y', 'yaw', 'z']);
+    expect([cam.yaw, cam.pitch]).toEqual([0, 0]);
     expect(cam.width).toBe(360);
     for (const b of figureButtons(host)) {
       const w = JSON.parse(b.dataset.world!);
@@ -1182,58 +1120,20 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     for (const view of ['wall', 'shelf'] as const) {
       const { host } = scene(getFixtureFigures(170), { view }, { frameFallback: COVER });
       for (const [k, dx] of [-400, -130, -257, -61, -400, -333].entries()) {
-        const before = `${host.dataset.cameraX} ${host.dataset.pan}`;
+        const before = host.dataset.cameraX;
         slowDrag(host, dx);
         const at = `${view} swipe ${k}`;
-        expect(`${host.dataset.cameraX} ${host.dataset.pan}`, `${at} moved the picture`).not.toBe(before);
+        expect(host.dataset.cameraX, `${at} moved the picture`).not.toBe(before);
         const camera = cameraOf(host);
         const panPx = Number(host.dataset.cullPan);
         expect(Number(host.dataset.cullX), at).toBeCloseTo(camera.x, 3);
-        expect(Math.round(panPx), at).toBe(Number(host.dataset.pan));
+        // the picture never slides (NAV-GRAD)
+        expect(panPx, at).toBe(0);
         const drawn = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
         expect(drawn.sort((a, b) => a - b), at).toEqual(nearestCabinets({ camera, panPx }, wall, [], Number(host.dataset.drawnCap)));
       }
       cleanup();
     }
-  }, 60_000);
-
-  it(`while a swipe moves, the cull holds until the picture has moved a quarter frame, and a cabinet drawn keeps its place against a near one`, () => {
-    const wall = klingsbos(60);
-    let kept = 0;
-    // the wall view frames five fronts, every one drawn whatever was drawn before; the shelf view a cabinet or two,
-    // the rest of the five chosen among those beside them, where one drawn before keeps its place
-    for (const view of ['wall', 'shelf'] as const) {
-      const { host } = scene(getFixtureFigures(170), { view }, { frameFallback: COVER });
-      const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
-      let held = 0;
-      let lastCull = host.dataset.cullX!;
-      let before = drawnNow();
-      fireEvent.pointerDown(host, { pointerId: 1, clientX: 420, clientY: 200, button: 0 });
-      for (let k = 1; k <= 120; k++) {
-        fireEvent.pointerMove(host, { pointerId: 1, clientX: 420 - 13 * k, clientY: 200 });
-        const camera = cameraOf(host);
-        const live = { camera, panPx: Number(host.dataset.pan) };
-        const cull = { camera: { ...camera, x: Number(host.dataset.cullX) }, panPx: Number(host.dataset.cullPan) };
-        // the culled picture is never more than a quarter frame behind the live one
-        const lag = Math.abs(camera.x - cull.camera.x) * (camera.focalPx / (camera.z - 0)) + Math.abs(live.panPx - cull.panPx);
-        expect(lag, `${view} move ${k}`).toBeLessThan(0.25 * COVER.width + 1);
-        if (host.dataset.cullX === lastCull && `${camera.x}` !== lastCull) held++;
-        lastCull = host.dataset.cullX!;
-        // the drawn five are chosen for the culled picture, the ones drawn before counting nearer
-        const now = drawnNow();
-        const cap = Number(host.dataset.drawnCap);
-        expect(now, `${view} move ${k}`).toEqual(nearestCabinets(cull, wall, before, cap));
-        if (JSON.stringify(nearestCabinets(cull, wall, before, cap)) !== JSON.stringify(nearestCabinets(cull, wall, [], cap))) kept++;
-        before = now;
-      }
-      fireEvent.pointerUp(host, { pointerId: 1, clientX: 420 - 13 * 120, clientY: 200 });
-      // the cull held across small moves
-      expect(held, view).toBeGreaterThan(60);
-      cleanup();
-    }
-    // and somewhere a drawn cabinet kept its place against a nearer one (CF1 a: the cover's whole panel draws its cap of
-    // eight; walking, in the wall view, and sliding, in the shelf view, at 13 px a move)
-    expect(kept).toBeGreaterThan(0);
   }, 60_000);
 
   /**
@@ -1242,7 +1142,6 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
    */
   const perCabinet = (host: HTMLElement) => {
     const camera = cameraOf(host);
-    const pan = Number(host.dataset.pan);
     const wall = JSON.parse(host.dataset.wall!) as number[][];
     const mids = figureButtons(host).map((b) => {
       const w = JSON.parse(b.dataset.world!) as { x0: number; x1: number };
@@ -1250,7 +1149,7 @@ describe('CabinetScene: the Fold8 tile budget (MOB-NAV-2)', () => {
     });
     const drawn = Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index));
     const counts = new Map(drawn.map((i) => [i, mids.filter((m) => m > wall[i][0] && m < wall[i][1]).length]));
-    const xAt = (x: number, y: number) => project(camera, [x, y, 0]).x + pan;
+    const xAt = (x: number, y: number) => project(camera, [x, y, 0]).x;
     const whole = drawn.filter((i) => {
       const [x0, x1, y1] = wall[i];
       return Math.min(xAt(x0, 0), xAt(x0, y1)) >= 0 && Math.max(xAt(x1, 0), xAt(x1, y1)) <= camera.frame.width;
@@ -1724,14 +1623,14 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     expect(JSON.parse(host.dataset.room!)).toEqual({ ceilingMm: 3048, zBack: -IKEA_KLINGSBO.outer.depthMm - 450 });
   });
 
-  it('camera mode: a drag down raises the camera and its aim, nothing else; it keeps that height through a walk', () => {
+  it('a drag down raises the camera, nothing else; it keeps that height through a walk', () => {
     const { host } = scene(getFixtureFigures(60), { view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
     const before = cam(host);
     drag2(host, 3, 60);
     const up = cam(host);
     expect(up.y).toBeGreaterThan(before.y + 10);
     expect({ ...up, y: before.y }).toEqual(before);
-    expect(host.dataset.panY).toBe('0');
+    expect((host.querySelector('.cabinet-scene__viewport') as HTMLElement).style.transform, 'the picture never slides').toBe('');
     // a sideways walk keeps the height
     drag2(host, -200, 5);
     const walked = cam(host);
@@ -1754,51 +1653,30 @@ describe('CASE-FB1: the drawn frame, the room under its ceiling, and the up/down
     expect(cam(host)).toEqual(before);
   });
 
-  it('camera mode, while the finger is still down: the camera rises live, the photo never slides', () => {
-    // a ceiling far overhead: a photo could slide a long way, were it slid
-    const { host } = scene(FIXTURE_FIGURES, { view: 'cabinet', ceilingMm: 9000 });
-    const before = cam(host);
-    fireEvent.pointerDown(host, { pointerId: 9, clientX: 200, clientY: 200, button: 0 });
-    fireEvent.pointerMove(host, { pointerId: 9, clientX: 200, clientY: 260 });
-    expect(cam(host).y).toBeGreaterThan(before.y);
-    expect(host.dataset.panY).toBe('0');
-    expect((host.querySelector('.cabinet-scene__viewport') as HTMLElement).style.transform).toBe('');
-    fireEvent.pointerUp(host, { pointerId: 9, clientX: 200, clientY: 260 });
-  });
-
-  it('a drag goes along the axis it first moves farther on: mostly sideways walks, mostly up or down lifts', () => {
-    const { host } = scene(getFixtureFigures(60), { view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
-    const before = cam(host);
-    drag2(host, 40, 120);
-    expect(cam(host).x).toBe(before.x);
-    expect(cam(host).y).toBeGreaterThan(before.y);
-    const raised = cam(host);
-    drag2(host, -200, 60);
-    expect(cam(host).x).toBeGreaterThan(raised.x);
-    expect(cam(host).y).toBe(raised.y);
-  });
-
   it('a new view or pattern starts from its own framing: the camera back down', () => {
     const figures = getFixtureFigures(60);
     const frame = { width: 443, height: 418 };
     const view = (patch: Partial<CasePrefs>) => <CabinetScene figures={figures} onSelect={vi.fn()} prefs={prefs(patch)} frameFallback={frame} />;
-    // the wall view's own opening height (CAB-FOCUS-1: the cabinet view is no longer its camera)
+    // the wall view's own opening (the level openings stand at one height; the wall's stands farther back)
     const wallOpen = render(view({ view: 'wall' }));
-    const wallY = cam(wallOpen.container.querySelector('.cabinet-scene') as HTMLElement).y;
+    const wallAt = cam(wallOpen.container.querySelector('.cabinet-scene') as HTMLElement);
+    const wallY = wallAt.y;
     wallOpen.unmount();
     const utils = render(view({ view: 'cabinet' }));
     const host = utils.container.querySelector('.cabinet-scene') as HTMLElement;
     const opened = cam(host);
-    expect(opened.y).not.toBe(wallY);
+    expect(opened.z).not.toBe(wallAt.z);
     drag2(host, 0, 120);
     expect(cam(host).y).toBeGreaterThan(opened.y);
     // a new view: back down, to the wall's own height
+    // (its x is the page's or the cabinet's the eye last looked at: the focus goes with the look)
+    const stance = (c: ReturnType<typeof cam>) => ({ ...c, x: 0 });
     utils.rerender(view({ view: 'wall' }));
-    expect(cam(host).y).toBe(wallY);
+    expect(stance(cam(host))).toEqual(stance(wallAt));
     drag2(host, 0, 120);
     expect(cam(host).y).toBeGreaterThan(wallY);
     utils.rerender(view({ view: 'cabinet' }));
-    expect(cam(host).y).toBe(opened.y);
+    expect(stance(cam(host))).toEqual(stance(opened));
   }, 30_000);
 });
 
@@ -1814,7 +1692,7 @@ describe('CF1 (a): on a wide panel the scene draws more cabinets, so the full-he
       const { host } = scene(getFixtureFigures(170), { view: 'wall' }, { frameFallback: frame });
       const cam = JSON.parse(host.dataset.camera!);
       const wall = wallLayout(JSON.parse(host.dataset.wall!).map(() => IKEA_KLINGSBO));
-      const f = frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0 });
+      const f = frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 0, shelf: 0, level: true });
       const cap = Number(host.dataset.drawnCap);
       expect(cap).toBe(f.drawCap);
       expect(cap).toBeGreaterThan(MAX_DRAWN_CABINETS);
@@ -1838,14 +1716,7 @@ describe('CF1 (a): on a wide panel the scene draws more cabinets, so the full-he
   }
 });
 
-describe('F3 and the drag notes: the scene owns every drag on a touch screen; a drag keeps to its axis', () => {
-  /** A one-finger drag by (dx, dy), in steps, then lifted. */
-  function drag2(el: HTMLElement, dx: number, dy: number) {
-    fireEvent.pointerDown(el, { pointerId: 11, clientX: 200, clientY: 200, button: 0 });
-    for (let k = 1; k <= 4; k++) fireEvent.pointerMove(el, { pointerId: 11, clientX: 200 + (dx * k) / 4, clientY: 200 + (dy * k) / 4 });
-    fireEvent.pointerUp(el, { pointerId: 11, clientX: 200 + dx, clientY: 200 + dy });
-  }
-
+describe('F3 and the drag notes: the scene owns every drag on a touch screen', () => {
   it('the scene\'s touch-action is none: the browser pans or scrolls nothing under a finger, so an up/down drag reaches it', () => {
     const { host } = scene(FIXTURE_FIGURES);
     const style = Array.from(document.querySelectorAll('style')).map((x) => x.textContent ?? '').join('\n');
@@ -1857,7 +1728,7 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
   // CAB-FOCUS-1 (Ross 10-18): the one-cabinet camera is level, so a lift moves only its height: raising or lowering it never
   // brings a cabinet nearer the middle than another, and the walk found for the tilted camera that swapped two drawn
   // cabinets under a lift no longer exists in this view
-  it('camera mode, while a finger raises or lowers the camera: the cabinets drawn stay as they are, through the drag and after it', () => {
+  it('while a finger raises or lowers the camera: the cabinets drawn stay as they are, through the drag and after it', () => {
     const frame = { width: 443, height: 418 };
     const { host } = scene(getFixtureFigures(30), { pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack', view: 'cabinet' }, { frameFallback: frame });
     const drawnNow = () => Array.from(host.querySelectorAll<HTMLElement>('.cab')).map((c) => Number(c.dataset.index)).sort((a, b) => a - b);
@@ -1869,25 +1740,14 @@ describe('F3 and the drag notes: the scene owns every drag on a touch screen; a 
       fireEvent.pointerDown(host, { pointerId: 12, clientX: 300, clientY: 300, button: 0 });
       fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy / 2 });
       fireEvent.pointerMove(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
+      expect(drawnNow()).toEqual(held);
+      fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
+      // (the pose is published once the finger lifts)
       expect(cameraOf(host).y).not.toBe(before.y);
       expect(cameraOf(host).x).toBe(before.x);
       expect(drawnNow()).toEqual(held);
-      fireEvent.pointerUp(host, { pointerId: 12, clientX: 300, clientY: 300 + dy });
-      expect(drawnNow()).toEqual(held);
     }
   }, 30_000);
-
-  for (const drift of [-40, 40]) {
-    it(`camera mode, the cabinet view: a mostly up/down drag drifting ${drift} px sideways lifts the camera, never walks it`, () => {
-      const { host } = scene(getFixtureFigures(60), { view: 'cabinet' }, { frameFallback: { width: 443, height: 418 } });
-      fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
-      const before = JSON.parse(host.dataset.camera!);
-      drag2(host, drift, 120);
-      const after = JSON.parse(host.dataset.camera!);
-      expect(after.x).toBe(before.x);
-      expect(after.y).toBeGreaterThan(before.y);
-    });
-  }
 });
 
 describe('CLEAR-1: the clearance above a figure, from the case prefs, decides where figures stand', () => {
@@ -1944,7 +1804,7 @@ describe('CabinetScene: Reset view (PAN-KEEP-1)', () => {
       // reset frames the page or cabinet the picture stands at again, it does not jump back to the wall's start.
       const back = cam(host);
       expect([back.y, back.z, back.pitch, back.focalPx]).toEqual([homeCam.y, homeCam.z, homeCam.pitch, homeCam.focalPx]);
-      expect([host.dataset.pan, host.dataset.panY]).toEqual(['0', '0']);
+      expect((host.querySelector('.cabinet-scene__viewport') as HTMLElement).style.transform, 'the picture never slid').toBe('');
       expect(resetChip()).toBeNull();
     });
   }
@@ -2035,8 +1895,12 @@ describe('CabinetScene: Reset view (PAN-KEEP-1)', () => {
     drag2(host, -300, 0);
     expect(cam(host).x).not.toBe(home.x);
     rerender(at({ view: 'cabinet', pattern: 'ikea-detolf' }));
-    expect(host.dataset.pan).toBe('0');
     expect(resetChip()).toBeNull();
+    // where a case opened on that view and wall stands, at the cabinet the walk left the focus on
+    const walked = cam(host);
+    cleanup();
+    const fresh = render(at({ view: 'cabinet', pattern: 'ikea-detolf' })).container.querySelector('.cabinet-scene') as HTMLElement;
+    expect({ ...walked, x: 0 }).toEqual({ ...cam(fresh), x: 0 });
   });
 });
 

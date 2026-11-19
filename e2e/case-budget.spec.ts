@@ -1,11 +1,11 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { boxCorners, project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox, type Box } from '../src/components/display/caseFraming';
 import { wallPatternProfiles } from '../src/components/display/casePrefs';
+import { DRAG_WALK_GAIN_X } from '../src/components/display/casePose';
 import * as caseCull from '../src/components/display/caseCull';
 import { DRAWN_CABINETS_LIMIT, FLAT_GRID, GRADIENT_GRID, MAX_DRAWN_CABINETS, nearestCabinets, trimFace } from '../src/components/display/caseCull';
 
@@ -246,7 +246,8 @@ async function drawn(page: Page) {
       outside,
       spill,
       cameraX: Number(host.dataset.cameraX),
-      pan: Number(host.dataset.pan),
+      // NAV-GRAD: the photo's slide went with the old camera; the picture is never slid
+      pan: 0,
       coarse: coarse.length,
       coarseInFrame,
       layers,
@@ -387,21 +388,34 @@ async function settled(page: Page, size: { width: number; height: number }, stat
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
   // the walls the budget was measured on are packed with no clearance above a figure (the 1 in default, CLEAR-1, would pack them differently)
-  }, legacyPrefs({ view: state.view ?? 'wall', clearanceMm: 0, ...(state.pattern ? { pattern: state.pattern } : {}) }));
+  }, { view: state.view ?? 'wall', clearanceMm: 0, ...(state.pattern ? { pattern: state.pattern } : {}) });
   await page.setViewportSize(size);
   const t0 = Date.now();
-  await page.goto(`/?layout=case&${wall.query}`);
+  // NAV-GRAD: Look arms after a 1 s hold here, so on a loaded host a swipe whose first move comes late still walks
+  // (at the Free camera's own 250 ms it turned the eye instead, once in some hundred runs)
+  await page.goto(`/?layout=case&${wall.query}&lookhold=1000`);
   await page.waitForSelector('button.cab-figure');
   // G1: a dense wall draws every figure its drawn cabinets hold (up to DRAWN_FIGURES_LIMIT), so its first picture
   // takes longer: how long is logged (loadMs)
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
   const loadMs = Date.now() - t0;
   const x0 = Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x'));
-  for (let i = 0; i < state.swipes; i++) await swipe(page, -400);
+  // NAV-GRAD: the Free camera walks DRAG_WALK_GAIN_X the finger's travel, so each swipe is the old 400 px of the wall;
+  // and a swipe of its own may walk on past the wall's end (the old camera stopped at the end cabinet), so the forty-swipe
+  // state, the wall's far end, walks until the last cabinet is the one the frame centres on
+  const host = page.locator('.cabinet-scene');
+  const last = (JSON.parse((await host.getAttribute('data-wall'))!) as unknown[]).length - 1;
+  const toEnd = state.swipes >= 40;
+  for (let i = 0; i < (toEnd ? 6 * state.swipes : state.swipes); i++) {
+    const focus = Number(await host.getAttribute('data-focus'));
+    if (toEnd && focus === last) break;
+    // the last dozen cabinets in short steps, so the walk comes to the end cabinet and not past it
+    await swipe(page, (toEnd && focus >= last - 12 ? -40 : -400) / DRAG_WALK_GAIN_X);
+    if (toEnd) await page.waitForTimeout(60);
+  }
   if (state.swipes > 0) {
-    // the walk and the pan went down the wall: forty swipes a long way
-    const past = state.swipes >= 40 ? x0 + 20_000 : x0;
-    await expect.poll(async () => Number(await page.locator('.cabinet-scene').getAttribute('data-camera-x')) - Number(await page.locator('.cabinet-scene').getAttribute('data-pan'))).toBeGreaterThan(past);
+    await expect.poll(async () => Number(await host.getAttribute('data-camera-x'))).toBeGreaterThan(x0);
+    if (toEnd) await expect(host, 'walked to the wall\'s far end').toHaveAttribute('data-focus', String(last));
   }
   await page.waitForTimeout(500);
   const scene = await drawn(page);
@@ -485,13 +499,10 @@ function budgetChecks(m: Awaited<ReturnType<typeof measured>>, state: State) {
   const mesh = scene.spill.filter((x) => x.startsWith('q m-mesh '));
   expect.soft(scene.spill.filter((x) => !mesh.includes(x)), 'faces reaching past the frame and half a viewport round it').toEqual([]);
   expect.soft(mesh.length, 'mesh shelves reaching past it (CULL-LEAK-1)').toBeLessThanOrEqual(MESH_SPILL_MAX);
-  // a settled walk or pan stands at least three cabinets whole (Ross 12:1xC, desk MN2 a; NOTE 31); at the wall's end
-  // (close-out 3, ruling 27) it stands its end cabinet whole (CF1 a: the whole panel again, so two swipes never reach it)
-  if (state.swipes > 0 && (state.view ?? 'wall') === 'wall') {
-    const last = frame.boxes.length - 1;
-    if (frame.framed.includes(last) && state.swipes >= 40) expect.soft(frame.whole, 'the wall\'s end cabinet whole').toContain(last);
-    else expect.soft(frame.whole.length, `cabinets whole across the frame: ${frame.whole.join(',')}`).toBeGreaterThanOrEqual(3);
-  }
+  // walked to the wall's end (close-out 3, ruling 27) the frame stands its end cabinet whole. NAV-GRAD: the Free camera
+  // stands wherever the finger leaves it, on no stop, so a walk short of the end promises no count of whole cabinets
+  // (the old camera's settled walk stood three: NOTE 31, gone with it)
+  if (state.swipes >= 40 && (state.view ?? 'wall') === 'wall') expect.soft(frame.whole, 'the wall\'s end cabinet whole').toContain(frame.boxes.length - 1);
   // SHOULD 28: the coarser figures are the outermost
   expect.soft(frame.coarseNearer, 'figures drawn finer than one nearer the frame centre').toBe(0);
   expect(layers.sceneArea / viewport, 'the scene layers, in viewports of pixels').toBeLessThanOrEqual(CEILING_VIEWPORTS);
@@ -614,24 +625,24 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
       localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-    }, legacyPrefs({ view: 'wall', clearanceMm: 0, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' }));
+    }, { view: 'wall', clearanceMm: 0, pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
     await page.setViewportSize(size);
     // a wall long enough for the steps' pages (CF1 a: a wide panel's page holds a dozen cabinets)
-    await page.goto('/?layout=case&fx=170');
+    await page.goto('/?layout=case&fx=170&lookhold=1000');
     await page.waitForSelector('button.cab-figure');
     const host = page.locator('.cabinet-scene');
     const next = page.getByRole('button', { name: 'Next cabinet' });
     const prev = page.getByRole('button', { name: 'Previous cabinet' });
     const steps: [string, () => Promise<void>][] = [
-      ['Next', () => next.click()],
-      ['Next', () => next.click()],
+      ['Next', () => next.press('Enter')],
+      ['Next', () => next.press('Enter')],
       ['swipe -150', () => swipe(page, -150)],
-      ['Next', () => next.click()],
-      ['Prev', () => prev.click()],
+      ['Next', () => next.press('Enter')],
+      ['Prev', () => prev.press('Enter')],
       ['swipe 200', () => swipe(page, 200)],
-      ['Prev', () => prev.click()],
+      ['Prev', () => prev.press('Enter')],
       ['swipe -400', () => swipe(page, -400)],
-      ['Next', () => next.click()],
+      ['Next', () => next.press('Enter')],
     ];
     for (const [k, [name, step]] of steps.entries()) {
       await step();

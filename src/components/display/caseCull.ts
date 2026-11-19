@@ -11,7 +11,7 @@
  * board); every face at the px per mm the screen shows it; and it re-culls
  * on a camera change, the margin absorbing small moves. Pure maths, no DOM.
  */
-import { castRay, project, rayHitPlane, unprojectToPlaneZ, type Camera, type Frame, type Vec3 } from './caseCamera';
+import { castRay, project, rayHitPlane, type Camera, type Frame, type Vec3 } from './caseCamera';
 import type { RoomSpan } from './caseFraming';
 import { sideOverhangMm } from './cabinetProfile';
 import type { WallLayout, WallSlot } from './packCabinets';
@@ -271,25 +271,6 @@ export function nearestCabinets(
     .slice(0, cap)
     .map((r) => r.i)
     .sort((x, y) => x - y);
-}
-
-/**
- * The picture the case culls for: the last one it culled for while the new one only walks the camera along the
- * wall or slides the photo by less than `share` of the frame width (the margin still covers the frame), else
- * the new one.
- */
-export function stickyView(previous: CullView | null, next: CullView, share: number = RECULL_SHARE): CullView {
-  if (previous === null) return next;
-  const a = previous.camera;
-  const b = next.camera;
-  if (a.y !== b.y || a.z !== b.z || a.pitch !== b.pitch || a.focalPx !== b.focalPx || a.frame.width !== b.frame.width || a.frame.height !== b.frame.height) {
-    return next;
-  }
-  // the point on the cabinets' front the old picture drew at the frame centre, and how far the new one moved it
-  const centre = unprojectToPlaneZ(a, a.frame.width / 2 - previous.panPx, a.frame.height / 2, 0);
-  if (centre === null) return next;
-  const moved = project(b, centre).x + next.panPx - b.frame.width / 2;
-  return Math.abs(moved) < share * b.frame.width ? previous : next;
 }
 
 /** A turned camera's x reach when texelScale is given none: far past any wall. */

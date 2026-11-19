@@ -139,26 +139,18 @@ export function CaseViewCard({ open, prefs, onChange, onClose, misfitCount = 0, 
           )}
         </div>
 
-        {/* NAV-2A (NAVDEF a): the Free camera, per device, on until unticked here */}
-        <label class="case-card__choice">
-          <input type="checkbox" checked={prefs.freeCamera} onChange={() => onChange({ freeCamera: !prefs.freeCamera })} />
-          Free camera
-        </label>
-
-        {/* NAV-ROCKER (Ross 11-14): the depth rocker's shape, while the Free camera (which has it) is on */}
-        {prefs.freeCamera && (
-          <fieldset class="case-card__group">
-            <legend>Depth control</legend>
-            <label class="case-card__choice">
-              <input type="radio" name="case-depth-rocker" checked={prefs.depthRocker === 'vertical'} onChange={() => onChange({ depthRocker: 'vertical' })} />
-              Vertical rocker (up moves closer)
-            </label>
-            <label class="case-card__choice">
-              <input type="radio" name="case-depth-rocker" checked={prefs.depthRocker === 'horizontal'} onChange={() => onChange({ depthRocker: 'horizontal' })} />
-              Horizontal slider (toward the move button moves closer)
-            </label>
-          </fieldset>
-        )}
+        {/* NAV-ROCKER (Ross 11-14): the depth rocker's shape (NAV-GRAD: the Free camera, which has it, is the only camera) */}
+        <fieldset class="case-card__group">
+          <legend>Depth control</legend>
+          <label class="case-card__choice">
+            <input type="radio" name="case-depth-rocker" checked={prefs.depthRocker === 'vertical'} onChange={() => onChange({ depthRocker: 'vertical' })} />
+            Vertical rocker (up moves closer)
+          </label>
+          <label class="case-card__choice">
+            <input type="radio" name="case-depth-rocker" checked={prefs.depthRocker === 'horizontal'} onChange={() => onChange({ depthRocker: 'horizontal' })} />
+            Horizontal slider (toward the move button moves closer)
+          </label>
+        </fieldset>
 
         {misfitCount > 0 && onShowMisfits !== undefined && (
           <button type="button" class="case-card__misfits" onClick={onShowMisfits}>

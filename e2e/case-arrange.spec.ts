@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { touchTap } from './touch';
-import { legacyPrefs } from './legacyCamera';
+import { stepByKey } from './stepKeys';
 
 /**
  * PACK1 (Ross 10-26): the case stands its figures in an arrangement chosen in the View card (series, then scale, then name
@@ -78,7 +78,7 @@ function grouped(ids: readonly string[], rank: (id: string) => number | string):
 
 for (const size of FOLD8) {
   test(`a fresh device arranges the case by series, then scale, then name: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, legacyPrefs({}));
+    await openCase(page, size, {});
     const scene = page.locator('.cabinet-scene');
     await expect(scene).toHaveAttribute('data-arrange', 'series-scale-name');
     const ids = await order(page);
@@ -90,34 +90,33 @@ for (const size of FOLD8) {
     await expect(page.getByRole('group', { name: 'Arrange by' }).getByRole('radio', { name: 'Series, then scale, then name' })).toBeChecked();
   });
 
-  for (const free of [false, true]) {
-    test(`switching the arrangement packs the case again, and the device keeps it${free ? ', in the Free camera' : ''}: ${size.name}`, async ({ page }) => {
-      await openCase(page, size, free ? { freeCamera: true } : legacyPrefs({}));
-      const scene = page.locator('.cabinet-scene');
-      if (free) await expect(scene).toHaveAttribute('data-free-camera', '1');
-      const before = await order(page);
+  // NAV-GRAD: one test where there were two (Free camera off and on): the Free camera is the only camera
+  test(`switching the arrangement packs the case again, and the device keeps it, in the Free camera: ${size.name}`, async ({ page }) => {
+    await openCase(page, size, {});
+    const scene = page.locator('.cabinet-scene');
+    await expect(scene).toHaveAttribute('data-free-camera', '1');
+    const before = await order(page);
 
-      await arrangeBy(page, 'Name');
-      await expect(scene).toHaveAttribute('data-arrange', 'name');
-      const byName = await order(page);
-      expect(byName).not.toEqual(before);
-      expect([...byName].sort()).toEqual([...before].sort());
-      // no groups: the shelf figures read strictly by name
-      const names = byName.filter((id) => base(id) !== 'fx-dark-angel').map((id) => NAMES[base(id)]);
-      expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    await arrangeBy(page, 'Name');
+    await expect(scene).toHaveAttribute('data-arrange', 'name');
+    const byName = await order(page);
+    expect(byName).not.toEqual(before);
+    expect([...byName].sort()).toEqual([...before].sort());
+    // no groups: the shelf figures read strictly by name
+    const names = byName.filter((id) => base(id) !== 'fx-dark-angel').map((id) => NAMES[base(id)]);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
 
-      await arrangeBy(page, 'Scale, then name');
-      await expect(scene).toHaveAttribute('data-arrange', 'scale-name');
-      expect(grouped(await order(page), (id) => SCALE_RANK[id])).toBe(true);
+    await arrangeBy(page, 'Scale, then name');
+    await expect(scene).toHaveAttribute('data-arrange', 'scale-name');
+    expect(grouped(await order(page), (id) => SCALE_RANK[id])).toBe(true);
 
-      await page.reload();
-      await page.waitForSelector('button.cab-figure');
-      await expect(scene).toHaveAttribute('data-arrange', 'scale-name');
-    });
-  }
+    await page.reload();
+    await page.waitForSelector('button.cab-figure');
+    await expect(scene).toHaveAttribute('data-arrange', 'scale-name');
+  });
 
   test(`the list keeps its own sort whatever the case's arrangement: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, legacyPrefs({}), '&fx=1');
+    await openCase(page, size, {}, '&fx=1');
     /** The tiles' pictures in the list's order, then back to the case. */
     const tiles = async () => {
       await page.goto('/?layout=rows&fx=1');
@@ -141,9 +140,9 @@ for (const size of FOLD8) {
   });
 
   test(`the one-cabinet view starts again at the first cabinet, and a tap opens the figure it shows: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, legacyPrefs({ view: 'cabinet' }));
+    await openCase(page, size, { view: 'cabinet' });
     const scene = page.locator('.cabinet-scene');
-    await page.getByRole('button', { name: 'Next cabinet' }).click();
+    await stepByKey(page, 'Next cabinet');
     await expect(scene).toHaveAttribute('data-focus', '1');
     await arrangeBy(page, 'Name');
     await expect(scene).toHaveAttribute('data-focus', '0');

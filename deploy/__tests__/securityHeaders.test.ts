@@ -56,19 +56,20 @@ describe('previewHeaders (vite preview, for the e2e suite)', () => {
 
   it('is the nginx set exactly when the build talks only to its own origin', () => {
     expect(previewHeaders(conf, {})).toEqual(nginx);
-    expect(previewHeaders(conf, { VITE_API_URL: '/api' })).toEqual(nginx);
+    expect(previewHeaders(conf, { VITE_IMAGE_MANAGER_URL: '/images' })).toEqual(nginx);
   });
 
-  it("adds a mode's cross-origin API and image hosts to connect-src and img-src, and nothing else", () => {
-    const out = previewHeaders(conf, {
-      VITE_API_URL: 'http://localhost:5080/api',
-      VITE_IMAGE_MANAGER_URL: 'http://localhost:8000',
-    });
+  it('opens connect-src to no REST API on another origin, whatever VITE_API_URL says: the API is same-origin /api (FLIP-LEGACY-REST)', () => {
+    expect(previewHeaders(conf, { VITE_API_URL: 'http://localhost:5080/api' })).toEqual(nginx);
+    expect(previewHeaders(conf, { VITE_API_URL: 'https://figurecollecting.com/api' })).toEqual(nginx);
+  });
+
+  it("adds a mode's cross-origin image host to img-src, and nothing else", () => {
+    const out = previewHeaders(conf, { VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' });
     const csp = parseCsp(out['Content-Security-Policy'] as string);
     const base = parseCsp(nginx['Content-Security-Policy'] as string);
-    expect(csp['connect-src']).toEqual([...(base['connect-src'] as string[]), 'http://localhost:5080']);
     expect(csp['img-src']).toEqual([...(base['img-src'] as string[]), 'http://localhost:8000']);
-    for (const name of Object.keys(base).filter((d) => d !== 'connect-src' && d !== 'img-src')) {
+    for (const name of Object.keys(base).filter((d) => d !== 'img-src')) {
       expect(csp[name]).toEqual(base[name]);
     }
   });
@@ -140,7 +141,7 @@ describe('the CSP matcher these tests use', () => {
 });
 
 describe('devServerHeaders (the vite dev server, and every spike page it serves)', () => {
-  const env = { VITE_API_URL: 'http://localhost:5080/api', VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' };
+  const env = { VITE_IMAGE_MANAGER_URL: 'http://localhost:8000' };
   const preview = parseCsp(previewHeaders(conf, env)['Content-Security-Policy'] as string);
 
   it("is the mode's preview CSP with inline styles allowed (vite's dev client injects CSS as <style>), and nothing else", () => {

@@ -1,7 +1,6 @@
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
-import { legacyPrefs, pinLegacyCamera } from './legacyCamera';
 import { signoffShot } from './signoffShots';
 import { CASE_PREFS_KEY } from '../src/components/display/casePrefs';
 
@@ -29,7 +28,6 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
-  await pinLegacyCamera(page);
 });
 
 type Layout = 'case' | 'rows';
@@ -270,10 +268,14 @@ for (const layout of ['case', 'rows'] as const) {
     await expect(page.locator('.applied-chips')).toHaveCount(0);
     await expectNoStrip(page, layout);
 
-    // the load ends: nothing moved
+    // the load ends: nothing moved. NAV-GRAD: read again first, as the row that came and went leaves the case's Free
+    // camera a few px off where it opened (it keeps its pose through a change of the frame, spec 6.6: not the strip's doing)
+    await page.waitForTimeout(300);
+    const cleared = await firstTop(page, layout);
+    if (layout === 'rows') expect(Math.abs(cleared - before)).toBeLessThan(0.5);
     await setLoad(page, false);
     await expect(bar(page)).toHaveCount(0);
-    expect(Math.abs((await firstTop(page, layout)) - before)).toBeLessThan(0.5);
+    expect(Math.abs((await firstTop(page, layout)) - cleared)).toBeLessThan(0.5);
   });
 }
 
@@ -289,7 +291,7 @@ test('LOADBAR-2 (challenge S1: rows, nothing filtered, loading): a first-row til
 async function expectShelfAboveTakesItsTap(page: Page, testInfo: TestInfo, query: string, shot?: string) {
   await page.addInitScript(
     ({ key, prefs }) => localStorage.setItem(key, JSON.stringify(prefs)),
-    { key: CASE_PREFS_KEY, prefs: legacyPrefs({ view: 'shelf', swipe: 'camera', pattern: 'ikea-detolf' }) },
+    { key: CASE_PREFS_KEY, prefs: { view: 'shelf', swipe: 'camera', pattern: 'ikea-detolf' } },
   );
   await ready(page, 'case', query);
   const host = page.locator('.cabinet-scene');

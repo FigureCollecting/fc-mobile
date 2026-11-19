@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { project, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_DETOLF } from '../src/components/display/cabinetPresets';
@@ -25,7 +24,7 @@ async function openShelfView(page: Page, size: { width: number; height: number }
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'shelf', pattern: 'ikea-detolf' }));
+  }, { view: 'shelf', pattern: 'ikea-detolf' });
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=2');
   await page.waitForSelector('button.cab-figure');

@@ -30,7 +30,7 @@ describe('the depth control pref', () => {
   });
 });
 
-describe('the View card: a "Depth control" choice under the Free camera box', () => {
+describe('the View card: a "Depth control" choice under the estimated-sizes row', () => {
   it('two choices, the vertical rocker picked to begin with; a tap is a patch of the pref', () => {
     const onChange = vi.fn();
     const { unmount } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
@@ -50,12 +50,9 @@ describe('the View card: a "Depth control" choice under the Free camera box', ()
     expect(on).toHaveBeenCalledWith({ depthRocker: 'vertical' });
   });
 
-  it('sits right after the Free camera box; with the Free camera off (no rocker) it is not offered', () => {
-    const { unmount } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
-    const free = screen.getByRole('checkbox', { name: 'Free camera' }).closest('label')!;
-    expect(free.nextElementSibling).toBe(screen.getByRole('group', { name: 'Depth control' }));
-    unmount();
-    render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, freeCamera: false }} onChange={vi.fn()} onClose={() => {}} />);
-    expect(screen.queryByRole('group', { name: 'Depth control' })).toBeNull();
+  it('sits right after the estimated-sizes row (NAV-GRAD: no Free camera box between them), always offered', () => {
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
+    const sizes = screen.getByRole('checkbox', { name: 'Show estimated sizes' }).closest('.case-card__sizes')!;
+    expect(sizes.nextElementSibling).toBe(screen.getByRole('group', { name: 'Depth control' }));
   });
 });

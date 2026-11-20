@@ -1,5 +1,6 @@
 /**
- * nginx.org security advisories (CVE-2026-121810, -123007, -123633, -123634, -118899, -113425):
+ * nginx.org security advisories (CVE-2026-121810, -123007, -123633, -123634, -118899, -113425,
+ * -125283, -120967, -123640):
  * not vulnerable in 1.30.7+ (stable) and 1.31.9+ (mainline). A version on neither line past those is
  * read as not fixed, so a base image move to another line has to update this first.
  */

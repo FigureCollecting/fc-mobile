@@ -16,7 +16,7 @@ ARG VITE_BUILD_ID=dev
 ENV VITE_BUILD_ID=${VITE_BUILD_ID}
 RUN npm run build
 
-# The official image (nginx.org lists 1.30.7+ as fixed for CVE-2026-121810 and five more; no
+# The official image (nginx.org lists 1.30.7+ as fixed for CVE-2026-121810 and eight more; no
 # nginx-unprivileged 1.30.7 exists yet), run as its nginx user (uid 101) with
 # deploy/nginx/nginx.conf in place of the stock one (no user directive, pid and temp paths in /tmp).
 FROM nginx:1.30.7-alpine-slim@sha256:8c950211a641ec5b23f265450517001f6bcca533666120ebe36cb4cff3d00a55 AS web

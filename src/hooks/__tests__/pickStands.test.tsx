@@ -118,19 +118,23 @@ function gate() {
   };
 }
 const busy = () => Promise.resolve(new Response('busy', { status: 503 }));
-/** From now on every read of one withheld record takes 400 ms: a picture's check answers after the answers told meanwhile. */
+/** From now on every read of the withheld records takes 400 ms: a drawing's check answers after the answers told meanwhile. */
 function slowWithheld() {
   const open = storage.open.bind(storage);
   vi.spyOn(storage, 'open').mockImplementation(async (n: string) => {
     const cache = await open(n);
     if (n !== WITHHELD_CACHE) return cache;
     const match = cache.match.bind(cache);
+    const keys = cache.keys.bind(cache);
     return Object.assign(Object.create(cache) as Cache, {
       match: async (...args: Parameters<Cache['match']>) => {
         await wait(400);
         return match(...args);
       },
-      keys: cache.keys.bind(cache),
+      keys: async (...args: Parameters<Cache['keys']>) => {
+        await wait(400);
+        return keys(...args);
+      },
     });
   });
 }
@@ -339,6 +343,33 @@ describe('the case (useCollectionImages): a slow pick keeps the picture on scree
     slow7.let();
     await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(c0), { timeout: 5000 });
     await idle();
+    expect(seq(frames)).toEqual(['b0', 'c0']);
+  }, 30_000);
+
+  it('a pick that lands while an older choice still downloads is drawn at once over the earlier pick it replaces', async () => {
+    const { result, idle, frames } = await opened();
+    // an older choice on figure 3 (d3), kept, then its bytes gone: the pick's run fetches it after the pick, held
+    const d3 = at(3, 'd');
+    act(() => setPhotoChoice(SUB, headOf(3), d3));
+    await waitFor(() => expect(result.current.get(headOf(3))?.url).toBe(d3), { timeout: 3000 });
+    await idle();
+    await pickB0(result, idle);
+    await (await storage.open(OWNED_MEDIA_CACHE)).delete(d3);
+    const slowD3 = gate();
+    const mask = gate();
+    const asked = network((u, s) => (u === d3 ? slowD3.answer(s, 'd3') : u === f0 ? mask.answer(s, 'f0') : undefined));
+    frames.length = 0;
+    act(() => setPhotoChoice(SUB, headOf(0), c0));
+    await waitFor(() => expect(asked.get(f0) ?? 0).toBeGreaterThan(0), { timeout: 3000 });
+    await wait(800);
+    mask.let();
+    // the run waits on d3 before its sync: only the pick draws c0
+    await waitFor(() => expect(asked.get(d3) ?? 0).toBeGreaterThan(0), { timeout: 3000 });
+    await wait(500);
+    const whileD3 = seq(frames);
+    slowD3.let();
+    await idle();
+    expect(whileD3).toEqual(['b0', 'c0']);
     expect(seq(frames)).toEqual(['b0', 'c0']);
   }, 30_000);
 

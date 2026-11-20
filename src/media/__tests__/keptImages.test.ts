@@ -33,6 +33,7 @@ import {
   rememberImages,
   syncKeptImages,
   toCachedImages,
+  withheldAddresses,
   withheldAmong,
   withheldKey,
   type CachedImage,
@@ -1628,6 +1629,16 @@ describe('the addresses a sync withheld (the tombstone the worker reads)', () =>
     expect(await withheld(storage, ['a', 'b', 'c', 'f'])).toEqual([]);
     await syncKeptImages(['h1'], lists({ h1: [img('d', { primary: true })] }), { storage });
     expect(await withheld(storage, ['a', 'b', 'c', 'd', 'f'])).toEqual([url('a'), url('b'), url('f')].sort());
+  });
+
+  it('withheldAddresses: every address remembered, in one read of the records; none where the browser has no caches', async () => {
+    const storage = device();
+    await syncKeptImages(['h1', 'h2'], lists({ h1: [img('a', { primary: true, mask: mask('f') }), img('b')], h2: [img('c', { primary: true })] }), { storage });
+    expect([...(await withheldAddresses(storage))]).toEqual([]);
+    await syncKeptImages(['h1'], lists({ h1: [img('d', { primary: true })] }), { storage });
+    expect([...(await withheldAddresses(storage))].sort()).toEqual([url('a'), url('b'), url('f')].sort());
+    expect(typeof caches).toBe('undefined');
+    expect(await withheldAddresses()).toEqual(new Set());
   });
 
   it('remembers every kept address of a figure still owned whose fresh list is empty, or that the coordinator left out', async () => {

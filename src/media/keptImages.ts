@@ -312,6 +312,12 @@ export async function keptImage(headId: string, storage: CacheStorage | undefine
   return (await keptImages([headId], storage, choices)).get(headId);
 }
 
+/** Every address a sync withheld and no later sync carried again: one read of the records, as keptImages reads them. */
+export async function withheldAddresses(storage: CacheStorage | undefined = browserCaches()): Promise<Set<string>> {
+  if (storage === undefined) return new Set();
+  return new Set((await (await storage.open(WITHHELD_CACHE)).keys()).map((k) => addressOfWithheldKey(k.url)));
+}
+
 /** The addresses among these that a sync withheld and no later sync carried again. */
 export async function withheldAmong(addresses: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<Set<string>> {
   const out = new Set<string>();
@@ -584,7 +590,8 @@ async function fetchKept(media: Cache, address: string, signal: AbortSignal | un
  * already loaded is kept from the worker's browsed cache (BROWSED_MEDIA_CACHE, a CORS 200 only), not downloaded again. A
  * photo's mask is kept before the photo, and a mask not kept (refused, lost, stalled) leaves its photo to the sync too, so
  * nothing this keeps makes a read answer a cut-out whose mask is not stored. What the reads answer meanwhile is the primary (the
- * chosen photo not here); the case view draws the picture on screen instead until the chosen photo is kept or its run ends
+ * chosen photo not here); the case view draws the picture on screen instead (never one a sync recorded withheld, nor its
+ * withheld mask) until the chosen photo is kept or its run ends
  * (useCollectionImages). Once that run ends, offline, or after a reload, the reads' rule stands: the primary while the chosen
  * photo is not here, and a chosen photo the sync kept without its mask is answered with its mask's address though the mask is not
  * stored. A photo whose bytes were already here is answered as before (keptImages).

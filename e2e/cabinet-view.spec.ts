@@ -256,9 +256,8 @@ const KEPT_POSE_MISS_PX = new Map([
   ['turn: cabinet, fold8-cover to fold8-cover-sideways', 102.741],
   ['turn: shelf, fold8-cover to fold8-cover-sideways', 36.203],
 ]);
-// identical to 1e-6 px in every run so far; the +-0.5 px band absorbs sub-pixel layout, float rounding and a 1 px layout
-// change (the lens follows the frame size, so the miss moves about 0.4 px) and fails from 2 px; a re-fit moves the miss
-// 12 px or more. It keeps the smallest miss, 2.6 px, clearly below the scene
+// identical to 1e-6 px in every run so far; half a CSS px leaves room for sub-pixel layout and float rounding, still
+// fails on a layout a whole px off, and keeps the smallest miss, 2.6 px, clearly below the scene
 const KEPT_POSE_MISS_TOLERANCE_PX = 0.5;
 
 /** After a change of the frame: the scene above the tabs, the pose as `before`, the framed bottom `missPx` below the scene. */
@@ -299,10 +298,8 @@ for (const size of FOLD8) {
       await expectFramedAboveTabs(page, view, 'at load');
     });
 
-    const offlineKey = `offline: ${view}, ${size.name}`;
-    const offlineWhat = KEPT_POSE_MISS_PX.has(offlineKey) ? 'the pose is kept above the tabs (spec 6.6)' : 'the scene is re-fitted above the tabs';
-    test(`${offlineWhat} when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
-      const kept = KEPT_POSE_MISS_PX.get(offlineKey);
+    test(`still above the tabs when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+      const kept = KEPT_POSE_MISS_PX.get(`offline: ${view}, ${size.name}`);
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'online');
       const online = await steadyEye(page);
@@ -445,10 +442,8 @@ for (const [from, to] of [
   ['fold8-open', 'fold8-open-rotated'],
 ] as const) {
   for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-    const turnKey = `turn: ${view}, ${from} to ${to}`;
-    const turnWhat = KEPT_POSE_MISS_PX.has(turnKey) ? 'keeps the pose above the tabs (spec 6.6)' : 're-fits the scene above the tabs';
-    test(`turning the phone with the case open ${turnWhat}: ${view}, ${from} to ${to}`, async ({ page }) => {
-      const kept = KEPT_POSE_MISS_PX.get(turnKey);
+    test(`turning the phone with the case open re-fits the scene above the tabs: ${view}, ${from} to ${to}`, async ({ page }) => {
+      const kept = KEPT_POSE_MISS_PX.get(`turn: ${view}, ${from} to ${to}`);
       await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
       const upright = await steadyEye(page);
       await page.setViewportSize(FOLD8.find((v) => v.name === to)!);
@@ -1163,20 +1158,17 @@ test('a swipe opens nothing; the next tap does', async ({ page }) => {
   await expect(page.locator('.pswp')).toBeVisible();
 });
 
-test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; no swipe mode in the View card (CAM1) or the header (NAV-2A2)', async ({ page }) => {
+test('IC1: View, Info, Refine together on the tab bar, no Reserved slot and no raised + among them (NAV-FLOAT); no swipe mode in the View card (CAM1) or the header (NAV-2A2)', async ({ page }) => {
   await openCase(page, FOLD8[0]);
   const tabs = page.locator('.case-tabs');
-  const add = (await page.locator('.tab-bar__add').boundingBox())!;
   const bar = (await page.locator('.tab-bar').boundingBox())!;
   const tabBox = (await tabs.boundingBox())!;
-  // the tabs rest on the tab bar; the + rises above the bar, between them
+  // the tabs rest on the tab bar; Add is the header's here, so no + rises between them
   expect(Math.abs(tabBox.y + tabBox.height - bar.y)).toBeLessThanOrEqual(1);
-  expect(add.y).toBeLessThan(bar.y - add.height * 0.5);
+  await expect(page.locator('.tab-bar__add')).toHaveCount(0);
+  await expect(page.locator('.slim-header__actions').getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
   const order = await tabs.locator(':scope > [data-tab]').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.tab));
-  expect(order).toEqual(['view', 'reserved', 'dock', 'info', 'refine']);
-  await expect(tabs.locator('[data-tab="reserved"]')).toHaveText('');
-  const dock = (await tabs.locator('[data-tab="dock"]').boundingBox())!;
-  expect(Math.abs(dock.x + dock.width / 2 - (add.x + add.width / 2))).toBeLessThanOrEqual(1);
+  expect(order).toEqual(['view', 'info', 'refine']);
 
   // CAM1: the View card no longer holds the swipe mode; NAV-2A2: nor does the header
   await page.getByRole('button', { name: 'View' }).click();
@@ -1189,16 +1181,16 @@ test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; no swipe mo
 });
 
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
-  test(`CC5 ${size.name}: the View card ends above the tab bar and its + and a tap reaches every choice in it`, async ({ page }) => {
+  test(`CC5 ${size.name}: the View card ends above the tab bar and the pull-up tabs and a tap reaches every choice in it`, async ({ page }) => {
     await openCase(page, size);
     await page.getByRole('button', { name: 'View' }).click();
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     const bar = (await page.locator('.tab-bar').boundingBox())!;
     const shown = (await card.boundingBox())!;
-    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    const strip = (await page.locator('.case-tabs').boundingBox())!;
     expect.soft(shown.y + shown.height, 'the card ends above the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
-    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    expect.soft(shown.y + shown.height, 'the card ends above the pull-up tabs').toBeLessThanOrEqual(strip.y + 0.5);
     const choices = card.locator('label.case-card__choice');
     // the back wall colours and the cabinet walls (the swipe mode and the view are in the header: CAM1, VIEWCARD-1)
     expect(await choices.count()).toBeGreaterThanOrEqual(7);
@@ -1226,9 +1218,9 @@ for (const routePx of [325, 301]) {
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     const shown = (await card.boundingBox())!;
-    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    const strip = (await page.locator('.case-tabs').boundingBox())!;
     expect.soft(shown.y, 'the card keeps a gap below the top edge').toBeGreaterThanOrEqual(4);
-    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    expect.soft(shown.y + shown.height, 'the card ends above the pull-up tabs').toBeLessThanOrEqual(strip.y + 0.5);
     const missed: string[] = [];
     for (const choice of await card.locator('label.case-card__choice').all()) {
       const { hit, at } = await takesTap(choice, '.bottom-sheet__content');

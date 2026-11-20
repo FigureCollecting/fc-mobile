@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { decodePng, type Rgba } from './paintCheck';
+import { depth } from './navControls';
 
 /**
  * NAV-DEPTH-OCCL (Ross 11-15): walking the Free camera in with the depth rocker near the cabinets, parts of them (a
@@ -70,6 +71,16 @@ const setTransform = (page: Page, t: string) =>
     document.querySelector<HTMLElement>('.cabinet-scene__root')!.style.transform = t;
   }, t);
 
+/**
+ * Takes the pull-up tabs out of the page for the whole walk (the CSSOM: the CSP allows no style element). NAV-FLOAT: whether
+ * Chromium drops parts depends on what else lies over the scene; with the floating controls it drops them only with the
+ * tabs out of the way (with them shown, the old plane lost 0 px at every step), so every step is measured there.
+ */
+const hideTabs = (page: Page) =>
+  page.evaluate(() => {
+    document.querySelector<HTMLElement>('.case-tabs')!.style.setProperty('display', 'none', 'important');
+  });
+
 const differs = (a: Rgba, b: Rgba, i: number) =>
   Math.abs(a.data[i] - b.data[i]) > DELTA || Math.abs(a.data[i + 1] - b.data[i + 1]) > DELTA || Math.abs(a.data[i + 2] - b.data[i + 2]) > DELTA;
 
@@ -92,7 +103,7 @@ async function open(page: Page, size: { width: number; height: number }) {
     sessionStorage.setItem('seeded', '1');
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0, depthRocker: 'vertical', pattern }));
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0, pattern }));
   }, PATTERN);
   await page.setViewportSize(size);
   await page.goto('/?layout=case&fx=40');
@@ -108,7 +119,7 @@ async function open(page: Page, size: { width: number; height: number }) {
 
 /** One push of the rocker toward the wall (up = closer), held `ms`, then let go and settled. */
 async function push(page: Page, ms: number) {
-  const b = (await page.locator('.depth-rocker').boundingBox())!;
+  const b = (await depth(page).boundingBox())!;
   const [cx, cy] = [b.x + b.width / 2, b.y + b.height / 2];
   await page.mouse.move(cx, cy);
   await page.mouse.down();
@@ -122,6 +133,8 @@ for (const size of SIZES) {
   test(`NAV-DEPTH-OCCL ${size.name}: walked in by the rocker, no step loses a drawn part of the cabinets`, async ({ page }, testInfo) => {
     test.setTimeout(600_000);
     await open(page, size);
+    await hideTabs(page);
+    await settle(page, 300);
     const frame = (await page.locator('.cabinet-scene__frame').boundingBox())!;
     const box = { x: frame.x, y: frame.y, width: frame.width, height: Math.min(frame.height, size.height - frame.y) };
     const wall = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-wall'))!) as number[][];
@@ -144,9 +157,6 @@ for (const size of SIZES) {
         r.push(decodePng(await page.screenshot()));
       }
       const refs = [r[0], r[1]] as const;
-      await setTransform(page, st.transform);
-      await settle(page, 150);
-      const lost = lostPx(a, refs, box);
       const k = Number(/scale3d\(([^,]+),/.exec(st.transform)?.[1] ?? 1);
       // the positive control: where the plane stood before (f / s mm out, k = 1) is 60 to 180 mm in front of the fronts,
       // the same DOM drawn with that plane loses parts here, so a step that lost them would have been seen
@@ -155,9 +165,10 @@ for (const size of SIZES) {
         await setTransform(page, withScale(st.transform, 1));
         await settle(page, 150);
         control.push({ z: Math.round(st.cam.z), plane: Math.round(oldPlane), lost: lostPx(decodePng(await page.screenshot()), refs, box) });
-        await setTransform(page, st.transform);
-        await settle(page, 150);
       }
+      await setTransform(page, st.transform);
+      await settle(page, 150);
+      const lost = lostPx(a, refs, box);
       rows.push({ z: Math.round(st.cam.z), s: st.s, plane: Math.round(st.cam.z - st.cam.focalPx / (k * st.s)), lost, elements: st.elements });
       const before = st.cam.z;
       await push(page, hold);

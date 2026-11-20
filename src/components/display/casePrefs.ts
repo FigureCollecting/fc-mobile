@@ -2,12 +2,13 @@
  * The case's per-device choices (Ross CC14, 2026-10-09: kept on each device
  * until a contract round syncs them): which cabinets line the wall, the view,
  * the room's ceiling (CC9),
- * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine) and
+ * the order of the pull-up tabs (IC1-R1: View, Info, Refine) and
  * the order the case stands its figures in (PACK1).
  * One localStorage entry; unreadable or unknown values fall back per field.
  * NAV-2A2 (Ross 11-04): no swipe mode any more (CC4's pan the wall or move the camera): a stored one is not read, and the
  * next write drops it. NAV-GRAD: the same for freeCamera (the Free camera is the only camera: a stored false, the old
  * View card's box unticked, turns nothing off).
+ * NAV-FLOAT (11-18): likewise the depth rocker's shape (NAV-ROCKER's depthRocker): the floating Z is vertical only.
  */
 import { useCallback, useState } from 'preact/hooks';
 import { CEILING_DEFAULT_MM, CLEARANCE_MAX_MM, DEFAULT_CLEARANCE_MM } from './cabinetProfile';
@@ -39,15 +40,9 @@ export const WALL_PATTERNS: readonly WallPattern[] = [
   },
 ];
 
-/** The pull-up tabs (IC1-R1): Reserved holds an empty slot until it has a job (IC1-R3). */
-export type CaseTab = 'view' | 'reserved' | 'info' | 'refine';
-export const CASE_TABS: readonly CaseTab[] = ['view', 'reserved', 'info', 'refine'];
-
-/**
- * NAV-ROCKER (Ross 11-14): the depth control's shape: a vertical rocker rising above the slot left of the hat (up =
- * closer; the default), or a horizontal slider in the slot (toward the hat = closer).
- */
-export type DepthRockerShape = 'vertical' | 'horizontal';
+/** The pull-up tabs (IC1-R1). NAV-FLOAT: no Reserved slot any more (it held the depth rocker, now the floating Z). */
+export type CaseTab = 'view' | 'info' | 'refine';
+export const CASE_TABS: readonly CaseTab[] = ['view', 'info', 'refine'];
 
 export function wallPatternProfiles(id: string): CabinetProfile[] {
   return [...(WALL_PATTERNS.find((p) => p.id === id)?.profiles ?? [DEFAULT_CABINET_PROFILE])];
@@ -57,7 +52,7 @@ export interface CasePrefs {
   readonly pattern: string;
   readonly view: CaseView;
   readonly ceilingMm: number;
-  /** Left to right; the first two sit left of the raised +, the last two right of it. */
+  /** Left to right. */
   readonly tabOrder: readonly CaseTab[];
   /**
    * MISFIT-CHIP-1: the ids of the figures that did not fit when the do-not-fit chip was dismissed. The chip stays hidden
@@ -74,8 +69,6 @@ export interface CasePrefs {
   readonly wallCustom: string;
   /** PACK1 (Ross 10-26): the order the case stands its figures in, apart from the list's sort (caseArrangement.ts). */
   readonly arrange: CaseArrangement;
-  /** NAV-ROCKER: the depth rocker's shape, per device; only a stored 'horizontal' is the slider. */
-  readonly depthRocker: DepthRockerShape;
 }
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
@@ -89,7 +82,6 @@ export const DEFAULT_CASE_PREFS: CasePrefs = {
   wall: DEFAULT_WALL,
   wallCustom: DEFAULT_WALL_CUSTOM,
   arrange: DEFAULT_CASE_ARRANGEMENT,
-  depthRocker: 'vertical',
 };
 
 function isTabOrder(value: unknown): value is readonly CaseTab[] {
@@ -98,6 +90,14 @@ function isTabOrder(value: unknown): value is readonly CaseTab[] {
     value.length === CASE_TABS.length &&
     CASE_TABS.every((tab) => value.includes(tab))
   );
+}
+
+/**
+ * NAV-FLOAT: an order stored while the tabs had a Reserved slot, without it, so sides swapped then stay swapped; anything
+ * else is passed on as it is, for isTabOrder to judge.
+ */
+function withoutReserved(value: unknown): unknown {
+  return Array.isArray(value) ? value.filter((tab) => tab !== 'reserved') : value;
 }
 
 function isIdList(value: unknown): value is readonly string[] {
@@ -122,18 +122,18 @@ export function readCasePrefs(): CasePrefs {
     /* storage unavailable: defaults */
   }
   const d = DEFAULT_CASE_PREFS;
+  const tabOrder = withoutReserved(stored.tabOrder);
   return {
     pattern: WALL_PATTERNS.some((p) => p.id === stored.pattern) ? (stored.pattern as string) : d.pattern,
     view: CASE_VIEWS.includes(stored.view as CaseView) ? (stored.view as CaseView) : d.view,
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
-    tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
+    tabOrder: isTabOrder(tabOrder) ? [...tabOrder] : d.tabOrder,
     misfitsDismissed: isIdList(stored.misfitsDismissed) ? [...stored.misfitsDismissed] : d.misfitsDismissed,
     clearanceMm: typeof stored.clearanceMm === 'number' && stored.clearanceMm >= 0 && stored.clearanceMm <= CLEARANCE_MAX_MM ? stored.clearanceMm : d.clearanceMm,
     showEstimated: stored.showEstimated === true,
     wall: isWallPreset(stored.wall) ? stored.wall : d.wall,
     wallCustom: isHexColour(stored.wallCustom) ? stored.wallCustom : d.wallCustom,
     arrange: isCaseArrangement(stored.arrange) ? stored.arrange : d.arrange,
-    depthRocker: stored.depthRocker === 'horizontal' ? 'horizontal' : d.depthRocker,
   };
 }
 

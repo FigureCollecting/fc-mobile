@@ -100,11 +100,12 @@ for (const size of FOLD8) {
     });
   }
 
-  test(`the wall colour is drawn in every view, the wall, one cabinet and one shelf: ${size.name}`, async ({ page }) => {
+  // NAV-SCOPE (Ross 11-18): the case's one view; a device that stored an old one opens the same
+  test(`the wall colour is drawn in the case's one view, whatever view the device stored: ${size.name}`, async ({ page }) => {
     for (const view of ['wall', 'cabinet', 'shelf'] as const) {
       await page.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), { view, wall: 'seafoam' });
       await openCase(page, size, 'light');
-      await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', view);
+      await expect(page.locator('.cabinet-scene')).not.toHaveAttribute('data-view', /./);
       // the back wall (the Free camera draws the room's side walls too, where the frame sees them)
       await expect(page.locator('.cabinet-scene .room-wall:not(.room-side)')).toHaveCount(1);
       expect(await wallVar(page), view).toBe('#a8d8cc');
@@ -142,9 +143,9 @@ for (const size of FOLD8) {
     await expect(page.getByRole('group', { name: 'Wall', exact: true })).toBeVisible();
     for (const name of ['Whole cabinets', 'One cabinet', 'One shelf']) await expect(page.getByRole('radio', { name })).toHaveCount(0);
     await page.keyboard.press('Escape');
-    // the header's Case menu still does
-    await page.getByRole('button', { name: /^Case,/ }).click();
-    await page.getByRole('menuitemradio', { name: 'One cabinet' }).click();
-    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', 'cabinet');
+    // NAV-SCOPE: nor does the header: the case has one view, and its Case button opens no menu
+    await page.getByRole('button', { name: 'Case', exact: true }).click();
+    await expect(page.getByRole('menuitemradio', { name: 'One cabinet' })).toHaveCount(0);
+    await expect(page.getByRole('menu')).toHaveCount(0);
   });
 }

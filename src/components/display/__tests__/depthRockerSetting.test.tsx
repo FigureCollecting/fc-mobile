@@ -15,17 +15,17 @@ describe('the depth control pref', () => {
   it('is the vertical rocker by default, and for a record that does not say', () => {
     expect(DEFAULT_CASE_PREFS.depthRocker).toBe('vertical');
     expect(readCasePrefs().depthRocker).toBe('vertical');
-    writeCasePrefs({ view: 'shelf' });
+    writeCasePrefs({ ceilingMm: 2700 });
     expect(readCasePrefs().depthRocker).toBe('vertical');
   });
 
   it('keeps the horizontal slider once chosen, across a fresh read; anything else stored is the vertical rocker', () => {
-    writeCasePrefs({ depthRocker: 'horizontal', view: 'shelf' });
+    writeCasePrefs({ depthRocker: 'horizontal', ceilingMm: 2700 });
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).depthRocker).toBe('horizontal');
-    expect(readCasePrefs()).toMatchObject({ depthRocker: 'horizontal', view: 'shelf' });
+    expect(readCasePrefs()).toMatchObject({ depthRocker: 'horizontal', ceilingMm: 2700 });
     for (const bad of ['Horizontal', 'sideways', 1, null, {}, true]) {
-      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: bad, view: 'shelf' }));
-      expect(readCasePrefs(), JSON.stringify(bad)).toMatchObject({ depthRocker: 'vertical', view: 'shelf' });
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: bad, ceilingMm: 2700 }));
+      expect(readCasePrefs(), JSON.stringify(bad)).toMatchObject({ depthRocker: 'vertical', ceilingMm: 2700 });
     }
   });
 });

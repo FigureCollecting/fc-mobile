@@ -100,33 +100,43 @@ describe('CabinetScene: the case arrangement (PACK1)', () => {
 });
 
 describe('CabinetScene: a new arrangement starts the view at the wall\'s start, as a new sort does', () => {
-  // forty figures, three Detolfs: the one-cabinet view can step along them
+  // forty figures, three Detolfs: a walk can take the eye along them
   const forty = Array.from({ length: 40 }, (_, i) => fig(`f${i}`, `Figure ${String(i).padStart(2, '0')}`, i % 2 ? 'Odd' : 'Even', '1/8', `2026-01-${String((i % 28) + 1).padStart(2, '0')}T00:00:00Z`));
 
-  it('the one-cabinet view, stepped along, comes back to the first cabinet; the same arrangement again does not move it', () => {
-    const props = { figures: forty, onSelect: vi.fn(), prefs: prefs({ view: 'cabinet' }), frameFallback: COVER };
+  it('the wall, walked along, comes back to its opening at the first cabinet; the same arrangement again does not move it', () => {
+    const props = { figures: forty, onSelect: vi.fn(), prefs: prefs(), frameFallback: COVER };
     const { rerender, container } = render(<CabinetScene {...props} />);
     const host = container.querySelector('.cabinet-scene') as HTMLElement;
-    fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
-    expect(host.dataset.focus).toBe('1');
-    rerender(<CabinetScene {...props} prefs={prefs({ view: 'cabinet' })} />);
-    expect(host.dataset.focus).toBe('1');
-    rerender(<CabinetScene {...props} prefs={prefs({ view: 'cabinet', arrange: 'date-added' })} />);
+    const opening = host.dataset.camera;
+    // NAV-SCOPE: no step keys; one finger walks the eye (a drag left walks it right) until the frame centre is past the first
+    for (let i = 0; i < 4 && host.dataset.focus === '0'; i++) {
+      fireEvent.pointerDown(host, { pointerId: 1, clientX: 400, clientY: 200, button: 0 });
+      for (const x of [360, 260, 160, 40]) fireEvent.pointerMove(host, { pointerId: 1, clientX: x, clientY: 200 });
+      fireEvent.pointerUp(host, { pointerId: 1, clientX: 40, clientY: 200 });
+    }
+    expect(Number(host.dataset.focus)).toBeGreaterThan(0);
+    const walked = host.dataset.camera;
+    const focus = host.dataset.focus;
+    rerender(<CabinetScene {...props} prefs={prefs()} />);
+    expect(host.dataset.focus).toBe(focus);
+    expect(host.dataset.camera).toBe(walked);
+    rerender(<CabinetScene {...props} prefs={prefs({ arrange: 'date-added' })} />);
     expect(host.dataset.focus).toBe('0');
+    expect(host.dataset.camera).toBe(opening);
   });
 
   it('Go to finds a figure where the new arrangement stands it', () => {
     const onWentTo = vi.fn();
     const props = { figures: forty, onSelect: vi.fn(), frameFallback: COVER, onWentTo };
-    const { rerender, container } = render(<CabinetScene {...props} prefs={prefs({ view: 'shelf', arrange: 'name' })} />);
+    const { rerender, container } = render(<CabinetScene {...props} prefs={prefs({ arrange: 'name' })} />);
     const host = container.querySelector('.cabinet-scene') as HTMLElement;
     const cabinetOf = (id: string) => (JSON.parse(host.dataset.order!) as string[][]).findIndex((ids) => ids.includes(id));
     // by name f0 is first; arranged by series (Even, Odd) f1 stands with the odd ones, past the even ones' cabinet
     expect(cabinetOf('f1')).toBe(0);
-    rerender(<CabinetScene {...props} prefs={prefs({ view: 'shelf', arrange: 'series-name' })} />);
+    rerender(<CabinetScene {...props} prefs={prefs({ arrange: 'series-name' })} />);
     const there = cabinetOf('f1');
     expect(there).toBeGreaterThan(0);
-    rerender(<CabinetScene {...props} prefs={prefs({ view: 'shelf', arrange: 'series-name' })} goTo={{ figureId: 'f1', seq: 1 }} />);
+    rerender(<CabinetScene {...props} prefs={prefs({ arrange: 'series-name' })} goTo={{ figureId: 'f1', seq: 1 }} />);
     expect(onWentTo).toHaveBeenCalledWith('f1', true);
     expect(Number(host.dataset.focus)).toBe(there);
     expect(screen.getByRole('button', { name: 'Figure 01' })).toBeInTheDocument();

@@ -270,7 +270,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
                 signal,
                 onKept: async (head) => {
                   const image = await keptImage(head, undefined, allChoices);
-                  if (image !== undefined) shown.pick(head, image);
+                  // only the chosen photo: told for a kept mask whose photo failed, the device answers the primary, and the picture on screen stands
+                  if (image !== undefined && image.url === allChoices.get(head)) shown.pick(head, image);
                 },
               });
         // awaited in the sync's try below; until then a failure is not an unhandled one

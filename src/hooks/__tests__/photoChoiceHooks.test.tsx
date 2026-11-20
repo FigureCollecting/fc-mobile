@@ -291,33 +291,52 @@ describe('the case (useCollectionImages): a changed picture drawn while every ot
   const N = 20;
   const hx = (n: number, salt: string) => `${salt}${n.toString(16).padStart(4, '0')}`.padEnd(64, salt);
   const at = (n: number, salt: string) => `${D}/${hx(n, salt)}`;
-  const lists = () =>
+  /** `c` masked by `f` when `cMasked`. */
+  const lists = (cMasked = false) =>
     create(GetProductImagesResponseSchema, {
       products: Array.from({ length: N }, (_, i) => ({
         headId: headOf(i),
         images: [
           { derivativeId: hx(i, 'a'), role: 'gallery', primary: true, url: at(i, 'a'), width: 600, height: 800 },
           { derivativeId: hx(i, 'b'), role: 'gallery', primary: false, url: at(i, 'b'), width: 600, height: 800 },
-          { derivativeId: hx(i, 'c'), role: 'gallery', primary: false, url: at(i, 'c'), width: 600, height: 800 },
+          {
+            derivativeId: hx(i, 'c'),
+            role: 'gallery',
+            primary: false,
+            url: at(i, 'c'),
+            width: 600,
+            height: 800,
+            ...(cMasked ? { mask: { maskId: hx(i, 'f'), contentType: 'image/png', url: at(i, 'f') } } : {}),
+          },
         ],
       })),
     });
   const a0 = at(0, 'a');
   const b0 = at(0, 'b');
   const c0 = at(0, 'c');
+  const f0 = at(0, 'f');
 
-  /** The case of N kept figures, drawn as their primaries, its sync done. */
-  const opened = async () => {
+  /** The case of N kept figures, drawn as their primaries, its sync done; figure 0's picture recorded at every render. */
+  const opened = async (cMasked = false) => {
     const r = await localRig();
-    r.clients.getProductImages.mockResolvedValue(lists());
+    r.clients.getProductImages.mockResolvedValue(lists(cMasked));
     await seedFigures(r, Array.from({ length: N }, (_, i) => ({ title: `F${i}` })));
     const client = makeTestQueryClient();
-    const { result } = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+    const frames: { url: string | undefined; size: number }[] = [];
+    const { result } = renderHook(
+      () => {
+        const answer = useCollectionImages();
+        frames.push({ url: answer.get(headOf(0))?.url, size: answer.size });
+        return answer;
+      },
+      { wrapper: queryWrapper(client) },
+    );
     await waitFor(() => expect(result.current.size).toBe(N), { timeout: 5000 });
     const idle = () => waitFor(() => expect(client.isFetching()).toBe(0), { timeout: 5000 });
     await idle();
-    return { r, result, idle };
+    return { r, result, idle, frames, client };
   };
+  const owned = async (u: string) => (await (await storage.open(OWNED_MEDIA_CACHE)).match(u)) !== undefined;
 
   /** From now on every kept list read but figure 0's waits; the hold ends with the function answered. */
   const holdOtherLists = (): (() => void) => {
@@ -419,6 +438,87 @@ describe('the case (useCollectionImages): a changed picture drawn while every ot
       release();
     }
     await idle();
+  });
+
+  it('a masked pick whose mask came but whose photo failed: the earlier pick on screen stands, the primary is never drawn', async () => {
+    const { result, idle, frames } = await opened(true);
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    // the pick c: its mask f comes, the photo is refused (503)
+    let askedC = 0;
+    const fetchAll = storage.fetch;
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = input instanceof Request && init === undefined ? input : new Request(input, init);
+      if (request.url !== c0) return fetchAll(request);
+      askedC += 1;
+      return Promise.resolve(new Response('busy', { status: 503 }));
+    });
+    const release = holdOtherLists();
+    frames.length = 0;
+    try {
+      act(() => setPhotoChoice(SUB, headOf(0), c0));
+      await waitFor(async () => expect(askedC > 0 && (await owned(f0))).toBe(true), { timeout: 2000 });
+      await new Promise((res) => setTimeout(res, 200));
+      expect(await owned(c0)).toBe(false);
+      expect(frames.map((f) => f.url)).not.toContain(a0);
+      expect(result.current.get(headOf(0))?.url).toBe(b0);
+    } finally {
+      release();
+    }
+    await idle();
+  });
+
+  it('a lay is read from the device before the run asks the server for any list (no lay lands after the run\'s drawing)', async () => {
+    const { r, result, idle } = await opened();
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    // the first device open after "Use default" is the lay's (it starts first): held till let through
+    let letLay: () => void = () => {};
+    const layHeld = new Promise<void>((res) => (letLay = res));
+    const open = storage.open.bind(storage);
+    let opens = 0;
+    vi.spyOn(storage, 'open').mockImplementation(async (name: string) => {
+      opens += 1;
+      if (opens === 1) await layHeld;
+      return open(name);
+    });
+    const asked = r.clients.getProductImages.mock.calls.length;
+    act(() => setPhotoChoice(SUB, headOf(0), null));
+    await waitFor(() => expect(opens).toBeGreaterThan(1), { timeout: 2000 });
+    await new Promise((res) => setTimeout(res, 300));
+    expect(r.clients.getProductImages.mock.calls.length).toBe(asked);
+    letLay();
+    await waitFor(() => expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked), { timeout: 3000 });
+    await idle();
+    expect(result.current.get(headOf(0))?.url).toBe(a0);
+  });
+
+  it('the lay\'s device read failing leaves the picture on screen, errs nothing, and the run\'s own read and sync go on', async () => {
+    const { r, result, idle, frames, client } = await opened();
+    act(() => setPhotoChoice(SUB, headOf(0), b0));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(b0), { timeout: 3000 });
+    await idle();
+    // the first device open after "Use default" (the lay's, which starts first) is refused
+    const open = storage.open.bind(storage);
+    let refused = 0;
+    vi.spyOn(storage, 'open').mockImplementation(async (name: string) => {
+      if (refused === 0) {
+        refused += 1;
+        throw new DOMException('the device refused', 'UnknownError');
+      }
+      return open(name);
+    });
+    frames.length = 0;
+    const asked = r.clients.getProductImages.mock.calls.length;
+    act(() => setPhotoChoice(SUB, headOf(0), null));
+    await waitFor(() => expect(result.current.get(headOf(0))?.url).toBe(a0), { timeout: 3000 });
+    await idle();
+    expect(refused).toBe(1);
+    expect(r.clients.getProductImages.mock.calls.length).toBeGreaterThan(asked);
+    expect(frames.every((f) => f.size === N)).toBe(true);
+    expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'] }).filter((q) => q.state.status === 'error')).toHaveLength(0);
   });
 
   it('another user signed in is drawn nothing piecemeal from the last user\'s choices: only its own read draws', async () => {

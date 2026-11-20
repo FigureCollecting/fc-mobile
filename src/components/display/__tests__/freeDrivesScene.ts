@@ -86,7 +86,6 @@ export function freeSceneOf(opts: SceneOpts = {}): FreeScene {
     space: eyeSpace(room, CEILING_MM),
     zBack: room.zBack,
     reach: boxCorners(room.x0, room.x1, 0, room.y1, room.zBack, room.zFront),
-    dimmed: null,
     lookHoldMs: 500,
     jogMax: 2,
     reducedMotion: false,

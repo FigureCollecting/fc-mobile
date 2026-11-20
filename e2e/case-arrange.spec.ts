@@ -1,8 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
-import { touchTap } from './touch';
-import { stepByKey } from './stepKeys';
+import { touchSwipe, touchTap } from './touch';
 
 /**
  * PACK1 (Ross 10-26): the case stands its figures in an arrangement chosen in the View card (series, then scale, then name
@@ -139,11 +138,16 @@ for (const size of FOLD8) {
     expect(await tiles()).toEqual(listed);
   });
 
-  test(`the one-cabinet view starts again at the first cabinet, and a tap opens the figure it shows: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, { view: 'cabinet' });
+  // NAV-SCOPE: the one-cabinet view and its step keys are gone; a walk along the wall moves the focus instead
+  test(`a new arrangement starts the wall again at its first cabinet, and a tap opens the figure it shows: ${size.name}`, async ({ page }) => {
+    await openCase(page, size, null, '&fx=30&lookhold=1000');
     const scene = page.locator('.cabinet-scene');
-    await stepByKey(page, 'Next cabinet');
-    await expect(scene).toHaveAttribute('data-focus', '1');
+    const frame0 = (await scene.boundingBox())!;
+    for (let i = 0; i < 8 && (await scene.getAttribute('data-focus')) === '0'; i++) {
+      await touchSwipe(page, frame0.x + frame0.width * 0.8, frame0.y + frame0.height / 2, -frame0.width * 0.6, 0);
+      await page.waitForTimeout(150);
+    }
+    expect(Number(await scene.getAttribute('data-focus')), 'the walk moved the focus on').toBeGreaterThan(0);
     await arrangeBy(page, 'Name');
     await expect(scene).toHaveAttribute('data-focus', '0');
     // a figure the frame shows whole: its card is that figure

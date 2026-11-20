@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS } from './caseViewports';
+import { goToFirstFigure } from './goTo';
 import { project, unprojectToPlaneZ, type Camera, type Vec3 } from '../src/components/display/caseCamera';
 import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import * as caseCull from '../src/components/display/caseCull';
@@ -31,7 +32,8 @@ const PUBLISHED_MM = 0.01;
 /** The KLINGSBO with the Detolf and the open steel rack alongside: three heights, three widths. */
 const MIXED = 'ikea-klingsbo+ikea-detolf+open-steel-rack';
 
-type Prefs = { view?: 'wall' | 'cabinet' | 'shelf'; pattern?: string; ceilingMm?: number; arrange?: string };
+// NAV-SCOPE (Ross 11-18): the case has one view (the wall's); no view is stored
+type Prefs = { pattern?: string; ceilingMm?: number; arrange?: string };
 
 async function openCase(page: Page, size: { width: number; height: number }, prefs: Prefs, query = '&fx=170') {
   await page.addInitScript((p) => {
@@ -94,13 +96,12 @@ async function swipe(page: Page, dx: number, dy = 0) {
 }
 
 // item 2: no vertical jump. A walk along the wall (NAV-2A2: the pan mode is gone), twenty swipes each way, from the picture as it opens: the
-// floor line and the cabinets' top line never move up or down
+// floor line and the cabinets' top line never move up or down (NAV-SCOPE: the wall's is the case's one view)
 for (const size of FOLD8) {
-  for (const view of ['wall', 'cabinet'] as const) {
-    for (const pattern of [undefined, MIXED]) {
-    test(`no vertical jump: 20 swipes each way hold the floor and top lines still, ${view} view${pattern ? ', the mixed wall' : ''}: ${size.name}`, async ({ page }) => {
+  for (const pattern of [undefined, MIXED]) {
+    test(`no vertical jump: 20 swipes each way hold the floor and top lines still${pattern ? ', the mixed wall' : ''}: ${size.name}`, async ({ page }) => {
       test.setTimeout(240_000);
-      await openCase(page, size, { view, ...(pattern ? { pattern } : {}) });
+      await openCase(page, size, pattern ? { pattern } : {});
       const start = await picture(page);
       const at = lines(start);
       const domAt = await domLines(page);
@@ -123,27 +124,27 @@ for (const size of FOLD8) {
           if (off > STILL_PX) moved.push({ step: `${dx < 0 ? 'left' : 'right'} ${k + 1}`, floor: +(l.floor - at.floor).toFixed(1), top: +(l.top - at.top).toFixed(1), x: Math.round(now.camera.x) });
         }
       }
-      console.log(`case-fb1 jump ${JSON.stringify({ panel: size.name, view, pattern: pattern ?? 'default', worstPx: +worst.toFixed(2), worstDomPx: +worstDom.toFixed(2), travelledMm: Math.round(travelled), moved: moved.length })}`);
+      console.log(`case-fb1 jump ${JSON.stringify({ panel: size.name, pattern: pattern ?? 'default', worstPx: +worst.toFixed(2), worstDomPx: +worstDom.toFixed(2), travelledMm: Math.round(travelled), moved: moved.length })}`);
       expect(travelled, 'the swipes moved the picture along the wall').toBeGreaterThan(300);
       expect(moved, `swipes that moved the floor or top line by more than ${STILL_PX} px (worst ${worst.toFixed(1)} px)`).toEqual([]);
     });
-    }
   }
 }
 
-// item 1: full height. The single cabinet and the wall: a strip of floor in front of the feet, the top surface and what
-// stands on it inside the frame. Arranged by name (PACK1): the fixtures' Dark Angel Olivia, too tall for a stock shelf,
-// comes first and stands on the tops the wall opens with (by series, the first cabinets hold Cowboy Bebop's Spikes, their
-// tops kept empty for a tall figure of their own)
+// item 1: full height. The wall (NAV-SCOPE: the case's one view; the single cabinet's went with its view): a strip of floor
+// in front of the feet, the top surface and what stands on it inside the frame. Arranged by name (PACK1): the fixtures'
+// Dark Angel Olivia, too tall for a stock shelf, comes first and stands on the tops the wall opens with (by series, the
+// first cabinets hold Cowboy Bebop's Spikes, their tops kept empty for a tall figure of their own)
 for (const size of FOLD8) {
-  for (const view of ['wall', 'cabinet'] as const) {
+  {
+    const view = 'wall';
     test(`full height: a floor strip, the top surface and a figure on the top inside the frame, ${view} view: ${size.name}`, async ({ page }) => {
-      await openCase(page, size, { view, arrange: 'name' });
+      await openCase(page, size, { arrange: 'name' });
       const p = await picture(page);
       const { camera } = p;
       const wall = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-wall'))!) as number[][];
       const look = unprojectToPlaneZ(camera, camera.frame.width / 2, camera.frame.height / 2, 0)!;
-      // the cabinets standing whole across the frame (their bodies, at the height it aims at): the focus, in the cabinet view
+      // the cabinets standing whole across the frame (their bodies, at the height it aims at)
       const across = wall.flatMap(([x0, x1], i) =>
         [x0, x1].every((x) => {
           const px = project(camera, [x, look[1], 0]).x + p.panX;
@@ -202,7 +203,7 @@ async function setCeiling(page: Page, inches: number) {
 // item 3: the room's ceiling setting reaches the drawn room
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
   test(`room height: changing the ceiling changes the drawn wall's height, its top where the ceiling is: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, { view: 'cabinet', ceilingMm: 96 * 25.4 });
+    await openCase(page, size, { ceilingMm: 96 * 25.4 });
     const low = await roomWall(page);
     const lowPic = await picture(page);
     await setCeiling(page, 110);
@@ -226,7 +227,7 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
   test(`vertical pan, camera mode: an up/down drag raises and lowers the camera between the floor and the ceiling, never sideways: ${size.name}`, async ({ page }) => {
     test.setTimeout(120_000);
-    await openCase(page, size, { view: 'wall' });
+    await openCase(page, size, {});
     const start = await picture(page);
     await swipe(page, 0, 120);
     const up = await picture(page);
@@ -260,31 +261,31 @@ for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'f
 // CF1 (a): the full-height wall fills the panel's width, as many cabinets drawn as it shows, no bands at its sides
 for (const size of FOLD8) {
   for (const pattern of [undefined, 'ikea-detolf', MIXED, 'open-steel-rack']) {
-    for (const view of ['wall', 'cabinet'] as const) {
-      test(`fills the panel: the drawn frame as wide as the scene, every front it shows drawn, ${view} view${pattern ? `, ${pattern}` : ''}: ${size.name}`, async ({ page }) => {
-        await openCase(page, size, { view, ...(pattern ? { pattern } : {}) });
-        const host = page.locator('.cabinet-scene');
-        const widths = await host.evaluate((h) => ({ scene: h.getBoundingClientRect().width, frame: h.querySelector('.cabinet-scene__frame')!.getBoundingClientRect().width }));
-        const cap = Number(await host.getAttribute('data-drawn-cap'));
-        const drawn = Number(await host.getAttribute('data-drawn-cabinets'));
-        console.log(`case-fb1 fill ${JSON.stringify({ panel: size.name, view, pattern: pattern ?? 'default', cap, drawn, scenePx: widths.scene, framePx: widths.frame })}`);
-        expect(cap, 'the cap: five at the least').toBeGreaterThanOrEqual(5);
-        expect(cap, 'and the limit at the most').toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
-        expect(drawn, 'drawn cabinets').toBeLessThanOrEqual(cap);
-        // G2: the limit is what the Fold8's panels need (caseFraming.test), so the frame is the whole scene on every
-        // one of them: no band at either side
-        expect(Math.abs(widths.frame - widths.scene), 'the frame against the scene (px)').toBeLessThanOrEqual(1);
-      });
-    }
+    // NAV-SCOPE: the wall's is the case's one view (the one-cabinet view's case went with it)
+    test(`fills the panel: the drawn frame as wide as the scene, every front it shows drawn${pattern ? `, ${pattern}` : ''}: ${size.name}`, async ({ page }) => {
+      await openCase(page, size, pattern ? { pattern } : {});
+      const host = page.locator('.cabinet-scene');
+      const widths = await host.evaluate((h) => ({ scene: h.getBoundingClientRect().width, frame: h.querySelector('.cabinet-scene__frame')!.getBoundingClientRect().width }));
+      const cap = Number(await host.getAttribute('data-drawn-cap'));
+      const drawn = Number(await host.getAttribute('data-drawn-cabinets'));
+      console.log(`case-fb1 fill ${JSON.stringify({ panel: size.name, pattern: pattern ?? 'default', cap, drawn, scenePx: widths.scene, framePx: widths.frame })}`);
+      expect(cap, 'the cap: five at the least').toBeGreaterThanOrEqual(5);
+      expect(cap, 'and the limit at the most').toBeLessThanOrEqual(DRAWN_CABINETS_LIMIT);
+      expect(drawn, 'drawn cabinets').toBeLessThanOrEqual(cap);
+      // G2: the limit is what the Fold8's panels need (caseFraming.test), so the frame is the whole scene on every
+      // one of them: no band at either side
+      expect(Math.abs(widths.frame - widths.scene), 'the frame against the scene (px)').toBeLessThanOrEqual(1);
+    });
   }
 }
 
-// F2: the shelf view on the mixed wall: one camera height per shelf level for the whole wall, so a walk to
-// another kind of cabinet moves the picture sideways only
+// F2: Go to's shelf framing on the mixed wall (NAV-SCOPE: the one-shelf view's camera): one camera height per shelf level
+// for the whole wall, so a walk to another kind of cabinet moves the picture sideways only
 for (const size of FOLD8) {
-  test(`no vertical jump in the shelf view: 20 swipes each way along the mixed wall hold its height: ${size.name}`, async ({ page }) => {
+  test(`no vertical jump from Go to's shelf framing: 20 swipes each way along the mixed wall hold its height: ${size.name}`, async ({ page }) => {
     test.setTimeout(240_000);
-    await openCase(page, size, { view: 'shelf', pattern: MIXED });
+    await openCase(page, size, { pattern: MIXED });
+    await goToFirstFigure(page);
     const start = await picture(page);
     const domAt = await domLines(page);
     let worstDom = 0;
@@ -331,7 +332,7 @@ async function touchDrag(page: Page, dx: number, dy: number) {
 // up/down finger raises the camera (NAV-2A2: the pan mode that slid the photo is gone); a drift sideways never walks it
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
   test(`touch, camera mode: an up/down finger raises the camera, a sideways drift never walks it: ${size.name}`, async ({ page }) => {
-    await openCase(page, size, { view: 'wall' });
+    await openCase(page, size, {});
     const start = await picture(page);
     await touchDrag(page, 0, 120);
     const up = await picture(page);

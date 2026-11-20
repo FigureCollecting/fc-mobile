@@ -27,6 +27,8 @@ import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng } from '../paintCheck';
+import { touchSwipe } from '../touch';
+import { DRAG_WALK_GAIN_X } from '../../src/components/display/casePose';
 import { SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { loginDevice } from '../stack/src/device.js';
@@ -538,10 +540,12 @@ test("(e) a case view moved far along while its sync fetches: the figures it dra
   await openCase(page);
   await expect.poll(() => asked.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(4);
 
-  const next = page.getByRole('button', { name: 'Next cabinet' });
-  for (let i = 0; i < 12 && !(await next.isDisabled()); i++) {
-    // NAV-GRAD: the arrows are the keyboard's alone (the Free camera's: unseen, and no finger meets them)
-    await next.press('Enter');
+  // NAV-SCOPE (Ross 11-18): the wall's Next is gone; twelve swipes of most of the frame each walk the wall along as its
+  // twelve pages did (the Free camera walks DRAG_WALK_GAIN_X the finger's travel)
+  for (let i = 0; i < 12; i++) {
+    const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+    const share = 0.85 / DRAG_WALK_GAIN_X;
+    await touchSwipe(page, f.x + f.width * (0.5 + share / 2), f.y + f.height * 0.5, -f.width * share, 0, 10, 16);
     await page.waitForTimeout(450);
   }
   await page.waitForTimeout(1200);

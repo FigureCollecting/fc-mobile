@@ -313,7 +313,6 @@ describe('texelScale: faces drawn at the px per mm the screen shows them, never 
   it.each([
     ['wall, cover', framing(COVER)],
     ['wall, open', framing(OPEN)],
-    ['cabinet, cover', framing(COVER, 10, 'cabinet')],
     ['shelf, open', framing(OPEN, 10, 'shelf')],
   ])('%s: at least what the nearest point shows, under 1.19 times it, at most 1 px per mm', (_, f) => {
     const s = texelScale(f.camera, span);

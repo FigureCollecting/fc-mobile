@@ -1,13 +1,14 @@
 /**
  * The case's per-device choices (Ross CC14, 2026-10-09: kept on each device
- * until a contract round syncs them): which cabinets line the wall, the view,
+ * until a contract round syncs them): which cabinets line the wall,
  * the room's ceiling (CC9),
  * the order of the pull-up tabs (IC1-R1: View, Reserved | + | Info, Refine) and
  * the order the case stands its figures in (PACK1).
  * One localStorage entry; unreadable or unknown values fall back per field.
  * NAV-2A2 (Ross 11-04): no swipe mode any more (CC4's pan the wall or move the camera): a stored one is not read, and the
  * next write drops it. NAV-GRAD: the same for freeCamera (the Free camera is the only camera: a stored false, the old
- * View card's box unticked, turns nothing off).
+ * View card's box unticked, turns nothing off). NAV-SCOPE (Ross 11-18): the same for view (one continuous view: no one
+ * cabinet, no one shelf; a stored one opens the wall).
  */
 import { useCallback, useState } from 'preact/hooks';
 import { CEILING_DEFAULT_MM, CLEARANCE_MAX_MM, DEFAULT_CLEARANCE_MM } from './cabinetProfile';
@@ -17,10 +18,6 @@ import { DEFAULT_CASE_ARRANGEMENT, isCaseArrangement, type CaseArrangement } fro
 import { DEFAULT_WALL, DEFAULT_WALL_CUSTOM, isHexColour, isWallPreset, type WallPreset } from './wallColour';
 
 export const CASE_PREFS_KEY = 'fc-case-prefs';
-
-/** Whole cabinets (as many as fit side by side), one cabinet, one shelf. */
-export type CaseView = 'wall' | 'cabinet' | 'shelf';
-export const CASE_VIEWS: readonly CaseView[] = ['wall', 'cabinet', 'shelf'];
 
 export interface WallPattern {
   readonly id: string;
@@ -55,7 +52,6 @@ export function wallPatternProfiles(id: string): CabinetProfile[] {
 
 export interface CasePrefs {
   readonly pattern: string;
-  readonly view: CaseView;
   readonly ceilingMm: number;
   /** Left to right; the first two sit left of the raised +, the last two right of it. */
   readonly tabOrder: readonly CaseTab[];
@@ -80,7 +76,6 @@ export interface CasePrefs {
 
 export const DEFAULT_CASE_PREFS: CasePrefs = {
   pattern: DEFAULT_CABINET_PROFILE.id,
-  view: 'wall',
   ceilingMm: CEILING_DEFAULT_MM,
   tabOrder: CASE_TABS,
   misfitsDismissed: [],
@@ -124,7 +119,6 @@ export function readCasePrefs(): CasePrefs {
   const d = DEFAULT_CASE_PREFS;
   return {
     pattern: WALL_PATTERNS.some((p) => p.id === stored.pattern) ? (stored.pattern as string) : d.pattern,
-    view: CASE_VIEWS.includes(stored.view as CaseView) ? (stored.view as CaseView) : d.view,
     ceilingMm: typeof stored.ceilingMm === 'number' && Number.isFinite(stored.ceilingMm) && stored.ceilingMm > 0 ? stored.ceilingMm : d.ceilingMm,
     tabOrder: isTabOrder(stored.tabOrder) ? [...stored.tabOrder] : d.tabOrder,
     misfitsDismissed: isIdList(stored.misfitsDismissed) ? [...stored.misfitsDismissed] : d.misfitsDismissed,

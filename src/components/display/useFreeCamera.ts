@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
 import { DEPTH_STOP_MM, aheadMm, depthSpeed, dollyStep } from './caseDepth';
-import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
+import { capSpanMm, frameSpanMm, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
 import {
   DRAG_WALK_GAIN_X,
@@ -42,7 +42,7 @@ import {
   type YawSide,
 } from './casePose';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling, projector, type BudgetScene, type Projector, type SceneCost } from './caseBudget';
-import type { WallLayout, WallSlot } from './packCabinets';
+import type { WallLayout } from './packCabinets';
 import type { Point } from './caseZoom';
 import { hapticLight } from '../../utils/haptics';
 
@@ -62,8 +62,6 @@ export interface FreeScene {
   readonly zBack: number;
   /** NAV-DEPTH-OCCL: the room's corners (everything drawn stands among them): the root's transform puts the CSS z = 0 plane past them. */
   readonly reach: readonly Vec3[];
-  /** The one-cabinet view's focus cabinet, whose neighbours are dimmed; null in the other views. */
-  readonly dimmed: WallSlot | null;
   readonly lookHoldMs: number;
   /** NAV-2B: the jog's top speed, in the 10-28 jog's (?jogmax=, JOG_MAX_X). */
   readonly jogMax: number;
@@ -328,25 +326,13 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     return held.current;
   };
 
-  /** Write the camera to the DOM: the root's transform, data-camera, the dimming veils; ask for a render when the cull must change. */
+  /** Write the camera to the DOM: the root's transform, data-camera; ask for a render when the cull must change. */
   const write = (camera: Camera) => {
     const { host, root } = dom;
     if (!host.current || !root.current) return;
     root.current.style.transform = cssSceneTransform(camera, scene.current.s, scene.current.reach);
     host.current.dataset.camera = cameraData(camera);
     host.current.dataset.cameraX = String(num(camera.x));
-    const slot = scene.current.dimmed;
-    if (slot) {
-      const edges = focusEdgesPx(camera, slot);
-      for (const veil of Array.from(host.current.querySelectorAll<HTMLElement>('.cabinet-scene__dim'))) {
-        const left = veil.dataset.side === 'left';
-        const x0 = -4;
-        const x1 = camera.frame.width + 4;
-        const [a, b] = left ? [x0, edges.left] : [edges.right, x1];
-        veil.style.left = `${num(a)}px`;
-        veil.style.width = `${num(Math.max(0, b - a))}px`;
-      }
-    }
     const next: CullView = { camera, panPx: 0 };
     if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) !== culled.current) onRender();
   };

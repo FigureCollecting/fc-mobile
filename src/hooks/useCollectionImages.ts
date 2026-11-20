@@ -52,8 +52,8 @@ import { useQuery, useQueryClient, type QueryClient, type QueryKey, type QuerySt
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
-import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImages, syncKeptImages, ABSENT_RECHECK_MS, MAX_KEPT_FIGURES, type CachedImage, type KeptImageFill } from '../media/keptImages';
-import { usePhotoChoices } from '../media/photoChoice';
+import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImage, keptImages, syncKeptImages, withheldAddresses, ABSENT_RECHECK_MS, MAX_KEPT_FIGURES, type CachedImage, type KeptImageFill } from '../media/keptImages';
+import { usePhotoChoices, type PhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
 
@@ -130,26 +130,98 @@ async function stopFill(): Promise<void> {
   await under.done;
 }
 
-/** Shows each answer a sync tells, at most every KEPT_SHOWN_EVERY_MS and the latest last, until the sync aborts or `stop`. */
-function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal) {
+/**
+ * Shows each answer a sync tells, at most every KEPT_SHOWN_EVERY_MS and the latest last, until the sync aborts or `stop`.
+ * PICK-SLOW: `show` lays the pictures `held` on screen (standing) over the answer; `pick` lays a chosen photo just kept over
+ * `base` (the answer on screen) and every answer told after it, the first pick drawn at once, later ones with the next
+ * drawing; so a pick never waits on the read of every kept figure.
+ * PICK-SLOW (CHAL4 SHOULD-1/2: a pick already drawn, and the answer a run spared by the run it replaced had read, stood on
+ * screen after a sync withheld them): each drawing reads the withheld records first and draws no picture recorded withheld,
+ * whichever it is (told, laid, held, picked), and no mask recorded withheld; a held picture or a pick whose photo is withheld
+ * gives way to the answer's own picture of its figure. A drawing whose read is overtaken by a later one is not drawn, nor one
+ * that ends after `stop`; one whose read fails draws nothing (what is on screen stands until the next drawing or the run's
+ * answer).
+ */
+function showKept(client: QueryClient, key: QueryKey, signal: AbortSignal, base: ReadonlyMap<string, CachedImage> = EMPTY) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let shownAt = -Infinity;
-  let latest: ReadonlyMap<string, CachedImage> = EMPTY;
+  let told: ReadonlyMap<string, CachedImage> = base;
+  let holding: ReadonlyMap<string, CachedImage> = EMPTY;
+  let stopped = false;
+  let drawing = 0;
+  const picked = new Map<string, CachedImage>();
   const flush = () => {
+    clearTimeout(timer);
     timer = undefined;
     shownAt = Date.now();
-    // the case view gone: the answer it showed last stands
-    if (signal.aborted) return;
-    partial.add(latest);
-    client.setQueryData(key, latest);
+    const n = (drawing += 1);
+    void withheldAddresses().then(
+      (gone) => {
+        // the case view gone: the answer it showed last stands; stopped, nothing told late is drawn over the run's own answer
+        if (signal.aborted || stopped || n !== drawing) return;
+        const drawn = new Map<string, CachedImage>();
+        for (const [head, image] of [...told, ...holding, ...picked]) {
+          const clear = cleared(image, gone);
+          if (clear !== undefined) drawn.set(head, clear);
+        }
+        partial.add(drawn);
+        client.setQueryData(key, drawn);
+      },
+      () => undefined,
+    );
+  };
+  const later = () => {
+    timer ??= setTimeout(flush, Math.max(0, shownAt + KEPT_SHOWN_EVERY_MS - Date.now()));
+  };
+  const show = (kept: ReadonlyMap<string, CachedImage>, held: ReadonlyMap<string, CachedImage> = EMPTY) => {
+    told = kept;
+    holding = held;
+    later();
   };
   return {
-    show: (kept: ReadonlyMap<string, CachedImage>) => {
-      latest = kept;
-      timer ??= setTimeout(flush, Math.max(0, shownAt + KEPT_SHOWN_EVERY_MS - Date.now()));
+    show,
+    pick: (head: string, image: CachedImage) => {
+      const first = picked.size === 0;
+      picked.set(head, image);
+      if (first) flush();
+      else later();
     },
-    stop: () => clearTimeout(timer),
+    /** A figure's picture whose bytes the device already holds, drawn at once over the answer on screen (the run's reads answer it too). */
+    lay: (head: string, image: CachedImage) => {
+      told = new Map(told).set(head, image);
+      flush();
+    },
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+    },
   };
+}
+
+/** A picture as drawn given the withheld addresses: none when its photo is withheld, without its mask when that is. */
+function cleared(image: CachedImage, gone: ReadonlySet<string>): CachedImage | undefined {
+  if (gone.has(image.url)) return undefined;
+  if (image.maskUrl === undefined || !gone.has(image.maskUrl)) return image;
+  const { maskUrl: _withheld, ...rest } = image;
+  return rest;
+}
+
+/**
+ * PICK-SLOW (CHAL3 SHOULD-1: on a slow link the run's read of every kept figure drew the primary over the earlier pick for the
+ * whole of the pick's download): what a run draws of an answer it read or its sync told. A figure whose chosen photo that answer
+ * does not name yet (not here, or withheld) keeps the picture `was` on screen when the run began, until the chosen photo is kept
+ * (showKept's pick) or the run ends with its own answer. Never a picture a sync withheld (taken down): showKept draws none, so it
+ * leaves the screen even when it is the one there, the answer's own picture of the figure drawn instead, and one whose mask was
+ * withheld stays without it. The pictures kept, laid over the answer by showKept.
+ */
+function standing(answer: ReadonlyMap<string, CachedImage>, was: ReadonlyMap<string, CachedImage>, choices: PhotoChoices): ReadonlyMap<string, CachedImage> {
+  const held = new Map<string, CachedImage>();
+  for (const [head, on] of was) {
+    const choice = choices.get(head);
+    const now = answer.get(head)?.url;
+    if (choice !== undefined && now !== choice && now !== on.url) held.set(head, on);
+  }
+  return held;
 }
 
 /**
@@ -180,7 +252,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
   const choiceKey = (heads ?? []).filter((h) => allChoices.has(h)).map((h) => `${h}=${allChoices.get(h)}`).join(',');
   const signedIn = session !== undefined && phase === 'signed-in';
   const enabled = signedIn && heads !== undefined;
-  const key = ['local', 'kept-images', heads?.join(',') ?? '', choiceKey];
+  // PICK-SLOW: whose answer it is, so another user's is a new key, and never a placeholder (below)
+  const key = ['local', 'kept-images', heads?.join(',') ?? '', choiceKey, session?.sub() ?? ''];
   // PHOTOS1 (X2): whether this case view has synced in reach since it opened, the server not lost since; a sync after that
   // (the kept figures or choices changed) backs off on the addresses refused, as a fill does (keptImages.ts SyncOptions.backOff)
   const syncedInReach = useRef(false);
@@ -200,8 +273,19 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     clearTimeout(owedTimer.current);
     owedTimer.current = undefined;
   };
+  /** PICK-SLOW: the answer this case view draws now, which a pick is laid over (showKept). */
+  const onScreen = useRef<ReadonlyMap<string, CachedImage>>(EMPTY);
+  /** PICK-SLOW: whose choices the last run of this case view read, so the next one knows which figures' pictures changed. */
+  const ranWith = useRef<{ sub: unknown; choices: PhotoChoices }>();
+  /** PICK-SLOW: the key this case view asks now, whose run a run it replaced never stops (queryFn's drop). */
+  const asking = useRef<QueryKey>(key);
+  asking.current = key;
   const query = useQuery<ReadonlyMap<string, CachedImage>>({
     queryKey: key,
+    // PICK-SLOW (Ross 11-19: the case stood as plates for seconds after a pick): a change of choice is a new key, whose first
+    // answer comes only after the read of every kept figure; till then the answer drawn stands. Only for the same user and the
+    // same kept figures: another user (even on the same figures) or a new collection is never drawn with the last one's pictures.
+    placeholderData: (previous, previousQuery) => (previousQuery?.queryKey[2] === key[2] && previousQuery.queryKey[4] === key[4] ? previous : undefined),
     // The query's signal is consumed, so a sync stops when the case view goes away or a newer one
     // replaces it: aborted while it reads the lists, it touches no cache but a new figure's; while it fetches images, the
     // fetches in flight are aborted and no other starts.
@@ -211,30 +295,70 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       hearKeptSyncs(client);
       await stopFill();
       const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
+      // PICK-SLOW: the figures whose choice changed since this user's last run ("Use default", a pick), none for another user
+      const before = ranWith.current;
+      ranWith.current = { sub: queryKey[4], choices: allChoices };
+      const changed = before !== undefined && before.sub === queryKey[4] ? kept.filter((h) => before.choices.get(h) !== allChoices.get(h)) : [];
       let incomplete = false;
       let listsUnread = false;
       let left: number | undefined;
+      // PICK-SLOW (CHAL3: a pick during a sync ran again about a second later, having lost which figures changed): a run this
+      // case view replaced (a pick, "Use default") drops the other answers as any sync does, but never stops or asks again the
+      // run that replaced it, which answers next from its own sync
+      const drop = () => {
+        const now = client.getQueryCache().find({ queryKey: asking.current, exact: true });
+        return dropImageAnswers(client, queryKey, now?.state.fetchStatus === 'fetching' ? new Set([now.queryHash]) : undefined);
+      };
       if (reachable && !answersFromKept(client, queryKey)) {
-        const shown = showKept(client, queryKey, signal);
-        shown.show(await keptImages(kept, undefined, allChoices));
+        const was = onScreen.current;
+        const shown = showKept(client, queryKey, signal, was);
+        /** Each answer drawn, a figure whose chosen photo is still coming keeping its picture (standing). */
+        const showStanding = (answer: ReadonlyMap<string, CachedImage>) => shown.show(answer, standing(answer, was, allChoices));
+        // PICK-SLOW (CHAL1 SHOULD-4): a changed figure whose shown photo is on the device already (the primary after "Use
+        // default", a photo picked again) is drawn at once: keepChosenPhotos keeps nothing for it, so tells nothing
+        const laid = (async () => {
+          for (const head of changed) {
+            const image = await keptImage(head, undefined, allChoices);
+            const choice = allChoices.get(head);
+            // a chosen photo not here yet is keepChosenPhotos's to draw, once kept
+            if (image !== undefined && (choice === undefined || image.url === choice)) shown.lay(head, image);
+          }
+        })().catch(() => undefined);
+        // PICK-CASE-1: a chosen photo the device lacks is fetched first, from the figure's kept list, so a pick is shown
+        // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails).
+        // PICK-SLOW: begun before the read of every kept figure (seconds for a large collection), the newest choice first, each
+        // drawn as soon as it is kept (keepChosenPhotos)
+        const picks =
+          choiceKey === ''
+            ? undefined
+            : keepChosenPhotos(kept, allChoices, {
+                signal,
+                onKept: async (head) => {
+                  const image = await keptImage(head, undefined, allChoices);
+                  // only the chosen photo: told for a kept mask whose photo failed, the device answers the primary, and the picture on screen stands
+                  if (image !== undefined && image.url === allChoices.get(head)) shown.pick(head, image);
+                },
+              });
+        // awaited in the sync's try below; until then a failure is not an unhandled one
+        picks?.catch(() => undefined);
+        showStanding(await keptImages(kept, undefined, allChoices));
         let read = false;
         const backOff = syncedInReach.current;
         syncedInReach.current = true;
         try {
-          // PICK-CASE-1: a chosen photo the device lacks is fetched first, from the figure's kept list, so a pick is shown
-          // without waiting on every list being read again (tens of seconds for a large collection, never when one call fails)
-          if (choiceKey !== '' && (await keepChosenPhotos(kept, allChoices, { signal })) > 0) shown.show(await keptImages(kept, undefined, allChoices));
+          await laid;
+          await picks;
           const synced = await duringOwnSync(client, queryKey, () =>
             syncKeptImages(kept, (h, onBatch, order) => fetchImageLists(session!.clients.catalog, h, signal, onBatch, order), {
               signal,
               onListsRead: () => (read = true),
-              onKept: shown.show,
+              onKept: showStanding,
               choices: allChoices,
               first: () => fetchOrder,
               backOff,
             }),
           );
-          void dropImageAnswers(client, queryKey);
+          void drop();
           // Stopped part way by the case view going away, or leaving an image unfetched (abandoned on a
           // stalled link, refused): the other documents drop their answers too, and a sync of theirs
           // under way runs on.
@@ -248,7 +372,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // nor run again.
           if (read) {
             incomplete = true;
-            void dropImageAnswers(client, queryKey);
+            void drop();
             tellKeptSync(client, 'stopped');
           }
           if (signal.aborted) throw err;
@@ -271,6 +395,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     staleTime: (q) => freshFor(q.state.data),
     retry: false,
   });
+  onScreen.current = query.data ?? EMPTY;
   const client = useQueryClient();
   // PHOTOS1: what the sync (or a fill) left unfetched, fetched from the kept lists by a fill, never while a sync runs
   const startFill = () => {

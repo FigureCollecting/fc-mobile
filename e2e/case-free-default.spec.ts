@@ -104,14 +104,12 @@ for (const panel of FOLD8) {
     await closeSheet(page);
     await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(jogButton(page)).toHaveCount(1);
-    // the Free camera through a view change and a reload
-    await page.getByRole('button', { name: /^Case,/ }).click();
-    await page.getByRole('menuitemradio', { name: 'One cabinet' }).click();
-    await expect(scene).toHaveAttribute('data-view', 'cabinet');
+    // the Free camera through a reload (NAV-SCOPE: the case has one view; its Case button opens no menu)
+    await page.getByRole('button', { name: 'Case', exact: true }).click();
+    await expect(page.getByRole('menu')).toHaveCount(0);
     await expect(swipeButton(page)).toHaveCount(0);
     await page.reload();
     await waitForCase(page);
-    await expect(scene).toHaveAttribute('data-view', 'cabinet');
     await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(swipeButton(page)).toHaveCount(0);
     await expect(jogButton(page)).toHaveCount(1);
@@ -161,16 +159,20 @@ for (const panel of FOLD8) {
     expect(turned.x, 'where it stood').toBe(moved.x);
     // nothing written yet: the stored field is still there, only read past
     expect((await storedPrefs(page)).freeCamera).toBe(false);
-    // the next write (a view change) drops it; the reload is the Free camera still
-    await page.getByRole('button', { name: /^Case,/ }).click();
-    await page.getByRole('menuitemradio', { name: 'One cabinet' }).click();
-    await expect(scene).toHaveAttribute('data-view', 'cabinet');
+    // the next write (an arrangement, NAV-SCOPE: the case has no view to change) drops it, and the stored view with it;
+    // the reload is the Free camera still
+    await page.getByRole('button', { name: 'View' }).click();
+    const arrange = page.getByRole('group', { name: 'Arrange by' });
+    await arrange.getByRole('radio', { name: 'Name', exact: true }).click();
+    await expect(arrange.getByRole('radio', { name: 'Name', exact: true })).toBeChecked();
+    await closeSheet(page);
+    await expect(scene).toHaveAttribute('data-arrange', 'name');
     const stored = await storedPrefs(page);
-    expect(stored.view).toBe('cabinet');
+    expect(stored.arrange).toBe('name');
     expect('freeCamera' in stored, 'freeCamera dropped on the write').toBe(false);
+    expect('view' in stored, 'the stored view dropped on the write').toBe(false);
     await page.reload();
     await waitForCase(page);
-    await expect(scene).toHaveAttribute('data-view', 'cabinet');
     await expect(scene).toHaveAttribute('data-free-camera', '1');
   });
 }
@@ -217,27 +219,5 @@ test.describe('desktop, no touch', () => {
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
     await jogButton(page).click();
     await expect(addSheet(page)).toBeVisible();
-  });
-
-  test('the keyboard still steps the cabinets: Next is unseen until Tab reaches it, then shown, and Enter stands the eye at the next cabinet', async ({ page }) => {
-    await openCase(page, DESKTOP, { view: 'cabinet' });
-    const scene = page.locator('.cabinet-scene');
-    await expect(scene).toHaveAttribute('data-free-camera', '1');
-    await expect(scene).toHaveAttribute('data-focus', '0');
-    const next = page.locator('.cabinet-scene__step--next');
-    await expect(next).toHaveCSS('opacity', '0');
-    let reached = false;
-    for (let i = 0; i < 150 && !reached; i++) {
-      await page.keyboard.press('Tab');
-      reached = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Next cabinet');
-    }
-    expect(reached, 'Tab reaches Next cabinet').toBe(true);
-    await expect(next).toHaveCSS('opacity', '1');
-    const before = await cameraOf(page);
-    await page.keyboard.press('Enter');
-    await expect(scene).toHaveAttribute('data-focus', '1');
-    const after = await cameraOf(page);
-    expect(after.x, 'the eye stands at the next cabinet').toBeGreaterThan(before.x);
-    expect([after.yaw ?? 0, after.pitch]).toEqual([0, 0]);
   });
 });

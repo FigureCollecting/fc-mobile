@@ -45,21 +45,7 @@ import {
   type WallSlot,
 } from './packCabinets';
 import { boxCorners, cssSceneTransform, type Vec3 } from './caseCamera';
-import {
-  cabinetBox,
-  centreCabinet,
-  centreHit,
-  frameCap,
-  frameCase,
-  frontsOf,
-  focusEdgesPx,
-  pageInView,
-  pageOpensAt,
-  pagerReach,
-  roomBox,
-  shelfSteps,
-  wallPages,
-} from './caseFraming';
+import { cabinetBox, centreCabinet, frameCap, frameCase, frontsOf, roomBox } from './caseFraming';
 import {
   FIGURE_BUDGET_VIEWPORTS,
   FLAT_GRID,
@@ -90,7 +76,7 @@ import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, wheelZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
-import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, resetApplies, withPose, type Pose } from './casePose';
+import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, withPose, type Pose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
 import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
@@ -107,16 +93,6 @@ const DOUBLE_TAP_PX = 40;
 /** MISFIT-CHIP-1: a finger resting this long (ms) on the do-not-fit chip, and not moving past the slop (px), hides it. */
 export const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP_PX = 8;
-/**
- * CAB-FOCUS-1 (Ross 10-18): how dark the cabinets either side of the focus one are drawn in the one-cabinet view (0 to 1,
- * black over them): light to moderate, to focus the current cabinet where the screen shows neighbours, and to mark the
- * mode. The one value to tune. The room is dark whatever the app's theme (the scene's colours are its own), so the same
- * black veil serves the dark and the light theme.
- * Ross 2026-10-18: 60 %, chosen by eye.
- */
-export const NEIGHBOUR_DIM = 0.6;
-/** A dimming veil reaches this far past the window the frame shows, so a pinch or a sub-pixel slide never shows its edge. */
-const DIM_PAD_PX = 4;
 const DEFAULT_FRAME = { width: 360, height: 480 };
 /**
  * CASE-FB2a (Ross 10-16: "one line height and fairly minimal space around the text"): a name plate is one line of
@@ -487,29 +463,6 @@ function Rack({ slot }: { slot: WallSlot }) {
   );
 }
 
-/**
- * CAB-FOCUS-1: a flat veil over everything on one side of the focus cabinet's silhouette (its neighbours there; past the
- * wall's first or last cabinet the bare wall or empty space, dimmed the same: CAB-EDGE-DIM-1, Ross 10-31), in the
- * viewport so a pan or a pinch carries it with the picture. It spans only the window the frame shows of that picture
- * (`window`: the picture's x and y at the frame's edges, which a slide moves), never more: a layer the size of the wall
- * would blow the case's budget of scene layers. It never takes a touch: a neighbour's figures stay tappable.
- */
-function NeighbourDim({ side, edge, window }: { side: 'left' | 'right'; edge: number; window: Rect }) {
-  const x0 = window.x0 - DIM_PAD_PX;
-  const x1 = window.x1 + DIM_PAD_PX;
-  const [left, right] = side === 'left' ? [x0, edge] : [edge, x1];
-  if (right <= left) return null;
-  const style = {
-    left: `${fmt(left)}px`,
-    width: `${fmt(right - left)}px`,
-    top: `${fmt(window.y0 - DIM_PAD_PX)}px`,
-    height: `${fmt(window.y1 - window.y0 + 2 * DIM_PAD_PX)}px`,
-    backgroundColor: `rgba(0, 0, 0, ${NEIGHBOUR_DIM})`,
-    pointerEvents: 'none' as const,
-  };
-  return <div class="cabinet-scene__dim" data-side={side} data-edge={fmt(edge)} style={style} />;
-}
-
 function Cabinet({ slot, index }: { slot: WallSlot; index: number }) {
   const p = slot.profile;
   return (
@@ -791,7 +744,7 @@ export interface CabinetSceneProps {
   imagesComplete?: boolean;
   /**
    * CARD-VIEW-1: a card's Go to: frame this figure (goToFigure, caseGoTo.ts) once the wall is laid out; a new seq is a new
-   * request. Its owner (Collection) puts the case in the one-shelf view with it.
+   * request. The eye stands at the figure's shelf framing (NAV-SCOPE: no view to switch to).
    */
   goTo?: { figureId: string; seq: number } | null;
   /** The request was taken up: found on a shelf and framed, or on none. */
@@ -845,14 +798,14 @@ function useFrame(ref: { current: HTMLElement | null }, fallback: { width: numbe
 }
 
 /**
- * PINCH-1: the Reset view chip, while the picture is zoomed. It holds whether it shows and hands the scene its
- * setter (`shown`), so it comes and goes as its own render, never the scene's.
+ * PINCH-1: the Reset view chip, while the picture is zoomed, and only then (NAV-SCOPE, Ross 11-17: "reset view would only
+ * be used for pinch zoom": it clears the magnification and never moves the camera). It holds whether it shows and hands
+ * the scene its setter (`shown`), so it comes and goes as its own render, never the scene's.
  */
-function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; moved: boolean; onReset: () => void }) {
+function ResetChip({ shown, onReset }: { shown: { current: ((zoomed: boolean) => void) | null }; onReset: () => void }) {
   const [zoomed, setZoomed] = useState(false);
   shown.current = setZoomed;
-  // PAN-KEEP-1: also while the camera is off the default angle: the one deliberate way back
-  if (!zoomed && !moved) return null;
+  if (!zoomed) return null;
   // NAV-PTR-1: a small button (a ⟲ over a short label), a scene control (a press on it is no gesture of the scene's)
   return (
     <button type="button" class="cabinet-scene__reset cabinet-scene__reset--fade" aria-label="Reset view" title="Reset view" data-scene-ui onClick={onReset}>
@@ -861,72 +814,6 @@ function ResetChip({ shown, moved, onReset }: { shown: { current: ((zoomed: bool
         <path d="M3 3v5h5" />
       </svg>
       <span>Reset</span>
-    </button>
-  );
-}
-
-/** NAV-PTR-1: a click this soon (ms) after an arrow stepped on its pointerup, or let a drag go to the scene, is that press's own click: ignored. */
-const STEP_CLICK_MS = 600;
-
-/** Where a press of the scene begins (client px), and its pointer. */
-type PressStart = { pointerId: number; clientX: number; clientY: number };
-
-const inBox = (el: Element, at: { clientX: number; clientY: number }): boolean => {
-  const r = el.getBoundingClientRect();
-  return at.clientX >= r.left && at.clientX <= r.right && at.clientY >= r.top && at.clientY <= r.bottom;
-};
-
-/**
- * NAV-PTR-1 (Ross 10-25, "arrow movements weren't working"): an arrow (‹ › ˄ ˅) steps on the pointerup of a primary
- * press that began on it, the pointer still inside its box and the arrow enabled: a thumb that travels a few px still
- * steps, where Chrome makes no click past its tap slop. The click that tap then makes is ignored; any other click (the
- * keyboard's, a script's) steps. A press that leaves the arrow as a drag (out of its box, SWIPE_START_PX or more from
- * where it began) is the scene's from there (`onDrag`, from where it began): a walk started at the edge walks.
- */
-function StepButton({ cls, label, disabled, onStep, onDrag, children }: { cls?: string; label: string; disabled: boolean; onStep: () => void; onDrag: (start: PressStart) => void; children: ComponentChildren }) {
-  const pressed = useRef<PressStart | null>(null);
-  const quietUntil = useRef(0);
-  const onPointerMove = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
-    const p = pressed.current;
-    if (p === null || p.pointerId !== e.pointerId) return;
-    if (Math.max(Math.abs(e.clientX - p.clientX), Math.abs(e.clientY - p.clientY)) < SWIPE_START_PX || inBox(e.currentTarget, e)) return;
-    pressed.current = null;
-    quietUntil.current = Date.now() + STEP_CLICK_MS;
-    // the scene takes the press before this move reaches it (bubbling on to the scene's host)
-    onDrag(p);
-  };
-  const onPointerUp = (e: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
-    const own = pressed.current?.pointerId === e.pointerId;
-    pressed.current = null;
-    const b = e.currentTarget;
-    if (!own || b.disabled || !inBox(b, e)) return;
-    quietUntil.current = Date.now() + STEP_CLICK_MS;
-    onStep();
-  };
-  const onClick = () => {
-    if (Date.now() < quietUntil.current) {
-      quietUntil.current = 0;
-      return;
-    }
-    onStep();
-  };
-  return (
-    <button
-      type="button"
-      class={cls}
-      aria-label={label}
-      disabled={disabled}
-      onPointerDown={(e) => {
-        pressed.current = e.button === 0 ? { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY } : null;
-      }}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={() => {
-        pressed.current = null;
-      }}
-      onClick={onClick}
-    >
-      {children}
     </button>
   );
 }
@@ -1154,42 +1041,28 @@ export function CabinetScene({
   const cabinets: readonly (PackedCabinet | null)[] = packed.cabinets.length > 0 ? packed.cabinets : [null];
   const wall = useMemo(() => wallLayout(cabinets.map((c, i) => c?.profile ?? pattern[i % pattern.length])), [cabinets, pattern]);
   const headroomMm = useMemo(() => wall.cabinets.map((slot, i) => framingHeadroomMm(slot.profile, tallestOnTop(cabinets[i]), ceilingMm)), [wall, cabinets, ceilingMm]);
-  // NAV3-TOP (b), Ross 10-28: the one-cabinet view frames each top up to its tallest figure (no 24 in framing cap), so
-  // that figure shows whole there; the wall view keeps headroomMm's crop
-  const topWholeMm = useMemo(() => wall.cabinets.map((slot, i) => framingHeadroomMm(slot.profile, tallestOnTop(cabinets[i]), ceilingMm, Infinity)), [wall, cabinets, ceilingMm]);
 
+  // the cabinet the frame centre looks at (a move, a jog or Go to sets it): the wall framing is its page's
   const [focus, setFocus] = useState(0);
-  // CAB-FOCUS-1: the cabinet the one-cabinet view's picture was fitted to. null: the focus. A move carries the focus
-  // on to a neighbour (the arrows go on from there) without re-fitting the picture under the finger: only an arrow does.
-  const [framedFocus, setFramedFocus] = useState<number | null>(null);
-  const [shelf, setShelf] = useState(0);
 
-  // a new view or wall starts from its own framing
-  // (a layout effect: the frame is back before the view's picture is painted, as the filter's reset below is)
-  useLayoutEffect(() => {
-    setFramedFocus(null);
-  }, [prefs.view, prefs.pattern]);
   // CASE-FB2a (interim, REPACK_ON_FILTER): a new filter or sort packs its figures from the wall's start, and the view
   // starts there too, before it is drawn: left where a walk had it, the camera stood past a wall a filter had shortened.
   // PACK1: so does a new arrangement of the case
   useLayoutEffect(() => {
     if (!REPACK_ON_FILTER) return;
     setFocus(0);
-    setFramedFocus(null);
-    setShelf(0);
   }, [filterKey, prefs.arrange]);
 
   const lastIndex = wall.cabinets.length - 1;
   const focusIdx = Math.min(focus, lastIndex);
-  const framedIdx = framedFocus === null ? focusIdx : Math.min(framedFocus, lastIndex);
-  // the framing and the wall's pages hold for a whole swipe: worked out once per view, not at every finger move
+  // the framing holds for a whole swipe: worked out once per wall and focus, not at every finger move.
+  // NAV-SCOPE (Ross 11-18): the case's one view is the wall's (no one cabinet, no one shelf)
   const framingInput = useMemo(
-    // NAV-1A (rulings R0.3): the openings are level (topWholeMm: NAV3-TOP b)
-    () => ({ frame, wall, headroomMm, view: prefs.view, focus: prefs.view === 'cabinet' ? framedIdx : focusIdx, shelf, ceilingMm, level: true, topWholeMm }),
-    [frame, wall, headroomMm, prefs.view, focusIdx, framedIdx, shelf, ceilingMm, topWholeMm],
+    // NAV-1A (rulings R0.3): the openings are level
+    () => ({ frame, wall, headroomMm, view: 'wall' as const, focus: focusIdx, ceilingMm, level: true }),
+    [frame, wall, headroomMm, focusIdx, ceilingMm],
   );
   const base = useMemo(() => frameCase(framingInput), [framingInput]);
-  const pages = useMemo(() => (framingInput.view === 'wall' ? wallPages(framingInput) : wall.cabinets.map((_, i) => [i])), [framingInput, wall]);
   const culled = useRef<CullView | null>(null);
   // NAV-1A: the camera's pose (a ref, written each frame by its gestures); the scene renders when the cull must change
   const rootRef = useRef<HTMLDivElement>(null);
@@ -1199,8 +1072,8 @@ export function CabinetScene({
   const freeScene = useRef<FreeScene | null>(null);
   const fc = useFreeCamera(freeScene as { current: FreeScene }, { host: hostRef, root: rootRef, ring: ringRef }, culled, rerender);
   const laidOut = figures.length > 0 && basis !== null && (steadyLayout ? settle.revealed : unmeasured === 0);
-  // a new view, wall pattern or filter starts from its framing (instant in this slice); a fold or unfold keeps the pose (spec 6.6)
-  const rebaseKey = `${prefs.view}|${prefs.pattern}|${REPACK_ON_FILTER ? `${filterKey ?? ''}|${prefs.arrange}` : ''}`;
+  // a new wall pattern or filter starts from its framing (instant in this slice); a fold or unfold keeps the pose (spec 6.6)
+  const rebaseKey = `${prefs.pattern}|${REPACK_ON_FILTER ? `${filterKey ?? ''}|${prefs.arrange}` : ''}`;
   const rebasedFor = useRef(rebaseKey);
   const pinnedAt = useRef<{ width: number; height: number; camera: typeof base.camera } | null>(null);
   if (rebasedFor.current !== rebaseKey) {
@@ -1211,25 +1084,10 @@ export function CabinetScene({
   if (fc.held() === null && laidOut && pinnedAt.current !== null && (pinnedAt.current.width !== frame.width || pinnedAt.current.height !== frame.height)) {
     fc.hold(poseOf(pinnedAt.current.camera));
   }
-  // NAV-1A: the camera is the pose (on the framing's lens and frame); the pager pages from what its frame centre looks
-  // at (rulings S7)
+  // NAV-1A: the camera is the pose (on the framing's lens and frame)
   const camera = fc.camera(base.camera);
   // pinned from the host's first measured size on: the fallback frame a wall laid out on before it is not a fold's
   if (laidOut && frameMeasured && fc.held() === null) pinnedAt.current = { width: frame.width, height: frame.height, camera: base.camera };
-  const centre = centreHit(camera, wall);
-  // the wall view pages from what the picture centres on (close-out 4, ruling 32)
-  const pageIdx = prefs.view === 'wall' ? pageInView(pages, wall, base, 0, centre) : focusIdx;
-  // PAGER-END: the first and the last page's openings, so Next stays on short of the last page's centre and Prev past the first's
-  const ends = useMemo(
-    () => (framingInput.view === 'wall' && pages.length > 0 ? { first: pageOpensAt(framingInput, pages[0]), last: pageOpensAt(framingInput, pages[pages.length - 1]) } : null),
-    [framingInput, pages],
-  );
-  const reach = ends !== null ? pagerReach(pages, wall, base, 0, ends, centre) : null;
-  // CAB-FOCUS-1: in the one-cabinet view, all either side of the focus cabinet is dimmed, from the edges of its silhouette
-  // (CAB-EDGE-DIM-1: at the wall's ends too, where no neighbour stands)
-  const dimFrom = prefs.view === 'cabinet' ? focusEdgesPx(camera, wall.cabinets[focusIdx]) : null;
-  // CAB-FOCUS-1: the picture's x and y the frame shows at its edges (the picture never slides: NAV-GRAD)
-  const shownWindow: Rect = { x0: 0, x1: camera.frame.width, y0: 0, y1: camera.frame.height };
 
   // MOB-NAV-2: while the camera moves, cull for the picture last culled for (the half-viewport margin still covers the
   // frame), a cabinet already drawn keeping its place against a small move; once it settles, cull for the settled
@@ -1358,13 +1216,13 @@ export function CabinetScene({
     showZoom(settled, settled.k === now.k && settled.x === now.x && settled.y === now.y ? 'still' : 'settle');
     return settled;
   }, [showZoom]);
-  // a new view, wall, filter, arrangement (PACK1) or frame starts the picture at 1x, at once
+  // a new wall, filter, arrangement (PACK1) or frame starts the picture at 1x, at once
   useLayoutEffect(() => {
     if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-  }, [prefs.view, prefs.pattern, filterKey, prefs.arrange, frame.width, frame.height, showZoom]);
+  }, [prefs.pattern, filterKey, prefs.arrange, frame.width, frame.height, showZoom]);
 
   // CARD-VIEW-1: Go to. The wall is laid out (every figure in the place it keeps); a request is taken up once, after the resets
-  // above (a layout effect declared after them: a new view's reset never undoes it), to the framing goToFigure gives
+  // above (a layout effect declared after them: a new wall's reset never undoes it), to the framing goToFigure gives
   const goToScene = useMemo<GoToScene>(() => ({ frame, wall, cabinets, headroomMm, ceilingMm }), [frame, wall, cabinets, headroomMm, ceilingMm]);
   const wentTo = useRef<number | null>(null);
   const wentOut = useRef(onWentTo);
@@ -1375,11 +1233,10 @@ export function CabinetScene({
     const target = goToFigure(goTo.figureId, goToScene);
     if (target !== null) {
       setFocus(target.focus);
-      setFramedFocus(null);
-      setShelf(target.shelf);
       if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-      // NAV-1A: the camera stands at the framing Go to gives, at once (the animated go-to is slice 1c)
-      fc.hold(target.walkX === null ? null : poseOf(target.framing.camera));
+      // NAV-1A: the camera stands at the framing Go to gives, at once (the animated go-to is slice 1c). NAV-SCOPE: always
+      // held, slid or not: the wall framing the scene opens at is no shelf's
+      fc.hold(poseOf(target.framing.camera));
     }
     wentOut.current?.(goTo.figureId, target !== null);
   }, [goTo, laidOut, goToScene, showZoom]);
@@ -1417,8 +1274,8 @@ export function CabinetScene({
     if (onSceneUi(e.target)) return;
     startPress(e);
   }, []);
-  // a finger down on the scene; or, NAV-PTR-1, one that began on an arrow and left it as a drag, from where it began
-  const startPress = (e: PressStart) => {
+  // a finger down on the scene
+  const startPress = (e: PointerEvent) => {
     // NAV-DESKTOP-ZOOM: a press lets go of a wheel's zoom at once, and the press takes it up from there
     if (wheelIdle.current !== undefined) letGo();
     // a new touch cuts a settling zoom short
@@ -1516,12 +1373,9 @@ export function CabinetScene({
       showZoom(zoom.current, 'still');
       return;
     }
-    // NAV-1A: the pose is the last live one (no settle, no retake); the arrows and Reset go on from what the frame centre looks at
+    // NAV-1A: the pose is the last live one (no settle, no retake); the focus goes on from what the frame centre looks at
     const left = fc.release(e.pointerId, commit);
-    if (left !== null) {
-      setFocus(centreCabinet(withPose(base.camera, left), wall));
-      setFramedFocus(null);
-    }
+    if (left !== null) setFocus(centreCabinet(withPose(base.camera, left), wall));
   };
   const onClickCapture = (e: MouseEvent) => {
     if (onSceneUi(e.target)) {
@@ -1535,34 +1389,6 @@ export function CabinetScene({
     e.preventDefault();
   };
 
-  // TOP1 (Ross 10-18): an arrow press in the one-shelf view snaps to the straight-on view that shows that whole shelf of the
-  // focus cabinet: the move, the look and the zoom a drag or a pinch left are gone. Only the arrows do it; a drag
-  // or a pinch still moves the picture from there. CAB-FOCUS-1: the one-cabinet view's arrows do
-  // the same, to the straight-on fit of the whole focus cabinet.
-  const snapFrame = () => {
-    if (zoom.current !== UNZOOMED) showZoom(UNZOOMED, 'still');
-  };
-  const goCabinet = (to: number) => {
-    // NAV-1A: TOP1 as built: an arrow stands the camera at the target's framing, at once (the tween is slice 1c)
-    fc.hold(null);
-    rerender();
-    setFocus(Math.max(0, Math.min(lastIndex, to)));
-    setFramedFocus(null);
-    if (prefs.view === 'shelf' || prefs.view === 'cabinet') snapFrame();
-  };
-  const goPage = (step: number) => {
-    const target = pages[Math.max(0, Math.min(pages.length - 1, pageIdx + step))];
-    goCabinet(target[0]);
-  };
-  // SHELF-STEPS-1: the steps are the wall's levels, as the shelf camera is (shelfSteps), not the focus cabinet's own surfaces
-  const shelfCount = useMemo(() => shelfSteps(framingInput), [framingInput]);
-  const shelfIdx = Math.min(shelf, shelfCount - 1);
-  const goShelf = (to: number) => {
-    fc.hold(null);
-    rerender();
-    setShelf(to);
-    snapFrame();
-  };
   // NAV-JOG (Ross 10-28): while a case is shown, the bottom-centre button is its jog (the side arrows retire):
   // a jog drops a magnification first, and its lift leaves the focus on the cabinet the frame centre shows, as a drag's
   // NAV-DEPTH-3: its depth is the depth rocker's (useFreeCamera's depth drive), by the same rules: a magnification is
@@ -1573,7 +1399,6 @@ export function CabinetScene({
       if (left === null) return;
       const s = freeScene.current!;
       setFocus(centreCabinet(withPose(s.base, left), s.wall));
-      setFramedFocus(null);
     };
     /** A drive's start: refused, nothing; begun, a wheel's or pinch's magnification goes (NAV-DESKTOP-ZOOM: under 1x too). */
     const begun = (ok: boolean) => {
@@ -1743,7 +1568,6 @@ export function CabinetScene({
     space: eyeSpace(room, ceilingMm),
     zBack: room.zBack,
     reach: roomCorners,
-    dimmed: prefs.view === 'cabinet' ? wall.cabinets[focusIdx] : null,
     lookHoldMs: lookHoldMs(),
     jogMax: jogMax(),
     reducedMotion: prefersReducedMotion(),
@@ -1786,13 +1610,11 @@ export function CabinetScene({
       aria-label="Display cabinets"
       // NAV-PTR-1: every drag on the scene is its own (a finger moving down raises the camera): never a pull to refresh
       data-own-gestures
-      data-view={prefs.view}
       // WALL-COLOUR-1: the wall's colour (both themes', as custom properties)
       data-wall-colour={prefs.wall}
       style={wallStyle(prefs.wall, prefs.wallCustom)}
       data-pattern={prefs.pattern}
       data-focus={String(focusIdx)}
-      data-shelf={String(shelfIdx)}
       data-camera-x={fmt(camera.x)}
       data-camera={cameraData(camera)}
       // NAV-GRAD: the Free camera is the only camera; the mark stays for the rules and the tests keyed on it
@@ -1869,59 +1691,13 @@ export function CabinetScene({
                 })}
               </DrawContext.Provider>
             </div>
-            {dimFrom !== null && <NeighbourDim side="left" edge={dimFrom.left} window={shownWindow} />}
-            {dimFrom !== null && <NeighbourDim side="right" edge={dimFrom.right} window={shownWindow} />}
           </div>
         </div>
         <div ref={ringRef} class="cabinet-scene__look-ring" aria-hidden="true" />
       </div>
 
-      <ResetChip
-        shown={showChip}
-        // NAV-1A (spec 4): zoomed, or off the frame-centre cabinet's framing by more than a glance; never during a gesture
-        moved={!fc.live() && fc.held() !== null && resetApplies(poseOf(camera), poseOf(base.camera))}
-        onReset={() => {
-          // NAV-1A: the frame-centre cabinet's framing, turned straight, at once; the zoom cleared
-          fc.hold(null);
-          showZoom(UNZOOMED, 'still');
-          setFramedFocus(null);
-          rerender();
-        }}
-      />
-
-      {/* NAV-PTR-1: the arrows are the scene's controls, not its picture: a press on one is no gesture of the scene's */}
-      <div class="cabinet-scene__nav" data-scene-ui>
-        {/* NAV-JOG: the bottom-centre button's jog moves the camera and the side arrows are out of sight; NAV-2A: they
-            stay for the keyboard, unseen and untouchable until focused (freeStyles) */}
-        <StepButton
-          cls="cabinet-scene__step cabinet-scene__step--prev cabinet-scene__step--keys"
-          label="Previous cabinet"
-          disabled={reach !== null ? !reach.prev : focusIdx <= 0}
-          onStep={() => (prefs.view === 'wall' ? goPage(-1) : goCabinet(focusIdx - 1))}
-          onDrag={startPress}
-        >
-          ‹
-        </StepButton>
-        <StepButton
-          cls="cabinet-scene__step cabinet-scene__step--next cabinet-scene__step--keys"
-          label="Next cabinet"
-          disabled={reach !== null ? !reach.next : focusIdx >= lastIndex}
-          onStep={() => (prefs.view === 'wall' ? goPage(1) : goCabinet(focusIdx + 1))}
-          onDrag={startPress}
-        >
-          ›
-        </StepButton>
-        {prefs.view === 'shelf' && (
-          <div class="cabinet-scene__shelves">
-            <StepButton label="Shelf above" disabled={shelfIdx <= 0} onStep={() => goShelf(Math.max(0, shelfIdx - 1))} onDrag={startPress}>
-              ˄
-            </StepButton>
-            <StepButton label="Shelf below" disabled={shelfIdx >= shelfCount - 1} onStep={() => goShelf(Math.min(shelfCount - 1, shelfIdx + 1))} onDrag={startPress}>
-              ˅
-            </StepButton>
-          </div>
-        )}
-      </div>
+      {/* NAV-SCOPE (Ross 11-17): the chip clears the magnification only; the camera stays where it stands */}
+      <ResetChip shown={showChip} onReset={() => showZoom(UNZOOMED, 'still')} />
 
       {flagged > 0 && chipShown && (
         <MisfitChip
@@ -1975,12 +1751,9 @@ function jogMax(): number {
   return v >= 1 && v <= JOG_MAX_X ? v : JOG_MAX_X;
 }
 
-/** NAV-1A: the Free camera's own rules (its Look ring, its Reset chip, the arrows kept for the keyboard). */
+/** NAV-1A: the Free camera's own rules (its Look ring, its Reset chip). */
 const freeStyles = `
   .cabinet-scene[data-free-camera] { -webkit-touch-callout: none; }
-  /* NAV-2A: the side arrows, kept for the keyboard alone: no eye or finger meets them until one is focused */
-  .cabinet-scene__step--keys { opacity: 0; pointer-events: none; }
-  .cabinet-scene__step--keys:focus { opacity: 1; pointer-events: auto; }
   /* rulings S6: the 28 px ring under a finger that has armed Look, gone when it lifts */
   .cabinet-scene__look-ring {
     position: absolute;
@@ -2025,8 +1798,6 @@ const styles = `
   .cabinet-scene__zoom { position: absolute; inset: 0; transform-origin: 0 0; }
   .cabinet-scene__zoom--live { will-change: transform; }
   .cabinet-scene__viewport { position: absolute; inset: 0; perspective-origin: 50% 50%; }
-  /* CAB-FOCUS-1: the dimming over the focus cabinet's neighbours: flat, over the window the frame shows, its box set per render */
-  .cabinet-scene__dim { position: absolute; }
   .cabinet-scene__root { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0 0; transform-style: preserve-3d; }
   .cabinet-scene .cab, .cabinet-scene .part { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-style: preserve-3d; pointer-events: none; }
   .cabinet-scene .q { position: absolute; left: 0; top: 0; transform-origin: 0 0 0; pointer-events: none; box-sizing: border-box; }
@@ -2154,33 +1925,6 @@ const styles = `
     color: #2e1f0a;
     text-shadow: 0 calc(0.6px * var(--s, 1)) 0 rgba(255, 228, 160, 0.4);
   }
-  /* no box of its own: a layer the size of the scene over the 3D faces, for two buttons (MOB-NAV-2) */
-  .cabinet-scene__nav { display: contents; }
-  .cabinet-scene__step {
-    position: absolute;
-    top: 50%;
-    width: 32px;
-    height: 48px;
-    margin-top: -24px;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.35);
-    color: rgba(255, 255, 255, 0.85);
-    font: 600 24px/1 var(--font-sans, system-ui);
-    pointer-events: auto;
-  }
-  .cabinet-scene__step:disabled { opacity: 0; pointer-events: none; }
-  .cabinet-scene__step--prev { left: 4px; }
-  .cabinet-scene__step--next { right: 4px; }
-  .cabinet-scene__shelves { position: absolute; right: 4px; top: 8px; display: flex; flex-direction: column; gap: 4px; pointer-events: auto; }
-  .cabinet-scene__shelves button {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.35);
-    color: rgba(255, 255, 255, 0.85);
-    font: 600 18px/1 var(--font-sans, system-ui);
-  }
-  .cabinet-scene__shelves button:disabled { opacity: 0.25; }
   /* MISFIT-CHIP-1: the do-not-fit chip, bottom left, inset 24 px from the edge (the back swipe's), clear of the raised + at the
      middle of the tab bar; a warning glyph and the count. A 48 px target round the small chip, as the Reset view chip's */
   .cabinet-scene__misfit {

@@ -20,7 +20,6 @@ import { setFetchOrder } from '../../hooks/useCollectionImages';
 import { STAMP, headOf, serverVersion, uuid } from '../../sync/__tests__/engineSupport';
 import { T0 } from '../../sync/__tests__/harness';
 import { fakeCaches, type FakeCaches } from '../../test/fakeCaches';
-import { CASE_PREFS_KEY } from '../../components/display/casePrefs';
 
 const D = 'https://images.figurecollecting.com/d';
 const FIGURES = 60;
@@ -57,8 +56,9 @@ afterEach(() => {
 
 describe('FETCH-FIRST: the Collection page fetches the pictures of the figures its case draws first', () => {
   it('then those of every other figure, in the order the case stands them', async () => {
-    // one cabinet in view, so most of the wall is out of it
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'cabinet' }));
+    // NAV-SCOPE: the wall's opening (the case's one view) frames a page of cabinets: a wall long enough that most of it is out
+    // of view (the one-cabinet view this used held 60 figures past it)
+    const FIGURES = 200;
     const r = await localRig();
     // the lists answer once the case has drawn its first view, as on a phone, where reading them takes a while
     let answer!: () => void;

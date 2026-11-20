@@ -582,9 +582,12 @@ async function fetchKept(media: Cache, address: string, signal: AbortSignal | un
  * choice made again is the newest, photoChoice.ts), so a pick never waits on older choices whose bytes are not here; `onKept`
  * told each figure as soon as all of it that was missing is kept, before the next is asked; and an address the Photos sheet
  * already loaded is kept from the worker's browsed cache (BROWSED_MEDIA_CACHE, a CORS 200 only), not downloaded again. A
- * photo's mask is kept before the photo, and a mask not kept (refused, lost, stalled) leaves its photo to the sync too, so no
- * read of the kept images answers a cut-out whose mask is not stored: the figure keeps its old picture meanwhile (GALLERY-1 and
- * GKSHOW stand). A photo whose bytes were already here is answered as before (keptImages).
+ * photo's mask is kept before the photo, and a mask not kept (refused, lost, stalled) leaves its photo to the sync too, so
+ * nothing this keeps makes a read answer a cut-out whose mask is not stored. What the reads answer meanwhile is the primary (the
+ * chosen photo not here); the case view draws the picture on screen instead until the chosen photo is kept or its run ends
+ * (useCollectionImages). Once that run ends, offline, or after a reload, the reads' rule stands: the primary while the chosen
+ * photo is not here, and a chosen photo the sync kept without its mask is answered with its mask's address though the mask is not
+ * stored. A photo whose bytes were already here is answered as before (keptImages).
  */
 export async function keepChosenPhotos(
   heads: readonly string[],

@@ -22,7 +22,7 @@ export function requireImage(name: string): string {
 }
 
 /** The production container flags: uid from the image, read-only root, tmpfs /tmp, no capabilities. */
-const RUN_FLAGS = ['--read-only', '--tmpfs', '/tmp:rw,size=16m', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges'];
+export const RUN_FLAGS = ['--read-only', '--tmpfs', '/tmp:rw,size=16m', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges'];
 
 const envFlags = (env: Record<string, string>): string[] => Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 

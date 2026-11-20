@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# fc-mobile-web: the production build on nginx-unprivileged.
+# fc-mobile-web: the production build on nginx, run as the unprivileged nginx user.
 #   docker build --secret id=node_auth_token,env=NODE_AUTH_TOKEN -t fc-mobile-web .
 # Runs as uid 101 on :8080 with a read-only root; mount a writable /tmp
 # (pid file, temp paths, and the HOLDING switch). Base images are pinned by digest; the runtime
@@ -16,17 +16,20 @@ ARG VITE_BUILD_ID=dev
 ENV VITE_BUILD_ID=${VITE_BUILD_ID}
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.30.6-alpine3.24-slim@sha256:5d8bb9437d74a600ec5dbf90c035451c724dc33eac8d3a71078f6f8612c345f6 AS web
+# The official image (nginx.org lists 1.30.7+ as fixed for CVE-2026-121810 and five more; no
+# nginx-unprivileged 1.30.7 exists yet), run as its nginx user (uid 101) with
+# deploy/nginx/nginx.conf in place of the stock one (no user directive, pid and temp paths in /tmp).
+FROM nginx:1.30.7-alpine-slim@sha256:8c950211a641ec5b23f265450517001f6bcca533666120ebe36cb4cff3d00a55 AS web
 ARG VITE_BUILD_ID=dev
 LABEL org.opencontainers.image.title="fc-mobile-web" \
-      org.opencontainers.image.description="FigureCollecting PWA: static build on nginx-unprivileged" \
+      org.opencontainers.image.description="FigureCollecting PWA: static build on nginx, run as uid 101" \
       org.opencontainers.image.source="https://github.com/FigureCollecting/fc-mobile" \
       org.opencontainers.image.version="${VITE_BUILD_ID}"
-# Alpine's security fixes that the pinned base predates (pcre2 10.49-r0 for
-# CVE-2026-103111): the base image runs as 101, apk needs root.
+# Alpine's security fixes that the pinned base predates (pcre2 10.49-r0 for CVE-2026-103111).
 USER root
 RUN apk upgrade --no-cache
 # Root-owned and read-only to the nginx user: the server can serve, not modify.
+COPY --chown=root:root --chmod=0644 deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --chown=root:root --chmod=0644 deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build --chown=root:root /app/dist /usr/share/nginx/html
 # R-1(b): HOLDING=1 serves the holding page instead of the app (deploy/nginx/40-fc-holding.sh).

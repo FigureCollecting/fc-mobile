@@ -208,8 +208,8 @@ Build switches are off unless set to exactly `true` (`src/config/features.ts`):
 ## Web image (fc-mobile-web)
 
 `Dockerfile` builds the production bundle and serves it from
-`nginxinc/nginx-unprivileged` (uid 101, port 8080, read-only root with a
-writable `/tmp`). `deploy/nginx/default.conf` is the one source of the
+the official `nginx` 1.30.7 alpine-slim image, run as its nginx user (uid 101,
+port 8080, read-only root with a writable `/tmp`). `deploy/nginx/default.conf` is the one source of the
 response headers: CSP without `unsafe-inline`/`unsafe-eval`, HSTS, nosniff,
 Referrer-Policy; `index.html`, `sw.js` and the manifest `no-cache`,
 `/assets/*` immutable; `/api` always 404; the SPA fallback for navigations only.

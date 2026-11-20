@@ -312,6 +312,12 @@ export async function keptImage(headId: string, storage: CacheStorage | undefine
   return (await keptImages([headId], storage, choices)).get(headId);
 }
 
+/** Every address a sync withheld and no later sync carried again: one read of the records, as keptImages reads them. */
+export async function withheldAddresses(storage: CacheStorage | undefined = browserCaches()): Promise<Set<string>> {
+  if (storage === undefined) return new Set();
+  return new Set((await (await storage.open(WITHHELD_CACHE)).keys()).map((k) => addressOfWithheldKey(k.url)));
+}
+
 /** The addresses among these that a sync withheld and no later sync carried again. */
 export async function withheldAmong(addresses: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<Set<string>> {
   const out = new Set<string>();
@@ -578,34 +584,55 @@ async function fetchKept(media: Cache, address: string, signal: AbortSignal | un
  * address a sync withheld are left to the sync. The sync keeps what this fetched (the chosen photo and its mask are in what it
  * keeps), so nothing is fetched twice. Not under the sync's lock: another document's sync that read the choices before this one
  * may evict what it fetched, which the sync this document runs next fetches again. Answers how many it kept.
+ * PICK-SLOW (Ross 11-19, on cellular: a pick took so long he scrolled away and came back to it): the newest choice first (a
+ * choice made again is the newest, photoChoice.ts), so a pick never waits on older choices whose bytes are not here; `onKept`
+ * told each figure as soon as all of it that was missing is kept, before the next is asked; and an address the Photos sheet
+ * already loaded is kept from the worker's browsed cache (BROWSED_MEDIA_CACHE, a CORS 200 only), not downloaded again. A
+ * photo's mask is kept before the photo, and a mask not kept (refused, lost, stalled) leaves its photo to the sync too, so
+ * nothing this keeps makes a read answer a cut-out whose mask is not stored. What the reads answer meanwhile is the primary (the
+ * chosen photo not here); the case view draws the picture on screen instead (never one a sync recorded withheld, nor its
+ * withheld mask) until the chosen photo is kept or its run ends
+ * (useCollectionImages). Once that run ends, offline, or after a reload, the reads' rule stands: the primary while the chosen
+ * photo is not here, and a chosen photo the sync kept without its mask is answered with its mask's address though the mask is not
+ * stored. A photo whose bytes were already here is answered as before (keptImages).
  */
 export async function keepChosenPhotos(
   heads: readonly string[],
   choices: PhotoChoices,
-  options: { storage?: CacheStorage | undefined; signal?: AbortSignal } = {},
+  options: { storage?: CacheStorage | undefined; signal?: AbortSignal; onKept?: (head: string) => void | Promise<void> } = {},
 ): Promise<number> {
   const storage = 'storage' in options ? options.storage : browserCaches();
-  const chosen = heads.filter((h) => choices.has(h));
+  const asked = new Set(heads);
+  const chosen = [...choices.keys()].filter((h) => asked.has(h)).reverse();
   if (storage === undefined || chosen.length === 0) return 0;
   const records = await storage.open(IMAGE_LISTS_CACHE);
   const media = await storage.open(OWNED_MEDIA_CACHE);
+  const browsed = await storage.open(BROWSED_MEDIA_CACHE);
   const tomb = await storage.open(WITHHELD_CACHE);
   let kept = 0;
   for (const head of chosen) {
     const image = ((await readList(records, head)) ?? []).find((i) => i.url === choices.get(head));
     // a photo a sync withheld is not shown: neither it nor its mask is fetched
     if (image === undefined || (await tomb.match(withheldKey(image.url))) !== undefined) continue;
-    for (const address of addressesOf([image])) {
-      if (options.signal?.aborted === true) return kept;
+    let keptHere = 0;
+    // the mask first: keptImages answers the photo once its bytes are here, and must not while its mask is still to come
+    for (const address of addressesOf([image]).reverse()) {
+      if (options.signal?.aborted === true) return kept + keptHere;
       // here already, or a withheld mask (the photo is shown without it)
       if ((await media.match(address, IGNORE_VARY)) !== undefined || (await tomb.match(withheldKey(address))) !== undefined) continue;
       try {
-        await fetchKept(media, address, options.signal);
-        kept += 1;
+        const loaded = await browsed.match(address, IGNORE_VARY);
+        if (loaded?.ok === true) await media.put(new Request(address, { mode: 'cors', credentials: 'omit' }), loaded);
+        else await fetchKept(media, address, options.signal);
+        keptHere += 1;
       } catch {
-        // not kept now: the sync fetches it
+        // not kept now: the sync fetches it, and a mask's photo with it (refused, lost or stalled), so no cut-out is answered
+        // before its mask is stored
+        if (address === image.maskUrl) break;
       }
     }
+    kept += keptHere;
+    if (keptHere > 0) await options.onKept?.(head);
   }
   return kept;
 }

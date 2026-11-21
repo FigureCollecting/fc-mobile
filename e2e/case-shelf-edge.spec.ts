@@ -1,15 +1,15 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { FOLD8_DPR } from './caseViewports';
 import { decodePng } from './paintCheck';
 import { touchDown } from './touch';
+import { goToFirstFigure } from './goTo';
 import { project, type Camera } from '../src/components/display/caseCamera';
 import { IKEA_DETOLF, IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 
 /**
- * CASE-FB3a item 2 (Ross 10-17: "the 2nd to lowest shelf vanished at exactly horizontal but reappears otherwise"). The
- * shelf view (level, pitch 0), the camera lifted to within 3 microns of a glass shelf's top and 40 mm either side of it:
+ * CASE-FB3a item 2 (Ross 10-17: "the 2nd to lowest shelf vanished at exactly horizontal but reappears otherwise"). Go
+ * to's shelf framing (level, pitch 0; NAV-SCOPE: the one-shelf view's camera), the camera lifted to within 3 microns of a glass shelf's top and 40 mm either side of it:
  * the shelf's front edge reads as a line at every height, the way the Detolf's does. On 8c565638 the KLINGSBO's glass
  * shelves drew their 17 mm front edge in dark steel, 4 to 11 against the room behind it at the shelf's own height, 45
  * and more 40 mm off it (their lit rim and fill are edge-on there, so the shelf was gone); the Detolf's glass edge read
@@ -38,7 +38,7 @@ async function liftTo(page: Page, target: number): Promise<number> {
   for (let i = 0; i < 8; i++) {
     const c = await cam(page);
     if (Math.abs(target - c.y) < 0.003) return c.y;
-    // pitch 0 in the shelf view: the depth to the front plane is the camera's z
+    // pitch 0 at the shelf framing: the depth to the front plane is the camera's z
     const dy = ((target - c.y) * c.focalPx) / c.z;
     const finger = await touchDown(page, f.x + f.width / 2, f.y + f.height * 0.4);
     await finger.to(f.x + f.width / 2, f.y + f.height * 0.4 + 30, 3, 16);
@@ -75,11 +75,14 @@ for (const profile of [IKEA_KLINGSBO, IKEA_DETOLF]) {
       localStorage.setItem('onboarding_complete', '1');
       localStorage.setItem('fc-fixture-mode', 'on');
       localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-    }, legacyPrefs({ view: 'shelf', pattern: profile.id }));
+    }, { pattern: profile.id });
     await page.setViewportSize({ width: 657, height: 870 });
     await page.goto('/?layout=case&fx=1&fxonly=spike');
     await page.waitForSelector('.cab', { state: 'attached' });
     await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
+    await settle(page, 800);
+    // NAV-SCOPE: the level camera a hand from the shelves, where the one-shelf view stood it, is Go to's
+    await goToFirstFigure(page);
     await settle(page, 800);
     const frame = (await page.locator('.cabinet-scene__frame').boundingBox())!;
     const wall = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-wall'))!) as number[][];

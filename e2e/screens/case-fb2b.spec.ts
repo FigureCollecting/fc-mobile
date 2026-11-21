@@ -2,21 +2,23 @@
 // copies are taller than a KLINGSBO shelf's 256 mm): user A's 1,200 owned (IMG-SHOW-1's seed: 325 at 1/4 = 400 mm and
 // 204 at 1/6 = 267 mm, too tall for a stock shelf) with their images, at the Fold8's cover and open panels:
 //   (a) every cabinet before the wall's last has figures on its shelves (no empty glass), by what the scene says each
-//       holds (data-held, drawn or not); the first cabinets, stepped through in the cabinet view, stand their figures
+//       holds (data-held, drawn or not); the first cabinets, walked through on the wall, stand their figures
 //       too tall for a stock shelf inside, in tiers made by taking glass shelves out, which each names (data-removed);
 //   (b) the sign-off shots of a cabinet with two glass shelves out holding 1/6 and 1/4 figures (the first cabinet), and
 //       (open panel, while paging) of one with one shelf out holding 1/6 and 1/4 figures;
-//   (c) at the open panel, the wall view paged to its end: every page draws figures on the shelves of each cabinet it
-//       shows whole, as data-held says, and Next stops at the last page.
+//   (c) at the open panel, the wall walked to its end a frame at a time: every frame draws figures on the shelves of each
+//       cabinet it shows whole, as data-held says, and the walk ends at the last cabinet.
+// NAV-SCOPE (Ross 11-18): the one-cabinet view and the step keys are gone; the walk is a finger's.
 // On 086f61c5 (develop): 236 cabinets before the last stood with nothing on their shelves (the 1/4 and 1/6 figures each
 // on a top, a cabinet of empty glass under them), no figure too tall for a stock shelf stood inside, and no cabinet
 // took a shelf out (no data-removed).
 import { expect, test } from '../fixtures';
-import { legacyPrefs } from '../legacyCamera';
 import type { Page, TestInfo } from '@playwright/test';
 import { SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { heldImages, openOwned, ownedStack } from './heldCase';
+import { touchSwipe } from '../touch';
+import { DRAG_WALK_GAIN_X } from '../../src/components/display/casePose';
 
 /** A stock KLINGSBO's tallest compartment and its top (mm). */
 const SHELF_MAX_MM = 259;
@@ -32,10 +34,10 @@ test.beforeAll(async () => {
 });
 
 test.beforeEach(async ({ context }) => {
-  await context.addInitScript((prefs) => {
+  // NAV-SCOPE (Ross 11-18): the case has one view, the wall's; no view is stored
+  await context.addInitScript(() => {
     localStorage.setItem('onboarding_complete', '1');
-    localStorage.setItem('fc-case-prefs', JSON.stringify(prefs));
-  }, legacyPrefs({ view: 'cabinet' }));
+  });
   await owned.stack.edge.clearFaults();
   await owned.stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -52,7 +54,7 @@ interface CabinetSeen {
   tallOnTop: number[];
 }
 
-/** The focus cabinet as the cabinet view draws it. */
+/** The focus cabinet (the one nearest the frame's centre) as the wall draws it. */
 async function seen(page: Page): Promise<CabinetSeen> {
   return page.evaluate(
     ([shelfMax, topMm]) => {
@@ -113,13 +115,30 @@ async function held(page: Page): Promise<[number, number, number[]][]> {
   return JSON.parse(attr!) as [number, number, number[]][];
 }
 
-/** Step the cabinet view's focus to cabinet `to` (from where it stands). */
+/**
+ * One finger's swipe that walks `share` of the frame along the wall (right for dir 1). The Free camera walks
+ * DRAG_WALK_GAIN_X the finger's travel, so the finger crosses share / DRAG_WALK_GAIN_X of the frame.
+ */
+async function walkBy(page: Page, share: number, dir: 1 | -1): Promise<void> {
+  const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+  const s = share / DRAG_WALK_GAIN_X;
+  await touchSwipe(page, f.x + f.width * (0.5 + (dir * s) / 2), f.y + f.height * 0.5, -dir * f.width * s, 0, 10, 16);
+  await page.waitForTimeout(250);
+}
+
+/**
+ * Walk the focus (the cabinet nearest the frame's centre) to cabinet `to`. NAV-SCOPE: the one-cabinet view and its step
+ * keys are gone, so the walk is the finger's, in swipes of under a cabinet so none is skipped.
+ */
 async function stepTo(page: Page, to: number): Promise<void> {
   const scene = page.locator('.cabinet-scene');
-  for (let i = Number(await scene.getAttribute('data-focus')); i < to; i++) {
-    await page.getByRole('button', { name: 'Next cabinet' }).click();
-    await expect(scene).toHaveAttribute('data-focus', String(i + 1));
+  const share = 0.6 / Math.max(1, Number(await scene.getAttribute('data-drawn-cabinets')));
+  for (let k = 0; k < 600; k++) {
+    const at = Number(await scene.getAttribute('data-focus'));
+    if (at === to) return;
+    await walkBy(page, share, at < to ? 1 : -1);
   }
+  await expect(scene, `walked to cabinet ${to}`).toHaveAttribute('data-focus', String(to));
 }
 
 test('(a) every cabinet before the last has figures on its shelves, the tall ones inside, in tiers; (b) a cabinet with shelves out holding 1/6 and 1/4 figures', async ({ context, page }, testInfo) => {
@@ -128,7 +147,6 @@ test('(a) every cabinet before the last has figures on its shelves, the tall one
   await heldImages(context, page, owned.heads);
   await openOwned(page, owned);
   const scene = page.locator('.cabinet-scene');
-  await expect(scene).toHaveAttribute('data-view', 'cabinet');
   await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
   await settled(page);
   await shot(page, testInfo, 'fb2b-first-cabinet');
@@ -168,18 +186,16 @@ test('(a) every cabinet before the last has figures on its shelves, the tall one
   soft(pictured, 'a cabinet with shelves out holding a 1/6 and a 1/4').toBe(true);
 });
 
-test('(c) the open panel pages the wall view to its end, each page drawing figures on the shelves of the cabinets it shows whole; (b) one with one shelf out', async ({ context, page }, testInfo) => {
+// NAV-SCOPE: the wall's Next is gone; a swipe of most of the frame is the page now, walked until the wall ends
+test('(c) the open panel walks the wall to its end a frame at a time, each frame drawing figures on the shelves of the cabinets it shows whole; (b) one with one shelf out', async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('open'), 'the open panel shows the most cabinets a page: the fewest pages');
   test.setTimeout(300_000);
-  await context.addInitScript((prefs) => localStorage.setItem('fc-case-prefs', JSON.stringify(prefs)), legacyPrefs({ view: 'wall' }));
   await heldImages(context, page, owned.heads);
   await openOwned(page, owned);
   const scene = page.locator('.cabinet-scene');
-  await expect(scene).toHaveAttribute('data-view', 'wall');
   await expect(page.locator('button.cab-figure').first()).toBeVisible({ timeout: 30_000 });
   await settled(page);
   const wall = await held(page);
-  const next = page.getByRole('button', { name: 'Next cabinet' });
   const faults: string[] = [];
   let pages = 0;
   let oneShot = false;
@@ -213,16 +229,17 @@ test('(c) the open panel pages the wall view to its end, each page drawing figur
     for (let cab = Math.min(...seenCabs); cab <= Math.max(...seenCabs); cab++) {
       if (cab < wall.length - 1 && !seenCabs.has(cab)) faults.push(`page ${pages}: cabinet ${cab} draws nothing inside`);
     }
-    if (await next.isDisabled()) break;
-    const focus = await scene.getAttribute('data-focus');
-    await next.click();
-    await expect(scene).not.toHaveAttribute('data-focus', focus!);
+    if (Number(await scene.getAttribute('data-focus')) === wall.length - 1) break;
+    const x = await scene.getAttribute('data-camera-x');
+    await walkBy(page, 0.85, 1);
+    // past the wall's end the walk stops moving the camera
+    if ((await scene.getAttribute('data-camera-x')) === x) break;
   }
   testInfo.annotations.push({ type: 'paged', description: JSON.stringify({ pages: pages + 1, cabinets: wall.length }) });
   expect(JSON.parse((await scene.getAttribute('data-wall'))!).length, 'the wall paged is the one data-held was read from').toBe(wall.length);
   await shot(page, testInfo, 'fb2b-last-page');
   expect(faults).toEqual([]);
   expect(oneShot, 'a cabinet with one shelf out holding a 1/6 and a 1/4').toBe(true);
-  await expect(next).toBeDisabled();
+  await expect(scene, 'walked to the wall\'s last cabinet').toHaveAttribute('data-focus', String(wall.length - 1));
   expect(pages + 1, 'pages to the wall end').toBeLessThan(wall.length);
 });

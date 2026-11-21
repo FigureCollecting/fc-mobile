@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { pinLegacyCamera } from './legacyCamera';
 import { SHOT_VIEWPORTS, type ShotViewport } from './caseViewports';
 import { atRest } from './sheetRest';
 import { signoffShot } from './signoffShots';
@@ -44,7 +43,6 @@ async function openCase(page: Page) {
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
-  await pinLegacyCamera(page);
   // the photos are on the public image address; answered here, never from the network
   await page.route(/^https:\/\/images\.figurecollecting\.com\//, (route) =>
     route.fulfill({

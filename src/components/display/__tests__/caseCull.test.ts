@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 import { boxCorners, lensFocalPx, project, type Camera, type Vec3 } from '../caseCamera';
-import { cabinetBox, frameCase, panFraming, wallPages, type FramingInput } from '../caseFraming';
+import { cabinetBox, frameCase, wallPages, type FramingInput } from '../caseFraming';
 import { wallLayout } from '../packCabinets';
 import { sideOverhangMm } from '../cabinetProfile';
 import {
@@ -14,7 +14,6 @@ import {
   MAX_DRAWN_CABINETS,
   MAX_DRAWN_FIGURES,
   NEAR_MM,
-  RECULL_SHARE,
   byFrameCentre,
   cullRect,
   figureCap,
@@ -23,7 +22,6 @@ import {
   hiddenUnder,
   opaqueBoards,
   nearestCabinets,
-  stickyView,
   texelScale,
   trimFace,
   type CullView,
@@ -247,7 +245,7 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     });
   }
 
-  it('every cabinet whose front the frame shows comes before one it sees only through the glass at its edge, walked or slid', () => {
+  it('every cabinet whose front the frame shows comes before one it sees only through the glass at its edge, wherever along the wall the camera walks', () => {
     let checked = 0;
     for (const [frame, wall] of [
       [COVER, WALL],
@@ -256,8 +254,9 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
     ] as const) {
       const f = frameCase({ frame, wall, headroomMm: wall.cabinets.map(() => 300), view: 'wall', focus: 12, shelf: 0 });
       for (let k = -12; k <= 12; k++) {
-        const r = panFraming(f, (k / 12) * (f.slideMaxPx ?? 0) * 1.5);
-        const view = viewOf(r.framing.camera, r.panPx);
+        // up to two frame widths of the fronts either way of where the page opens
+        const walkedMm = ((k / 12) * 2 * f.camera.frame.width * (f.camera.z - f.look[2])) / f.camera.focalPx;
+        const view = viewOf({ ...f.camera, x: f.camera.x + walkedMm });
         // each cabinet's front, feet to top, on the front plane, where it draws inside the frame itself (CASE-FB1: the
         // drawn frame, cropped to five fronts where the full-height camera would show more)
         const rect = { x0: 0, x1: f.camera.frame.width, y0: 0, y1: f.camera.frame.height };
@@ -267,7 +266,7 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
         });
         // CF1 (a): the framing draws its own cap of cabinets (more on a wide panel)
         expect(fronts.length).toBeLessThanOrEqual(f.drawCap);
-        expect(nearestCabinets(view, wall, [], f.drawCap), `${frame.width} slid ${r.panPx}`).toEqual(expect.arrayContaining(fronts));
+        expect(nearestCabinets(view, wall, [], f.drawCap), `${frame.width} walked ${Math.round(walkedMm)} mm`).toEqual(expect.arrayContaining(fronts));
         checked++;
       }
     }
@@ -302,42 +301,6 @@ describe(`nearestCabinets: at most ${MAX_DRAWN_CABINETS} drawn, nearest the fram
   });
 });
 
-describe('stickyView: re-cull on a camera change, not on every small move', () => {
-  const camera = framing().camera;
-  const view = viewOf(camera);
-
-  it('the first view is taken as it is', () => {
-    expect(stickyView(null, view)).toBe(view);
-  });
-
-  it(`keeps the culled view while the picture has moved less than ${RECULL_SHARE * 100} % of the frame width, by a pan or a walk`, () => {
-    expect(RECULL_SHARE).toBe(0.25);
-    const smallPan = viewOf(camera, -0.2 * camera.frame.width);
-    expect(stickyView(view, smallPan)).toBe(view);
-    const perPx = (camera.z - 0) / camera.focalPx;
-    const smallWalk = viewOf({ ...camera, x: camera.x + 0.2 * camera.frame.width * perPx * 0.9 });
-    expect(stickyView(view, smallWalk)).toBe(view);
-  });
-
-  it('takes the new view once the picture moved farther, or anything but the camera x and the pan changed', () => {
-    const bigPan = viewOf(camera, -0.3 * camera.frame.width);
-    expect(stickyView(view, bigPan)).toBe(bigPan);
-    const perPx = (camera.z - 0) / camera.focalPx;
-    const bigWalk = viewOf({ ...camera, x: camera.x + 0.4 * camera.frame.width * perPx });
-    expect(stickyView(view, bigWalk)).toBe(bigWalk);
-    for (const patch of [{ z: camera.z + 1 }, { y: camera.y + 1 }, { pitch: camera.pitch + 0.01 }, { focalPx: camera.focalPx + 1 }, { frame: OPEN }]) {
-      const next = viewOf({ ...camera, ...patch });
-      expect(stickyView(view, next)).toBe(next);
-    }
-  });
-
-  it('takes the new view when the old one looked at nothing on the cabinets front', () => {
-    const away = viewOf({ ...camera, pitch: -Math.PI / 2 });
-    const next = viewOf({ ...away.camera, x: away.camera.x + 1 });
-    expect(stickyView(away, next)).toBe(next);
-  });
-});
-
 describe('texelScale: faces drawn at the px per mm the screen shows them, never coarser', () => {
   const span = { y0: 0, y1: 2100, z0: -400, z1: 50 };
   const nearest = (camera: Camera) => {
@@ -350,7 +313,6 @@ describe('texelScale: faces drawn at the px per mm the screen shows them, never 
   it.each([
     ['wall, cover', framing(COVER)],
     ['wall, open', framing(OPEN)],
-    ['cabinet, cover', framing(COVER, 10, 'cabinet')],
     ['shelf, open', framing(OPEN, 10, 'shelf')],
   ])('%s: at least what the nearest point shows, under 1.19 times it, at most 1 px per mm', (_, f) => {
     const s = texelScale(f.camera, span);

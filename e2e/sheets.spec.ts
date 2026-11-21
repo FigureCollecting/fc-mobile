@@ -1,6 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { atRest } from './sheetRest';
 import { touchDown, touchSwipe, touchTap } from './touch';
@@ -27,7 +26,6 @@ async function openCase(page: Page, size: { width: number; height: number }, que
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
-  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
@@ -318,23 +316,21 @@ for (const size of FOLD8) {
     await expect(card.locator('.filter-sheet2__count')).toHaveText(`${n} of ${n}`);
   });
 
-  test(`Header: two mode buttons at fixed places, the active one opens its views with the current ticked; no Select: ${size.name}`, async ({ page }) => {
+  // NAV-SCOPE (Ross 11-18): the case has one view, so the active Case button opens no menu; the Tiles one still does
+  test(`Header: two mode buttons at fixed places, the active Tiles one opens its views with the current ticked, Case none; no Select: ${size.name}`, async ({ page }) => {
     await openCase(page, size);
     await expect(page.getByRole('button', { name: 'Select' })).toHaveCount(0);
-    const caseBtn = page.getByRole('button', { name: /^Case,/ });
+    const caseBtn = page.getByRole('button', { name: 'Case', exact: true });
     const tilesBtn = page.getByRole('button', { name: /^Tiles,/ });
     const labelsBtn = page.getByRole('button', { name: /^Labels:/ });
     const places = async () => JSON.stringify(await Promise.all([caseBtn, tilesBtn, labelsBtn].map((b) => b.boundingBox())));
     const at = await places();
+    await expect(caseBtn).not.toHaveAttribute('aria-haspopup', /./);
+    const camera = await page.locator('.cabinet-scene').getAttribute('data-camera');
     await caseBtn.tap();
-    const menu = page.getByRole('menu', { name: 'Case views' });
-    await expect(menu).toBeVisible();
-    await expect(menu.getByRole('menuitemradio', { name: 'Whole cabinets' })).toHaveAttribute('aria-checked', 'true');
-    await menu.getByRole('menuitemradio', { name: 'One shelf' }).tap();
-    await expect(menu).toHaveCount(0);
-    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', 'shelf');
-    await expect(caseBtn).toHaveAttribute('aria-label', 'Case, One shelf');
-    expect(await places(), 'no button moved or grew picking a view').toBe(at);
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-camera', camera!);
+    expect(await places(), 'no button moved or grew tapping the active Case').toBe(at);
     await tilesBtn.tap();
     await expect(page.locator('.jrows')).toBeVisible();
     expect(await places(), 'no button moved or grew switching to the tiles').toBe(at);
@@ -534,7 +530,6 @@ test('a holding the address names twice is one chip; one it does not know is non
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
-  await pinLegacyCamera(page);
   await page.setViewportSize(FOLD8[0]);
   await page.goto('/?layout=case&status=owned|owned|bogus');
   await page.waitForSelector('button.cab-figure');
@@ -549,7 +544,6 @@ async function openCaseFromSettings(page: Page, size: { width: number; height: n
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
-  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto('/settings');
   await page.waitForLoadState('networkidle');

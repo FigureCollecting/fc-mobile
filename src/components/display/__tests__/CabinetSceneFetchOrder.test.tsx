@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
 
 // FETCH-FIRST (10-31: on a slow link, the case arranged by series, its first figure in view stood as its plate for a minute):
 // the case tells its owner the figures it draws now, then every other it stands, in the order it stands them, so the image
@@ -16,8 +15,7 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-// NAV-2A0: written against the old path's arrows (Free camera off)
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 const drawn = (host: HTMLElement) => Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => b.dataset.figureId!);
 /** The figures' ids as the case stands them, in reading order (cabinet by cabinet, its top first). */
 const standing = (host: HTMLElement) => (JSON.parse(host.dataset.order!) as string[][]).flat();
@@ -41,7 +39,7 @@ const place = (b: HTMLElement) => {
 describe('CabinetScene: the figures in view first, then the rest as the case stands them (FETCH-FIRST)', () => {
   // PHOTOS1: the figures nearest the middle of the view first (byFrameCentre), so a wall fills from where the eye is
   it('tells the figures it draws, nearest the middle of the view first, then every other figure it stands, in the order it stands them', () => {
-    const { host, told } = scene(getFixtureFigures(40), { view: 'cabinet' });
+    const { host, told } = scene(getFixtureFigures(40));
     const shown = drawn(host);
     expect(shown.length).toBeGreaterThan(0);
     expect(shown.length).toBeLessThan(standing(host).length);
@@ -53,14 +51,21 @@ describe('CabinetScene: the figures in view first, then the rest as the case sta
     const first = at.get(told()[0]!)!;
     const shelf = [...at.values()].filter((p) => p.shelf === first.shelf).map((p) => p.x);
     expect(shelf.length).toBeGreaterThan(2);
-    expect(first.x).toBeGreaterThan(Math.min(...shelf));
+    // NAV-SCOPE: the wall's framing (no one-cabinet view) centres on the wall, where the nearest figure may stand at its
+    // shelf's left end; it is still not where reading order starts (the first cabinet's top left)
+    expect(told()[0]).not.toBe(shown[0]);
     expect(first.x).toBeLessThan(Math.max(...shelf));
   });
 
-  it('a step to the next cabinet tells the figures it draws there first', () => {
-    const { host, told } = scene(getFixtureFigures(40), { view: 'cabinet' });
+  it('a walk along the wall tells the figures it draws there first', () => {
+    const { host, told } = scene(getFixtureFigures(40));
     const before = drawn(host);
-    fireEvent.click(screen.getByRole('button', { name: 'Next cabinet' }));
+    // NAV-SCOPE: no step keys; one finger walks the eye along the wall (a drag left walks it right)
+    for (let i = 0; i < 3; i++) {
+      fireEvent.pointerDown(host, { pointerId: 1, clientX: 340, clientY: 240, button: 0 });
+      for (const x of [300, 200, 100, 20]) fireEvent.pointerMove(host, { pointerId: 1, clientX: x, clientY: 240 });
+      fireEvent.pointerUp(host, { pointerId: 1, clientX: 20, clientY: 240 });
+    }
     const after = drawn(host);
     expect(after).not.toEqual(before);
     expect([...told().slice(0, after.length)].sort()).toEqual([...after].sort());
@@ -68,7 +73,7 @@ describe('CabinetScene: the figures in view first, then the rest as the case sta
   });
 
   it('tells nothing again while what it draws and what it stands are the same', () => {
-    const { onViewOrder, again } = scene(getFixtureFigures(40), { view: 'cabinet' });
+    const { onViewOrder, again } = scene(getFixtureFigures(40));
     const calls = onViewOrder.mock.calls.length;
     again();
     again();

@@ -12,18 +12,10 @@ import { APP_VERSION } from '../config/version';
 import type { CacheStats } from '../storage/cacheManager';
 import { readStorageStatus, type StorageStatus } from '../pwa/storage';
 import { checkForUpdate, type UpdateCheck } from '../pwa/updates';
-import { hapticLight, hapticMedium, hapticHeavy } from '../utils/haptics';
+import { hapticLight, hapticMedium } from '../utils/haptics';
 import { Style } from '../styles/Style';
 import { DIAG_IDS_KEY, DIAG_IDS_TEXT, diagIdsOn, diagIdsSaved, setDiagIds } from '../auth/diagIds';
 import { localSession } from '../local/session';
-
-const SYNC_INTERVALS = [
-  { value: 'manual', label: 'Manual' },
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-] as const;
-
-type SyncInterval = (typeof SYNC_INTERVALS)[number]['value'];
 
 /** Back arrow for header navigation */
 function BackButton({ onClick }: { onClick: () => void }) {
@@ -150,18 +142,10 @@ export function Settings() {
   const [cacheClearing, setCacheClearing] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
 
-  // Notifications
+  // Notifications: only the legacy screens' push switch and its blocked hint, so the section shows only with one of them
   const push = usePushNotifications();
-  const [priceAlerts, setPriceAlerts] = useState(() => localStorage.getItem('fc-price-alerts') !== 'false');
-  const [syncNotifs, setSyncNotifs] = useState(() => localStorage.getItem('fc-sync-notifs') !== 'false');
-
-  // Sync preferences
-  const [syncOwned, setSyncOwned] = useState(() => localStorage.getItem('fc-sync-owned') !== 'false');
-  const [syncOrdered, setSyncOrdered] = useState(() => localStorage.getItem('fc-sync-ordered') !== 'false');
-  const [syncWished, setSyncWished] = useState(() => localStorage.getItem('fc-sync-wished') !== 'false');
-  const [syncInterval, setSyncInterval] = useState<SyncInterval>(
-    () => (localStorage.getItem('fc-sync-interval') as SyncInterval) || 'manual',
-  );
+  const showPushRow = LEGACY_SCREENS_ENABLED && push.isSupported;
+  const showPushBlocked = LEGACY_SCREENS_ENABLED && push.permission === 'denied';
 
   // Privacy: the Diagnostic ids choice, read from and written through src/auth/diagIds.ts
   const [diagIds, setDiagIdsShown] = useState(diagIdsOn);
@@ -176,9 +160,6 @@ export function Settings() {
     return () => window.removeEventListener('storage', storage);
   }, []);
 
-  // Delete account
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-
   // Load cache stats
   useEffect(() => {
     getCacheStats().then(setCacheStats).catch(() => {});
@@ -188,40 +169,6 @@ export function Settings() {
   const [storage, setStorage] = useState<StorageStatus | null>(null);
   useEffect(() => {
     readStorageStatus().then(setStorage).catch(() => {});
-  }, []);
-
-  // Persist notification preferences
-  const handlePriceAlerts = useCallback((v: boolean) => {
-    setPriceAlerts(v);
-    localStorage.setItem('fc-price-alerts', String(v));
-  }, []);
-
-  const handleSyncNotifs = useCallback((v: boolean) => {
-    setSyncNotifs(v);
-    localStorage.setItem('fc-sync-notifs', String(v));
-  }, []);
-
-  // Persist sync preferences
-  const handleSyncOwned = useCallback((v: boolean) => {
-    setSyncOwned(v);
-    localStorage.setItem('fc-sync-owned', String(v));
-  }, []);
-
-  const handleSyncOrdered = useCallback((v: boolean) => {
-    setSyncOrdered(v);
-    localStorage.setItem('fc-sync-ordered', String(v));
-  }, []);
-
-  const handleSyncWished = useCallback((v: boolean) => {
-    setSyncWished(v);
-    localStorage.setItem('fc-sync-wished', String(v));
-  }, []);
-
-  const handleSyncInterval = useCallback((e: Event) => {
-    const val = (e.target as HTMLSelectElement).value as SyncInterval;
-    hapticLight();
-    setSyncInterval(val);
-    localStorage.setItem('fc-sync-interval', val);
   }, []);
 
   // Shows what now applies to the next request, and whether this browser kept the choice. Off also
@@ -252,13 +199,6 @@ export function Settings() {
       setClearConfirmOpen(false);
     }
   }, [queryClient]);
-
-  // Delete account (placeholder)
-  const handleDeleteAccount = useCallback(() => {
-    hapticHeavy();
-    // TODO: integrate with backend DELETE /auth/account
-    setDeleteConfirmOpen(false);
-  }, []);
 
   const formatBytes = (bytes: number) => {
     if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -332,68 +272,27 @@ export function Settings() {
           </button>
         </section>
 
-        {/* ── Notifications ── */}
-        <section class="settings__section">
-          <h3 class="settings__section-title">Notifications</h3>
+        {/* ── Notifications: only with the legacy screens' push switch or its blocked hint ── */}
+        {(showPushRow || showPushBlocked) && (
+          <section class="settings__section">
+            <h3 class="settings__section-title">Notifications</h3>
 
-          {LEGACY_SCREENS_ENABLED && push.isSupported && (
-            <div class="settings__row">
-              <span class="settings__label">Push Notifications</span>
-              <Toggle
-                checked={push.isSubscribed}
-                onChange={(v) => v ? push.requestPermission() : push.unsubscribe()}
-                disabled={push.loading || push.permission === 'denied'}
-              />
-            </div>
-          )}
+            {showPushRow && (
+              <div class="settings__row">
+                <span class="settings__label">Push Notifications</span>
+                <Toggle
+                  checked={push.isSubscribed}
+                  onChange={(v) => v ? push.requestPermission() : push.unsubscribe()}
+                  disabled={push.loading || push.permission === 'denied'}
+                />
+              </div>
+            )}
 
-          {LEGACY_SCREENS_ENABLED && push.permission === 'denied' && (
-            <p class="settings__hint">Push notifications are blocked in browser settings.</p>
-          )}
-
-          <div class="settings__row">
-            <span class="settings__label">Price Alerts</span>
-            <Toggle checked={priceAlerts} onChange={handlePriceAlerts} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Complete</span>
-            <Toggle checked={syncNotifs} onChange={handleSyncNotifs} />
-          </div>
-        </section>
-
-        {/* ── Sync ── */}
-        <section class="settings__section">
-          <h3 class="settings__section-title">Sync</h3>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Owned</span>
-            <Toggle checked={syncOwned} onChange={handleSyncOwned} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Ordered</span>
-            <Toggle checked={syncOrdered} onChange={handleSyncOrdered} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Sync Wished</span>
-            <Toggle checked={syncWished} onChange={handleSyncWished} />
-          </div>
-
-          <div class="settings__row">
-            <span class="settings__label">Auto-Sync Interval</span>
-            <select
-              class="settings__select"
-              value={syncInterval}
-              onChange={handleSyncInterval}
-            >
-              {SYNC_INTERVALS.map((i) => (
-                <option key={i.value} value={i.value}>{i.label}</option>
-              ))}
-            </select>
-          </div>
-        </section>
+            {showPushBlocked && (
+              <p class="settings__hint">Push notifications are blocked in browser settings.</p>
+            )}
+          </section>
+        )}
 
         {/* ── Privacy: the link in every build (P1); the switch only in one with diagnostic ids (VITE_DIAG_IDS=true) ── */}
         <section class="settings__section">
@@ -479,17 +378,6 @@ export function Settings() {
               <polyline points="9 18 15 12 9 6" />
             </svg>
           </button>
-
-          <button
-            class="settings__row settings__row--action"
-            type="button"
-            onClick={() => { hapticHeavy(); setDeleteConfirmOpen(true); }}
-          >
-            <span class="settings__label settings__label--danger">Delete Account</span>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
         </section>
       </div>
 
@@ -512,35 +400,6 @@ export function Settings() {
             class="settings__confirm-btn settings__confirm-btn--cancel"
             type="button"
             onClick={() => setClearConfirmOpen(false)}
-          >
-            Cancel
-          </button>
-        </div>
-      </BottomSheet>
-
-      {/* Delete account confirmation */}
-      <BottomSheet open={deleteConfirmOpen} onClose={() => setDeleteConfirmOpen(false)} snapPoint="half">
-        <div class="settings__confirm">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent-danger)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <h3 class="settings__confirm-title">Delete Account?</h3>
-          <p class="settings__confirm-text">
-            This action is permanent and cannot be undone. All your data, collection, and preferences will be permanently deleted.
-          </p>
-          <button
-            class="settings__confirm-btn settings__confirm-btn--danger"
-            type="button"
-            onClick={handleDeleteAccount}
-          >
-            Delete My Account
-          </button>
-          <button
-            class="settings__confirm-btn settings__confirm-btn--cancel"
-            type="button"
-            onClick={() => setDeleteConfirmOpen(false)}
           >
             Cancel
           </button>
@@ -637,10 +496,6 @@ const styles = `
     color: var(--accent-warning);
   }
 
-  .settings__label--danger {
-    color: var(--accent-danger);
-  }
-
   .settings__label--muted {
     color: var(--text-tertiary);
     font-size: var(--font-xs);
@@ -659,17 +514,6 @@ const styles = `
 
   .settings__hint:empty {
     padding: 0;
-  }
-
-  .settings__select {
-    min-height: 36px;
-    padding: var(--space-1) var(--space-3);
-    font-size: var(--font-sm);
-    border-radius: var(--radius-sm);
-    background: var(--surface-secondary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-default);
-    min-width: 100px;
   }
 
   /* Toggle */
@@ -789,15 +633,6 @@ const styles = `
 
   .settings__confirm-btn--warning:disabled {
     opacity: 0.6;
-  }
-
-  .settings__confirm-btn--danger {
-    background: var(--accent-danger);
-    color: white;
-  }
-
-  .settings__confirm-btn--danger:active {
-    background: #dc2626;
   }
 
   .settings__confirm-btn--cancel {

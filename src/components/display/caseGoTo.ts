@@ -1,8 +1,9 @@
 /**
  * CARD-VIEW-1 part 3 (Ross 10-25: "a go to button on card view so if viewing one from tap or flipping through them, it takes
- * you to that figure"): the ONE place that says where the case goes for a figure. Today that is the one-shelf view (TOP1,
+ * you to that figure"): the ONE place that says where the case goes for a figure. Today that is the shelf framing (TOP1,
  * frameShelf) of the shelf the figure stands on, in its cabinet, the camera slid toward the figure as far as that framing
  * allows; the Free camera slice replaces this body with its animated go-to, and the cards that call it stay as they are.
+ * NAV-SCOPE (Ross 11-18): the case has one view; the scene always stands the eye at this framing (no shelf view to keep).
  * Pure maths: no DOM.
  */
 import { frameMargins, type Frame } from './caseCamera';
@@ -29,7 +30,7 @@ export interface GoToFraming {
   readonly framing: Framing;
 }
 
-/** A slide shorter than this (mm along the wall) is none: the shelf's own framing, with nothing for Reset view to undo. */
+/** A slide shorter than this (mm along the wall) is none: the shelf's own framing. */
 const NO_SLIDE_MM = 0.5;
 
 /** Where the figure stands: its cabinet (wall index), its surface's step in the shelf view, its middle along the wall; null when on no shelf. */
@@ -51,7 +52,7 @@ function placeOf(figureId: string, scene: GoToScene): { focus: number; level: nu
 }
 
 /**
- * Where the case goes for `figureId`: the one-shelf view of its shelf in its cabinet (the framing the arrows give it, TOP1),
+ * Where the case goes for `figureId`: the shelf framing of its shelf in its cabinet (TOP1),
  * the camera walked toward the figure as far as that framing allows: on a frame wider than the shelf, until the shelf's far
  * side meets the frame's margin (the shelf stays whole); on one narrower, until the frame's edge meets the shelf's. A figure
  * on no shelf (not in the case: goods and media, or one that does not fit) has nowhere to go: null.

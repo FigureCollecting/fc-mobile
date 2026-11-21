@@ -29,12 +29,12 @@ import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { expect, test } from '../fixtures';
-import { pinLegacyCamera } from '../legacyCamera';
 import type { BrowserContext, Locator, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng, inkShare } from '../paintCheck';
 import { touchPinch, touchSwipe } from '../touch';
+import { DRAG_WALK_GAIN_X } from '../../src/components/display/casePose';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
 import type { StackUser } from '../stack/src/issuer.js';
@@ -74,7 +74,7 @@ const DETACHED_MAX = 100;
 const GROWTH = 0.1;
 /** The swipes, the open, and the two after it whose largest DOM for what the page held is the warm-up. */
 const WARM_UP = 3;
-/** A finger's swipe across this share of the frame: about 7 cabinets on the open panel, 3 on the cover. */
+/** The share of the frame a swipe walks along the wall: about 7 cabinets on the open panel, 3 on the cover. */
 const SWIPE_SHARE = 0.85;
 /** A cut-out is drawn when hiding its art changes at least this share of its box on screen (e2e/screens/case-images). */
 const MIN_DRAWN_SHARE = 0.05;
@@ -135,7 +135,6 @@ test.beforeAll(async () => {
 
 test.beforeEach(async ({ context }) => {
   await context.addInitScript(() => localStorage.setItem('onboarding_complete', '1'));
-  await pinLegacyCamera(context);
   await stack.edge.clearFaults();
   await stack.issuer.configure({ accessTokenTtlSeconds: 600, offlineAccess: true });
 });
@@ -328,11 +327,16 @@ const frameBox = async (page: Page): Promise<Box> => (await page.locator('.cabin
 /** Settled: a swipe's walk lands at once; a zoom's settle takes 200 ms. */
 const settle = (page: Page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 250)))));
 
-/** One finger across SWIPE_SHARE of the frame: from its right to its left walks right (dir 1), the other way left. */
+/**
+ * One finger's swipe that walks SWIPE_SHARE of the frame along the wall: from right to left walks right (dir 1), the
+ * other way left. NAV-GRAD: the Free camera walks DRAG_WALK_GAIN_X the finger's travel, so the finger crosses
+ * SWIPE_SHARE / DRAG_WALK_GAIN_X of the frame; a finger across the whole share skipped cabinets between two steps.
+ */
 async function walk(page: Page, dir: 1 | -1): Promise<void> {
   const f = await frameBox(page);
-  const x = f.x + f.width * (0.5 + (dir * SWIPE_SHARE) / 2);
-  await touchSwipe(page, x, f.y + f.height * 0.5, -dir * f.width * SWIPE_SHARE, 0, 10, 16);
+  const share = SWIPE_SHARE / DRAG_WALK_GAIN_X;
+  const x = f.x + f.width * (0.5 + (dir * share) / 2);
+  await touchSwipe(page, x, f.y + f.height * 0.5, -dir * f.width * share, 0, 10, 16);
   await settle(page);
 }
 
@@ -351,10 +355,9 @@ async function pinchAndReset(page: Page): Promise<void> {
 }
 
 /**
- * The case screen's chrome (e2e/screens/case-chrome), each control by the name Ross would give it, and the step that
- * leads back along the wall from `end` (the one leading past it is disabled there, drawn faint).
+ * The case screen's chrome (e2e/screens/case-chrome), each control by the name Ross would give it.
  */
-function chrome(page: Page, end: 'start' | 'far'): [string, Locator][] {
+function chrome(page: Page): [string, Locator][] {
   return [
     ['the header title', page.locator('.slim-header__context')],
     ['the View tab', page.locator('.case-tabs__tab[data-tab="view"]')],
@@ -362,16 +365,17 @@ function chrome(page: Page, end: 'start' | 'far'): [string, Locator][] {
     ['Collection (tab bar)', page.getByRole('button', { name: 'Collection', exact: true })],
     ['Search (tab bar)', page.getByRole('button', { name: 'Search', exact: true })],
     ['Profile (tab bar)', page.getByRole('button', { name: 'Profile', exact: true })],
+    // NAV-GRAD: in the Free camera this button is the jog, its name ending "Tap to add figures"; the side arrows are the
+    // keyboard's alone, unseen, so the step that led back along the wall from `end` is not chrome the screen draws
     ['Add figures (+)', page.getByRole('button', { name: 'Add figures' })],
-    end === 'far' ? ['Previous cabinet', page.locator('.cabinet-scene__step--prev')] : ['Next cabinet', page.locator('.cabinet-scene__step--next')],
   ];
 }
 
 /** The controls the screen does not draw: each in the DOM, at least 8 px of it on screen, with ink where it stands. */
-async function undrawn(page: Page, end: 'start' | 'far'): Promise<string[]> {
+async function undrawn(page: Page): Promise<string[]> {
   const viewport = page.viewportSize()!;
   const out: string[] = [];
-  for (const [name, locator] of chrome(page, end)) {
+  for (const [name, locator] of chrome(page)) {
     const box = (await locator.count()) > 0 ? await locator.first().boundingBox() : null;
     if (box === null) {
       out.push(`${name} (missing)`);
@@ -445,20 +449,26 @@ async function drawnShare(page: Page, id: string): Promise<number | null> {
   return changed(shown, hidden);
 }
 
-/** The cabinet the walk ends on (data-focus): what it holds is drawn, each imaged figure as its cut-out, drawing its art. */
-async function endCabinet(page: Page): Promise<string[]> {
+/** The focus cabinet (data-focus): its figures drawn, and its imaged ones whole across the frame, nearest its middle first. */
+async function focusCabinet(page: Page): Promise<{ focus: number; mine: Drawn[]; near: Drawn[] }> {
   const scene = page.locator('.cabinet-scene');
   const focus = Number(await scene.getAttribute('data-focus'));
   const [x0, x1] = (JSON.parse((await scene.getAttribute('data-wall'))!) as number[][])[focus]!;
   const frame = await frameBox(page);
   const mine = (await drawn(page)).filter((d) => d.xMm >= x0! && d.xMm <= x1!);
-  const out: string[] = [];
-  if (mine.length === 0) out.push(`cabinet ${focus}: no figure drawn`);
-  for (const d of mine) if (imaged(d.id) ? !cutOut(d) : d.art !== 'plate') out.push(`${d.id}: ${d.art}${d.grounded ? '' : ' (reading)'}`);
   const mid = { x: frame.x + frame.width / 2, y: frame.y + frame.height / 2 };
   const near = mine
     .filter((d) => imaged(d.id) && d.tap.x >= frame.x && d.tap.x + d.tap.width <= frame.x + frame.width && d.tap.height >= 24)
     .sort((a, b) => Math.hypot(a.tap.x - mid.x, a.tap.y - mid.y) - Math.hypot(b.tap.x - mid.x, b.tap.y - mid.y));
+  return { focus, mine, near };
+}
+
+/** The cabinet the walk ends on (data-focus): what it holds is drawn, each imaged figure as its cut-out, drawing its art. */
+async function endCabinet(page: Page): Promise<string[]> {
+  const { focus, mine, near } = await focusCabinet(page);
+  const out: string[] = [];
+  if (mine.length === 0) out.push(`cabinet ${focus}: no figure drawn`);
+  for (const d of mine) if (imaged(d.id) ? !cutOut(d) : d.art !== 'plate') out.push(`${d.id}: ${d.art}${d.grounded ? '' : ' (reading)'}`);
   let read = 0;
   for (const d of near) {
     if (read === 4) break;
@@ -546,14 +556,40 @@ test('walking the wall end to end and back keeps only what the case draws, the c
   const scene = page.locator('.cabinet-scene');
   const at = async () => Number(await scene.getAttribute('data-camera-x'));
   const lastIndex = JSON.parse((await scene.getAttribute('data-wall'))!).length - 1;
-  // from the wall's start: the stop a walk back left lands on (the case opens framed a little way in)
-  await walk(page, -1);
+  // NAV-GRAD: the Free camera's swipe walks past the wall's ends to the room's side walls, where the frame holds nothing
+  // of the wall (the left stop is 5.9 m left of the first cabinet). So the start is the first swipe right from the left
+  // stop that frames the first cabinet's figures; the walk back goes on to that stop and comes back to the start by the
+  // same swipes, which land on the same pose from the same stop.
+  for (let before = NaN, n = 0; (await at()) !== before && n < 40; n++) {
+    before = await at();
+    await walk(page, -1);
+  }
+  let home = 0;
+  for (; (await focusCabinet(page)).near.length === 0; home++) {
+    if (home === 10) throw new Error(`ten swipes right of the left stop frame no figure of the first cabinet (camera x ${await at()})`);
+    await walk(page, 1);
+  }
   const start = await at();
   const steps: Step[] = [await measure(page, 0, 'at the start')];
   const failures: string[] = overruns(steps[0]!);
   let rates: Rates | undefined;
 
-  // out to the far end, a pinch on the way, then back to the start, each swipe a step
+  /** What the page holds after a swipe, a step. */
+  const record = async (what: string) => {
+    let s = await measure(page, steps.length, what);
+    if (rates !== undefined && domOverruns(s, rates).length > 0) {
+      // requests in flight (the sync's IndexedDB, a fetch) hold listeners for a moment: a second on, what the page keeps
+      // (its layers as read: an idle page commits no new layer tree)
+      await page.waitForTimeout(1000);
+      s = { ...s, dom: await domState(page), ...(await retained(page)) };
+    }
+    steps.push(s);
+    failures.push(...overruns(s), ...(rates === undefined ? [] : domOverruns(s, rates)));
+    if (steps.length === WARM_UP) rates = ratesOf(steps);
+    if (steps.length > 400) throw new Error('the walk never reached the end of the wall');
+  };
+
+  // out to the far end, a pinch on the way, then back to the left stop and on to the start, each swipe a step
   let pinched = false;
   let lastDrawn = false;
   for (const dir of [1, -1] as const) {
@@ -567,25 +603,18 @@ test('walking the wall end to end and back keeps only what the case draws, the c
         what += ', pinch to 4x, Reset view';
       }
       moved = (await at()) !== before;
-      let s = await measure(page, steps.length, what);
-      if (rates !== undefined && domOverruns(s, rates).length > 0) {
-        // requests in flight (the sync's IndexedDB, a fetch) hold listeners for a moment: a second on, what the page keeps
-        // (its layers as read: an idle page commits no new layer tree)
-        await page.waitForTimeout(1000);
-        s = { ...s, dom: await domState(page), ...(await retained(page)) };
-      }
-      steps.push(s);
-      failures.push(...overruns(s), ...(rates === undefined ? [] : domOverruns(s, rates)));
-      if (steps.length === WARM_UP) rates = ratesOf(steps);
-      if (steps.length > 400) throw new Error('the walk never reached the end of the wall');
+      // the wall's last cabinet, drawn as the walk out comes to it (the walk goes on past it, to the room's side)
+      if (dir > 0 && !lastDrawn) lastDrawn = (await page.locator(`.cabinet-scene .cab[data-index="${lastIndex}"]`).count()) === 1;
+      await record(what);
     }
-    if (dir > 0) {
-      lastDrawn = (await page.locator(`.cabinet-scene .cab[data-index="${lastIndex}"]`).count()) === 1;
-      failures.push(...(await undrawn(page, 'far')).map((c) => `at the far end (cabinet ${steps[steps.length - 1]!.dom.focus}): ${c} not drawn`));
-    }
+    if (dir > 0) failures.push(...(await undrawn(page)).map((c) => `at the far end (cabinet ${steps[steps.length - 1]!.dom.focus}): ${c} not drawn`));
+  }
+  for (let i = 0; i < home; i++) {
+    await walk(page, 1);
+    await record('right, to the start');
   }
   await attachSteps(testInfo, steps);
-  expect(lastDrawn, `the far end draws the last cabinet (${lastIndex})`).toBe(true);
+  expect(lastDrawn, `the walk out draws the last cabinet (${lastIndex})`).toBe(true);
   expect(await at(), 'back at the start').toBe(start);
   expect(rates, `a walk past its warm-up (${steps.length} swipes)`).toBeDefined();
 
@@ -604,7 +633,7 @@ test('walking the wall end to end and back keeps only what the case draws, the c
   }
 
   // back at the start: the chrome drawn, and the cabinet the walk ends on holds its cut-outs, drawn
-  failures.push(...(await undrawn(page, 'start')).map((c) => `back at the start: ${c} not drawn`));
+  failures.push(...(await undrawn(page)).map((c) => `back at the start: ${c} not drawn`));
   failures.push(...(await endCabinet(page)).map((c) => `back at the start: ${c}`));
 
   const peak = (k: 'nodes' | 'detached' | 'sceneViewports') => Math.max(...steps.map((s) => s[k]));

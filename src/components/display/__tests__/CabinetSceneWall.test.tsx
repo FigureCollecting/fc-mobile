@@ -3,8 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@testing-library/preact';
 import { CabinetScene } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { WALL_PRESETS } from '../wallColour';
 
@@ -16,7 +15,7 @@ const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 
 afterEach(cleanup);
 
 const scene = (patch: Partial<CasePrefs> = {}) => {
-  const { container } = render(<CabinetScene figures={getFixtureFigures(6)} onSelect={vi.fn()} prefs={{ ...LEGACY_PREFS, ...patch }} />);
+  const { container } = render(<CabinetScene figures={getFixtureFigures(6)} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, ...patch }} />);
   return container.querySelector<HTMLElement>('.cabinet-scene')!;
 };
 
@@ -48,16 +47,14 @@ describe('CabinetScene: the wall colour (WALL-COLOUR-1)', () => {
     expect(host.style.getPropertyValue('--wall-dark')).toBe('#3b342a');
   });
 
-  it('a preset puts its light colour and its dark-theme counterpart on the scene, in every view', () => {
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      cleanup();
-      const host = scene({ wall: 'seafoam', view });
-      const seafoam = WALL_PRESETS.find((p) => p.id === 'seafoam')!;
-      expect(host.dataset.wallColour, view).toBe('seafoam');
-      expect(host.style.getPropertyValue('--wall-light'), view).toBe(seafoam.light);
-      expect(host.style.getPropertyValue('--wall-dark'), view).toBe(seafoam.dark);
-      expect(host.querySelector('.room-wall'), `${view} draws the room's back wall`).not.toBeNull();
-    }
+  it('a preset puts its light colour and its dark-theme counterpart on the scene', () => {
+    cleanup();
+    const host = scene({ wall: 'seafoam' });
+    const seafoam = WALL_PRESETS.find((p) => p.id === 'seafoam')!;
+    expect(host.dataset.wallColour).toBe('seafoam');
+    expect(host.style.getPropertyValue('--wall-light')).toBe(seafoam.light);
+    expect(host.style.getPropertyValue('--wall-dark')).toBe(seafoam.dark);
+    expect(host.querySelector('.room-wall'), "the room's back wall is drawn").not.toBeNull();
   });
 
   it('a custom colour is carried the same way, its dark counterpart the same hue at 25 % lightness', () => {

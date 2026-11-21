@@ -2,8 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, act, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LONG_PRESS_MS, type CabinetSceneProps } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { FIXTURE_FIGURES } from '../../../dev-fixtures/fixtures';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
@@ -18,7 +17,7 @@ afterEach(() => {
 });
 
 const COVER = { width: 443, height: 558 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 /** Too tall for any place of the KLINGSBO (its tallest tier is 1351 mm). */
 const tall = (i: number): Figure => ({ ...FIXTURE_FIGURES[0], _id: `tall-${i}`, name: `Tall Statue ${i}`, dimensions: { heightMm: 1500 } }) as Figure;
 const tallOnes = (n: number, from = 0) => Array.from({ length: n }, (_, i) => tall(from + i));
@@ -242,7 +241,7 @@ describe('MISFIT-CHIP-1 (3): the list is always recallable from outside, whether
 
 describe('MISFIT-CHIP-1 (4): the scene\'s gestures leave the chip and its list alone', () => {
   it('a drag that starts on the open list scrolls the list: the camera does not move', () => {
-    const { host } = scene(SIXTEEN, { view: 'cabinet' }, { misfitsOpen: true });
+    const { host } = scene(SIXTEEN, {}, { misfitsOpen: true });
     const before = host.dataset.camera;
     const l = list(host)!;
     fireEvent.pointerDown(l, { pointerId: 1, clientX: 200, clientY: 400, button: 0 });
@@ -254,7 +253,7 @@ describe('MISFIT-CHIP-1 (4): the scene\'s gestures leave the chip and its list a
   });
 
   it('a tap on the chip right after a drag of the scene still opens the list: the drag\'s swallowed click does not eat it', () => {
-    const { host } = scene(SIXTEEN, { view: 'cabinet' });
+    const { host } = scene(SIXTEEN);
     fireEvent.pointerDown(host, { pointerId: 1, clientX: 200, clientY: 200, button: 0 });
     fireEvent.pointerMove(host, { pointerId: 1, clientX: 140, clientY: 200 });
     fireEvent.pointerMove(host, { pointerId: 1, clientX: 80, clientY: 200 });

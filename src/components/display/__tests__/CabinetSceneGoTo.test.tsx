@@ -2,18 +2,18 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, screen, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { __clearAlphaMarginCache } from '../alphaMargin';
 
-// CARD-VIEW-1 part 3 (Ross 10-25): a card's Go to takes the case to its figure: the one-shelf view (TOP1) of its shelf, in
-// its cabinet, the figure in the frame; the scene reports where its figures stand, so a card can say Go to has nowhere to go
+// CARD-VIEW-1 part 3 (Ross 10-25): a card's Go to takes the case to its figure: the shelf framing (TOP1) of its shelf, in
+// its cabinet, the figure in the frame; the scene reports where its figures stand, so a card can say Go to has nowhere to go.
+// NAV-SCOPE: the case's one view is the wall's; Go to stands the eye at the shelf framing from it
 
 beforeEach(() => __clearAlphaMarginCache());
 afterEach(() => cleanup());
 
 const COVER = { width: 443, height: 418 };
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, clearanceMm: 0, pattern: 'ikea-detolf', view: 'shelf', ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, pattern: 'ikea-detolf', ...patch });
 const sized = (i: number, heightMm: number, widthMm: number): Figure => ({ _id: `s${i}`, name: `Figure ${i}`, dimensions: { heightMm, widthMm } }) as Figure;
 const FORTY = Array.from({ length: 40 }, (_, i) => sized(i, 200, 100));
 
@@ -32,12 +32,11 @@ const move = (el: Element, id: number, p: P) => fireEvent.pointerMove(el, { poin
 const up = (el: Element, id: number, p: P) => fireEvent.pointerUp(el, { pointerId: id, clientX: p.x, clientY: p.y });
 
 describe('CabinetScene: Go to (CARD-VIEW-1)', () => {
-  it('a request frames the figure\'s shelf in the one-shelf view, in its cabinet, and says it went there, once per request', () => {
+  it('a request frames the figure\'s shelf, in its cabinet, and says it went there, once per request', () => {
     const onWentTo = vi.fn();
     const props = { figures: FORTY, onSelect: vi.fn(), prefs: prefs(), frameFallback: COVER, onWentTo };
     const { rerender } = render(<CabinetScene {...props} />);
     expect(host().dataset.focus).toBe('0');
-    expect(host().dataset.shelf).toBe('0');
     rerender(<CabinetScene {...props} goTo={{ figureId: 's39', seq: 1 }} />);
     expect(onWentTo).toHaveBeenCalledTimes(1);
     expect(onWentTo).toHaveBeenCalledWith('s39', true);

@@ -15,22 +15,22 @@ describe('the depth control pref', () => {
   it('is the vertical rocker by default, and for a record that does not say', () => {
     expect(DEFAULT_CASE_PREFS.depthRocker).toBe('vertical');
     expect(readCasePrefs().depthRocker).toBe('vertical');
-    writeCasePrefs({ view: 'shelf' });
+    writeCasePrefs({ ceilingMm: 2700 });
     expect(readCasePrefs().depthRocker).toBe('vertical');
   });
 
   it('keeps the horizontal slider once chosen, across a fresh read; anything else stored is the vertical rocker', () => {
-    writeCasePrefs({ depthRocker: 'horizontal', view: 'shelf' });
+    writeCasePrefs({ depthRocker: 'horizontal', ceilingMm: 2700 });
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).depthRocker).toBe('horizontal');
-    expect(readCasePrefs()).toMatchObject({ depthRocker: 'horizontal', view: 'shelf' });
+    expect(readCasePrefs()).toMatchObject({ depthRocker: 'horizontal', ceilingMm: 2700 });
     for (const bad of ['Horizontal', 'sideways', 1, null, {}, true]) {
-      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: bad, view: 'shelf' }));
-      expect(readCasePrefs(), JSON.stringify(bad)).toMatchObject({ depthRocker: 'vertical', view: 'shelf' });
+      localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: bad, ceilingMm: 2700 }));
+      expect(readCasePrefs(), JSON.stringify(bad)).toMatchObject({ depthRocker: 'vertical', ceilingMm: 2700 });
     }
   });
 });
 
-describe('the View card: a "Depth control" choice under the Free camera box', () => {
+describe('the View card: a "Depth control" choice under the estimated-sizes row', () => {
   it('two choices, the vertical rocker picked to begin with; a tap is a patch of the pref', () => {
     const onChange = vi.fn();
     const { unmount } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={onChange} onClose={() => {}} />);
@@ -50,12 +50,9 @@ describe('the View card: a "Depth control" choice under the Free camera box', ()
     expect(on).toHaveBeenCalledWith({ depthRocker: 'vertical' });
   });
 
-  it('sits right after the Free camera box; with the Free camera off (no rocker) it is not offered', () => {
-    const { unmount } = render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
-    const free = screen.getByRole('checkbox', { name: 'Free camera' }).closest('label')!;
-    expect(free.nextElementSibling).toBe(screen.getByRole('group', { name: 'Depth control' }));
-    unmount();
-    render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, freeCamera: false }} onChange={vi.fn()} onClose={() => {}} />);
-    expect(screen.queryByRole('group', { name: 'Depth control' })).toBeNull();
+  it('sits right after the estimated-sizes row (NAV-GRAD: no Free camera box between them), always offered', () => {
+    render(<CaseViewCard open prefs={DEFAULT_CASE_PREFS} onChange={vi.fn()} onClose={() => {}} />);
+    const sizes = screen.getByRole('checkbox', { name: 'Show estimated sizes' }).closest('.case-card__sizes')!;
+    expect(sizes.nextElementSibling).toBe(screen.getByRole('group', { name: 'Depth control' }));
   });
 });

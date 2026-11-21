@@ -23,11 +23,12 @@ import { readFileSync } from 'node:fs';
 import { create, toJson } from '@bufbuild/protobuf';
 import { GetProductImagesResponseSchema } from '@figurecollecting/fc-api-contract';
 import { expect, test } from '../fixtures';
-import { pinLegacyCamera } from '../legacyCamera';
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { E2eHooks } from '../../src/auth/e2eHooks';
 import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng } from '../paintCheck';
+import { touchSwipe } from '../touch';
+import { DRAG_WALK_GAIN_X } from '../../src/components/display/casePose';
 import { SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
 import { loginDevice } from '../stack/src/device.js';
@@ -529,8 +530,6 @@ test("(d) filtered to Ordered and to Wished, figures not owned stand as their cu
 test("(e) a case view moved far along while its sync fetches: the figures it draws there are fetched next, not those next in the case's order", async ({ context, page }, testInfo) => {
   test.skip(!testInfo.project.name.endsWith('cover'), 'one panel is enough: (a) covers both');
   test.setTimeout(240_000);
-  // NAV-2A0: it steps with the side arrows, which Free camera retires
-  await pinLegacyCamera(context);
   // every image 1.5 s late (a slow link), the figures recorded in the order first asked
   const asked: string[] = [];
   await imageHost(context, async (head) => {
@@ -541,9 +540,12 @@ test("(e) a case view moved far along while its sync fetches: the figures it dra
   await openCase(page);
   await expect.poll(() => asked.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(4);
 
-  const next = page.getByRole('button', { name: 'Next cabinet' });
-  for (let i = 0; i < 12 && !(await next.isDisabled()); i++) {
-    await next.tap();
+  // NAV-SCOPE (Ross 11-18): the wall's Next is gone; twelve swipes of most of the frame each walk the wall along as its
+  // twelve pages did (the Free camera walks DRAG_WALK_GAIN_X the finger's travel)
+  for (let i = 0; i < 12; i++) {
+    const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+    const share = 0.85 / DRAG_WALK_GAIN_X;
+    await touchSwipe(page, f.x + f.width * (0.5 + share / 2), f.y + f.height * 0.5, -f.width * share, 0, 10, 16);
     await page.waitForTimeout(450);
   }
   await page.waitForTimeout(1200);

@@ -1,13 +1,14 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
 import { CASE_VIEWPORTS, type CaseViewport } from './caseViewports';
 
 /**
  * Screenshot baselines of the faithful cabinets (CASE-CABINET, CASE-ADAPT,
- * CASE-FIX): the three views at every size in CASE_VIEWPORTS, the figure art
- * branches (masked, framed, plate) and the three cabinet profiles at the
- * Fold8 sizes, and the IC1 tabs with the raised +. Fixture mode on the
+ * CASE-FIX): the wall at every size in CASE_VIEWPORTS, the three cabinet
+ * profiles at the Fold8 sizes, and the IC1 tabs with the raised +. NAV-SCOPE
+ * (Ross 11-18): the wall is the case's one view, so the one-cabinet and
+ * one-shelf views' baselines, and the art branches' (taken in the one-cabinet
+ * view), are retired. Fixture mode on the
  * committed synthetic art (.env.test), so no git-ignored file is involved.
  * Baselines are recorded for the chromium project; refresh them with
  *   npx playwright test e2e/cabinet-screenshots.spec.ts --project=chromium --update-snapshots
@@ -21,21 +22,20 @@ test.beforeEach(({}, testInfo) => {
 });
 
 interface Prefs {
-  view?: 'wall' | 'cabinet' | 'shelf';
   pattern?: string;
 }
 
 /**
  * Text draws in whatever sans-serif the machine has (Inter is not bundled),
  * so the shots hide every glyph and compare boxes, colours and places: the
- * step arrows, the plates' names, the fit flag and the tab labels. An
- * adopted sheet, as the CSP allows no inline style element.
+ * plates' names, the fit flag and the tab labels. An adopted sheet, as the
+ * CSP allows no inline style element.
  */
 async function hideText(page: Page) {
   await page.evaluate(() => {
     const sheet = new CSSStyleSheet();
     sheet.replaceSync(
-      '.cabinet-scene__step, .cabinet-scene__shelves button, .cab-figure__plate, .cab-plate, .cabinet-scene__fit, .cabinet-scene__fit *, .case-tabs *, .tab-bar * { color: transparent !important; }',
+      '.cab-figure__plate, .cab-plate, .cabinet-scene__fit, .cabinet-scene__fit *, .case-tabs *, .tab-bar * { color: transparent !important; }',
     );
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
   });
@@ -47,7 +47,7 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
     localStorage.setItem('fc-fixture-mode', 'on');
     // the baselines are of the wall as it was packed with no clearance above a figure; the new 1 in default (CLEAR-1) has its own e2e
     localStorage.setItem('fc-case-prefs', JSON.stringify({ clearanceMm: 0, ...p }));
-  }, legacyPrefs(prefs));
+  }, prefs);
   await page.setViewportSize({ width: size.width, height: size.height });
   await page.goto(`/?layout=case${query}`);
   await page.waitForSelector('button.cab-figure');
@@ -69,33 +69,15 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
 const SHOT = { animations: 'disabled', caret: 'hide', scale: 'css', maxDiffPixels: 10, threshold: 0.05 } as const;
 
 for (const size of CASE_VIEWPORTS) {
-  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-    test(`cabinets, ${view} view, ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
-      // three walls' worth of figures: several cabinets side by side, neighbours drawn true (CC4a)
-      await openCase(page, size, '&fx=3', { view });
-      await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', view);
-      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-${view}-${size.name}.png`, SHOT);
-    });
-  }
+  const view = 'wall';
+  test(`cabinets, ${view} view, ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
+    // three walls' worth of figures: several cabinets side by side, neighbours drawn true (CC4a)
+    await openCase(page, size, '&fx=3');
+    await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-${view}-${size.name}.png`, SHOT);
+  });
 }
 
 const FOLD8_PAIR = CASE_VIEWPORTS.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open');
-
-const BRANCHES = [
-  { branch: 'masked', art: 'masked' },
-  { branch: 'framed', art: 'framed' },
-  { branch: 'silhouette', art: 'plate' },
-] as const;
-
-for (const size of FOLD8_PAIR) {
-  for (const { branch, art } of BRANCHES) {
-    test(`cabinets, ${branch} branch, ${size.name}`, async ({ page }) => {
-      await openCase(page, size, `&fxbranch=${branch}`, { view: 'cabinet' });
-      await expect(page.locator(`button.cab-figure[data-art="${art}"]`)).toHaveCount(7);
-      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-branch-${branch}-${size.name}.png`, SHOT);
-    });
-  }
-}
 
 const PATTERNS = [
   { name: 'detolf', pattern: 'ikea-detolf' },
@@ -106,7 +88,7 @@ const PATTERNS = [
 for (const size of FOLD8_PAIR) {
   for (const { name, pattern } of PATTERNS) {
     test(`cabinets, ${name} wall, ${size.name}`, async ({ page }) => {
-      await openCase(page, size, '&fx=3', { view: 'wall', pattern });
+      await openCase(page, size, '&fx=3', { pattern });
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-pattern', pattern);
       await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-pattern-${name}-${size.name}.png`, SHOT);
     });

@@ -2,8 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LABEL_HEIGHT_MM, LABEL_LIFT_MM, LABEL_LINE_MM, LABEL_PAD_MM } from '../CabinetScene';
-import type { CasePrefs } from '../casePrefs';
-import { LEGACY_PREFS } from '../../../test/legacyPrefs';
+import { DEFAULT_CASE_PREFS, type CasePrefs } from '../casePrefs';
 import { getFixtureFigures } from '../../../dev-fixtures/fixtures';
 import { FIGURE_GAP_MM, surfaceSlots } from '../packCabinets';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
@@ -25,7 +24,7 @@ afterEach(() => {
 const COVER = { width: 443, height: 558 };
 const OPEN = { width: 870, height: 475 };
 
-const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...LEGACY_PREFS, ...patch });
+const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, ...patch });
 
 function scene(figures: Figure[], patch: Partial<CasePrefs> = {}, extra: Partial<Parameters<typeof CabinetScene>[0]> = {}) {
   const onSelect = vi.fn();
@@ -75,21 +74,19 @@ describe('CASE-FB2a labels: one line, brass, on the lip', () => {
     expect(LABEL_HEIGHT_MM).toBeCloseTo(LABEL_LINE_MM + 2 * LABEL_PAD_MM, 9);
     expect(LABEL_HEIGHT_MM).toBeLessThan(1.5 * LABEL_LINE_MM);
     for (const frame of [COVER, OPEN]) {
-      for (const view of ['wall', 'cabinet'] as const) {
-        const { host } = scene(getFixtureFigures(3), { view }, { labels: true, frameFallback: frame });
-        const s = pxPerMm(host);
-        // "minimal space around the text": at most 3 px above and below the line on the screen
-        expect(LABEL_PAD_MM * s, `${view} ${frame.width}`).toBeLessThanOrEqual(3);
-        const plates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'));
-        expect(plates.length).toBeGreaterThan(0);
-        for (const p of plates) expect(-worldQuad(p, s).v[1]).toBeCloseTo(LABEL_HEIGHT_MM, 3);
-        cleanup();
-      }
+      const { host } = scene(getFixtureFigures(3), {}, { labels: true, frameFallback: frame });
+      const s = pxPerMm(host);
+      // "minimal space around the text": at most 3 px above and below the line on the screen
+      expect(LABEL_PAD_MM * s, String(frame.width)).toBeLessThanOrEqual(3);
+      const plates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate'));
+      expect(plates.length).toBeGreaterThan(0);
+      for (const p of plates) expect(-worldQuad(p, s).v[1]).toBeCloseTo(LABEL_HEIGHT_MM, 3);
+      cleanup();
     }
   });
 
   it("a label's name is one line on a brass face that follows the text, cut with an ellipsis within its figure's width, never wrapped", () => {
-    const { host } = scene([sized(0, 150, 60, 'Nendoroid Hatsune Miku Snow Miku Crane Priestess Ver.')], { view: 'cabinet' }, { labels: true });
+    const { host } = scene([sized(0, 150, 60, 'Nendoroid Hatsune Miku Snow Miku Crane Priestess Ver.')], {}, { labels: true });
     const plate = host.querySelector<HTMLElement>('.cab-plate')!;
     const face = plate.querySelector<HTMLElement>('.cab-plate__face')!;
     expect(face.textContent).toBe('Nendoroid Hatsune Miku Snow Miku Crane Priestess Ver.');
@@ -108,7 +105,7 @@ describe('CASE-FB2a labels: one line, brass, on the lip', () => {
 
   it("neighbours' labels never overlap: each is at most its figure's width, centred under it, the packing's gap between them", () => {
     const widths = [60, 60, 60, 60, 60, 150, 60, 60, 60, 60];
-    const { host } = scene(widths.map((w, i) => sized(i, 100, w)), { view: 'cabinet' }, { labels: true });
+    const { host } = scene(widths.map((w, i) => sized(i, 100, w)), {}, { labels: true });
     const s = pxPerMm(host);
     const centre = new Map(figureButtons(host).map((b) => [b.dataset.figureId!, b]));
     const plates = Array.from(host.querySelectorAll<HTMLElement>('.cab-plate')).map((p) => {
@@ -142,7 +139,7 @@ describe('CASE-FB2a labels: one line, brass, on the lip', () => {
   ];
   for (const { profile, count, heightMm } of WALLS) {
     it(`${profile.id}: each label sits on its surface's lip, in front of it and of every face of the cabinet at its centre`, () => {
-      const { host } = scene(Array.from({ length: count }, (_, i) => sized(i, heightMm, 100)), { view: 'cabinet', pattern: profile.id }, { labels: true, frameFallback: { width: 443, height: 900 } });
+      const { host } = scene(Array.from({ length: count }, (_, i) => sized(i, heightMm, 100)), { pattern: profile.id }, { labels: true, frameFallback: { width: 443, height: 900 } });
       const s = pxPerMm(host);
       const lips = new Map(surfaceSlots(profile).map((slot) => [slot.topMm, slot.lipZMm]));
       // the vertical faces of the cabinets, facing the camera (a box front, a shelf's lip, a pane's edge)
@@ -174,7 +171,7 @@ describe('CASE-FB2a labels: one line, brass, on the lip', () => {
 
 describe('CASE-FB2a depth: each figure centred in its surface\'s depth', () => {
   it("each figure's base is centred in its surface's usable depth and its picture stands at the base's front; the scene says so", () => {
-    const { host } = scene(getFixtureFigures(2), { view: 'cabinet' });
+    const { host } = scene(getFixtureFigures(2));
     const buttons = figureButtons(host);
     expect(buttons.length).toBeGreaterThan(6);
     for (const b of buttons) {
@@ -187,7 +184,7 @@ describe('CASE-FB2a depth: each figure centred in its surface\'s depth', () => {
   });
 
   it('the contact shadow lies on the surface under the base, inside the usable depth', () => {
-    const { host } = scene(getFixtureFigures(2), { view: 'cabinet' });
+    const { host } = scene(getFixtureFigures(2));
     const s = pxPerMm(host);
     const buttons = figureButtons(host);
     const shadows = Array.from(host.querySelectorAll<HTMLElement>('.cab-shadow'));
@@ -206,7 +203,7 @@ describe('CASE-FB2a depth: each figure centred in its surface\'s depth', () => {
 
   it('a tap on a figure standing nearer the front still opens it', () => {
     const figures = getFixtureFigures(2);
-    const { host, onSelect } = scene(figures, { view: 'cabinet' });
+    const { host, onSelect } = scene(figures);
     const b = figureButtons(host)[4];
     fireEvent.click(b);
     const index = figures.findIndex((f) => f._id === b.dataset.figureId);
@@ -219,18 +216,17 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   const few = many.slice(0, 5);
 
   /** The view a scene of `figures` starts with, on its own. */
-  function fresh(figures: Figure[], patch: Partial<CasePrefs>) {
-    const { host, unmount } = scene(figures, patch);
-    const out = { camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY };
+  function fresh(figures: Figure[]) {
+    const { host, unmount } = scene(figures);
+    const out = { camera: camera(host), focus: host.dataset.focus };
     unmount();
     return out;
   }
-  const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus, shelf: host.dataset.shelf, pan: host.dataset.pan, panY: host.dataset.panY });
+  const view = (host: HTMLElement) => ({ camera: camera(host), focus: host.dataset.focus });
 
-  it('camera mode: a walk along the wall and a lift, then a filter: the camera stands where a scene of the filtered figures starts', () => {
-    const patch = { view: 'cabinet' } as const;
-    const start = fresh(few, patch);
-    const { host, again } = scene(many, patch, { filterKey: 'all' });
+  it('a walk along the wall and a lift, then a filter: the camera stands where a scene of the filtered figures starts', () => {
+    const start = fresh(few);
+    const { host, again } = scene(many, {}, { filterKey: 'all' });
     drag(host, -300);
     drag(host, 0, 80);
     expect(host.dataset.focus).not.toBe('0');
@@ -238,10 +234,9 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
     expect(view(host)).toEqual(start);
   });
 
-  it('the wall view after a walk to its far end: a filter starts at the wall\'s start, not in an empty room past it', () => {
-    const patch = { view: 'wall' } as const;
-    const start = fresh(few, patch);
-    const { host, again } = scene(many, patch, { filterKey: 'all' });
+  it('after a walk to the wall\'s far end: a filter starts at the wall\'s start, not in an empty room past it', () => {
+    const start = fresh(few);
+    const { host, again } = scene(many, {}, { filterKey: 'all' });
     for (let i = 0; i < 6; i++) drag(host, -400);
     expect(Number(JSON.parse(host.dataset.camera!).x)).toBeGreaterThan(Number(JSON.parse(start.camera!).x));
     again({ figures: few, filterKey: 'ordered' });
@@ -249,19 +244,8 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
     expect(figureButtons(host).length).toBe(few.length);
   });
 
-  it('the shelf view, a few cabinets and shelves along: a filter starts at the first cabinet\'s first shelf', () => {
-    const patch = { view: 'shelf' } as const;
-    const { host, again, getByRole } = scene(many, patch, { filterKey: 'all' });
-    fireEvent.click(getByRole('button', { name: 'Next cabinet' }));
-    fireEvent.click(getByRole('button', { name: 'Shelf below' }));
-    fireEvent.click(getByRole('button', { name: 'Shelf below' }));
-    expect([host.dataset.focus, host.dataset.shelf]).toEqual(['1', '2']);
-    again({ figures: many.slice(0, 40), filterKey: 'wished' });
-    expect([host.dataset.focus, host.dataset.shelf]).toEqual(['0', '0']);
-  });
-
   it('the same filter with new figure data (an image landing) keeps the view where it is', () => {
-    const { host, again } = scene(many, { view: 'cabinet' }, { filterKey: 'all' });
+    const { host, again } = scene(many, {}, { filterKey: 'all' });
     drag(host, -300);
     const walked = view(host);
     again({ figures: many.map((f) => ({ ...f })), filterKey: 'all' });
@@ -269,7 +253,7 @@ describe('CASE-FB2a filter: a new filter starts the view at the wall\'s start (R
   });
 
   it("each figure says its place in the list, the order it is packed in", () => {
-    const { host } = scene(few, { view: 'cabinet' });
+    const { host } = scene(few);
     expect(figureButtons(host).map((b) => [b.dataset.figureId, Number(b.dataset.index)])).toEqual(
       expect.arrayContaining(few.map((f, i) => [f._id, i])),
     );

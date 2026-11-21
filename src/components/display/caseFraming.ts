@@ -1,16 +1,12 @@
 /**
- * Where the case camera stands for each view (Ross 2026-09-27: three views,
- * each setting its defaults; 2026-10-09 CC15, CC4a, CC4b, CC4), in the
- * millimetre world of caseCamera: x along the wall, y up from the floor, z
- * toward the viewer, every cabinet's front at z = 0. Pure maths, no DOM.
+ * Where the case camera stands (Ross 2026-09-27; 2026-10-09 CC15, CC4a, CC4b,
+ * CC4), in the millimetre world of caseCamera: x along the wall, y up from the
+ * floor, z toward the viewer, every cabinet's front at z = 0. Pure maths, no DOM.
+ * NAV-SCOPE (Ross 11-18): the case has one continuous view, the wall's; the
+ * shelf framing is where Go to stands the eye. The one-cabinet view went.
  *
- *  - cabinet: one cabinet, straight on and level at its middle, the whole of
- *    it (feet to headroom) in view, fitted by whichever of its height or width
- *    dictates, the other showing more; each cabinet by its own size, an arrow
- *    press framing the next (CAB-FOCUS-1, Ross 10-18, replacing the CC15 start
- *    camera the wall shares); its neighbours stay true, wherever they fall (CC4a).
- *  - wall: the same distance, centred on a PAGE of cabinets: as many side by
- *    side as that distance shows, so wide screens show several.
+ *  - wall: centred on a PAGE of cabinets: as many side by side as the shared
+ *    camera's distance shows, so wide screens show several.
  *  - shelf: level at one shelf level's band (the band all the wall's cabinets
  *    span there), its full width and height in view, whichever dictates the
  *    distance and the other showing more; at the top, whose height is open, the
@@ -21,10 +17,10 @@
  * the cabinets, their shelves and the figures never change (Ross 09-26).
  *
  * MOB-NAV-2 (Ross 12:1xC: at least 3 full and 2 partial, up to 5 full, on
- * every panel): no view frames the fronts of more cabinets than the case
+ * every panel): no framing frames the fronts of more cabinets than the case
  * draws (its drawCap), wherever the camera walks or the photo slides.
  *
- * CASE-FB1 (Ross, Fold8 10-14): the wall and cabinet views are full height,
+ * CASE-FB1 (Ross, Fold8 10-14): the wall framing is full height,
  * from a strip of floor in front of the feet (FLOOR_STRIP_MM) to the top of
  * what stands on the tallest top, and the whole wall shares ONE camera height,
  * distance and tilt (wallCamera): a walk, a pan, a page or a new focus moves
@@ -32,10 +28,12 @@
  * short panel the case draws as many cabinets as that frame shows fronts (up
  * to DRAWN_CABINETS_LIMIT), so the wall spans the panel; only past the limit
  * is the frame cropped narrower (CC2: crop FOV, the lens unchanged), never the
- * camera stepped in: never a cropped height. The shelf view stands one camera
- * per shelf level for the whole wall too (frameShelf). An up/down drag raises or lowers
- * the camera with its aim (camera mode, liftLimitsMm) or slides the photo
- * (pan mode, panYLimitsPx), between the floor and the ceiling.
+ * camera stepped in: never a cropped height. The shelf framing stands one camera
+ * per shelf level for the whole wall too (frameShelf).
+ *
+ * NAV-GRAD: these framings are where the Free camera (casePose, useFreeCamera)
+ * opens and where Go to stands it; the old camera's own moves (the stop-to-stop
+ * walk, the lift, the photo's slide) went with it.
  */
 import { HEADROOM_MIN_MM, sideOverhangMm, CEILING_DEFAULT_MM, type CabinetProfile } from './cabinetProfile';
 import {
@@ -55,7 +53,6 @@ import {
   type Vec3,
 } from './caseCamera';
 import { surfaceSlots, type WallLayout, type WallSlot } from './packCabinets';
-import type { CaseView } from './casePrefs';
 import { DRAWN_CABINETS_LIMIT, MAX_DRAWN_CABINETS, NEAR_MM, boxFaces, clipConvex, cullRect, faceInView } from './caseCull';
 
 /** TOP1 (Ross 10-18): the most the top step shows above a top surface. Ross gave 72 to 96 in; this is the one value to tune. */
@@ -72,21 +69,20 @@ export interface FramingInput {
   readonly wall: WallLayout;
   /** Framing headroom above each cabinet (framingHeadroomMm of its top figures), by wall index. */
   readonly headroomMm: readonly number[];
-  readonly view: CaseView;
+  /** The wall's page holding the focus cabinet, or (Go to's) one shelf level of the wall. */
+  readonly view: Framed;
   /** The cabinet in focus, by wall index. */
   readonly focus: number;
-  /** The shelf view's surface, in reading order (0 = the top, then the shelves top to bottom). */
-  readonly shelf: number;
+  /** The shelf framing's surface, in reading order (0 = the top, then the shelves top to bottom); the wall's reads none. */
+  readonly shelf?: number;
   readonly ceilingMm?: number;
   readonly lensMm?: number;
-  /** NAV-1A (rulings R0.3): Free camera's openings are level: the wall view stands at the wall's half height, not tilted down at it. */
+  /** NAV-1A (rulings R0.3): Free camera's openings are level: the wall framing stands at the wall's half height, not tilted down at it. */
   readonly level?: boolean;
-  /**
-   * NAV3-TOP (b), Ross 10-28, a trial: the headroom the one-cabinet view frames above each cabinet (framingHeadroomMm with
-   * no framing cap), so the tallest top figure shows whole there; the wall and shelf views keep headroomMm's crop.
-   */
-  readonly topWholeMm?: readonly number[];
 }
+
+/** NAV-SCOPE: what a framing frames: the wall (the case's one view) or one shelf level (where Go to stands the eye). */
+export type Framed = 'wall' | 'shelf';
 
 export interface Framing {
   readonly camera: Camera;
@@ -94,8 +90,6 @@ export interface Framing {
   readonly look: Vec3;
   /** The cabinets this view frames, by wall index. */
   readonly page: readonly number[];
-  /** CC4 pan mode: how far (CSS px) the photo may slide either way before it is retaken (panFraming); panSlideMaxPx when not given. */
-  readonly slideMaxPx?: number;
   /** CF1 (a): the most cabinets the case draws for this panel and wall, every view alike (wallCamera). */
   readonly drawCap: number;
 }
@@ -194,7 +188,7 @@ function reachOf(camera: Camera, room: RoomSpan): [number, number] | null {
 }
 
 /**
- * How long a stretch of the wall (mm) the frame (unslid: a slide is capped by capSlidePx) shows any of the room
+ * How long a stretch of the wall (mm) the frame shows any of the room
  * along: at depth d it spans d w / f, over the depths it sees. 0 when it sees none of the room. NAV-1A: turned, the
  * x extent of what it shows (Infinity when that runs out along the wall).
  */
@@ -294,30 +288,12 @@ function capDistance(at: (distance: number) => Camera, fit: number, cap: WallCap
   return lo;
 }
 
-/**
- * CC4 pan mode under the cap: how far (CSS px) the photo may slide either way and still show no longer a stretch
- * of the fronts than `span`. Up to half the frame the stretch stays what it is unslid; past it the frame's far edge
- * looks along the fronts at a graze, and the stretch grows by the depth the fronts span in view (a level camera
- * sees them all at one depth: no limit).
- */
-export function capSlidePx(camera: Camera, fronts: RoomSpan, span: number): number {
-  const seen = seenDepthsMm(camera, fronts);
-  if (seen === null || !(seen[1] > seen[0])) return Infinity;
-  const half = camera.frame.width / 2;
-  return Math.max(0, (camera.focalPx * span - half * (seen[0] + seen[1])) / (seen[1] - seen[0]));
-}
-
-/** The framing with the slide its cap allows the photo in pan mode (capSlidePx, at most panSlideMaxPx). */
-function withSlide(framing: Framing, cap: WallCap): Framing {
-  return { ...framing, slideMaxPx: Math.min(panSlideMaxPx(framing.camera), capSlidePx(framing.camera, cap.fronts, cap.span)) };
-}
-
 /** The top of the wall: the highest cabinet top plus its framing headroom (what stands on it). */
 function wallTopMm(input: FramingInput): number {
   return Math.max(...input.wall.cabinets.map((c, i) => c.profile.outer.heightMm + headroomOf(input, i)));
 }
 
-/** The wall view's and the cabinet view's camera, at x = 0, the height it aims at, and the most cabinets drawn (wallCamera). */
+/** The wall framing's camera, at x = 0, the height it aims at, and the most cabinets drawn (wallCamera). */
 interface WallCamera {
   readonly camera: Camera;
   readonly lookY: number;
@@ -326,7 +302,7 @@ interface WallCamera {
 
 /**
  * The deepest a front of the cabinets lies in view, at any height the camera may be raised or lowered to with its
- * tilt kept (liftLimitsMm): a front point at height y lies (camera.y - y) sin(pitch) + camera.z cos(pitch) deep, deepest
+ * tilt kept: a front point at height y lies (camera.y - y) sin(pitch) + camera.z cos(pitch) deep, deepest
  * at the lowest the frame shows; raised, the frame shows lower fronts, down to where its bottom row meets the
  * fronts' plane. So: the depth there, never less than the camera's own distance (a level camera).
  */
@@ -338,7 +314,7 @@ export function deepestFrontMm(camera: Camera): number {
 }
 
 /**
- * CASE-FB1: the one camera the wall and cabinet views share. Aimed at the middle of the wall's top (wallTopMm) from
+ * CASE-FB1: the one camera the whole wall shares. Aimed at the middle of the wall's top (wallTopMm) from
  * the CC15 start height; as far back as the widest of its cabinets needs to stand whole in the frame margins, centred,
  * from a FLOOR_STRIP_MM strip of floor in front of its feet to the wall's top. CF1 (a): the case draws as many
  * cabinets as that frame shows fronts, at any height the camera may be raised to (the least cap, from
@@ -470,9 +446,9 @@ function wallBand(input: FramingInput, level: number): { lo: number; hi: number 
 }
 
 /**
- * The shelf steps the wall offers (the shelf view's camera is per wall level, CASE-FB1): as many as the most slots any
+ * The shelf levels the wall offers (the shelf framing's camera is per wall level, CASE-FB1): as many as the most slots any
  * cabinet has, less the levels at the bottom whose wall band is the one above's (a cabinet with a shelf out has fewer
- * levels, and its last stands for the rest: stepping down to them would show the same picture).
+ * levels, and its last stands for the rest: framing them would show the same picture).
  */
 export function shelfSteps(input: FramingInput): number {
   const ceiling = input.ceilingMm ?? CEILING_DEFAULT_MM;
@@ -487,14 +463,14 @@ export function shelfSteps(input: FramingInput): number {
 }
 
 /**
- * The shelf view (F2, close-out 1): one camera per shelf level for the whole wall, so a walk or a new focus moves
- * only x. Level, at the middle of the band every cabinet's own band at that level spans (levelBand); as far back as
- * its height or the widest cabinet's width needs, whichever dictates, to show the band whole in the margins, the
+ * The shelf framing (F2, close-out 1; Go to's since NAV-SCOPE): one camera per shelf level for the whole wall, so a new
+ * focus moves only x. Level, at the middle of the band every cabinet's own band at that level spans (levelBand); as far
+ * back as its height or the widest cabinet's width needs, whichever dictates, to show the band whole in the margins, the
  * other showing more (TOP1: no cap on the step back at the top, whose band runs up to the ceiling); stepped in where
  * that frame would show more fronts than the case draws.
  */
 function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
-  const { lo, hi } = wallBand(input, input.shelf);
+  const { lo, hi } = wallBand(input, input.shelf ?? 0);
   const look: Vec3 = [input.wall.cabinets[focus].centerMm, (lo + hi) / 2, 0];
   const focalPx = lensFocalPx(input.frame, input.lensMm);
   const m = frameMargins(input.frame);
@@ -504,62 +480,15 @@ function frameShelf(input: FramingInput, focus: number, cap: WallCap): Framing {
   return { camera: at(capDistance(at, Math.max(widthFit, heightFit), cap)), look, page: [focus], drawCap: cap.cap };
 }
 
-/**
- * CAB-FOCUS-1 (Ross 10-18): the cabinet view, straight on and level at the middle of the focus cabinet (its feet to the top
- * of what stands on it), as far back as its height or its width needs, whichever dictates, to show the whole cabinet inside
- * the margins, the other showing more: never a crop. Each cabinet by its own size. The frame is narrowed, as the wall's is
- * (wallCamera), to the stretch of the fronts the case draws, never the camera stepped in.
- */
-function frameCabinet(input: FramingInput, focus: number, drawCap: number, cap: WallCap): Framing {
-  const slot = input.wall.cabinets[focus];
-  const b = cabinetBox(slot, input.topWholeMm?.[focus] ?? headroomOf(input, focus));
-  const look: Vec3 = [slot.centerMm, (b.y0 + b.y1) / 2, 0];
-  const focalPx = lensFocalPx(input.frame, input.lensMm);
-  const m = frameMargins(input.frame);
-  const heightFit = (focalPx * (b.y1 - b.y0)) / 2 / (input.frame.height / 2 - m.y);
-  const widthFit = (focalPx * (b.x1 - b.x0)) / 2 / (input.frame.width / 2 - m.x);
-  // the nearest plane of the box (a splayed foot reaches z1 toward the viewer) is the one that has to fit
-  const z = Math.max(heightFit, widthFit) + b.z1;
-  const width = Math.floor((cap.span * focalPx) / z);
-  const frame = width < input.frame.width ? { width, height: input.frame.height } : input.frame;
-  return { camera: { x: look[0], y: look[1], z, pitch: 0, focalPx, frame }, look, page: [focus], drawCap };
-}
-
-/**
- * CAB-FOCUS-1: where the focus cabinet's silhouette spans the frame (px from its left edge): the extremes of its box's
- * corners (splayed feet included) through the camera, wherever it stands. What lies beyond is its neighbours'.
- */
-export function focusEdgesPx(camera: Camera, slot: WallSlot): { left: number; right: number } {
-  const b = cabinetBox(slot, 0);
-  const xs = boxCorners(b.x0, b.x1, 0, b.y1, b.z0, b.z1).map((c) => project(camera, c).x);
-  return { left: Math.min(...xs), right: Math.max(...xs) };
-}
-
-/** The camera for the view, the focus cabinet and (in the shelf view) its surface. */
+/** The camera for the wall's page holding the focus cabinet, or (the shelf framing) its shelf level. */
 export function frameCase(input: FramingInput): Framing {
   const n = input.wall.cabinets.length;
   if (n === 0) throw new RangeError('frameCase needs at least one cabinet on the wall');
   const focus = Math.min(Math.max(0, Math.trunc(input.focus)), n - 1);
   const wc = wallCamera(input);
-  const cap = wallCap(input, wc.drawCap);
-  if (input.view === 'shelf') return withSlide(frameShelf(input, focus, cap), cap);
-  if (input.view === 'cabinet') return withSlide(frameCabinet(input, focus, wc.drawCap, cap), cap);
+  if (input.view === 'shelf') return frameShelf(input, focus, wallCap(input, wc.drawCap));
   const page = wallPages(input).find((p) => p.includes(focus)) as number[];
-  return withSlide(standWhole(centredOn(input, wc, page), input.wall, page), cap);
-}
-
-/**
- * CC4, camera mode: a sideways swipe of dxPx walks the camera (and its aim)
- * along the wall, by the distance those pixels span at the cabinets' front,
- * opposite to the finger, never past the first or the last cabinet.
- */
-export function swipeCamera(framing: Framing, wall: WallLayout, dxPx: number): Framing {
-  const { camera, look } = framing;
-  const perPx = (camera.z - look[2]) / camera.focalPx;
-  const first = wall.cabinets[0].centerMm;
-  const last = wall.cabinets[wall.cabinets.length - 1].centerMm;
-  const x = Math.min(last, Math.max(first, camera.x - dxPx * perPx));
-  return { ...framing, camera: { ...camera, x }, look: [x, look[1], look[2]] };
+  return standWhole(centredOn(input, wc, page), input.wall, page);
 }
 
 /** Ross 12:1xC (desk MN2 a): a settled walk stands at least this many cabinets whole across the frame. */
@@ -596,25 +525,6 @@ export function nearestCabinet(wall: WallLayout, x: number): number {
   return nearest;
 }
 
-/**
- * The wall x the frame centre shows, on the cabinets' front at the height it aims at, the picture slid panPx: the
- * camera's, less the slide over the px per mm there (a picture retaken farther along shows the same).
- */
-export function frameCentreX(framing: Framing, panPx = 0): number {
-  const { camera, look } = framing;
-  return camera.x - (panPx * project(camera, look).depth) / camera.focalPx;
-}
-
-/**
- * The page the pager pages from (close-out 4, ruling 32): the one holding the cabinet whose centre is nearest what the
- * frame centres on, wherever a press opened, a walk settled or a pan slid the picture; so Next opens a page farther
- * along than the picture stands and Prev one nearer, never where it already is or back past it.
- */
-export function pageInView(pages: readonly (readonly number[])[], wall: WallLayout, framing: Framing, panPx = 0, centre?: CentreHit): number {
-  const at = centre?.cabinet ?? nearestCabinet(wall, frameCentreX(framing, panPx));
-  return pages.findIndex((p) => p.includes(at));
-}
-
 /** NAV-1A (rulings S7): the cabinet the frame centre looks at, and where on the wall it does. */
 export interface CentreHit {
   readonly cabinet: number;
@@ -624,8 +534,8 @@ export interface CentreHit {
 /**
  * NAV-1A (rulings S7): what the frame centre looks at: the cabinet its ray meets on the fronts' plane (between two, or
  * past the wall's end, the nearest); a ray that never meets that plane in front of the eye (behind the fronts past the
- * wall's end), the cabinet nearest the eye. Free camera's focus after any move or look: the arrows, Reset and the pager
- * go on from where you look, not from where you stand.
+ * wall's end), the cabinet nearest the eye. Free camera's focus after any move or look: the wall framing goes on from
+ * where you look, not from where you stand.
  */
 export function centreHit(camera: Camera, wall: WallLayout): CentreHit {
   const hit = rayHitPlane(castRay(camera, camera.frame.width / 2, camera.frame.height / 2), 'z', 0);
@@ -640,33 +550,6 @@ export function centreCabinet(camera: Camera, wall: WallLayout): number {
   return centreHit(camera, wall).cabinet;
 }
 
-/** PAGER-END: how close (mm) the picture's centre may stand to the camera x a page opens at and count as there. */
-export const PAGE_AT_MM = 0.5;
-
-/** The camera x a page opens at: its first cabinet pressed (the wall view's framing of it). */
-export function pageOpensAt(input: FramingInput, page: readonly number[]): number {
-  return frameCase({ ...input, view: 'wall', focus: page[0] }).camera.x;
-}
-
-/**
- * PAGER-END: whether Next and Prev have anywhere to take the picture. A page farther along (nearer) is somewhere; so, at
- * the last (first) page, is that page's own opening when the picture stands short of (past) it: a walk that settled in
- * the last page, off its centre, had left Next off with the centre still ahead. `ends`: the camera x the first and the
- * last page open at (pageOpensAt).
- */
-export function pagerReach(
-  pages: readonly (readonly number[])[],
-  wall: WallLayout,
-  framing: Framing,
-  panPx: number,
-  ends: { readonly first: number; readonly last: number },
-  centre?: CentreHit,
-): { readonly prev: boolean; readonly next: boolean } {
-  const at = pageInView(pages, wall, framing, panPx, centre);
-  const x = centre?.x ?? frameCentreX(framing, panPx);
-  return { prev: at > 0 || x > ends.first + PAGE_AT_MM, next: at + 1 < pages.length || x < ends.last - PAGE_AT_MM };
-}
-
 /** The framing with the camera, and its aim, moved along the wall to x. */
 export const atX = (framing: Framing, x: number): Framing => ({ ...framing, camera: { ...framing.camera, x }, look: [x, framing.look[1], framing.look[2]] });
 
@@ -674,121 +557,6 @@ export const atX = (framing: Framing, x: number): Framing => ({ ...framing, came
 function stopXs(wall: WallLayout): number[] {
   const centres = wall.cabinets.map((c) => c.centerMm);
   return centres.flatMap((x, i) => (i + 1 < centres.length ? [x, (x + centres[i + 1]) / 2] : [x]));
-}
-
-/** A place a walk of the wall view settles: the camera at x, the focus the cabinet nearest it, the cabinets it stands whole. */
-export interface WalkStop {
-  readonly x: number;
-  readonly focus: number;
-  readonly whole: readonly number[];
-}
-
-/**
- * The stops of a wall view's walk (Ross 12:1xC, desk MN2 a; close-out 3, ruling 27), left to right. Each is seen as
- * the scene shows it once settled: from the wall's one camera (wallCamera). The stops are those where at least
- * WHOLE_MIN cabinets stand whole (on a wall where none does, the most any does); the wall's two ends, where a swipe
- * stops (the first and the last cabinet's centre); and, for a cabinet whole at none of those, the stop that stands it
- * whole beside the most others (reachability wins over the count).
- */
-export function walkStops(input: FramingInput): WalkStop[] {
-  const { wall } = input;
-  const wc = wallCamera(input);
-  const all = stopXs(wall).map((x): WalkStop => {
-    const focus = nearestCabinet(wall, x);
-    return { x, focus, whole: wholeCabinets({ ...wc.camera, x }, wall, wc.lookY) };
-  });
-  // a cabinet always stands whole at its own centre: its page fits it whole there
-  return pickStops(all, wall.cabinets.length);
-}
-
-/**
- * Of the places a swipe may settle, left to right: those where at least WHOLE_MIN of the n cabinets stand whole (or
- * the most any does), the first and the last (the wall's ends), and, for a cabinet whole at none of those, the place
- * that stands it whole beside the most others (the first of those), if any does.
- */
-function pickStops<T extends { readonly whole: readonly number[] }>(all: readonly T[], n: number): T[] {
-  const need = Math.min(WHOLE_MIN, Math.max(...all.map((s) => s.whole.length)));
-  const keep = new Set<T | undefined>(all.filter((s, k) => s.whole.length >= need || k === 0 || k === all.length - 1));
-  for (let i = 0; i < n; i++) {
-    if ([...keep].some((s) => s?.whole.includes(i))) continue;
-    // none stands it whole: nothing to add
-    keep.add(all.reduce<T | undefined>((best, s) => (s.whole.includes(i) && s.whole.length > (best?.whole.length ?? 0) ? s : best), undefined));
-  }
-  return all.filter((s) => keep.has(s));
-}
-
-/** The stop at `ats` index nearest `to` among those past `from` toward it; none (-1) when none lies that way. */
-function nextStop(ats: readonly number[], from: number, to: number): number {
-  let best = -1;
-  ats.forEach((x, k) => {
-    if ((x - from) * (to - from) > 0 && (best < 0 || Math.abs(x - to) < Math.abs(ats[best] - to))) best = k;
-  });
-  return best;
-}
-
-/** NOTE 30: a walk steps on to a stop only once the finger has moved this many px net, at the least. */
-export const WALK_MIN_PX = 40;
-
-/** How far (px) a finger must move net before the walk steps on: a quarter of the width the cabinet nearest the camera shows, at least WALK_MIN_PX. */
-export function walkDeadPx(framing: Framing, wall: WallLayout): number {
-  const { camera, look } = framing;
-  const perPx = (camera.z - look[2]) / camera.focalPx;
-  return Math.max(WALK_MIN_PX, wall.cabinets[nearestCabinet(wall, camera.x)].profile.outer.widthMm / 4 / perPx);
-}
-
-/**
- * CC4, camera mode, once a walk of dxPx from `walked` settles (Ross 12:1xC, desk MN2 a): the stop nearest where the
- * swipe walked the camera to, among those past where it started, so a short swipe still moves on a stop. None (the
- * picture stays) when the finger moved less than walkDeadPx net or no stop lies that way (the wall's end).
- */
-export function settleWalk(walked: Framing, wall: WallLayout, stops: readonly WalkStop[], dxPx: number): WalkStop | null {
-  if (Math.abs(dxPx) < walkDeadPx(walked, wall)) return null;
-  const k = nextStop(
-    stops.map((s) => s.x),
-    walked.camera.x,
-    swipeCamera(walked, wall, dxPx).camera.x,
-  );
-  return k < 0 ? null : stops[k];
-}
-
-/** A place a pan of the wall view settles (NOTE 31): the photo slid panPx, the cabinets it stands whole. */
-export interface PanStop {
-  readonly panPx: number;
-  readonly whole: readonly number[];
-}
-
-/**
- * The stops of a wall view's pan (NOTE 31), left to right, as for a walk where the photo can slide to them: the
- * slides to the wall's two ends (panLimitsPx), and between them each slide that draws a walk stop's place (a
- * cabinet's centre or halfway between two) at the frame centre, picked as a walk's are (pickStops). Past the slide
- * the photo is retaken farther along (panFraming), which draws the line it aims along (the front plane at the look-at's
- * height, all at one depth) exactly where the slid photo would: so the cabinets whole there are those of the slid photo.
- */
-export function panStops(framing: Framing, wall: WallLayout): PanStop[] {
-  const { camera, look } = framing;
-  const [lo, hi] = panLimitsPx(framing, wall);
-  const between = stopXs(wall)
-    .map((x) => camera.frame.width / 2 - project(camera, [x, look[1], 0]).x)
-    .filter((p) => p > lo && p < hi);
-  const all = [...new Set([lo, ...between, hi])]
-    .sort((a, b) => a - b)
-    .map((panPx): PanStop => ({ panPx, whole: wholeCabinets(camera, wall, look[1], panPx) }));
-  return pickStops(all, wall.cabinets.length);
-}
-
-/**
- * CC4, pan mode, once a pan of dxPx from fromPan settles (NOTE 31): the stop nearest where the photo was slid to,
- * among those past where it started (past the wall's end, the end); none (the photo stays) when the finger moved less
- * than walkDeadPx net or no stop lies that way.
- */
-export function settlePan(framing: Framing, wall: WallLayout, stops: readonly PanStop[], fromPan: number, dxPx: number): PanStop | null {
-  if (Math.abs(dxPx) < walkDeadPx(panFraming(framing, fromPan).framing, wall)) return null;
-  const k = nextStop(
-    stops.map((s) => s.panPx),
-    fromPan,
-    fromPan + dxPx,
-  );
-  return k < 0 ? null : stops[k];
 }
 
 /**
@@ -815,108 +583,13 @@ function standWhole(framing: Framing, wall: WallLayout, page: readonly number[])
 }
 
 /**
- * CC4, pan mode: how far (CSS px) the drawn picture may slide, left
- * (negative) and right, so the wall's ends never leave the frame margins.
- * [0, 0] when the whole wall already sits inside them.
- */
-export function panLimitsPx(framing: Framing, wall: WallLayout): [number, number] {
-  const { camera, look } = framing;
-  const m = frameMargins(camera.frame);
-  const left = project(camera, [wall.leftMm, look[1], 0]).x;
-  const right = project(camera, [wall.rightMm, look[1], 0]).x;
-  // a wall narrower than the frame may still start or end off screen: it slides in, never past its ends
-  return [Math.min(0, camera.frame.width - m.x - right), Math.max(0, m.x - left)];
-}
-
-/**
- * CC4, pan mode: the photo slides at most until the frame's far edge looks
- * this far off the camera's axis (tan; 2 = 63 deg). Past it a photo of a
- * long wall is all shear: the frame looks through dozens of cabinets at a
- * graze, and drawing them all ran the phone's compositor out of tile memory
- * (MOB-NAV-1, Fold8).
- */
-export const PAN_EDGE_TAN_MAX = 2;
-
-/** CC4, pan mode: how far (CSS px) the picture itself may slide either way (PAN_EDGE_TAN_MAX). */
-export function panSlideMaxPx(camera: Camera): number {
-  return Math.max(0, camera.focalPx * PAN_EDGE_TAN_MAX - camera.frame.width / 2);
-}
-
-/**
- * CC4, pan mode: the picture for a pan of panPx (within panLimitsPx). Up to
- * panSlideMaxPx the photo slides and the camera stays; past it the photo is
- * retaken from farther along the wall, the camera and its aim moved by the
- * rest, so the line the camera aims along (the look point's height, on the
- * cabinets' front) still draws exactly where the slid photo would put it.
- */
-export function panFraming(framing: Framing, panPx: number): { framing: Framing; panPx: number } {
-  const max = framing.slideMaxPx ?? panSlideMaxPx(framing.camera);
-  const slid = Math.min(max, Math.max(-max, panPx));
-  if (slid === panPx) return { framing, panPx };
-  const { camera, look } = framing;
-  const dx = ((slid - panPx) * project(camera, look).depth) / camera.focalPx;
-  return { framing: { ...framing, camera: { ...camera, x: camera.x + dx }, look: [look[0] + dx, look[1], look[2]] }, panPx: slid };
-}
-
-/**
- * CASE-FB3a item 3 (Ross 10-17): how far under the ceiling the camera stays at the top of its lift. At the ceiling's own
+ * CASE-FB3a item 3 (Ross 10-17): how far under the ceiling the camera stays at its highest. At the ceiling's own
  * height the ceiling plane is edge-on, every point of it draws on the horizon, and the frame above the wall's top is
  * blank; under it, the ceiling is overhead and fills that band to the frame's top once the frame's top ray meets it past
  * the near plane (NEAR_MM, 10 mm: the ray meets it about twice the clearance along the axis on the Fold8's panels).
  * 50 mm leaves room.
  */
 export const CEILING_CLEARANCE_MM = 50;
-
-/**
- * CASE-FB1 item 5, camera mode: how far (mm) the camera may be raised (positive) or lowered with its aim, x, distance
- * and tilt kept, so that neither it nor the point it aims at on the cabinets' front leaves the floor..ceiling (the
- * camera staying CEILING_CLEARANCE_MM under the ceiling); never a range that moves it where it stands (a camera
- * already past a bound stays until it moves back).
- */
-export function liftLimitsMm(framing: Framing, ceilingMm: number): [number, number] {
-  const lo = Math.min(framing.camera.y, framing.look[1]);
-  const up = Math.min(ceilingMm - CEILING_CLEARANCE_MM - framing.camera.y, ceilingMm - framing.look[1]);
-  return [Math.min(0, -lo), Math.max(0, up)];
-}
-
-/** The lift (liftLimitsMm) nearest `liftMm` that stays within the floor..ceiling. */
-export function clampLift(framing: Framing, ceilingMm: number, liftMm: number): number {
-  const [lo, hi] = liftLimitsMm(framing, ceilingMm);
-  return Math.min(hi, Math.max(lo, liftMm));
-}
-
-/**
- * The lift (mm) for an up/down drag of dyPx: a finger moving down raises the camera so the point it aims at draws
- * exactly dyPx lower (the picture follows the finger, as a walk does sideways). Infinity (either way) for a drag the
- * aim cannot follow (it would pass the horizon): as far as the limits allow.
- */
-export function liftForDragMm(framing: Framing, dyPx: number): number {
-  const { camera, look } = framing;
-  const depth = project(camera, look).depth;
-  const across = camera.focalPx * Math.cos(camera.pitch) - dyPx * Math.sin(camera.pitch);
-  if (!(across > 0)) return dyPx > 0 ? Infinity : -Infinity;
-  return (dyPx * depth) / across;
-}
-
-/** The framing with the camera and its aim raised liftMm (lowered when negative). */
-export function lifted(framing: Framing, liftMm: number): Framing {
-  if (liftMm === 0) return framing;
-  const { camera, look } = framing;
-  return { ...framing, camera: { ...camera, y: camera.y + liftMm }, look: [look[0], look[1] + liftMm, look[2]] };
-}
-
-/**
- * CASE-FB1 item 5, pan mode: how far (CSS px) the photo may slide up (negative) and down. Down until the ceiling over
- * the cabinets' front draws at the frame's top; up until the floor line under the feet's front draws at its bottom;
- * a bound already passed allows no slide that way.
- */
-export function panYLimitsPx(framing: Framing, wall: WallLayout, ceilingMm: number): [number, number] {
-  const { camera } = framing;
-  const feet = Math.max(0, ...wall.cabinets.map((c) => c.profile.footprint?.frontOverhangMm ?? 0));
-  const floorY = project(camera, [camera.x, 0, feet]).y;
-  const ceilingY = project(camera, [camera.x, ceilingMm, 0]).y;
-  return [Math.min(0, camera.frame.height - floorY), Math.max(0, -ceilingY)];
-}
 
 /** CASE-FB1 item 3: the room the cabinets stand in, as drawn: its back wall from the floor to the ceiling, its floor and ceiling out toward the viewer. */
 export interface RoomBox {

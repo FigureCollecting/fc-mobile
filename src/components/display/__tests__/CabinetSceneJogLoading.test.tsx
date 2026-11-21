@@ -81,7 +81,7 @@ function scene(loading: boolean) {
   const props = {
     figures: FIGURES,
     onSelect: vi.fn(),
-    prefs: { ...DEFAULT_CASE_PREFS, clearanceMm: 0, freeCamera: true },
+    prefs: { ...DEFAULT_CASE_PREFS, clearanceMm: 0 },
     frameFallback: COVER,
     imageFor: masked,
     steadyLayout: true,

@@ -109,27 +109,142 @@ export function cone(raw: number, lo: number, hi: number, hardLo: number, hardHi
   return { committed: raw, shown: raw, past: false };
 }
 
-/**
- * A look from `start` (look's bearings) through both cones: the yaw's (yawLimits, a side budgetCone moved in kept to)
- * and the pitch's (PITCH). A look that begins past a limit (the limits narrowed since: a fold, a walk under the Classic
- * cap) is held where it began, never pulled back.
- */
-export function turn(start: Pose, a0: number, b0: number, a1: number, b1: number, limits: YawCone): { committed: Pose; shown: Pose; past: boolean } {
-  const raw = look(start, a0, b0, a1, b1);
-  const side = (at: number, lo: number, hi: number, hardLo: number, hardHi: number, value: number) => {
-    const l = Math.min(lo, at);
-    const h = Math.max(hi, at);
-    return cone(value, l, h, Math.min(hardLo, l), Math.max(hardHi, h));
-  };
+/** One axis of a turn's limits: where it rests either way (lo, hi) and where its rubber bands end (hardLo, hardHi). */
+interface Span {
+  readonly lo: number;
+  readonly hi: number;
+  readonly hardLo: number;
+  readonly hardHi: number;
+}
+
+/** An axis's limits for a turn that starts at `at`: widened to it, so a start past a limit is held where it began. */
+function spanFrom(at: number, lo: number, hi: number, hardLo: number, hardHi: number): Span {
+  const l = Math.min(lo, at);
+  const h = Math.max(hi, at);
+  return { lo: l, hi: h, hardLo: Math.min(hardLo, l), hardHi: Math.max(hardHi, h) };
+}
+
+/** Both axes' limits for a turn from `start`: the yaw's cone (a side budgetCone moved in kept to) and the pitch's (PITCH). */
+function spansOf(start: Pose, limits: YawCone): { yaw: Span; pitch: Span } {
   const l = limits.left ?? limits;
   const r = limits.right ?? limits;
-  const yaw = side(start.yaw, -l.soft, r.soft, -l.hard, r.hard, raw.yaw);
-  const pitch = side(start.pitch, -PITCH.upSoft, PITCH.downSoft, -PITCH.upHard, PITCH.downHard, raw.pitch);
+  return {
+    yaw: spanFrom(start.yaw, -l.soft, r.soft, -l.hard, r.hard),
+    pitch: spanFrom(start.pitch, -PITCH.upSoft, PITCH.downSoft, -PITCH.upHard, PITCH.downHard),
+  };
+}
+
+/**
+ * NAV-LOOKDRIVE: a turn of (dYaw, dPitch) radians from `start` through both cones: the yaw's (yawLimits, a side
+ * budgetCone moved in kept to) and the pitch's (PITCH). A turn that begins past a limit (the limits narrowed since: a
+ * fold, a walk under the Classic cap) is held where it began, never pulled back. The one limit path of every Look: a
+ * finger's on the scene (turn) and a rate's (the hat's Look drive), which adds angles up and so never wraps.
+ */
+export function turnBy(start: Pose, dYaw: number, dPitch: number, limits: YawCone): { committed: Pose; shown: Pose; past: boolean } {
+  const at = spansOf(start, limits);
+  const yaw = cone(start.yaw + dYaw, at.yaw.lo, at.yaw.hi, at.yaw.hardLo, at.yaw.hardHi);
+  const pitch = cone(start.pitch + dPitch, at.pitch.lo, at.pitch.hi, at.pitch.hardLo, at.pitch.hardHi);
   return {
     committed: { ...start, yaw: yaw.committed, pitch: pitch.committed },
     shown: { ...start, yaw: yaw.shown, pitch: pitch.shown },
     past: yaw.past || pitch.past,
   };
+}
+
+/** A look from `start` (look's bearings) through both cones: turnBy of the angles the bearings turn it by. */
+export function turn(start: Pose, a0: number, b0: number, a1: number, b1: number, limits: YawCone): { committed: Pose; shown: Pose; past: boolean } {
+  return turnBy(start, Math.atan(a0) - Math.atan(a1), Math.atan(b1) - Math.atan(b0), limits);
+}
+
+/**
+ * NAV-LOOKDRIVE, anti-windup: the turn asked for from `start` after a frame's `step`, each axis on its own: the step
+ * added, except that a step outward never takes it past the hard limit (its soft limit and the band's width again),
+ * so a hat held against a limit stores nothing up and the first step back moves the view. A turn already asked for past
+ * it (taken over from a deeper look) is left where it is, never pulled in.
+ */
+export function lookWind(start: Pose, dYaw: number, dPitch: number, step: { readonly yaw: number; readonly pitch: number }, limits: YawCone): { dYaw: number; dPitch: number } {
+  const at = spansOf(start, limits);
+  const wind = (from: number, d: number, by: number, s: Span): number => {
+    const v = from + d;
+    if (by > 0 && v + by > s.hardHi) return Math.max(v, s.hardHi) - from;
+    if (by < 0 && v + by < s.hardLo) return Math.min(v, s.hardLo) - from;
+    return d + by;
+  };
+  return { dYaw: wind(start.yaw, dYaw, step.yaw, at.yaw), dPitch: wind(start.pitch, dPitch, step.pitch, at.pitch) };
+}
+
+/** How far past a soft limit a turn was asked for, for its band (`band` wide) to show it `past` the limit: shown, inverted. */
+function unshown(past: number, band: number): number {
+  if (!(band > 0)) return 0;
+  return -band * Math.log(1 - Math.min(past / band, 1 - Number.EPSILON));
+}
+
+/**
+ * NAV-LOOKDRIVE: the turn from `start` that turnBy shows at (yaw, pitch): inside the cone the aim itself, in a band the
+ * turn past the soft limit the band shows there. What a Look that takes over a view drawn mid-ease starts from, so its
+ * first frame draws what was drawn. Finite always: an aim at or past a hard limit is the deepest its band shows, and
+ * past a limit with no band, the limit.
+ */
+export function turnRaw(start: Pose, yaw: number, pitch: number, limits: YawCone): { dYaw: number; dPitch: number } {
+  const at = spansOf(start, limits);
+  const raw = (v: number, s: Span): number => {
+    if (v > s.hi) return s.hi + unshown(v - s.hi, s.hardHi - s.hi);
+    if (v < s.lo) return s.lo - unshown(s.lo - v, s.lo - s.hardLo);
+    return v;
+  };
+  return { dYaw: raw(yaw, at.yaw) - start.yaw, dPitch: raw(pitch, at.pitch) - start.pitch };
+}
+
+/**
+ * NAV-LOOKDRIVE: turnRaw for the hat's Look, which stores nothing up (lookWind): the turn that shows (yaw, pitch) in
+ * `limits` from `start`. A view deeper in its band than where a held hat rests (the turn asked for past the hard limit)
+ * comes in by as far as that side's hard limit closed in since `was`, the cone it was drawn in from its start, and no
+ * further than that rest: where the cone closed in (the depth backed the eye away under the Classic cap) it follows
+ * the cap, never moved against the thumb by more than the cap closed; where nothing closed in (a Look that took a view
+ * over mid-ease, a cone worked out again on a wall with no cap) it stays where it is drawn. A view at or past the hard
+ * limit, which no turn shows, comes in to the rest; with no `was`, so does any view deeper than it.
+ */
+export function lookRaw(start: Pose, yaw: number, pitch: number, limits: YawCone, was?: { readonly start: Pose; readonly limits: YawCone }): { dYaw: number; dPitch: number } {
+  const at = spansOf(start, limits);
+  const before = was && spansOf(was.start, was.limits);
+  const raw = turnRaw(start, yaw, pitch, limits);
+  // the view comes in to t (`turned(t)`: the turn that shows it on this axis), no further than the rest
+  const kept = (v: number, from: number, d: number, s: Span, b: Span | undefined, turned: (t: number) => number): number => {
+    if (from + d > s.hardHi) {
+      const t = b ? v - Math.max(0, b.hardHi - s.hardHi) : s.hardHi;
+      return t < s.hardHi ? Math.max(turned(t), s.hardHi - from) : s.hardHi - from;
+    }
+    if (from + d < s.hardLo) {
+      const t = b ? v + Math.max(0, s.hardLo - b.hardLo) : s.hardLo;
+      return t > s.hardLo ? Math.min(turned(t), s.hardLo - from) : s.hardLo - from;
+    }
+    return d;
+  };
+  return {
+    dYaw: kept(yaw, start.yaw, raw.dYaw, at.yaw, before?.yaw, (t) => turnRaw(start, t, pitch, limits).dYaw),
+    dPitch: kept(pitch, start.pitch, raw.dPitch, at.pitch, before?.pitch, (t) => turnRaw(start, yaw, t, limits).dPitch),
+  };
+}
+
+/**
+ * NAV-LOOKDRIVE: a Look's cone kept inside the realism cone `to` of where the eye has got to (each side's soft and
+ * hard limit no further than its): the cone itself where no side is past it. What the depth asks every frame it moves
+ * the eye under a hat's Look, between two workings-out of the whole cone (budgetCone's projections).
+ */
+export function coneIn(cone: YawCone, to: YawSide): YawCone {
+  const side = <S extends YawSide>(s: S): S | YawSide => (s.soft <= to.soft && s.hard <= to.hard ? s : { soft: Math.min(s.soft, to.soft), hard: Math.min(s.hard, to.hard) });
+  const both = side(cone);
+  const left = cone.left && side(cone.left);
+  const right = cone.right && side(cone.right);
+  if (both === cone && left === cone.left && right === cone.right) return cone;
+  return { soft: both.soft, hard: both.hard, ...(left ? { left } : {}), ...(right ? { right } : {}) };
+}
+
+/** NAV-LOOKDRIVE: the turn asked for is inside both axes' soft limits by `by` (radians) or more. */
+export function turnInside(start: Pose, dYaw: number, dPitch: number, limits: YawCone, by: number): boolean {
+  const at = spansOf(start, limits);
+  const inside = (v: number, s: Span) => v <= s.hi - by && v >= s.lo + by;
+  return inside(start.yaw + dYaw, at.yaw) && inside(start.pitch + dPitch, at.pitch);
 }
 
 /**
@@ -177,9 +292,12 @@ export function budgetCone(cone: YawSide, startYaw: number, fits: (yaw: number) 
   return { soft: cone.soft, hard: cone.hard, ...(left ? { left } : {}), ...(right ? { right } : {}) };
 }
 
-/** Spec 1.5: the shown value `elapsedMs` into its ease (out, cubic) back from `from` to the committed `to`. */
+/**
+ * Spec 1.5: the shown value `elapsedMs` into its ease (out, cubic) back from `from` to the committed `to`. A time before
+ * its start (a frame stamped before the lift that began it) is the start: never further out than `from`.
+ */
 export function springBack(from: number, to: number, elapsedMs: number): number {
-  const t = Math.min(1, elapsedMs / SPRING_MS);
+  const t = Math.min(1, Math.max(0, elapsedMs) / SPRING_MS);
   return t >= 1 ? to : to + (from - to) * (1 - t) ** 3;
 }
 
@@ -306,6 +424,35 @@ export function jogStep(dxPx: number, dyPx: number, dtMs: number, frameWidthPx: 
   if (angle <= JOG_SNAP_DEG * DEG) return { x: Math.sign(dxPx) * px, y: 0 };
   if (angle >= (90 - JOG_SNAP_DEG) * DEG) return { x: 0, y: Math.sign(dyPx) * px };
   return { x: (dxPx / d) * px, y: (dyPx / d) * px };
+}
+
+/** NAV-LOOKDRIVE: the hat's Look speed unit (degrees a second): the square of the reach tops out here, as the jog's at JOG_FRAMES_PER_S. */
+export const LOOK_DEG_PER_S = 45;
+/** NAV-LOOKDRIVE: full reach turns this many times LOOK_DEG_PER_S (the jog's JOG_MAX_X, for the turn). */
+export const LOOK_MAX_X = 2;
+/** NAV-LOOKDRIVE: a turn back inside a soft limit by this (radians) arms its tick again: a wobble on the limit ticks once. */
+export const LOOK_TICK_BACK = 1 * DEG;
+/** NAV-LOOKDRIVE: while the depth moves the eye under a hat's Look, its cone is worked out again at most this often (ms), and once the eye rests. */
+export const LOOK_REBASE_MS = 200;
+
+/**
+ * NAV-LOOKDRIVE: the hat's Look speed (radians a second) with the thumb `d` px from where it went down: the jog's curve
+ * (jogSpeed: its dead zone, its reach to JOG_FULL_PX, r^2 + (max - 1) r^6) in LOOK_DEG_PER_S: about 12 deg/s at half
+ * reach, 90 at full.
+ */
+export function lookSpeed(d: number, max: number = LOOK_MAX_X): number {
+  return (LOOK_DEG_PER_S * DEG * jogSpeed(d, max)) / JOG_FRAMES_PER_S;
+}
+
+/**
+ * NAV-LOOKDRIVE: the turn (radians) a hat's Look held at (dxPx, dyPx) from where the thumb went down makes in `dtMs`:
+ * the jog's step (jogStep: its axis snap and its longest frame) at lookSpeed. Thumb right turns right (yaw +), thumb up
+ * (dy < 0) looks up (pitch -): a camera stick, where a finger on the scene drags the picture. A `max` that is no
+ * number, or below none, is refused for LOOK_MAX_X (it would turn the eye by NaN, or the other way).
+ */
+export function lookStep(dxPx: number, dyPx: number, dtMs: number, max: number = LOOK_MAX_X): { yaw: number; pitch: number } {
+  const step = jogStep(dxPx, dyPx, dtMs, (LOOK_DEG_PER_S * DEG) / JOG_FRAMES_PER_S, max >= 0 ? max : LOOK_MAX_X);
+  return { yaw: step.x, pitch: step.y };
 }
 
 /** Spec 4, rulings X1: Reset view applies once the pose is off its framing by more than a glance: walking never shows it. */

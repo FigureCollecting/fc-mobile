@@ -1,6 +1,5 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { pinLegacyCamera } from './legacyCamera';
 import { CASE_VIEWPORTS } from './caseViewports';
 import { touchDown, touchSwipe } from './touch';
 
@@ -24,7 +23,6 @@ async function openCase(page: Page, size: { width: number; height: number }, mis
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
   });
-  await pinLegacyCamera(page);
   await page.setViewportSize(size);
   await page.goto(`/?layout=case&fx=2&fxmisfit=${misfits}`);
   await page.waitForSelector('button.cab-figure');
@@ -51,7 +49,8 @@ for (const size of FOLD8) {
     expect(c.width, 'small').toBeLessThanOrEqual(110);
     expect(c.y, 'in the lower half').toBeGreaterThan(scene.y + scene.height / 2);
     expect(c.y + c.height, 'inside the scene').toBeLessThanOrEqual(scene.y + scene.height);
-    for (const other of ['.case-tabs', '.tab-bar', '.case-tabs__dock', '.cabinet-scene__step', '.cabinet-scene__reset', 'button[aria-label="Add figures"]']) {
+    // (NAV-SCOPE: the step keys are gone)
+    for (const other of ['.case-tabs', '.tab-bar', '.case-tabs__dock', '.cabinet-scene__reset', 'button[aria-label="Add figures"]']) {
       for (const el of await page.locator(other).all()) {
         const b = await el.boundingBox();
         if (b) expect(overlap(c, b), `the chip over ${other}`).toBe(false);

@@ -1,10 +1,11 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { legacyPrefs } from './legacyCamera';
-import { CASE_VIEWPORTS, SHOT_VIEWPORTS } from './caseViewports';
+import { CASE_VIEWPORTS } from './caseViewports';
 import { atRest, takesTap } from './sheetRest';
-import { project, unprojectToPlaneZ, type Camera } from '../src/components/display/caseCamera';
-import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../src/components/display/cabinetPresets';
+import { goToFirstFigure } from './goTo';
+import { touchPinch } from './touch';
+import { project, type Camera } from '../src/components/display/caseCamera';
+import { IKEA_KLINGSBO } from '../src/components/display/cabinetPresets';
 import { surfaceSlots, wallLayout } from '../src/components/display/packCabinets';
 import { cabinetBox } from '../src/components/display/caseFraming';
 import { boxCorners } from '../src/components/display/caseCamera';
@@ -14,8 +15,8 @@ import { ALPHA_READS_AT_ONCE, ALPHA_READ_DEADLINE_MS, ALPHA_READ_TURN_MS } from 
  * The faithful cabinets in a real browser (CASE-FIX, CASE-CABINET,
  * CASE-ADAPT): a tap on a figure opens it and a tap on the cabinet opens
  * nothing; the browser draws each figure exactly where the camera maths
- * puts it, standing on its surface; switching views relays out without
- * overlap; the CC4 swipe walks the camera or pans the picture; the IC1 tabs
+ * puts it, standing on its surface; the wall packs without overlap; the CC4
+ * swipe walks the camera or pans the picture; the IC1 tabs
  * sit above the raised +. Fixture mode on the committed synthetic art.
  */
 
@@ -25,8 +26,9 @@ test.beforeEach(({}, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'runs in the chromium project');
 });
 
+// NAV-SCOPE (Ross 11-18): the case has one view, the wall's; no view is stored. The camera the one-shelf view stood is Go
+// to's (goToFirstFigure); the one-cabinet view's went with it
 interface Prefs {
-  view?: 'wall' | 'cabinet' | 'shelf';
   pattern?: string;
 }
 
@@ -36,9 +38,10 @@ async function openCase(page: Page, size: { width: number; height: number }, que
     localStorage.setItem('onboarding_complete', '1');
     localStorage.setItem('fc-fixture-mode', 'on');
     localStorage.setItem('fc-case-prefs', JSON.stringify(p));
-  }, legacyPrefs(prefs));
+  }, prefs);
   await page.setViewportSize(size);
-  await page.goto(`/?layout=case${query}`);
+  // NAV-GRAD: Look arms after a 1 s hold here, so on a loaded host a drag whose first move comes late still walks
+  await page.goto(`/?layout=case&lookhold=1000${query}`);
   await page.waitForSelector('button.cab-figure');
   await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 15_000 });
   await settle(page, stalled);
@@ -74,10 +77,10 @@ async function cameraOf(page: Page): Promise<Camera> {
   return { x: c.x, y: c.y, z: c.z, pitch: c.pitch, focalPx: c.focalPx, frame: { width: c.width, height: c.height } };
 }
 
-/** Each figure's on-screen box (CSS px, relative to the scene) and the box the camera maths predicts for it, slid by the pan. */
+/** Each figure's on-screen box (CSS px, relative to the scene) and the box the camera maths predicts for it. */
 async function drawnVsPredicted(page: Page) {
   const camera = await cameraOf(page);
-  const pan = Number(await page.locator('.cabinet-scene').getAttribute('data-pan'));
+  const pan = 0;
   // the frame the picture is drawn in (CASE-FB1: centred in the scene, cropped narrower on a wide panel)
   const scene = (await page.locator('.cabinet-scene__frame').boundingBox())!;
   const figures = await page.locator('button.cab-figure').evaluateAll((els) =>
@@ -107,7 +110,7 @@ const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 
 for (const size of CASE_VIEWPORTS) {
   test(`a tap on a figure opens it, a tap on the cabinet opens nothing: ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
-    await openCase(page, size, '', { view: 'cabinet' });
+    await openCase(page, size, '');
     const figure = page.locator('button.cab-figure').nth(2);
     const name = await figure.getAttribute('aria-label');
     // the cabinet itself, between two shelves, away from every figure: nothing opens
@@ -125,9 +128,10 @@ for (const size of CASE_VIEWPORTS) {
 }
 
 for (const size of FOLD8) {
-  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+  for (const view of ['wall', 'go to'] as const) {
     test(`the browser draws every figure where the camera maths puts it: ${view}, ${size.name}`, async ({ page }) => {
-      await openCase(page, size, '', { view });
+      await openCase(page, size, '');
+      if (view === 'go to') await goToFirstFigure(page);
       const rows = await drawnVsPredicted(page);
       expect(rows.length).toBeGreaterThan(0);
       for (const r of rows) {
@@ -139,39 +143,29 @@ for (const size of FOLD8) {
   }
 }
 
-/** The lowest scene y (CSS px) of what the view frames: the focus cabinet's front feet, or the shelf view's surface edge. */
-async function framedBottomPx(page: Page, view: 'wall' | 'cabinet' | 'shelf'): Promise<number> {
+/** The lowest scene y (CSS px) of what the wall frames: the focus cabinet's front feet. */
+async function framedBottomPx(page: Page): Promise<number> {
   const camera = await cameraOf(page);
   const host = page.locator('.cabinet-scene');
   const focus = Number(await host.getAttribute('data-focus'));
   const slot = wallLayout(Array.from({ length: focus + 1 }, () => IKEA_KLINGSBO)).cabinets[focus];
-  if (view !== 'shelf') {
-    const b = cabinetBox(slot, 0);
-    return Math.max(...boxCorners(b.x0, b.x1, 0, 0, b.z0, b.z1).map((c) => project(camera, c).y));
-  }
-  const s = surfaceSlots(IKEA_KLINGSBO)[Number(await host.getAttribute('data-shelf'))];
-  const surface = IKEA_KLINGSBO.surfaces[s.surfaceIndex];
-  const lo = surface.topMm - surface.thicknessMm;
-  return Math.max(...[slot.leftMm, slot.rightMm].map((x) => project(camera, [x, lo, 0]).y));
-}
-
-type View = 'wall' | 'cabinet' | 'shelf';
-
-/** Open the case in `view`; the shelf view frames shelf 1 (the top step, shelf 0, frames its band up to the ceiling, TOP1). */
-async function openFramed(page: Page, size: { width: number; height: number }, view: View) {
-  await openCase(page, size, '&fx=3', { view });
-  if (view === 'shelf') {
-    await page.getByRole('button', { name: 'Shelf below' }).click();
-    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
-  }
+  const b = cabinetBox(slot, 0);
+  return Math.max(...boxCorners(b.x0, b.x1, 0, 0, b.z0, b.z1).map((c) => project(camera, c).y));
 }
 
 /**
- * The scene runs from wherever the layout above it ends down to 4 px above
- * the pull-up tabs, never under them, and the camera frames the cabinet
- * (its feet, or the shelf's edge) inside it.
+ * NAV-SCOPE: the wall is the case's one view, so the above-the-tabs family below runs on it alone (the one-cabinet and
+ * one-shelf views' cases, and their Shelf below steps, went with those views).
  */
-async function expectFramedAboveTabs(page: Page, view: View, label: string) {
+type View = 'wall';
+
+/** Open the case at the wall. */
+async function openFramed(page: Page, size: { width: number; height: number }, _view: View) {
+  await openCase(page, size, '&fx=3');
+}
+
+/** The scene runs from wherever the layout above it ends down to 4 px above the pull-up tabs, never under them. */
+async function expectSceneAboveTabs(page: Page, label: string) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const tabsTop = Math.min(
     (await page.locator('.case-tabs').boundingBox())!.y,
@@ -180,7 +174,17 @@ async function expectFramedAboveTabs(page: Page, view: View, label: string) {
   const sceneBottom = scene.y + scene.height;
   expect(sceneBottom, `${label}: the scene ends 4 px above the tabs`).toBeLessThanOrEqual(tabsTop - 3);
   expect(sceneBottom, `${label}: the scene reaches down to the tabs`).toBeGreaterThanOrEqual(tabsTop - 6);
-  const bottom = scene.y + (await framedBottomPx(page, view));
+  return { scene, tabsTop, sceneBottom };
+}
+
+/**
+ * The scene runs from wherever the layout above it ends down to 4 px above
+ * the pull-up tabs, never under them, and the camera frames the cabinet
+ * (its feet, or the shelf's edge) inside it.
+ */
+async function expectFramedAboveTabs(page: Page, _view: View, label: string) {
+  const { scene, tabsTop, sceneBottom } = await expectSceneAboveTabs(page, label);
+  const bottom = scene.y + (await framedBottomPx(page));
   expect(bottom, `${label}: framed inside the scene`).toBeLessThanOrEqual(sceneBottom);
   expect(bottom, `${label}: framed above the tabs`).toBeLessThanOrEqual(tabsTop);
 }
@@ -215,22 +219,77 @@ async function expectReframedAboveTabs(page: Page, view: View, label: string) {
   await expect(async () => expectFramedAboveTabs(page, view, label)).toPass({ timeout: 5_000 });
 }
 
+/** The eye's pose: x, y, z, yaw and pitch (spec 6.6 keeps these through a fold; the frame and the lens's px follow it). */
+async function eyeOf(page: Page) {
+  const c = JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!);
+  return { pose: [c.x, c.y, c.z, c.yaw, c.pitch] as number[], frame: { width: c.width, height: c.height } };
+}
+
+type Eye = Awaited<ReturnType<typeof eyeOf>>;
+
+/** The eye once it stands still: the same pose read twice, longer than a spring (200 ms) apart. */
+async function steadyEye(page: Page): Promise<Eye> {
+  let eye = await eyeOf(page);
+  await expect(async () => {
+    await page.waitForTimeout(250);
+    const again = await eyeOf(page);
+    const same = JSON.stringify(again) === JSON.stringify(eye);
+    eye = again;
+    expect(same, 'the eye stands still').toBe(true);
+  }).toPass({ timeout: 5_000 });
+  return eye;
+}
+
+// Spec 6.6, by design: a fold, a banner or a turn of the phone keeps the eye's pose (CabinetScene's frame-change hold;
+// also CabinetSceneFreeCamera.test.tsx and case-free-camera.spec.ts). Where the new frame is shorter than the old one,
+// the cabinet therefore stays at the old frame's framing and its feet end below the scene. The combination below asserts
+// that: the pose unchanged and the miss below the scene's bottom as measured (CSS px). It turns red if a frame change ever
+// re-fits the eye (NAV-SCOPE: the cabinet and shelf views' six combinations went with those views).
+const KEPT_POSE_MISS_PX = new Map([['turn: wall, fold8-cover to fold8-cover-sideways', 71.457]]);
+// identical to 1e-6 px in every run so far; the +-0.5 px band absorbs sub-pixel layout, float rounding and a 1 px layout
+// change (the lens follows the frame size, so the miss moves about 0.4 px) and fails from 2 px; a re-fit moves the miss
+// 12 px or more
+const KEPT_POSE_MISS_TOLERANCE_PX = 0.5;
+
+/** After a change of the frame: the scene above the tabs, the pose as `before`, the framed bottom `missPx` below the scene. */
+async function expectPoseKeptAboveTabs(page: Page, _view: View, label: string, before: Eye, missPx: number) {
+  await expect(async () => {
+    const { scene, sceneBottom } = await expectSceneAboveTabs(page, label);
+    const now = await eyeOf(page);
+    expect(now.frame, `${label}: the frame changed`).not.toEqual(before.frame);
+    expect(now.pose, `${label}: the pose kept (spec 6.6)`).toEqual(before.pose);
+    const miss = scene.y + (await framedBottomPx(page)) - sceneBottom;
+    expect(miss, `${label}: the framed bottom below the scene`).toBeGreaterThanOrEqual(missPx - KEPT_POSE_MISS_TOLERANCE_PX);
+    expect(miss, `${label}: the framed bottom below the scene`).toBeLessThanOrEqual(missPx + KEPT_POSE_MISS_TOLERANCE_PX);
+  }).toPass({ timeout: 5_000 });
+}
+
+// NAV-SCOPE (plan section 9): Reset view is zoom-only and never moves the camera, so NAV-RESET-FRAME's test (Reset view
+// after a turn of the phone stands the eye at the new frame's framing, marked test.fail) has no case left: deleted.
+
 for (const size of FOLD8) {
-  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+  for (const view of ['wall'] as const) {
     test(`the whole framed cabinet stands above the pull-up tabs and the tab bar: ${view}, ${size.name}`, async ({ page }) => {
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'at load');
     });
 
-    test(`still above the tabs when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+    const offlineKey = `offline: ${view}, ${size.name}`;
+    const offlineWhat = KEPT_POSE_MISS_PX.has(offlineKey) ? 'the pose is kept above the tabs (spec 6.6)' : 'the scene is re-fitted above the tabs';
+    test(`${offlineWhat} when the phone goes offline and the banner pushes the page down: ${view}, ${size.name}`, async ({ page, context }) => {
+      const kept = KEPT_POSE_MISS_PX.get(offlineKey);
       await openFramed(page, size, view);
       await expectFramedAboveTabs(page, view, 'online');
+      const online = await steadyEye(page);
       await context.setOffline(true);
       await expect(page.locator('.offline-banner')).toBeVisible();
-      await expectReframedAboveTabs(page, view, 'offline');
+      // spec 6.6: under the banner's shorter frame the eye keeps the taller one's pose
+      if (kept === undefined) await expectReframedAboveTabs(page, view, 'offline');
+      else await expectPoseKeptAboveTabs(page, view, 'offline', online, kept);
       await context.setOffline(false);
       await expect(page.locator('.offline-banner')).toHaveCount(0);
       await expectReframedAboveTabs(page, view, 'back online');
+      if (kept !== undefined) expect((await eyeOf(page)).pose, 'back online: the pose kept').toEqual(online.pose);
     });
 
     test(`still above the tabs when the chips row comes and goes above the scene: ${view}, ${size.name}`, async ({ page }) => {
@@ -242,10 +301,6 @@ for (const size of FOLD8) {
       await page.reload();
       await page.waitForSelector('button.cab-figure');
       await expect(page.locator('.applied-chips')).toHaveCount(0);
-      if (view === 'shelf') {
-        await page.getByRole('button', { name: 'Shelf below' }).click();
-        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
-      }
       await expectFramedAboveTabs(page, view, 'reloaded without chips');
       await page.getByRole('button', { name: 'Refine' }).click();
       await expectSheetAtRest(page);
@@ -253,135 +308,24 @@ for (const size of FOLD8) {
       await page.getByRole('group', { name: 'Holding' }).getByRole('button', { name: /^Owned/ }).click();
       await page.getByRole('button', { name: 'Done' }).click();
       await expect(page.locator('.applied-chips')).toHaveCount(1);
-      if (view === 'shelf') {
-        // CASE-FB2a: a new filter starts the view again at the wall's start, its top first; on to shelf 1 as at load
-        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '0');
-        await page.getByRole('button', { name: 'Shelf below' }).click();
-        await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-shelf', '1');
-      }
       await expectReframedAboveTabs(page, view, 'a chip added');
     });
   }
 }
 
-// close-out 3, ruling 27: the mixed wall paged to its end on the Fold8 as the installed app (full screen), where a
-// snap to three whole once left the last cabinet out of every page and made every other press go nowhere
-for (const size of SHOT_VIEWPORTS.filter((v) => /^fold8-.*-full$/.test(v.name))) {
-  test(`the mixed wall pages to its last cabinet, each press moving on and every cabinet whole on its page: ${size.name}`, async ({ page }) => {
-    test.setTimeout(120_000);
-    await openCase(page, size, '&fx=30', { view: 'wall', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
-    const host = page.locator('.cabinet-scene');
-    const n = (JSON.parse((await host.getAttribute('data-wall'))!) as number[][]).length;
-    expect(n).toBeGreaterThan(8);
-    const wall = wallLayout(Array.from({ length: n }, (_, i) => [IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK][i % 3]));
-    // whole: the body, side to side at the height the frame aims at
-    const whole = async () => {
-      const camera = await cameraOf(page);
-      const lookY = unprojectToPlaneZ(camera, camera.frame.width / 2, camera.frame.height / 2, 0)![1];
-      return wall.cabinets.flatMap((slot, i) =>
-        [slot.leftMm, slot.rightMm].every((x) => {
-          const p = project(camera, [x, lookY, 0]).x;
-          return p >= -1e-6 && p <= camera.frame.width + 1e-6;
-        })
-          ? [i]
-          : [],
-      );
-    };
-    const next = page.getByRole('button', { name: 'Next cabinet' });
-    const paged = new Set(await whole());
-    let x = (await cameraOf(page)).x;
-    for (let k = 0; k < n && (await next.isEnabled()); k++) {
-      await next.click();
-      await expect.poll(async () => (await cameraOf(page)).x, { message: `press ${k}` }).toBeGreaterThan(x);
-      x = (await cameraOf(page)).x;
-      (await whole()).forEach((i) => paged.add(i));
-    }
-    await expect(next).toBeDisabled();
-    expect(await whole(), 'the last page').toContain(n - 1);
-    expect([...paged].sort((a, b) => a - b)).toEqual(wall.cabinets.map((_, i) => i));
-  });
-}
-
-// close-out 4, ruling 32: on the mixed wall a walk could settle on the stop halfway between two cabinets where the next
-// page opened, so the next press of Next went nowhere (the button only went off); from wherever a walk settles, on
-// any page, Next moves the camera on and Prev back
-for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open-rotated')) {
-  test(`the mixed wall: after a walk on any page, Next moves the camera on and Prev back: ${size.name}`, async ({ page }) => {
-    test.setTimeout(600_000);
-    await openCase(page, size, '&fx=30', { view: 'wall', pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack' });
-    const next = page.getByRole('button', { name: 'Next cabinet' });
-    const prev = page.getByRole('button', { name: 'Previous cabinet' });
-    const x = async () => (await cameraOf(page)).x;
-    let moves = 0;
-    let last = false;
-    for (let p = 0; p < 40 && !last; p++) {
-      const opened = await x();
-      last = await next.isDisabled();
-      for (const dx of [-45, -70, -100, -130, -170, -220, -290, 70, 130]) {
-        // a finger moving left walks on, so Next is the press that could find itself where it stands
-        const button = dx < 0 ? next : prev;
-        await swipe(page, dx);
-        await page.waitForTimeout(100);
-        const walked = await x();
-        const at = `page ${p} walk ${dx} to ${walked} focus ${await page.locator('.cabinet-scene').getAttribute('data-focus')}`;
-        if (await button.isEnabled()) {
-          await button.click();
-          await expect.poll(async () => Math.sign((await x()) - walked), { message: `${at}: ${dx < 0 ? 'Next' : 'Prev'}` }).toBe(dx < 0 ? 1 : -1);
-          moves++;
-        }
-        // back to this page as it opened: the pages open left to right (a walk within the first page leaves Prev off)
-        if ((await prev.isDisabled()) && (await x()) !== opened) await next.click();
-        while ((await x()) > opened && (await prev.isEnabled())) await prev.click();
-        while ((await x()) < opened && (await next.isEnabled())) await next.click();
-        expect(await x(), at).toBe(opened);
-      }
-      if (!last) await next.click();
-    }
-    expect(moves).toBeGreaterThan(40);
-  });
-}
-
-// DETOLF-GAP S1: the half-inch gap leaves float noise in the Detolf centres, so a walk that settled halfway between the
-// last cabinet of one page and the first of the next once focused the right one, and Next skipped a page (NEAREST_TIE_MM)
-test('the Detolf wall: a walk of four stops settles between cabinets 3 and 4, focusing 3, and Next opens cabinets 4-7: fold8-cover', async ({ page }) => {
-  test.setTimeout(120_000);
-  await openCase(page, FOLD8.find((v) => v.name === 'fold8-cover')!, '&fx=40', { view: 'wall', pattern: 'ikea-detolf' });
-  const host = page.locator('.cabinet-scene');
-  await expect(host).toHaveAttribute('data-pattern', 'ikea-detolf');
-  await expect(host).not.toHaveAttribute('data-free-camera', '1');
-  const next = page.getByRole('button', { name: 'Next cabinet' });
-  const prev = page.getByRole('button', { name: 'Previous cabinet' });
-  const x = async () => (await cameraOf(page)).x;
-  // where the second page opens, then back to the first
-  const first = await x();
-  await next.click();
-  await expect.poll(x).toBeGreaterThan(first);
-  const second = await x();
-  await expect(host).toHaveAttribute('data-focus', '4');
-  await prev.click();
-  await expect.poll(x).toBe(first);
-  for (let s = 0; s < 4; s++) {
-    await swipe(page, -45);
-    await page.waitForTimeout(120);
-  }
-  const c = wallLayout(Array(8).fill(IKEA_DETOLF)).cabinets.map((slot) => slot.centerMm);
-  expect(await x()).toBeCloseTo((c[3] + c[4]) / 2, 6);
-  await expect(host).toHaveAttribute('data-focus', '3');
-  await next.click();
-  await expect.poll(x).toBe(second);
-  await expect(host).toHaveAttribute('data-focus', '4');
-});
+// NAV-SCOPE: close-out 3 (ruling 27) and close-out 4 (ruling 32), the mixed wall paged by Next and Prev, went with the
+// step keys; a walk standing every cabinet of the mixed wall whole is CabinetScene.test.tsx's
 
 // the open Fold8 shows a tapped figure in a pane beside the case: the case column must still end above the tabs
 for (const size of FOLD8.filter((v) => v.name === 'fold8-open' || v.name === 'fold8-open-rotated')) {
   test(`still above the tabs with the detail pane open, then offline: ${size.name}`, async ({ page, context }) => {
-    await openFramed(page, size, 'cabinet');
+    await openFramed(page, size, 'wall');
     await page.locator('button.cab-figure').nth(1).tap();
     await expect(page.locator('.detail-pane')).toBeVisible();
-    await expectReframedAboveTabs(page, 'cabinet', 'detail pane open');
+    await expectReframedAboveTabs(page, 'wall', 'detail pane open');
     await context.setOffline(true);
     await expect(page.locator('.offline-banner')).toBeVisible();
-    await expectReframedAboveTabs(page, 'cabinet', 'detail pane open, offline');
+    await expectReframedAboveTabs(page, 'wall', 'detail pane open, offline');
   });
 }
 
@@ -389,11 +333,17 @@ for (const [from, to] of [
   ['fold8-cover', 'fold8-cover-sideways'],
   ['fold8-open', 'fold8-open-rotated'],
 ] as const) {
-  for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-    test(`turning the phone with the case open re-fits the scene above the tabs: ${view}, ${from} to ${to}`, async ({ page }) => {
+  for (const view of ['wall'] as const) {
+    const turnKey = `turn: ${view}, ${from} to ${to}`;
+    const turnWhat = KEPT_POSE_MISS_PX.has(turnKey) ? 'keeps the pose above the tabs (spec 6.6)' : 're-fits the scene above the tabs';
+    test(`turning the phone with the case open ${turnWhat}: ${view}, ${from} to ${to}`, async ({ page }) => {
+      const kept = KEPT_POSE_MISS_PX.get(turnKey);
       await openFramed(page, FOLD8.find((v) => v.name === from)!, view);
+      const upright = await steadyEye(page);
       await page.setViewportSize(FOLD8.find((v) => v.name === to)!);
-      await expectReframedAboveTabs(page, view, to);
+      // spec 6.6: turned sideways the eye keeps the upright cover's pose (the feet far below the scene)
+      if (kept === undefined) await expectReframedAboveTabs(page, view, to);
+      else await expectPoseKeptAboveTabs(page, view, to, upright, kept);
     });
   }
 }
@@ -508,10 +458,11 @@ function overlapsOf(rows: { name: string; kind: string; world: World; opaque: { 
 
 for (const branch of ['cut-out', 'masked'] as const) {
   for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
-    test(`true scale, ${branch}: the drawn figure (its opaque rows) is exactly its labelled height, feet on the surface: shelf view, ${size.name}`, async ({ page }) => {
-      await openCase(page, size, branch === 'masked' ? '&fxbranch=masked' : '', { view: 'shelf' });
+    test(`true scale, ${branch}: the drawn figure (its opaque rows) is exactly its labelled height, feet on the surface: Go to's shelf framing, ${size.name}`, async ({ page }) => {
+      await openCase(page, size, branch === 'masked' ? '&fxbranch=masked' : '');
+      await goToFirstFigure(page);
       const camera = await cameraOf(page);
-      // the shelf view looks level: a figure facing the camera is drawn without foreshortening
+      // the shelf framing looks level: a figure facing the camera is drawn without foreshortening
       expect(camera.pitch).toBe(0);
       const rows = await pictureAlpha(page);
       expect(rows.length).toBeGreaterThan(0);
@@ -531,8 +482,9 @@ for (const branch of ['cut-out', 'masked'] as const) {
 
   // the committed art and the off-centre art (?fxasym=1), whose pictures are moved so the figures stand centred
   for (const asym of ['', '&fxasym=1'] as const) {
-    test(`true scale, ${branch}${asym ? ', off-centre art' : ''}: the tilted cabinet view draws each picture where its world box is, the figure in it its labelled height`, async ({ page }) => {
-      await openCase(page, FOLD8[0], `${branch === 'masked' ? '&fxbranch=masked' : ''}${asym}`, { view: 'cabinet' });
+    // (NAV-SCOPE: the one-cabinet view this stood in is gone; the wall's framing stands its camera farther back)
+    test(`true scale, ${branch}${asym ? ', off-centre art' : ''}: the wall draws each picture where its world box is, the figure in it its labelled height`, async ({ page }) => {
+      await openCase(page, FOLD8[0], `${branch === 'masked' ? '&fxbranch=masked' : ''}${asym}`);
       const camera = await cameraOf(page);
       for (const r of await pictureAlpha(page)) {
         const pictureH = r.art.y1 - r.art.y0;
@@ -554,27 +506,11 @@ for (const branch of ['cut-out', 'masked'] as const) {
   }
 }
 
-// the labelled widths as given, none at all, and labels narrower than the cut-outs draw (as the real sign-off cut-outs have)
-for (const widths of ['', 'none', 'narrow'] as const) {
-  test(`views switch in place: no figure overlaps another on its surface, the scene keeps its size${widths ? `, widths ${widths}` : ''}`, async ({ page }) => {
-    const size = FOLD8.find((v) => v.name === 'fold8-open')!;
-    await openCase(page, size, `&fx=3${widths ? `&fxwidth=${widths}` : ''}`);
-    const sceneBox = await page.locator('.cabinet-scene').boundingBox();
-    for (const view of ['One cabinet', 'One shelf', 'Whole cabinets', 'One cabinet'] as const) {
-      // VIEWCARD-1: the header's Case menu chooses the view (the View card no longer repeats it)
-      await page.getByRole('button', { name: /^Case,/ }).click();
-      await page.getByRole('menuitemradio', { name: view }).click();
-      await expect(page.getByRole('menu', { name: 'Case views' })).toHaveCount(0);
-      await settle(page);
-      expect(await page.locator('.cabinet-scene').boundingBox()).toEqual(sceneBox);
-      await expectNoOverlap(page, view);
-    }
-  });
-}
+// NAV-SCOPE: "views switch in place" went with the Case views menu; the whole wall's no-overlap cases below stay
 
 for (const branch of ['', 'masked', 'framed', 'silhouette'] as const) {
   test(`no drawn figure reaches over its neighbour: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
-    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3${branch ? `&fxbranch=${branch}` : ''}`, {});
     await expectNoOverlap(page, branch || 'cut-out');
   });
 }
@@ -586,7 +522,7 @@ for (const [widths, what] of [
 ] as const) {
   for (const branch of ['', 'masked'] as const) {
     test(`no drawn figure reaches over its neighbour, ${what}: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
-      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxwidth=${widths}${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
+      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxwidth=${widths}${branch ? `&fxbranch=${branch}` : ''}`, {});
       await expectNoOverlap(page, `${widths} ${branch || 'cut-out'}`);
     });
   }
@@ -597,7 +533,7 @@ for (const [widths, what] of [
 for (const widths of ['', 'none', 'narrow'] as const) {
   for (const branch of ['', 'masked'] as const) {
     test(`no drawn figure reaches over its neighbour or into the side panel, off-centre art${widths ? `, widths ${widths}` : ''}: ${branch || 'cut-out'} art, the whole wall`, async ({ page }) => {
-      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxasym=1${widths ? `&fxwidth=${widths}` : ''}${branch ? `&fxbranch=${branch}` : ''}`, { view: 'wall' });
+      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, `&fx=3&fxasym=1${widths ? `&fxwidth=${widths}` : ''}${branch ? `&fxbranch=${branch}` : ''}`, {});
       const leaning = (await drawnFigures(page)).filter((r) => r.name === 'Rem' || r.name.startsWith('Spike'));
       // the art under test: the figures stand off-centre in their pictures
       expect(new Set(leaning.map((r) => r.name)).size).toBe(2);
@@ -634,7 +570,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
         /* never answers */
       });
       // labels narrower than the cut-outs draw: a figure packed by its label while its picture is read would overlap
-      await openCase(page, size, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
+      await openCase(page, size, '&fx=3&fxwidth=narrow', {}, ryuko);
       const stalled = await groundedOf(page, ryuko);
       expect(stalled.length).toBeGreaterThan(0);
       expect(stalled, 'the stalled picture alone waits, on its plate').toEqual(stalled.map(() => '0'));
@@ -648,7 +584,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
         // on to the hands-off guard, which sends it
         await route.fallback();
       });
-      await openCase(page, size, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
+      await openCase(page, size, '&fx=3&fxwidth=narrow', {}, ryuko);
       const late = await groundedOf(page, ryuko);
       expect(late.length).toBeGreaterThan(0);
       expect(late, 'still on its way').toEqual(late.map(() => '0'));
@@ -674,7 +610,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
         return w.__ryukoReads++ === 0 ? Promise.reject(new DOMException('network error', 'EncodingError')) : decode.call(this);
       };
     });
-    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow', { view: 'wall' }, ryuko);
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow', {}, ryuko);
     await expect.poll(() => offTrueScale(page, (name) => ryuko.test(name)), { timeout: 15_000, intervals: [500] }).toBeLessThan(0.5);
     // read twice: the failed read, then the one its load sent
     expect(await page.evaluate(() => (window as unknown as { __ryukoReads: number }).__ryukoReads)).toBe(2);
@@ -703,7 +639,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       };
     }, ALPHA_READS_AT_ONCE);
     const reads = () => page.evaluate(() => (window as unknown as { __reads: { src: string; loaded: boolean; failed: boolean }[] }).__reads);
-    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow', { view: 'wall' }, /./);
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow', {}, /./);
     await expect.poll(async () => (await reads()).some((r) => r.failed), { timeout: 15_000 }).toBe(true);
     const failed = (await reads()).find((r) => r.failed)!;
     expect(failed.loaded, 'its own picture had loaded: the load found its read waiting in line').toBe(true);
@@ -731,7 +667,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       };
     }, 2 * ALPHA_READS_AT_ONCE);
     // each copy's picture at its own URL, as a real collection's: 21 pictures; no figure is waited for here
-    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxuniq=1', { view: 'wall' }, /./);
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxuniq=1', {}, /./);
     const stalledOf = () =>
       page.evaluate(() => {
         const stalled = (window as unknown as { __stalled: string[] }).__stalled;
@@ -792,7 +728,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
       requestAnimationFrame(watch);
     });
     // each copy's picture at its own URL, labels narrower than the cut-outs draw: a picture drawn on its label packing would overlap
-    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxuniq=1&fxwidth=narrow', { view: 'wall' }, /./);
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxuniq=1&fxwidth=narrow', {}, /./);
     await expect
       .poll(() => page.locator('button.cab-figure[data-grounded="0"]').count(), { timeout: 150_000, intervals: [1_000] })
       .toBe(0);
@@ -851,7 +787,7 @@ test.describe('a slow or stalled picture never holds the other figures back', ()
   });
 
   test('a filter removed: the figures already measured stay grounded while the new pictures load', async ({ page }) => {
-    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow&mfr=Good%20Smile%20Company', { view: 'wall' });
+    await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3&fxwidth=narrow&mfr=Good%20Smile%20Company', {});
     const measured = /^(Rem|Nendoroid Hatsune Miku|Hatsune Miku: Deep Sea Girl)$/;
     expect((await groundedOf(page, measured)).length).toBeGreaterThan(0);
     // the pictures new to the list arrive 2 s late (a phone on a slow network)
@@ -918,7 +854,7 @@ test.describe('a picture whose alpha read is slow while the picture itself is on
     test(`${what} slow, the pictures on time: a figure still being read draws its plate, over no neighbour or side panel; then its picture: ${branch || 'cut-out'}, ${size.name}`, async ({ page }) => {
       await holdReads(page, slow);
       // labels narrower than the cut-outs draw: a picture drawn on its label packing would overlap
-      await openCase(page, size, `&fx=3&fxwidth=narrow${branch ? '&fxbranch=masked' : ''}`, { view: 'wall' }, held);
+      await openCase(page, size, `&fx=3&fxwidth=narrow${branch ? '&fxbranch=masked' : ''}`, {}, held);
       // the pictures themselves are here: only their reads wait
       await page.waitForFunction(
         (source) =>
@@ -982,7 +918,7 @@ test.describe('a read landing after a new list is drawn, before its effects run,
           }).observe(document, { subtree: true, childList: true });
         }
       }, when);
-      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3', { view: 'wall' }, /^(Ryuko|Spike)/);
+      await openCase(page, FOLD8.find((v) => v.name === 'fold8-open')!, '&fx=3', {}, /^(Ryuko|Spike)/);
       // the list narrows to the wished figures: Ryuko alone, still being read
       await page.getByRole('button', { name: 'Refine' }).click();
       await expectSheetAtRest(page);
@@ -1044,18 +980,19 @@ async function swipe(page: Page, dx: number) {
 }
 
 test('CC4 camera: a sideways swipe walks the camera along the wall; the perspective re-renders', async ({ page }) => {
-  await openCase(page, FOLD8[0], '&fx=6', { view: 'cabinet' });
+  await openCase(page, FOLD8[0], '&fx=6');
   const before = await cameraOf(page);
   await swipe(page, -160);
   const after = await cameraOf(page);
   expect(after.x).toBeGreaterThan(before.x + 100);
-  expect(await page.locator('.cabinet-scene').getAttribute('data-pan')).toBe('0');
   // and the drawing still follows the maths after the walk
   for (const r of await drawnVsPredicted(page)) expect(Math.abs(r.drawn.left - r.predicted.left)).toBeLessThan(1.5);
 });
 
-// PAN-KEEP-1 (Ross 10-20): Reset view is the deliberate way back to the default angle. NAV-2A2 (Ross 11-04): the swipe mode
-// it kept the camera across is gone, and the tests of the switch with it. At the Fold8 cover and open panels.
+// PAN-KEEP-1 (Ross 10-20): Reset view was the deliberate way back to the default angle. NAV-2A2 (Ross 11-04): the swipe mode
+// it kept the camera across is gone, and the tests of the switch with it. NAV-SCOPE (plan section 9, Ross 11-17: "reset
+// view would only be used for pinch zoom"): it clears the zoom only, shown only while zoomed; the camera stays where the
+// walk and the raise left it. At the Fold8 cover and open panels.
 async function dragBy(page: Page, dx: number, dy: number) {
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
   const x = scene.x + scene.width / 2;
@@ -1067,27 +1004,31 @@ async function dragBy(page: Page, dx: number, dy: number) {
 }
 
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
-  for (const view of ['wall', 'cabinet'] as const) {
-    test(`PAN-KEEP-1 ${view} ${size.name}: a camera walked and raised comes back to the default angle with Reset view`, async ({ page }) => {
-      await openCase(page, size, '&fx=24', { view });
-      const home = await cameraOf(page);
-      await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
-      await dragBy(page, -160, 0);
-      await dragBy(page, 0, -120);
-      const moved = await cameraOf(page);
-      expect(moved.x, 'the camera walked').not.toBeCloseTo(home.x, 0);
-      expect(moved.y, 'and rose').not.toBeCloseTo(home.y, 0);
-      await page.getByRole('button', { name: 'Reset view' }).click();
-      await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
-      const back = await cameraOf(page);
-      expect([back.y, back.z, back.pitch, back.focalPx], 'the default angle').toEqual([home.y, home.z, home.pitch, home.focalPx]);
-      expect(await page.locator('.cabinet-scene').getAttribute('data-pan')).toBe('0');
-    });
-  }
+  test(`PAN-KEEP-1, NAV-SCOPE ${size.name}: a camera walked and raised shows no Reset view; pinched, Reset view clears only the zoom`, async ({ page }) => {
+    await openCase(page, size, '&fx=24');
+    const home = await cameraOf(page);
+    const reset = page.getByRole('button', { name: 'Reset view' });
+    await expect(reset).toHaveCount(0);
+    await dragBy(page, -160, 0);
+    await dragBy(page, 0, -120);
+    const moved = await cameraOf(page);
+    expect(moved.x, 'the camera walked').not.toBeCloseTo(home.x, 0);
+    expect(moved.y, 'and rose').not.toBeCloseTo(home.y, 0);
+    await expect(reset, 'a walk and a raise are no zoom').toHaveCount(0);
+    const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+    const m = { x: f.x + f.width / 2, y: f.y + f.height * 0.55 };
+    await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 60, y: m.y }, { x: m.x + 60, y: m.y });
+    await expect(reset).toHaveCount(1);
+    await page.waitForTimeout(400);
+    await reset.click();
+    await expect(reset).toHaveCount(0);
+    expect((JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-zoom'))!) as { k: number }).k).toBe(1);
+    expect(await cameraOf(page), 'the camera where the walk and the raise left it').toEqual(moved);
+  });
 }
 
 test('a swipe opens nothing; the next tap does', async ({ page }) => {
-  await openCase(page, FOLD8[0], '&fx=6', { view: 'cabinet' });
+  await openCase(page, FOLD8[0], '&fx=6');
   await swipe(page, -80);
   await page.waitForTimeout(200);
   await expect(page.locator('.pswp')).toHaveCount(0);
@@ -1162,7 +1103,8 @@ for (const routePx of [325, 301]) {
     const barAt = (await page.locator('.tab-bar').boundingBox())!.y;
     await page.setViewportSize({ width: sideways.width, height: Math.round(sideways.height + routePx - barAt) });
     await expect.poll(async () => Math.round((await page.locator('.tab-bar').boundingBox())!.y)).toBe(routePx);
-    await page.getByRole('button', { name: 'View' }).click();
+    // (the tab by its exact name: the shorter window leaves the Free camera a Reset view, kept pose and all)
+    await page.getByRole('button', { name: 'View', exact: true }).click();
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     const shown = (await card.boundingBox())!;
@@ -1179,7 +1121,7 @@ for (const routePx of [325, 301]) {
 }
 
 test('masked art: the clean copy composited with its mask at display time (CSS mask-image)', async ({ page }) => {
-  await openCase(page, FOLD8[0], '&fxbranch=masked', { view: 'shelf' });
+  await openCase(page, FOLD8[0], '&fxbranch=masked');
   const art = page.locator('.cab-figure__art--masked').first();
   const style = await art.evaluate((el) => {
     const cs = getComputedStyle(el);

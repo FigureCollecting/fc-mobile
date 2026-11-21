@@ -130,30 +130,33 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ wall: 'white' });
   });
 
-  it('NAV-2A: a fresh device opens the case in Free camera, with no swipe button and no pan anywhere; NAV-2A2: the View card\'s untick brings no button back, and the stored swipe mode is dropped', async () => {
-    localStorage.setItem('fc-case-prefs', JSON.stringify({ swipe: 'pan' }));
+  it('NAV-GRAD: a device that had the Free camera off and Pan the wall stored opens the case in the Free camera, with no swipe button, no pan and no Free camera box; the View card\'s next change drops both stored fields', async () => {
+    localStorage.setItem('fc-case-prefs', JSON.stringify({ freeCamera: false, swipe: 'pan' }));
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
     const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     expect(container.querySelector('.cabinet-scene[data-free-camera="1"]')).not.toBeNull();
+    expect(container.querySelector('.cabinet-scene[data-pan]')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
     expect(screen.queryByText(/pan the wall/i)).toBeNull();
+    // opening the case alone rewrites nothing
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toEqual({ freeCamera: false, swipe: 'pan' });
     await user.click(screen.getByRole('button', { name: 'View' }));
     expect(screen.queryByText(/pan the wall/i)).toBeNull();
-    const box = await screen.findByRole('checkbox', { name: 'Free camera' });
-    expect(box).toBeChecked();
-    await user.click(box);
-    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-free-camera]')).toBeNull());
-    // NAV-2A2 (Ross 11-04): the old camera has no swipe button either, and the swipe mode stored before is gone
-    expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
+    const sizes = await screen.findByRole('checkbox', { name: 'Show estimated sizes' });
+    expect(screen.queryByRole('checkbox', { name: /free camera/i })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Depth control' })).toBeInTheDocument();
+    await user.click(sizes);
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ showEstimated: true }));
     const stored = JSON.parse(localStorage.getItem('fc-case-prefs')!);
-    expect(stored).toMatchObject({ freeCamera: false });
+    expect('freeCamera' in stored).toBe(false);
     expect('swipe' in stored).toBe(false);
+    expect(container.querySelector('.cabinet-scene[data-free-camera="1"]')).not.toBeNull();
     unmount();
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(document.querySelector('.cabinet-scene[data-free-camera]')).toBeNull();
+    expect(document.querySelector('.cabinet-scene[data-free-camera="1"]')).not.toBeNull();
     expect(screen.queryByRole('button', { name: /^Swipe/ })).toBeNull();
   });
 
@@ -366,16 +369,16 @@ describe('Collection page (rebuilt display layer)', () => {
     }
   });
 
-  it('HDR (a): the active Case button opens its views and sets the case view, kept on this device; Tiles switches mode', async () => {
+  it('HDR (a), NAV-SCOPE: the active Case button opens no views (the case has one) and moves nothing; Tiles switches mode', async () => {
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
     const { container, currentPath } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
+    const camera = (container.querySelector('.cabinet-scene') as HTMLElement).dataset.camera;
     await user.click(screen.getByRole('button', { name: /^Case/ }));
-    await user.click(screen.getByRole('menuitemradio', { name: 'One shelf' }));
-    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-view="shelf"]')).not.toBeNull());
-    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ view: 'shelf' });
-    expect(screen.getByRole('button', { name: /^Case/ })).toHaveAttribute('aria-label', 'Case, One shelf');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Case/ })).toHaveAttribute('aria-label', 'Case');
+    expect((container.querySelector('.cabinet-scene') as HTMLElement).dataset.camera).toBe(camera);
     await user.click(screen.getByRole('button', { name: /^Tiles/ }));
     await waitFor(() => expect(container.querySelector('.jrows')).not.toBeNull());
     expect(currentPath()).toContain('layout=rows');
@@ -487,23 +490,39 @@ describe('Collection page (rebuilt display layer)', () => {
 
 // CARD-VIEW-1 part 3 (Ross 10-25): "If shelving isn't visible behind (like cover screen), that go to tap should close that view,
 // too. Otherwise, if on tablet/pc/fold where card is alongside, just takes you to it but doesn't close that view by default."
+/** The case scene's camera (data-camera), as it publishes it. */
+const caseCamera = (container: HTMLElement) => JSON.parse(container.querySelector<HTMLElement>('.cabinet-scene')!.dataset.camera!) as { x: number; y: number; z: number };
+
+/**
+ * NAV-SCOPE: the camera a fresh case opens at on this page (the wall's framing), from a render of its own. Go to's shelf
+ * framing stands nearer the wall than it: the case has no view to switch to, so where the camera stands is the proof.
+ */
+async function wallOpening(path: string, figure: string) {
+  const { container, unmount } = renderWithProviders(<Collection />, { initialPath: path });
+  await screen.findByRole('button', { name: figure });
+  const camera = caseCamera(container);
+  unmount();
+  return camera;
+}
+
 describe('Go to on a figure card (CARD-VIEW-1)', () => {
   const caseScene = (container: HTMLElement) => container.querySelector('.cabinet-scene') as HTMLElement | null;
 
-  it('over the shelving (the full-screen viewer, below 640 px): Go to closes the card and frames the figure\'s shelf in the one-shelf view', async () => {
+  it('over the shelving (the full-screen viewer, below 640 px): Go to closes the card and frames the figure\'s shelf, storing no view', async () => {
     mockPageWidth(400);
     await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
     const user = userEvent.setup();
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 2' });
-    expect(caseScene(container)!.dataset.view).toBe('wall');
+    const opening = caseCamera(container);
     await user.click(drawnPart('Figure 2'));
     await waitFor(() => expect(instances).toHaveLength(1));
     await user.click(screen.getByRole('button', { name: 'Go to' }));
-    // the card is gone, the case stands in the one-shelf view, on the figure's shelf
+    // the card is gone, the case stands on the figure's shelf, nearer than the wall's framing
     await waitFor(() => expect(document.querySelector('.figure-viewer-sheet')).toBeNull());
-    expect(caseScene(container)!.dataset.view).toBe('shelf');
-    expect(JSON.parse(localStorage.getItem('fc-case-prefs')!).view).toBe('shelf');
+    await waitFor(() => expect(caseCamera(container).z).toBeLessThan(opening.z));
+    expect(caseScene(container)!.dataset.view).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem('fc-case-prefs') ?? '{}')).not.toHaveProperty('view');
     expect(screen.getByRole('button', { name: 'Figure 2' })).toBeInTheDocument();
   });
 
@@ -513,10 +532,11 @@ describe('Go to on a figure card (CARD-VIEW-1)', () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 2' });
+    const opening = caseCamera(container);
     await user.click(drawnPart('Figure 2'));
     await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
     await user.click(screen.getByRole('button', { name: 'Go to' }));
-    await waitFor(() => expect(caseScene(container)!.dataset.view).toBe('shelf'));
+    await waitFor(() => expect(caseCamera(container).z).toBeLessThan(opening.z));
     expect(container.querySelector('.detail-pane')).not.toBeNull();
     expect(screen.getByText('2 of 3')).toBeInTheDocument();
   });
@@ -524,6 +544,7 @@ describe('Go to on a figure card (CARD-VIEW-1)', () => {
   it('from the tiles: Go to switches to the case first', async () => {
     mockPageWidth(700);
     await respondWith([makeFigure('1'), makeFigure('2')]);
+    const opening = await wallOpening('/', 'Figure 1');
     const user = userEvent.setup();
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
     await screen.findByRole('button', { name: 'Figure 1' });
@@ -532,7 +553,7 @@ describe('Go to on a figure card (CARD-VIEW-1)', () => {
     await waitFor(() => expect(container.querySelector('.detail-pane')).not.toBeNull());
     await user.click(screen.getByRole('button', { name: 'Go to' }));
     await waitFor(() => expect(caseScene(container)).not.toBeNull());
-    expect(caseScene(container)!.dataset.view).toBe('shelf');
+    await waitFor(() => expect(caseCamera(container).z).toBeLessThan(opening.z));
     expect(container.querySelector('.jrows')).toBeNull();
     expect(container.querySelector('.detail-pane')).not.toBeNull();
   });
@@ -573,34 +594,37 @@ describe('Go to from the figure page (search, Copies and actions): the collectio
     expect(screen.getByRole('button', { name: 'Go to' })).toHaveAccessibleDescription('Goods and media are not shelved');
   });
 
-  it('a request made on the figure page: the case opens in the one-shelf view on that figure', async () => {
+  it('a request made on the figure page: the case opens on that figure\'s shelf', async () => {
     mockPageWidth(400);
     await respondWith([makeFigure('1'), makeFigure('2'), makeFigure('3')]);
+    const opening = await wallOpening('/', 'Figure 3');
     requestGoTo(headOf(2));
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
-    await waitFor(() => expect(container.querySelector('.cabinet-scene')?.getAttribute('data-view')).toBe('shelf'));
     expect(await screen.findByRole('button', { name: 'Figure 3' })).toBeInTheDocument();
+    await waitFor(() => expect(caseCamera(container).z).toBeLessThan(opening.z));
     expect(takeGoToRequest()).toBeNull();
   });
 
   it('a request for a wished figure the holdings hide: they widen to show it, then the case goes to it', async () => {
     mockPageWidth(400);
     await respondWith([makeFigure('1'), makeFigure('2', { status: 'wished' })]);
+    const opening = await wallOpening('/', 'Figure 1');
     requestGoTo(headOf(1));
     const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
-    await waitFor(() => expect(container.querySelector('.cabinet-scene')?.getAttribute('data-view')).toBe('shelf'));
     expect(await screen.findByRole('button', { name: 'Figure 2' })).toBeInTheDocument();
+    await waitFor(() => expect(caseCamera(container).z).toBeLessThan(opening.z));
     expect(screen.getByRole('button', { name: 'Figure 1' })).toBeInTheDocument();
   });
 
   it('a request for a figure Refine hides past its holdings, or one not in the collection: it says so and stays put', async () => {
     mockPageWidth(400);
     await respondWith([makeFigure('1', { manufacturer: 'Alter' }), makeFigure('2', { manufacturer: 'Kotobukiya' })]);
+    const opening = await wallOpening('/?mfr=Alter', 'Figure 1');
     requestGoTo(headOf(1));
     const { container } = renderWithProviders(<Collection />, { initialPath: '/?mfr=Alter' });
     await screen.findByRole('button', { name: 'Figure 1' });
     await waitFor(() => expect(toasts.value.map((t) => t.message)).toContain('Refine hides that figure: clear its filters to go to it'));
-    expect(container.querySelector('.cabinet-scene')!.getAttribute('data-view')).toBe('wall');
+    expect(caseCamera(container)).toEqual(opening);
   });
 });
 

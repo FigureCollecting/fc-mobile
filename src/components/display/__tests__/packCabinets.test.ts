@@ -14,8 +14,9 @@ import {
   type CaseFigure,
 } from '../packCabinets';
 import { UNMATTED_META } from '../displayMeta';
+import { propertySeed } from '../../../test/propertySeed';
 import { TALL_ON_OPENED_TOPS, TALL_SHELF_REMOVAL_DEFAULT } from '../caseInterim';
-import { DEFAULT_CLEARANCE_MM, DETOLF_PAIR_GAP_MM, clearHeightsMm, inchesToMm, liftOutShelves, stableLayout, withClearance, withShelfLayout } from '../cabinetProfile';
+import { DEFAULT_CLEARANCE_MM, DETOLF_PAIR_GAP_MM, FIT_EPSILON_MM, clearHeightsMm, inchesToMm, liftOutShelves, stableLayout, withClearance, withShelfLayout } from '../cabinetProfile';
 
 /** The rules before CASE-FB2a and FB2b: tall figures on the first top from the shelf cursor on, no shelf taken out. */
 const AS_BEFORE = { tallOnOpenedTops: false, shelfRemoval: false } as const;
@@ -191,7 +192,38 @@ describe('packCabinets', () => {
     expect(() => packCabinets([item(0, 100)], [])).toThrow(RangeError);
   });
 
-  it('every figure is placed once or listed as a violator; rows never overlap or overrun; reading order holds per surface', () => {
+  /**
+   * Every figure placed once or a violator; rows never overlap or overrun; reading order holds per surface on a wall of
+   * one profile (on a mixed wall a cabinet seats the figures only its profile holds first, PACK-KIND-1). Sizes are
+   * compared within FIT_EPSILON_MM (1e-6 mm), the slack the packer itself admits a row with (within(rowWidth, widthMm)):
+   * a row it took may run up to that over its surface, centred, so up to half of it past each side.
+   */
+  function expectPackInvariants(specs: readonly { h: number; w: number; d: number }[], pattern: readonly CabinetProfile[]): void {
+    const items = specs.map((s, i) => item(i, s.h, s.w, s.d));
+    const { cabinets, violators } = packCabinets(items, pattern);
+    const mixed = pattern.some((p) => p !== pattern[0]);
+    const seen = [...violators.map((v) => v.item.index)];
+    for (const cab of cabinets) {
+      for (const surf of cab.surfaces) {
+        const slot = surfaceSlots(cab.profile).find((s) => s.surfaceIndex === surf.surfaceIndex)!;
+        let right = -Infinity;
+        let lastIndex = -1;
+        for (const p of surf.items) {
+          expect(p.xMm).toBeGreaterThanOrEqual(-FIT_EPSILON_MM);
+          expect(p.xMm + p.item.widthMm).toBeLessThanOrEqual(slot.widthMm + FIT_EPSILON_MM);
+          expect(p.xMm).toBeGreaterThanOrEqual(right - FIT_EPSILON_MM);
+          expect(p.item.heightMm).toBeLessThanOrEqual(slot.maxHeightMm + FIT_EPSILON_MM);
+          right = p.xMm + p.item.widthMm;
+          if (!slot.isTop && !mixed) expect(p.item.index).toBeGreaterThan(lastIndex);
+          lastIndex = p.item.index;
+          seen.push(p.item.index);
+        }
+      }
+    }
+    expect(seen.sort((a, b) => a - b)).toEqual(items.map((i) => i.index));
+  }
+
+  it('every figure is placed once or listed as a violator; rows never overlap or overrun; reading order holds per surface on a one-profile wall', () => {
     fc.assert(
       fc.property(
         fc.array(
@@ -203,32 +235,39 @@ describe('packCabinets', () => {
           { maxLength: 60 },
         ),
         fc.constantFrom([IKEA_DETOLF], [OPEN_STEEL_RACK], [IKEA_DETOLF, OPEN_STEEL_RACK]),
-        (specs, pattern) => {
-          const items = specs.map((s, i) => item(i, s.h, s.w, s.d));
-          const { cabinets, violators } = packCabinets(items, pattern);
-          const seen = [...violators.map((v) => v.item.index)];
-          for (const cab of cabinets) {
-            for (const surf of cab.surfaces) {
-              const slot = surfaceSlots(cab.profile).find((s) => s.surfaceIndex === surf.surfaceIndex)!;
-              let right = -Infinity;
-              let lastIndex = -1;
-              for (const p of surf.items) {
-                expect(p.xMm).toBeGreaterThanOrEqual(-1e-9);
-                expect(p.xMm + p.item.widthMm).toBeLessThanOrEqual(slot.widthMm + 1e-9);
-                expect(p.xMm).toBeGreaterThanOrEqual(right - 1e-9);
-                expect(p.item.heightMm).toBeLessThanOrEqual(slot.maxHeightMm + 1e-6);
-                right = p.xMm + p.item.widthMm;
-                if (!slot.isTop) expect(p.item.index).toBeGreaterThan(lastIndex);
-                lastIndex = p.item.index;
-                seen.push(p.item.index);
-              }
-            }
-          }
-          expect(seen.sort((a, b) => a - b)).toEqual(items.map((i) => i.index));
-        },
+        (specs, pattern) => expectPackInvariants(specs, pattern),
       ),
-      { numRuns: 150 },
+      // fixed in CI, rotating locally; a failure prints its seed: FC_SEED=<seed> replays it
+      { numRuns: 150, seed: propertySeed() },
     );
+  });
+
+  it('PACKCAB-SEED (CI seed 1067213541): a Detolf top row 2e-9 mm over its 430 mm, inside the fit slack, holds the invariants', () => {
+    // the first figure turns (399.6 deep fits nowhere): 399.617... + 10 + 20.382... = 430 + 2e-9 mm on the top
+    expectPackInvariants(
+      [
+        { h: 40, w: 20, d: 399.61729809926004 },
+        { h: 40, w: 20.38270190273997, d: 20 },
+      ],
+      [IKEA_DETOLF],
+    );
+    const top = (w: number) => packCabinets([item(0, 40, 20, 399.61729809926004), item(1, 40, w, 20)], [IKEA_DETOLF]).cabinets[0].surfaces[0];
+    // the packer takes the 2e-9 mm overrun (centred: -1e-9 mm each side) and refuses one past FIT_EPSILON_MM
+    expect(top(20.38270190273997).items.map((p) => p.item.index)).toEqual([0, 1]);
+    expect(top(20.38270190273997).items[0].xMm).toBeCloseTo(-1e-9, 12);
+    expect(top(20.38270190273997 + 2 * FIT_EPSILON_MM).items.map((p) => p.item.index)).toEqual([0]);
+  });
+
+  it('PACKCAB-SEED (seed -1069290220, shrunk): on a Detolf-rack wall the rack seats the figure only it holds first, so its tier reads 2, 1', () => {
+    // 0 takes the Detolf top; 1 (600 tall) waits; 2 (500 wide) fits only the rack, which takes it first (PACK-KIND-1)
+    const specs = [
+      { h: 40, w: 400, d: 20 },
+      { h: 600, w: 50, d: 20 },
+      { h: 600, w: 500, d: 20 },
+    ];
+    expectPackInvariants(specs, [IKEA_DETOLF, OPEN_STEEL_RACK]);
+    const { cabinets } = packCabinets(specs.map((s, i) => item(i, s.h, s.w, s.d)), [IKEA_DETOLF, OPEN_STEEL_RACK]);
+    expect(cabinets.map((c) => c.surfaces.flatMap((s) => s.items.map((p) => p.item.index)))).toEqual([[0], [2, 1]]);
   });
 
   it("packs 1,144 synthetic figures (Ross's collection size) on the Detolf and on the rack", () => {

@@ -86,7 +86,6 @@ export function freeSceneOf(opts: SceneOpts = {}): FreeScene {
     space: eyeSpace(room, CEILING_MM),
     zBack: room.zBack,
     reach: boxCorners(room.x0, room.x1, 0, room.y1, room.zBack, room.zFront),
-    dimmed: null,
     lookHoldMs: 500,
     jogMax: 2,
     reducedMotion: false,
@@ -103,11 +102,15 @@ export function freeDom(): FreeDom & { readonly hostEl: HTMLElement; readonly ro
   return { host: { current: hostEl }, root: { current: rootEl }, ring: { current: ringEl }, hostEl, rootEl };
 }
 
-/** requestAnimationFrame by hand: `tick(ms)` runs the frames asked for, at the clock moved on by ms. */
-export function handFrames(start = 1000) {
+/**
+ * requestAnimationFrame by hand: `tick(ms)` runs the frames asked for, at the clock moved on by ms. `clock`: that clock
+ * is performance.now() too (a lift's ease back is timed from it), and `wait(ms)` moves it on with no frame run.
+ */
+export function handFrames(start = 1000, clock = false) {
   const asked = new Map<number, FrameRequestCallback>();
   let id = 0;
   let now = start;
+  if (clock) vi.spyOn(performance, 'now').mockImplementation(() => now);
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
     asked.set(++id, cb);
     return id;
@@ -121,6 +124,9 @@ export function handFrames(start = 1000) {
       const due = [...asked.values()];
       asked.clear();
       for (const cb of due) cb(now);
+    },
+    wait(ms: number) {
+      now += ms;
     },
     pending: () => asked.size,
   };

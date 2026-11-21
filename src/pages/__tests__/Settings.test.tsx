@@ -182,7 +182,7 @@ describe('Settings shows no control that does nothing', () => {
   it('keeps the sections that still have something in them, in order', () => {
     renderWithProviders(<Settings />, { initialPath: '/settings' });
     expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
-      'Appearance', 'Data & Storage', 'About', 'Account',
+      'Appearance', 'Data & Storage', 'Privacy', 'About', 'Account',
     ]);
   });
 
@@ -228,7 +228,7 @@ describe('Settings shows no control that does nothing', () => {
   });
 });
 
-// LGMOB: a build without VITE_DIAG_IDS=true has no Diagnostic ids switch and no /privacy link (P1 ships the page).
+// LGMOB: a build without VITE_DIAG_IDS=true has no Diagnostic ids switch. P1: its Privacy section is the /privacy link alone.
 describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
   beforeEach(() => vi.stubEnv('VITE_DIAG_IDS', undefined));
   afterEach(() => {
@@ -236,16 +236,22 @@ describe('Settings privacy in a build without VITE_DIAG_IDS', () => {
     vi.unstubAllEnvs();
   });
 
-  it('shows no Privacy section: Data & Storage is followed by About, with no switch, wording or /privacy link', () => {
-    renderWithProviders(<Settings />, { initialPath: '/settings' });
+  it('shows a Privacy section between Data & Storage and About holding only the /privacy link: no switch and none of its wording', async () => {
+    const user = userEvent.setup();
+    const view = renderWithProviders(<Settings />, { initialPath: '/settings' });
     const titles = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
-    expect(titles).not.toContain('Privacy');
-    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'About']);
+    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'Privacy', 'About']);
     expect(screen.queryByRole('switch', { name: DIAG_IDS_TEXT.label })).toBeNull();
     expect(screen.queryByText(DIAG_IDS_TEXT.label)).toBeNull();
     expect(screen.queryByText(DIAG_IDS_TEXT.description)).toBeNull();
-    expect(screen.queryByRole('link', { name: DIAG_IDS_TEXT.privacyLink })).toBeNull();
-    expect(document.querySelector('a[href="/privacy"]')).toBeNull();
+    expect(screen.queryByText(DIAG_IDS_TEXT.hint)).toBeNull();
+    const section = screen.getByRole('heading', { name: 'Privacy' }).closest('section')!;
+    const link = screen.getByRole('link', { name: DIAG_IDS_TEXT.privacyLink });
+    expect(section).toContainElement(link);
+    expect(section.querySelectorAll('.settings__row, .settings__hint')).toHaveLength(1);
+    expect(document.querySelectorAll('a[href="/privacy"]')).toHaveLength(1);
+    await user.click(link);
+    expect(view.currentPath()).toBe('/privacy');
   });
 
   it('writes nothing to fc-diag-ids, rendering or when another tab writes it', () => {
@@ -454,6 +460,7 @@ describe('Settings privacy: the Diagnostic ids switch', () => {
     const view = renderWithProviders(<Settings />, { initialPath: '/settings' });
     const link = screen.getByRole('link', { name: DIAG_IDS_TEXT.privacyLink });
     expect(link).toHaveAttribute('href', '/privacy');
+    expect(document.querySelectorAll('a[href="/privacy"]')).toHaveLength(1);
     await user.click(link);
     expect(view.currentPath()).toBe('/privacy');
   });

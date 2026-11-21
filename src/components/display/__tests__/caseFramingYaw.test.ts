@@ -11,10 +11,7 @@ import {
   frameSpanMm,
   frontsOf,
   nearestCabinet,
-  pageInView,
-  pagerReach,
   seenDepthsMm,
-  wallPages,
   wallReachMm,
   yawCapRad,
   type FramingInput,
@@ -60,14 +57,12 @@ describe('level openings (rulings R0.3)', () => {
     }
   });
 
-  it('the cabinet and shelf views are level already: level changes nothing there', () => {
+  it('the shelf framing (Go to\'s) is level already: level changes nothing there', () => {
     for (const frame of FOLD8) {
-      for (const view of ['cabinet', 'shelf'] as const) {
-        const a = frameCase(input(frame, KLINGSBO, { view, shelf: 2 }));
-        const b = frameCase(input(frame, KLINGSBO, { view, shelf: 2, level: true }));
-        expect(b.camera).toEqual(a.camera);
-        expect(b.camera.pitch).toBe(0);
-      }
+      const a = frameCase(input(frame, KLINGSBO, { view: 'shelf', shelf: 2 }));
+      const b = frameCase(input(frame, KLINGSBO, { view: 'shelf', shelf: 2, level: true }));
+      expect(b.camera).toEqual(a.camera);
+      expect(b.camera.pitch).toBe(0);
     }
   });
 
@@ -171,10 +166,10 @@ describe('wallReachMm under yaw', () => {
 describe('frameCap and yawCapRad (rulings S2): the drawn-cabinet cap follows the turned frame, up to the limit', () => {
   const PATTERN_WALLS = WALL_PATTERNS.map((p) => [p.id, long([...p.profiles])] as const);
 
-  it('at yaw 0 it is the framing\'s cap, on every Fold8 panel and wall pattern, in every view', () => {
+  it('at yaw 0 it is the framing\'s cap, on every Fold8 panel and wall pattern, the wall\'s framing and the shelf\'s (Go to) alike', () => {
     for (const [id, wall] of PATTERN_WALLS) {
       for (const frame of FOLD8) {
-        for (const view of ['wall', 'cabinet', 'shelf'] as const) {
+        for (const view of ['wall', 'shelf'] as const) {
           const f = frameCase(input(frame, wall, { view, level: true, shelf: 1 }));
           expect(frameCap(f.camera, wall, frontsOf(wall, input(frame, wall).headroomMm), f.drawCap), `${id} ${frame.width} ${view}`).toBe(f.drawCap);
         }
@@ -212,7 +207,7 @@ describe('frameCap and yawCapRad (rulings S2): the drawn-cabinet cap follows the
 describe('centreCabinet (rulings S7): the cabinet the frame centre looks at, not the one the eye stands before', () => {
   const MIXED = long([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK]);
   it('the one the centre ray meets on the fronts\' plane', () => {
-    const camera = frameCase(input(FOLD8[2], MIXED, { view: 'cabinet', level: true, focus: 12 })).camera;
+    const camera = frameCase(input(FOLD8[2], MIXED, { view: 'shelf', level: true, focus: 12 })).camera;
     expect(centreCabinet(camera, MIXED)).toBe(12);
     const turned = { ...camera, yaw: 20 * DEG };
     const hit = rayHitPlane(castRay(turned, turned.frame.width / 2, turned.frame.height / 2), 'z', 0)!;
@@ -229,20 +224,5 @@ describe('centreCabinet (rulings S7): the cabinet the frame centre looks at, not
     // behind the fronts' plane past the wall's end, looking away from it
     const behind = { ...camera, x: MIXED.leftMm - 3000, z: -300 };
     expect(centreCabinet(behind, MIXED)).toBe(0);
-  });
-
-  it('pageInView and pagerReach page from the centre cabinet when given one', () => {
-    const inp = input(FOLD8[2], MIXED, { level: true, focus: 12 });
-    const pages = wallPages(inp);
-    const f = frameCase(inp);
-    const at = pageInView(pages, MIXED, f);
-    // a turned frame centring on a cabinet two pages on pages from there
-    const target = pages[at + 2][0];
-    const centre = { cabinet: target, x: MIXED.cabinets[target].centerMm };
-    expect(pageInView(pages, MIXED, f, 0, centre)).toBe(at + 2);
-    const ends = { first: -1e10, last: 1e10 };
-    expect(pagerReach(pages, MIXED, f, 0, ends, { cabinet: pages[pages.length - 1][0], x: 2e10 }).next).toBe(false);
-    expect(pagerReach(pages, MIXED, f, 0, ends, { cabinet: pages[pages.length - 1][0], x: 0 }).next).toBe(true);
-    expect(pagerReach(pages, MIXED, f, 0, ends, { cabinet: pages[0][0], x: -2e10 }).prev).toBe(false);
   });
 });

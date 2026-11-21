@@ -3,20 +3,16 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { hapticLight } from '../../utils/haptics';
 import { DENSITIES } from './density';
 import type { Density } from './density';
-import type { CaseView } from './casePrefs';
 import type { LayoutMode } from '../../hooks/useFigureListParams';
 import { Style } from '../../styles/Style';
 
 interface DisplayToggleProps {
   layout: LayoutMode;
   density: Density;
-  /** The case's view (whole cabinets, one cabinet, one shelf). */
-  caseView: CaseView;
   /** Nameplate overlay toggle — defaults off. */
   labels?: boolean;
   onLayout: (layout: LayoutMode) => void;
   onDensity: (density: Density) => void;
-  onCaseView: (view: CaseView) => void;
   onLabels?: (labels: boolean) => void;
   /** NAV-FLOAT: told true when a views menu opens and false when it closes, so the page can keep its floating controls off it. */
   onMenuOpen?: (open: boolean) => void;
@@ -26,13 +22,6 @@ const DENSITY_LABEL: Record<Density, string> = {
   comfortable: 'Comfortable',
   compact: 'Compact',
   gallery: 'Gallery',
-};
-
-const CASE_VIEWS: readonly CaseView[] = ['wall', 'cabinet', 'shelf'];
-const CASE_VIEW_LABEL: Record<CaseView, string> = {
-  wall: 'Whole cabinets',
-  cabinet: 'One cabinet',
-  shelf: 'One shelf',
 };
 
 const ICON = {
@@ -45,30 +34,13 @@ const ICON = {
   'aria-hidden': 'true',
 } as const;
 
-/** The case button's icon: the view it shows. */
-function CaseIcon({ view }: { view: CaseView }) {
-  if (view === 'wall') {
-    return (
-      <svg {...ICON} stroke-linejoin="round">
-        <rect x="1" y="2" width="4" height="12" rx="0.5" />
-        <rect x="6" y="2" width="4" height="12" rx="0.5" />
-        <rect x="11" y="2" width="4" height="12" rx="0.5" />
-      </svg>
-    );
-  }
-  if (view === 'cabinet') {
-    return (
-      <svg {...ICON} stroke-linejoin="round" stroke-linecap="round">
-        <rect x="4" y="1.5" width="8" height="13" rx="0.5" />
-        <path d="M4 6h8M4 10h8" />
-      </svg>
-    );
-  }
-  // one shelf with figures on it
+/** The case button's icon: a wall of cabinets side by side. */
+function CaseIcon() {
   return (
-    <svg {...ICON} stroke-linecap="round">
-      <path d="M1.5 12.5h13" />
-      <path d="M4.5 12.5v-4M8 12.5V6.5M11.5 12.5v-3" />
+    <svg {...ICON} stroke-linejoin="round">
+      <rect x="1" y="2" width="4" height="12" rx="0.5" />
+      <rect x="6" y="2" width="4" height="12" rx="0.5" />
+      <rect x="11" y="2" width="4" height="12" rx="0.5" />
     </svg>
   );
 }
@@ -87,24 +59,22 @@ function TilesIcon({ density }: { density: Density }) {
 /**
  * The header's display controls (desk HDR, Ross decided (a) 10-14): exactly two mode buttons, Case and
  * Tiles, at fixed places that never move or grow, and the nameplate toggle beside them. A tap on the
- * other mode switches to it; a tap on the mode showing opens a small menu of its views (Case: whole
- * cabinets, one cabinet, one shelf; Tiles: its densities), the current one ticked. Each button's icon is
- * its mode's current view.
+ * other mode switches to it; a tap on Tiles while it shows opens a small menu of its densities, the
+ * current one ticked. The Tiles icon is its current density.
  *
  * NAV-2A2 (Ross 11-04): no swipe-mode button (CAM1's) on either camera: one finger moves the camera.
+ * NAV-SCOPE (Ross 11-18): the case has one continuous view, so Case is a plain mode button: no views menu.
  */
 export function DisplayToggle({
   layout,
   density,
-  caseView,
   labels = false,
   onLayout,
   onDensity,
-  onCaseView,
   onLabels,
   onMenuOpen,
 }: DisplayToggleProps) {
-  const [menu, setMenu] = useState<LayoutMode | null>(null);
+  const [menu, setMenu] = useState<'rows' | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const menuOpen = menu !== null;
 
@@ -132,38 +102,32 @@ export function DisplayToggle({
 
   const tapMode = (mode: LayoutMode) => {
     hapticLight();
-    if (mode === layout) setMenu(menu === mode ? null : mode);
-    else {
+    if (mode !== layout) {
       setMenu(null);
       onLayout(mode);
-    }
+    } else if (mode === 'rows') setMenu(menu === 'rows' ? null : 'rows');
   };
 
-  const modeButton = (mode: LayoutMode, name: string, view: string, icon: ComponentChildren) => (
+  // the Tiles button names its density and, while the tiles show, opens their menu; the Case button is the mode alone
+  const modeButton = (mode: LayoutMode, label: string, icon: ComponentChildren) => (
     <button
       class={`display-toggle__btn ${layout === mode ? 'display-toggle__btn--active' : ''}`}
       type="button"
       data-mode={mode}
-      aria-label={`${name}, ${view}`}
+      aria-label={label}
       aria-pressed={layout === mode}
-      {...(layout === mode ? { 'aria-haspopup': 'menu', 'aria-expanded': menu === mode } : {})}
+      {...(layout === mode && mode === 'rows' ? { 'aria-haspopup': 'menu', 'aria-expanded': menu === mode } : {})}
       onClick={() => tapMode(mode)}
     >
       {icon}
     </button>
   );
 
-  const items: readonly [string, string, boolean, () => void][] =
-    menu === 'case'
-      ? CASE_VIEWS.map((v) => [v, CASE_VIEW_LABEL[v], v === caseView, () => onCaseView(v)])
-      : DENSITIES.map((d) => [d, DENSITY_LABEL[d], d === density, () => onDensity(d)]);
-  const menuName = menu === 'case' ? 'Case views' : 'Tiles views';
-
   return (
     <div class="display-toggle" ref={root}>
       <div class="display-toggle__group" role="group" aria-label="Display mode">
-        {modeButton('case', 'Case', CASE_VIEW_LABEL[caseView], <CaseIcon view={caseView} />)}
-        {modeButton('rows', 'Tiles', DENSITY_LABEL[density], <TilesIcon density={density} />)}
+        {modeButton('case', 'Case', <CaseIcon />)}
+        {modeButton('rows', `Tiles, ${DENSITY_LABEL[density]}`, <TilesIcon density={density} />)}
       </div>
 
       <button
@@ -182,21 +146,21 @@ export function DisplayToggle({
       </button>
 
       {menu !== null && (
-        <div class="display-toggle__menu" role="menu" aria-label={menuName}>
-          {items.map(([key, label, current, pick]) => (
+        <div class="display-toggle__menu" role="menu" aria-label="Tiles views">
+          {DENSITIES.map((d) => (
             <button
-              key={key}
+              key={d}
               type="button"
               role="menuitemradio"
-              aria-checked={current}
+              aria-checked={d === density}
               class="display-toggle__item"
               onClick={() => {
                 hapticLight();
                 setMenu(null);
-                pick();
+                onDensity(d);
               }}
             >
-              {label}
+              {DENSITY_LABEL[d]}
             </button>
           ))}
         </div>

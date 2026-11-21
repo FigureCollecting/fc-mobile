@@ -4,8 +4,8 @@ import { CASE_VIEWPORTS } from './caseViewports';
 import { e2eServers } from './e2eServers';
 
 /**
- * LGMOB: Settings > Privacy (the Diagnostic ids switch and its link to /privacy) shows only in a build made with
- * VITE_DIAG_IDS=true (src/config/features.ts). No committed env file sets it, so both servers this config builds,
+ * LGMOB: the Diagnostic ids switch in Settings > Privacy shows only in a build made with VITE_DIAG_IDS=true
+ * (src/config/features.ts); the section's link to /privacy shows in every build (P1). No committed env file sets it, so both servers this config builds,
  * the --mode test one and the real production one, are without it unless this run's environment sets it, which
  * their builds inherit: `VITE_DIAG_IDS=true npx playwright test e2e/diag-ids.spec.ts` checks the build with ids.
  */
@@ -28,10 +28,11 @@ async function expectPrivacy(page: Page) {
     await expect(page.getByRole('switch', { name: 'Diagnostic ids' })).toBeVisible();
     await expect(privacyLinks).toHaveCount(1);
   } else {
-    expect(titles).not.toContain('Privacy');
-    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'About']);
+    // P1: the section is there for its link to /privacy alone.
+    expect(titles.slice(titles.indexOf('Data & Storage'), titles.indexOf('About') + 1)).toEqual(['Data & Storage', 'Privacy', 'About']);
     await expect(page.getByRole('switch', { name: 'Diagnostic ids' })).toHaveCount(0);
-    await expect(privacyLinks).toHaveCount(0);
+    await expect(page.getByText('Diagnostic ids')).toHaveCount(0);
+    await expect(privacyLinks).toHaveCount(1);
   }
   expect(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('fc-diag-ids')))).toEqual([]);
 }
@@ -41,7 +42,7 @@ test.beforeEach(({}, testInfo) => {
 });
 
 for (const size of FOLD8) {
-  test(`Settings, --mode test build: Privacy ${WITH_IDS ? 'shows' : 'is absent'}: ${size.name}`, async ({ page }) => {
+  test(`Settings, --mode test build: the Diagnostic ids switch ${WITH_IDS ? 'shows' : 'is absent'}: ${size.name}`, async ({ page }) => {
     await openSettings(page, size);
     await expectPrivacy(page);
   });
@@ -51,7 +52,7 @@ test.describe('real production build', () => {
   test.use({ baseURL: e2eServers().prodUrl });
 
   for (const size of FOLD8) {
-    test(`Settings: Privacy ${WITH_IDS ? 'shows' : 'is absent'}, no /privacy link unless it shows: ${size.name}`, async ({ page }) => {
+    test(`Settings: the Diagnostic ids switch ${WITH_IDS ? 'shows' : 'is absent'}, one /privacy link either way: ${size.name}`, async ({ page }) => {
       await page.route('https://figurecollecting.com/api/**', (route) =>
         route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
       );

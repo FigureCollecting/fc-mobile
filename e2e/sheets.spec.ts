@@ -316,23 +316,21 @@ for (const size of FOLD8) {
     await expect(card.locator('.filter-sheet2__count')).toHaveText(`${n} of ${n}`);
   });
 
-  test(`Header: two mode buttons at fixed places, the active one opens its views with the current ticked; no Select: ${size.name}`, async ({ page }) => {
+  // NAV-SCOPE (Ross 11-18): the case has one view, so the active Case button opens no menu; the Tiles one still does
+  test(`Header: two mode buttons at fixed places, the active Tiles one opens its views with the current ticked, Case none; no Select: ${size.name}`, async ({ page }) => {
     await openCase(page, size);
     await expect(page.getByRole('button', { name: 'Select' })).toHaveCount(0);
-    const caseBtn = page.getByRole('button', { name: /^Case,/ });
+    const caseBtn = page.getByRole('button', { name: 'Case', exact: true });
     const tilesBtn = page.getByRole('button', { name: /^Tiles,/ });
     const labelsBtn = page.getByRole('button', { name: /^Labels:/ });
     const places = async () => JSON.stringify(await Promise.all([caseBtn, tilesBtn, labelsBtn].map((b) => b.boundingBox())));
     const at = await places();
+    await expect(caseBtn).not.toHaveAttribute('aria-haspopup', /./);
+    const camera = await page.locator('.cabinet-scene').getAttribute('data-camera');
     await caseBtn.tap();
-    const menu = page.getByRole('menu', { name: 'Case views' });
-    await expect(menu).toBeVisible();
-    await expect(menu.getByRole('menuitemradio', { name: 'Whole cabinets' })).toHaveAttribute('aria-checked', 'true');
-    await menu.getByRole('menuitemradio', { name: 'One shelf' }).tap();
-    await expect(menu).toHaveCount(0);
-    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', 'shelf');
-    await expect(caseBtn).toHaveAttribute('aria-label', 'Case, One shelf');
-    expect(await places(), 'no button moved or grew picking a view').toBe(at);
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-camera', camera!);
+    expect(await places(), 'no button moved or grew tapping the active Case').toBe(at);
     await tilesBtn.tap();
     await expect(page.locator('.jrows')).toBeVisible();
     expect(await places(), 'no button moved or grew switching to the tiles').toBe(at);

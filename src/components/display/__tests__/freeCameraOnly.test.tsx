@@ -70,7 +70,7 @@ describe('NAV-GRAD (b): a stored freeCamera: false still opens the Free camera',
   beforeEach(() => vi.useFakeTimers());
 
   it('read from the device: data-free-camera is there, and a still hold then a drag looks', () => {
-    storeOff({ view: 'wall' });
+    storeOff({});
     render(<CabinetScene figures={FIGURES} onSelect={vi.fn()} prefs={readCasePrefs()} frameFallback={COVER} />);
     expect(host().dataset.freeCamera).toBe('1');
     expect(host().hasAttribute('data-pan'), 'the old path published its pan').toBe(false);
@@ -89,36 +89,36 @@ describe('NAV-GRAD (b): a stored freeCamera: false still opens the Free camera',
   });
 
   it.each([true, 0, 'false', null, {}, undefined])('whatever the field holds (%j), the prefs read carry no freeCamera', (value) => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: value, view: 'shelf' }));
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ freeCamera: value, ceilingMm: 2700 }));
     const read = readCasePrefs();
     expect(read).not.toHaveProperty('freeCamera');
-    expect(read.view).toBe('shelf');
+    expect(read.ceilingMm).toBe(2700);
     expect(DEFAULT_CASE_PREFS).not.toHaveProperty('freeCamera');
   });
 });
 
 describe('NAV-GRAD (c): the next prefs write drops freeCamera', () => {
   it('a write of another field keeps what the device chose and drops the field', () => {
-    storeOff({ view: 'shelf', ceilingMm: 2700 });
+    storeOff({ pattern: 'ikea-detolf', ceilingMm: 2700 });
     expect(stored(), 'reading alone rewrites nothing').toHaveProperty('freeCamera', false);
     readCasePrefs();
     expect(stored()).toHaveProperty('freeCamera', false);
     writeCasePrefs({ showEstimated: true });
     expect(stored()).not.toHaveProperty('freeCamera');
-    expect(stored()).toMatchObject({ view: 'shelf', ceilingMm: 2700, showEstimated: true });
+    expect(stored()).toMatchObject({ pattern: 'ikea-detolf', ceilingMm: 2700, showEstimated: true });
   });
 
   it('the hook\'s update does the same', () => {
-    storeOff({ view: 'cabinet' });
+    storeOff({ ceilingMm: 2700 });
     const { result } = renderHook(() => useCasePrefs());
     expect(result.current[0]).not.toHaveProperty('freeCamera');
-    act(() => result.current[1]({ ceilingMm: 2700 }));
+    act(() => result.current[1]({ showEstimated: true }));
     expect(stored()).not.toHaveProperty('freeCamera');
-    expect(stored()).toMatchObject({ view: 'cabinet', ceilingMm: 2700 });
+    expect(stored()).toMatchObject({ ceilingMm: 2700, showEstimated: true });
   });
 
   it('storage that refuses the write changes nothing and throws nothing', () => {
-    storeOff({ view: 'shelf' });
+    storeOff({ ceilingMm: 2700 });
     const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('quota');
     });

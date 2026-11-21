@@ -47,16 +47,14 @@ describe('CabinetScene: the wall colour (WALL-COLOUR-1)', () => {
     expect(host.style.getPropertyValue('--wall-dark')).toBe('#3b342a');
   });
 
-  it('a preset puts its light colour and its dark-theme counterpart on the scene, in every view', () => {
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      cleanup();
-      const host = scene({ wall: 'seafoam', view });
-      const seafoam = WALL_PRESETS.find((p) => p.id === 'seafoam')!;
-      expect(host.dataset.wallColour, view).toBe('seafoam');
-      expect(host.style.getPropertyValue('--wall-light'), view).toBe(seafoam.light);
-      expect(host.style.getPropertyValue('--wall-dark'), view).toBe(seafoam.dark);
-      expect(host.querySelector('.room-wall'), `${view} draws the room's back wall`).not.toBeNull();
-    }
+  it('a preset puts its light colour and its dark-theme counterpart on the scene', () => {
+    cleanup();
+    const host = scene({ wall: 'seafoam' });
+    const seafoam = WALL_PRESETS.find((p) => p.id === 'seafoam')!;
+    expect(host.dataset.wallColour).toBe('seafoam');
+    expect(host.style.getPropertyValue('--wall-light')).toBe(seafoam.light);
+    expect(host.style.getPropertyValue('--wall-dark')).toBe(seafoam.dark);
+    expect(host.querySelector('.room-wall'), "the room's back wall is drawn").not.toBeNull();
   });
 
   it('a custom colour is carried the same way, its dark counterpart the same hue at 25 % lightness', () => {

@@ -14,10 +14,9 @@ import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 beforeEach(() => localStorage.clear());
 
 describe('case prefs, kept per device (CC14)', () => {
-  it('defaults: the KLINGSBO (Ross 10-11), whole cabinets, an 8 ft ceiling, IC1-R1 tab order; no freeCamera field (NAV-GRAD)', () => {
+  it('defaults: the KLINGSBO (Ross 10-11), an 8 ft ceiling, IC1-R1 tab order; no freeCamera field (NAV-GRAD), no view (NAV-SCOPE)', () => {
     expect(DEFAULT_CASE_PREFS).toEqual({
       pattern: 'ikea-klingsbo',
-      view: 'wall',
       ceilingMm: 2438.4,
       tabOrder: ['view', 'info', 'refine'],
       misfitsDismissed: [],
@@ -33,7 +32,6 @@ describe('case prefs, kept per device (CC14)', () => {
   it('round-trips through localStorage', () => {
     const prefs = {
       pattern: 'ikea-klingsbo+ikea-detolf+open-steel-rack',
-      view: 'shelf',
       ceilingMm: 2700,
       tabOrder: ['refine', 'info', 'view'],
       misfitsDismissed: ['fig-a', 'fig-b'],
@@ -49,8 +47,8 @@ describe('case prefs, kept per device (CC14)', () => {
   });
 
   it('a partial write keeps the rest', () => {
-    writeCasePrefs({ view: 'cabinet' });
-    expect(readCasePrefs()).toEqual({ ...DEFAULT_CASE_PREFS, view: 'cabinet' });
+    writeCasePrefs({ ceilingMm: 2700 });
+    expect(readCasePrefs()).toEqual({ ...DEFAULT_CASE_PREFS, ceilingMm: 2700 });
   });
 
   // NAV-FLOAT (e): the Reserved slot is gone from the tabs; an order stored with it is read without it, so sides a
@@ -123,17 +121,17 @@ describe('case prefs, kept per device (CC14)', () => {
       throw new Error('denied');
     });
     expect(readCasePrefs()).toEqual(DEFAULT_CASE_PREFS);
-    expect(() => writeCasePrefs({ view: 'shelf' })).not.toThrow();
+    expect(() => writeCasePrefs({ ceilingMm: 2700 })).not.toThrow();
     get.mockRestore();
     set.mockRestore();
   });
 
   it('the hook reads, updates and persists', () => {
     const { result } = renderHook(() => useCasePrefs());
-    expect(result.current[0].view).toBe('wall');
-    act(() => result.current[1]({ view: 'shelf' }));
-    expect(result.current[0].view).toBe('shelf');
-    expect(readCasePrefs().view).toBe('shelf');
+    expect(result.current[0].ceilingMm).toBe(2438.4);
+    act(() => result.current[1]({ ceilingMm: 2700 }));
+    expect(result.current[0].ceilingMm).toBe(2700);
+    expect(readCasePrefs().ceilingMm).toBe(2700);
   });
 });
 
@@ -167,8 +165,8 @@ describe('showEstimated (SIZE-BASIS-1)', () => {
   });
 
   it('a record written before it existed reads as off, and keeps the rest', () => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', ceilingMm: 2700 }));
-    expect(readCasePrefs()).toMatchObject({ view: 'shelf', ceilingMm: 2700, showEstimated: false });
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ pattern: 'ikea-detolf', ceilingMm: 2700 }));
+    expect(readCasePrefs()).toMatchObject({ pattern: 'ikea-detolf', ceilingMm: 2700, showEstimated: false });
   });
 });
 
@@ -184,12 +182,12 @@ describe('the back wall colour (WALL-COLOUR-1)', () => {
   });
 
   it('an unknown preset or a colour that is not #rrggbb falls back, field by field; a record from before it existed reads as Cream', () => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ wall: 'teal', wallCustom: 'blue', view: 'shelf' }));
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ wall: 'teal', wallCustom: 'blue', ceilingMm: 2700 }));
     const read = readCasePrefs();
-    expect([read.wall, read.wallCustom, read.view]).toEqual(['cream', '#d8d2c4', 'shelf']);
+    expect([read.wall, read.wallCustom, read.ceilingMm]).toEqual(['cream', '#d8d2c4', 2700]);
     localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ wall: 'seafoam', wallCustom: 12 }));
     expect([readCasePrefs().wall, readCasePrefs().wallCustom]).toEqual(['seafoam', '#d8d2c4']);
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'cabinet' }));
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ ceilingMm: 2700 }));
     expect(readCasePrefs().wall).toBe('cream');
     localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ wall: 'slate' }));
     expect(readCasePrefs().wall, 'the old slate wall is not a choice any more').toBe('cream');
@@ -203,8 +201,8 @@ describe('the back wall colour (WALL-COLOUR-1)', () => {
 describe('the case arrangement (PACK1)', () => {
   it('a fresh device arranges by series, then scale, then name; so does a record from before it existed', () => {
     expect(readCasePrefs().arrange).toBe('series-scale-name');
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ view: 'shelf', ceilingMm: 2700 }));
-    expect(readCasePrefs()).toMatchObject({ view: 'shelf', ceilingMm: 2700, arrange: 'series-scale-name' });
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ pattern: 'ikea-detolf', ceilingMm: 2700 }));
+    expect(readCasePrefs()).toMatchObject({ pattern: 'ikea-detolf', ceilingMm: 2700, arrange: 'series-scale-name' });
   });
 
   it('each of the six is kept once chosen', () => {
@@ -216,12 +214,12 @@ describe('the case arrangement (PACK1)', () => {
 
   it('an explicit choice survives later writes of the other prefs, the default included', () => {
     writeCasePrefs({ arrange: 'date-added' });
-    writeCasePrefs({ view: 'shelf' });
     writeCasePrefs({ ceilingMm: 2700 });
+    writeCasePrefs({ wall: 'seafoam' });
     writeCasePrefs({ showEstimated: false });
     expect(readCasePrefs().arrange).toBe('date-added');
     writeCasePrefs({ arrange: 'series-scale-name' });
-    writeCasePrefs({ view: 'cabinet' });
+    writeCasePrefs({ ceilingMm: 2600 });
     expect(JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!).arrange, 'the default, chosen, is stored too').toBe('series-scale-name');
   });
 
@@ -234,8 +232,8 @@ describe('the case arrangement (PACK1)', () => {
   });
 
   it.each([['Name'], ['activity'], [''], [7], [null], [['name']]])('reads %j as the default', (bad) => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ arrange: bad, view: 'shelf' }));
-    expect(readCasePrefs()).toMatchObject({ arrange: 'series-scale-name', view: 'shelf' });
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ arrange: bad, ceilingMm: 2700 }));
+    expect(readCasePrefs()).toMatchObject({ arrange: 'series-scale-name', ceilingMm: 2700 });
   });
 });
 
@@ -243,10 +241,10 @@ describe('the case arrangement (PACK1)', () => {
 // (Pan the wall or Move the camera) reads as if it never had, keeps every other pref, and its next write drops it.
 describe('no swipe mode (NAV-2A2)', () => {
   it.each([['pan'], ['camera']])('a stored swipe %j is not read, the other prefs are, and the next write drops it', (swipe) => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ swipe, view: 'shelf', freeCamera: false }));
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ swipe, ceilingMm: 2700, freeCamera: false }));
     const read = readCasePrefs();
     expect('swipe' in read).toBe(false);
-    expect(read).toEqual({ ...DEFAULT_CASE_PREFS, view: 'shelf' });
+    expect(read).toEqual({ ...DEFAULT_CASE_PREFS, ceilingMm: 2700 });
     writeCasePrefs({ wall: 'seafoam' });
     expect('swipe' in JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toBe(false);
     expect('swipe' in DEFAULT_CASE_PREFS).toBe(false);

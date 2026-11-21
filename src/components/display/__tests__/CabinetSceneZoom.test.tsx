@@ -110,7 +110,7 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 
   it('a two-finger pinch zooms toward the midpoint between the fingers, as one transform on the zoom layer; the camera, the walk and the pan stay', () => {
-    const { host, layer } = scene(getFixtureFigures(8), { view: 'cabinet' });
+    const { host, layer } = scene(getFixtureFigures(8));
     const before = still(host);
     zoomIn(host);
     const z = zoomOf(host);
@@ -150,7 +150,7 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 
   it('a second finger landing mid-swipe stops the walk where it started: a two-finger gesture never walks', () => {
-    const { host, onSelect } = scene(getFixtureFigures(8), { view: 'cabinet' });
+    const { host, onSelect } = scene(getFixtureFigures(8));
     const before = still(host);
     // (the same swipe let go by its one finger does walk: CabinetScene.test.tsx; the pose mid-swipe: CabinetSceneFreeCamera.test.tsx)
     down(host, 11, { x: 300, y: 200 });
@@ -169,7 +169,7 @@ describe('CabinetScene: pinch zoom (PINCH-1)', () => {
   });
 
   it('a pinch that ends back at 1x leaves its last finger unable to walk', () => {
-    const { host } = scene(getFixtureFigures(8), { view: 'cabinet' });
+    const { host } = scene(getFixtureFigures(8));
     const before = still(host);
     pinch(host, { x: 180, y: 260 }, { x: 260, y: 260 }, { x: 200, y: 260 }, { x: 240, y: 260 }, false);
     up(host, 12, { x: 240, y: 260 });
@@ -266,7 +266,7 @@ describe('CabinetScene: sharp at the zoom once it settles (PINCH-1)', () => {
   });
 
   it('where the budget binds (4x), a pan while zoomed redraws them about the middle of the view it lets go at', () => {
-    const { host } = scene(getFixtureFigures(60), { view: 'wall' });
+    const { host } = scene(getFixtureFigures(60));
     const s = sceneScale(host);
     pinch(host, { x: 210, y: 260 }, { x: 230, y: 260 }, { x: 180, y: 260 }, { x: 260, y: 260 });
     expect(zoomOf(host).k).toBeCloseTo(4, 6);
@@ -286,7 +286,7 @@ describe('CabinetScene: the order it tells the image sync, zoomed (PHOTOS1)', ()
   /** The first figure the scene tells, unzoomed, then zoomed 4x about `at`, and how many times it told. */
   const firstTold = (at: P) => {
     const onViewOrder = vi.fn<(shown: readonly Figure[]) => void>();
-    const { host, unmount } = scene(getFixtureFigures(60), { view: 'wall' }, { onViewOrder });
+    const { host, unmount } = scene(getFixtureFigures(60), {}, { onViewOrder });
     const unzoomed = onViewOrder.mock.lastCall![0][0]!._id;
     pinch(host, { x: at.x - 10, y: at.y }, { x: at.x + 10, y: at.y }, { x: at.x - 40, y: at.y }, { x: at.x + 40, y: at.y });
     expect(zoomOf(host).k).toBeCloseTo(4, 6);
@@ -308,7 +308,7 @@ describe('CabinetScene: the order it tells the image sync, zoomed (PHOTOS1)', ()
 
 describe('CabinetScene: panning while zoomed (PINCH-1)', () => {
   it('zoomed, one finger pans the magnified picture; it never walks the wall, changes cabinets, lifts or slides the photo', () => {
-    const { host, onSelect } = scene(getFixtureFigures(60), { view: 'wall' });
+    const { host, onSelect } = scene(getFixtureFigures(60));
     zoomIn(host);
     const z0 = zoomOf(host);
     const before = still(host);
@@ -326,7 +326,7 @@ describe('CabinetScene: panning while zoomed (PINCH-1)', () => {
   });
 
   it('at 1x the swipe walks as before', () => {
-    const { host } = scene(getFixtureFigures(8), { view: 'cabinet' });
+    const { host } = scene(getFixtureFigures(8));
     const x0 = Number(host.dataset.cameraX);
     drag(host, -150);
     expect(Number(host.dataset.cameraX)).toBeGreaterThan(x0);
@@ -553,7 +553,6 @@ describe('CabinetScene: the quick way back to 1x (PINCH-1)', () => {
   });
 
   for (const [what, base, next] of [
-    ['view', {}, { view: 'shelf' }],
     ['wall', {}, { pattern: 'ikea-detolf' }],
     // PACK1: a new arrangement of the case, as a new sort
     ['arrangement', {}, { arrange: 'name' }],
@@ -606,7 +605,7 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
 
   it('a wheel turned away zooms in at the cursor, as one transform on the zoom layer; the page never scrolls; the camera, the walk and the pan stay', () => {
     vi.useFakeTimers();
-    const { host, layer } = scene(getFixtureFigures(8), { view: 'cabinet' });
+    const { host, layer } = scene(getFixtureFigures(8));
     const before = still(host);
     expect(wheel(host, at, { deltaY: -100 })).toBe(false);
     const z = zoomOf(host);
@@ -738,10 +737,16 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
   it('a wheel over the scene\'s own controls is theirs (a list in them scrolls): no zoom, the browser keeps it', () => {
     vi.useFakeTimers();
     const { host } = scene(getFixtureFigures(8));
+    // NAV-SCOPE: no step keys; the control the scene shows is the zoomed Reset view chip
+    wheel(host, at, { deltaY: -100 });
+    idle();
+    const zoomed = zoomOf(host);
+    expect(zoomed.k).toBeGreaterThan(1);
     const ui = host.querySelector('[data-scene-ui]')!;
-    expect(ui).not.toBeNull();
+    expect(ui).toBe(chip());
     expect(wheel(ui, at, { deltaY: -100 })).toBe(true);
-    expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
+    idle();
+    expect(zoomOf(host)).toEqual(zoomed);
   });
 
   it(`a LINE-mode wheel (Firefox) zooms as ${WHEEL_LINE_PX} px a line`, () => {
@@ -845,11 +850,11 @@ describe('CabinetScene: the mouse wheel zooms at the cursor (NAV-DESKTOP-ZOOM)',
     expect(chip()).toBeNull();
   });
 
-  it('a new view wins over a wheel\'s pending settle', () => {
+  it('a new wall wins over a wheel\'s pending settle', () => {
     vi.useFakeTimers();
     const { host, again } = scene(getFixtureFigures(8));
     wheel(host, at, { deltaY: -300 });
-    again({ prefs: prefs({ view: 'cabinet' }) });
+    again({ prefs: prefs({ pattern: 'ikea-detolf' }) });
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });
     idle();
     expect(zoomOf(host)).toEqual({ k: 1, x: 0, y: 0 });

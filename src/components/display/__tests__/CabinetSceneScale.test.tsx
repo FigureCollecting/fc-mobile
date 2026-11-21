@@ -111,30 +111,29 @@ describe('CabinetScene: figures at true scale (the transparent margin above the 
     // copies of the fixture (fx-spike-xN): matted cut-outs, as getDisplayMeta resolves them
     const wall = Array.from({ length: 600 }, (_, i) => ({ ...spike, _id: `fx-spike-x${i + 2}` }));
     let binding = 0;
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      for (const frame of [{ width: 870, height: 400 }, { width: 443, height: 454 }, { width: 616, height: 245 }]) {
-        const { container } = render(<CabinetScene figures={wall} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, view }} frameFallback={frame} />);
-        const host = container.querySelector<HTMLElement>('.cabinet-scene')!;
-        const s = Number(host.dataset.pxPerMm);
-        const buttons = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure'));
-        let whole = 0;
-        let clipped = 0;
-        for (const b of buttons) {
-          const box = b.querySelector<HTMLElement>('.cab-figure__box')!;
-          const k = Number(b.style.getPropertyValue('--s'));
-          // each at the scene's px per mm
-          const [l, t, w, h] = ['left', 'top', 'width', 'height'].map((x) => (parseFloat(box.style.getPropertyValue(x)) * s) / k);
-          const [bw, bh] = [(parseFloat(b.style.width) * s) / k, (parseFloat(b.style.height) * s) / k];
-          whole += (Math.max(bw, l + w) - Math.min(0, l)) * (Math.max(bh, t + h) - Math.min(0, t));
-          clipped += (Math.max(bw, l + 0.6 * w) - Math.min(0, l + 0.4 * w)) * (Math.max(bh, t + 0.95 * h) - Math.min(0, t + 0.25 * h));
-        }
-        const budget = FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height;
-        if (whole > budget && clipped <= budget) {
-          binding++;
-          for (const b of buttons) expect(b.style.getPropertyValue('--s'), `${view} ${frame.width}`).toBe(String(s));
-        }
-        cleanup();
+    // NAV-SCOPE: the case's one view, the wall's
+    for (const frame of [{ width: 870, height: 400 }, { width: 443, height: 454 }, { width: 616, height: 245 }]) {
+      const { container } = render(<CabinetScene figures={wall} onSelect={vi.fn()} prefs={DEFAULT_CASE_PREFS} frameFallback={frame} />);
+      const host = container.querySelector<HTMLElement>('.cabinet-scene')!;
+      const s = Number(host.dataset.pxPerMm);
+      const buttons = Array.from(host.querySelectorAll<HTMLElement>('button.cab-figure'));
+      let whole = 0;
+      let clipped = 0;
+      for (const b of buttons) {
+        const box = b.querySelector<HTMLElement>('.cab-figure__box')!;
+        const k = Number(b.style.getPropertyValue('--s'));
+        // each at the scene's px per mm
+        const [l, t, w, h] = ['left', 'top', 'width', 'height'].map((x) => (parseFloat(box.style.getPropertyValue(x)) * s) / k);
+        const [bw, bh] = [(parseFloat(b.style.width) * s) / k, (parseFloat(b.style.height) * s) / k];
+        whole += (Math.max(bw, l + w) - Math.min(0, l)) * (Math.max(bh, t + h) - Math.min(0, t));
+        clipped += (Math.max(bw, l + 0.6 * w) - Math.min(0, l + 0.4 * w)) * (Math.max(bh, t + 0.95 * h) - Math.min(0, t + 0.25 * h));
       }
+      const budget = FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height;
+      if (whole > budget && clipped <= budget) {
+        binding++;
+        for (const b of buttons) expect(b.style.getPropertyValue('--s'), String(frame.width)).toBe(String(s));
+      }
+      cleanup();
     }
     expect(binding).toBeGreaterThan(0);
   }, 30_000);

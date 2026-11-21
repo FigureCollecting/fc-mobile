@@ -28,7 +28,7 @@ const TALL: Record<string, readonly [number, number]> = { [IKEA_KLINGSBO.id]: [2
 
 function scene(figures: Figure[], pattern: string) {
   const { container } = render(
-    <CabinetScene figures={figures} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, pattern, view: 'wall' }} frameFallback={{ width: 870, height: 900 }} />,
+    <CabinetScene figures={figures} onSelect={vi.fn()} prefs={{ ...DEFAULT_CASE_PREFS, pattern }} frameFallback={{ width: 870, height: 900 }} />,
   );
   return container.querySelector('.cabinet-scene') as HTMLElement;
 }

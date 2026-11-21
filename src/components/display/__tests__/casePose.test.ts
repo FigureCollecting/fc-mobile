@@ -212,6 +212,11 @@ describe('the realism cone (rulings S8)', () => {
     expect(springBack(1, 0, SPRING_MS)).toBe(0);
     expect(springBack(1, 0, 10 * SPRING_MS)).toBe(0);
   });
+
+  it('springBack: a frame stamped before the lift (a negative time) shows where the ease starts, never further out', () => {
+    expect(springBack(1, 0, -16)).toBe(1);
+    expect(springBack(-0.4, 0.1, -200)).toBe(-0.4);
+  });
 });
 
 describe('collision (spec 1.3, 6.4): clamp and slide', () => {

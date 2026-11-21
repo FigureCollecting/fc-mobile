@@ -188,10 +188,20 @@ test(`the pane's zoom control zooms in on the face; its transform is the face an
 // CARD-VIEW-1 part 3 (Ross 10-25): "a go to button on card view ... If shelving isn't visible behind (like cover screen), that go
 // to tap should close that view, too. Otherwise, if on tablet/pc/fold where card is alongside, just takes you to it but doesn't
 // close that view by default."
-/** The case stands the one-shelf view on `id`: drawn whole in the frame, in the cabinet in focus, level with its shelf. */
-async function expectFramed(page: Page, id: string) {
+/** The camera the case opens at (the wall's framing) at `size`, from a load of its own. */
+async function wallOpening(page: Page, size: { width: number; height: number }) {
+  await openCollection(page, size, 'case', '&fx=3');
+  return JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!) as { z: number };
+}
+
+/**
+ * The case stands `id`'s shelf framing: drawn whole in the frame, in the cabinet in focus, level with its shelf, and nearer
+ * than the wall's framing (NAV-SCOPE: no view switches, so the camera is the proof; `opening` is the wall's).
+ */
+async function expectFramed(page: Page, id: string, opening: { z: number }) {
   const scene = page.locator('.cabinet-scene');
-  await expect(scene).toHaveAttribute('data-view', 'shelf');
+  await expect(scene).not.toHaveAttribute('data-view', /./);
+  await expect.poll(async () => (JSON.parse((await scene.getAttribute('data-camera'))!) as { z: number }).z, { message: 'nearer than the wall framing' }).toBeLessThan(opening.z);
   const fig = scene.locator(`button.cab-figure[data-figure-id="${id}"]`);
   await expect(fig).toHaveCount(1);
   await atRest(fig);
@@ -206,10 +216,11 @@ async function expectFramed(page: Page, id: string) {
   const camera = JSON.parse((await scene.getAttribute('data-camera'))!) as { y: number; pitch: number };
   expect(camera.pitch, 'straight on (TOP1)').toBe(0);
   expect(camera.y, 'level with its shelf: above the board it stands on').toBeGreaterThan(world.surface);
-  return { focus: Number(await scene.getAttribute('data-focus')), shelf: Number(await scene.getAttribute('data-shelf')) };
+  return { focus: Number(await scene.getAttribute('data-focus')), camera };
 }
 
 test(`Go to over the shelving (the viewer): it closes the card, and the case frames the figure flipped to, on its shelf: ${COVER.name}`, async ({ page }) => {
+  const opening = await wallOpening(page, COVER);
   await openCollection(page, COVER, 'rows', '&fx=3');
   const tile = (await page.locator('button.jrows__item').nth(8).boundingBox())!;
   await touchTap(page, tile.x + tile.width / 2, tile.y + tile.height / 2);
@@ -231,13 +242,13 @@ test(`Go to over the shelving (the viewer): it closes the card, and the case fra
   await expect(page.locator('.pswp')).toHaveCount(0);
   await expect(sheet).toHaveCount(0);
   await expect(page.locator('.jrows')).toHaveCount(0);
-  const at = await expectFramed(page, id);
-  expect(at.focus + at.shelf, `it went somewhere: cabinet ${at.focus}, step ${at.shelf}, not the view's first`).toBeGreaterThan(0);
+  await expectFramed(page, id, opening);
   // Back leaves the page where Go to left it: the card's history entry went with it
   expect(new URL(page.url()).searchParams.get('layout')).toBe('case');
 });
 
 test(`Go to beside the shelving (the pane, opened from the tiles): the card stays open, and the case frames its figure on its shelf: ${OPEN.name}`, async ({ page }) => {
+  const opening = await wallOpening(page, OPEN);
   await openCollection(page, OPEN, 'rows', '&fx=3');
   const tile = (await page.locator('button.jrows__item').nth(16).boundingBox())!;
   await touchTap(page, tile.x + tile.width / 2, tile.y + tile.height / 2);
@@ -248,8 +259,7 @@ test(`Go to beside the shelving (the pane, opened from the tiles): the card stay
   expect(await targetHeight(goTo), 'a 48 px target').toBeGreaterThanOrEqual(48);
   const id = (await goTo.getAttribute('data-figure-id'))!;
   await goTo.tap();
-  const at = await expectFramed(page, id);
-  expect(at.focus + at.shelf, `it went somewhere: cabinet ${at.focus}, step ${at.shelf}, not the view's first`).toBeGreaterThan(0);
+  await expectFramed(page, id, opening);
   await expect(pane).toBeVisible();
   await expect(pane.locator('.figure-viewer-sheet__name')).toHaveText(name);
 });

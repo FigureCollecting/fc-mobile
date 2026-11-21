@@ -230,14 +230,14 @@ export function Collection() {
 
   // CARD-VIEW-1 part 3 (Ross 10-25): a card's Go to. Whether the card covers the shelving is the state that already chooses
   // the card: beside the case (the pane, showDetailPane) it stays open; over it (the full-screen viewer, every layout where
-  // the pane is not beside it) it closes first. Then the case, in its one-shelf view, frames the figure (CabinetScene's goTo).
+  // the pane is not beside it) it closes first. Then the case stands at the figure's shelf framing (CabinetScene's goTo;
+  // NAV-SCOPE: the case's one view, no view switched to or stored).
   const showDetailPane = dualPane && viewerIndex !== null && !!visible[viewerIndex];
   const [goTo, setGoTo] = useState<{ figureId: string; seq: number } | null>(null);
   const goToSeq = useRef(0);
   const goToCase = (figure: Figure) => {
     if (!showDetailPane) setViewerIndex(null);
     if (layout !== 'case') setLayout('case');
-    if (casePrefs.view !== 'shelf') setCasePrefs({ view: 'shelf' });
     setGoTo({ figureId: figure._id, seq: ++goToSeq.current });
   };
   // the figures the case stood on no shelf as it last laid them out (kept while the tiles show), and the ones it never shelves
@@ -279,11 +279,9 @@ export function Collection() {
       <DisplayToggle
         layout={layout}
         density={density}
-        caseView={casePrefs.view}
         labels={labels}
         onLayout={setLayout}
         onDensity={setDensity}
-        onCaseView={(view) => setCasePrefs({ view })}
         onLabels={setLabels}
         onMenuOpen={setViewsMenuOpen}
       />

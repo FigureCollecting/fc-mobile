@@ -5,16 +5,44 @@
  * only when the cull must change (stickyWhole) or a gesture ends. One finger drags MOVE the eye (truck and pedestal);
  * held still LOOK_HOLD_MS first, or a right or Shift+left mouse drag, they LOOK (yaw and pitch through the realism cone,
  * eased back to its soft limit when let go). A still release is a tap, as today. NAV-2A: the stored swipe mode (the
- * old path's) has no say here.
+ * old path's) has no say here. NAV-LOOKDRIVE: the hat can drive a Look too, by rate (lookStart, lookAim, lookStop): the
+ * thumb's offset is an angular speed, through the same cone; and nothing begun while a look eases back makes the view jump.
  */
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
 import { DEPTH_STOP_MM, aheadMm, depthSpeed, dollyStep } from './caseDepth';
-import { capSpanMm, frameSpanMm, focusEdgesPx, yawCapRad, type Box, type RoomSpan } from './caseFraming';
+import { capSpanMm, frameSpanMm, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
-import { DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, JOG_MAX_STEP_MS, SPRING_MS, anchorDepth, axisGate, budgetCone, jogStep, poseOf, springBack, turn, walk, withPose, yawLimits, type Pose, type YawCone, type YawSide } from './casePose';
+import {
+  DRAG_WALK_GAIN_X,
+  DRAG_WALK_GAIN_Y,
+  JOG_MAX_STEP_MS,
+  LOOK_REBASE_MS,
+  LOOK_TICK_BACK,
+  SPRING_MS,
+  anchorDepth,
+  axisGate,
+  budgetCone,
+  coneIn,
+  jogStep,
+  lookRaw,
+  lookStep,
+  lookWind,
+  poseOf,
+  springBack,
+  turn,
+  turnBy,
+  turnInside,
+  turnRaw,
+  walk,
+  withPose,
+  yawLimits,
+  type Pose,
+  type YawCone,
+  type YawSide,
+} from './casePose';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling, projector, type BudgetScene, type Projector, type SceneCost } from './caseBudget';
-import type { WallLayout, WallSlot } from './packCabinets';
+import type { WallLayout } from './packCabinets';
 import type { Point } from './caseZoom';
 import { hapticLight } from '../../utils/haptics';
 
@@ -34,11 +62,11 @@ export interface FreeScene {
   readonly zBack: number;
   /** NAV-DEPTH-OCCL: the room's corners (everything drawn stands among them): the root's transform puts the CSS z = 0 plane past them. */
   readonly reach: readonly Vec3[];
-  /** The one-cabinet view's focus cabinet, whose neighbours are dimmed; null in the other views. */
-  readonly dimmed: WallSlot | null;
   readonly lookHoldMs: number;
   /** NAV-2B: the jog's top speed, in the 10-28 jog's (?jogmax=, JOG_MAX_X). */
   readonly jogMax: number;
+  /** NAV-LOOKDRIVE: the hat's Look top speed, in LOOK_DEG_PER_S (LOOK_MAX_X when absent). */
+  readonly lookMax?: number;
   readonly reducedMotion: boolean;
   /** What a look's projected scene is worked out from (NAV-1A b): a look stops where it would pass the ceiling. */
   readonly budget: BudgetScene;
@@ -83,6 +111,28 @@ interface Gesture {
   span: number;
   /** NAV-1A (b): the cone worked out while the armed finger was still, from this start at this scene. */
   cone?: { start: Pose; scene: FreeScene; limits: YawCone };
+  /** NAV-LOOKDRIVE: a look let go was easing back when the press began: the drag starts from where it rests, not where the press saw it. */
+  readonly eased: boolean;
+  /** NAV-LOOKDRIVE: a Look that took over that ease mid-way: the turn (turnRaw) that shows where it had got, added to the finger's. */
+  over?: { dYaw: number; dPitch: number };
+}
+
+/**
+ * NAV-LOOKDRIVE: the hat in Look mode: the thumb's offset and its last frame's time; the cone (limits) and the pose it
+ * was worked out from (start: the committed pose, at the place the eye is at now); the turn asked for from that start
+ * (dYaw, dPitch: integrated from the thumb, lookWind); whether the soft limit's tick has been given for this crossing;
+ * and, while the depth moves the eye, when the cone was last worked out and whether the eye has moved since.
+ */
+interface Look {
+  aim: Point;
+  last: number | undefined;
+  start: Pose;
+  limits: YawCone;
+  dYaw: number;
+  dPitch: number;
+  crossed: boolean;
+  coneAt: number;
+  stale: boolean;
 }
 
 /** NAV-JOG: the hat (the bottom-centre button's jog) running: the thumb's offset, its last frame's time, and a MOVE's depth and cap. */
@@ -129,10 +179,17 @@ const STUCK_DTS = 4;
 
 const samePose = (a: Pose, b: Pose) => a.x === b.x && a.y === b.y && a.z === b.z && a.yaw === b.yaw && a.pitch === b.pitch;
 
-/** NAV-DEPTH-2: the drives of one pose, either or both held at once: each frame the hat walks it, then the depth dollies it. */
+/**
+ * NAV-DEPTH-2: the drives of one pose, the hat and the depth, either or both held at once: each frame the hat walks it
+ * (hat) or turns it (look: NAV-LOOKDRIVE, the same thumb in Look mode, never both), then the depth dollies it. `pose` is
+ * the committed pose (never past a soft limit); `shown` the one drawn: a Look's rubber band, or a look let go still
+ * easing back under the drive.
+ */
 interface Drives {
   pose: Pose;
+  shown: Pose;
   hat: Hat | null;
+  look: Look | null;
   depth: Depth | null;
 }
 
@@ -249,38 +306,33 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const raf = useRef<number | undefined>(undefined);
 
   const cameraOf = (pose: Pose | null): Camera => (pose === null ? scene.current.base : withPose(scene.current.base, pose));
-  /** The pose drawn now: a gesture's shown pose, the spring's, or the held one (null: the framing's). */
+  /** `pose` aimed where the spring has it now: a look let go easing back (the pose itself when none runs). */
+  const eased = (pose: Pose, now?: number): Pose => {
+    const sp = spring.current;
+    if (!sp) return pose;
+    const t = (now ?? performance.now()) - sp.t0;
+    return { ...pose, yaw: springBack(sp.from.yaw, sp.to.yaw, t), pitch: springBack(sp.from.pitch, sp.to.pitch, t) };
+  };
+  /**
+   * The pose drawn now: a gesture's shown pose (NAV-LOOKDRIVE: a MOVE's with a look still easing back under it), the
+   * drives', the spring's, or the held one (null: the framing's).
+   */
   const drawn = (now?: number): Pose | null => {
     const g = gesture.current;
-    if (g?.mode) return g.shown;
-    if (drives.current) return drives.current.pose;
+    if (g?.mode) return g.mode === 'move' ? eased(g.shown, now) : g.shown;
+    if (drives.current) return drives.current.shown;
     const sp = spring.current;
-    if (sp) {
-      const t = (now ?? performance.now()) - sp.t0;
-      return { ...sp.to, yaw: springBack(sp.from.yaw, sp.to.yaw, t), pitch: springBack(sp.from.pitch, sp.to.pitch, t) };
-    }
+    if (sp) return eased(sp.to, now);
     return held.current;
   };
 
-  /** Write the camera to the DOM: the root's transform, data-camera, the dimming veils; ask for a render when the cull must change. */
+  /** Write the camera to the DOM: the root's transform, data-camera; ask for a render when the cull must change. */
   const write = (camera: Camera) => {
     const { host, root } = dom;
     if (!host.current || !root.current) return;
     root.current.style.transform = cssSceneTransform(camera, scene.current.s, scene.current.reach);
     host.current.dataset.camera = cameraData(camera);
     host.current.dataset.cameraX = String(num(camera.x));
-    const slot = scene.current.dimmed;
-    if (slot) {
-      const edges = focusEdgesPx(camera, slot);
-      for (const veil of Array.from(host.current.querySelectorAll<HTMLElement>('.cabinet-scene__dim'))) {
-        const left = veil.dataset.side === 'left';
-        const x0 = -4;
-        const x1 = camera.frame.width + 4;
-        const [a, b] = left ? [x0, edges.left] : [edges.right, x1];
-        veil.style.left = `${num(a)}px`;
-        veil.style.width = `${num(Math.max(0, b - a))}px`;
-      }
-    }
     const next: CullView = { camera, panPx: 0 };
     if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) !== culled.current) onRender();
   };
@@ -290,7 +342,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
    * rules (the room, the furniture, jogOk) and the scene's budget, projected at the camera the scene renders with (the
    * framing's lens and frame at the pose, its px per mm held from where the turn left yaw 0: freeTexelScale's). The cost
    * the last dolly handed back is trusted only at the same scene (a render, a resize or a new budget is a new scene)
-   * and the same place (the hat has not moved the eye since). A dolly that held the eye still (against the budget, the
+   * and the same pose (the hat has not moved the eye since, nor its Look turned it). A dolly that held the eye still (against the budget, the
    * cap, a wall's end or the room: Stuck) is not asked again for a frame with all the same inputs: it would hold it there
    * again, and at the ceiling that costs three projections a frame. Any other frame (a longer or shorter one included)
    * asks it.
@@ -304,7 +356,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const project = d.project.fn;
     const held = unturned.current === null ? undefined : withPose(s.base, unturned.current);
     const vp = (p: Vec3) => project(withPose(s.base, { ...pose, x: p[0], y: p[1], z: p[2] }), held).vp;
-    const v0 = d.at !== null && d.at.scene === s && samePlace(d.at.pose, pose) ? d.v0 : undefined;
+    // NAV-LOOKDRIVE: the same pose, its aim too: the cost is another once the hat's Look has turned the eye
+    const v0 = d.at !== null && d.at.scene === s && samePose(d.at.pose, pose) ? d.v0 : undefined;
     const step = dollyStep(pose, d.r, dtMs, { space: s.space, boxes: s.boxes, ok: jogOk(s, pose, d.span), vp }, v0);
     d.v0 = step.vp;
     d.at = { scene: s, pose: step.pose };
@@ -344,46 +397,144 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
         }
         hat.last = now;
       }
+      // NAV-LOOKDRIVE: or the hat in Look mode turns it: the thumb's rate added to the turn asked for (lookStep, never
+      // wound up past the hard limit: lookWind), then through the cone a scene Look goes through (turnBy)
+      const look = d.look;
+      let shown: Pose | null = null;
+      if (look) {
+        if (look.last !== undefined) {
+          const step = lookStep(look.aim.x, look.aim.y, now - look.last, s.lookMax);
+          if (step.yaw !== 0 || step.pitch !== 0) Object.assign(look, lookWind(look.start, look.dYaw, look.dPitch, step, look.limits));
+        }
+        look.last = now;
+        const t = lookTurn(look);
+        pose = t.committed;
+        shown = t.shown;
+      }
       // NAV-DEPTH-2: then the depth, from where the hat left the eye; moved, the hat walks at the depth it is at now
       const depth = d.depth;
+      let moved = false;
       if (depth) {
         if (depth.last !== undefined) {
           const next = depthFrame(s, depth, pose, now - depth.last);
-          if (hat && !samePlace(next, pose)) hat.anchor = hatAnchor(s, next);
+          moved = !samePlace(next, pose);
+          if (hat && moved) hat.anchor = hatAnchor(s, next);
           pose = next;
         }
         depth.last = now;
       }
-      // the pose written once a frame, only when it moved
-      if (!samePlace(pose, d.pose)) {
-        d.pose = pose;
-        write(cameraOf(pose));
+      if (look) {
+        // NAV-LOOKDRIVE: the depth moved the eye under the Look: its cone stands at the place it was worked out at. It
+        // is worked out again from where the eye is (as the hat's anchor is), the view drawn kept as it is: at most
+        // every LOOK_REBASE_MS while the eye moves (a cone is a dozen projections or more), and once it rests. Every
+        // frame between, the cone is kept inside the realism cone of where the eye is (coneOf: the Classic cap, no
+        // projection), so a cap that closes in never leaves the view standing past it till the next working-out
+        if (moved) {
+          look.start = { ...look.start, x: pose.x, y: pose.y, z: pose.z };
+          look.stale = true;
+          shown = { ...(shown as Pose), x: pose.x, y: pose.y, z: pose.z };
+        }
+        if (look.stale && (!moved || now - look.coneAt >= LOOK_REBASE_MS)) {
+          rebase(s, look, pose, shown as Pose, now);
+          const t = lookTurn(look);
+          pose = t.committed;
+          shown = t.shown;
+        } else if (moved) {
+          const within = coneIn(look.limits, coneOf(withPose(s.base, pose), s.wall, s.fronts));
+          if (within !== look.limits) {
+            keep(look, pose, shown as Pose, within, false);
+            const t = lookTurn(look);
+            pose = t.committed;
+            shown = t.shown;
+          }
+        }
+      } else if (spring.current) {
+        // NAV-LOOKDRIVE: a look let go still easing back when the drive began goes on easing under it: no jump
+        if (now - spring.current.t0 >= SPRING_MS) spring.current = null;
+        else shown = eased(pose, now);
+      }
+      // the pose written once a frame, only when what is drawn changed: where the eye is or where it aims
+      const draw = shown ?? pose;
+      d.pose = pose;
+      if (!samePose(draw, d.shown)) {
+        d.shown = draw;
+        write(cameraOf(draw));
       }
       raf.current = requestAnimationFrame(loop);
       return;
     }
     const sp = spring.current;
-    if (sp && !gesture.current?.mode && now - sp.t0 >= SPRING_MS) {
+    if (sp && now - sp.t0 >= SPRING_MS) {
       spring.current = null;
-      write(cameraOf(held.current));
-      onRender();
-      return;
+      // (NAV-LOOKDRIVE: under a MOVE still held, the ease is over and the drag goes on)
+      if (!gesture.current?.mode) {
+        write(cameraOf(held.current));
+        onRender();
+        return;
+      }
     }
     write(cameraOf(drawn(now)));
-    if (sp && !gesture.current?.mode) raf.current = requestAnimationFrame(loop);
+    if (spring.current) raf.current = requestAnimationFrame(loop);
+  };
+  /** NAV-LOOKDRIVE: the hat's Look through its cone, with the soft limit's tick: one a crossing, armed again LOOK_TICK_BACK inside. */
+  const lookTurn = (look: Look) => {
+    const t = turnBy(look.start, look.dYaw, look.dPitch, look.limits);
+    if (t.past) {
+      if (!look.crossed) {
+        look.crossed = true;
+        hapticLight();
+      }
+    } else if (look.crossed && turnInside(look.start, look.dYaw, look.dPitch, look.limits, LOOK_TICK_BACK)) look.crossed = false;
+    return t;
+  };
+  /**
+   * NAV-LOOKDRIVE: the Look goes on from the committed pose `at` through `limits`, the turn asked for the one that shows
+   * `shown` there, never past a hard limit (lookRaw: a cone that closed in on the view leaves nothing wound up, and
+   * brings it in by no more than it closed). `taken`: a drawn view taken over (lookStart), drawn in this very cone.
+   */
+  const keep = (look: Look, at: Pose, shown: Pose, limits: YawCone, taken: boolean) => {
+    const was = taken ? { start: at, limits } : { start: look.start, limits: look.limits };
+    look.start = at;
+    look.limits = limits;
+    Object.assign(look, lookRaw(at, shown.yaw, shown.pitch, limits, was));
+  };
+  /** NAV-LOOKDRIVE: the Look's cone worked out from the committed pose `at` (keep). `taken`: a drawn view taken over (lookStart). */
+  const rebase = (s: FreeScene, look: Look, at: Pose, shown: Pose, now: number, taken = false) => {
+    keep(look, at, shown, coneFrom(s, at), taken);
+    look.coneAt = now;
+    look.stale = false;
   };
   const schedule = () => {
     if (raf.current === undefined) raf.current = requestAnimationFrame(loop);
   };
-  /** NAV-DEPTH-2: the last drive stops: the eye stays where the drives got it, held. Returns that pose. */
+  /**
+   * NAV-LOOKDRIVE: the hat's Look stops: a turn shown past its soft limit eases back to it (spec 1.5) as a scene look
+   * let go does, at once under reduced motion.
+   */
+  const dropLook = (d: Drives) => {
+    if (!d.look) return;
+    d.look = null;
+    const off = d.shown.yaw !== d.pose.yaw || d.shown.pitch !== d.pose.pitch;
+    if (off && !scene.current.reducedMotion) spring.current = { from: d.shown, to: d.pose, t0: performance.now() };
+  };
+  /**
+   * NAV-DEPTH-2: the last drive stops: the eye stays where the drives got it, held. Returns that pose. NAV-LOOKDRIVE: a
+   * look still easing back (the hat's, let go past its soft limit, or one the drive began under) goes on to its rest there.
+   */
   const endDrives = (d: Drives): Pose => {
     drives.current = null;
     // a running drive always has its next frame asked for (beginDrives, the loop)
     cancelAnimationFrame(raf.current!);
     raf.current = undefined;
     setGesture(null);
+    dropLook(d);
     held.current = d.pose;
-    write(cameraOf(d.pose));
+    const sp = spring.current;
+    if (sp) {
+      spring.current = { ...sp, to: d.pose };
+      write(cameraOf(drawn()));
+      schedule();
+    } else write(cameraOf(d.pose));
     onRender();
     return d.pose;
   };
@@ -392,7 +543,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     // the lift that does come first returns where it held the eye (haltedStop), as a lift returns where it got
     const halt = () => {
       const d = drives.current;
-      if (d) halted.current = { pose: endDrives(d), hat: d.hat !== null, depth: d.depth !== null };
+      if (!d) return;
+      const hat = d.hat !== null || d.look !== null;
+      halted.current = { pose: endDrives(d), hat, depth: d.depth !== null };
     };
     const hidden = () => {
       if (document.visibilityState === 'hidden') halt();
@@ -428,7 +581,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     el.style.top = `${at.y}px`;
     el.dataset.on = '';
   };
-  const setGesture = (mode: 'move' | 'look' | 'jog' | 'depth' | null) => {
+  const setGesture = (mode: 'move' | 'look' | 'jog' | 'jog-look' | 'depth' | null) => {
     const host = dom.host.current;
     if (!host) return;
     if (mode === null) delete host.dataset.gesture;
@@ -461,6 +614,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       limits: { soft: 0, hard: 0 },
       crossed: false,
       span: Infinity,
+      eased: spring.current !== null,
     };
     if (!lookAtOnce) {
       g.timer = setTimeout(() => {
@@ -493,18 +647,28 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (g.mode === null) {
       if (g.timer !== undefined) clearTimeout(g.timer);
       g.timer = undefined;
-      // a spring still easing back is done: the look starts from where it rests
-      if (spring.current) {
-        g.start = spring.current.to;
-        spring.current = null;
-      }
+      const looks = g.armed || g.lookAtOnce;
+      // NAV-LOOKDRIVE: a look let go still easing back: the drag starts from where it rests, the view from where it is
+      // drawn (no jump). A Look takes the ease over (the turn that shows it, added to the finger's); under a MOVE it
+      // goes on to its rest. One that came to rest since the press: from there (the press saw it mid-ease)
+      const easing = spring.current;
+      const mid = easing && looks ? drawn() : null;
+      if (easing) {
+        g.start = easing.to;
+        if (looks) spring.current = null;
+      } else if (g.eased) g.start = held.current ?? poseOf(s.base);
       g.committed = g.start;
       g.shown = g.start;
       const camera = cameraOf(g.start);
-      if (g.armed || g.lookAtOnce) {
+      if (looks) {
         g.mode = 'look';
         const ready = g.cone !== undefined && g.cone.start === g.start && g.cone.scene === s ? g.cone.limits : null;
         g.limits = ready ?? coneFrom(s, g.start);
+        if (mid) {
+          g.over = turnRaw(g.start, mid.yaw, mid.pitch, g.limits);
+          // still past the soft limit: this crossing's tick was the look's before
+          g.crossed = turnBy(g.start, g.over.dYaw, g.over.dPitch, g.limits).past;
+        }
         // rulings S6: the haptic is the first Look move's, never the arming's
         hapticLight();
       } else {
@@ -520,7 +684,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       const bearing = (p: Point) => [(p.x - base.frame.width / 2) / f, (base.frame.height / 2 - p.y) / f] as const;
       const [a0, b0] = bearing(g.at0);
       const [a1, b1] = bearing(at);
-      const t = turn(g.start, a0, b0, a1, b1, g.limits);
+      const t = g.over
+        ? turnBy(g.start, g.over.dYaw + (Math.atan(a0) - Math.atan(a1)), g.over.dPitch + (Math.atan(b1) - Math.atan(b0)), g.limits)
+        : turn(g.start, a0, b0, a1, b1, g.limits);
       g.committed = t.committed;
       g.shown = t.shown;
       if (t.past && !g.crossed) {
@@ -554,6 +720,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (raf.current !== undefined) cancelAnimationFrame(raf.current);
     raf.current = undefined;
     if (!commit) {
+      // (a look that was easing back under a MOVE is done: the eye goes back to where it was held)
+      spring.current = null;
       held.current = g.heldBefore;
       write(cameraOf(g.heldBefore));
       onRender();
@@ -561,9 +729,15 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     }
     held.current = g.committed;
     const off = g.shown.yaw !== g.committed.yaw || g.shown.pitch !== g.committed.pitch;
+    const sp = spring.current;
     if (off && !scene.current.reducedMotion) {
       spring.current = { from: g.shown, to: g.committed, t0: performance.now() };
       write(cameraOf(g.shown));
+      schedule();
+    } else if (sp) {
+      // NAV-LOOKDRIVE: a look still easing back under the MOVE goes on to its rest, where the drag left the eye
+      spring.current = { ...sp, to: g.committed };
+      write(cameraOf(drawn()));
       schedule();
     } else write(cameraOf(g.committed));
     onRender();
@@ -579,33 +753,32 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const h = halted.current;
     if (h === null || !h[which]) return null;
     halted.current = null;
-    // only while the eye still stands there: a swipe, a look, Reset view or any pose held since set the focus their own way
-    const now = drawn() ?? poseOf(scene.current.base);
+    // only while the eye still stands there (a halted Look easing back: where it rests): a swipe, a look, Reset view or
+    // any pose held since set the focus their own way
+    const now = spring.current?.to ?? drawn() ?? poseOf(scene.current.base);
     return samePose(now, h.pose) ? h.pose : null;
   };
 
   const beginDrives = (): Drives => {
     if (drives.current) return drives.current;
-    const easing = spring.current;
-    spring.current = null;
-    const d: Drives = { pose: held.current ?? poseOf(scene.current.base), hat: null, depth: null };
+    const pose = held.current ?? poseOf(scene.current.base);
+    // NAV-LOOKDRIVE: a look easing back goes on easing under the drive (the loop), drawn from where it is: no jump
+    const d: Drives = { pose, shown: drawn() ?? pose, hat: null, look: null, depth: null };
     drives.current = d;
     // a halt before it is no lift's to return now: this drive's last stop returns where it gets
     halted.current = null;
-    // a look easing back is done: the drive starts from where it rests (held already)
-    if (easing) write(cameraOf(d.pose));
     if (raf.current !== undefined) cancelAnimationFrame(raf.current);
     raf.current = requestAnimationFrame(loop);
     return d;
   };
 
   /**
-   * NAV-JOG: a thumb has started the bottom-centre button's jog: from the pose drawn now (a look easing back, from where
-   * it rests; a depth drive running, from where it has got), at the depth the frame centre looks at. Refused (false)
-   * while a finger is on the scene or a jog runs.
+   * NAV-JOG: a thumb has started the bottom-centre button's jog: from the pose held now (a look easing back goes on to
+   * its rest under it; a depth drive running, from where it has got), at the depth the frame centre looks at. Refused
+   * (false) while a finger is on the scene or the hat runs (a jog, or its Look).
    */
   const jogStart = useCallback((): boolean => {
-    if (gesture.current !== null || drives.current?.hat) return false;
+    if (gesture.current !== null || drives.current?.hat || drives.current?.look) return false;
     const s = scene.current;
     const d = beginDrives();
     d.hat = { aim: { x: 0, y: 0 }, last: undefined, anchor: hatAnchor(s, d.pose), span: spanOf(s, cameraOf(d.pose)) };
@@ -636,6 +809,45 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   }, []);
 
   /**
+   * NAV-LOOKDRIVE: the hat in Look mode: a thumb has started it. The eye turns at the rate the thumb holds (lookAim)
+   * from the pose drawn now, through the cone a scene Look from there has (coneFrom); a look still easing back is taken
+   * over where it is drawn. With the depth or alone. Refused (false) while a finger is on the scene or the hat runs.
+   */
+  const lookStart = useCallback((): boolean => {
+    if (gesture.current !== null || drives.current?.hat || drives.current?.look) return false;
+    const d = beginDrives();
+    spring.current = null;
+    const look: Look = { aim: { x: 0, y: 0 }, last: undefined, start: d.pose, limits: { soft: 0, hard: 0 }, dYaw: 0, dPitch: 0, crossed: false, coneAt: 0, stale: false };
+    rebase(scene.current, look, d.pose, d.shown, performance.now(), true);
+    // drawn past a soft limit already (the ease taken over): this crossing's tick was the look's before
+    look.crossed = turnBy(look.start, look.dYaw, look.dPitch, look.limits).past;
+    d.look = look;
+    setGesture('jog-look');
+    return true;
+  }, []);
+
+  /** NAV-LOOKDRIVE: the thumb's offset (px) from where it went down: the way the eye turns, and how fast (lookStep). */
+  const lookAim = useCallback((dxPx: number, dyPx: number) => {
+    const look = drives.current?.look;
+    if (look) look.aim = { x: dxPx, y: dyPx };
+  }, []);
+
+  /**
+   * NAV-LOOKDRIVE: the thumb lifts: the Look stops, and a turn shown past its soft limit eases back to it. As jogStop:
+   * the last drive stopping, the committed pose is held and returned; null while the depth still moves the eye.
+   */
+  const lookStop = useCallback((): Pose | null => {
+    const d = drives.current;
+    if (!d?.look) return haltedStop('hat');
+    if (d.depth) {
+      dropLook(d);
+      setGesture('depth');
+      return null;
+    }
+    return endDrives(d);
+  }, []);
+
+  /**
    * NAV-DEPTH-2: the depth rocker leaves its centre at reach r in [-1, 1] (+ forward): the eye dollies along its
    * horizontal heading (dollyStep) from the pose drawn now, with the hat or alone. Refused (false) while a finger is on
    * the scene or a depth drive runs.
@@ -644,7 +856,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (gesture.current !== null || drives.current?.depth) return false;
     const d = beginDrives();
     d.depth = { r, last: undefined, span: spanOf(scene.current, cameraOf(d.pose)), v0: undefined, at: null, project: null, stuck: null };
-    if (!d.hat) setGesture('depth');
+    if (!d.hat && !d.look) setGesture('depth');
     return true;
   }, []);
 
@@ -659,7 +871,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     const d = drives.current;
     if (!d?.depth) return haltedStop('depth');
     d.depth = null;
-    return d.hat ? null : endDrives(d);
+    if (d.look) setGesture('jog-look');
+    return d.hat || d.look ? null : endDrives(d);
   }, []);
 
   return {
@@ -685,6 +898,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     jogStart,
     jogAim,
     jogStop,
+    lookStart,
+    lookAim,
+    lookStop,
     depthStart,
     depthRate,
     depthStop,

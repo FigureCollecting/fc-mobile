@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef } from 'preact/hooks';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Link } from 'wouter';
+import { PRIVACY_LINK_LABEL } from '../content/privacyText';
 import { PageDots } from '../components/ui/PageDots';
 import { Style } from '../styles/Style';
 
@@ -150,6 +152,9 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       {/* Dot indicators */}
       <div class="onboarding__footer">
         <PageDots total={SCREENS.length} active={page} onDotClick={goTo} />
+        <Link class="onboarding__privacy" href="/privacy">
+          {PRIVACY_LINK_LABEL}
+        </Link>
       </div>
 
       <Style css={styles} />
@@ -336,6 +341,17 @@ const styles = `
   .onboarding__footer {
     flex-shrink: 0;
     padding-bottom: var(--space-6);
+  }
+
+  .onboarding__privacy {
+    display: block;
+    width: fit-content;
+    margin: var(--space-3) auto 0;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   /* ── Decorative: Collection Grid ── */

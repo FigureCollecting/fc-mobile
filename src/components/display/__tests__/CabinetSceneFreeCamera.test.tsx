@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach, onTestFinished } from 'vitest';
 import { render, fireEvent, screen, cleanup, act } from '@testing-library/preact';
-import userEvent from '@testing-library/user-event';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene } from '../CabinetScene';
 import { DEFAULT_CASE_PREFS, WALL_PATTERNS, type CasePrefs } from '../casePrefs';
@@ -10,8 +9,8 @@ import { coneOf } from '../useFreeCamera';
 import { useJogStore } from '../../../stores/jog';
 import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
 import { wallLayout } from '../packCabinets';
-import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
-import { frameMargins, project } from '../caseCamera';
+import { IKEA_KLINGSBO } from '../cabinetPresets';
+import { project } from '../caseCamera';
 import { DRAWN_CABINETS_LIMIT } from '../caseCull';
 import { DEPTH_DEAD } from '../caseDepth';
 
@@ -225,7 +224,7 @@ describe('NAV-SWIPE-2X (Ross 11-04): a one-finger MOVE walks twice as far sidewa
 
   it('a doubled drag into the room\'s side wall stops at the wall (less EYE_MARGIN_MM), never past it', () => {
     // one cabinet: the side walls stand ROOM_SIDE_MM (6 m) past the wall's ends
-    scene({ view: 'cabinet' }, { figures: FIGURES.slice(0, 2) });
+    scene({}, { figures: FIGURES.slice(0, 2) });
     const boxes = JSON.parse(host().dataset.wall!) as number[][];
     const bound = Math.min(...boxes.map((b) => b[0])) - 6000 + EYE_MARGIN_MM;
     let swipes = 0;
@@ -407,100 +406,16 @@ describe('the realism cone (rulings S8)', () => {
   });
 });
 
-describe('the arrows and Reset from where you look (rulings S7, spec 4)', () => {
-  it('Reset: absent after a walk at the opening height, present after a look once the gesture ends, and back to the framing (yaw 0)', () => {
-    scene({ view: 'cabinet' });
-    drag({ x: 300, y: 200 }, { x: 100, y: 200 });
-    tick(500);
-    expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
-    drag({ x: 300, y: 200 }, { x: 160, y: 200 }, { button: 2, lift: false });
-    expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
-    up(1, { x: 160, y: 200 });
-    tick(500);
-    const reset = screen.getByRole('button', { name: 'Reset view' });
-    expect(reset.classList.contains('cabinet-scene__reset--fade')).toBe(true);
-    const focus = host().dataset.focus;
-    fireEvent.click(reset);
-    tick();
-    expect(cam().yaw).toBe(0);
-    expect(host().dataset.focus).toBe(focus);
-    expect(screen.queryByRole('button', { name: 'Reset view' })).toBeNull();
-  });
-
-  it('NAV-JOG: the side arrows retire from sight (the jog moves the camera), kept for the keyboard alone (NAV-2A), in every view; the shelf view keeps its shelf steps', () => {
-    const keysOnly = (name: string) => screen.getByRole('button', { name }).classList.contains('cabinet-scene__step--keys');
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      scene({ view });
-      expect(keysOnly('Next cabinet'), view).toBe(true);
-      expect(keysOnly('Previous cabinet'), view).toBe(true);
-      expect(screen.queryByRole('button', { name: 'Shelf below' }) !== null, view).toBe(view === 'shelf');
-      cleanup();
-    }
-  });
-
-  it('NAV-2A: unseen, the arrows hide from the eye and the finger only, until focused; Tab reaches Next and Enter stands the eye at the next cabinet', async () => {
-    scene({ view: 'cabinet' });
-    const next = screen.getByRole('button', { name: 'Next cabinet' });
-    const shown = () => getComputedStyle(next);
-    expect(shown().opacity).toBe('0');
-    expect(shown().pointerEvents).toBe('none');
-    expect(next.tabIndex).toBe(0);
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    // from the last figure the scene draws (the arrows follow the picture in the tab order)
-    const figures = screen.getAllByRole('button', { name: /^Figure / });
-    figures[figures.length - 1].focus();
-    for (let i = 0; i < 5 && document.activeElement !== next; i++) await user.tab();
-    expect(document.activeElement, 'Tab reaches Next cabinet').toBe(next);
-    // shown once focused: jsdom keeps a computed style until the DOM changes, so case-free-default.spec.ts sees that
-    expect(next.matches('.cabinet-scene__step--keys:focus')).toBe(true);
-    const before = pose();
-    await user.keyboard('{Enter}');
-    tick();
-    expect(host().dataset.focus).toBe('1');
-    expect(pose().x).toBeGreaterThan(before.x);
-    expect([pose().yaw, pose().pitch]).toEqual([0, 0]);
-    const prev = screen.getByRole('button', { name: 'Previous cabinet' });
-    expect(prev).toBeEnabled();
-    prev.focus();
-    await user.keyboard('{Enter}');
-    tick();
-    expect(host().dataset.focus).toBe('0');
-  });
-
-  it('NAV-2A: in the whole-cabinets view the keyboard\'s Next and Previous page the wall from where the eye looks', async () => {
-    scene();
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const start = pose();
-    screen.getByRole('button', { name: 'Next cabinet' }).focus();
-    await user.keyboard('{Enter}');
-    tick();
-    const paged = pose();
-    expect(paged.x).toBeGreaterThan(start.x);
-    expect([paged.yaw, paged.pitch]).toEqual([0, 0]);
-    const prev = screen.getByRole('button', { name: 'Previous cabinet' });
-    expect(prev).toBeEnabled();
-    prev.focus();
-    await user.keyboard('{Enter}');
-    tick();
-    expect(pose().x).toBeLessThan(paged.x);
-  });
-
-  it('the shelf arrows stand it at the shelf\'s framing too', () => {
-    scene({ view: 'shelf' });
-    drag({ x: 300, y: 200 }, { x: 100, y: 200 });
-    fireEvent.click(screen.getByRole('button', { name: 'Shelf below' }));
-    tick();
-    expect(host().dataset.shelf).toBe('1');
-    expect(cam().pitch).toBe(0);
-  });
-
-  it('a new view starts from its framing; new prefs that are not a new view keep the pose', () => {
+describe('the pose across new prefs (NAV-SCOPE: one view; the Reset chip is the zoom\'s alone, navScope.test.tsx)', () => {
+  it('a new wall pattern starts from its framing; new prefs that are not a new wall keep the pose, a stale view among them', () => {
     const { again } = scene();
     drag({ x: 300, y: 200 }, { x: 100, y: 200 });
     const walked = pose();
     again({ showEstimated: true });
     expect(pose()).toEqual(walked);
-    again({ showEstimated: true, view: 'cabinet' });
+    again({ showEstimated: true, view: 'cabinet' } as Partial<CasePrefs>);
+    expect(pose()).toEqual(walked);
+    again({ showEstimated: true, pattern: 'ikea-detolf' });
     expect(pose().x).not.toBe(walked.x);
   });
 });
@@ -556,7 +471,7 @@ describe('a fold or an unfold keeps the pose (spec 6.6)', () => {
 describe('Go to (CARD-VIEW-1) in Free camera', () => {
   it('stands the camera at the framing Go to gives', () => {
     const onWentTo = vi.fn();
-    const { again } = scene({ view: 'shelf' }, { onWentTo });
+    const { again } = scene({}, { onWentTo });
     drag({ x: 300, y: 200 }, { x: 100, y: 200 }, { button: 2 });
     again({}, { onWentTo, goTo: { figureId: 's60', seq: 1 } });
     tick();
@@ -638,7 +553,7 @@ function lookRight() {
 
 describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
   it('(a) turned, the scene is drawn at the framing\'s px per mm, below what the turned view asks; back at the framing, today\'s', () => {
-    scene();
+    const { again } = scene();
     const framing = pxPerMm();
     expect(host().hasAttribute('data-turned-px-per-mm')).toBe(false);
     // walked in toward the fronts, the cabinet beside the eye near: a turn there asks a sharper scene
@@ -649,8 +564,8 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect(cam().yaw).not.toBe(0);
     expect(pxPerMm()).toBe(framing);
     expect(Number(host().dataset.turnedPxPerMm)).toBeGreaterThan(framing);
-    // Reset: the framing, turned straight, at today's px per mm again
-    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+    // back at the framing (NAV-SCOPE: Reset is the zoom's alone; a new filter starts from the framing), today's px per mm again
+    again({}, { filterKey: 'another' });
     tick();
     expect(cam().yaw).toBe(0);
     expect(pxPerMm()).toBe(framing);
@@ -658,7 +573,7 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
   });
 
   it('(a) a move or a pitch made while turned never draws sharper than where the turn left yaw 0; turned straight, today\'s', () => {
-    scene();
+    const { again } = scene();
     const opening = pxPerMm();
     lookRight();
     up(1, { x: 0, y: 200 });
@@ -680,8 +595,8 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     tick(500);
     expect(Math.abs(pose().pitch)).toBeGreaterThan(5 * DEG);
     expect(pxPerMm(), 'pitched while turned').toBeLessThanOrEqual(opening);
-    // and from the opening, one diagonal look (right and up together)
-    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+    // and from the opening (a new filter starts there: NAV-SCOPE), one diagonal look (right and up together)
+    again({}, { filterKey: 'another' });
     tick();
     expect(pxPerMm()).toBe(opening);
     drag({ x: 440, y: 400 }, { x: 0, y: 0 }, { button: 2, steps: 12 });
@@ -738,21 +653,25 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     up(1, { x: 280, y: 200 });
   });
 
-  it('in every view the projection at the start draws the cabinets and figures the scene draws (the cap is the wall\'s, CF1)', () => {
-    for (const view of ['wall', 'cabinet', 'shelf'] as const) {
-      const { unmount } = scene({ view }, { figures: WIDE });
+  it('at the opening and at a Go to\'s shelf framing the projection at the start draws the cabinets and figures the scene draws (the cap is the wall\'s, CF1)', () => {
+    const { again } = scene({}, { figures: WIDE });
+    for (const at of ['opening', 'go to'] as const) {
+      if (at === 'go to') {
+        again({}, { figures: WIDE, goTo: { figureId: 'w300', seq: 1 } });
+        tick();
+      }
       const drawn = [Number(host().dataset.drawnCabinets), Number(host().dataset.drawnFigures)];
       down(1, { x: 300, y: 200 }, { button: 2 });
       move(1, { x: 290, y: 200 });
       const start = budget().start!;
-      expect([start.drawn, start.figures], view).toEqual(drawn);
+      expect([start.drawn, start.figures], at).toEqual(drawn);
       up(1, { x: 290, y: 200 });
-      unmount();
+      tick(500);
     }
   });
 
   it('a turned start is projected as the scene draws it there; a turn\'s projection counts the cabinets and figures it brings in', () => {
-    scene({}, { figures: WIDE });
+    const { again } = scene({}, { figures: WIDE });
     const opening = Number(host().dataset.drawnFigures);
     lookRight();
     const first = budget();
@@ -782,8 +701,9 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     expect([inner.drawn, inner.figures]).toEqual([walkedIn.cabs, walkedIn.figures]);
     up(1, { x: 290, y: 200 });
     tick(500);
-    // and turned left, past the wall's start (fewer cabinets in view than the opening's cap)
-    fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+    // and turned left from the opening (a new filter starts there: NAV-SCOPE), past the wall's start (fewer cabinets in
+    // view than the opening's cap)
+    again({}, { figures: WIDE, filterKey: 'another' });
     tick();
     down(1, { x: 0, y: 200 }, { button: 2 });
     for (let x = 10; x <= 440; x += 10) {
@@ -934,7 +854,8 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     host().removeAttribute('data-yaw-budget');
     move(1, { x: 290, y: 200 });
     expect(host().hasAttribute('data-yaw-budget')).toBe(false);
-    // the turn goes on from the rest (the band past it), not from where the ease had got to
+    // the turn goes on from the rest's cone, drawn from where the ease had got to (NAV-LOOKDRIVE: no jump): 140 ms in,
+    // a hair past the rest
     expect(pose().yaw / DEG).toBeGreaterThan(armed.start!.yaw);
     expect(pose().yaw / DEG).toBeLessThan(armed.start!.yaw + 1);
     up(1, { x: 290, y: 200 });
@@ -972,16 +893,16 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
 
   beforeEach(() => useJogStore.setState({ target: null }));
 
-  it('the case offers a jog while it is shown, the same one through new prefs and views; gone, it is withdrawn; shown again, offered again', () => {
+  it('the case offers a jog while it is shown, the same one through new prefs and walls; gone, it is withdrawn; shown again, offered again', () => {
     const { again, unmount } = scene();
     const offered = useJogStore.getState().target;
     expect(offered).not.toBeNull();
-    again({ view: 'cabinet' });
+    again({ pattern: 'ikea-detolf' });
     again({ ceilingMm: 2700 });
     expect(useJogStore.getState().target, 'offered once, not again at each render').toBe(offered);
     unmount();
     expect(useJogStore.getState().target).toBeNull();
-    scene({ view: 'shelf' });
+    scene({ ceilingMm: 2700 });
     expect(useJogStore.getState().target).not.toBeNull();
   });
 
@@ -1124,7 +1045,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
   };
 
   it('a long jog at twice the speed (NAV-2B) stops where the eye reaches the wall\'s end, never past it (half the frame still shows the wall); there up still goes, and back', () => {
-    scene({ view: 'cabinet' });
+    scene();
     expect(host().dataset.focus).toBe('0');
     const ends = wallEnds();
     begin();
@@ -1137,10 +1058,16 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(far.x).toBeGreaterThan(ends.right - step - 1e-6);
     run(JOG_FULL_PX, 0, 100);
     expect(pose().x).toBe(far.x);
-    // a diagonal there keeps its rise, not its run
+    // a diagonal there keeps its rise, not its run past the end (NAV-SCOPE: from the wall's framing the last full step can
+    // stop short of the end by more than a diagonal's smaller run, which may still close that gap, never cross it)
     run(JOG_FULL_PX, -JOG_FULL_PX, 10);
-    expect(pose().x).toBe(far.x);
+    expect(pose().x).toBeGreaterThanOrEqual(far.x);
+    expect(pose().x).toBeLessThanOrEqual(ends.right);
     expect(pose().y).toBeGreaterThan(far.y);
+    const risen = pose();
+    run(JOG_FULL_PX, -JOG_FULL_PX, 10);
+    expect(pose().x).toBe(risen.x);
+    expect(pose().y).toBeGreaterThan(risen.y);
     end();
     expect(Number(host().dataset.focus)).toBeGreaterThan(0);
     // and back the whole way: the left end holds it as well
@@ -1153,7 +1080,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
 
   it('an eye a swipe left past the wall\'s end: the jog brings it back, never farther out', () => {
     // one cabinet: a single swipe walks the eye past its end
-    scene({ view: 'cabinet' }, { figures: FIGURES.slice(0, 2) });
+    scene({}, { figures: FIGURES.slice(0, 2) });
     const ends = wallEnds();
     drag({ x: 430, y: 200 }, { x: 20, y: 200 });
     tick(500);
@@ -1286,14 +1213,24 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     expect(pxPerMm(), 'let go turned').toBeLessThanOrEqual(opening);
   });
 
-  it('a jog while a look eases back starts from where the ease rests (the soft limit)', () => {
+  it('a jog while a look eases back starts from where the ease rests (the soft limit), the view easing on to it under the jog (NAV-LOOKDRIVE: no jump)', () => {
     scene();
     const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
     drag({ x: 440, y: 200 }, { x: 0, y: 200 }, { button: 2, steps: 20, lift: false });
     up(1, { x: 0, y: 200 });
     tick(16);
-    begin();
-    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+    const easing = pose().yaw;
+    expect(easing / DEG).toBeGreaterThan(cone.soft + 1);
+    let ok = false;
+    act(() => {
+      ok = jog().start();
+    });
+    expect(ok).toBe(true);
+    // drawn where the ease had it, and a frame on a little nearer its rest
+    expect(pose().yaw).toBe(easing);
+    frames(1);
+    expect(pose().yaw).toBeLessThan(easing);
+    expect(pose().yaw / DEG).toBeGreaterThan(cone.soft);
     run(JOG_FULL_PX, 0, 20);
     expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
     end();
@@ -1317,6 +1254,48 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     run(JOG_FULL_PX, 0, 10);
     end();
     expect(pose().x).toBeGreaterThan(before.x);
+  });
+
+  // NAV-LOOKDRIVE: the same button in Look mode drives the scene's camera by rate (useFreeCamera's lookStart, lookAim, lookStop)
+  it('the jog offers the hat\'s Look: held right the eye turns right where it stands; let go past the soft limit it eases back to it; zoomed, its start drops the magnification', () => {
+    scene();
+    const cone = JSON.parse(host().dataset.cone!) as { soft: number; hard: number };
+    down(11, { x: 180, y: 260 });
+    down(12, { x: 260, y: 260 });
+    move(11, { x: 140, y: 260 });
+    move(12, { x: 300, y: 260 });
+    up(11, { x: 140, y: 260 });
+    up(12, { x: 300, y: 260 });
+    tick(500);
+    expect(JSON.parse(host().dataset.zoom!).k).toBeGreaterThan(1);
+    const before = pose();
+    const look = jog().look!;
+    let ok = false;
+    act(() => {
+      ok = look.start();
+    });
+    expect(ok).toBe(true);
+    expect(JSON.parse(host().dataset.zoom!).k).toBe(1);
+    expect(host().dataset.gesture).toBe('jog-look');
+    act(() => look.aim(JOG_FULL_PX, 0));
+    frames(61);
+    expect(pose().yaw / DEG).toBeGreaterThan(cone.soft);
+    expect(pose().yaw / DEG).toBeLessThan(cone.hard);
+    expect([pose().x, pose().y, pose().z]).toEqual([before.x, before.y, before.z]);
+    act(() => look.stop());
+    expect(host().hasAttribute('data-gesture')).toBe(false);
+    // easing back: still past the soft limit a frame in, at it once the ease is over
+    tick(16);
+    expect(pose().yaw / DEG).toBeGreaterThan(cone.soft);
+    tick(250);
+    expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 3);
+    // a finger on the scene owns it: the Look is refused
+    down(1, { x: 200, y: 200 });
+    act(() => {
+      ok = look.start();
+    });
+    expect(ok).toBe(false);
+    up(1, { x: 200, y: 200 });
   });
 
   // NAV-DESKTOP-ZOOM: the wheel's magnification keeps the jog's rule: no magnification rides a moving camera
@@ -1379,7 +1358,7 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
       return boxes.map((b, i) => [Math.max(0, b[0] - x, x - b[1]), i]).sort((a, b) => a[0] - b[0])[0][1];
     };
     const jogAlong = () => {
-      scene({ view: 'cabinet' });
+      scene();
       expect(host().dataset.focus).toBe('0');
       begin();
       act(() => jog().aim(JOG_FULL_PX, 0));
@@ -1518,7 +1497,7 @@ describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth move
   });
 
   it('held with the hat: x and z both move; the hat\'s lift leaves the depth running; its stop, the last, moves the focus to the cabinet the eye stands at', () => {
-    scene({ view: 'cabinet' });
+    scene();
     expect(host().dataset.focus).toBe('0');
     const before = pose();
     act(() => {
@@ -1544,116 +1523,11 @@ describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth move
   });
 
   it('a stop with no depth drive running (after the hat alone) changes nothing', () => {
-    scene({ view: 'cabinet' });
+    scene();
     const before = pose();
     lift();
     frames(2);
     expect(pose()).toEqual(before);
     expect(host().dataset.focus).toBe('0');
-  });
-});
-
-// NAV3-TOP (b), Ross 10-28 ("we can try b I reckon"), a trial with the Free camera: only the one-cabinet view stands back so
-// the tallest figure on a cabinet's top shows whole; the wall view keeps the 24 in crop (raise or look up there).
-describe('NAV3-TOP (b): the one-cabinet view shows the tallest top figure whole; the wall view keeps the crop', () => {
-  const tall = { _id: 'tall', name: 'Tall', dimensions: { heightMm: 700, widthMm: 200 } } as Figure;
-  /** Where the tall figure's head draws in the frame (px from its top), and the frame's top margin. */
-  const head = () => {
-    const w = JSON.parse(host().querySelector<HTMLElement>('.cab-figure[data-figure-id="tall"]')!.dataset.world!) as { x0: number; x1: number; y1: number; z: number };
-    const c = cam();
-    const frame = { width: c.width, height: c.height };
-    return { y: project({ ...c, frame }, [(w.x0 + w.x1) / 2, w.y1, w.z]).y, margin: frameMargins(frame).y, top: w.y1 };
-  };
-
-  it('a 700 mm figure on a Detolf\'s top, the open Fold8: the cabinet view stands back to show it whole; the wall view frames as for one at the cap', () => {
-    const atCap = { ...tall, dimensions: { heightMm: 609.6 - 40, widthMm: 200 } } as Figure;
-    const open = { frameFallback: { width: 870, height: 475 } };
-    const { again } = scene({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { ...open, figures: [tall] });
-    const cabinet = head();
-    expect(cabinet.top).toBeGreaterThan(IKEA_DETOLF.outer.heightMm + 609.6);
-    expect(cabinet.y).toBeGreaterThanOrEqual(cabinet.margin - 1e-6);
-    const stoodBack = cam();
-    again({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { ...open, figures: [atCap] });
-    expect(stoodBack.z).toBeGreaterThan(cam().z);
-    // the wall view: the same camera for either (the crop kept: a figure past the cap is cut at the frame's top)
-    again({ view: 'wall', pattern: IKEA_DETOLF.id }, { ...open, figures: [atCap] });
-    const wallAtCap = cam();
-    again({ view: 'wall', pattern: IKEA_DETOLF.id }, { ...open, figures: [tall] });
-    expect(cam()).toEqual(wallAtCap);
-  });
-
-  it('the cover\'s cabinet view too', () => {
-    scene({ view: 'cabinet', pattern: IKEA_DETOLF.id }, { figures: [tall] });
-    const { y, margin } = head();
-    expect(y).toBeGreaterThanOrEqual(margin - 1e-6);
-  });
-});
-
-// CAB-EDGE-DIM-1 (Ross 10-31, Fold8): in the one-cabinet view, what lies past the wall's end (the bare wall, or empty
-// space) dims as a neighbour does, from the end cabinet's outer edge to the frame's edge, straight on, turned, live and let go.
-describe('CAB-EDGE-DIM-1: the one-cabinet view dims past the wall\'s ends in Free camera', () => {
-  /** A wall of two cabinets: the first and the last. */
-  const FEW = FIGURES.slice(0, 40);
-  const veil = (side: string) => host().querySelector<HTMLElement>(`.cabinet-scene__dim[data-side="${side}"]`);
-  const wallOf = () => JSON.parse(host().dataset.wall!) as [number, number, number, number, number][];
-  /** The focus cabinet's silhouette across the frame, through the camera the scene publishes (its yaw included). */
-  const edges = () => {
-    const [x0, x1, y1, z0, z1] = wallOf()[Number(host().dataset.focus)];
-    const c = cam();
-    const camera = { ...c, frame: { width: c.width, height: c.height } };
-    const xs = [x0, x1].flatMap((x) => [0, y1].flatMap((y) => [z0, z1].map((z) => project(camera, [x, y, z]).x)));
-    return { left: Math.min(...xs), right: Math.max(...xs), width: c.width };
-  };
-  /** A veil's span across the frame (px from its left edge). */
-  const span = (side: string) => {
-    const v = veil(side);
-    expect(v, `a ${side} veil`).not.toBeNull();
-    return { a: parseFloat(v!.style.left), b: parseFloat(v!.style.left) + parseFloat(v!.style.width) };
-  };
-  const coversLeftEnd = () => {
-    const e = edges();
-    expect(e.left).toBeGreaterThan(0);
-    const l = span('left');
-    expect(l.a).toBeLessThanOrEqual(0);
-    expect(l.b).toBeCloseTo(e.left, 1);
-  };
-  const coversRightEnd = () => {
-    const e = edges();
-    expect(e.right).toBeLessThan(e.width);
-    const r = span('right');
-    expect(r.a).toBeCloseTo(e.right, 1);
-    expect(r.b).toBeGreaterThanOrEqual(e.width);
-  };
-
-  it('the first cabinet: from the frame\'s left edge to its outer edge, at the opening and turned toward the end, live and let go', () => {
-    scene({ view: 'cabinet' }, { figures: FEW });
-    expect(host().dataset.focus).toBe('0');
-    coversLeftEnd();
-    // a right drag turns at once; a drag right turns the eye left (yaw below 0), toward the wall's first end
-    drag({ x: 200, y: 200 }, { x: 260, y: 200 }, { lift: false, button: 2 });
-    expect(cam().yaw).toBeLessThan(0);
-    coversLeftEnd();
-    up(1, { x: 260, y: 200 });
-    tick(500);
-    expect(cam().yaw).toBeLessThan(0);
-    coversLeftEnd();
-  });
-
-  it('the last cabinet, reached by a walk: from its outer edge to the frame\'s right edge, straight on and turned toward the end, live and let go', () => {
-    scene({ view: 'cabinet' }, { figures: FEW });
-    const last = String(wallOf().length - 1);
-    expect(Number(last), 'a wall of more than one cabinet').toBeGreaterThan(0);
-    for (let i = 0; i < 40 && host().dataset.focus !== last; i++) drag({ x: 400, y: 200 }, { x: 60, y: 200 });
-    tick(500);
-    expect(host().dataset.focus).toBe(last);
-    coversRightEnd();
-    drag({ x: 260, y: 200 }, { x: 200, y: 200 }, { lift: false, button: 2 });
-    expect(cam().yaw).toBeGreaterThan(0);
-    coversRightEnd();
-    up(1, { x: 200, y: 200 });
-    tick(500);
-    expect(cam().yaw).toBeGreaterThan(0);
-    expect(host().dataset.focus).toBe(last);
-    coversRightEnd();
   });
 });

@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { touchDown, touchSwipe } from './touch';
+import { touchDown, touchPinch, touchSwipe } from './touch';
 import { watchPull } from './pullWatch';
 import { hat } from './navControls';
 
@@ -91,20 +91,28 @@ for (const panel of FOLD8) {
   });
 }
 
-// NAV-PTR-1 (Ross 10-25: "Reset view appears too easily (and/or too largely)"): a walk is navigation and shows none; a
-// real raise of the camera shows a small button low at the right, in thumb reach (the misfit chip's mirror)
-test('NAV-PTR-1 fold8-cover: a walk shows no Reset view; a 200 px raise shows a small one, low at the right', async ({ page }) => {
+// NAV-PTR-1 (Ross 10-25: "Reset view appears too easily (and/or too largely)"): a walk is navigation and shows none; it is
+// a small button low at the right, in thumb reach (the misfit chip's mirror). NAV-SCOPE (plan section 9): Reset view is
+// zoom-only: a raise of the camera shows none either; a pinch does, and its tap clears the zoom with the camera unmoved
+test('NAV-PTR-1 fold8-cover: a walk and a 200 px raise show no Reset view; a pinch shows a small one, low at the right, that clears only the zoom', async ({ page }) => {
   await openCase(page, FOLD8.find((v) => v.name === 'fold8-cover')!);
   const f = await frameBox(page);
   const x = (await sceneState(page)).x;
   await touchSwipe(page, f.x + f.width * 0.8, f.y + f.height * 0.5, -f.width * 0.6, 0);
   await settle(page);
   expect((await sceneState(page)).x, 'the camera walked').not.toBe(x);
-  await expect(page.locator('.cabinet-scene__reset'), 'no Reset view after a walk').toHaveCount(0);
+  const reset = page.locator('.cabinet-scene__reset');
+  await expect(reset, 'no Reset view after a walk').toHaveCount(0);
+  const y = (await sceneState(page)).y;
   await touchSwipe(page, f.x + f.width / 2, f.y + f.height * 0.2, 0, 200);
   await settle(page);
-  const reset = page.locator('.cabinet-scene__reset');
-  await expect(reset, 'Reset view after a raise').toHaveCount(1);
+  expect((await sceneState(page)).y, 'the camera rose').toBeGreaterThan(y);
+  await expect(reset, 'no Reset view after a raise').toHaveCount(0);
+  const m = { x: f.x + f.width / 2, y: f.y + f.height * 0.55 };
+  await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 60, y: m.y }, { x: m.x + 60, y: m.y });
+  await settle(page);
+  await expect(reset, 'Reset view once zoomed').toHaveCount(1);
+  const camera = await page.locator('.cabinet-scene').getAttribute('data-camera');
   const b = (await reset.boundingBox())!;
   const s = (await page.locator('.cabinet-scene').boundingBox())!;
   expect(b.width, 'small').toBeLessThanOrEqual(44);
@@ -114,44 +122,11 @@ test('NAV-PTR-1 fold8-cover: a walk shows no Reset view; a 200 px raise shows a 
   const h = (await hat(page).boundingBox())!;
   expect(Math.abs(h.x - (b.x + b.width) - 12), '12 px inboard of the hat').toBeLessThanOrEqual(2);
   expect(h.x + h.width, 'the hat inside the scene').toBeLessThanOrEqual(s.x + s.width);
+  await reset.tap();
+  await expect(reset).toHaveCount(0);
+  await expect.poll(async () => (JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-zoom'))!) as { k: number }).k).toBe(1);
+  await expect(page.locator('.cabinet-scene'), 'the camera stays where the walk and the raise left it').toHaveAttribute('data-camera', camera!);
 });
-
-// NAV-GRAD: the side arrows are the keyboard's alone (unseen, and no finger meets them), so a swipe that starts where
-// Next stands is the scene's own, as one that starts beside it
-for (const panel of FOLD8) {
-  test(`NAV-PTR-1 ${panel.name}: a swipe that starts where the unseen Next stands walks the wall as the same swipe beside it does`, async ({ page }) => {
-    await openCase(page, panel);
-    const f = await frameBox(page);
-    const swipeFrom = async (x: number, y: number) => {
-      const finger = await touchDown(page, x, y);
-      await finger.to(x - f.width * 0.6, y, 8, 16);
-      await finger.end();
-      await settle(page);
-      return sceneState(page);
-    };
-    const start = await sceneState(page);
-    const b = (await page.locator('.cabinet-scene__step--next').boundingBox())!;
-    const y = b.y + b.height / 2;
-    // NAV-FLOAT: on the cover held sideways the scene is short and the hat floats near Next's left, so the scene's swipe
-    // starts 16 px above Next's top there instead of 24 px left of its middle; both start points are the scene's own
-    const sceneAt = panel.name === 'fold8-cover-sideways' ? { x: b.x - 24, y: b.y - 16 } : { x: b.x - 24, y };
-    const onHat = await page.evaluate(
-      (points) => points.map(({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-nav]') != null),
-      [sceneAt, { x: b.x + b.width / 2, y }],
-    );
-    expect(onHat, 'neither start point is a floating control\'s').toEqual([false, false]);
-    const fromScene = await swipeFrom(sceneAt.x, sceneAt.y);
-    expect(fromScene.x, 'a swipe on the scene walks').toBeGreaterThan(start.x);
-    await page.reload();
-    await page.waitForSelector('button.cab-figure');
-    // the splash takes the touches until it goes
-    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
-    await settle(page, 800);
-    expect((await sceneState(page)).x).toBe(start.x);
-    const fromArrow = await swipeFrom(b.x + b.width / 2, y);
-    expect(fromArrow, 'walked, as from the scene').toEqual(fromScene);
-  });
-}
 
 test("NAV-PTR-1: the page asks the browser for no pull-to-refresh of its own (the CSS shipped; headless Chromium has no browser refresh to show)", async ({ page }) => {
   await openCase(page, FOLD8[0]);

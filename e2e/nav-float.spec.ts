@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR, SHOT_VIEWPORTS } from './caseViewports';
-import { touchFingers, touchTap } from './touch';
+import { touchFingers, touchPinch, touchTap } from './touch';
 import { centreOf, depth, hat, hatCircle, navControls } from './navControls';
 import { DEPTH_FULL_PX } from '../src/components/display/caseDepth';
 import { JOG_FULL_PX, JOG_MAX_STEP_MS } from '../src/components/display/casePose';
@@ -163,7 +163,7 @@ test('NAV-FLOAT (a): the tiles float no control; back on the case they are there
   await expect(navControls(page)).toHaveCount(0);
   await expect(page.locator('.tab-bar__add')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
-  await page.getByRole('button', { name: /^Case,/ }).click();
+  await page.getByRole('button', { name: 'Case', exact: true }).click();
   await ready(page);
   await expect(navControls(page)).toHaveCount(2);
 });
@@ -468,13 +468,11 @@ test('NAV-FLOAT: the three headers stand together at the centre of the strip, a 
 test('NAV-FLOAT: Reset view and the do-not-fit chip stand inboard of the two controls, each still the top element at its own centre and tapped', async ({ page }) => {
   // fxonly=spike: figures that do not fit, so the chip shows
   await openFree(page, COVER, { query: 'fx=40&fxmisfit=1' });
-  // raise the eye with the hat: Reset view shows
-  const at = await centreOf(hat(page));
-  const f = await touchFingers(page);
-  await f.down(1, at.x, at.y);
-  await f.to(1, at.x, at.y - JOG_FULL_PX, 6);
-  await hold(page, 900);
-  await f.up(1);
+  // NAV-SCOPE: Reset view is zoom-only: a pinch on the scene shows it
+  const s = (await page.locator('.cabinet-scene').boundingBox())!;
+  const m = { x: s.x + s.width / 2, y: s.y + s.height * 0.4 };
+  await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 60, y: m.y }, { x: m.x + 60, y: m.y });
+  await settle(page);
   const reset = page.locator('.cabinet-scene__reset');
   await expect(reset).toBeVisible({ timeout: 5000 });
   const h = (await hat(page).boundingBox())!;
@@ -484,10 +482,12 @@ test('NAV-FLOAT: Reset view and the do-not-fit chip stand inboard of the two con
   expect(chip.x, 'Reset view right of the rail').toBeGreaterThanOrEqual(r.x + r.width);
   const top = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)!.closest('.cabinet-scene__reset') !== null, { x: chip.x + chip.width / 2, y: chip.y + chip.height / 2 });
   expect(top, 'Reset view is the top element at its centre').toBe(true);
-  const raised = await cameraOf(page);
+  expect(await zoomOf(page), 'pinched').toBeGreaterThan(1);
+  const pinched = await cameraOf(page);
   await reset.tap();
   await settle(page, 600);
-  expect((await cameraOf(page)).y, 'Reset view took the tap').toBeLessThan(raised.y);
+  expect(await zoomOf(page), 'Reset view took the tap: the zoom is cleared').toBe(1);
+  expect(await cameraOf(page), 'and the eye stays where it was').toEqual(pinched);
   const misfit = page.locator('.cabinet-scene__misfit');
   if ((await misfit.count()) > 0) {
     const m = (await misfit.boundingBox())!;

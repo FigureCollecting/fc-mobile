@@ -1415,6 +1415,11 @@ export function CabinetScene({
         rate: fc.depthRate,
         stop: () => settle(fc.depthStop()),
       },
+      look: {
+        start: () => begun(fc.lookStart()),
+        aim: fc.lookAim,
+        stop: () => settle(fc.lookStop()),
+      },
     });
   }, []);
 

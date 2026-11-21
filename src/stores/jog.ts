@@ -19,6 +19,19 @@ export interface JogTarget {
    * a finger of its own), its reach now, and its spring back to the centre. Absent, the jog offers no depth.
    */
   readonly depth?: DepthDrive;
+  /**
+   * NAV-LOOKDRIVE: the same thumb in Look mode (useFreeCamera's lookStart, lookAim, lookStop): held off its centre it
+   * turns the camera, right for right and up for up, faster the farther, through a scene Look's limits; the lift stops
+   * it. A press drives the jog or this, never both. Absent, the jog offers no Look.
+   */
+  readonly look?: LookDrive;
+}
+
+/** NAV-LOOKDRIVE: what the hat drives in Look mode (JogTarget's look): start, aim and stop as the jog's own. */
+export interface LookDrive {
+  start(): boolean;
+  aim(dxPx: number, dyPx: number): void;
+  stop(): void;
 }
 
 /** NAV-DEPTH-2: what the depth rocker drives (JogTarget's depth). */

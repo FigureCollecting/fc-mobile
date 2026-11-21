@@ -178,8 +178,10 @@ test('Settings links to it, the page shows inside the app, and Back returns to S
   await last.scrollIntoViewIfNeeded();
   await expect(last).toBeInViewport({ ratio: 1 });
   const lastBox = (await last.boundingBox())!;
-  const tabBar = (await page.getByRole('button', { name: 'Collection' }).boundingBox())!;
-  expect(lastBox.y + lastBox.height).toBeLessThanOrEqual(tabBar.y);
+  // The scroll slides the tab bar away over about 200 ms: wait for it to settle below the last line.
+  await expect
+    .poll(async () => (await page.getByRole('button', { name: 'Collection' }).boundingBox())!.y)
+    .toBeGreaterThanOrEqual(lastBox.y + lastBox.height);
 
   await page.getByRole('button', { name: 'Back' }).click();
   await expect(page).toHaveURL(/\/settings$/);

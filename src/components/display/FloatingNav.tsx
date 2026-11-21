@@ -22,7 +22,7 @@ interface FloatingNavProps {
   /** The column the case is drawn in: the controls keep inside its left and right edges. Absent: the window's. */
   within?: RefObject<HTMLElement>;
   /**
-   * A card or menu of the page's own lies over the case (the View card, the do-not-fit list, the header's views menu): the controls go while it does, or
+   * A card or list of the page's own lies over the case (the View card, the do-not-fit list): the controls go while it does, or
    * they would float over it (they are in document.body, above the page) and take its touches. A drive held then stops.
    */
   hidden?: boolean;

@@ -14,8 +14,6 @@ interface DisplayToggleProps {
   onLayout: (layout: LayoutMode) => void;
   onDensity: (density: Density) => void;
   onLabels?: (labels: boolean) => void;
-  /** NAV-FLOAT: told true when a views menu opens and false when it closes, so the page can keep its floating controls off it. */
-  onMenuOpen?: (open: boolean) => void;
 }
 
 const DENSITY_LABEL: Record<Density, string> = {
@@ -72,17 +70,9 @@ export function DisplayToggle({
   onLayout,
   onDensity,
   onLabels,
-  onMenuOpen,
 }: DisplayToggleProps) {
   const [menu, setMenu] = useState<'rows' | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  const menuOpen = menu !== null;
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    onMenuOpen?.(true);
-    return () => onMenuOpen?.(false);
-  }, [menuOpen, onMenuOpen]);
 
   useEffect(() => {
     if (menu === null) return;

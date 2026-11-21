@@ -569,24 +569,21 @@ test('NAV-FLOAT: while the View card is open the controls are away (they would f
   expect('depthRocker' in stored).toBe(false);
 });
 
-// chal1 S7: the hat is in document.body above the header, whose views menu drops over the scene's top right; on a short
-// scene the two met and the hat took the menu's touches. While a views menu is open the controls are away.
+// chal1 S7: the hat is in document.body above the header. NAV-SCOPE took the Case views menu away (Case is a plain mode
+// button), so no header menu drops over the case: a tap on Case opens nothing, and the controls stay where they were
 for (const panel of FOLD8) {
-  test(`NAV-FLOAT ${panel.name}: while the Case views menu is open the controls are away, and a tap at the right end of "One shelf" picks it`, async ({ page }) => {
+  test(`NAV-FLOAT ${panel.name}: a tap on the header's Case button opens no menu and leaves both controls in place`, async ({ page }) => {
     await openFree(page, panel);
     await expect(navControls(page)).toHaveCount(2);
-    await page.getByRole('button', { name: /^Case,/ }).click();
-    const item = page.getByRole('menuitemradio', { name: 'One shelf' });
-    await expect(item).toBeVisible();
-    await expect(navControls(page)).toHaveCount(0);
-    // the item's right end, where the hat stood on the cover held sideways: the item is the top element there
-    const b = (await item.boundingBox())!;
-    const at = { x: b.x + b.width - 8, y: b.y + b.height / 2 };
-    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="menuitemradio"]')?.textContent ?? 'not the item', at)).toContain('One shelf');
+    const before = await navControls(page).evaluateAll((els) => els.map((e) => JSON.stringify(e.getBoundingClientRect())));
+    const caseButton = page.getByRole('button', { name: 'Case', exact: true });
+    const b = (await caseButton.boundingBox())!;
+    const at = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? 'not a button', at)).toBe('Case');
     await touchTap(page, at.x, at.y);
-    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-view', 'shelf');
     await expect(page.getByRole('menu')).toHaveCount(0);
     await expect(navControls(page)).toHaveCount(2);
+    expect(await navControls(page).evaluateAll((els) => els.map((e) => JSON.stringify(e.getBoundingClientRect())))).toEqual(before);
   });
 }
 

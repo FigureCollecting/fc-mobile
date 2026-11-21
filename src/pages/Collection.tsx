@@ -137,8 +137,6 @@ export function Collection() {
   const [casePrefs, setCasePrefs] = useCasePrefs();
   // MISFIT-CHIP-1: the case's do-not-fit list (open or not) and how many figures are in it, for the View card's entry
   const [misfitsOpen, setMisfitsOpen] = useState(false);
-  // NAV-FLOAT: a views menu of the header's is open (the floating controls would lie over it)
-  const [viewsMenuOpen, setViewsMenuOpen] = useState(false);
   const [misfitCount, setMisfitCount] = useState(0);
   // the list belongs to the case: leaving it for the tiles closes it
   useEffect(() => {
@@ -283,7 +281,6 @@ export function Collection() {
         onLayout={setLayout}
         onDensity={setDensity}
         onLabels={setLabels}
-        onMenuOpen={setViewsMenuOpen}
       />
       {/* ADDFAB b: Add sits here on the collection, so the pull-up tabs have the strip's whole width */}
       <HeaderAdd />
@@ -414,8 +411,8 @@ export function Collection() {
       />
 
       {/* NAV-FLOAT: the Free camera's left Z and right XY hat, floating over the case while it offers its jog; away
-          while the View card, the do-not-fit list or a views menu of the header's lies over the case */}
-      <FloatingNav within={caseColRef} hidden={caseCard === 'view' || misfitsOpen || viewsMenuOpen} />
+          while the View card or the do-not-fit list lies over the case (NAV-SCOPE: the header has no menu over the case) */}
+      <FloatingNav within={caseColRef} hidden={caseCard === 'view' || misfitsOpen} />
 
       <CaseViewCard
         open={caseCard === 'view'}

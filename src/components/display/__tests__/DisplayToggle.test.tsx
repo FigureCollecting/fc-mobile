@@ -157,29 +157,4 @@ describe('DisplayToggle: two mode buttons at fixed places, the nameplate toggle 
     mount({ labels: true });
     expect(screen.getByRole('button', { name: /labels: on/i })).toHaveAttribute('aria-pressed', 'true');
   });
-
-  // NAV-FLOAT (chal1 S7): the page hides the floating controls while a views menu is open, or the hat would lie over it
-  it('tells the page while a views menu is open: on opening, then on each way it closes (a pick, Escape, a tap outside, going away)', async () => {
-    const user = userEvent.setup();
-    const onMenuOpen = vi.fn();
-    const { unmount } = mount({ layout: 'case', onMenuOpen });
-    expect(onMenuOpen).not.toHaveBeenCalledWith(true);
-    await user.click(caseButton());
-    expect(onMenuOpen).toHaveBeenLastCalledWith(true);
-    await user.click(screen.getByRole('menuitemradio', { name: 'One shelf' }));
-    expect(onMenuOpen).toHaveBeenLastCalledWith(false);
-    await user.click(caseButton());
-    expect(onMenuOpen).toHaveBeenLastCalledWith(true);
-    await user.keyboard('{Escape}');
-    expect(onMenuOpen).toHaveBeenLastCalledWith(false);
-    await user.click(caseButton());
-    fireEvent.pointerDown(document.body);
-    expect(onMenuOpen).toHaveBeenLastCalledWith(false);
-    await user.click(caseButton());
-    expect(onMenuOpen).toHaveBeenLastCalledWith(true);
-    const calls = onMenuOpen.mock.calls.length;
-    unmount();
-    expect(onMenuOpen).toHaveBeenCalledTimes(calls + 1);
-    expect(onMenuOpen).toHaveBeenLastCalledWith(false);
-  });
 });

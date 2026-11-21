@@ -70,8 +70,8 @@ describe('case prefs, kept per device (CC14)', () => {
   });
 
   it('NAV-FLOAT: a stored depth rocker shape is not read (the floating Z is vertical only), and the next write drops it', () => {
-    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: 'horizontal', view: 'cabinet' }));
-    expect(readCasePrefs()).toEqual({ ...DEFAULT_CASE_PREFS, view: 'cabinet' });
+    localStorage.setItem(CASE_PREFS_KEY, JSON.stringify({ depthRocker: 'horizontal', ceilingMm: 2700 }));
+    expect(readCasePrefs()).toEqual({ ...DEFAULT_CASE_PREFS, ceilingMm: 2700 });
     expect('depthRocker' in readCasePrefs()).toBe(false);
     writeCasePrefs({ clearanceMm: 0 });
     expect('depthRocker' in JSON.parse(localStorage.getItem(CASE_PREFS_KEY)!)).toBe(false);

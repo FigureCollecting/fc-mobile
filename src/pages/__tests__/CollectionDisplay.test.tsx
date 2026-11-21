@@ -394,21 +394,17 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(currentPath()).toContain('layout=rows');
   });
 
-  // NAV-FLOAT (chal1 S7): the hat floats in document.body above the header's menus, so it goes while a views menu is open
-  it('NAV-FLOAT: the floating hat and Z rail go while the Case views menu is open and come back once a view is picked', async () => {
+  // NAV-FLOAT (chal1 S7) after NAV-SCOPE: the header has no menu over the case, so a tap on Case keeps the controls
+  it('NAV-FLOAT: a tap on the header\'s Case button opens no menu, and the floating hat and Z rail stay', async () => {
     await respondWith([makeFigure('1')]);
     const user = userEvent.setup();
-    const { container } = renderWithProviders(<Collection />, { initialPath: '/' });
+    renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
     const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
     await waitFor(() => expect(floating()).toBe(2));
-    await user.click(screen.getByRole('button', { name: /^Case/ }));
-    expect(screen.getByRole('menu', { name: 'Case views' })).toBeInTheDocument();
-    expect(floating()).toBe(0);
-    await user.click(screen.getByRole('menuitemradio', { name: 'One shelf' }));
-    await waitFor(() => expect(container.querySelector('.cabinet-scene[data-view="shelf"]')).not.toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Case' }));
     expect(screen.queryByRole('menu')).toBeNull();
-    await waitFor(() => expect(floating()).toBe(2));
+    expect(floating()).toBe(2);
   });
 
   it('honors the layout URL param for Display B', async () => {

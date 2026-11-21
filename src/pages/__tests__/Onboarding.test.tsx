@@ -17,6 +17,8 @@ vi.mock('../../sync/browser', async () => {
 });
 
 import { Onboarding } from '../Onboarding';
+import { PRIVACY_LINK_LABEL } from '../../content/privacyText';
+import { DIAG_IDS_TEXT } from '../../auth/diagIds';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 import { App } from '../../app';
 import { renderWithProviders } from '../../test/testUtils';
@@ -26,6 +28,24 @@ describe('Onboarding page', () => {
     renderWithProviders(<Onboarding onComplete={() => {}} />, { initialPath: '/' });
     expect(screen.getByRole('button', { name: /skip/i })).toBeInTheDocument();
     expect(screen.getByText(/your collection, anywhere/i)).toBeInTheDocument();
+  });
+
+  // P1: the privacy page is one tap from every slide, the create-account one included, before any choice is made.
+  it('links "How we use your data" to /privacy on every slide, without completing the onboarding', async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn();
+    const view = renderWithProviders(<Onboarding onComplete={onComplete} />, { initialPath: '/' });
+    expect(PRIVACY_LINK_LABEL).toBe(DIAG_IDS_TEXT.privacyLink);
+    for (const dot of screen.getAllByRole('tab')) {
+      await user.click(dot);
+      const link = screen.getByRole('link', { name: PRIVACY_LINK_LABEL });
+      expect(link).toHaveAttribute('href', '/privacy');
+      expect(document.querySelectorAll('a[href="/privacy"]')).toHaveLength(1);
+    }
+    expect(await screen.findByRole('button', { name: /create account/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: PRIVACY_LINK_LABEL }));
+    expect(view.currentPath()).toBe('/privacy');
+    expect(onComplete).not.toHaveBeenCalled();
   });
 
   it('calls onComplete("guest") when Skip is clicked', async () => {

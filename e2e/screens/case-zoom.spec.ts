@@ -7,7 +7,8 @@
 //       the size, its neighbours pushed out from it; 4x at most; the camera never moves;
 //   (b) zoomed, one finger pans the magnified picture up to its edges and never walks the wall or changes cabinets;
 //   (c) a double-tap on an empty spot and the Reset view chip each return to 1x, animated about 200 ms (frames, not a CSS transition)
-//       (at once with reduced motion); the chip sits at the scene's lower right (NAV-PTR-1), clear of the tab bar and the tabs;
+//       (at once with reduced motion); the chip sits low in the scene (NAV-PTR-1), 12 px inboard of the floating hat
+//       (NAV-FLOAT), clear of the hat, the Z rail, the tab bar and the tabs;
 //       a double-tap at 1x zooms 2x at that point;
 //   (d) zoomed, a tap on a figure opens THAT figure, where at 1x the same spot showed something else;
 //   (e) a filter picked in Refine, or leaving the case and coming back, starts at 1x;
@@ -25,6 +26,7 @@ import type { SyncHooks } from '../../src/sync/e2eHooks';
 import { decodePng } from '../paintCheck';
 import { FOLD8_DPR, SHOT_VIEWPORTS } from '../caseViewports';
 import { shotSizeError, signoffShot } from '../signoffShots';
+import { depth, hat } from '../navControls';
 import { touchDoubleTap, touchPinch, touchSwipe, touchTap } from '../touch';
 import { loginDevice } from '../stack/src/device.js';
 import { readStackState, stackClient, type StackClient } from '../stack/src/client.js';
@@ -482,7 +484,9 @@ test('(c) a double-tap on an empty spot returns to 1x, animated, and the Reset v
   await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0);
 
   // the chip, NAV-PTR-1 (Ross 10-25: small and low, never a frequent control at the top): a button of 44 px at most in the
-  // scene's lower quarter, 24 px in from its right side, clear of the tab bar, the pull-up tabs and the cabinet steps
+  // scene's lower quarter; NAV-FLOAT: the XY hat owns the lower right, so the chip stands 12 px inboard of the hat (where
+  // develop's 24 px from the scene's right side would put it under the hat), clear of the hat, the Z rail, the tab bar,
+  // the pull-up tabs and the do-not-fit chip
   await pinchAbout(page, mid, 40, 100);
   const chip = page.getByRole('button', { name: 'Reset view' });
   await expect(chip).toBeVisible();
@@ -491,9 +495,12 @@ test('(c) a double-tap on an empty spot returns to 1x, animated, and the Reset v
   expect(inside(c, scene)).toBe(true);
   expect(Math.max(c.width, c.height)).toBeLessThanOrEqual(44);
   expect(c.y + c.height / 2).toBeGreaterThanOrEqual(scene.y + scene.height * 0.75);
-  expect(Math.abs(scene.x + scene.width - (c.x + c.width) - 24)).toBeLessThanOrEqual(2);
+  const h = (await hat(page).boundingBox())!;
+  expect(Math.abs(h.x - (c.x + c.width) - 12), '12 px inboard of the hat').toBeLessThanOrEqual(2);
+  const r = (await depth(page).boundingBox())!;
+  expect(c.x, 'right of the Z rail').toBeGreaterThanOrEqual(r.x + r.width);
   // (NAV-SCOPE: the step keys and the shelf arrows are gone)
-  for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__misfit']) {
+  for (const clear of ['.tab-bar', '.case-tabs', '.cabinet-scene__misfit', '[data-nav]']) {
     for (const box of await page.locator(clear).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().toJSON() as Box))) {
       expect(meets(c, box), `the chip meets ${clear}`).toBe(false);
     }

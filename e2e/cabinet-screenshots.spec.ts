@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, type CaseViewport } from './caseViewports';
+import { navControls } from './navControls';
 
 /**
  * Screenshot baselines of the faithful cabinets (CASE-CABINET, CASE-ADAPT,
@@ -67,13 +68,15 @@ async function openCase(page: Page, size: CaseViewport, query = '', prefs: Prefs
  * default per-pixel threshold (0.2), hence 0.05.
  */
 const SHOT = { animations: 'disabled', caret: 'hide', scale: 'css', maxDiffPixels: 10, threshold: 0.05 } as const;
+/** NAV-FLOAT: the scene's baseline is the scene's alone: the floating hat and Z rail over it are masked. */
+const shot = (page: Page) => ({ ...SHOT, mask: [navControls(page)] });
 
 for (const size of CASE_VIEWPORTS) {
   const view = 'wall';
   test(`cabinets, ${view} view, ${size.name} ${size.width}x${size.height}`, async ({ page }) => {
     // three walls' worth of figures: several cabinets side by side, neighbours drawn true (CC4a)
     await openCase(page, size, '&fx=3');
-    await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-${view}-${size.name}.png`, SHOT);
+    await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-${view}-${size.name}.png`, shot(page));
   });
 }
 
@@ -90,15 +93,15 @@ for (const size of FOLD8_PAIR) {
     test(`cabinets, ${name} wall, ${size.name}`, async ({ page }) => {
       await openCase(page, size, '&fx=3', { pattern });
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-pattern', pattern);
-      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-pattern-${name}-${size.name}.png`, SHOT);
+      await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`cabinet-pattern-${name}-${size.name}.png`, shot(page));
     });
   }
 }
 
-test('IC1 tabs over the tab bar with the raised +, fold8-cover', async ({ page }) => {
+test('IC1 tabs over the tab bar (NAV-FLOAT: three together, no raised + among them), fold8-cover', async ({ page }) => {
   await openCase(page, CASE_VIEWPORTS[0]);
   await expect(page).toHaveScreenshot('cabinet-ic1-tabs-fold8-cover.png', {
-    ...SHOT,
+    ...shot(page),
     clip: await page.locator('.case-tabs').evaluate((tabs) => {
       const bar = document.querySelector('.tab-bar')!.getBoundingClientRect();
       const t = tabs.getBoundingClientRect();

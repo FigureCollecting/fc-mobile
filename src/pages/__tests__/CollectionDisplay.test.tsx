@@ -92,28 +92,38 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(rows.container.querySelector('.page-collection')!.classList.contains('page-collection--case')).toBe(false);
   });
 
-  it('IC1: the case shows the pull-up tabs View, Info, Refine around the raised +; the tiles Info and Refine, View kept as an empty slot (SHEETS-FB1)', async () => {
+  it('IC1: the case shows the pull-up tabs View, Info, Refine together; the tiles Info and Refine, View kept as an empty slot (SHEETS-FB1)', async () => {
     await respondWith([makeFigure('1')]);
     const { unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual([
-      'view',
-      'reserved',
-      'dock',
-      'info',
-      'refine',
-    ]);
+    expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => e.dataset.tab)).toEqual(['view', 'info', 'refine']);
     unmount();
     renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
     await screen.findByRole('button', { name: 'Figure 1' });
     // the tiles keep their way into Refine now the filter row comes and goes; the case's View card is not theirs
     expect(Array.from(document.querySelectorAll('.case-tabs > [data-tab]') as NodeListOf<HTMLElement>).map((e) => `${e.dataset.tab}:${e.tagName}`)).toEqual([
       'view:SPAN',
-      'reserved:SPAN',
-      'dock:SPAN',
       'info:BUTTON',
       'refine:BUTTON',
     ]);
+  });
+
+  // NAV-FLOAT (a, the page's half): with a Free camera case shown, the hat and the Z rail float in document.body and the
+  // header carries Add; the tiles float nothing
+  it('NAV-FLOAT: the Free camera case floats its hat and Z rail over the page and puts Add in the header; the tiles float neither', async () => {
+    await respondWith([makeFigure('1')]);
+    const { container, unmount } = renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    await waitFor(() => expect(document.body.querySelector(':scope > .floating-nav [data-nav="hat"]')).not.toBeNull());
+    expect(document.body.querySelector(':scope > .floating-nav [data-nav="depth"]')).not.toBeNull();
+    expect(container.querySelector('[data-nav]')).toBeNull();
+    expect(container.querySelector('.slim-header__actions .header-add')).toBe(screen.getByRole('button', { name: 'Add figures' }));
+    unmount();
+    expect(document.querySelector('[data-nav]')).toBeNull();
+    renderWithProviders(<Collection />, { initialPath: '/?layout=rows' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    expect(document.querySelector('[data-nav]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Add figures' })).toBeInTheDocument();
   });
 
   it('the View tab opens the case card; its choices are kept on this device (CC14)', async () => {
@@ -146,7 +156,7 @@ describe('Collection page (rebuilt display layer)', () => {
     expect(screen.queryByText(/pan the wall/i)).toBeNull();
     const sizes = await screen.findByRole('checkbox', { name: 'Show estimated sizes' });
     expect(screen.queryByRole('checkbox', { name: /free camera/i })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Depth control' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Depth control' })).toBeNull();
     await user.click(sizes);
     await waitFor(() => expect(JSON.parse(localStorage.getItem('fc-case-prefs')!)).toMatchObject({ showEstimated: true }));
     const stored = JSON.parse(localStorage.getItem('fc-case-prefs')!);
@@ -382,6 +392,19 @@ describe('Collection page (rebuilt display layer)', () => {
     await user.click(screen.getByRole('button', { name: /^Tiles/ }));
     await waitFor(() => expect(container.querySelector('.jrows')).not.toBeNull());
     expect(currentPath()).toContain('layout=rows');
+  });
+
+  // NAV-FLOAT (chal1 S7) after NAV-SCOPE: the header has no menu over the case, so a tap on Case keeps the controls
+  it('NAV-FLOAT: a tap on the header\'s Case button opens no menu, and the floating hat and Z rail stay', async () => {
+    await respondWith([makeFigure('1')]);
+    const user = userEvent.setup();
+    renderWithProviders(<Collection />, { initialPath: '/' });
+    await screen.findByRole('button', { name: 'Figure 1' });
+    const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
+    await waitFor(() => expect(floating()).toBe(2));
+    await user.click(screen.getByRole('button', { name: 'Case' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(floating()).toBe(2);
   });
 
   it('honors the layout URL param for Display B', async () => {
@@ -665,6 +688,19 @@ describe('MISFIT-CHIP-1: the do-not-fit chip on the case page, its list, and the
     await user.click(screen.getByRole('button', { name: 'View' }));
     await user.click(await screen.findByRole('button', { name: "Doesn't fit (16)" }));
     expect((await screen.findByRole('region', { name: 'Figures that do not fit' })).querySelectorAll('li')).toHaveLength(16);
+  });
+
+  // NAV-FLOAT (chal1 S4): the list lies over the case, so the floating controls go while it is open and come back after
+  it('the floating hat and Z rail go while the list is open and come back when it closes', async () => {
+    const { user } = await openCaseWithMisfits(16);
+    const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
+    await waitFor(() => expect(floating()).toBe(2));
+    await user.click(screen.getByRole('button', { name: '16 figures do not fit' }));
+    await screen.findByRole('region', { name: 'Figures that do not fit' });
+    expect(floating()).toBe(0);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(list()).toBeNull());
+    await waitFor(() => expect(floating()).toBe(2));
   });
 
   it('no entry in the card, no chip, when every figure fits', async () => {

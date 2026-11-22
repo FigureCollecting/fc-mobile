@@ -601,9 +601,11 @@ for (const panel of FOLD8) {
  * NAV-FLOAT-COVERS (a decision for the desk): on a short scene the controls lie wholly over some figures at the opening
  * view, and no ring size clears them (fix1, ring forced on ad1a3fb: sideways 25 at 104 px, 11 at 80; open 8 at 104, 3 at
  * 80). With the eye (chal1 SHOULD-3): 299682e (no eye) open 8 of 122, sideways 25 of 139; deadccd (eye on the ring) 10
- * and 29; the fused eye outside the ring 11 and 29. Pinned at those: one more figure under the controls fails the run.
+ * and 29; the fused eye outside the ring 11 and 29; the seam as the boundary with the hit area padded outward (chal2
+ * SHOULD-1) 10 and 29 (EYE_SLOT_DEG 130 tried: 11 and 28, kept 135). Pinned at those: one more figure under the controls
+ * fails the run.
  */
-const COVERED: Record<string, number> = { 'fold8-cover': 0, 'fold8-cover-sideways': 29, 'fold8-open': 11, 'fold8-open-rotated': 0 };
+const COVERED: Record<string, number> = { 'fold8-cover': 0, 'fold8-cover-sideways': 29, 'fold8-open': 10, 'fold8-open-rotated': 0 };
 for (const panel of FOLD8) {
   test(`NAV-FLOAT ${panel.name}: at the opening view every figure in view can still be tapped somewhere (none lies wholly under the controls)`, async ({ page }) => {
     await openFree(page, panel);

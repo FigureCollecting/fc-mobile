@@ -16,7 +16,7 @@ import { Style } from '../../styles/Style';
 import { CASE_TABS_HEIGHT_PX } from './CaseTabs';
 import { NavDepth } from './NavDepth';
 import { NavHat } from './NavHat';
-import { DEPTH_RAIL_PX, EYE_SLOT_DEG, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY } from './navTuning';
+import { DEPTH_RAIL_PX, EYE_HIT_PX, EYE_SLOT_DEG, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from './navTuning';
 
 interface FloatingNavProps {
   /** The column the case is drawn in: the controls keep inside its left and right edges. Absent: the window's. */
@@ -98,6 +98,7 @@ const styles = `
     --nav-line: ${hsl(NAV_OPACITY.line)};
     --nav-knob: ${hsl(NAV_OPACITY.knob)};
     --nav-active: ${hsl(NAV_OPACITY.active)};
+    --nav-teal: hsl(${NAV_TEAL} / ${NAV_OPACITY.look});
   }
   /* will-change: each control is a compositing layer of its own, the size of its box; without it Chromium squashed the
      hat, the rail and the pull-up tabs into one layer the width of the screen, from the rail's top down to the tab bar */
@@ -137,14 +138,52 @@ const styles = `
     transform: translate(calc(var(--hat-x, 0) * var(--hat-reach)), calc(var(--hat-y, 0) * var(--hat-reach)));
   }
   .nav-hat[data-jogging] .nav-hat__knob { background: var(--nav-active); }
-  .nav-hat__eye-slot {
+  /* the knob's glyph (a cross for Move, a turning arrow for Look): dark on the knob, never white */
+  .nav-hat__glyph {
     position: absolute;
-    left: calc(${EYE_AT.x.toFixed(3)}% - ${EYE_SLOT_PX / 2}px);
-    top: calc(${EYE_AT.y.toFixed(3)}% - ${EYE_SLOT_PX / 2}px);
-    width: ${EYE_SLOT_PX}px;
-    height: ${EYE_SLOT_PX}px;
+    inset: 22%;
+    width: 56%;
+    height: 56%;
+    color: ${NAV_GLYPH};
     pointer-events: none;
   }
+  /* NAV-EYE: Look's thin teal outline on the ring and on the eye */
+  .nav-hat[data-mode='look'] { border-color: var(--nav-teal); }
+  /* the eye: its hit circle (EYE_HIT_PX) centred on the ring at EYE_SLOT_DEG, over the ring where they overlap; what is
+     drawn is the smaller circle inside it, fused to the ring's shoulder */
+  .nav-eye {
+    position: absolute;
+    z-index: 1;
+    left: calc(${EYE_AT.x.toFixed(3)}% - ${EYE_HIT_PX / 2}px * var(--nav-k));
+    top: calc(${EYE_AT.y.toFixed(3)}% - ${EYE_HIT_PX / 2}px * var(--nav-k));
+    width: calc(${EYE_HIT_PX}px * var(--nav-k));
+    height: calc(${EYE_HIT_PX}px * var(--nav-k));
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--nav-knob);
+    display: grid;
+    place-items: center;
+    pointer-events: auto;
+    touch-action: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .nav-eye::before {
+    content: '';
+    position: absolute;
+    inset: calc(${(EYE_HIT_PX - EYE_SLOT_PX) / 2}px * var(--nav-k));
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: var(--nav-fill);
+    border: 1.5px solid var(--nav-line);
+  }
+  .nav-eye__glyph { position: relative; width: calc(16px * var(--nav-k)); height: calc(16px * var(--nav-k)); pointer-events: none; }
+  .nav-eye[aria-pressed='true']::before, .nav-eye[data-held]::before { border-color: var(--nav-teal); }
+  .nav-eye[aria-pressed='true'], .nav-eye[data-held] { color: var(--nav-teal); }
+  .nav-eye:focus-visible::before { outline: 2px solid var(--nav-active); outline-offset: 1px; }
   .nav-depth {
     position: fixed;
     z-index: 98;

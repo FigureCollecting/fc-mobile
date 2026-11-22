@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { useRef } from 'preact/hooks';
 import { FloatingNav } from '../FloatingNav';
-import { DEPTH_RAIL_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY } from '../navTuning';
+import { DEPTH_RAIL_PX, EYE_HIT_PX, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from '../navTuning';
 import { DEPTH_FULL_PX } from '../caseDepth';
 import { offerJog, useJogStore, type DepthDrive, type JogTarget } from '../../../stores/jog';
 
@@ -99,9 +99,26 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     expect(rule('.nav-depth')).toMatch(/pointer-events:\s*auto;/);
     expect(rule('.nav-depth')).toMatch(/touch-action:\s*none;/);
     // what is drawn inside them takes none of its own
-    for (const part of ['.nav-hat__knob', '.nav-hat__arrow', '.nav-hat__eye-slot', '.nav-depth__knob', '.nav-depth__end']) {
+    for (const part of ['.nav-hat__knob', '.nav-hat__arrow', '.nav-hat__glyph', '.nav-eye__glyph', '.nav-depth__knob', '.nav-depth__end']) {
       expect(rule(part), part).toMatch(/pointer-events:\s*none;/);
     }
+    // NAV-EYE: the eye's own hit circle, round, above the ring's where they overlap
+    expect(rule('.nav-eye')).toMatch(/position:\s*absolute;\s*z-index:\s*1;/);
+    expect(rule('.nav-eye')).toMatch(/pointer-events:\s*auto;/);
+    expect(rule('.nav-eye')).toMatch(/border-radius:\s*50%;/);
+    expect(rule('.nav-eye')).toMatch(/touch-action:\s*none;/);
+    expect(rule('.nav-eye')).toContain(`width: calc(${EYE_HIT_PX}px * var(--nav-k));`);
+    expect(rule('.nav-eye::before')).toContain(`inset: calc(${(EYE_HIT_PX - EYE_SLOT_PX) / 2}px * var(--nav-k));`);
+  });
+
+  it('NAV-EYE: Look is a thin teal outline on the ring and the eye (latched or held), never a fill; the glyph is dark, never white', () => {
+    expect(rule('.floating-nav')).toContain(`--nav-teal: hsl(${NAV_TEAL} / ${NAV_OPACITY.look});`);
+    expect(rule(".nav-hat[data-mode='look']")).toMatch(/^\s*border-color:\s*var\(--nav-teal\);\s*$/);
+    expect(rule(".nav-eye[aria-pressed='true']::before, .nav-eye[data-held]::before")).toMatch(/^\s*border-color:\s*var\(--nav-teal\);\s*$/);
+    expect(rule('.nav-hat__glyph')).toContain(`color: ${NAV_GLYPH};`);
+    expect(NAV_GLYPH).not.toMatch(/#fff|white|100%\s*\//i);
+    expect(EYE_HIT_PX).toBeGreaterThanOrEqual(48);
+    expect(EYE_SLOT_PX).toBeLessThan(EYE_HIT_PX);
   });
 
   it('subdued blue, largely transparent at rest: fill, ring and rail, knob and active are navTuning\'s opacities', () => {

@@ -2,10 +2,10 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR, SHOT_VIEWPORTS } from './caseViewports';
 import { touchFingers, touchPinch, touchTap } from './touch';
-import { centreOf, depth, hat, hatCircle, navControls } from './navControls';
+import { NAV_PARTS, centreOf, depth, eye, hat, hatCircle, navControls } from './navControls';
 import { DEPTH_FULL_PX } from '../src/components/display/caseDepth';
 import { JOG_FULL_PX, JOG_MAX_STEP_MS } from '../src/components/display/casePose';
-import { DEPTH_RAIL_PX, EYE_SLOT_DEG, HAT_RING_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE } from '../src/components/display/navTuning';
+import { DEPTH_RAIL_PX, EYE_HIT_PX, EYE_SLOT_DEG, HAT_RING_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE } from '../src/components/display/navTuning';
 
 /**
  * NAV-FLOAT (handoff FINAL 11-17), in Chromium at the Fold8's panels, fixture mode, through Chromium's own touch pipeline
@@ -157,7 +157,7 @@ test('NAV-FLOAT (a): on every Fold8 panel the hat sits lower-right and the Z rai
 
 test('NAV-FLOAT (a): the tiles float no control; back on the case they are there again', async ({ page }) => {
   await openFree(page, COVER);
-  await expect(navControls(page)).toHaveCount(2);
+  await expect(navControls(page)).toHaveCount(NAV_PARTS);
   await page.getByRole('button', { name: /^Tiles,/ }).click();
   await expect(page.locator('.cabinet-scene')).toHaveCount(0);
   await expect(navControls(page)).toHaveCount(0);
@@ -165,7 +165,7 @@ test('NAV-FLOAT (a): the tiles float no control; back on the case they are there
   await expect(page.getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Case', exact: true }).click();
   await ready(page);
-  await expect(navControls(page)).toHaveCount(2);
+  await expect(navControls(page)).toHaveCount(NAV_PARTS);
 });
 
 test('NAV-FLOAT: Add in the header opens the Add sheet; on another screen the raised + is back in the bar', async ({ page }) => {
@@ -278,7 +278,8 @@ async function figureAtHatEdge(page: Page) {
       const top = document.elementFromPoint(out.x, out.y)?.closest('button.cab-figure') ?? null;
       if (top === null) continue;
       const under = document.elementsFromPoint(inn.x, inn.y);
-      if (under[0]?.closest('[data-nav="hat"]') == null) continue;
+      // (the hat's own ring, not the eye on it: the eye's tap is a toggle, case-nav-eye)
+      if (under[0]?.closest('[data-nav="hat"]') == null || under[0].closest('[data-nav="eye"]') !== null) continue;
       if (!under.some((el) => el.closest('button.cab-figure') === top)) continue;
       return { deg, out, inn, name: top.getAttribute('aria-label') };
     }
@@ -318,10 +319,11 @@ for (const panel of TWO_THUMBS) {
   });
 }
 
-test('NAV-FLOAT (c): the layer, the corners of the hat\'s box and the eye\'s slot take no touch; beside the Z rail\'s target a figure is tapped, inside it not', async ({ page }) => {
+test('NAV-FLOAT (c): the layer and the corners of the hat\'s box take no touch; the eye sits on the shoulder; beside the Z rail\'s target a figure is tapped, inside it not', async ({ page }) => {
   test.setTimeout(90_000);
   await openFree(page, COVER, { query: 'fx=170' });
-  // the corner of the hat's square box is outside its circle: the scene's, never the hat's or the layer's
+  // the corner of the hat's square box is outside its circle: the scene's, never the hat's or the layer's (NAV-EYE: the
+  // upper-left corner lies inside the eye's hit circle, which is the eye's: the eye's own test below)
   const h = (await hat(page).boundingBox())!;
   const corners = await page.evaluate(
     ({ h }) =>
@@ -331,25 +333,25 @@ test('NAV-FLOAT (c): the layer, the corners of the hat\'s box and the eye\'s slo
         [h.x + 3, h.y + h.height - 3],
       ].map(([x, y]) => {
         const el = document.elementFromPoint(x, y)!;
-        return { nav: el.closest('[data-nav], .floating-nav') !== null, scene: el.closest('.cabinet-scene') !== null };
+        return { eye: el.closest('[data-nav="eye"]') !== null, nav: el.closest('[data-nav], .floating-nav') !== null, scene: el.closest('.cabinet-scene') !== null };
       }),
     { h },
   );
   expect(corners).toEqual([
-    { nav: false, scene: true },
-    { nav: false, scene: true },
-    { nav: false, scene: true },
+    { eye: true, nav: true, scene: false },
+    { eye: false, nav: false, scene: true },
+    { eye: false, nav: false, scene: true },
   ]);
-  // the eye's slot: kept on the upper-left shoulder, drawing nothing and taking nothing
-  const slot = (await page.locator('[data-nav-slot="eye"]').boundingBox())!;
+  // NAV-EYE: the eye sits on the upper-left shoulder, its hit circle (EYE_HIT_PX) centred on the ring
+  const slot = (await eye(page).boundingBox())!;
   const c = await hatCircle(page);
   const slotAt = { x: slot.x + slot.width / 2, y: slot.y + slot.height / 2 };
-  // (on the ring's inner edge: its 1.5 px line is outside what the slot is placed in)
-  expect(Math.abs(Math.hypot(slotAt.x - c.x, slotAt.y - c.y) - c.r), 'the slot is centred on the ring').toBeLessThanOrEqual(2);
+  // (on the ring's inner edge: its 1.5 px line is outside what the eye is placed in)
+  expect(Math.abs(Math.hypot(slotAt.x - c.x, slotAt.y - c.y) - c.r), 'the eye is centred on the ring').toBeLessThanOrEqual(2);
   expect(Math.atan2(c.y - slotAt.y, slotAt.x - c.x) * (180 / Math.PI), 'at 135 degrees').toBeCloseTo(EYE_SLOT_DEG, 0);
   expect(slotAt.x, 'on the inboard side').toBeLessThan(c.x);
   expect(slotAt.y, 'on the upper side').toBeLessThan(c.y);
-  await expect(page.locator('[data-nav-slot="eye"]')).toHaveCSS('pointer-events', 'none');
+  expect([slot.width, slot.height], 'its hit circle').toEqual([EYE_HIT_PX, EYE_HIT_PX]);
 
   // the rail: 8 px right of its target a figure is the top element; walk until one is there
   const railEdge = async () => {
@@ -554,7 +556,7 @@ test('NAV-FLOAT: while the View card is open the controls are away (they would f
   await page.locator('.bottom-sheet__backdrop').click({ position: { x: 5, y: 5 } });
   await expect(page.locator('.bottom-sheet')).toHaveCount(0);
   expect(await cameraOf(page)).toEqual(c0);
-  await expect(navControls(page)).toHaveCount(2);
+  await expect(navControls(page)).toHaveCount(NAV_PARTS);
   // swapped back with the card's button, and kept through a reload
   await page.getByRole('button', { name: 'View', exact: true }).click();
   await page.getByRole('button', { name: 'Swap tab sides' }).click();
@@ -574,7 +576,7 @@ test('NAV-FLOAT: while the View card is open the controls are away (they would f
 for (const panel of FOLD8) {
   test(`NAV-FLOAT ${panel.name}: a tap on the header's Case button opens no menu and leaves both controls in place`, async ({ page }) => {
     await openFree(page, panel);
-    await expect(navControls(page)).toHaveCount(2);
+    await expect(navControls(page)).toHaveCount(NAV_PARTS);
     const before = await navControls(page).evaluateAll((els) => els.map((e) => JSON.stringify(e.getBoundingClientRect())));
     const caseButton = page.getByRole('button', { name: 'Case', exact: true });
     const b = (await caseButton.boundingBox())!;
@@ -582,7 +584,7 @@ for (const panel of FOLD8) {
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('button')?.getAttribute('aria-label') ?? 'not a button', at)).toBe('Case');
     await touchTap(page, at.x, at.y);
     await expect(page.getByRole('menu')).toHaveCount(0);
-    await expect(navControls(page)).toHaveCount(2);
+    await expect(navControls(page)).toHaveCount(NAV_PARTS);
     expect(await navControls(page).evaluateAll((els) => els.map((e) => JSON.stringify(e.getBoundingClientRect())))).toEqual(before);
   });
 }
@@ -598,7 +600,7 @@ for (const panel of FOLD8) {
   test(`NAV-FLOAT ${panel.name}: at the opening view every figure in view can still be tapped somewhere (none lies wholly under the controls)`, async ({ page }) => {
     test.fail(SHORT.includes(panel.name), NAV_FLOAT_COVERS);
     await openFree(page, panel);
-    await expect(navControls(page)).toHaveCount(2);
+    await expect(navControls(page)).toHaveCount(NAV_PARTS);
     const { inView, untappable } = await page.evaluate(() => {
       const scene = document.querySelector('.cabinet-scene')!.getBoundingClientRect();
       let inView = 0;
@@ -634,7 +636,7 @@ for (const panel of FOLD8) {
 for (const panel of FOLD8) {
   test(`NAV-FLOAT ${panel.name}: the control cluster's look at rest, unmasked`, async ({ page }) => {
     await openFree(page, panel);
-    await expect(navControls(page)).toHaveCount(2);
+    await expect(navControls(page)).toHaveCount(NAV_PARTS);
     const clip = await page.evaluate(() => {
       const boxes = Array.from(document.querySelectorAll('[data-nav]')).map((e) => e.getBoundingClientRect());
       const x0 = Math.max(0, Math.floor(Math.min(...boxes.map((b) => b.left)) - 8));

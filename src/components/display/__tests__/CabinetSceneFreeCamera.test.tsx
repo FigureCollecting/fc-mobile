@@ -25,9 +25,10 @@ const FIGURES = Array.from({ length: 120 }, (_, i) => sized(i));
 const prefs = (patch: Partial<CasePrefs> = {}): CasePrefs => ({ ...DEFAULT_CASE_PREFS, clearanceMm: 0, ...patch });
 
 type P = { x: number; y: number };
-type Opts = { button?: number; shiftKey?: boolean };
+type Opts = { button?: number; shiftKey?: boolean; pointerType?: string };
 const host = () => document.querySelector('.cabinet-scene') as HTMLElement;
-const down = (id: number, p: P, o: Opts = {}) => fireEvent.pointerDown(host(), { pointerId: id, clientX: p.x, clientY: p.y, button: o.button ?? 0, shiftKey: o.shiftKey ?? false });
+const down = (id: number, p: P, o: Opts = {}) =>
+  fireEvent.pointerDown(host(), { pointerId: id, clientX: p.x, clientY: p.y, button: o.button ?? 0, shiftKey: o.shiftKey ?? false, pointerType: o.pointerType ?? 'mouse' });
 const move = (id: number, p: P) => fireEvent.pointerMove(host(), { pointerId: id, clientX: p.x, clientY: p.y });
 const up = (id: number, p: P) => fireEvent.pointerUp(host(), { pointerId: id, clientX: p.x, clientY: p.y });
 const cancel = (id: number, p: P) => fireEvent.pointerCancel(host(), { pointerId: id, clientX: p.x, clientY: p.y });
@@ -296,6 +297,35 @@ describe('LOOK (rulings S6): a still hold arms it; the hold never swallows a tap
     up(1, { x: 280, y: 200 });
     expect(pose().yaw).toBe(0);
     expect(host().querySelector('.cabinet-scene__look-ring')!.hasAttribute('data-on')).toBe(false);
+  });
+
+  it('NAVLOOK 1a: a finger held still on the scene arms nothing; its drag then MOVEs (the hat\'s eye is touch\'s Look)', () => {
+    scene();
+    const before = pose();
+    down(1, { x: 220, y: 200 }, { pointerType: 'touch' });
+    tick(LOOK_HOLD_MS * 3);
+    expect(host().dataset.gesture).toBeUndefined();
+    expect(host().querySelector('.cabinet-scene__look-ring')!.hasAttribute('data-on')).toBe(false);
+    for (const x of [200, 180, 160]) {
+      move(1, { x, y: 200 });
+      tick(16);
+    }
+    expect(host().dataset.gesture).toBe('move');
+    up(1, { x: 160, y: 200 });
+    tick();
+    const after = pose();
+    expect(after.x, 'walked').toBeGreaterThan(before.x);
+    expect([after.yaw, after.pitch], 'never turned').toEqual([0, 0]);
+  });
+
+  it('NAVLOOK 1a: a finger\'s hold still opens the figure under it on release (the tap is kept)', () => {
+    scene();
+    const fig = screen.getAllByRole('button', { name: /^Figure / })[0];
+    down(1, { x: 220, y: 200 }, { pointerType: 'touch' });
+    tick(LOOK_HOLD_MS + 100);
+    up(1, { x: 220, y: 200 });
+    fireEvent.click(fig);
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it('a right drag and a Shift+left drag turn at once', () => {

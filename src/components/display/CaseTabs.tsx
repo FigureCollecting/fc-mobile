@@ -1,18 +1,19 @@
 /**
- * The case screen's pull-up tabs (Ross 2026-10-09, IC1-R1..R3): four slots,
- * two each side of the raised + of the tab bar: View, Reserved | + | Info,
- * Refine. Reserved is held as an empty slot until it has a job (IC1-R3), so
- * the others never move. The order is kept per device (CC14); the View card
- * can swap the sides. NAV-DEPTH-3: while the case on show offers a depth drive
- * (a Free camera's jog), the Reserved slot holds the depth rocker.
+ * The case screen's pull-up tabs (Ross 2026-10-09, IC1-R1..R3): View, Info,
+ * Refine, side by side at the middle of the strip above the tab bar. The order
+ * is kept per device (CC14); the View card can swap the sides. NAV-FLOAT
+ * (handoff FINAL 11-17; ADDFAB b): the Reserved slot (the depth rocker's) and
+ * the dock of the raised + are gone, so the three headers stand together at
+ * the centre; the strip takes up to five (they narrow before they run out).
  */
 import { createPortal } from 'preact/compat';
-import type { CaseTab, DepthRockerShape } from './casePrefs';
-import { useJogStore } from '../../stores/jog';
-import { DepthRocker } from './DepthRocker';
+import type { CaseTab } from './casePrefs';
 import { Style } from '../../styles/Style';
 
-export type CaseCard = Exclude<CaseTab, 'reserved'>;
+export type CaseCard = CaseTab;
+
+/** The strip's height (px): what floats above it (FloatingNav) and the page's reserve for it count from this. */
+export const CASE_TABS_HEIGHT_PX = 32;
 
 const LABEL: Record<CaseCard, string> = { view: 'View', info: 'Info', refine: 'Refine' };
 
@@ -65,22 +66,11 @@ interface CaseTabsProps {
   infoEnabled: boolean;
   open: CaseCard | null;
   onTab: (tab: CaseCard) => void;
-  /** NAV-ROCKER: the depth rocker's shape (the View card's setting); vertical unless it says. */
-  rocker?: DepthRockerShape;
 }
 
-export function CaseTabs({ order, viewEnabled = true, infoEnabled, open, onTab, rocker = 'vertical' }: CaseTabsProps) {
-  const depth = useJogStore((s) => s.target?.depth ?? null);
+export function CaseTabs({ order, viewEnabled = true, infoEnabled, open, onTab }: CaseTabsProps) {
   const slot = (tab: CaseTab) => {
-    if (tab === 'reserved' && depth) {
-      // the slot's side of the dock: across, toward the hat is closer
-      return (
-        <span key={tab} class="case-tabs__slot case-tabs__slot--reserved case-tabs__slot--rocker" data-tab={tab}>
-          <DepthRocker depth={depth} shape={rocker} toward={order.indexOf('reserved') < 2 ? 1 : -1} />
-        </span>
-      );
-    }
-    if (tab === 'reserved' || (tab === 'view' && !viewEnabled)) return <span key={tab} class="case-tabs__slot case-tabs__slot--reserved" data-tab={tab} aria-hidden="true" />;
+    if (tab === 'view' && !viewEnabled) return <span key={tab} class="case-tabs__slot case-tabs__slot--empty" data-tab={tab} aria-hidden="true" />;
     return (
       <button
         key={tab}
@@ -100,9 +90,7 @@ export function CaseTabs({ order, viewEnabled = true, infoEnabled, open, onTab, 
   // In document.body, like the tab bar: a fixed bar inside the page would ride the page's transitions.
   return createPortal(
     <nav class="case-tabs" aria-label="Case cards">
-      {order.slice(0, 2).map(slot)}
-      <span class="case-tabs__dock" data-tab="dock" aria-hidden="true" />
-      {order.slice(2).map(slot)}
+      {order.map(slot)}
       <Style css={styles} />
     </nav>,
     document.body,
@@ -123,9 +111,8 @@ const styles = `
     padding: 0 6px;
     pointer-events: none;
   }
-  .case-tabs__slot { flex: 0 1 84px; min-width: 0; height: 32px; }
-  .case-tabs__dock { flex: none; width: calc(var(--fab-size) + 8px); }
-  .case-tabs__slot--rocker { position: relative; }
+  /* three headers stand 112 px each at the centre; a fourth and a fifth narrow them all before the strip runs out */
+  .case-tabs__slot { flex: 0 1 112px; min-width: 0; height: ${CASE_TABS_HEIGHT_PX}px; }
   .case-tabs__tab {
     pointer-events: auto;
     display: inline-flex;

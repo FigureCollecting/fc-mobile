@@ -1,9 +1,7 @@
-import { useRef, useState } from 'preact/hooks';
 import { useLocation } from 'wouter';
 import { hapticLight } from '../../utils/haptics';
 import { useChromeStore } from '../../stores/chrome';
-import { useJogStore, type JogTarget } from '../../stores/jog';
-import { JOG_DEAD_PX, jogDetents, jogSpeed } from '../display/casePose';
+import { closeAdd, openAdd, useAddStore } from '../../stores/add';
 import { BottomSheet } from '../ui/BottomSheet';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 import { Style } from '../../styles/Style';
@@ -136,119 +134,15 @@ function AddSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
-/** NAV-JOG: how far (px) the knob follows the thumb from the button's centre: the jog's reach shown, not its speed. */
-const KNOB_REACH_PX = 16;
 /**
- * NAV-JOG: a click this soon (ms, by the events' own times) after a jog's lift is that drag's (a mouse raises one with
- * its up; a touch drag none); a later one is a click of its own (Enter, a switch) and opens the menu.
+ * The app's tab bar, with the raised + ("Add figures") docked at its middle. NAV-FLOAT: the + is no jog any more (the hat
+ * floats over the case: NavHat). ADDFAB b: where a page's header hosts Add (stores/add), the + is away and its dock stays,
+ * so no tab moves; the Add sheet is here either way.
  */
-const JOG_CLICK_MS = 100;
-/** NAV-2B: a detent passed on the way out ticks again on the way back once the thumb is this much (px) inside it: a wobble on it ticks once. */
-const DETENT_SLACK_PX = 4;
-
-/**
- * NAV-2B: how many of the jog's detents (jogDetents) the thumb `d` px out has passed, from `band` passed before: more once
- * jogSpeed there reaches the next; fewer only once it would not even DETENT_SLACK_PX farther out.
- */
-function detentBand(d: number, band: number, max: number | undefined): number {
-  const levels = jogDetents(max);
-  const passed = (at: number) => levels.filter((level) => jogSpeed(at, max) >= level).length;
-  const out = passed(d);
-  return out >= band ? out : Math.min(band, passed(d + DETENT_SLACK_PX));
-}
-
-/**
- * NAV-JOG (Ross 10-28): the bottom-centre button as the jog on offer. A press that leaves JOG_DEAD_PX starts it (once),
- * aims it at the thumb's offset from where it went down at every move, and the lift or a pointercancel stops it; such a
- * drag makes no tap. A press that never leaves the dead zone is a tap: the button's click, the menu. The drag is the
- * button's own (pointer capture), so it crosses the tab bar's tabs and the case's tabs without pressing any.
- */
-function useJogDrive(jog: JogTarget | null) {
-  const drive = useRef<{ id: number; x0: number; y0: number; target: JogTarget; moved: boolean; on: boolean; band: number } | null>(null);
-  /** When (the event's timeStamp) the last drag lifted; null: no drag since the last press or click. */
-  const swallowed = useRef<number | null>(null);
-  const knob = useRef<HTMLSpanElement>(null);
-  const end = (e: PointerEvent) => {
-    const d = drive.current;
-    if (!d || d.id !== e.pointerId) return;
-    drive.current = null;
-    swallowed.current = d.moved ? e.timeStamp : null;
-    delete (e.currentTarget as HTMLElement).dataset.jogging;
-    if (knob.current) knob.current.style.transform = '';
-    if (d.on) d.target.stop();
-  };
-  const handlers = {
-    onPointerDown: (e: PointerEvent) => {
-      if (!jog || drive.current) return;
-      try {
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      } catch {
-        /* a synthetic pointer cannot be captured */
-      }
-      swallowed.current = null;
-      drive.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, target: jog, moved: false, on: false, band: 0 };
-    },
-    onPointerMove: (e: PointerEvent) => {
-      const d = drive.current;
-      if (!d || d.id !== e.pointerId) return;
-      const dx = e.clientX - d.x0;
-      const dy = e.clientY - d.y0;
-      const reach = Math.hypot(dx, dy);
-      if (!d.moved) {
-        if (reach <= JOG_DEAD_PX) return;
-        d.moved = true;
-        d.on = d.target.start();
-        if (!d.on) return;
-        (e.currentTarget as HTMLElement).dataset.jogging = '';
-        hapticLight();
-        // the start's tick stands for any detent its first move is already past
-        d.band = detentBand(reach, 0, d.target.max);
-      }
-      if (!d.on) return;
-      d.target.aim(dx, dy);
-      // NAV-2B: a light tick each time the speed passes a detent, out or back (one for a move past several)
-      const band = detentBand(reach, d.band, d.target.max);
-      if (band !== d.band) {
-        d.band = band;
-        hapticLight();
-      }
-      const k = Math.min(1, KNOB_REACH_PX / reach);
-      if (knob.current) knob.current.style.transform = `translate(${Math.round(dx * k)}px, ${Math.round(dy * k)}px)`;
-    },
-    onPointerUp: end,
-    onPointerCancel: end,
-  };
-  /** Whether this click is a jog's lift (and so no tap): it comes within JOG_CLICK_MS of it; asked once per click. */
-  const swallow = (e: MouseEvent) => {
-    const at = swallowed.current;
-    swallowed.current = null;
-    return at !== null && e.timeStamp - at <= JOG_CLICK_MS;
-  };
-  return { handlers, knob, swallow };
-}
-
-const JOG_CSS = `
-  .tab-bar__add--jog { touch-action: none; }
-  .tab-bar__add--jog[data-jogging] { background: var(--brand-600); }
-  .tab-bar__jog-knob {
-    position: absolute;
-    left: calc(50% - 7px);
-    top: calc(50% - 7px);
-    width: 14px;
-    height: 14px;
-    border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.92);
-    pointer-events: none;
-    opacity: 0;
-  }
-  .tab-bar__add--jog[data-jogging] .tab-bar__jog-knob { opacity: 1; }
-`;
-
 export function TabBar() {
   const hidden = useChromeStore((s) => s.hidden);
-  const jog = useJogStore((s) => s.target);
-  const [addOpen, setAddOpen] = useState(false);
-  const drive = useJogDrive(jog);
+  const addOpen = useAddStore((s) => s.open);
+  const inHeader = useAddStore((s) => s.inHeader > 0);
 
   return (
     <>
@@ -259,39 +153,22 @@ export function TabBar() {
       >
         {LEFT_TABS.map((t) => <Tab key={t.path} item={t} />)}
         <div class="tab-bar__dock" aria-hidden="false">
-          <button
-            class={jog ? 'tab-bar__add tab-bar__add--jog' : 'tab-bar__add'}
-            type="button"
-            aria-label={jog ? 'Move the camera: hold and drag. Tap to add figures' : 'Add figures'}
-            data-jog={jog ? '' : undefined}
-            // (no jog on offer, a press starts nothing; a drive begun goes on to its lift though the jog is withdrawn)
-            {...drive.handlers}
-            onClick={(e) => {
-              if (drive.swallow(e)) return;
-              hapticLight();
-              setAddOpen(true);
-            }}
-          >
-            {jog ? (
-              <>
-                {/* NAV-JOG: the plus with an arrowhead on each arm: move, and still the Add button's plus */}
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="12" y1="4" x2="12" y2="20" />
-                  <line x1="4" y1="12" x2="20" y2="12" />
-                  <polyline points="9 7 12 4 15 7" />
-                  <polyline points="9 17 12 20 15 17" />
-                  <polyline points="7 9 4 12 7 15" />
-                  <polyline points="17 9 20 12 17 15" />
-                </svg>
-                <span ref={drive.knob} class="tab-bar__jog-knob" aria-hidden="true" />
-              </>
-            ) : (
+          {!inHeader && (
+            <button
+              class="tab-bar__add"
+              type="button"
+              aria-label="Add figures"
+              onClick={() => {
+                hapticLight();
+                openAdd();
+              }}
+            >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round">
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-            )}
-          </button>
+            </button>
+          )}
         </div>
         {RIGHT_TABS.map((t) => <Tab key={t.path} item={t} />)}
 
@@ -354,7 +231,7 @@ export function TabBar() {
             position: relative;
           }
 
-          /* IC1-R2 (Ross 2026-10-09): the + is raised on every screen, between the case's pull-up tabs */
+          /* IC1-R2 (Ross 2026-10-09): the + is raised wherever the bar has it (ADDFAB b: not where a header hosts Add) */
           .tab-bar__add {
             position: absolute;
             top: calc(var(--fab-size) / -1.25);
@@ -374,9 +251,8 @@ export function TabBar() {
             background: var(--brand-600);
           }
         `} />
-        {jog && <Style css={JOG_CSS} />}
       </nav>
-      <AddSheet open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddSheet open={addOpen} onClose={closeAdd} />
     </>
   );
 }

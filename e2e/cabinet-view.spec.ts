@@ -1045,20 +1045,17 @@ test('a swipe opens nothing; the next tap does', async ({ page }) => {
   await expect(page.locator('.pswp')).toBeVisible();
 });
 
-test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; no swipe mode in the View card (CAM1) or the header (NAV-2A2)', async ({ page }) => {
+test('IC1: View, Info, Refine together on the tab bar, no Reserved slot and no raised + among them (NAV-FLOAT); no swipe mode in the View card (CAM1) or the header (NAV-2A2)', async ({ page }) => {
   await openCase(page, FOLD8[0]);
   const tabs = page.locator('.case-tabs');
-  const add = (await page.locator('.tab-bar__add').boundingBox())!;
   const bar = (await page.locator('.tab-bar').boundingBox())!;
   const tabBox = (await tabs.boundingBox())!;
-  // the tabs rest on the tab bar; the + rises above the bar, between them
+  // the tabs rest on the tab bar; Add is the header's here, so no + rises between them
   expect(Math.abs(tabBox.y + tabBox.height - bar.y)).toBeLessThanOrEqual(1);
-  expect(add.y).toBeLessThan(bar.y - add.height * 0.5);
+  await expect(page.locator('.tab-bar__add')).toHaveCount(0);
+  await expect(page.locator('.slim-header__actions').getByRole('button', { name: 'Add figures', exact: true })).toHaveCount(1);
   const order = await tabs.locator(':scope > [data-tab]').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.tab));
-  expect(order).toEqual(['view', 'reserved', 'dock', 'info', 'refine']);
-  await expect(tabs.locator('[data-tab="reserved"]')).toHaveText('');
-  const dock = (await tabs.locator('[data-tab="dock"]').boundingBox())!;
-  expect(Math.abs(dock.x + dock.width / 2 - (add.x + add.width / 2))).toBeLessThanOrEqual(1);
+  expect(order).toEqual(['view', 'info', 'refine']);
 
   // CAM1: the View card no longer holds the swipe mode; NAV-2A2: nor does the header
   await page.getByRole('button', { name: 'View' }).click();
@@ -1071,16 +1068,16 @@ test('IC1: View, an empty Reserved slot, the raised +, Info, Refine; no swipe mo
 });
 
 for (const size of FOLD8.filter((v) => v.name === 'fold8-cover' || v.name === 'fold8-open')) {
-  test(`CC5 ${size.name}: the View card ends above the tab bar and its + and a tap reaches every choice in it`, async ({ page }) => {
+  test(`CC5 ${size.name}: the View card ends above the tab bar and the pull-up tabs and a tap reaches every choice in it`, async ({ page }) => {
     await openCase(page, size);
     await page.getByRole('button', { name: 'View' }).click();
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     const bar = (await page.locator('.tab-bar').boundingBox())!;
     const shown = (await card.boundingBox())!;
-    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    const strip = (await page.locator('.case-tabs').boundingBox())!;
     expect.soft(shown.y + shown.height, 'the card ends above the tab bar').toBeLessThanOrEqual(bar.y + 0.5);
-    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    expect.soft(shown.y + shown.height, 'the card ends above the pull-up tabs').toBeLessThanOrEqual(strip.y + 0.5);
     const choices = card.locator('label.case-card__choice');
     // the back wall colours and the cabinet walls (the swipe mode and the view are in the header: CAM1, VIEWCARD-1)
     expect(await choices.count()).toBeGreaterThanOrEqual(7);
@@ -1108,9 +1105,9 @@ for (const routePx of [325, 301]) {
     const card = page.locator('.bottom-sheet');
     await atRest(card);
     const shown = (await card.boundingBox())!;
-    const add = (await page.locator('.tab-bar__add').boundingBox())!;
+    const strip = (await page.locator('.case-tabs').boundingBox())!;
     expect.soft(shown.y, 'the card keeps a gap below the top edge').toBeGreaterThanOrEqual(4);
-    expect.soft(shown.y + shown.height, 'the card ends above the raised +').toBeLessThanOrEqual(add.y + 0.5);
+    expect.soft(shown.y + shown.height, 'the card ends above the pull-up tabs').toBeLessThanOrEqual(strip.y + 0.5);
     const missed: string[] = [];
     for (const choice of await card.locator('label.case-card__choice').all()) {
       const { hit, at } = await takesTap(choice, '.bottom-sheet__content');

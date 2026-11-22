@@ -57,12 +57,12 @@ describe('NAV-GRAD (a): the View card has no Free camera control', () => {
     expect(screen.getAllByRole('checkbox').map((b) => b.closest('label')!.textContent!.trim())).toEqual(['Show estimated sizes']);
   });
 
-  it('no tap on the card patches freeCamera, and the Depth control group shows whatever a caller hands it', () => {
+  it('no tap on the card patches freeCamera, and there is no Depth control group (NAV-FLOAT: the floating Z is vertical only)', () => {
     const onChange = vi.fn();
     render(<CaseViewCard open prefs={{ ...DEFAULT_CASE_PREFS, freeCamera: false } as CasePrefs} onChange={onChange} onClose={() => {}} />);
     for (const box of screen.getAllByRole('checkbox')) fireEvent.click(box);
     expect(onChange.mock.calls.flatMap(([patch]) => Object.keys(patch as object))).not.toContain('freeCamera');
-    expect(screen.getByRole('group', { name: 'Depth control' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Depth control' })).toBeNull();
   });
 });
 
@@ -112,9 +112,9 @@ describe('NAV-GRAD (c): the next prefs write drops freeCamera', () => {
     storeOff({ ceilingMm: 2700 });
     const { result } = renderHook(() => useCasePrefs());
     expect(result.current[0]).not.toHaveProperty('freeCamera');
-    act(() => result.current[1]({ depthRocker: 'horizontal' }));
+    act(() => result.current[1]({ showEstimated: true }));
     expect(stored()).not.toHaveProperty('freeCamera');
-    expect(stored()).toMatchObject({ ceilingMm: 2700, depthRocker: 'horizontal' });
+    expect(stored()).toMatchObject({ ceilingMm: 2700, showEstimated: true });
   });
 
   it('storage that refuses the write changes nothing and throws nothing', () => {

@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown } from './touch';
+import { hat } from './navControls';
 import { JOG_FULL_PX } from '../src/components/display/casePose';
 
 /**
@@ -47,8 +48,11 @@ type Published = { x: number; y: number; z: number; yaw?: number; pitch: number 
 const cameraOf = async (page: Page) => JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!) as Published;
 const frameBox = async (page: Page) => (await page.locator('.cabinet-scene__frame').boundingBox())!;
 const swipeButton = (page: Page) => page.getByRole('button', { name: /^Swipe/ });
-const jogButton = (page: Page) => page.locator('.tab-bar__add[data-jog]');
+/** The floating hat (NAV-FLOAT): the jog the bottom-centre button was. */
+const jogButton = hat;
 const addSheet = (page: Page) => page.getByText(/import your mfc export/i);
+/** Add figures: the header's, on the collection (ADDFAB b). */
+const addButton = (page: Page) => page.getByRole('button', { name: 'Add figures', exact: true });
 /** What the header's display controls are, left to right (class and the name's first part). */
 const headerControls = (page: Page) =>
   page.locator('.display-toggle button').evaluateAll((els) => els.map((e) => `${e.className.split(' ')[0]}:${e.getAttribute('aria-label')!.split(',')[0]}`));
@@ -71,14 +75,14 @@ async function quickDrag(page: Page) {
 }
 
 for (const panel of FOLD8) {
-  test(`a fresh device: Free camera, no swipe icon, the jog on and its tap the menu; the View card has no Free camera box, and a reload keeps the view (NAV-GRAD): ${panel.name}`, async ({ page }) => {
+  test(`a fresh device: Free camera, no swipe icon, the hat on and Add in the header; the View card has no Free camera box, and a reload keeps the view (NAV-GRAD): ${panel.name}`, async ({ page }) => {
     test.setTimeout(90_000);
     await openCase(page, panel);
     const scene = page.locator('.cabinet-scene');
     await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(swipeButton(page)).toHaveCount(0);
     expect(await headerControls(page)).toEqual(['display-toggle__btn:Case', 'display-toggle__btn:Tiles', 'display-toggle__cycle:Labels: off']);
-    // the jog is on: a thumb's drag on the bottom-centre button moves the eye; a quick tap is the menu
+    // the hat is on: a thumb's drag on it moves the eye; a quick tap on it is nothing, and Add is the header's button
     await expect(jogButton(page)).toHaveCount(1);
     const start = await cameraOf(page);
     const b = (await jogButton(page).boundingBox())!;
@@ -90,17 +94,20 @@ for (const panel of FOLD8) {
     expect((await cameraOf(page)).x, 'the jog moved the eye').toBeGreaterThan(start.x);
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
     await jogButton(page).tap();
+    await settle(page, 300);
+    await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    await addButton(page).tap();
     await expect(addSheet(page)).toBeVisible();
     await page.locator('.bottom-sheet__handle-area').click();
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
-    // the View card offers no pan and no Free camera box (NAV-GRAD: the Free camera is the only camera); its depth
-    // control's choices are there with nothing to tick first
+    // the View card offers no pan and no Free camera box (NAV-GRAD: the Free camera is the only camera), and no depth
+    // control choice either (NAV-FLOAT: the floating Z is vertical only)
     await page.getByRole('button', { name: 'View' }).click();
     await expect(page.getByRole('group', { name: 'Arrange by' })).toBeVisible();
     await expect(page.getByRole('checkbox', { name: /free camera/i })).toHaveCount(0);
     await expect(page.getByText(/free camera/i)).toHaveCount(0);
     await expect(page.getByText(/pan the wall/i)).toHaveCount(0);
-    await expect(page.getByRole('group', { name: 'Depth control' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Depth control' })).toHaveCount(0);
     await closeSheet(page);
     await expect(scene).toHaveAttribute('data-free-camera', '1');
     await expect(jogButton(page)).toHaveCount(1);
@@ -193,7 +200,7 @@ test.describe('desktop, no touch', () => {
     await settle(page);
   }
 
-  test('a fresh device: no swipe icon; a left drag moves, a right drag looks, a drag on the jog moves and a click on it is the menu', async ({ page }) => {
+  test('a fresh device: no swipe icon; a left drag moves, a right drag looks, a drag on the hat moves and a click on it opens nothing (Add is the header\'s)', async ({ page }) => {
     // Look arms after a 1 s hold here, so the left drag's first move is never late enough to arm it on a loaded host
     await openCase(page, DESKTOP, null, 'fx=40&lookhold=1000');
     await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
@@ -215,9 +222,12 @@ test.describe('desktop, no touch', () => {
     await page.waitForTimeout(500);
     await page.mouse.up();
     await settle(page, 400);
-    expect((await cameraOf(page)).x, 'the drag on the jog moved the eye').toBeGreaterThan(turned.x);
+    expect((await cameraOf(page)).x, 'the drag on the hat moved the eye').toBeGreaterThan(turned.x);
     await expect(page.locator('.bottom-sheet')).toHaveCount(0);
     await jogButton(page).click();
+    await settle(page, 300);
+    await expect(page.locator('.bottom-sheet')).toHaveCount(0);
+    await addButton(page).click();
     await expect(addSheet(page)).toBeVisible();
   });
 });

@@ -177,6 +177,9 @@ interface Stuck {
 /** The most frame lengths a hold keeps (a display's frames come in a few: 16.6 and 16.7 ms at 60 Hz). */
 const STUCK_DTS = 4;
 
+/** LOD-HOLD: how long a held control leaves the drawn pose unchanged before the scene renders at it (its rest render). */
+export const REST_RENDER_MS = 150;
+
 const samePose = (a: Pose, b: Pose) => a.x === b.x && a.y === b.y && a.z === b.z && a.yaw === b.yaw && a.pitch === b.pitch;
 
 /**
@@ -301,6 +304,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const drives = useRef<Drives | null>(null);
   /** NAV-DEPTH-2: drives a blur or a hidden page stopped before their lift: where they held the eye, for that lift. */
   const halted = useRef<{ readonly pose: Pose; readonly hat: boolean; readonly depth: boolean } | null>(null);
+  /** LOD-HOLD: the rest render's timer, and the pose a held control last drew (armed only by a new one). */
+  const rest = useRef<{ timer: ReturnType<typeof setTimeout>; pose: Pose } | null>(null);
   /** A look let go past its soft limit easing back (spec 1.5) over SPRING_MS from t0, the lift (a late first frame catches up). */
   const spring = useRef<{ from: Pose; to: Pose; t0: number } | null>(null);
   const raf = useRef<number | undefined>(undefined);
@@ -335,6 +340,29 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     host.current.dataset.cameraX = String(num(camera.x));
     const next: CullView = { camera, panPx: 0 };
     if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) !== culled.current) onRender();
+  };
+
+  /**
+   * LOD-HOLD (Ross 11-22): a held control drew `pose`. Once it has drawn no other for REST_RENDER_MS, the scene renders
+   * at it (the figure layers at the px per mm where the eye stands, as the lift draws them), the control still held.
+   * Armed only where a gesture or a drive draws a new pose, never in write: a render's sync (or a tilt) rewrites the
+   * pose it holds, and arming there would render again and again.
+   */
+  const restArm = (pose: Pose) => {
+    const r = rest.current;
+    if (r && samePose(r.pose, pose)) return;
+    if (r) clearTimeout(r.timer);
+    rest.current = {
+      pose,
+      timer: setTimeout(() => {
+        if (gesture.current?.mode || drives.current) onRender();
+      }, REST_RENDER_MS),
+    };
+  };
+  /** LOD-HOLD: the held control is let go, cancelled, halted or gone: no rest render follows. */
+  const restOff = () => {
+    if (rest.current) clearTimeout(rest.current.timer);
+    rest.current = null;
   };
 
   /**
@@ -459,6 +487,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       if (!samePose(draw, d.shown)) {
         d.shown = draw;
         write(cameraOf(draw));
+        restArm(draw);
       }
       raf.current = requestAnimationFrame(loop);
       return;
@@ -473,7 +502,10 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
         return;
       }
     }
-    write(cameraOf(drawn(now)));
+    const pose = drawn(now);
+    write(cameraOf(pose));
+    // a finger's drag (a spring with nothing held is no held control)
+    if (gesture.current?.mode) restArm(pose!);
     if (spring.current) raf.current = requestAnimationFrame(loop);
   };
   /** NAV-LOOKDRIVE: the hat's Look through its cone, with the soft limit's tick: one a crossing, armed again LOOK_TICK_BACK inside. */
@@ -523,6 +555,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
    */
   const endDrives = (d: Drives): Pose => {
     drives.current = null;
+    restOff();
     // a running drive always has its next frame asked for (beginDrives, the loop)
     cancelAnimationFrame(raf.current!);
     raf.current = undefined;
@@ -558,6 +591,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       if (raf.current !== undefined) cancelAnimationFrame(raf.current);
       raf.current = undefined;
       drives.current = null;
+      restOff();
       // gone, the scene has no focus left to set from a halt
       halted.current = null;
       const g = gesture.current;
@@ -714,6 +748,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (!g || g.id !== pointerId) return null;
     gesture.current = null;
     if (g.timer !== undefined) clearTimeout(g.timer);
+    restOff();
     dropRing();
     setGesture(null);
     if (g.mode === null) return null;

@@ -1522,6 +1522,49 @@ describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth move
     expect(Number(host().dataset.focus)).toBe(nearest);
   });
 
+  // LOD-HOLD (Ross 11-22): the figure layers' px per mm follow the eye while the control is still held, once it rests
+  const scales = () => [...host().querySelectorAll<HTMLElement>('button.cab-figure')].map((b) => Number(b.style.getPropertyValue('--s')));
+  const sharpest = () => Math.max(...scales());
+
+  it('LOD-HOLD: the rocker held still after an approach draws the figures as sharp as its lift does', () => {
+    scene();
+    const far = sharpest();
+    press(1);
+    frames(60);
+    act(() => depth().rate(0));
+    frames(10);
+    expect(host().dataset.gesture).toBe('depth');
+    const held = sharpest();
+    // 0.1768 px per mm from the opening to 0.7071 (two octaves) at the eye's new depth
+    expect(far).toBeCloseTo(Math.SQRT1_2 / 4, 6);
+    expect(held).toBeCloseTo(Math.SQRT1_2, 6);
+    lift();
+    frames(1);
+    expect(held).toBe(sharpest());
+  });
+
+  it('LOD-HOLD: a finger MOVE resting with no pointermove draws the figures as its lift does', () => {
+    scene();
+    press(1);
+    frames(60);
+    lift();
+    frames(1);
+    const near = scales();
+    // a short rise that keeps the cull: no re-cull render while the finger is down
+    down(1, { x: 220, y: 200 });
+    for (let i = 1; i <= 20; i++) {
+      move(1, { x: 220, y: 200 + 4 * i });
+      tick(16);
+    }
+    expect(host().dataset.gesture).toBe('move');
+    frames(10);
+    const held = scales();
+    expect(held).not.toEqual(near);
+    up(1, { x: 220, y: 280 });
+    frames(1);
+    expect(held).toEqual(scales());
+  });
+
   it('a stop with no depth drive running (after the hat alone) changes nothing', () => {
     scene();
     const before = pose();

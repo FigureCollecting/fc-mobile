@@ -1510,9 +1510,10 @@ export function CabinetScene({
   });
   // PINCH-1: Chrome rasters a layer under the perspective at the device pixel ratio per layer px, whatever the zoom
   // magnifies it by; so once a zoom settles the figures nearest the middle of the zoomed view are drawn at the zoom
-  // times the scene's px per mm, out of the same budget (the rest coarser outward from it)
+  // times the scene's px per mm, out of the same budget (the rest coarser outward from it). LOD-HOLD: nearest the centre
+  // of the frame drawn now, not of the sticky cull's (a held control's rest render draws them as its lift would)
   const scales = figureScales(
-    cull,
+    { camera, panPx: 0 },
     showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * LABEL_HEIGHT_MM : 0 })),
     s * sharp.k,
     FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,

@@ -5,8 +5,8 @@ import * as camera from '../caseCamera';
 import { EYE_MARGIN_MM, JOG_FULL_PX, poseOf, withPose, type Pose } from '../casePose';
 import { SCENE_CEILING_VIEWPORTS, projector } from '../caseBudget';
 import { capSpanMm, frameSpanMm, type Box } from '../caseFraming';
-import { DRAWN_CABINETS_LIMIT } from '../caseCull';
-import { useFreeCamera, type FreeScene } from '../useFreeCamera';
+import { DRAWN_CABINETS_LIMIT, type CullView } from '../caseCull';
+import { REST_RENDER_MS, useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { LONG_WALL, freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
 // NAV-DEPTH-2 (Ross 11-13): the hat (the bottom-centre button's jog) and the depth rocker are two drives of one eye, held
@@ -892,5 +892,189 @@ describe('NAV-DEPTH-2: turned drives', () => {
     expect(dx).toBeGreaterThan(0);
     expect(dz).toBeLessThan(0);
     expect(Math.atan2(dx, -dz)).toBeCloseTo(20 * DEG, 6);
+  });
+});
+
+// LOD-HOLD (Ross 11-22): a held control that has stopped moving the eye asks for one render, so the figure layers are
+// drawn at the px per mm of where the eye now stands while the thumb or finger is still down. The scene re-renders
+// with a new FreeScene and syncs the pose back (CabinetScene's layout effect); that sync must never ask again.
+describe('LOD-HOLD: a held control at rest asks for one render', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The hook as CabinetScene drives it: each render keeps the cull at the drawn camera, builds a new scene and syncs. */
+  function mountScene(scene: FreeScene = freeSceneOf()) {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const frames = handFrames(1000, true);
+    const dom = freeDom();
+    const ref = { current: scene };
+    const culled: { current: CullView | null } = { current: { camera: ref.current.base, panPx: 0 } };
+    let renders = 0;
+    const hook = renderHook(() =>
+      useFreeCamera(ref, dom, culled, () => {
+        renders++;
+        const fc = hook.result.current;
+        culled.current = { camera: fc.camera(ref.current.base), panPx: 0 };
+        ref.current = { ...ref.current };
+        fc.sync();
+      }),
+    );
+    const fc = () => hook.result.current;
+    const pose = (): Pose => poseOf(fc().camera(ref.current.base));
+    /** n frames of 16 ms, the timers moved on with them (the frame last). */
+    const run = (n: number) => {
+      for (let i = 0; i < n; i++) {
+        vi.advanceTimersByTime(16);
+        frames.tick(16);
+      }
+    };
+    const wait = (ms: number) => vi.advanceTimersByTime(ms);
+    return { dom, fc, pose, run, wait, renders: () => renders, unmount: hook.unmount };
+  }
+
+  it('the depth: moving, no render; at rest one after REST_RENDER_MS and none after; pushed and rested, one more; the lift its own', () => {
+    const m = mountScene();
+    m.fc().depthStart(1);
+    m.run(60);
+    // a straight approach keeps the cull: nothing renders while the eye moves
+    expect(m.renders()).toBe(0);
+    const z = m.pose().z;
+    m.fc().depthRate(0);
+    m.run(1);
+    expect(m.pose().z).toBe(z);
+    m.wait(REST_RENDER_MS - 17);
+    expect(m.renders()).toBe(0);
+    m.wait(1);
+    expect(m.renders()).toBe(1);
+    // held still 2 s: no storm (the render's own sync writes the same pose)
+    m.run(125);
+    expect(m.renders()).toBe(1);
+    expect(m.dom.hostEl.dataset.gesture).toBe('depth');
+    // the drive goes on from the new scene
+    m.fc().depthRate(1);
+    m.run(20);
+    expect(m.pose().z).toBeLessThan(z);
+    m.fc().depthRate(0);
+    m.run(125);
+    expect(m.renders()).toBe(2);
+    act(() => void m.fc().depthStop());
+    expect(m.renders()).toBe(3);
+    m.run(125);
+    expect(m.renders()).toBe(3);
+  });
+
+  it('the hat: at rest one render, none more while held; the lift adds only its own', () => {
+    // a long wall: the hat never reaches its end (where it would rest against it)
+    const m = mountScene(freeSceneOf({ wall: LONG_WALL }));
+    m.fc().jogStart();
+    m.fc().jogAim(JOG_FULL_PX, 0);
+    m.run(29);
+    const x = m.pose().x;
+    m.run(1);
+    expect(m.pose().x).toBeGreaterThan(x);
+    const r0 = m.renders();
+    m.fc().jogAim(0, 0);
+    m.run(125);
+    expect(m.renders()).toBe(r0 + 1);
+    m.fc().jogAim(JOG_FULL_PX, 0);
+    m.run(10);
+    const r1 = m.renders();
+    m.fc().jogAim(0, 0);
+    m.run(125);
+    expect(m.renders()).toBe(r1 + 1);
+    act(() => void m.fc().jogStop());
+    expect(m.renders()).toBe(r1 + 2);
+    m.wait(2000);
+    expect(m.renders()).toBe(r1 + 2);
+  });
+
+  it('the hat stopped before it rests: the lift renders once, no rest render after it', () => {
+    const m = mountScene();
+    m.fc().jogStart();
+    m.fc().jogAim(JOG_FULL_PX, 0);
+    m.run(10);
+    const r0 = m.renders();
+    act(() => void m.fc().jogStop());
+    m.wait(2000);
+    expect(m.renders()).toBe(r0 + 1);
+  });
+
+  it('a finger MOVE resting: one render; a move that walks nothing asks nothing; the lift its own', () => {
+    const m = mountScene();
+    act(() => m.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+    for (const x of [380, 340, 300]) {
+      act(() => m.fc().drag(5, { x, y: 200 }, 'x'));
+      m.run(1);
+    }
+    expect(m.dom.hostEl.dataset.gesture).toBe('move');
+    const r0 = m.renders();
+    m.run(10);
+    expect(m.renders()).toBe(r0 + 1);
+    m.run(125);
+    expect(m.renders()).toBe(r0 + 1);
+    // the finger stirs without walking the eye: the same pose drawn again
+    act(() => m.fc().drag(5, { x: 300, y: 200 }, 'x'));
+    m.run(125);
+    expect(m.renders()).toBe(r0 + 1);
+    act(() => m.fc().drag(5, { x: 260, y: 200 }, 'x'));
+    m.run(125);
+    expect(m.renders()).toBe(r0 + 2);
+    act(() => void m.fc().release(5, true));
+    expect(m.renders()).toBe(r0 + 3);
+    m.run(125);
+    expect(m.renders()).toBe(r0 + 3);
+  });
+
+  it('a MOVE cancelled, the drives halted by a blur, or the hook gone before the rest: no rest render follows', () => {
+    const cancelled = mountScene();
+    act(() => cancelled.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+    act(() => cancelled.fc().drag(5, { x: 300, y: 200 }, 'x'));
+    cancelled.run(1);
+    const c0 = cancelled.renders();
+    act(() => void cancelled.fc().release(5, false));
+    cancelled.wait(2000);
+    expect(cancelled.renders()).toBe(c0 + 1);
+    cancelled.unmount();
+
+    const blurred = mountScene();
+    blurred.fc().depthStart(1);
+    blurred.run(10);
+    act(() => void window.dispatchEvent(new Event('blur')));
+    expect(blurred.renders()).toBe(1);
+    blurred.wait(2000);
+    expect(blurred.renders()).toBe(1);
+    blurred.unmount();
+
+    const gone = mountScene();
+    gone.fc().depthStart(1);
+    gone.run(10);
+    gone.unmount();
+    gone.wait(2000);
+    expect(gone.renders()).toBe(0);
+
+    // a new press takes the scene over from a drag that never lifted: nothing is held by the time the timer runs
+    const replaced = mountScene();
+    act(() => replaced.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+    act(() => replaced.fc().drag(5, { x: 300, y: 200 }, 'x'));
+    replaced.run(1);
+    const p0 = replaced.renders();
+    act(() => replaced.fc().press({ pointerId: 6, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+    replaced.wait(REST_RENDER_MS);
+    expect(replaced.fc().live()).toBe(false);
+    expect(replaced.renders()).toBe(p0);
+  });
+
+  it('a look let go easing back with nothing held is no held control: only the lift and the ease end render', () => {
+    const m = mountScene();
+    act(() => m.fc().press({ pointerId: 1, clientX: 400, clientY: 200, button: 2 }, { x: 400, y: 200 }));
+    act(() => m.fc().drag(1, { x: 860, y: 200 }, 'x'));
+    m.run(1);
+    const r0 = m.renders();
+    act(() => void m.fc().release(1, true));
+    expect(m.fc().live()).toBe(true);
+    m.run(125);
+    expect(m.fc().live()).toBe(false);
+    expect(m.renders()).toBe(r0 + 2);
   });
 });

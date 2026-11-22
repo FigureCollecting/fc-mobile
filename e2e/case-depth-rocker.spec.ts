@@ -159,6 +159,72 @@ for (const panel of PANELS) {
     });
   }
 
+  // LOD-HOLD (Ross 11-22): the rail held still after an approach draws the figures as sharp as its lift does, before the
+  // lift. The longest frame around that rest render and around the lift's render are recorded (annotations), not gated
+  test(`LOD-HOLD ${panel.name}: held still after an approach, the figures are as sharp as the lift draws them`, async ({ page }, testInfo) => {
+    await openFree(page, panel);
+    const sharpest = () =>
+      page.evaluate(() => Math.max(...Array.from(document.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => Number(b.style.getPropertyValue('--s')))));
+    // every frame's time from here on, to find the longest around each render
+    await page.evaluate(() => {
+      const w = window as unknown as { __frames: number[] };
+      w.__frames = [];
+      const on = (t: number) => {
+        w.__frames.push(t);
+        requestAnimationFrame(on);
+      };
+      requestAnimationFrame(on);
+    });
+    const now = () => page.evaluate(() => performance.now());
+    const longest = (t0: number, t1: number) =>
+      page.evaluate(
+        ([a, b]) => {
+          const f = (window as unknown as { __frames: number[] }).__frames.filter((t) => t >= a && t <= b);
+          return Math.max(...f.slice(1).map((t, i) => t - f[i]));
+        },
+        [t0, t1],
+      );
+    const far = await sharpest();
+    const at = await centreOf(rocker(page));
+    const f = await touchFingers(page);
+    await f.down(1, at.x, at.y);
+    await f.to(1, at.x, at.y - DEPTH_FULL_PX, 6);
+    await hold(page, 600);
+    // back to the centre, still held: the eye rests
+    await f.to(1, at.x, at.y, 6);
+    const rested = await now();
+    await hold(page, 800);
+    await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'depth');
+    const held = await sharpest();
+    const restMs = await longest(rested, rested + 800);
+    expect(held, 'sharper at rest, before the lift').toBeGreaterThan(far);
+    // still held: nothing more is drawn (no figure restyled, no camera written), so no render loop at rest
+    const redrawn = await page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          let n = 0;
+          const scene = document.querySelector('.cabinet-scene')!;
+          const o = new MutationObserver((records) => {
+            n += records.filter((r) => r.attributeName === 'data-camera' || (r.target as Element).matches('button.cab-figure')).length;
+          });
+          o.observe(scene, { attributes: true, subtree: true, attributeFilter: ['style', 'data-camera'] });
+          setTimeout(() => {
+            o.disconnect();
+            resolve(n);
+          }, 1000);
+        }),
+    );
+    expect(redrawn, 'nothing redrawn while held still').toBe(0);
+    await f.up(1);
+    const lifted = await now();
+    await hold(page, 800);
+    expect(await sharpest(), 'the lift draws them no sharper').toBe(held);
+    const liftMs = await longest(lifted, lifted + 800);
+    const measured = JSON.stringify({ panel: panel.name, far, held, restLongestFrameMs: restMs, liftLongestFrameMs: liftMs });
+    testInfo.annotations.push({ type: 'lod-hold', description: measured });
+    console.log(`lod-hold ${measured}`);
+  });
+
   // chal1 NOTE-1 (ruled a fix): the capture released mid-push and the finger lifted off the rocker: no lift reaches it, so
   // the lost capture springs it back and stops the drive
   test(`NAV-DEPTH-3 ${panel.name}: the capture lost mid-push stops the drive; the lift elsewhere leaves nothing moving`, async ({ page }) => {

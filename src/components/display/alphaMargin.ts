@@ -371,6 +371,7 @@ export function __clearAlphaMarginCache(): void {
   undecoded.clear();
   loadedUnread.clear();
   drawsNothing.clear();
+  undecodedWatches.clear();
 }
 
 /**
@@ -540,6 +541,67 @@ export function rereadUndecoded(urls: readonly string[]): void {
   for (const url of urls) if (undecoded.has(url) && !readers.has(url)) readAgain(url, false);
 }
 
+/**
+ * DESK1: how long a watched picture whose read never decoded it waits before it is read again on its own (retryUndecoded):
+ * this, doubling each time, up to ALPHA_UNDECODED_RETRY_MAX_MS, and ALPHA_UNDECODED_RETRIES times at most (2, 4, 8, 16, 32
+ * and then 60 s: about four minutes in all). So a link that fails for a while costs a mask a few reads, and a dead one
+ * (a mask the image host refuses) nine in all each time the case opens, never a loop.
+ */
+export const ALPHA_UNDECODED_RETRY_MS = 2000;
+export const ALPHA_UNDECODED_RETRY_MAX_MS = 60_000;
+export const ALPHA_UNDECODED_RETRIES = 8;
+/** What each watch does when a read of a picture never decoded it (retryUndecoded). */
+const undecodedWatches = new Set<(imageUrl: string) => void>();
+
+/**
+ * DESK1 (Ross 11-21: figures stood as boxed photos on the desktop until the case was opened again): a masked figure's CSS mask
+ * has no load event, so a mask whose read never decoded it (a 404, a failed fetch, offline) was read again only when
+ * something else happened (rereadUndecoded's callers), and a figure whose mask failed once stood framed for the session.
+ * While watched, each of `urls()` (asked anew each time) whose read never decodes it is read again on its own after a backoff
+ * (ALPHA_UNDECODED_RETRY_MS), in line as rereadUndecoded reads it, and the views showing it learn what the read gives; one
+ * that failed before the watch began too. Bounded: ALPHA_UNDECODED_RETRIES reads a picture, one at a time, each wait twice
+ * the last; none while the browser says it is offline (that read could only fail: the link coming back is the caller's
+ * `now`), and none for a picture no view shows. `now()` reads every one of them again at once (rereadUndecoded) and gives
+ * each its retries anew; `stop()` ends the watch and its waits.
+ */
+export function retryUndecoded(urls: () => readonly string[]): { now: () => void; stop: () => void } {
+  const tries = new Map<string, number>();
+  const waits = new Map<string, ReturnType<typeof setTimeout>>();
+  const failed = (url: string) => {
+    const tried = tries.get(url) ?? 0;
+    if (waits.has(url) || tried >= ALPHA_UNDECODED_RETRIES || !urls().includes(url)) return;
+    waits.set(
+      url,
+      setTimeout(
+        () => {
+          waits.delete(url);
+          if (navigator.onLine === false) return;
+          tries.set(url, tried + 1);
+          rereadUndecoded([url]);
+        },
+        Math.min(ALPHA_UNDECODED_RETRY_MS * 2 ** tried, ALPHA_UNDECODED_RETRY_MAX_MS),
+      ),
+    );
+  };
+  const forget = () => {
+    for (const wait of waits.values()) clearTimeout(wait);
+    waits.clear();
+    tries.clear();
+  };
+  undecodedWatches.add(failed);
+  for (const url of urls()) if (undecoded.has(url)) failed(url);
+  return {
+    now: () => {
+      forget();
+      rereadUndecoded(urls());
+    },
+    stop: () => {
+      undecodedWatches.delete(failed);
+      forget();
+    },
+  };
+}
+
 /** What a read of a picture gives, kept by its URL. */
 function keep(imageUrl: string, read: AlphaRead): void {
   marginCache.set(imageUrl, read.margins);
@@ -550,6 +612,7 @@ function keep(imageUrl: string, read: AlphaRead): void {
   else undecoded.delete(imageUrl);
   if (read === UNDECODED || read.mask?.drawn === 0) drawsNothing.add(imageUrl);
   else drawsNothing.delete(imageUrl);
+  if (read === UNDECODED) for (const failed of [...undecodedWatches]) failed(imageUrl);
 }
 
 /**

@@ -71,7 +71,8 @@ import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { arrangeOrder } from './caseArrangement';
 import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
-import { alphaDrawsNothing, alphaPictureLoaded, rereadUndecoded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { alphaDrawsNothing, alphaPictureLoaded, rereadUndecoded, retryUndecoded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { onImageKept } from '../../media/keptImages';
 import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
 import { setPhotoFits } from './photoFit';
@@ -931,7 +932,9 @@ export function CabinetScene({
   const liveAlpha = useAlphaMarginsOf(alphaUrls);
   // GKSHOW-2: a mask whose read never decoded it (a 404, offline, a weak link) stands its figure framed, and a CSS mask has no
   // load to read it again on (alphaPictureLoaded): it is read again, once each time, when the case opens or its masks change,
-  // an image sync starts or ends (imagesComplete), the link comes back or the app is shown again
+  // an image sync starts or ends (imagesComplete), the link comes back or the app is shown again.
+  // DESK1: and on its own meanwhile, after a backoff, a bounded number of times (retryUndecoded), and at once when the image
+  // sync stores its bytes (onImageKept); else a figure whose mask failed once stood framed until one of those happened
   const maskUrls = useMemo(() => {
     const masks = new Set(listedArts.flatMap(({ art }) => (art.kind === 'masked' ? [art.maskUrl] : [])));
     return alphaUrls.filter((url) => masks.has(url));
@@ -940,14 +943,20 @@ export function CabinetScene({
   masksNow.current = maskUrls;
   const maskKey = maskUrls.join('\n');
   useEffect(() => {
-    const again = () => rereadUndecoded(masksNow.current);
+    const retry = retryUndecoded(() => masksNow.current);
+    const again = () => retry.now();
     const shown = () => {
       if (document.visibilityState === 'visible') again();
     };
+    const unkept = onImageKept((address) => {
+      if (masksNow.current.includes(address)) rereadUndecoded([address]);
+    });
     again();
     window.addEventListener('online', again);
     document.addEventListener('visibilitychange', shown);
     return () => {
+      retry.stop();
+      unkept();
       window.removeEventListener('online', again);
       document.removeEventListener('visibilitychange', shown);
     };

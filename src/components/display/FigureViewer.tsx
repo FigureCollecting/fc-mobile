@@ -297,6 +297,14 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
     slides[current] = slideOf({ ...figure, imageUrl: picture });
     pswp.refreshSlideContent(current);
   }, [figure, current, picture]);
+  // DESK1: a photo picked again after the large picture failed on it is tried again, as its tile in the sheet is. Aimed at the
+  // address the slide already shows, nothing above changes, so the slide that says it cannot be loaded is made again here.
+  const aim = (url: string | undefined) => {
+    setAimed(url);
+    const pswp = pswpRef.current;
+    if (url === undefined || url !== shownUrl.current || !pswp?.currSlide?.content.isError()) return;
+    pswp.refreshSlideContent(pswp.currIndex);
+  };
   const openCopies = useCopiesAction(figure ?? ({} as Figure), closeViewer);
   // GALLERY-1: the figure's photos, over the viewer; another figure (a swipe) is another figure's photos
   const [photosOpen, setPhotosOpen] = useState(false);
@@ -473,7 +481,7 @@ export function FigureViewer({ figures, index, onClose, goTo, goToBlocked }: Fig
         }
       `} />
     </motion.div>
-    <PhotosSheet key={figure._id} figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={setAimed} />
+    <PhotosSheet key={figure._id} figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={aim} />
     </>,
     document.body,
   );

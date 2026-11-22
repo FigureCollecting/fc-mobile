@@ -31,6 +31,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  // a spy on the image getters is undone even when its test fails
+  vi.restoreAllMocks();
   localSession.value = undefined;
   setFixtureMode(false);
   window.history.pushState({}, '', '/');
@@ -187,7 +189,6 @@ describe('PhotosSheet', () => {
       vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(600);
       open();
       expect(tiles().map(stateOf)).toEqual(['loaded', 'loading', 'loading']);
-      vi.restoreAllMocks();
     });
 
     it('a failed tile says so and looks different from a loading one', () => {
@@ -246,7 +247,7 @@ describe('PhotosSheet', () => {
       fireEvent.click(tiles()[2]!);
       expect(stateOf(tiles()[2]!)).toBe('loaded');
       expect(tiles()[2]!.querySelector('img')).toBe(img);
-      // and a failed tile picked by its neighbour's tap stays failed: only its own tap tries it again
+      // and a failed tile stays failed when its neighbour is tapped: only picking it tries it again
       fireEvent.click(tiles()[0]!);
       expect(stateOf(tiles()[1]!)).toBe('failed');
     });
@@ -257,7 +258,23 @@ describe('PhotosSheet', () => {
       vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(0);
       open();
       expect(tiles().map(stateOf)).toEqual(['loading', 'loading', 'loading']);
-      vi.restoreAllMocks();
+    });
+
+    it('stepping onto a failed tile (Next or Previous photo) picks it and tries it again, as a tap does', () => {
+      photosOf.data = { photos: COLOURED, refreshFailed: false };
+      const onAim = vi.fn();
+      render(<PhotosSheet figure={figure()} open onClose={vi.fn()} onAim={onAim} />);
+      fireEvent.error(tiles()[1]!.querySelector('img')!);
+      fireEvent.error(tiles()[2]!.querySelector('img')!);
+      fireEvent.click(screen.getByRole('button', { name: 'Next photo' }));
+      expect(tiles().map(stateOf)).toEqual(['loading', 'loading', 'failed']);
+      expect(tiles()[1]).toHaveAttribute('aria-pressed', 'true');
+      expect(onAim).toHaveBeenLastCalledWith(url('b'));
+      fireEvent.error(tiles()[1]!.querySelector('img')!);
+      fireEvent.click(screen.getByRole('button', { name: 'Next photo' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Previous photo' }));
+      expect(tiles().map(stateOf)).toEqual(['loading', 'loading', 'loading']);
+      expect(onAim).toHaveBeenLastCalledWith(url('b'));
     });
 
     it('a colour that is not "#rrggbb" is never put in the tile\'s style', () => {

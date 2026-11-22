@@ -46,7 +46,8 @@ describe('fitsCeiling (NAV-1A b): the production ceiling', () => {
 describe('lookCone: the realism cone kept to the ceiling, every yaw projected at the px per mm it would be drawn at', () => {
   it('a projection exactly at the ceiling at every yaw it asks: the realism cone, (b) never engaged', () => {
     const { project, asked } = stub(() => 3);
-    const cone = lookCone(scene, opening, null, quiet, project);
+    // (the yaw's cone; NAV-EMPTY's pitch cap rides with it, and is no part of the budget)
+    const { pitch: _pitch, ...cone } = lookCone(scene, opening, null, quiet, project);
     expect(cone).toEqual(realism);
     expect(asked.length).toBeGreaterThan(2);
   });

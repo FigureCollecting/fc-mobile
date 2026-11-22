@@ -13,6 +13,7 @@ import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
 import { DEPTH_STOP_MM, aheadMm, depthSpeed, dollyStep } from './caseDepth';
 import { capSpanMm, frameSpanMm, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
+import { pitchCap, wallKept, wallShown } from './caseWallView';
 import {
   DRAG_WALK_GAIN_X,
   DRAG_WALK_GAIN_Y,
@@ -234,12 +235,17 @@ function capOf(s: FreeScene, pose: Pose, span: number): ((p: readonly number[]) 
  * NAV-JOG: where a jog from `pose` may stand the eye: within the Classic cap (capOf), and no farther past the wall's ends
  * than it is. Inside them, no farther than an end: there the frame centre is on the wall's end, so half the frame still
  * shows the wall (a held jog never walks off into the empty room; a swipe still may, and the jog brings it back).
+ * NAV-EMPTY: nor to a place where the frame holds the wall less well than it does from `pose` (wallKept, wallShown):
+ * the rail never carries an eye at the room's top over the cabinets, and neither drive leaves a frame of bare room
+ * behind. A frame that shows no front already (a swipe's, a fold's) moves anywhere, so it is never trapped.
  */
 function jogOk(s: FreeScene, pose: Pose, span: number): (p: readonly number[]) => boolean {
   const cap = capOf(s, pose, span);
   const past = (x: number) => Math.max(0, s.wall.leftMm - x, x - s.wall.rightMm);
   const limit = past(pose.x);
-  return (p) => past(p[0]) <= limit && (cap === undefined || cap(p));
+  const kept = wallKept(withPose(s.base, pose), s.wall);
+  const shows = (p: readonly number[]) => kept === undefined || wallShown(withPose(s.base, { ...pose, x: p[0], y: p[1], z: p[2] }), s.wall, kept);
+  return (p) => past(p[0]) <= limit && (cap === undefined || cap(p)) && shows(p);
 }
 
 /** NAV-JOG: the depth a hat at `pose` walks at: where the frame centre looks (anchorDepth over the wall). */
@@ -288,7 +294,9 @@ export function lookCone(scene: FreeScene, start: Pose, unturned: Pose | null, p
   const begun = seen.has(start.yaw) ? { yaw: deg(start.yaw), ...shown(start.yaw) } : null;
   const asked = Array.from(seen, ([yaw, p]) => [deg(yaw), num(p.vp)]);
   publish(JSON.stringify({ ceiling: SCENE_CEILING_VIEWPORTS, start: begun, left: side(-1, cone.left), right: side(1, cone.right), asked, ms }));
-  return cone;
+  // NAV-EMPTY: and the pitch kept to where the frame still holds the wall from here
+  const pitch = pitchCap(camera, scene.wall);
+  return pitch ? { ...cone, pitch } : cone;
 }
 
 export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culled: { current: CullView | null }, onRender: () => void) {

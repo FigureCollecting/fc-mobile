@@ -190,18 +190,19 @@ for (const panel of TWO_THUMBS) {
     expect(await zoomOf(page)).toBe(1);
     const f = await touchFingers(page);
     // the left thumb pushes the rail up while the right thumb goes out on a diagonal: both at once (half reach on the
-    // rail: at full the eye is at the glass, its closest, before the hat lifts)
+    // rail: at full the eye is at the glass, its closest, before the hat lifts). The diagonal is down and right:
+    // NAV-EMPTY stops the rail under an eye the hat has raised over the cabinets, and here the rail must run on
     const up = railAt.y - DEPTH_FULL_PX / 2;
     await f.down(1, railAt.x, railAt.y);
     await f.down(2, hatAt.x, hatAt.y);
     await f.to(1, railAt.x, up, 6);
-    await f.to(2, hatAt.x + JOG_FULL_PX * 0.7, hatAt.y - JOG_FULL_PX * 0.7, 6);
+    await f.to(2, hatAt.x + JOG_FULL_PX * 0.7, hatAt.y + JOG_FULL_PX * 0.7, 6);
     await hold(page, 800);
     await expect(hat(page)).toHaveAttribute('data-jogging', '');
     await expect(depth(page)).toHaveAttribute('data-rocking', '');
     const c1 = await cameraOf(page);
     expect(c1.x, 'the hat: right').toBeGreaterThan(c0.x + 20);
-    expect(c1.y, 'the hat: up').toBeGreaterThan(c0.y + 10);
+    expect(c1.y, 'the hat: down').toBeLessThan(c0.y - 10);
     expect(c1.z, 'the rail: closer').toBeLessThan(c0.z - 20);
     expect([c1.yaw, c1.pitch], 'never a look').toEqual([c0.yaw, c0.pitch]);
     expect(await zoomOf(page), 'two thumbs on the two controls are no pinch').toBe(1);

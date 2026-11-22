@@ -9,7 +9,9 @@ import { LONG_WALL, freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 // NAV-DEPTH-2 REGRESSION: the hat (the 10-28 jog) alone, replayed through the thumb offsets and frame times caseJog's
 // tests pin, writes the very frames it wrote before the depth drive joined it: the fixture was recorded at cd02ca1
 // (RECORD_JOG_REPLAY=1) and is compared byte for byte. It is stored with each run of identical consecutive rows
-// collapsed to ["x", count, row], one row a line; expanded, it is the recording itself.
+// collapsed to ["x", count, row], one row a line; expanded, it is the recording itself. NAV-EMPTY recorded "pitchedDown"
+// again, the one case it changes: looking up 20 degrees, the hat held up rose to the room's top, where the frame showed
+// no cabinet; now it stops at the last step that still holds the wall (y 1743.4), and comes down from there.
 
 const FIXTURE = join(process.cwd(), 'src/components/display/__tests__/__fixtures__/jogReplay.json');
 const DEG = Math.PI / 180;

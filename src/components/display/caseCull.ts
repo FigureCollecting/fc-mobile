@@ -221,10 +221,12 @@ export function trimFace(view: CullView, a: Vec3, u: Vec3, v: Vec3, rect: Rect):
   return { s0, s1, t0, t1 };
 }
 
-/** Whether the view's frame shows the cabinet's front: feet to top, splayed feet included, on the fronts' plane. */
-export function frontShown(view: CullView, slot: WallSlot): boolean {
+/**
+ * Whether the view's frame shows the cabinet's front: feet to top, splayed feet included, on the fronts' plane. `frame`:
+ * the part of the frame asked about (NAV-EMPTY's wallShown asks about its middle); the whole of it unless given.
+ */
+export function frontShown(view: CullView, slot: WallSlot, frame: Rect = { x0: 0, x1: view.camera.frame.width, y0: 0, y1: view.camera.frame.height }): boolean {
   const feet = sideOverhangMm(slot.profile);
-  const frame = { x0: 0, x1: view.camera.frame.width, y0: 0, y1: view.camera.frame.height };
   return trimFace(view, [slot.leftMm - feet, 0, 0], [slot.rightMm - slot.leftMm + 2 * feet, 0, 0], [0, slot.profile.outer.heightMm, 0], frame) !== null;
 }
 

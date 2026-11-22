@@ -5,6 +5,7 @@ import { EYE_MARGIN_MM, JOG_MAX_STEP_MS, eyeSpace, withPose, type Pose } from '.
 import { lensFocalPx, type Camera, type Vec3 } from '../caseCamera';
 import { cabinetBox, capSpanMm, frameSpanMm, frontsOf, roomBox, type Box } from '../caseFraming';
 import { SCENE_CEILING_VIEWPORTS, fitsCeiling } from '../caseBudget';
+import { wallShown } from '../caseWallView';
 import { wallLayout } from '../packCabinets';
 import { IKEA_DETOLF, IKEA_KLINGSBO, OPEN_STEEL_RACK } from '../cabinetPresets';
 
@@ -516,6 +517,21 @@ describe('dolly: the eye forward and back along its heading', () => {
     const end = hold(p, 1, 10_000, ends);
     expect(end.x).toBeLessThanOrEqual(wall.rightMm);
     expect(wall.rightMm - end.x).toBeLessThanOrEqual(DEPTH_STOP_MM);
+  });
+
+  it('NAV-EMPTY: from the room\'s top (y 2388.4, z 3639.8, level) the wall rule a jog keeps to (ok) stops the eye while a front still shows', () => {
+    const lens: Camera = { x: 0, y: 0, z: 0, pitch: 0, focalPx: F, frame: FRAME };
+    const p: Pose = { x: wall.cabinets[0].centerMm, y: 2388.4, z: 3639.8, yaw: 0, pitch: 0 };
+    const shows = (q: Vec3) => wallShown(withPose(lens, { ...p, x: q[0], y: q[1], z: q[2] }), wall);
+    expect(shows(eye(p))).toBe(true);
+    const kept: DollyScene = { space, boxes, ok: shows };
+    const end = hold(p, 1, 10_000, kept, (q) => expect(shows(eye(q))).toBe(true));
+    expect(end.z).toBeLessThan(p.z - 1000);
+    expect(shows([end.x, end.y, end.z - 2 * DEPTH_STOP_MM])).toBe(false);
+    // with no such rule the eye goes on over the cabinets' tops to the back wall's margin (aheadMm looks over them)
+    const over = hold(p, 1, 10_000, room);
+    expect(over.z).toBeCloseTo(space.z0, 6);
+    expect(shows(eye(over))).toBe(false);
   });
 
   it('a stub projector failing at z < 800 stops at the last fitting z', () => {

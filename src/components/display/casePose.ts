@@ -74,10 +74,23 @@ export interface YawSide {
   readonly hard: number;
 }
 
-/** A look's yaw cone: the realism cone either way, and a side the GPU budget moved in (budgetCone), where it did. */
+/**
+ * NAV-EMPTY: where a look's pitch rests short of PITCH's soft limits, up (lo) and down (hi), radians: the furthest that
+ * still shows the wall from where the eye stands (caseWallView's pitchCap). A side left out is PITCH's.
+ */
+export interface PitchCap {
+  readonly lo?: number;
+  readonly hi?: number;
+}
+
+/**
+ * A look's yaw cone: the realism cone either way, and a side the GPU budget moved in (budgetCone), where it did. With
+ * it, the pitch's cap where the place narrows PITCH (NAV-EMPTY).
+ */
 export interface YawCone extends YawSide {
   readonly left?: YawSide;
   readonly right?: YawSide;
+  readonly pitch?: PitchCap;
 }
 
 /** NAV-1A (b): how close budgetCone finds the last yaw that fits (radians). */
@@ -124,13 +137,27 @@ function spanFrom(at: number, lo: number, hi: number, hardLo: number, hardHi: nu
   return { lo: l, hi: h, hardLo: Math.min(hardLo, l), hardHi: Math.max(hardHi, h) };
 }
 
-/** Both axes' limits for a turn from `start`: the yaw's cone (a side budgetCone moved in kept to) and the pitch's (PITCH). */
+/**
+ * NAV-EMPTY: one way of the pitch's limits, as [soft, hard] angles from level: PITCH's, or where `cap` (that way's
+ * PitchCap, as an angle from level) is inside its soft limit, the cap with PITCH's band past it.
+ */
+function pitchSide(soft: number, hard: number, cap: number | undefined): readonly [number, number] {
+  return cap === undefined || cap >= soft ? [soft, hard] : [cap, cap + (hard - soft)];
+}
+
+/**
+ * Both axes' limits for a turn from `start`: the yaw's cone (a side budgetCone moved in kept to) and the pitch's (PITCH,
+ * a side the cone's PitchCap moved in kept to).
+ */
 function spansOf(start: Pose, limits: YawCone): { yaw: Span; pitch: Span } {
   const l = limits.left ?? limits;
   const r = limits.right ?? limits;
+  const lo = limits.pitch?.lo;
+  const [up, upHard] = pitchSide(PITCH.upSoft, PITCH.upHard, lo === undefined ? undefined : -lo);
+  const [down, downHard] = pitchSide(PITCH.downSoft, PITCH.downHard, limits.pitch?.hi);
   return {
     yaw: spanFrom(start.yaw, -l.soft, r.soft, -l.hard, r.hard),
-    pitch: spanFrom(start.pitch, -PITCH.upSoft, PITCH.downSoft, -PITCH.upHard, PITCH.downHard),
+    pitch: spanFrom(start.pitch, -up, down, -upHard, downHard),
   };
 }
 
@@ -237,7 +264,7 @@ export function coneIn(cone: YawCone, to: YawSide): YawCone {
   const left = cone.left && side(cone.left);
   const right = cone.right && side(cone.right);
   if (both === cone && left === cone.left && right === cone.right) return cone;
-  return { soft: both.soft, hard: both.hard, ...(left ? { left } : {}), ...(right ? { right } : {}) };
+  return { soft: both.soft, hard: both.hard, ...(left ? { left } : {}), ...(right ? { right } : {}), ...(cone.pitch ? { pitch: cone.pitch } : {}) };
 }
 
 /** NAV-LOOKDRIVE: the turn asked for is inside both axes' soft limits by `by` (radians) or more. */

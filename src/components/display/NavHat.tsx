@@ -18,6 +18,7 @@ import type { JogTarget, LookDrive } from '../../stores/jog';
 import { navModeNow, setTempLook, toggleNavMode, useNavMode, type NavMode } from '../../stores/navMode';
 import { JOG_DEAD_PX, JOG_FULL_PX, jogDetents, jogSpeed } from './casePose';
 import { NavEye } from './NavEye';
+import { FUSED_PATH, RING_PATH } from './navEyeShape';
 import { HAT_DOUBLE_TAP } from './navTuning';
 
 /** NAV-2B: a detent passed on the way out ticks again on the way back once the thumb is this much (px) inside it: a wobble on it ticks once. */
@@ -192,6 +193,10 @@ export function NavHat({ jog }: { jog: JogTarget }) {
 
   return (
     <div ref={node} class="nav-hat" data-nav="hat" data-mode={mode} role="group" aria-label={LABEL[mode]} {...handlers}>
+      {/* NAV-EYE shape: the ring and, with the eye, its bubble: one outline, drawn under everything else */}
+      <svg class="nav-hat__shell" viewBox="0 0 100 100" aria-hidden="true">
+        <path class="nav-hat__outline" d={look ? FUSED_PATH : RING_PATH} />
+      </svg>
       {ARROWS.map(([deg, points]) => (
         <svg key={deg} class={`nav-hat__arrow nav-hat__arrow--${deg}`} data-deg={deg} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points={points} />

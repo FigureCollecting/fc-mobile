@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { useRef } from 'preact/hooks';
 import { FloatingNav } from '../FloatingNav';
-import { DEPTH_RAIL_PX, EYE_HIT_PX, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from '../navTuning';
+import { EYE, EYE_GLYPH_BOX } from '../navEyeShape';
+import { DEPTH_RAIL_PX, EYE_HIT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from '../navTuning';
 import { DEPTH_FULL_PX } from '../caseDepth';
 import { offerJog, useJogStore, type DepthDrive, type JogTarget } from '../../../stores/jog';
 
@@ -107,18 +108,31 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     expect(rule('.nav-eye')).toMatch(/pointer-events:\s*auto;/);
     expect(rule('.nav-eye')).toMatch(/border-radius:\s*50%;/);
     expect(rule('.nav-eye')).toMatch(/touch-action:\s*none;/);
-    expect(rule('.nav-eye')).toContain(`width: calc(${EYE_HIT_PX}px * var(--nav-k));`);
-    expect(rule('.nav-eye::before')).toContain(`inset: calc(${(EYE_HIT_PX - EYE_SLOT_PX) / 2}px * var(--nav-k));`);
+    // NAV-EYE shape (Ross 11-22): the hit circle is the bubble, outside the ring, a share of the hat's box like it
+    const at = (n: number) => `${n.toFixed(3)}%`;
+    expect(rule('.nav-eye')).toContain(`left: ${at(EYE.x - EYE.r)};`);
+    expect(rule('.nav-eye')).toContain(`top: ${at(EYE.y - EYE.r)};`);
+    expect(rule('.nav-eye')).toContain(`width: ${at(2 * EYE.r)};`);
+    expect(rule('.nav-eye')).toContain(`height: ${at(2 * EYE.r)};`);
+    expect(rule('.nav-eye__glyph')).toContain(`width: ${at((100 * EYE_GLYPH_BOX.w) / (2 * EYE.r))};`);
+    expect(rule('.nav-eye__glyph')).toContain(`height: ${at((100 * EYE_GLYPH_BOX.h) / (2 * EYE.r))};`);
+    // the bubble is drawn in the hat's own outline (below), never as a second circle of the eye's
+    expect(css()).not.toMatch(/\.nav-eye::before/);
+    // the outline is drawn, and takes no touch: the hat's circle and the eye's are what take it
+    expect(rule('.nav-hat__shell')).toMatch(/position:\s*absolute;\s*inset:\s*0;/);
+    expect(rule('.nav-hat__shell')).toMatch(/overflow:\s*visible;/);
+    expect(rule('.nav-hat__shell')).toMatch(/pointer-events:\s*none;/);
   });
 
   it('NAV-EYE: Look is a thin teal outline on the ring and the eye (latched or held), never a fill; the glyph is dark, never white', () => {
     expect(rule('.floating-nav')).toContain(`--nav-teal: hsl(${NAV_TEAL} / ${NAV_OPACITY.look});`);
-    expect(rule(".nav-hat[data-mode='look']")).toMatch(/^\s*border-color:\s*var\(--nav-teal\);\s*$/);
-    expect(rule(".nav-eye[aria-pressed='true']::before, .nav-eye[data-held]::before")).toMatch(/^\s*border-color:\s*var\(--nav-teal\);\s*$/);
+    // one fused outline, the bubble's arc with it: Look is teal on the whole of it (the hat is in Look exactly while the
+    // eye is pressed or held)
+    expect(rule(".nav-hat[data-mode='look'] .nav-hat__outline")).toMatch(/^\s*stroke:\s*var\(--nav-teal\);\s*$/);
+    expect(rule(".nav-eye[aria-pressed='true'], .nav-eye[data-held]")).toMatch(/^\s*color:\s*var\(--nav-teal\);\s*$/);
     expect(rule('.nav-hat__glyph')).toContain(`color: ${NAV_GLYPH};`);
     expect(NAV_GLYPH).not.toMatch(/#fff|white|100%\s*\//i);
     expect(EYE_HIT_PX).toBeGreaterThanOrEqual(48);
-    expect(EYE_SLOT_PX).toBeLessThan(EYE_HIT_PX);
   });
 
   it('subdued blue, largely transparent at rest: fill, ring and rail, knob and active are navTuning\'s opacities', () => {
@@ -132,8 +146,12 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     expect(root).toContain(`--nav-line: hsl(${NAV_BLUE} / ${NAV_OPACITY.line});`);
     expect(root).toContain(`--nav-knob: hsl(${NAV_BLUE} / ${NAV_OPACITY.knob});`);
     expect(root).toContain(`--nav-active: hsl(${NAV_BLUE} / ${NAV_OPACITY.active});`);
-    expect(rule('.nav-hat')).toMatch(/background:\s*var\(--nav-fill\);/);
-    expect(rule('.nav-hat')).toMatch(/border:\s*1\.5px solid var\(--nav-line\);/);
+    // NAV-EYE shape: the hat's fill and ring are its outline's (the ring and the eye's bubble as one), not its box's
+    expect(rule('.nav-hat')).not.toMatch(/background|border:/);
+    expect(rule('.nav-hat__outline')).toMatch(/fill:\s*var\(--nav-fill\);/);
+    expect(rule('.nav-hat__outline')).toMatch(/stroke:\s*var\(--nav-line\);/);
+    expect(rule('.nav-hat__outline')).toMatch(/stroke-width:\s*1\.5px;/);
+    expect(rule('.nav-hat__outline')).toMatch(/vector-effect:\s*non-scaling-stroke;/);
     expect(rule('.nav-hat__knob')).toMatch(/background:\s*var\(--nav-knob\);/);
     expect(rule('.nav-hat[data-jogging] .nav-hat__knob')).toMatch(/background:\s*var\(--nav-active\);/);
     expect(rule('.nav-depth::before')).toMatch(/background:\s*var\(--nav-fill\);/);

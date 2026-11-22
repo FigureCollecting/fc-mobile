@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { touchDown, touchFingers, touchTap } from './touch';
+import { touchDown, touchFingers, touchPinch, touchTap } from './touch';
 import { centreOf, depth, eye, hat } from './navControls';
 import { lookDown } from './sceneLook';
 import { DEPTH_FULL_PX } from '../src/components/display/caseDepth';
@@ -140,6 +140,149 @@ for (const panel of PANELS) {
   });
 }
 
+// --- the eye's shape (Ross 11-22, "fused"): wholly outside the ring, its bubble's arc meeting the ring's outer perimeter ---
+
+type Rect = { x: number; y: number; width: number; height: number };
+const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+/** How far apart two boxes are (0 where they touch or overlap). */
+const gapOf = (a: Rect, b: Rect) => Math.hypot(Math.max(0, b.x - (a.x + a.width), a.x - (b.x + b.width)), Math.max(0, b.y - (a.y + a.height), a.y - (b.y + b.height)));
+
+/**
+ * The fused outline as Chromium lays it out: the hat's and the eye's boxes, the glyph's, the outline's subpaths, and 720
+ * points along it (getPointAtLength through the path's screen matrix), each with its distance from the hat's centre and
+ * from the eye's; and what takes a touch at the probes: the eye's centre, 4 px inside the bubble toward the hat, a point
+ * of the ring 4 px outside the bubble, and 8 px outside the bubble, straight out from the hat.
+ */
+async function shapeOf(page: Page) {
+  return page.evaluate(() => {
+    const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect().toJSON() as Rect;
+    const h = box('[data-nav="hat"]');
+    const e = box('[data-nav="eye"]');
+    const g = box('.nav-eye__glyph');
+    const hc = { x: h.x + h.width / 2, y: h.y + h.height / 2, r: h.width / 2 };
+    const ec = { x: e.x + e.width / 2, y: e.y + e.height / 2, r: e.width / 2 };
+    const path = document.querySelector<SVGPathElement>('.nav-hat__outline');
+    const d = path?.getAttribute('d') ?? '';
+    const points: { x: number; y: number; dh: number; de: number }[] = [];
+    let step = 0;
+    if (path) {
+      const m = path.getScreenCTM()!;
+      const len = path.getTotalLength();
+      step = (len * m.a) / 720;
+      for (let i = 0; i < 720; i++) {
+        const p = path.getPointAtLength((len * i) / 720).matrixTransform(m);
+        points.push({ x: p.x, y: p.y, dh: Math.hypot(p.x - hc.x, p.y - hc.y), de: Math.hypot(p.x - ec.x, p.y - ec.y) });
+      }
+    }
+    const what = (x: number, y: number) => {
+      const el = document.elementFromPoint(x, y);
+      return el?.closest('[data-nav="eye"]') ? 'eye' : el?.closest('[data-nav="hat"]') ? 'hat' : el?.closest('[data-nav]') ? 'nav' : 'scene';
+    };
+    // unit vector from the hat's centre out through the eye's
+    const k = Math.hypot(ec.x - hc.x, ec.y - hc.y);
+    const u = { x: (ec.x - hc.x) / k, y: (ec.y - hc.y) / k };
+    // a point of the ring (2 px in from its edge) 4 px outside the bubble: on the circle of radius hc.r - 2 round the hat's
+    // centre, at distance ec.r + 4 from the eye's (the law of cosines gives its angle off the eye's direction)
+    const rr = hc.r - 2;
+    const want = ec.r + 4;
+    const off = Math.acos((rr * rr + k * k - want * want) / (2 * rr * k));
+    const base = Math.atan2(u.y, u.x);
+    const ring4 = { x: hc.x + rr * Math.cos(base + off), y: hc.y + rr * Math.sin(base + off) };
+    return {
+      h,
+      e,
+      g,
+      hc,
+      ec,
+      d,
+      points,
+      step,
+      probes: {
+        centre: what(ec.x, ec.y),
+        inside4: what(ec.x - u.x * (ec.r - 4), ec.y - u.y * (ec.r - 4)),
+        ring4: what(ring4.x, ring4.y),
+        ring4At: Math.hypot(ring4.x - ec.x, ring4.y - ec.y),
+        out8: what(ec.x + u.x * (ec.r + 8), ec.y + u.y * (ec.r + 8)),
+      },
+      view: { width: innerWidth, height: innerHeight },
+    };
+  });
+}
+
+function expectFused(s: Awaited<ReturnType<typeof shapeOf>>, what: string) {
+  // the eye glyph's bounding circle lies wholly outside the ring's outer radius
+  const gc = { x: s.g.x + s.g.width / 2, y: s.g.y + s.g.height / 2 };
+  const glyphR = Math.hypot(s.g.width, s.g.height) / 2;
+  expect(Math.hypot(gc.x - s.hc.x, gc.y - s.hc.y) - glyphR, `${what}: the glyph clear of the ring`).toBeGreaterThan(s.hc.r);
+  expect(Math.hypot(gc.x - s.ec.x, gc.y - s.ec.y), `${what}: the glyph centred in the bubble`).toBeLessThanOrEqual(0.5);
+  // at the upper-left, inboard shoulder, and the bubble's centre outside the ring (more than a semicircle shows)
+  expect((Math.atan2(s.hc.y - s.ec.y, s.ec.x - s.hc.x) * 180) / Math.PI, `${what}: at 135 degrees`).toBeCloseTo(135, 0);
+  expect(Math.hypot(s.ec.x - s.hc.x, s.ec.y - s.hc.y), `${what}: the bubble's centre`).toBeGreaterThan(s.hc.r);
+  // one closed path; every point of it on the ring (outside the bubble) or on the bubble (outside the ring): the ring's
+  // arc inside the bubble is not drawn, and nothing crosses the eye
+  expect(s.d.match(/[Mm]/g), `${what}: one subpath`).toHaveLength(1);
+  expect(s.d.trim().endsWith('Z'), `${what}: closed`).toBe(true);
+  const onRing = s.points.filter((p) => p.dh <= s.hc.r && p.dh >= s.hc.r - 1.5);
+  const onBubble = s.points.filter((p) => p.de <= s.ec.r && p.de >= s.ec.r - 1.5);
+  const stray = s.points.filter((p) => !onRing.includes(p) && !onBubble.includes(p));
+  expect(stray, `${what}: every point on the ring or the bubble`).toEqual([]);
+  expect(onRing.filter((p) => p.de < s.ec.r - 1.5), `${what}: no ring inside the bubble`).toEqual([]);
+  expect(onBubble.filter((p) => p.dh < s.hc.r - 1.5), `${what}: no bubble inside the ring`).toEqual([]);
+  expect(onRing.length, `${what}: most of it the ring`).toBeGreaterThan(360);
+  expect(onBubble.length, `${what}: the bubble's arc`).toBeGreaterThan(72);
+  // the joins: points a 720th of the length apart never jump, round the end back to the start too (one continuous
+  // outline: the bubble's arc meets the ring's within 0.5 px)
+  const jumps = s.points.map((p, i) => Math.hypot(p.x - s.points[(i + 1) % s.points.length].x, p.y - s.points[(i + 1) % s.points.length].y));
+  expect(Math.max(...jumps), `${what}: no gap in the outline`).toBeLessThanOrEqual(s.step + 0.5);
+  // what takes a touch: the bubble is the eye's, over the ring inside it; the ring outside it the hat's; beyond it the scene's
+  expect(s.probes, `${what}: hit-testing`).toMatchObject({ centre: 'eye', inside4: 'eye', ring4: 'hat', out8: 'scene' });
+  expect(s.probes.ring4At, `${what}: the ring probe 4 px outside the bubble`).toBeCloseTo(s.ec.r + 4, 1);
+  // the eye inside the window
+  expect(s.e.x, `${what}: inside the window`).toBeGreaterThanOrEqual(0);
+  expect(s.e.y, `${what}: inside the window`).toBeGreaterThanOrEqual(0);
+  expect(s.e.x + s.e.width, `${what}: inside the window`).toBeLessThanOrEqual(s.view.width);
+  expect(s.e.y + s.e.height, `${what}: inside the window`).toBeLessThanOrEqual(s.view.height);
+}
+
+/** The eye clear of the scene's top (the header), the case-tabs strip and the Reset view chip (with its 48 px target). */
+async function expectClear(page: Page, what: string) {
+  const reset = page.locator('.cabinet-scene__reset');
+  await expect(reset, `${what}: Reset view shows once zoomed`).toBeVisible({ timeout: 5000 });
+  const e = (await eye(page).boundingBox())!;
+  const chip = (await reset.boundingBox())!;
+  const target = { x: chip.x - 4, y: chip.y - 4, width: chip.width + 8, height: chip.height + 8 };
+  const strip = (await page.locator('.case-tabs').boundingBox())!;
+  const scene = (await page.locator('.cabinet-scene').boundingBox())!;
+  console.log(`NAV-EYE-CLEAR ${what} eye ${JSON.stringify(e)} chip ${JSON.stringify(chip)} gap ${gapOf(e, target).toFixed(1)}`);
+  expect(overlaps(e, target), `${what}: clear of Reset view`).toBe(false);
+  expect(overlaps(e, strip), `${what}: clear of the case tabs`).toBe(false);
+  expect(e.y, `${what}: under the scene's top`).toBeGreaterThanOrEqual(scene.y);
+  const top = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)!.closest('.cabinet-scene__reset') !== null, { x: chip.x + chip.width / 2, y: chip.y + chip.height / 2 });
+  expect(top, `${what}: Reset view still the top element at its centre`).toBe(true);
+}
+
+for (const panel of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
+  test(`NAV-EYE shape ${panel.name}: the eye wholly outside the ring in one fused outline; the bubble is the eye's, the ring outside it the hat's; clear of the window's edges, the tabs and Reset view`, async ({ page }) => {
+    await openFree(page, panel);
+    expectFused(await shapeOf(page), panel.name);
+    // Look: the same outline, teal on the whole of it (the bubble's arc with the ring's)
+    await tapEye(page);
+    await expect(eye(page)).toHaveAttribute('aria-pressed', 'true');
+    const stroke = await page.locator('.nav-hat__outline').evaluate((p) => getComputedStyle(p).stroke);
+    const teal = await eye(page).evaluate((b) => getComputedStyle(b).color);
+    expect(stroke, `${panel.name}: Look's teal on the outline, the eye glyph's`).toBe(teal);
+    expect(teal).toMatch(/^rgba\(57, 198, 179, 0\.75\)$/);
+    expectFused(await shapeOf(page), `${panel.name} look`);
+    await tapEye(page);
+    // Reset view (zoom-only): a pinch shows it
+    const s = (await page.locator('.cabinet-scene').boundingBox())!;
+    const m = { x: s.x + s.width / 2, y: s.y + s.height * 0.4 };
+    await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 60, y: m.y }, { x: m.x + 60, y: m.y });
+    await settle(page);
+    await expectClear(page, panel.name);
+  });
+}
+
 test('NAV-EYE (b): a 600 ms still press on the hat centre toggles nothing and moves nothing', async ({ page }) => {
   await openFree(page, COVER);
   const start = await cameraOf(page);
@@ -221,8 +364,11 @@ test('NAV-EYE (f): a tap 8 px outside the eye\'s hit circle opens the figure the
         if (fig && !top!.closest('[data-nav]')) return { ...p, deg, name: fig.getAttribute('aria-label') };
       }
       return null;
-    }, { e, r: EYE_HIT_PX / 2 });
+    }, { e, r });
   };
+  // the eye's hit circle is its bubble (NAV-EYE shape): its box's half width, at least EYE_HIT_PX / 2
+  const r = ((await eye(page).boundingBox())!).width / 2;
+  expect(r).toBeGreaterThanOrEqual(EYE_HIT_PX / 2);
   let found = await beside();
   for (let i = 0; found === null && i < 12; i++) {
     await hatBy(page, i % 2 === 0 ? 30 : 0, i % 2 === 0 ? 0 : -24, 250);
@@ -232,7 +378,7 @@ test('NAV-EYE (f): a tap 8 px outside the eye\'s hit circle opens the figure the
   console.log(`NAV-EYE beside ${JSON.stringify(found)}`);
   // the eye's own hit circle is what is there 8 px inside it, never the scene
   const e = await centreOf(eye(page));
-  const inside = { x: e.x + ((found!.x - e.x) * (EYE_HIT_PX / 2 - 8)) / (EYE_HIT_PX / 2 + 8), y: e.y + ((found!.y - e.y) * (EYE_HIT_PX / 2 - 8)) / (EYE_HIT_PX / 2 + 8) };
+  const inside = { x: e.x + ((found!.x - e.x) * (r - 8)) / (r + 8), y: e.y + ((found!.y - e.y) * (r - 8)) / (r + 8) };
   expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-nav="eye"]') !== null, inside)).toBe(true);
   await touchTap(page, found!.x, found!.y);
   await expect(info(page)).toHaveCount(1);
@@ -347,6 +493,16 @@ test('NAVLOOK 3b: two short, still taps on the hat toggle Look and two more Move
 test.describe('a mouse-only desktop', () => {
   test.use({ hasTouch: false, isMobile: false, deviceScaleFactor: 1 });
   const DESKTOP = { width: 1536, height: 730 };
+
+  test('NAV-EYE shape desktop: drawn smaller, the eye still wholly outside the ring in one fused outline, clear of the edges, the tabs and Reset view', async ({ page }) => {
+    await openFree(page, DESKTOP);
+    expectFused(await shapeOf(page), 'desktop');
+    const f = await frameBox(page);
+    await page.mouse.move(f.x + f.width / 2, f.y + f.height * 0.4);
+    await page.mouse.wheel(0, -300);
+    await settle(page, 600);
+    await expectClear(page, 'desktop');
+  });
 
   test('NAV-EYE (e) desktop: a click on the eye latches Look; a mouse drag on the hat turns the eye; right drag on the scene still turns it', async ({ page }) => {
     await openFree(page, DESKTOP);

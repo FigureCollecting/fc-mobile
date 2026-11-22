@@ -16,7 +16,8 @@ import { Style } from '../../styles/Style';
 import { CASE_TABS_HEIGHT_PX } from './CaseTabs';
 import { NavDepth } from './NavDepth';
 import { NavHat } from './NavHat';
-import { DEPTH_RAIL_PX, EYE_HIT_PX, EYE_SLOT_DEG, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from './navTuning';
+import { EYE, EYE_GLYPH_BOX } from './navEyeShape';
+import { DEPTH_RAIL_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from './navTuning';
 
 interface FloatingNavProps {
   /** The column the case is drawn in: the controls keep inside its left and right edges. Absent: the window's. */
@@ -77,8 +78,8 @@ const rail = DEPTH_RAIL_PX;
 /** The rail's larger target reaches this far (px) round what is drawn: at its sides, and above and below. */
 const RAIL_PAD_X = (rail.hitWidth - rail.width) / 2;
 const RAIL_PAD_Y = (rail.hitHeight - rail.height) / 2;
-/** The eye's slot, centred on the ring at EYE_SLOT_DEG: its centre as a share of the hat's box. */
-const EYE_AT = { x: 50 + 50 * Math.cos((EYE_SLOT_DEG * Math.PI) / 180), y: 50 - 50 * Math.sin((EYE_SLOT_DEG * Math.PI) / 180) };
+/** A length in the hat's box (navEyeShape: 100 units across) as a share of it. */
+const pct = (units: number) => `${units.toFixed(3)}%`;
 
 const styles = `
   :root {
@@ -112,8 +113,6 @@ const styles = `
     height: var(--hat-size);
     box-sizing: border-box;
     border-radius: 50%;
-    background: var(--nav-fill);
-    border: 1.5px solid var(--nav-line);
     color: var(--nav-knob);
     pointer-events: auto;
     touch-action: none;
@@ -121,11 +120,16 @@ const styles = `
     -webkit-user-select: none;
     -webkit-touch-callout: none;
   }
+  /* NAV-EYE shape (Ross 11-22): the hat's fill and ring are one outline with the eye's bubble (navEyeShape), drawn over
+     the hat's box and out past it to the bubble; it takes no touch (the hat's circle and the eye's do) */
+  .nav-hat__shell { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  .nav-hat__outline { fill: var(--nav-fill); stroke: var(--nav-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+  /* (5.5 px: where they were inside the 1.5 px border the ring was before it was the outline) */
   .nav-hat__arrow { position: absolute; pointer-events: none; }
-  .nav-hat__arrow--0 { right: 4px; top: calc(50% - 8px); }
-  .nav-hat__arrow--90 { top: 4px; left: calc(50% - 8px); }
-  .nav-hat__arrow--180 { left: 4px; top: calc(50% - 8px); }
-  .nav-hat__arrow--270 { bottom: 4px; left: calc(50% - 8px); }
+  .nav-hat__arrow--0 { right: 5.5px; top: calc(50% - 8px); }
+  .nav-hat__arrow--90 { top: 5.5px; left: calc(50% - 8px); }
+  .nav-hat__arrow--180 { left: 5.5px; top: calc(50% - 8px); }
+  .nav-hat__arrow--270 { bottom: 5.5px; left: calc(50% - 8px); }
   .nav-hat__knob {
     position: absolute;
     left: calc(50% - ${HAT_KNOB_PX / 2}px * var(--nav-k));
@@ -147,17 +151,17 @@ const styles = `
     color: ${NAV_GLYPH};
     pointer-events: none;
   }
-  /* NAV-EYE: Look's thin teal outline on the ring and on the eye */
-  .nav-hat[data-mode='look'] { border-color: var(--nav-teal); }
-  /* the eye: its hit circle (EYE_HIT_PX) centred on the ring at EYE_SLOT_DEG, over the ring where they overlap; what is
-     drawn is the smaller circle inside it, fused to the ring's shoulder */
+  /* NAV-EYE: Look's thin teal outline on the whole fused outline, the ring and the eye's bubble */
+  .nav-hat[data-mode='look'] .nav-hat__outline { stroke: var(--nav-teal); }
+  /* the eye: its hit circle is its bubble (navEyeShape's EYE), outside the ring at EYE_SLOT_DEG, over the ring where the
+     bubble reaches into it; a share of the hat's box, as the outline is */
   .nav-eye {
     position: absolute;
     z-index: 1;
-    left: calc(${EYE_AT.x.toFixed(3)}% - ${EYE_HIT_PX / 2}px * var(--nav-k));
-    top: calc(${EYE_AT.y.toFixed(3)}% - ${EYE_HIT_PX / 2}px * var(--nav-k));
-    width: calc(${EYE_HIT_PX}px * var(--nav-k));
-    height: calc(${EYE_HIT_PX}px * var(--nav-k));
+    left: ${pct(EYE.x - EYE.r)};
+    top: ${pct(EYE.y - EYE.r)};
+    width: ${pct(2 * EYE.r)};
+    height: ${pct(2 * EYE.r)};
     margin: 0;
     padding: 0;
     border: 0;
@@ -171,19 +175,10 @@ const styles = `
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  .nav-eye::before {
-    content: '';
-    position: absolute;
-    inset: calc(${(EYE_HIT_PX - EYE_SLOT_PX) / 2}px * var(--nav-k));
-    box-sizing: border-box;
-    border-radius: 50%;
-    background: var(--nav-fill);
-    border: 1.5px solid var(--nav-line);
-  }
-  .nav-eye__glyph { position: relative; width: calc(16px * var(--nav-k)); height: calc(16px * var(--nav-k)); pointer-events: none; }
-  .nav-eye[aria-pressed='true']::before, .nav-eye[data-held]::before { border-color: var(--nav-teal); }
+  /* the glyph, centred in the bubble, wholly outside the ring */
+  .nav-eye__glyph { position: relative; width: ${pct((100 * EYE_GLYPH_BOX.w) / (2 * EYE.r))}; height: ${pct((100 * EYE_GLYPH_BOX.h) / (2 * EYE.r))}; pointer-events: none; }
   .nav-eye[aria-pressed='true'], .nav-eye[data-held] { color: var(--nav-teal); }
-  .nav-eye:focus-visible::before { outline: 2px solid var(--nav-active); outline-offset: 1px; }
+  .nav-eye:focus-visible { outline: 2px solid var(--nav-active); outline-offset: 1px; }
   .nav-depth {
     position: fixed;
     z-index: 98;

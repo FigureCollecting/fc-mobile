@@ -6,6 +6,7 @@ import { NAV_PARTS, centreOf, depth, eye, hat, hatCircle, navControls } from './
 import { DEPTH_FULL_PX } from '../src/components/display/caseDepth';
 import { JOG_FULL_PX, JOG_MAX_STEP_MS } from '../src/components/display/casePose';
 import { DEPTH_RAIL_PX, EYE_HIT_PX, EYE_SLOT_DEG, HAT_RING_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE } from '../src/components/display/navTuning';
+import { EYE } from '../src/components/display/navEyeShape';
 
 /**
  * NAV-FLOAT (handoff FINAL 11-17), in Chromium at the Fold8's panels, fixture mode, through Chromium's own touch pipeline
@@ -342,16 +343,20 @@ test('NAV-FLOAT (c): the layer and the corners of the hat\'s box take no touch; 
     { eye: false, nav: false, scene: true },
     { eye: false, nav: false, scene: true },
   ]);
-  // NAV-EYE: the eye sits on the upper-left shoulder, its hit circle (EYE_HIT_PX) centred on the ring
+  // NAV-EYE: the eye sits on the upper-left shoulder, outside the ring (Ross 11-22, fused): its hit circle is its bubble
+  // (navEyeShape's EYE, a share of the hat's box), at least EYE_HIT_PX across
   const slot = (await eye(page).boundingBox())!;
   const c = await hatCircle(page);
   const slotAt = { x: slot.x + slot.width / 2, y: slot.y + slot.height / 2 };
-  // (on the ring's inner edge: its 1.5 px line is outside what the eye is placed in)
-  expect(Math.abs(Math.hypot(slotAt.x - c.x, slotAt.y - c.y) - c.r), 'the eye is centred on the ring').toBeLessThanOrEqual(2);
+  const unit = (2 * c.r) / 100;
+  expect(Math.hypot(slotAt.x - c.x, slotAt.y - c.y), 'the eye\'s centre, outside the ring').toBeCloseTo(Math.hypot(EYE.x - 50, EYE.y - 50) * unit, 0);
+  expect(Math.hypot(slotAt.x - c.x, slotAt.y - c.y)).toBeGreaterThan(c.r);
   expect(Math.atan2(c.y - slotAt.y, slotAt.x - c.x) * (180 / Math.PI), 'at 135 degrees').toBeCloseTo(EYE_SLOT_DEG, 0);
   expect(slotAt.x, 'on the inboard side').toBeLessThan(c.x);
   expect(slotAt.y, 'on the upper side').toBeLessThan(c.y);
-  expect([slot.width, slot.height], 'its hit circle').toEqual([EYE_HIT_PX, EYE_HIT_PX]);
+  expect(slot.width, 'its hit circle').toBeCloseTo(2 * EYE.r * unit, 1);
+  expect(slot.height, 'its hit circle').toBeCloseTo(2 * EYE.r * unit, 1);
+  expect(slot.width).toBeGreaterThanOrEqual(EYE_HIT_PX);
 
   // the rail: 8 px right of its target a figure is the top element; walk until one is there
   const railEdge = async () => {

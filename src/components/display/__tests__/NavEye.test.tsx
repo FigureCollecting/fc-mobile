@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { NavHat } from '../NavHat';
 import { EYE_HIT_PX, EYE_SLOT_DEG, EYE_TAP, HAT_DOUBLE_TAP } from '../navTuning';
+import { EYE as SHAPE } from '../navEyeShape';
 import { JOG_DEAD_PX } from '../casePose';
 import { useNavMode } from '../../../stores/navMode';
 import type { JogTarget, LookDrive } from '../../../stores/jog';
@@ -35,13 +36,18 @@ const wait = (ms: number) => vi.advanceTimersByTime(ms);
 const latched = () => useNavMode.getState().latched;
 
 // jsdom lays nothing out: the hat's box is placed here as the page would place it (a 104 px ring, its centre at
-// (152, 452)), and the eye's 48 px hit circle centred on the ring at 135 degrees
+// (152, 452)), and the eye's hit circle (its bubble, at least EYE_HIT_PX across) outside the ring at 135 degrees
 const HAT = { x: 152, y: 452, r: 52 };
-const EYE = { x: HAT.x + HAT.r * Math.cos((EYE_SLOT_DEG * Math.PI) / 180), y: HAT.y - HAT.r * Math.sin((EYE_SLOT_DEG * Math.PI) / 180) };
+/** The hat's box is 100 units across (navEyeShape): px per unit here. */
+const UNIT = (HAT.r * 2) / 100;
+const EYE_AT = Math.hypot(SHAPE.x - 50, SHAPE.y - 50) * UNIT;
+const EYE = { x: HAT.x + EYE_AT * Math.cos((EYE_SLOT_DEG * Math.PI) / 180), y: HAT.y - EYE_AT * Math.sin((EYE_SLOT_DEG * Math.PI) / 180) };
+const EYE_PX = 2 * SHAPE.r * UNIT;
 const rect = (cx: number, cy: number, size: number) => ({ left: cx - size / 2, top: cy - size / 2, right: cx + size / 2, bottom: cy + size / 2, width: size, height: size, x: cx - size / 2, y: cy - size / 2, toJSON: () => ({}) }) as DOMRect;
 function place() {
+  expect(EYE_PX).toBeGreaterThanOrEqual(EYE_HIT_PX);
   hat().getBoundingClientRect = () => rect(HAT.x, HAT.y, HAT.r * 2);
-  eye().getBoundingClientRect = () => rect(EYE.x, EYE.y, EYE_HIT_PX);
+  eye().getBoundingClientRect = () => rect(EYE.x, EYE.y, EYE_PX);
 }
 const C = { x: HAT.x, y: HAT.y };
 

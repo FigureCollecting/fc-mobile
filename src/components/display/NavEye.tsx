@@ -1,11 +1,13 @@
 /**
- * NAV-EYE (handoff FINAL 11-17 B, ref 02): the eye fused to the hat's upper-left, inboard shoulder. One tap (EYE_TAP:
- * little travel, quickly lifted) latches the hat Move <-> Look; Enter or Space on it does too. Its hit circle is its own
- * and lies over the hat's ring where they overlap: its press never reaches the hat under it. NAVLOOK 2a: pressed and
+ * NAV-EYE (handoff FINAL 11-17 B, ref 02): the eye fused to the hat's upper-left, inboard shoulder, wholly outside its
+ * ring in a bubble of the hat's outline (navEyeShape, Ross 11-22). One tap (EYE_TAP: little travel, quickly lifted)
+ * latches the hat Move <-> Look; Enter or Space on it does too. Its hit circle is the bubble and lies over the hat's
+ * ring where the bubble does: its press never reaches the hat under it. NAVLOOK 2a: pressed and
  * slid off it onto the hat, the hat takes the finger (`onSlide`) as a temporary Look until it lifts. A press that slides
  * anywhere else, or is held, is nothing.
  */
 import { useRef } from 'preact/hooks';
+import { EYE_GLYPH_VIEWBOX } from './navEyeShape';
 import { EYE_TAP } from './navTuning';
 
 interface Press {
@@ -88,7 +90,7 @@ export function NavEye({ pressed, held, onToggle, onSlide }: NavEyeProps) {
         if (e.detail === 0) onToggle();
       }}
     >
-      <svg class="nav-eye__glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="nav-eye__glyph" viewBox={EYE_GLYPH_VIEWBOX} fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" />
         <circle cx="12" cy="12" r="3" />
       </svg>

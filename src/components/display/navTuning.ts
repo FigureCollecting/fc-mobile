@@ -24,9 +24,13 @@ export const HAT_RING_PX = { compact: 104, wide: 120, wideFrom: 600 } as const;
 export const HAT_KNOB_PX = 36;
 /** Where on the ring the eye sits (NAV-EYE), degrees anticlockwise from the right: its upper-left, inboard shoulder. */
 export const EYE_SLOT_DEG = 135;
-/** The eye as drawn (px across), centred on the ring. */
-export const EYE_SLOT_PX = 32;
-/** The eye's hit circle (px across): larger than drawn, and over the hat's ring where they overlap. */
+/**
+ * NAV-EYE shape (Ross 11-22, "fused"): the eye's bubble, wholly outside the ring but for where it fuses: its centre `at`
+ * ring radii out from the hat's centre (at EYE_SLOT_DEG), its radius `r` ring radii. It is also the eye's hit circle.
+ * The eye glyph is `glyph` of the bubble's width across. A share of the ring, so it grows and shrinks with it.
+ */
+export const EYE_BUBBLE = { at: 1.21, r: 0.465, glyph: 0.32 } as const;
+/** The eye's hit circle (its bubble) is at least this much across (px) on the compact touch ring. */
 export const EYE_HIT_PX = 48;
 /** A tap on the eye: at most this much travel (px) and this long (ms) from press to lift. */
 export const EYE_TAP = { slopPx: 10, ms: 500 } as const;

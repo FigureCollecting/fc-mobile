@@ -363,6 +363,20 @@ describe('NAVLOOK 3b: a double tap on the hat toggles Move <-> Look', () => {
     expect(t.look.start).not.toHaveBeenCalled();
   });
 
+  // chal1 SHOULD-2 (the challenger's probe): a slide's press is never half of a pair
+  it('a slide adopted and lifted still, then one quick hat tap: no toggle', () => {
+    render(<NavHat jog={jogOf()} />);
+    place();
+    eyeDown(EYE);
+    eyeMove({ x: EYE.x + 30, y: EYE.y + 30 });
+    expect(useNavMode.getState().temp).toBe(true);
+    hatUp({ x: EYE.x + 30, y: EYE.y + 30 }, 2);
+    wait(60);
+    tap();
+    expect(latched()).toBe('move');
+    expect(useNavMode.getState().temp).toBe(false);
+  });
+
   it('a third quick tap starts a new pair: it never toggles straight back', () => {
     render(<NavHat jog={jogOf()} />);
     tap();

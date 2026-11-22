@@ -66,6 +66,28 @@ describe('toCachedImages', () => {
     ]);
   });
 
+  it('DESK1: the colour is kept, and the thumbhash (as base64), for the placeholder while the image loads', () => {
+    const thumbhash = new Uint8Array([0x1b, 0x08, 0x0e, 0x0d, 0x80, 0x76, 0x88, 0x77, 0x7f, 0x88, 0x87, 0x78, 0x80, 0x87, 0x97, 0x08, 0x76, 0x79, 0x60, 0x07, 0x08]);
+    const [kept] = toCachedImages([img('a', { dominantColor: '#8a9bb0', thumbhash })]);
+    expect(kept).toEqual({ url: url('a'), width: 600, height: 800, role: 'gallery', primary: false, dominantColor: '#8a9bb0', thumbhash: 'GwgODYB2iHd/iId4gIeXCHZ5YAcI' });
+    expect(Uint8Array.from(atob(kept!.thumbhash!), (c) => c.charCodeAt(0))).toEqual(thumbhash);
+  });
+
+  it('DESK1: an unknown colour or thumbhash (empty) is left out, as is a colour that is not "#rrggbb" and a thumbhash too long to be one', () => {
+    const plain = { url: url('a'), width: 600, height: 800, role: 'gallery', primary: false };
+    expect(toCachedImages([img('a', { dominantColor: '', thumbhash: new Uint8Array() })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { dominantColor: 'red' })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { dominantColor: '#8a9bb0; background-image: url(https://elsewhere.example/x)' })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { dominantColor: '#8A9BB0' })])).toEqual([{ ...plain, dominantColor: '#8a9bb0' }]);
+    expect(toCachedImages([img('a', { thumbhash: new Uint8Array(65) })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { thumbhash: new Uint8Array(64).fill(255) })])[0]!.thumbhash).toHaveLength(88);
+  });
+
+  it('DESK1: an image that carries no colour or thumbhash field at all (a list shaped before they were kept) is kept without them', () => {
+    const { dominantColor: _c, thumbhash: _t, ...bare } = img('a');
+    expect(toCachedImages([bare as ProductImage])).toEqual([{ url: url('a'), width: 600, height: 800, role: 'gallery', primary: false }]);
+  });
+
   it('keeps a measured 0 as a measurement', () => {
     expect(toCachedImages([img('a', { bottomMarginFrac: 0 })])[0]).toMatchObject({ bottomMarginFrac: 0 });
   });
@@ -789,6 +811,12 @@ describe('rememberImages / recallImages', () => {
     expect(await recallImages('h2', storage)).toBeUndefined();
     await rememberImages('h1', [], storage);
     expect(await recallImages('h1', storage)).toBeUndefined();
+  });
+
+  it('DESK1: the kept list gives the colour and thumbhash back (the Photos tab out of reach shows them)', async () => {
+    const storage = device();
+    await rememberImages('h1', toCachedImages([img('a', { primary: true, dominantColor: '#8a9bb0', thumbhash: new Uint8Array([1, 2, 3]) })]), storage);
+    expect((await recallImages('h1', storage))![0]).toMatchObject({ dominantColor: '#8a9bb0', thumbhash: 'AQID' });
   });
 
   it('reads nothing from a record it cannot parse', async () => {

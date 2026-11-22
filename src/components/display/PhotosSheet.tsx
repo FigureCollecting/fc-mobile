@@ -39,6 +39,8 @@ const ALL = 0;
 const PEEK = 1;
 /** Room kept under the strip at the peek. */
 const PEEK_GAP_PX = 12;
+/** DESK1: the only colour a tile takes into its style: "#rrggbb" (catalog.proto dominant_color), whatever a kept record holds. */
+const TILE_COLOUR = /^#[0-9a-f]{6}$/;
 /** A move on the picture behind this far across, and more across than down, steps to the next or previous photo. */
 const SWIPE_PX = 40;
 
@@ -65,6 +67,9 @@ function Sheet({ figure, onClose, onAim }: { figure: Figure; onClose: () => void
   const photos = useProductPhotos(headId);
   const chosen = usePhotoChoices(sub).get(headId ?? '');
   const images = useBrokenImages();
+  // DESK1: the photos drawn so far; one neither drawn nor failed is still loading
+  const [loaded, setLoaded] = useState<ReadonlySet<string>>(() => new Set());
+  const drawn = (url: string) => setLoaded((s) => (s.has(url) ? s : new Set([...s, url])));
   useBackToClose(onClose);
   const [picked, pick] = useState<string | undefined>(undefined);
   const sheetRef = useRef<HTMLElement>(null);
@@ -198,6 +203,9 @@ function Sheet({ figure, onClose, onAim }: { figure: Figure; onClose: () => void
               {list.map((photo, i) => {
                 const label = `Photo ${i + 1} of ${list.length}${photo === byDefault ? ', the default' : ''}${photo === inUse ? ', in use' : ''}`;
                 const selected = photo === aimed;
+                // DESK1: loading (its photo's colour, when the coordinator sent one), loaded (the photo) or failed (said so)
+                const state = images.broken(photo.url) ? 'failed' : loaded.has(photo.url) ? 'loaded' : 'loading';
+                const colour = state === 'loading' && photo.dominantColor !== undefined && TILE_COLOUR.test(photo.dominantColor) ? photo.dominantColor : undefined;
                 return (
                   <button
                     key={photo.url}
@@ -207,14 +215,34 @@ function Sheet({ figure, onClose, onAim }: { figure: Figure; onClose: () => void
                     }}
                     type="button"
                     class="photos-sheet__tile"
-                    aria-label={label}
+                    data-state={state}
+                    style={colour === undefined ? undefined : { backgroundColor: colour }}
+                    aria-label={state === 'failed' ? `${label}, couldn't load` : label}
+                    aria-busy={state === 'loading' ? 'true' : undefined}
                     aria-pressed={selected}
                     onClick={() => aimAt(photo.url)}
                   >
-                    {images.broken(photo.url) ? (
-                      <span class="photos-sheet__plate" aria-hidden="true" />
+                    {state === 'failed' ? (
+                      <span class="photos-sheet__plate photos-sheet__failed" aria-hidden="true">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="5" width="18" height="14" rx="2" />
+                          <path d="M4 4l16 16" />
+                        </svg>
+                        Couldn't load
+                      </span>
                     ) : (
-                      <img src={photo.url} alt="" loading="lazy" crossOrigin="anonymous" onError={() => images.failed(photo.url)} />
+                      <img
+                        ref={(el: HTMLImageElement | null) => {
+                          // one the browser already has fires no load this listener hears
+                          if (el !== null && el.complete && el.naturalWidth > 0) drawn(photo.url);
+                        }}
+                        src={photo.url}
+                        alt=""
+                        loading="lazy"
+                        crossOrigin="anonymous"
+                        onLoad={() => drawn(photo.url)}
+                        onError={() => images.failed(photo.url)}
+                      />
                     )}
                     {photo === inUse && <span class="photos-sheet__badge">In use</span>}
                   </button>
@@ -392,6 +420,51 @@ function Sheet({ figure, onClose, onAim }: { figure: Figure; onClose: () => void
           position: absolute;
           inset: 0;
           background: linear-gradient(180deg, var(--surface-tertiary), var(--surface-secondary));
+        }
+
+        /* DESK1: still loading: the photo's colour (inline) under a slow sheen, so the tile reads as on its way */
+        .photos-sheet__tile[data-state='loading']::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.14) 50%, transparent 70%);
+          background-size: 250% 100%;
+          animation: photos-sheet-loading 1.6s linear infinite;
+          pointer-events: none;
+        }
+
+        @keyframes photos-sheet-loading {
+          from { background-position: 125% 0; }
+          to { background-position: -125% 0; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .photos-sheet__tile[data-state='loading']::after {
+            animation: none;
+          }
+        }
+
+        /* DESK1: could not load: a dashed edge, a struck-out picture and the words, unlike a tile still loading */
+        .photos-sheet__failed {
+          box-sizing: border-box;
+          border: 2px dashed var(--text-tertiary);
+          border-radius: inherit;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-1);
+          padding: var(--space-1);
+          background: var(--surface-tertiary);
+          color: var(--text-secondary);
+          font-size: var(--font-2xs);
+          line-height: 1.2;
+          text-align: center;
+        }
+
+        /* the plate covers the tile's own outline: a picked one that failed is edged as picked */
+        .photos-sheet__tile[aria-pressed='true'] .photos-sheet__failed {
+          border: 2px solid var(--brand-400);
         }
 
         .photos-sheet__badge {

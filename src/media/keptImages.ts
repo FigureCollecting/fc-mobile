@@ -173,7 +173,16 @@ export interface CachedImage {
   /** Grounding (catalog.proto ProductImage), as the coordinator measured it for this caller. */
   bottomMarginFrac?: number;
   contactBand?: { centerXFrac: number; widthFrac: number };
+  /** DESK1: the image's dominant colour as the coordinator sent it, "#rrggbb" lowercase: what stands for it while it loads. */
+  dominantColor?: string;
+  /** DESK1: its ThumbHash (catalog.proto ProductImage.thumbhash) as base64, kept for the blurred placeholder (IMGREND). */
+  thumbhash?: string;
 }
+
+/** DESK1: a colour as catalog.proto sends it; anything else is never kept, so none reaches a style. */
+const HEX_COLOUR = /^#[0-9a-f]{6}$/;
+/** DESK1: a ThumbHash is some 25 bytes; one longer than this is no ThumbHash, and is not kept in every list record. */
+const MAX_THUMBHASH_BYTES = 64;
 
 export interface KeptImageSync {
   figures: number;
@@ -210,6 +219,11 @@ export function toCachedImages(images: readonly ProductImage[]): CachedImage[] {
     if (i.mask !== undefined && isMediaUrl(i.mask.url)) c.maskUrl = i.mask.url;
     if (i.bottomMarginFrac !== undefined) c.bottomMarginFrac = i.bottomMarginFrac;
     if (i.contactBand !== undefined) c.contactBand = { centerXFrac: i.contactBand.centerXFrac, widthFrac: i.contactBand.widthFrac };
+    // (an image shaped by hand, not by the contract's schema, may carry neither field)
+    const colour = typeof i.dominantColor === 'string' ? i.dominantColor.toLowerCase() : '';
+    if (HEX_COLOUR.test(colour)) c.dominantColor = colour;
+    const hash = i.thumbhash instanceof Uint8Array ? i.thumbhash : undefined;
+    if (hash !== undefined && hash.length > 0 && hash.length <= MAX_THUMBHASH_BYTES) c.thumbhash = btoa(String.fromCharCode(...hash));
     out.push(c);
   }
   return out;

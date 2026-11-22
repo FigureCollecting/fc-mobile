@@ -790,6 +790,12 @@ describe('fixture photos (?fxphotos=1): a local item and three photos each, for 
     expect(FIXTURE_SUB).toBe('fixture-user');
   });
 
+  it('DESK1: every fixture photo has a colour of its own for its tile while it loads, as the coordinator sends ("#rrggbb")', () => {
+    const photos = fixturePhotos(14);
+    for (const p of photos) expect(p.dominantColor, p.url).toMatch(/^#[0-9a-f]{6}$/);
+    expect(new Set(photos.map((p) => p.dominantColor)).size).toBe(14);
+  });
+
   // PHOTOS-FIND-1: a figure with five photos, for the photos chip
   it('?fxphotocount=N gives every figure N photos, each its own address on the public image address, the first three as before', () => {
     window.history.pushState({}, '', '/?fxphotos=1&fxphotocount=5');

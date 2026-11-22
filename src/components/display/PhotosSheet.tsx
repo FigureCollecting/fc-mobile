@@ -98,6 +98,8 @@ function Sheet({ figure, onClose, onAim }: { figure: Figure; onClose: () => void
   aimRef.current = onAim;
   useEffect(() => () => aimRef.current?.(undefined), []);
   const aimAt = (url: string) => {
+    // DESK1: a photo picked after its tile failed is tried again there: drawn, or said to have failed again
+    if (images.broken(url)) images.retry(url);
     pick(url);
     onAim?.(url);
   };

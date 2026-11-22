@@ -212,10 +212,63 @@ describe('PhotosSheet', () => {
       expect(tiles().map(stateOf)).toEqual(['loading', 'failed', 'loaded']);
     });
 
+    it('a failed tile that is tapped is tried again: loading, then loaded on its load event, and it no longer says it couldn\'t load', () => {
+      photosOf.data = { photos: COLOURED, refreshFailed: false };
+      open();
+      fireEvent.error(tiles()[1]!.querySelector('img')!);
+      expect(stateOf(tiles()[1]!)).toBe('failed');
+      fireEvent.click(tiles()[1]!);
+      // a fresh <img> for the same address, waiting in the photo's colour again
+      expect(stateOf(tiles()[1]!)).toBe('loading');
+      expect(tiles()[1]!.querySelector('img')?.getAttribute('src')).toBe(url('b'));
+      expect(tiles()[1]!.style.backgroundColor).toBe('rgb(34, 51, 68)');
+      expect(tiles()[1]).toHaveAttribute('aria-pressed', 'true');
+      fireEvent.load(tiles()[1]!.querySelector('img')!);
+      expect(stateOf(tiles()[1]!)).toBe('loaded');
+      expect(tiles()[1]!.getAttribute('aria-label')).toBe('Photo 2 of 3');
+      expect(screen.queryByText("Couldn't load")).toBeNull();
+      // the others are untouched by the retry
+      expect(tiles().map(stateOf)).toEqual(['loading', 'loaded', 'loading']);
+    });
+
+    it('a failed tile tried again that fails again says so again; a tap on a tile that has not failed changes nothing about it', () => {
+      photosOf.data = { photos: COLOURED, refreshFailed: false };
+      open();
+      fireEvent.error(tiles()[1]!.querySelector('img')!);
+      fireEvent.click(tiles()[1]!);
+      fireEvent.error(tiles()[1]!.querySelector('img')!);
+      expect(stateOf(tiles()[1]!)).toBe('failed');
+      expect(tiles()[1]!.getAttribute('aria-label')).toBe("Photo 2 of 3, couldn't load");
+      fireEvent.load(tiles()[2]!.querySelector('img')!);
+      const img = tiles()[2]!.querySelector('img');
+      fireEvent.click(tiles()[2]!);
+      expect(stateOf(tiles()[2]!)).toBe('loaded');
+      expect(tiles()[2]!.querySelector('img')).toBe(img);
+      // and a failed tile picked by its neighbour's tap stays failed: only its own tap tries it again
+      fireEvent.click(tiles()[0]!);
+      expect(stateOf(tiles()[1]!)).toBe('failed');
+    });
+
+    it('a picture the browser holds complete but undecoded (naturalWidth 0) is not drawn loaded', () => {
+      photosOf.data = { photos: COLOURED, refreshFailed: false };
+      vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true);
+      vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(0);
+      open();
+      expect(tiles().map(stateOf)).toEqual(['loading', 'loading', 'loading']);
+      vi.restoreAllMocks();
+    });
+
     it('a colour that is not "#rrggbb" is never put in the tile\'s style', () => {
       photosOf.data = { photos: [photo('a', { primary: true, dominantColor: 'red; background-image: url(https://elsewhere.example/x)' })], refreshFailed: false };
       open();
       expect(tiles()[0]!.getAttribute('style') ?? '').toBe('');
+    });
+
+    it('a colour the browser would take but that is not lower-case "#rrggbb" (a name, upper case, short form) is not shown either', () => {
+      photosOf.data = { photos: [photo('a', { primary: true, dominantColor: 'red' }), photo('b', { dominantColor: '#ABCDEF' }), photo('c', { dominantColor: '#abc' })], refreshFailed: false };
+      open();
+      expect(tiles().map((t) => t.getAttribute('style') ?? '')).toEqual(['', '', '']);
+      expect(tiles().map(stateOf)).toEqual(['loading', 'loading', 'loading']);
     });
 
     it('the tile rules give each state a look of its own: the failed plate is dashed, the loading tile pulses unless motion is reduced', () => {

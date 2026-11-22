@@ -1072,6 +1072,37 @@ describe('useCollectionImages', () => {
       }
     });
 
+    it('a fill in between (another figure\'s image the link refused at the sync) keeps it owed: still asked about at ten minutes', async () => {
+      let refusing = true;
+      storage = fakeCaches(async (req) => (refusing && req.url === url('a') ? new Response('', { status: 503 }) : new Response('img')));
+      vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
+      const r = await localRig();
+      const s = spine(r);
+      await seedFigures(r, [{ title: 'F0' }, { title: 'F1' }]);
+      const client = appClient();
+      const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+      await waitFor(() => expect(storage.added.filter((q) => q.url === url('a'))).toHaveLength(1));
+      await idle(client);
+      await settle();
+      const t0 = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+      restoreClock = () => clock.mockRestore();
+      refusing = false;
+      clock.mockReturnValue(t0 + MIN);
+      r.clock.advance(MIN);
+      await r.engine.trigger('poll');
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(1);
+      s.derived.add(1);
+      clock.mockReturnValue(t0 + 11 * MIN);
+      r.clock.advance(MIN);
+      await r.engine.trigger('poll');
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(r.clients.getProductImages).toHaveBeenCalledTimes(2);
+      expect((r.clients.getProductImages.mock.calls[1]![0] as { headIds: string[] }).headIds).toEqual([headOf(1)]);
+    });
+
     it('a figure listed but whose image is refused: the photo comes with a later fill, its list not asked again', async () => {
       let refusing = true;
       storage = fakeCaches(async (req) => (refusing && req.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
@@ -1492,7 +1523,9 @@ describe('useCollectionImages', () => {
           await nextPass(r);
         });
         await quiet();
-        expect(r.clients.getProductImages).toHaveBeenCalledTimes(3);
+        // no full sync: the one call more asks only about the figure added with no image (LISTLESS-RECHECK)
+        expect(r.clients.getProductImages).toHaveBeenCalledTimes(4);
+        expect(r.clients.getProductImages).toHaveBeenLastCalledWith({ headIds: [headOf(2)], pageSize: 200 }, expect.anything());
       } finally {
         vi.restoreAllMocks();
       }

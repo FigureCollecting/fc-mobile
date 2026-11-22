@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/preact';
 import { FloatingNav } from '../FloatingNav';
-import { DEPTH_RAIL_PX, NAV_EDGE_PX, ORB_PX } from '../navTuning';
+import { DEPTH_RAIL_PX, NAV_BLUE, NAV_EDGE_PX, NAV_OPACITY, ORB_NEEDLE, ORB_PALE, ORB_PX, ORB_RED, ORB_TEAL } from '../navTuning';
 import { offerJog, useJogStore, type JogTarget, type TiltDrive } from '../../../stores/jog';
 import { useTiltStore } from '../../../stores/tilt';
 import * as source from '../../../sensors/relativeOrientation';
@@ -124,7 +124,46 @@ describe('the orb where a sensor is: OFF by default, a tap toggles, the state sa
     expect(orb()!.innerHTML).not.toMatch(/style=/);
     expect(orb()!.querySelector('.nav-orb__needle')).not.toBeNull();
     // no gold, no vivid red: the needle's colours are the tuning's named muted ones
-    expect(orb()!.querySelector('.nav-orb__on')).not.toBeNull();
+    expect(orb()!.querySelector('.nav-orb__ring')).not.toBeNull();
+  });
+});
+
+describe('drawn as Ross\'s reference (ross-1122/logpose-orb.png): a dark dial, a thin teal outer ring, four ticks, a red and pale needle on a teal pivot', () => {
+  const cssText = () =>
+    Array.from(document.querySelectorAll('style'))
+      .map((s) => s.textContent ?? '')
+      .join('\n')
+      .replace(/\/\*.*?\*\//gs, '');
+  const ruleOf = (selector: string) => cssText().split('}').find((r) => r.split('{')[0].trim() === selector) ?? '';
+
+  it('the parts are there: the ring with its glow, four ticks, the two needle halves, the pivot', async () => {
+    probeTilt.mockResolvedValue('event');
+    render(<FloatingNav />);
+    offer(jogOf(tiltDrive()));
+    await flush();
+    const o = orb()!;
+    expect(o.querySelector('.nav-orb__ring')).not.toBeNull();
+    expect(o.querySelector('.nav-orb__glow')).not.toBeNull();
+    expect(o.querySelectorAll('.nav-orb__ticks line')).toHaveLength(4);
+    expect(o.querySelector('.nav-orb__north')).not.toBeNull();
+    expect(o.querySelector('.nav-orb__south')).not.toBeNull();
+    expect(o.querySelector('.nav-orb__hub')).not.toBeNull();
+  });
+
+  it('teal ring and pivot, a muted red and a pale half (never the controls\' blue, never gold); the needle rests on the diagonal; ON brightens the ring and its glow', async () => {
+    probeTilt.mockResolvedValue('event');
+    render(<FloatingNav />);
+    offer(jogOf(tiltDrive()));
+    await flush();
+    expect(ruleOf('.nav-orb__ring')).toContain(`hsl(${ORB_TEAL}`);
+    expect(ruleOf('.nav-orb__hub')).toContain(`hsl(${ORB_TEAL}`);
+    expect(ruleOf('.nav-orb__north')).toContain(`hsl(${ORB_RED}`);
+    expect(ruleOf('.nav-orb__south')).toContain(`hsl(${ORB_PALE}`);
+    expect(ruleOf('.nav-orb__south')).not.toContain(NAV_BLUE);
+    expect(cssText()).not.toMatch(/gold|#ffd|hsl\((4\d|5\d) /i);
+    expect(ruleOf('.nav-orb__needle')).toContain(`${ORB_NEEDLE.restDeg}deg`);
+    expect(ruleOf(".nav-orb[aria-checked='true'] .nav-orb__ring")).toContain(`hsl(${ORB_TEAL} / ${NAV_OPACITY.active})`);
+    expect(ruleOf(".nav-orb[aria-checked='true'] .nav-orb__glow")).not.toBe('');
   });
 });
 

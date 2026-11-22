@@ -5,9 +5,11 @@
  *   is awaited. Recenter: a 500 ms hold, R, or the context menu (a mouse's right click), while ON.
  * - Shown only where a sensor gave a real sample (probeTilt, once a session); hidden where none did; shown disabled, with
  *   the reason, once the permission was refused or the sensor went silent: never a misleading ON.
- * - Drawn: a dark translucent globe with minimal ticks, a needle wholly inside it (its red half muted, the other the
- *   controls' blue, no gold); ON adds a thin teal ring and the needle follows the offset (the CSSOM, never a style
- *   attribute). Its round target is larger than what is drawn; it is placed by FloatingNav's variables.
+ * - Drawn as Ross's reference (ross-1122/logpose-orb.png): a dark translucent dial with a thin teal outer ring, four
+ *   small cardinal ticks, and a two-tone needle wholly inside it (a muted red half and a pale grey half, resting on the
+ *   diagonal) on a teal pivot; no gold. OFF the ring is quiet; ON it is brighter and heavier with a soft glow, and the
+ *   needle follows the offset (the CSSOM, never a style attribute). Its round target is larger than what is drawn; it is
+ *   placed by FloatingNav's variables.
  */
 import { useEffect, useRef } from 'preact/hooks';
 import { Style } from '../../styles/Style';
@@ -16,7 +18,7 @@ import type { TiltDrive } from '../../stores/jog';
 import { useTiltStore } from '../../stores/tilt';
 import { askTilt, probeTilt } from '../../sensors/relativeOrientation';
 import { useTiltLook, type TiltShown } from '../../sensors/useTiltLook';
-import { DEPTH_RAIL_PX, NAV_BLUE, NAV_EDGE_PX, NAV_OPACITY, ORB_GLOBE, ORB_NEEDLE, ORB_PX, ORB_RED, ORB_TEAL } from './navTuning';
+import { DEPTH_RAIL_PX, NAV_EDGE_PX, NAV_OPACITY, ORB_GLOBE, ORB_NEEDLE, ORB_PALE, ORB_PX, ORB_RED, ORB_TEAL } from './navTuning';
 
 /** A hold this long on the orb recenters it (plan section 3). */
 export const ORB_RECENTER_MS = 500;
@@ -118,19 +120,21 @@ export function NavOrb({ tilt }: { tilt: TiltDrive }) {
       }}
     >
       <svg viewBox="0 0 34 34" aria-hidden="true">
-        <circle class="nav-orb__globe" cx="17" cy="17" r="15.25" />
+        <circle class="nav-orb__glow" cx="17" cy="17" r="15.4" />
+        <circle class="nav-orb__globe" cx="17" cy="17" r="15.4" />
+        <circle class="nav-orb__bezel" cx="17" cy="17" r="12.6" />
+        <circle class="nav-orb__ring" cx="17" cy="17" r="15.4" />
         <g class="nav-orb__ticks">
-          <line x1="17" y1="3.5" x2="17" y2="6.5" />
-          <line x1="17" y1="27.5" x2="17" y2="30.5" />
-          <line x1="3.5" y1="17" x2="6.5" y2="17" />
-          <line x1="27.5" y1="17" x2="30.5" y2="17" />
+          <line x1="17" y1="5.6" x2="17" y2="8.4" />
+          <line x1="17" y1="25.6" x2="17" y2="28.4" />
+          <line x1="5.6" y1="17" x2="8.4" y2="17" />
+          <line x1="25.6" y1="17" x2="28.4" y2="17" />
         </g>
         <g class="nav-orb__needle">
-          <polygon class="nav-orb__north" points="17,7 19.2,17 14.8,17" />
-          <polygon class="nav-orb__south" points="17,27 19.2,17 14.8,17" />
-          <circle class="nav-orb__hub" cx="17" cy="17" r="1.8" />
+          <polygon class="nav-orb__north" points="17,6.6 18.9,17 15.1,17" />
+          <polygon class="nav-orb__south" points="17,27.4 18.9,17 15.1,17" />
+          <circle class="nav-orb__hub" cx="17" cy="17" r="2.1" />
         </g>
-        <circle class="nav-orb__on" cx="17" cy="17" r="16.25" />
         <line class="nav-orb__off" x1="8" y1="26" x2="26" y2="8" />
       </svg>
       <Style css={styles} />
@@ -169,21 +173,26 @@ const styles = `
     -webkit-tap-highlight-color: transparent;
   }
   .nav-orb svg { width: calc(${orb.size}px * var(--nav-k)); height: calc(${orb.size}px * var(--nav-k)); overflow: hidden; }
-  .nav-orb__globe { fill: hsl(${ORB_GLOBE} / ${NAV_OPACITY.knob}); stroke: var(--nav-line); stroke-width: 1.5; }
-  .nav-orb__ticks { stroke: var(--nav-knob); stroke-width: 1.25; stroke-linecap: round; }
+  .nav-orb__glow { display: none; fill: none; stroke: hsl(${ORB_TEAL} / ${NAV_OPACITY.fill}); stroke-width: 2.4; }
+  .nav-orb__globe { fill: hsl(${ORB_GLOBE} / ${NAV_OPACITY.knob}); }
+  .nav-orb__bezel { fill: none; stroke: hsl(${ORB_GLOBE} / ${NAV_OPACITY.active}); stroke-width: 1.4; }
+  .nav-orb__ring { fill: none; stroke: hsl(${ORB_TEAL} / ${NAV_OPACITY.line}); stroke-width: 1; }
+  .nav-orb__ticks { stroke: hsl(${ORB_PALE} / ${NAV_OPACITY.knob}); stroke-width: 1.2; stroke-linecap: round; }
   .nav-orb__needle {
     transform-box: view-box;
     transform-origin: 17px 17px;
-    transform: translateY(calc(var(--orb-lift, 0) * 1px)) rotate(calc(var(--orb-turn, 0) * 1deg));
+    transform: translateY(calc(var(--orb-lift, 0) * 1px)) rotate(calc(${ORB_NEEDLE.restDeg}deg + var(--orb-turn, 0) * 1deg));
   }
   .nav-orb__north { fill: hsl(${ORB_RED} / ${NAV_OPACITY.knob}); }
-  .nav-orb__south { fill: hsl(${NAV_BLUE} / ${NAV_OPACITY.knob}); }
-  .nav-orb__hub { fill: var(--nav-knob); }
-  .nav-orb__on { display: none; fill: none; stroke: hsl(${ORB_TEAL} / ${NAV_OPACITY.active}); stroke-width: 1.5; }
-  .nav-orb__off { display: none; stroke: var(--nav-knob); stroke-width: 1.5; stroke-linecap: round; }
-  .nav-orb[aria-checked='true'] .nav-orb__on { display: inline; }
+  .nav-orb__south { fill: hsl(${ORB_PALE} / ${NAV_OPACITY.knob}); }
+  .nav-orb__hub { fill: hsl(${ORB_TEAL} / ${NAV_OPACITY.knob}); stroke: hsl(${ORB_PALE} / ${NAV_OPACITY.knob}); stroke-width: 0.7; }
+  .nav-orb__off { display: none; stroke: hsl(${ORB_PALE} / ${NAV_OPACITY.knob}); stroke-width: 1.5; stroke-linecap: round; }
+  /* ON: the ring brighter and thicker, with its soft glow (a non-colour cue too: the ring's weight), the needle fuller */
+  .nav-orb[aria-checked='true'] .nav-orb__glow { display: inline; }
+  .nav-orb[aria-checked='true'] .nav-orb__ring { stroke: hsl(${ORB_TEAL} / ${NAV_OPACITY.active}); stroke-width: 1.3; }
   .nav-orb[aria-checked='true'] .nav-orb__north { fill: hsl(${ORB_RED} / ${NAV_OPACITY.active}); }
-  .nav-orb[aria-checked='true'] .nav-orb__south { fill: hsl(${NAV_BLUE} / ${NAV_OPACITY.active}); }
+  .nav-orb[aria-checked='true'] .nav-orb__south { fill: hsl(${ORB_PALE} / ${NAV_OPACITY.active}); }
+  .nav-orb[aria-checked='true'] .nav-orb__hub { fill: hsl(${ORB_TEAL} / ${NAV_OPACITY.active}); }
   .nav-orb[aria-disabled='true'] .nav-orb__off { display: inline; }
   .nav-orb[aria-disabled='true'] .nav-orb__needle { opacity: 0.5; }
   .nav-orb:focus-visible { outline: 2px solid hsl(${ORB_TEAL}); outline-offset: -4px; }

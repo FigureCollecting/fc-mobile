@@ -34,14 +34,19 @@ export const DEPTH_RAIL_PX = { width: 28, height: 92, hitWidth: 56, hitHeight: 1
  */
 export const ORB_PX = { size: 34, hit: 48, gap: 14 } as const;
 /**
- * NAV-LOGPOSE: the orb's colours (HSL triples): its dark translucent globe, the thin ring that says ON (teal), and the
- * needle's muted dark red half (never vivid, never gold); the other half is NAV_BLUE.
+ * NAV-LOGPOSE (Ross's reference, ross-1122/logpose-orb.png): the orb's colours (HSL triples): its dark translucent dial,
+ * the thin teal outer ring (quiet OFF, brighter with a soft glow ON) and the teal pivot, and the needle's muted red half
+ * (never vivid, never gold) and its pale grey half.
  */
-export const ORB_GLOBE = '212 32% 16%';
+export const ORB_GLOBE = '200 30% 12%';
 export const ORB_TEAL = '172 55% 50%';
-export const ORB_RED = '355 40% 35%';
-/** NAV-LOGPOSE: how the needle shows the offset: degrees of needle a degree of yaw, and px of lift a degree of pitch. */
-export const ORB_NEEDLE = { turnPerDeg: 6, liftPxPerDeg: 0.375 } as const;
+export const ORB_RED = '355 45% 42%';
+export const ORB_PALE = '205 15% 82%';
+/**
+ * NAV-LOGPOSE: the needle: where it rests (degrees clockwise from straight up: the reference's diagonal), degrees of
+ * needle a degree of yaw, and px of lift a degree of pitch.
+ */
+export const ORB_NEEDLE = { restDeg: 45, turnPerDeg: 6, liftPxPerDeg: 0.375 } as const;
 
 /** Each control's drawn edge, in from the safe area's side (px). */
 export const NAV_EDGE_PX = 20;

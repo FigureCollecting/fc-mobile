@@ -12,6 +12,9 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
 import { LEGACY_SCREENS_ENABLED } from '../config/features';
 import { APP_VERSION } from '../config/version';
 import { Style } from '../styles/Style';
+import { configuredAccountPages } from '../auth/config';
+
+const ACCOUNT_PAGES = configuredAccountPages();
 
 /** Chevron icon for list items */
 function ChevronRight() {
@@ -257,7 +260,8 @@ export function Profile() {
         <div class="profile__section">
           <h3 class="profile__section-title">Account</h3>
 
-          <div class="profile__item">
+          {/* The sign-in server's own pages, in this tab as sign-out leaves; each asks for a second factor first. */}
+          <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.passwordChange}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -266,9 +270,20 @@ export function Profile() {
               <span>Change Password</span>
             </div>
             <ChevronRight />
-          </div>
+          </a>
 
-          <div class="profile__item">
+          <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.emailChange}>
+            <div class="profile__item-left">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2" />
+                <path d="M22 6l-10 7L2 6" />
+              </svg>
+              <span>Change Email</span>
+            </div>
+            <ChevronRight />
+          </a>
+
+          <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.mfaDevices}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="2" y="6" width="20" height="12" rx="2" />
@@ -279,7 +294,7 @@ export function Profile() {
               <span>Two-Factor Authentication</span>
             </div>
             <ChevronRight />
-          </div>
+          </a>
 
           <button
             class="profile__item profile__item--action profile__item--danger"
@@ -465,6 +480,10 @@ const styles = `
     min-height: var(--touch-min);
     text-align: left;
     width: 100%;
+  }
+
+  a.profile__item {
+    text-decoration: none;
   }
 
   .profile__item--action {

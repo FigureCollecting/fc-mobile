@@ -62,6 +62,25 @@ describe('Profile page', () => {
     expect(currentPath()).toBe('/review');
   });
 
+  it('opens the sign-in server for a password, email or second-factor change, in this tab', async () => {
+    await localRig();
+    renderWithProviders(<Profile />, { initialPath: '/profile' });
+    const account = screen.getByRole('heading', { level: 3, name: 'Account' }).parentElement as HTMLElement;
+    const rows = within(account).getAllByRole('link');
+    expect(rows.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['Change Password', 'https://auth.mindsignals1.com/if/flow/fc-password-change/'],
+      ['Change Email', 'https://auth.mindsignals1.com/if/flow/fc-email-change/'],
+      ['Two-Factor Authentication', 'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D'],
+    ]);
+    for (const a of rows) expect(a).not.toHaveAttribute('target');
+  });
+
+  it('offers no account change to a guest', async () => {
+    await localRig({ status: 'signed-out' });
+    renderWithProviders(<Profile />, { initialPath: '/profile' });
+    expect(screen.queryByRole('link', { name: /change password|change email|two-factor/i })).not.toBeInTheDocument();
+  });
+
   it('signs out through the session', async () => {
     const r = await localRig();
     const user = userEvent.setup();

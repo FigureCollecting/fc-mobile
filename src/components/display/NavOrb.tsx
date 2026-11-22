@@ -95,6 +95,8 @@ export function NavOrb({ tilt }: { tilt: TiltDrive }) {
       title={denied ? REASON : 'Tap: tilt to look on or off. Hold (or R): recenter.'}
       onClick={toggle}
       onPointerDown={(e) => {
+        // a new press: a hold that recentered and was lifted with no click (a touch long-press sends none) swallows nothing
+        swallow.current = false;
         if (hold.current) return;
         hold.current = {
           id: e.pointerId,
@@ -144,9 +146,12 @@ export function NavOrb({ tilt }: { tilt: TiltDrive }) {
 
 const rail = DEPTH_RAIL_PX;
 const orb = ORB_PX;
-/** The orb's round target, centred over the rail's drawn centre, its drawn bottom `gap` above the rail's drawn top. */
+/**
+ * The orb's round target, centred over the rail's drawn centre, its bottom `clear` above the top of the rail's target
+ * (the drawn rail and its pad). The clearance is not scaled with --nav-k: the touch adjustment's reach is fixed.
+ */
 const LEFT = (rail.width - orb.hit) / 2;
-const BOTTOM = rail.height + orb.gap - (orb.hit - orb.size) / 2;
+const RAIL_TARGET_TOP = (rail.hitHeight + rail.height) / 2;
 
 const styles = `
   .nav-orb {
@@ -154,7 +159,7 @@ const styles = `
     z-index: 99;
     will-change: transform;
     left: calc(max(var(--safe-area-left, 0px), var(--nav-left, 0px)) + ${NAV_EDGE_PX}px + ${LEFT}px * var(--nav-k));
-    bottom: calc(var(--nav-base) + ${BOTTOM}px * var(--nav-k));
+    bottom: calc(var(--nav-base) + ${RAIL_TARGET_TOP}px * var(--nav-k) + ${orb.clear}px);
     width: calc(${orb.hit}px * var(--nav-k));
     height: calc(${orb.hit}px * var(--nav-k));
     margin: 0;

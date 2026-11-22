@@ -92,14 +92,12 @@ test.describe('on the Fold8 cover with a (faked) motion sensor', () => {
     // the probe stopped its sampling: OFF, nothing listens
     expect(await listeners(page)).toBe(0);
 
-    // placed: centred over the rail, its drawn bottom ORB_PX.gap above the rail's drawn top
+    // placed: centred over the rail, its target ORB_PX.clear above the rail's target (out of a thumb's touch adjustment)
     const o = (await orb(page).boundingBox())!;
     const r = (await depth(page).boundingBox())!;
     expect(o.width).toBeCloseTo(ORB_PX.hit, 1);
     expect(o.x + o.width / 2).toBeCloseTo(r.x + r.width / 2, 1);
-    const orbDrawnBottom = o.y + o.height - (ORB_PX.hit - ORB_PX.size) / 2;
-    const railDrawnTop = r.y + (DEPTH_RAIL_PX.hitHeight - DEPTH_RAIL_PX.height) / 2;
-    expect(railDrawnTop - orbDrawnBottom).toBeCloseTo(ORB_PX.gap, 1);
+    expect(r.y - (o.y + o.height)).toBeCloseTo(ORB_PX.clear, 1);
 
     // OFF: tilting moves nothing
     const c0 = await cameraOf(page);
@@ -197,6 +195,57 @@ test.describe('on the Fold8 cover with a (faked) motion sensor', () => {
     // the phone still at 6 deg: the new neutral, the view does not turn again
     await page.waitForTimeout(400);
     expect((await cameraOf(page)).yaw).toBeCloseTo(tilted.yaw, 6);
+  });
+
+  test('NAV-LOGPOSE: a Z pull begun anywhere in the rail\'s top, even with a broad thumb, goes to the rail, never to the orb', async ({ page }) => {
+    test.setTimeout(90_000);
+    await fakeDevice(page);
+    await page.addInitScript(() => {
+      const w = window as unknown as { __ev: string[] };
+      w.__ev = [];
+      for (const t of ['pointerdown', 'pointercancel'])
+        document.addEventListener(t, (e) => w.__ev.push(`${t}:${(e.target as Element)?.closest?.('[data-nav]')?.getAttribute('data-nav') ?? 'scene'}`), true);
+    });
+    await openCase(page, COVER);
+    await expect(orb(page)).toHaveCount(1);
+    const r = (await depth(page).boundingBox())!;
+    const x = r.x + r.width / 2;
+    const drawnTop = r.y + (DEPTH_RAIL_PX.hitHeight - DEPTH_RAIL_PX.height) / 2;
+    const cdp = await page.context().newCDPSession(page);
+    // Chromium's touch adjustment area is the contact clamped to 20..32 DIP: radius 1 is the least, 20 the most it takes
+    let pulls = 0;
+    for (const radius of [1, 20]) {
+      // from the rail target's top row down to 2 px inside what is drawn
+      for (const above of [19, 14, 10, 6, 2, 0, -2]) {
+        const y = drawnTop - above;
+        // down, then up: the eye goes back and forth, never into the depth's end
+        const dy = pulls++ % 2 === 0 ? 40 : -40;
+        const at = (yy: number) => [{ x, y: yy, radiusX: radius, radiusY: radius }];
+        await page.evaluate(() => ((window as unknown as { __ev: string[] }).__ev.length = 0));
+        const z0 = (await cameraOf(page)).z;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(y) });
+        for (let i = 1; i <= 10; i++) {
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(y + (dy * i) / 10) });
+          await page.waitForTimeout(16);
+        }
+        await page.waitForTimeout(500);
+        const dz = (await cameraOf(page)).z - z0;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await settle(page, 300);
+        const ev = await page.evaluate(() => (window as unknown as { __ev: string[] }).__ev);
+        const what = `radius ${radius}, ${above} px above the drawn top`;
+        expect(ev, what).toEqual(['pointerdown:depth']);
+        // a pull down backs the eye away, a pull up brings it closer, as with no orb (a pull the orb took moved it 0)
+        expect(Math.sign(dz) * Math.sign(dy), what).toBe(1);
+        expect(Math.abs(dz), what).toBeGreaterThan(300);
+      }
+    }
+    await expect(orb(page)).toHaveAttribute('aria-checked', 'false');
+    // the orb itself still takes a broad thumb's tap
+    const c = await centreOf(orb(page));
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: c.x, y: c.y, radiusX: 20, radiusY: 20 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(orb(page)).toHaveAttribute('aria-checked', 'true');
   });
 });
 

@@ -29,10 +29,12 @@ export const EYE_SLOT_PX = 32;
 export const DEPTH_RAIL_PX = { width: 28, height: 92, hitWidth: 56, hitHeight: 132, knob: 24, travel: 34 } as const;
 
 /**
- * NAV-LOGPOSE: the Log-Pose orb (px): what is drawn, the round target that takes the thumb, and the gap between the
- * drawn orb and the drawn Z rail below it (handoff: smaller than the sextant concepts, visibly detached).
+ * NAV-LOGPOSE: the Log-Pose orb (px): what is drawn, the round target that takes the thumb, and the clear space between
+ * that target and the Z rail's target below it (handoff: smaller than the sextant concepts, visibly detached). `clear`
+ * is Chromium's touch adjustment reach: a touch is retargeted to a button within half its 32 DIP adjustment area, so
+ * with less a push begun in the rail's top would go to the orb.
  */
-export const ORB_PX = { size: 34, hit: 48, gap: 14 } as const;
+export const ORB_PX = { size: 34, hit: 48, clear: 16 } as const;
 /**
  * NAV-LOGPOSE (Ross's reference, ross-1122/logpose-orb.png): the orb's colours (HSL triples): its dark translucent dial,
  * the thin teal outer ring (quiet OFF, brighter with a soft glow ON) and the teal pivot, and the needle's muted red half

@@ -178,9 +178,12 @@ describe('(g) any other start folds the offset first: one rubber band, never two
     // its first frame: where the view was drawn (taken over, not added to)
     expect(Math.abs(m.shown()!.yaw - before.yaw)).toBeLessThan(0.2 * DEG);
     m.run(200, 16, () => expect(m.shown()!.yaw).toBeLessThan(hard));
-    // the sensor has no say while the drive runs: refused, and its offset is not composed on top
+    // the sensor has no say while the drive runs: refused, and its offset is not composed on top. The first sample after
+    // the fold is refused by the fold's one-shot new neutral; the ones after it must be refused by the drive itself.
     const at = m.shown()!;
-    expect(m.fc().tiltSet(12 * DEG, 8 * DEG)).toBe(false);
+    m.fc().tiltSet(12 * DEG, 8 * DEG);
+    expect(m.fc().tiltSet(12 * DEG, 8 * DEG), '2nd').toBe(false);
+    expect(m.fc().tiltSet(10 * DEG, 6 * DEG), '3rd').toBe(false);
     same(m.shown(), at);
     act(() => void m.fc().lookStop());
     m.run(Math.ceil(SPRING_MS / 16) + 2);
@@ -203,8 +206,32 @@ describe('(g) any other start folds the offset first: one rubber band, never two
       m.run(3);
       same(m.shown(), before);
       same(m.drawn(), before);
+      // refused while it has the view: the 1st by the fold's one-shot new neutral, the 2nd and 3rd by the drive or finger
       expect(m.fc().tiltSet(4 * DEG, -2 * DEG), start).toBe(false);
+      expect(m.fc().tiltSet(6 * DEG, -3 * DEG), `${start}: 2nd`).toBe(false);
+      expect(m.fc().tiltSet(8 * DEG, 1 * DEG), `${start}: 3rd`).toBe(false);
+      same(m.shown(), before);
     }
+  });
+
+  it('a Look let go easing back to soft: every sample refused while it eases, then taken once it rests', () => {
+    const m = mount();
+    m.fc().tiltSet(0, 0);
+    expect(m.fc().lookStart()).toBe(true);
+    m.fc().lookAim(JOG_FULL_PX, 0);
+    m.run(120);
+    act(() => void m.fc().lookStop());
+    m.run(1);
+    // past soft when let go: the spring has the view
+    expect(m.fc().live()).toBe(true);
+    m.fc().tiltSet(1 * DEG, 0);
+    const at = m.shown()!;
+    expect(m.fc().tiltSet(4 * DEG, 0), 'during the ease: 2nd').toBe(false);
+    expect(m.fc().tiltSet(5 * DEG, 1 * DEG), 'during the ease: 3rd').toBe(false);
+    same(m.shown(), at);
+    m.run(Math.ceil(SPRING_MS / 16) + 2);
+    expect(m.fc().live()).toBe(false);
+    expect(m.fc().tiltSet(4 * DEG, 0), 'at rest').toBe(true);
   });
 
   it('a scene Look by the mouse over an offset turns from the view drawn, not from under it', () => {

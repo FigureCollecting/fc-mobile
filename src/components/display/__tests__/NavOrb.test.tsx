@@ -96,7 +96,7 @@ describe('the orb where a sensor is: OFF by default, a tap toggles, the state sa
     expect(drive.fold).toHaveBeenCalledTimes(1);
   });
 
-  it('sits above the Z rail, left-aligned on its centre, a 14 px gap between what is drawn; its target 48 px, drawn 34', async () => {
+  it('sits above the Z rail, centred on it; its target 48 px (drawn 34) begins 16 px above the rail\'s target, out of a thumb\'s touch adjustment', async () => {
     probeTilt.mockResolvedValue('sensor');
     render(<FloatingNav />);
     offer(jogOf(tiltDrive()));
@@ -108,10 +108,13 @@ describe('the orb where a sensor is: OFF by default, a tap toggles, the state sa
     expect(rule).toBeDefined();
     expect(rule).toContain(`calc(${ORB_PX.hit}px * var(--nav-k))`);
     expect(rule).toContain(`${NAV_EDGE_PX}px + ${(DEPTH_RAIL_PX.width - ORB_PX.hit) / 2}px * var(--nav-k)`);
-    expect(rule).toContain(`calc(var(--nav-base) + ${DEPTH_RAIL_PX.height + ORB_PX.gap - (ORB_PX.hit - ORB_PX.size) / 2}px * var(--nav-k))`);
+    // the rail's target reaches (hitHeight + height) / 2 = 112 px above --nav-base; the orb's begins `clear` above that,
+    // unscaled: Chromium retargets a touch to a button up to 16 px (half its 32 DIP adjustment area) away
+    expect((DEPTH_RAIL_PX.hitHeight + DEPTH_RAIL_PX.height) / 2).toBe(112);
+    expect(rule).toContain('bottom: calc(var(--nav-base) + 112px * var(--nav-k) + 16px);');
     expect(rule).toContain('pointer-events: auto');
     expect(rule).toContain('border-radius: 50%');
-    expect(ORB_PX).toEqual({ size: 34, hit: 48, gap: 14 });
+    expect(ORB_PX).toEqual({ size: 34, hit: 48, clear: 16 });
     // first in the left cluster's reading order, above the rail
     expect(Array.from(document.querySelectorAll<HTMLElement>('[data-nav]')).map((n) => n.dataset.nav)).toEqual(['orb', 'depth', 'hat']);
   });
@@ -261,6 +264,24 @@ describe('(d) Recenter: a 500 ms hold, R, or the context menu; it folds and stay
       fireEvent.pointerDown(orb()!, { pointerId: 1 });
       act(() => void vi.advanceTimersByTime(100));
       fireEvent.pointerUp(orb()!, { pointerId: 1 });
+      fireEvent.click(orb()!);
+      expect(orb()!.getAttribute('aria-checked')).toBe('false');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('held 500 ms and lifted with no click (a touch long-press sends none): the next tap still turns it OFF', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const drive = await onOrb();
+      fireEvent.pointerDown(orb()!, { pointerId: 1 });
+      act(() => void vi.advanceTimersByTime(600));
+      expect(drive.fold).toHaveBeenCalledTimes(1);
+      fireEvent.pointerUp(orb()!, { pointerId: 1 });
+      // no click: Android Chrome and iOS Safari end a long press without one
+      fireEvent.pointerDown(orb()!, { pointerId: 2 });
+      fireEvent.pointerUp(orb()!, { pointerId: 2 });
       fireEvent.click(orb()!);
       expect(orb()!.getAttribute('aria-checked')).toBe('false');
     } finally {

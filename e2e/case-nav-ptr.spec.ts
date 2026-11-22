@@ -3,6 +3,7 @@ import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchPinch, touchSwipe } from './touch';
 import { watchPull } from './pullWatch';
+import { hat } from './navControls';
 
 /**
  * NAV-PTR-1 (Ross 10-25, his Fold8): "when dragging to pan/move to a higher vantage point, it would activate refresh".
@@ -117,7 +118,10 @@ test('NAV-PTR-1 fold8-cover: a walk and a 200 px raise show no Reset view; a pin
   expect(b.width, 'small').toBeLessThanOrEqual(44);
   expect(b.height, 'small').toBeLessThanOrEqual(44);
   expect(b.y + b.height / 2, "in the scene's lower quarter").toBeGreaterThan(s.y + s.height * 0.75);
-  expect(Math.abs(s.x + s.width - (b.x + b.width) - 24), "24 px in from the scene's right").toBeLessThanOrEqual(2);
+  // NAV-FLOAT: the hat floats at the scene's lower right, so the button stands 12 px inboard of it
+  const h = (await hat(page).boundingBox())!;
+  expect(Math.abs(h.x - (b.x + b.width) - 12), '12 px inboard of the hat').toBeLessThanOrEqual(2);
+  expect(h.x + h.width, 'the hat inside the scene').toBeLessThanOrEqual(s.x + s.width);
   await reset.tap();
   await expect(reset).toHaveCount(0);
   await expect.poll(async () => (JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-zoom'))!) as { k: number }).k).toBe(1);

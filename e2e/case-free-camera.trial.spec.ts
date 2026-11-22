@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchPinch } from './touch';
+import { hat } from './navControls';
 
 /**
  * NAV-1A: a recorded run of the Free camera (trial) for Ross, at the Fold8's four panels: a video of each and a PNG
@@ -72,8 +73,8 @@ for (const panel of FOLD8) {
     await page.locator('.cabinet-scene__reset').tap();
     await settle(page);
     await shot('7-pinched-then-reset');
-    // NAV-JOG: the thumb on the bottom-centre button, dragged right and held: the eye walks right until the lift
-    const jog = (await page.locator('.tab-bar__add[data-jog]').boundingBox())!;
+    // NAV-JOG (NAV-FLOAT: the floating hat): the thumb on it, dragged right and held: the eye walks right until the lift
+    const jog = (await hat(page).boundingBox())!;
     const thumb = await touchDown(page, jog.x + jog.width / 2, jog.y + jog.height / 2);
     await thumb.to(jog.x + jog.width / 2 + 48, jog.y + jog.height / 2, 6, 16);
     await page.waitForTimeout(700);

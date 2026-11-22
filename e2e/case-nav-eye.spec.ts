@@ -336,14 +336,25 @@ test('NAV-EYE: the hat held left in Look for 3 s: the yaw stays under the hard l
     await hold(page, 500);
     seen.push(await yawDeg(page));
   }
-  await thumb.end();
   const held = seen[seen.length - 1];
-  console.log(`NAV-EYE limit ${JSON.stringify({ cone, seen })}`);
+  // chal1 SHOULD-1: pushed back the other way while still held, the view turns back at once (anti-windup: nothing
+  // wound up past the cap has to unwind first)
+  await thumb.to(at.x + JOG_FULL_PX * 0.5, at.y, 2, 16);
+  await hold(page, 200);
+  const back = await yawDeg(page);
+  await thumb.end();
+  // the rubber band (casePose): past soft by `over`, shown at soft + (hard - soft)(1 - e^(-over / (hard - soft))), and
+  // over is capped at hard - soft: held hard left it rests at soft + (hard - soft)(1 - 1/e), short of hard
+  const rest = cone.soft + (cone.hard - cone.soft) * (1 - Math.exp(-1));
+  console.log(`NAV-EYE limit ${JSON.stringify({ cone, seen, rest: -rest, back })}`);
   for (const y of seen) {
     expect(Number.isFinite(y)).toBe(true);
     expect(y, 'never past the hard limit').toBeGreaterThan(-cone.hard - 1e-6);
   }
   expect(held, 'held past the soft limit (the rubber band)').toBeLessThan(-cone.soft);
+  expect(held, 'held at the band\'s rest, short of hard').toBeCloseTo(-rest, 2);
+  for (const y of seen.slice(1)) expect(y, 'and steady there').toBeCloseTo(-rest, 2);
+  expect(back - held, 'pushed back: the view turns back at once').toBeGreaterThan(0.2);
   await page.waitForTimeout(250);
   await settle(page, 300);
   const eased = await yawDeg(page);

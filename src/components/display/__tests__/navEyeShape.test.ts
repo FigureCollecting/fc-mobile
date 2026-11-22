@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BUBBLE, EYE, EYE_GLYPH_BOX, FUSED_PATH, RING, RING_PATH, SEAM_PATH } from '../navEyeShape';
+import { BUBBLE, EYE, EYE_GLYPH_BOX, EYE_HIT, EYE_PAD, FUSED_PATH, RING, RING_PATH, SEAM_PATH, eyeTakes } from '../navEyeShape';
 import { EYE_HIT_PX, EYE_SLOT_DEG, HAT_RING_PX, NAV_MOUSE_SCALE } from '../navTuning';
 
 // NAV-EYE shape (Ross 11-22, "fused"): the eye sits wholly OUTSIDE the hat's ring, in a bubble at the ring's upper-left,
@@ -86,7 +86,7 @@ describe('NAV-EYE shape: the eye wholly outside the ring', () => {
     expect((EYE_GLYPH_BOX.w * HAT_RING_PX.compact) / 100).toBeGreaterThanOrEqual(12);
   });
 
-  it('the hit circle is the bubble: at least EYE_HIT_PX across on the compact touch ring', () => {
+  it('the bubble is at least EYE_HIT_PX across on the compact touch ring', () => {
     expect(EYE_HIT_PX).toBeGreaterThanOrEqual(48);
     expect((2 * EYE.r * HAT_RING_PX.compact) / 100).toBeGreaterThanOrEqual(EYE_HIT_PX);
   });
@@ -187,5 +187,108 @@ describe('NAV-EYE shape: one fused outline', () => {
       expect(dist(centreOf(a), RING)).toBeLessThanOrEqual(0.01);
     }
     expect(p.arcs.length).toBe(2);
+  });
+});
+
+// chal2 SHOULD-1 (orchestrator ruling 11-22): what the user sees is what they tap. The seam is the boundary: a press
+// inside the ring (the hat's side of the seam) is the hat's; only a press outside the ring is the eye's. The eye's hit
+// area keeps its size by reaching OUTWARD past the bubble, into the scene; what is drawn does not change.
+describe('NAV-EYE hit: the seam is the boundary; the eye takes only what lies outside the ring', () => {
+  const k = dist(EYE, C);
+  const u = { x: (EYE.x - C.x) / k, y: (EYE.y - C.y) / k };
+  const v = { x: -u.y, y: u.x };
+  /** `out` units from the hat's centre straight out through the eye, then `across` units sideways. */
+  const along = (out: number, across = 0): P => ({ x: C.x + u.x * out + v.x * across, y: C.y + u.y * out + v.y * across });
+  const takes = (p: P) => eyeTakes(p.x, p.y);
+  const RINGS: Record<string, number> = { compact: HAT_RING_PX.compact, wide: HAT_RING_PX.wide, desktop: HAT_RING_PX.compact * NAV_MOUSE_SCALE };
+  /** Every 0.25 units over the box round the hat and the eye's reach. */
+  const grid = (): P[] => {
+    const out: P[] = [];
+    for (let x = -40; x <= 100; x += 0.25) for (let y = -40; y <= 100; y += 0.25) out.push({ x, y });
+    return out;
+  };
+
+  for (const [name, ringPx] of Object.entries(RINGS)) {
+    it(`${name} ring (${ringPx} px): 1, 2, 4, 8 and 12 px inside the seam, straight under the eye, are the hat's; 1 and 2 px outside it, the eye's`, () => {
+      const unit = ringPx / 100;
+      for (const px of [1, 2, 4, 8, 12]) expect(takes(along(RING.r - px / unit)), `${px} px inside the seam`).toBe(false);
+      for (const px of [1, 2]) expect(takes(along(RING.r + px / unit)), `${px} px outside the seam`).toBe(true);
+    });
+  }
+
+  it('no point inside the ring as drawn (the seam\'s circle) is the eye\'s; every point of the bubble outside it is (the eye loses nothing it shows)', () => {
+    const inHat = grid().filter((p) => dist(p, RING) <= RING.r);
+    const bubbleOut = grid().filter((p) => dist(p, RING) > RING.r && dist(p, EYE) <= EYE.r);
+    expect(inHat.length).toBeGreaterThan(100_000);
+    expect(bubbleOut.length).toBeGreaterThan(5000);
+    expect(inHat.filter(takes)).toEqual([]);
+    expect(bubbleOut.filter((p) => !takes(p))).toEqual([]);
+  });
+
+  it('padded outward only, into the scene: beyond the bubble it reaches straight out, never toward the hat or sideways', () => {
+    // the pad is as deep as the ring cuts into the bubble, so from the ring straight out the hit area is the bubble's width
+    expect(EYE_PAD).toBeCloseTo(EYE.r - (k - RING.r), 9);
+    const pad = grid().filter((p) => takes(p) && dist(p, EYE) > EYE.r);
+    expect(pad.length).toBeGreaterThan(1000);
+    for (const p of pad) {
+      const o = (p.x - EYE.x) * u.x + (p.y - EYE.y) * u.y;
+      const s = (p.x - EYE.x) * v.x + (p.y - EYE.y) * v.y;
+      expect(o, 'further out than the bubble\'s centre').toBeGreaterThan(0);
+      expect(Math.abs(s), 'no wider than the bubble').toBeLessThanOrEqual(EYE.r);
+      expect(o, 'no further out than the bubble moved out by the pad').toBeLessThanOrEqual(EYE_PAD + EYE.r);
+    }
+  });
+
+  it('still EYE_HIT_PX each way on the compact touch ring: from the ring straight out, and across the eye', () => {
+    const unit = HAT_RING_PX.compact / 100;
+    const outs = Array.from({ length: 15_001 }, (_, i) => i * 0.01).filter((o) => takes(along(o)));
+    const acrosses = Array.from({ length: 10_001 }, (_, i) => -50 + i * 0.01).filter((s) => takes(along(k, s)));
+    const deep = outs[outs.length - 1] - outs[0];
+    const wide = acrosses[acrosses.length - 1] - acrosses[0];
+    // it starts at the seam and runs out to the padded bubble's far side
+    expect(outs[0]).toBeCloseTo(RING.r, 1);
+    expect(outs[outs.length - 1]).toBeCloseTo(k + EYE_PAD + EYE.r, 1);
+    expect(deep * unit, 'from the ring straight out').toBeGreaterThanOrEqual(EYE_HIT_PX);
+    expect(wide * unit, 'across').toBeGreaterThanOrEqual(EYE_HIT_PX);
+  });
+
+  it('EYE_HIT is that area as a polygon in its own box: inside it exactly where eyeTakes, but for a hair at its edge', () => {
+    const { box, points, clip } = EYE_HIT;
+    expect(points.length).toBeGreaterThan(60);
+    for (const p of points) {
+      expect(p.x).toBeGreaterThanOrEqual(box.x - 1e-9);
+      expect(p.y).toBeGreaterThanOrEqual(box.y - 1e-9);
+      expect(p.x).toBeLessThanOrEqual(box.x + box.w + 1e-9);
+      expect(p.y).toBeLessThanOrEqual(box.y + box.h + 1e-9);
+    }
+    // the box is the polygon's own: it touches every side
+    expect(Math.min(...points.map((p) => p.x))).toBeCloseTo(box.x, 9);
+    expect(Math.min(...points.map((p) => p.y))).toBeCloseTo(box.y, 9);
+    expect(Math.max(...points.map((p) => p.x))).toBeCloseTo(box.x + box.w, 9);
+    expect(Math.max(...points.map((p) => p.y))).toBeCloseTo(box.y + box.h, 9);
+    const inside = (q: P) => {
+      let c = false;
+      for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+        const a = points[i];
+        const b = points[j];
+        if (a.y > q.y !== b.y > q.y && q.x < ((b.x - a.x) * (q.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+      }
+      return c;
+    };
+    const edgeGap = (q: P) =>
+      Math.min(
+        ...points.map((a, i) => {
+          const b = points[(i + 1) % points.length];
+          const t = Math.max(0, Math.min(1, ((q.x - a.x) * (b.x - a.x) + (q.y - a.y) * (b.y - a.y)) / ((b.x - a.x) ** 2 + (b.y - a.y) ** 2)));
+          return dist(q, { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) });
+        }),
+      );
+    // a hair: well under a hundredth of a px at the widest ring
+    const hair = 0.01 / (HAT_RING_PX.wide / 100);
+    const differ = grid().filter((q) => inside(q) !== takes(q) && edgeGap(q) > hair);
+    expect(differ).toEqual([]);
+    // the clip-path is the polygon in percentages of its box (3 decimals)
+    const pct = (n: number) => `${n.toFixed(3)}%`;
+    expect(clip).toBe(`polygon(${points.map((p) => `${pct((100 * (p.x - box.x)) / box.w)} ${pct((100 * (p.y - box.y)) / box.h)}`).join(', ')})`);
   });
 });

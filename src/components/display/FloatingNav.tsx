@@ -16,7 +16,7 @@ import { Style } from '../../styles/Style';
 import { CASE_TABS_HEIGHT_PX } from './CaseTabs';
 import { NavDepth } from './NavDepth';
 import { NavHat } from './NavHat';
-import { EYE, EYE_GLYPH_BOX } from './navEyeShape';
+import { EYE, EYE_GLYPH_BOX, EYE_HIT } from './navEyeShape';
 import { DEPTH_RAIL_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from './navTuning';
 
 interface FloatingNavProps {
@@ -80,6 +80,8 @@ const RAIL_PAD_X = (rail.hitWidth - rail.width) / 2;
 const RAIL_PAD_Y = (rail.hitHeight - rail.height) / 2;
 /** A length in the hat's box (navEyeShape: 100 units across) as a share of it. */
 const pct = (units: number) => `${units.toFixed(3)}%`;
+/** A length in the hat's units as a share of the eye's box (its bubble, 2 * EYE.r across). */
+const eyePct = (units: number) => pct((100 * units) / (2 * EYE.r));
 
 const styles = `
   :root {
@@ -155,8 +157,8 @@ const styles = `
   }
   /* NAV-EYE: Look's thin teal outline on the whole fused outline, the ring and the eye's bubble, and the seam */
   .nav-hat[data-mode='look'] .nav-hat__outline, .nav-hat[data-mode='look'] .nav-hat__seam { stroke: var(--nav-teal); }
-  /* the eye: its hit circle is its bubble (navEyeShape's EYE), outside the ring at EYE_SLOT_DEG, over the ring where the
-     bubble reaches into it; a share of the hat's box, as the outline is */
+  /* the eye: its box is its bubble (navEyeShape's EYE), outside the ring at EYE_SLOT_DEG; a share of the hat's box, as
+     the outline is. It takes no touch itself: its ::before does */
   .nav-eye {
     position: absolute;
     z-index: 1;
@@ -172,10 +174,24 @@ const styles = `
     color: var(--nav-knob);
     display: grid;
     place-items: center;
-    pointer-events: auto;
+    pointer-events: none;
     touch-action: none;
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
+  }
+  /* chal2 SHOULD-1 (ruling 11-22): the eye's hit area (navEyeShape's EYE_HIT), drawn nowhere: the bubble outside the ring
+     (inside it, the seam's other side, is the hat's), padded outward into the scene; a share of the eye's box */
+  .nav-eye::before {
+    content: '';
+    position: absolute;
+    left: ${eyePct(EYE_HIT.box.x - (EYE.x - EYE.r))};
+    top: ${eyePct(EYE_HIT.box.y - (EYE.y - EYE.r))};
+    width: ${eyePct(EYE_HIT.box.w)};
+    height: ${eyePct(EYE_HIT.box.h)};
+    clip-path: ${EYE_HIT.clip};
+    pointer-events: auto;
+    touch-action: none;
+    cursor: pointer;
   }
   /* the glyph, centred in the bubble, wholly outside the ring */
   .nav-eye__glyph { position: relative; width: ${pct((100 * EYE_GLYPH_BOX.w) / (2 * EYE.r))}; height: ${pct((100 * EYE_GLYPH_BOX.h) / (2 * EYE.r))}; pointer-events: none; }

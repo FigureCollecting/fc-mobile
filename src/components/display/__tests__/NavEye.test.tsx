@@ -36,7 +36,7 @@ const wait = (ms: number) => vi.advanceTimersByTime(ms);
 const latched = () => useNavMode.getState().latched;
 
 // jsdom lays nothing out: the hat's box is placed here as the page would place it (a 104 px ring, its centre at
-// (152, 452)), and the eye's hit circle (its bubble, at least EYE_HIT_PX across) outside the ring at 135 degrees
+// (152, 452)), and the eye's bubble (at least EYE_HIT_PX across) outside the ring at 135 degrees
 const HAT = { x: 152, y: 452, r: 52 };
 /** The hat's box is 100 units across (navEyeShape): px per unit here. */
 const UNIT = (HAT.r * 2) / 100;
@@ -238,7 +238,7 @@ describe('NAVLOOK 2a: the eye pressed and slid onto the hat is a Look while held
     render(<NavHat jog={t} />);
     place();
     eyeDown(EYE);
-    // still inside the eye's hit circle: nothing yet
+    // still inside the eye's bubble: nothing yet
     eyeMove({ x: EYE.x + 10, y: EYE.y + 10 });
     expect(hat().dataset.mode).toBe('move');
     // onto the hat, clear of the eye: the temporary Look begins, anchored here

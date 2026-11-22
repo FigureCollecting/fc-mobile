@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { useRef } from 'preact/hooks';
 import { FloatingNav } from '../FloatingNav';
-import { EYE, EYE_GLYPH_BOX } from '../navEyeShape';
+import { EYE, EYE_GLYPH_BOX, EYE_HIT } from '../navEyeShape';
 import { DEPTH_RAIL_PX, EYE_HIT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from '../navTuning';
 import { DEPTH_FULL_PX } from '../caseDepth';
 import { offerJog, useJogStore, type DepthDrive, type JogTarget } from '../../../stores/jog';
@@ -103,12 +103,27 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     for (const part of ['.nav-hat__knob', '.nav-hat__arrow', '.nav-hat__glyph', '.nav-eye__glyph', '.nav-depth__knob', '.nav-depth__end']) {
       expect(rule(part), part).toMatch(/pointer-events:\s*none;/);
     }
-    // NAV-EYE: the eye's own hit circle, round, above the ring's where they overlap
+    // NAV-EYE: the eye's box is its bubble (round, for the focus ring), above the ring; it takes no touch itself
     expect(rule('.nav-eye')).toMatch(/position:\s*absolute;\s*z-index:\s*1;/);
-    expect(rule('.nav-eye')).toMatch(/pointer-events:\s*auto;/);
+    expect(rule('.nav-eye')).toMatch(/pointer-events:\s*none;/);
     expect(rule('.nav-eye')).toMatch(/border-radius:\s*50%;/);
     expect(rule('.nav-eye')).toMatch(/touch-action:\s*none;/);
-    // NAV-EYE shape (Ross 11-22): the hit circle is the bubble, outside the ring, a share of the hat's box like it
+    // chal2 SHOULD-1 (ruling 11-22): its hit area is its ::before, navEyeShape's EYE_HIT: the bubble outside the ring,
+    // padded outward into the scene; a press inside the ring (the hat's side of the seam) is the hat's
+    const hit = rule('.nav-eye::before');
+    const of = (n: number) => `${((100 * n) / (2 * EYE.r)).toFixed(3)}%`;
+    expect(hit).toMatch(/content:\s*'';/);
+    expect(hit).toMatch(/position:\s*absolute;/);
+    expect(hit).toMatch(/pointer-events:\s*auto;/);
+    expect(hit).toMatch(/touch-action:\s*none;/);
+    expect(hit).toContain(`left: ${of(EYE_HIT.box.x - (EYE.x - EYE.r))};`);
+    expect(hit).toContain(`top: ${of(EYE_HIT.box.y - (EYE.y - EYE.r))};`);
+    expect(hit).toContain(`width: ${of(EYE_HIT.box.w)};`);
+    expect(hit).toContain(`height: ${of(EYE_HIT.box.h)};`);
+    expect(hit).toContain(`clip-path: ${EYE_HIT.clip};`);
+    // it draws nothing: the bubble is the hat's outline's
+    expect(hit).not.toMatch(/background|border|box-shadow|outline/);
+    // NAV-EYE shape (Ross 11-22): the eye's box is the bubble, outside the ring, a share of the hat's box like it
     const at = (n: number) => `${n.toFixed(3)}%`;
     expect(rule('.nav-eye')).toContain(`left: ${at(EYE.x - EYE.r)};`);
     expect(rule('.nav-eye')).toContain(`top: ${at(EYE.y - EYE.r)};`);
@@ -116,8 +131,6 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     expect(rule('.nav-eye')).toContain(`height: ${at(2 * EYE.r)};`);
     expect(rule('.nav-eye__glyph')).toContain(`width: ${at((100 * EYE_GLYPH_BOX.w) / (2 * EYE.r))};`);
     expect(rule('.nav-eye__glyph')).toContain(`height: ${at((100 * EYE_GLYPH_BOX.h) / (2 * EYE.r))};`);
-    // the bubble is drawn in the hat's own outline (below), never as a second circle of the eye's
-    expect(css()).not.toMatch(/\.nav-eye::before/);
     // the outline is drawn, and takes no touch: the hat's circle and the eye's are what take it
     expect(rule('.nav-hat__shell')).toMatch(/position:\s*absolute;\s*inset:\s*0;/);
     expect(rule('.nav-hat__shell')).toMatch(/overflow:\s*visible;/);

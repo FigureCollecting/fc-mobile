@@ -7,6 +7,10 @@ import { lookDown } from './sceneLook';
 import { DEPTH_FULL_PX } from '../src/components/display/caseDepth';
 import { JOG_DEAD_PX, JOG_FULL_PX, JOG_MAX_STEP_MS } from '../src/components/display/casePose';
 import { EYE_HIT_PX, HAT_DOUBLE_TAP } from '../src/components/display/navTuning';
+import { EYE, RING } from '../src/components/display/navEyeShape';
+
+/** chal2 SHOULD-1: how far (hat units) the eye's hit area reaches out past its bubble: as deep as the ring cuts into it. */
+const PAD_UNITS = EYE.r - (Math.hypot(EYE.x - 50, EYE.y - 50) - RING.r);
 
 /**
  * NAV-EYE (handoff FINAL 11-17 B; Ross NAVLOOK 1a 2a 3b), in Chromium at the Fold8's cover and open panels through its own
@@ -151,10 +155,11 @@ const gapOf = (a: Rect, b: Rect) => Math.hypot(Math.max(0, b.x - (a.x + a.width)
  * The fused outline as Chromium lays it out: the hat's and the eye's boxes, the glyph's, the outline's subpaths, and 720
  * points along it (getPointAtLength through the path's screen matrix), each with its distance from the hat's centre and
  * from the eye's; and what takes a touch at the probes: the eye's centre, 4 px inside the bubble toward the hat, a point
- * of the ring 4 px outside the bubble, and 8 px outside the bubble, straight out from the hat.
+ * of the ring 4 px outside the bubble, and straight out from the hat 8 px outside the bubble, 2 px short of the hit
+ * area's padded end and 4 px past it. The eye's hit area (its ::before) as laid out, and its pad in px.
  */
 async function shapeOf(page: Page) {
-  return page.evaluate(() => {
+  return page.evaluate((padUnits) => {
     const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect().toJSON() as Rect;
     const h = box('[data-nav="hat"]');
     const e = box('[data-nav="eye"]');
@@ -202,6 +207,10 @@ async function shapeOf(page: Page) {
     const off = Math.acos((rr * rr + k * k - want * want) / (2 * rr * k));
     const base = Math.atan2(u.y, u.x);
     const ring4 = { x: hc.x + rr * Math.cos(base + off), y: hc.y + rr * Math.sin(base + off) };
+    // chal2 SHOULD-1: the eye's hit area is its ::before (the bubble outside the ring, padded out by `pad` px)
+    const hs = getComputedStyle(document.querySelector('[data-nav="eye"]')!, '::before');
+    const hit = { x: e.x + parseFloat(hs.left), y: e.y + parseFloat(hs.top), width: parseFloat(hs.width), height: parseFloat(hs.height) };
+    const pad = (padUnits * h.width) / 100;
     return {
       h,
       e,
@@ -214,16 +223,20 @@ async function shapeOf(page: Page) {
       seam,
       seamStroke,
       outlineStroke,
+      hit,
+      pad,
       probes: {
         centre: what(ec.x, ec.y),
         inside4: what(ec.x - u.x * (ec.r - 4), ec.y - u.y * (ec.r - 4)),
         ring4: what(ring4.x, ring4.y),
         ring4At: Math.hypot(ring4.x - ec.x, ring4.y - ec.y),
         out8: what(ec.x + u.x * (ec.r + 8), ec.y + u.y * (ec.r + 8)),
+        padEnd2: what(ec.x + u.x * (ec.r + pad - 2), ec.y + u.y * (ec.r + pad - 2)),
+        beyond4: what(ec.x + u.x * (ec.r + pad + 4), ec.y + u.y * (ec.r + pad + 4)),
       },
       view: { width: innerWidth, height: innerHeight },
     };
-  });
+  }, PAD_UNITS);
 }
 
 function expectFused(s: Awaited<ReturnType<typeof shapeOf>>, what: string) {
@@ -265,14 +278,29 @@ function expectFused(s: Awaited<ReturnType<typeof shapeOf>>, what: string) {
   expect(joinGap(s.seam[s.seam.length - 1]), `${what}: and ends on it`).toBeLessThanOrEqual(s.step / 2 + 0.5);
   const under = { x: s.hc.x + ((gc.x - s.hc.x) * (s.hc.r - 0.9)) / Math.hypot(gc.x - s.hc.x, gc.y - s.hc.y), y: s.hc.y + ((gc.y - s.hc.y) * (s.hc.r - 0.9)) / Math.hypot(gc.x - s.hc.x, gc.y - s.hc.y) };
   expect(Math.min(...s.seam.map((q) => Math.hypot(q.x - under.x, q.y - under.y))), `${what}: it passes straight under the glyph`).toBeLessThanOrEqual(1);
-  // what takes a touch: the bubble is the eye's, over the ring inside it; the ring outside it the hat's; beyond it the scene's
-  expect(s.probes, `${what}: hit-testing`).toMatchObject({ centre: 'eye', inside4: 'eye', ring4: 'hat', out8: 'scene' });
+  // what takes a touch (chal2 SHOULD-1, ruling 11-22: the seam is the boundary): the bubble outside the ring is the eye's,
+  // and its part inside the ring the hat's, as the whole ring is; straight out past the bubble the eye's padded hit area,
+  // then the scene
+  expect(s.probes, `${what}: hit-testing`).toMatchObject({ centre: 'eye', inside4: 'hat', ring4: 'hat', out8: 'eye', padEnd2: 'eye', beyond4: 'scene' });
   expect(s.probes.ring4At, `${what}: the ring probe 4 px outside the bubble`).toBeCloseTo(s.ec.r + 4, 1);
-  // the eye inside the window
-  expect(s.e.x, `${what}: inside the window`).toBeGreaterThanOrEqual(0);
-  expect(s.e.y, `${what}: inside the window`).toBeGreaterThanOrEqual(0);
-  expect(s.e.x + s.e.width, `${what}: inside the window`).toBeLessThanOrEqual(s.view.width);
-  expect(s.e.y + s.e.height, `${what}: inside the window`).toBeLessThanOrEqual(s.view.height);
+  // the pad: as deep as the ring cuts into the bubble, so from the ring straight out the hit area is the bubble's width
+  expect(s.pad, `${what}: the pad`).toBeCloseTo(s.ec.r - (Math.hypot(s.ec.x - s.hc.x, s.ec.y - s.hc.y) - (s.hc.r * RING.r) / 50), 0);
+  // the eye and its hit area inside the window
+  for (const [name, b] of [['the eye', s.e], ['its hit area', s.hit]] as const) {
+    expect(b.x, `${what}: ${name} inside the window`).toBeGreaterThanOrEqual(0);
+    expect(b.y, `${what}: ${name} inside the window`).toBeGreaterThanOrEqual(0);
+    expect(b.x + b.width, `${what}: ${name} inside the window`).toBeLessThanOrEqual(s.view.width);
+    expect(b.y + b.height, `${what}: ${name} inside the window`).toBeLessThanOrEqual(s.view.height);
+  }
+}
+
+/** The eye's hit area's box (its ::before, navEyeShape's EYE_HIT), in the viewport. */
+async function hitBoxOf(page: Page): Promise<Rect> {
+  return eye(page).evaluate((b) => {
+    const e = b.getBoundingClientRect();
+    const s = getComputedStyle(b, '::before');
+    return { x: e.x + parseFloat(s.left), y: e.y + parseFloat(s.top), width: parseFloat(s.width), height: parseFloat(s.height) };
+  });
 }
 
 /** The eye clear of the scene's top (the header), the case-tabs strip and the Reset view chip (with its 48 px target). */
@@ -284,10 +312,14 @@ async function expectClear(page: Page, what: string) {
   const target = { x: chip.x - 4, y: chip.y - 4, width: chip.width + 8, height: chip.height + 8 };
   const strip = (await page.locator('.case-tabs').boundingBox())!;
   const scene = (await page.locator('.cabinet-scene').boundingBox())!;
-  console.log(`NAV-EYE-CLEAR ${what} eye ${JSON.stringify(e)} chip ${JSON.stringify(chip)} gap ${gapOf(e, target).toFixed(1)}`);
-  expect(overlaps(e, target), `${what}: clear of Reset view`).toBe(false);
-  expect(overlaps(e, strip), `${what}: clear of the case tabs`).toBe(false);
-  expect(e.y, `${what}: under the scene's top`).toBeGreaterThanOrEqual(scene.y);
+  const hit = await hitBoxOf(page);
+  console.log(`NAV-EYE-CLEAR ${what} eye ${JSON.stringify(e)} hit ${JSON.stringify(hit)} chip ${JSON.stringify(chip)} gap ${gapOf(e, target).toFixed(1)} hit gap ${gapOf(hit, target).toFixed(1)} tabs ${gapOf(hit, strip).toFixed(1)} top ${(hit.y - scene.y).toFixed(1)}`);
+  // the eye, and its hit area padded out past it (chal2 SHOULD-1)
+  for (const [name, b] of [['the eye', e], ['its hit area', hit]] as const) {
+    expect(overlaps(b, target), `${what}: ${name} clear of Reset view`).toBe(false);
+    expect(overlaps(b, strip), `${what}: ${name} clear of the case tabs`).toBe(false);
+    expect(b.y, `${what}: ${name} under the scene's top`).toBeGreaterThanOrEqual(scene.y);
+  }
   const top = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)!.closest('.cabinet-scene__reset') !== null, { x: chip.x + chip.width / 2, y: chip.y + chip.height / 2 });
   expect(top, `${what}: Reset view still the top element at its centre`).toBe(true);
 }
@@ -311,6 +343,65 @@ for (const panel of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
     await touchPinch(page, { x: m.x - 20, y: m.y }, { x: m.x + 20, y: m.y }, { x: m.x - 60, y: m.y }, { x: m.x + 60, y: m.y });
     await settle(page);
     await expectClear(page, panel.name);
+  });
+}
+
+// chal2 SHOULD-1 (orchestrator ruling 11-22): what the user sees is what they tap. The seam is the boundary: a press on
+// the hat's side of it (inside the ring as drawn) is the hat's, never the eye's; one just outside it is the eye's.
+
+/** What is the top element at a point: the eye, the hat, another control, or the scene. */
+const whatAt = (page: Page, p: { x: number; y: number }) =>
+  page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return el?.closest('[data-nav="eye"]') ? 'eye' : el?.closest('[data-nav="hat"]') ? 'hat' : el?.closest('[data-nav]') ? 'nav' : 'scene';
+  }, p);
+
+/** The point straight under the eye (on the line from the hat's centre out through the eye's), `px` inside the seam as drawn (outside it if negative). */
+async function underSeam(page: Page, px: number) {
+  const h = (await hat(page).boundingBox())!;
+  const unit = h.width / 100;
+  const k = Math.hypot(EYE.x - 50, EYE.y - 50);
+  const out = RING.r * unit - px;
+  return { x: h.x + h.width / 2 + ((EYE.x - 50) / k) * out, y: h.y + h.height / 2 + ((EYE.y - 50) / k) * out };
+}
+
+/** Past the hat's double-tap gap: the next tap on the hat is a first tap again. */
+const pastDoubleTap = (page: Page) => settle(page, HAT_DOUBLE_TAP.gapMs + 150);
+
+for (const panel of PANELS) {
+  test(`NAV-EYE seam ${panel.name}: taps 1, 2, 4, 8 and 12 px inside the seam, straight under the eye, are the hat's (no toggle); 1 and 2 px outside it are the eye's (toggle); a drag from 6 px inside Moves`, async ({ page }) => {
+    await openFree(page, panel);
+    for (const px of [1, 2, 4, 8, 12]) {
+      const p = await underSeam(page, px);
+      expect(await whatAt(page, p), `${px} px inside the seam: the hat on top`).toBe('hat');
+      await touchTap(page, p.x, p.y);
+      await pastDoubleTap(page);
+      await expect(eye(page), `${px} px inside the seam: no toggle`).toHaveAttribute('aria-pressed', 'false');
+      await expect(hat(page)).toHaveAttribute('data-mode', 'move');
+    }
+    for (const px of [1, 2]) {
+      const p = await underSeam(page, -px);
+      expect(await whatAt(page, p), `${px} px outside the seam: the eye on top`).toBe('eye');
+      await touchTap(page, p.x, p.y);
+      await expect(eye(page), `${px} px outside the seam: Look`).toHaveAttribute('aria-pressed', 'true');
+      await tapEye(page);
+      await expect(eye(page)).toHaveAttribute('aria-pressed', 'false');
+      await pastDoubleTap(page);
+    }
+    // a thumb meant for the hat that lands 6 px inside the seam drives the hat: it Moves (walks), never turns
+    const start = await cameraOf(page);
+    const from = await underSeam(page, 6);
+    const c = await centreOf(hat(page));
+    const thumb = await touchDown(page, from.x, from.y);
+    await thumb.to(c.x + JOG_FULL_PX / 2, c.y, 8, 16);
+    await hold(page, 400);
+    await expect(hat(page), 'held: the hat drives Move').toHaveAttribute('data-mode', 'move');
+    await thumb.end();
+    await settle(page);
+    const moved = await cameraOf(page);
+    expect(moved.x, 'it walked').not.toBe(start.x);
+    expect(moved.yaw ?? 0, 'it never turned').toBe(start.yaw ?? 0);
+    await expect(eye(page)).toHaveAttribute('aria-pressed', 'false');
   });
 }
 
@@ -392,10 +483,10 @@ test('NAV-EYE: the hat held left in Look for 3 s: the yaw stays under the hard l
   expect(eased, 'eased back to the soft limit').toBeCloseTo(-cone.soft, 1);
 });
 
-test('NAV-EYE (f): a tap 8 px outside the eye\'s hit circle opens the figure there; the mode stays as it was', async ({ page }) => {
+test('NAV-EYE (f): a tap 8 px outside the eye\'s bubble and its hit area opens the figure there; the mode stays as it was', async ({ page }) => {
   test.setTimeout(90_000);
   await openFree(page, COVER, 'fx=170');
-  /** Round the eye, a point 8 px outside its hit circle where a figure is the top element and the hat is not. */
+  /** Round the eye, a point 8 px outside its bubble where a figure is the top element and no control is (not its padded hit area, not the hat). */
   const beside = async () => {
     const e = await centreOf(eye(page));
     return page.evaluate(({ e, r }) => {
@@ -408,7 +499,7 @@ test('NAV-EYE (f): a tap 8 px outside the eye\'s hit circle opens the figure the
       return null;
     }, { e, r });
   };
-  // the eye's hit circle is its bubble (NAV-EYE shape): its box's half width, at least EYE_HIT_PX / 2
+  // the eye's bubble (NAV-EYE shape): its box's half width, at least EYE_HIT_PX / 2
   const r = ((await eye(page).boundingBox())!).width / 2;
   expect(r).toBeGreaterThanOrEqual(EYE_HIT_PX / 2);
   let found = await beside();
@@ -418,7 +509,7 @@ test('NAV-EYE (f): a tap 8 px outside the eye\'s hit circle opens the figure the
   }
   expect(found, 'a figure beside the eye').not.toBeNull();
   console.log(`NAV-EYE beside ${JSON.stringify(found)}`);
-  // the eye's own hit circle is what is there 8 px inside it, never the scene
+  // the eye is what is there 8 px inside its bubble (outside the ring on this side), never the scene
   const e = await centreOf(eye(page));
   const inside = { x: e.x + ((found!.x - e.x) * (r - 8)) / (r + 8), y: e.y + ((found!.y - e.y) * (r - 8)) / (r + 8) };
   expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-nav="eye"]') !== null, inside)).toBe(true);
@@ -544,6 +635,39 @@ test.describe('a mouse-only desktop', () => {
     await page.mouse.wheel(0, -300);
     await settle(page, 600);
     await expectClear(page, 'desktop');
+  });
+
+  test('NAV-EYE seam desktop: clicks 1, 2, 4, 8 and 12 px inside the seam are the hat\'s (no toggle); 1 and 2 px outside it are the eye\'s; a mouse drag from 6 px inside Moves', async ({ page }) => {
+    await openFree(page, DESKTOP);
+    for (const px of [1, 2, 4, 8, 12]) {
+      const p = await underSeam(page, px);
+      expect(await whatAt(page, p), `${px} px inside the seam: the hat on top`).toBe('hat');
+      await page.mouse.click(p.x, p.y);
+      await pastDoubleTap(page);
+      await expect(eye(page), `${px} px inside the seam: no toggle`).toHaveAttribute('aria-pressed', 'false');
+    }
+    for (const px of [1, 2]) {
+      const p = await underSeam(page, -px);
+      expect(await whatAt(page, p), `${px} px outside the seam: the eye on top`).toBe('eye');
+      await page.mouse.click(p.x, p.y);
+      await expect(eye(page), `${px} px outside the seam: Look`).toHaveAttribute('aria-pressed', 'true');
+      await eye(page).click();
+      await expect(eye(page)).toHaveAttribute('aria-pressed', 'false');
+      await pastDoubleTap(page);
+    }
+    const start = await cameraOf(page);
+    const from = await underSeam(page, 6);
+    const c = await centreOf(hat(page));
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) await page.mouse.move(from.x + ((c.x + JOG_FULL_PX / 2 - from.x) * i) / 8, from.y + ((c.y - from.y) * i) / 8);
+    await hold(page, 400);
+    await expect(hat(page), 'held: the hat drives Move').toHaveAttribute('data-mode', 'move');
+    await page.mouse.up();
+    await settle(page);
+    const moved = await cameraOf(page);
+    expect(moved.x, 'it walked').not.toBe(start.x);
+    expect(moved.yaw ?? 0, 'it never turned').toBe(start.yaw ?? 0);
   });
 
   test('NAV-EYE (e) desktop: a click on the eye latches Look; a mouse drag on the hat turns the eye; right drag on the scene still turns it', async ({ page }) => {

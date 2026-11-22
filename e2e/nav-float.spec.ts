@@ -324,7 +324,7 @@ test('NAV-FLOAT (c): the layer and the corners of the hat\'s box take no touch; 
   test.setTimeout(90_000);
   await openFree(page, COVER, { query: 'fx=170' });
   // the corner of the hat's square box is outside its circle: the scene's, never the hat's or the layer's (NAV-EYE: the
-  // upper-left corner lies inside the eye's hit circle, which is the eye's: the eye's own test below)
+  // upper-left corner lies inside the eye's bubble, outside the ring, which is the eye's: the eye's own test below)
   const h = (await hat(page).boundingBox())!;
   const corners = await page.evaluate(
     ({ h }) =>
@@ -343,7 +343,7 @@ test('NAV-FLOAT (c): the layer and the corners of the hat\'s box take no touch; 
     { eye: false, nav: false, scene: true },
     { eye: false, nav: false, scene: true },
   ]);
-  // NAV-EYE: the eye sits on the upper-left shoulder, outside the ring (Ross 11-22, fused): its hit circle is its bubble
+  // NAV-EYE: the eye sits on the upper-left shoulder, outside the ring (Ross 11-22, fused): its box is its bubble
   // (navEyeShape's EYE, a share of the hat's box), at least EYE_HIT_PX across
   const slot = (await eye(page).boundingBox())!;
   const c = await hatCircle(page);
@@ -354,8 +354,8 @@ test('NAV-FLOAT (c): the layer and the corners of the hat\'s box take no touch; 
   expect(Math.atan2(c.y - slotAt.y, slotAt.x - c.x) * (180 / Math.PI), 'at 135 degrees').toBeCloseTo(EYE_SLOT_DEG, 0);
   expect(slotAt.x, 'on the inboard side').toBeLessThan(c.x);
   expect(slotAt.y, 'on the upper side').toBeLessThan(c.y);
-  expect(slot.width, 'its hit circle').toBeCloseTo(2 * EYE.r * unit, 1);
-  expect(slot.height, 'its hit circle').toBeCloseTo(2 * EYE.r * unit, 1);
+  expect(slot.width, 'its bubble').toBeCloseTo(2 * EYE.r * unit, 1);
+  expect(slot.height, 'its bubble').toBeCloseTo(2 * EYE.r * unit, 1);
   expect(slot.width).toBeGreaterThanOrEqual(EYE_HIT_PX);
 
   // the rail: 8 px right of its target a figure is the top element; walk until one is there

@@ -1,8 +1,8 @@
 /**
  * NAV-EYE (handoff FINAL 11-17 B, ref 02): the eye fused to the hat's upper-left, inboard shoulder, wholly outside its
  * ring in a bubble of the hat's outline (navEyeShape, Ross 11-22). One tap (EYE_TAP: little travel, quickly lifted)
- * latches the hat Move <-> Look; Enter or Space on it does too. Its hit circle is the bubble and lies over the hat's
- * ring where the bubble does: its press never reaches the hat under it. NAVLOOK 2a: pressed and
+ * latches the hat Move <-> Look; Enter or Space on it does too. Its hit area (navEyeShape's EYE_HIT) is the bubble
+ * outside the ring, padded outward: a press inside the ring is the hat's (chal2 SHOULD-1). NAVLOOK 2a: pressed and
  * slid off it onto the hat, the hat takes the finger (`onSlide`) as a temporary Look until it lifts. A press that slides
  * anywhere else, or is held, is nothing.
  */
@@ -29,7 +29,10 @@ interface NavEyeProps {
   onSlide(e: PointerEvent): boolean;
 }
 
-/** Is (x, y) on the hat's disc and clear of the eye's own hit circle: where a slide from the eye becomes the hat's. */
+/**
+ * Is (x, y) on the hat's disc and clear of the eye's whole bubble: where a slide from the eye becomes the hat's. Past the
+ * bubble, not just past the seam, so a tap that jitters across the seam is still a tap.
+ */
 function onHat(eye: HTMLElement, x: number, y: number): boolean {
   const h = eye.parentElement!.getBoundingClientRect();
   const e = eye.getBoundingClientRect();

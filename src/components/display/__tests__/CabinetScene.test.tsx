@@ -1952,6 +1952,32 @@ describe('CabinetScene: a mask that cannot be shown stands its picture framed (G
     expect(Date.now() - storedAt, 'at once, not at its backoff').toBeLessThan(ALPHA_UNDECODED_RETRY_MS / 2);
   });
 
+  it('the image sync storing a mask while its FIRST read is in flight (never known as failed yet): that read failing, it is read again at once', async () => {
+    const figures = maskedFigures();
+    const late = getFixtureImageRef(figures[0])!.maskUrl!;
+    masksThat(() => false);
+    let stored = false;
+    let reads = 0;
+    const held: (() => void)[] = [];
+    (HTMLImageElement.prototype as { decode?: (this: HTMLImageElement) => Promise<void> }).decode = function (this: HTMLImageElement) {
+      if (!this.src.endsWith(late)) return Promise.resolve();
+      reads++;
+      if (stored) return Promise.resolve();
+      return new Promise<void>((_, fail) => held.push(() => fail(new DOMException('network error', 'EncodingError'))));
+    };
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await waitFor(() => expect(held).toHaveLength(1));
+    stored = true;
+    act(() => {
+      imageKept(late);
+    });
+    const storedAt = Date.now();
+    held[0]();
+    await waitFor(() => expect(reads).toBe(2), { timeout: ALPHA_UNDECODED_RETRY_MS / 2 });
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
+    expect(Date.now() - storedAt, 'at once, not at its backoff').toBeLessThan(ALPHA_UNDECODED_RETRY_MS / 2);
+  });
+
   it('the image sync storing a picture of the case that is no mask (a cut-out\'s photo whose read failed) reads nothing: its own picture load reads it', async () => {
     window.history.pushState({}, '', '/?fxbranch=masked');
     const figures = [...getFixtureFigures(1, 'masked'), ...getFixtureFigures(1, 'matted')];

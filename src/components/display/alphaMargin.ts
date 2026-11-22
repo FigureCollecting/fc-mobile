@@ -256,11 +256,19 @@ const queued: Waiting[] = [];
  */
 const outOfTime: (() => void)[] = [];
 
-/** The read at the front of the line starts, unless it is a re-read or a retry and those fill their room: whether it started. */
+/** Whether a read waiting may start now: not a re-read or a retry while those fill their room. */
+function mayStart(next: Waiting): boolean {
+  return !((next.again && rereading >= ALPHA_READS_AT_ONCE) || (next.retry && retrying >= ALPHA_READS_AT_ONCE - 1));
+}
+
+/**
+ * The first read in line that may start, starts (DESK1: a retry held for its room holds back none behind it, so a
+ * picture whose read ran out of time is read again at its backoff, however many retries wait): whether one started.
+ */
 function startNext(): boolean {
-  const next = queued[0];
-  if (!next || (next.again && rereading >= ALPHA_READS_AT_ONCE) || (next.retry && retrying >= ALPHA_READS_AT_ONCE - 1)) return false;
-  queued.shift();
+  const at = queued.findIndex(mayStart);
+  if (at < 0) return false;
+  const [next] = queued.splice(at, 1);
   if (next.again) rereading++;
   if (next.retry) retrying++;
   next.go(next.again, next.retry);
@@ -272,7 +280,7 @@ function passTurn(): void {
   if (!startNext()) reading--;
 }
 
-/** A read joins the line, a re-read ends or a load sends one at once: the read at the front starts if a turn is free. */
+/** A read joins the line, a re-read ends or a load sends one at once: the first in line that may start does, if a turn is free. */
 function startOnFreeTurn(): void {
   if (reading < ALPHA_READS_AT_ONCE && startNext()) reading++;
 }
@@ -311,6 +319,11 @@ interface Reader {
   retry: boolean;
 }
 const readers = new Map<string, Reader>();
+/**
+ * DESK1: how many of a picture's watch retries ran out of time: its next retry starts from that deadline (twice the time
+ * each), so a mask alive on a slow link is still read in time. Once a read decodes it, it is never read again.
+ */
+const retriesOutOfTime = new Map<string, number>();
 
 /**
  * Run one read when a turn is free (`first`: sent at once by its picture
@@ -388,6 +401,7 @@ export function __clearAlphaMarginCache(): void {
   outOfTime.length = 0;
   wantedBy.clear();
   readers.clear();
+  retriesOutOfTime.clear();
   undecoded.clear();
   loadedUnread.clear();
   drawsNothing.clear();
@@ -480,11 +494,19 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * loaded, a read that never decodes the picture (the one its load sends, one
  * in flight as it loads, or any later) failed to fetch it: it is read again
  * at once (`first`: from the start), once per load. `retry`: a watch's
- * retry (retryUndecoded), in line as a re-read.
+ * retry (retryUndecoded), in line as a re-read; one that runs out of time
+ * (its picture not loaded meanwhile) ends there as a read that never decoded
+ * it, so the watch's bound counts it, and its next retry gets twice the time
+ * (retriesOutOfTime).
  */
 async function readInTurn(imageUrl: string, first = false, retry = false): Promise<AlphaRead | undefined> {
   // `first`: sent by its own picture loading, whose read again it carries, as does a load before any read landed
-  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: first || loadedUnread.has(imageUrl), retry };
+  const reader: Reader = {
+    timedOut: retry ? (retriesOutOfTime.get(imageUrl) ?? 0) : 0,
+    loaded: false,
+    retryUndecoded: first || loadedUnread.has(imageUrl),
+    retry,
+  };
   readers.set(imageUrl, reader);
   for (;;) {
     const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);
@@ -498,6 +520,11 @@ async function readInTurn(imageUrl: string, first = false, retry = false): Promi
     if (read !== null) {
       readers.delete(imageUrl);
       return read;
+    }
+    if (reader.retry && !reader.loaded) {
+      retriesOutOfTime.set(imageUrl, reader.timedOut + 1);
+      readers.delete(imageUrl);
+      return UNDECODED;
     }
     reader.timedOut++;
     first = reader.loaded;

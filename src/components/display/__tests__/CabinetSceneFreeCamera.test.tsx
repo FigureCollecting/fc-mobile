@@ -1298,6 +1298,30 @@ describe('the jog (NAV-JOG): the eye moves the way the thumb holds the bottom-ce
     up(1, { x: 200, y: 200 });
   });
 
+  // NAV-LOGPOSE: the jog offers the Log-Pose orb's tilt drive (useFreeCamera's tiltSet, tiltFold)
+  it('the jog offers the tilt: an offset turns the view drawn, not the pose held; its fold keeps the view and holds it there', () => {
+    scene();
+    const before = pose();
+    const tilt = jog().tilt!;
+    let ok = false;
+    act(() => {
+      ok = tilt.set(3 * DEG, 0);
+    });
+    expect(ok).toBe(true);
+    expect(pose().yaw).toBeCloseTo(before.yaw + 3 * DEG, 6);
+    expect([pose().x, pose().y, pose().z]).toEqual([before.x, before.y, before.z]);
+    const shown = pose();
+    act(() => tilt.fold());
+    tick(300);
+    expect(pose()).toEqual(shown);
+    // folded: the source's next sample is its new neutral, refused once
+    act(() => {
+      ok = tilt.set(3 * DEG, 0);
+    });
+    expect(ok).toBe(false);
+    expect(pose()).toEqual(shown);
+  });
+
   // NAV-DESKTOP-ZOOM: the wheel's magnification keeps the jog's rule: no magnification rides a moving camera
   const wheel = (deltaY: number) => fireEvent.wheel(host(), { clientX: 220, clientY: 260, deltaY, deltaMode: 0 });
   const k = () => (JSON.parse(host().dataset.zoom!) as { k: number }).k;

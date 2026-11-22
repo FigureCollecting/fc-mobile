@@ -6,6 +6,8 @@ import type { Locator, Page } from '@playwright/test';
 export const hat = (page: Page): Locator => page.locator('[data-nav="hat"]');
 /** The left Z rail: hold and push up moves the Free camera closer, down backs it away. */
 export const depth = (page: Page): Locator => page.locator('[data-nav="depth"]');
+/** The Log-Pose orb above the Z rail: a tap turns tilt-to-look on or off (shown only where a sensor gives samples). */
+export const orb = (page: Page): Locator => page.locator('[data-nav="orb"]');
 /** Every floating control: what a scene screenshot masks, so its baseline is the scene's alone. */
 export const navControls = (page: Page): Locator => page.locator('[data-nav]');
 

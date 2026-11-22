@@ -16,6 +16,7 @@ import { Style } from '../../styles/Style';
 import { CASE_TABS_HEIGHT_PX } from './CaseTabs';
 import { NavDepth } from './NavDepth';
 import { NavHat } from './NavHat';
+import { NavOrb } from './NavOrb';
 import { DEPTH_RAIL_PX, EYE_SLOT_DEG, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY } from './navTuning';
 
 interface FloatingNavProps {
@@ -64,6 +65,7 @@ export function FloatingNav({ within, hidden = false }: FloatingNavProps) {
   if (target === null) return null;
   return createPortal(
     <div class="floating-nav" ref={layer} role="region" aria-label="Camera controls">
+      {target.tilt && <NavOrb tilt={target.tilt} />}
       {target.depth && <NavDepth depth={target.depth} />}
       <NavHat jog={target} />
       <Style css={styles} />

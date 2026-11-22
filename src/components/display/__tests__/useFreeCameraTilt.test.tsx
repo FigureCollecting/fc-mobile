@@ -107,6 +107,19 @@ describe('(d) Off and Recenter (fold) never snap', () => {
   });
 });
 
+describe('a fold after the scene\'s host is gone (the orb unmounting after the case)', () => {
+  it('drops the offset, holds nothing new, writes nothing, never throws', () => {
+    const m = mount();
+    m.fc().tiltSet(4 * DEG, 0);
+    const shown = m.shown();
+    (m.dom.host as { current: HTMLElement | null }).current = null;
+    expect(m.fc().tiltFold()).toBeNull();
+    expect(m.fc().held()).toBeNull();
+    expect(m.shown()).toEqual(shown);
+    expect(m.fc().tiltSet(4 * DEG, 0)).toBe(false);
+  });
+});
+
 describe('(e) through the cone a Look has: past the soft limit, a rubber band short of hard', () => {
   it('a pose 1 deg inside the right soft limit and a 12 deg offset: shown past soft, short of hard; the fold eases back to soft', () => {
     const m = mount();

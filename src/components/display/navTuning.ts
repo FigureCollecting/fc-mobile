@@ -28,6 +28,21 @@ export const EYE_SLOT_PX = 32;
 /** The Z rail (px): what is drawn, the larger box that takes the thumb, the knob, and how far the knob shows full reach. */
 export const DEPTH_RAIL_PX = { width: 28, height: 92, hitWidth: 56, hitHeight: 132, knob: 24, travel: 34 } as const;
 
+/**
+ * NAV-LOGPOSE: the Log-Pose orb (px): what is drawn, the round target that takes the thumb, and the gap between the
+ * drawn orb and the drawn Z rail below it (handoff: smaller than the sextant concepts, visibly detached).
+ */
+export const ORB_PX = { size: 34, hit: 48, gap: 14 } as const;
+/**
+ * NAV-LOGPOSE: the orb's colours (HSL triples): its dark translucent globe, the thin ring that says ON (teal), and the
+ * needle's muted dark red half (never vivid, never gold); the other half is NAV_BLUE.
+ */
+export const ORB_GLOBE = '212 32% 16%';
+export const ORB_TEAL = '172 55% 50%';
+export const ORB_RED = '355 40% 35%';
+/** NAV-LOGPOSE: how the needle shows the offset: degrees of needle a degree of yaw, and px of lift a degree of pitch. */
+export const ORB_NEEDLE = { turnPerDeg: 6, liftPxPerDeg: 0.375 } as const;
+
 /** Each control's drawn edge, in from the safe area's side (px). */
 export const NAV_EDGE_PX = 20;
 /** Each control's drawn bottom, above the case's pull-up tabs (px). */

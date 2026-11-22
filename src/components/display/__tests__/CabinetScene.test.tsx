@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, fireEvent, screen, cleanup, act, waitFor } from '@testing-library/preact';
+import { render, renderHook, fireEvent, screen, cleanup, act, waitFor } from '@testing-library/preact';
 import type { Figure } from '@figurecollecting/fc-shared';
 import { CabinetScene, LABEL_HEIGHT_MM, SWIPE_START_PX, quadStyle } from '../CabinetScene';
 import { CASE_PREFS_KEY, DEFAULT_CASE_PREFS, readCasePrefs, type CasePrefs } from '../casePrefs';
@@ -9,7 +9,7 @@ import { DRAWN_CABINETS_LIMIT, DRAWN_FIGURES_LIMIT, FIGURE_BUDGET_VIEWPORTS, FLA
 import { wallLayout } from '../packCabinets';
 import { cabinetBox, frameCase } from '../caseFraming';
 import { boxCorners, cssSceneTransform, project, unprojectToPlaneZ, type Camera } from '../caseCamera';
-import { ALPHA_READS_AT_ONCE, ALPHA_READ_TURN_MS, ALPHA_UNDECODED_RETRY_MS, __clearAlphaMarginCache } from '../alphaMargin';
+import { ALPHA_READS_AT_ONCE, ALPHA_READ_TURN_MS, ALPHA_UNDECODED_RETRY_MS, __clearAlphaMarginCache, useAlphaMarginsOf } from '../alphaMargin';
 import { imageKept } from '../../../media/keptImages';
 
 // each test starts with no picture read (jsdom cannot read one: every read fails and is known as all clear), so
@@ -1875,20 +1875,14 @@ describe('CabinetScene: a mask that cannot be shown stands its picture framed (G
     expect(b.querySelector('.cab-figure__art--masked')).not.toBeNull();
   }, 15_000);
 
-  it('the image sync storing a failed mask\'s bytes reads it again at once, before its backoff; an address that is no mask of the case reads nothing', async () => {
+  it('the image sync storing a failed mask\'s bytes reads it again at once, before its backoff', async () => {
     const figures = maskedFigures();
     const late = getFixtureImageRef(figures[0])!.maskUrl!;
     const mask = lateMask(late);
-    const { host, unmount } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
     await grounded(host);
     await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
     const failedAt = Date.now();
-    act(() => {
-      imageKept(getFixtureImageRef(figures[0])!.url);
-      imageKept('https://images.example/d/not-in-this-case');
-    });
-    await new Promise((r) => setTimeout(r, 200));
-    expect(mask.reads, 'its photo kept, not its mask: no read').toBe(1);
     mask.served = true;
     act(() => {
       imageKept(late);
@@ -1896,16 +1890,134 @@ describe('CabinetScene: a mask that cannot be shown stands its picture framed (G
     await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
     expect(mask.reads).toBe(2);
     expect(Date.now() - failedAt, 'at once, not at the backoff').toBeLessThan(ALPHA_UNDECODED_RETRY_MS);
-    // the case closed: a mask kept later reads nothing
-    unmount();
-    imageKept(late);
-    await new Promise((r) => setTimeout(r, 200));
-    expect(mask.reads).toBe(2);
   });
 
-  it('a mask that stays missing is read again on its own only at its backoff, and none once the case closes', async () => {
+  it('the image sync storing one failed mask reads that mask alone: another mask still failing waits for its own backoff', async () => {
+    const figures = maskedFigures();
+    const [x, y] = [getFixtureImageRef(figures[0])!.maskUrl!, getFixtureImageRef(figures[1])!.maskUrl!];
+    const reads = { x: 0, y: 0 };
+    masksThat((src) => {
+      if (src.endsWith(x)) reads.x++;
+      if (src.endsWith(y)) reads.y++;
+      return src.endsWith(x) || src.endsWith(y);
+    });
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[1]._id]).toBe('framed'));
+    // the link back reads both and starts their waits over (2 s from now): the store below lands well inside them
+    const opened = { ...reads };
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(reads).toEqual({ x: opened.x + 1, y: opened.y + 1 }));
+    const before = { ...reads };
+    act(() => {
+      imageKept(x);
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(reads.x, 'the stored mask: read again').toBeGreaterThan(before.x);
+    expect(reads.y, 'the other: not read').toBe(before.y);
+  });
+
+  it('the image sync storing a mask\'s bytes while a read of it is in flight (fetched before they were stored): that read failing, the mask is read again at once, not at its backoff', async () => {
+    const figures = maskedFigures();
+    const late = getFixtureImageRef(figures[0])!.maskUrl!;
+    masksThat(() => false);
+    let stored = false;
+    let reads = 0;
+    const held: (() => void)[] = [];
+    (HTMLImageElement.prototype as { decode?: (this: HTMLImageElement) => Promise<void> }).decode = function (this: HTMLImageElement) {
+      if (!this.src.endsWith(late)) return Promise.resolve();
+      reads++;
+      if (stored) return Promise.resolve();
+      if (reads === 1) return Promise.reject(new DOMException('network error', 'EncodingError'));
+      return new Promise<void>((_, fail) => held.push(() => fail(new DOMException('network error', 'EncodingError'))));
+    };
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    // the link back: a read starts, fetching before the sync stores the bytes, and is still in flight as they are stored
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(held).toHaveLength(1));
+    stored = true;
+    act(() => {
+      imageKept(late);
+    });
+    const storedAt = Date.now();
+    held[0]();
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('masked'));
+    expect(reads).toBe(3);
+    expect(Date.now() - storedAt, 'at once, not at its backoff').toBeLessThan(ALPHA_UNDECODED_RETRY_MS / 2);
+  });
+
+  it('the image sync storing a picture of the case that is no mask (a cut-out\'s photo whose read failed) reads nothing: its own picture load reads it', async () => {
+    window.history.pushState({}, '', '/?fxbranch=masked');
+    const figures = [...getFixtureFigures(1, 'masked'), ...getFixtureFigures(1, 'matted')];
+    const masks = figures.flatMap((f) => getFixtureImageRef(f)?.maskUrl ?? []);
+    const photos: string[] = [];
+    masksThat((src) => {
+      const photo = !masks.some((m) => src.endsWith(m));
+      if (photo) photos.push(src);
+      return photo;
+    });
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    const cutout = figures.find((f) => !f._id.endsWith('-masked'))!;
+    expect(artOf(host)[cutout._id]).toBe('cutout');
+    await new Promise((r) => setTimeout(r, 200));
+    const read = photos.length;
+    expect(read).toBeGreaterThan(0);
+    act(() => {
+      // as read (resolved) and as the case lists it
+      imageKept(photos[0]);
+      imageKept(photos[0].replace(window.location.origin, ''));
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(photos, 'no photo read again').toHaveLength(read);
+  });
+
+  it('the case closed with a mask still failing: the image sync storing it later reads nothing for that case, even while another view shows the mask', async () => {
+    const figures = maskedFigures();
+    const late = getFixtureImageRef(figures[0])!.maskUrl!;
+    const mask = lateMask(late);
+    const { host, unmount } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    unmount();
+    // another view of the mask (it would read it, were the closed case still listening)
+    const other = renderHook(() => useAlphaMarginsOf([late]));
+    await new Promise((r) => setTimeout(r, 100));
+    const before = mask.reads;
+    mask.served = true;
+    act(() => {
+      imageKept(late);
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mask.reads, 'no listener left by the closed case').toBe(before);
+    other.unmount();
+  });
+
+  it('the link coming back while a mask waits out a long backoff gives it its retries anew: the next comes a first backoff later, not at the old wait\'s end', async () => {
     const figures = maskedFigures();
     const mask = lateMask(getFixtureImageRef(figures[0])!.maskUrl!);
+    const { host } = scene(figures, {}, { imageFor: getFixtureImageRef });
+    await grounded(host);
+    await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
+    // read as the case opens, then on its own 2 s and 4 s on: the next wait is 8 s
+    await waitFor(() => expect(mask.reads).toBe(3), { timeout: 3 * ALPHA_UNDECODED_RETRY_MS + 2000 });
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    await waitFor(() => expect(mask.reads).toBe(4));
+    await waitFor(() => expect(mask.reads).toBe(5), { timeout: 2 * ALPHA_UNDECODED_RETRY_MS });
+  }, 25_000);
+
+  it('a mask that stays missing is read again on its own only at its backoff, and none once the case closes, even while another view shows it', async () => {
+    const figures = maskedFigures();
+    const late = getFixtureImageRef(figures[0])!.maskUrl!;
+    const mask = lateMask(late);
     const { host, unmount } = scene(figures, {}, { imageFor: getFixtureImageRef });
     await grounded(host);
     await waitFor(() => expect(artOf(host)[figures[0]._id]).toBe('framed'));
@@ -1914,8 +2026,11 @@ describe('CabinetScene: a mask that cannot be shown stands its picture framed (G
     await waitFor(() => expect(mask.reads).toBe(2), { timeout: ALPHA_UNDECODED_RETRY_MS });
     expect(artOf(host)[figures[0]._id]).toBe('framed');
     unmount();
+    // another view of the mask (it would read it, were the closed case's retry still waiting)
+    const other = renderHook(() => useAlphaMarginsOf([late]));
     await new Promise((r) => setTimeout(r, 2 * ALPHA_UNDECODED_RETRY_MS + 500));
     expect(mask.reads, 'the case closed: its waiting retry never reads').toBe(2);
+    other.unmount();
   }, 15_000);
 
   it('GKSHOW-2: the app shown again (visibilitychange to visible) reads a failed mask again; hidden, it reads nothing', async () => {

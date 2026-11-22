@@ -361,8 +361,6 @@ describe('keepChosenPhotos (PICK-CASE-1)', () => {
   });
 });
 
-// PHOTOS1 (Ross 11-04: a wall of name cards past the first cabinets, nothing asked for while he walked to them): what a sync
-// left unfetched is fetched again from the lists the device kept, while the case view stays open, without reading any list.
 describe('onImageKept (DESK1: what stores an image\'s bytes says so, so a mask that failed to load is read again at once)', () => {
   const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
   const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
@@ -411,6 +409,8 @@ describe('onImageKept (DESK1: what stores an image\'s bytes says so, so a mask t
   });
 });
 
+// PHOTOS1 (Ross 11-04: a wall of name cards past the first cabinets, nothing asked for while he walked to them): what a sync
+// left unfetched is fetched again from the lists the device kept, while the case view stays open, without reading any list.
 describe('fillKeptImages (PHOTOS1)', () => {
   const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
   const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();

@@ -71,7 +71,7 @@ import { wallPatternProfiles, type CasePrefs } from './casePrefs';
 import { arrangeOrder } from './caseArrangement';
 import { wallStyle } from './wallColour';
 import { REPACK_ON_FILTER } from './caseInterim';
-import { alphaDrawsNothing, alphaPictureLoaded, rereadUndecoded, retryUndecoded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
+import { alphaDrawsNothing, alphaPictureLoaded, retryUndecoded, useAlphaMarginsOf, useContactBand, type AlphaMargins } from './alphaMargin';
 import { onImageKept } from '../../media/keptImages';
 import { useLayoutBasis } from './layoutBasis';
 import { goToFigure, type GoToScene } from './caseGoTo';
@@ -948,8 +948,9 @@ export function CabinetScene({
     const shown = () => {
       if (document.visibilityState === 'visible') again();
     };
+    // a stored mask counts as loaded (alphaPictureLoaded): a read of it in flight that fails goes again at once
     const unkept = onImageKept((address) => {
-      if (masksNow.current.includes(address)) rereadUndecoded([address]);
+      if (masksNow.current.includes(address)) alphaPictureLoaded(address);
     });
     again();
     window.addEventListener('online', again);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BUBBLE, EYE, EYE_GLYPH_BOX, FUSED_PATH, RING, RING_PATH } from '../navEyeShape';
+import { BUBBLE, EYE, EYE_GLYPH_BOX, FUSED_PATH, RING, RING_PATH, SEAM_PATH } from '../navEyeShape';
 import { EYE_HIT_PX, EYE_SLOT_DEG, HAT_RING_PX, NAV_MOUSE_SCALE } from '../navTuning';
 
 // NAV-EYE shape (Ross 11-22, "fused"): the eye sits wholly OUTSIDE the hat's ring, in a bubble at the ring's upper-left,
@@ -145,6 +145,37 @@ describe('NAV-EYE shape: one fused outline', () => {
     // the bubble's arc passes the eye's far side: the point straight out from the hat's centre
     const far = { x: EYE.x + ((EYE.x - C.x) / dist(EYE, C)) * BUBBLE.r, y: EYE.y + ((EYE.y - C.y) / dist(EYE, C)) * BUBBLE.r };
     expect(sample(bubble, BUBBLE, 360).some((q) => dist(q, far) < 0.5)).toBe(true);
+  });
+
+  it('the seam (Ross 11-22 refs): the ring\'s arc inside the bubble, drawn on its own, from join to join under the eye; the glyph clears it', () => {
+    const p = parse(SEAM_PATH);
+    expect(p.moves).toBe(1);
+    expect(p.closed, 'an open arc, not a shape').toBe(false);
+    expect(p.arcs).toHaveLength(1);
+    const [seam] = p.arcs;
+    const [ring, bubble] = parse(FUSED_PATH).arcs;
+    // the ring's own circle, the short way, between the outline's two joins
+    expect(seam.r).toBeCloseTo(RING.r, 2);
+    expect(seam.large).toBe(false);
+    expect(dist(centreOf(seam), RING)).toBeLessThanOrEqual(0.01);
+    expect(dist(seam.from, ring.to)).toBeLessThanOrEqual(0.005);
+    expect(dist(seam.to, bubble.to)).toBeLessThanOrEqual(0.005);
+    // its middle is straight under the eye: on the line from the hat's centre to the eye, inside the bubble
+    const u = { x: (EYE.x - C.x) / dist(EYE, C), y: (EYE.y - C.y) / dist(EYE, C) };
+    const mid = { x: C.x + u.x * RING.r, y: C.y + u.y * RING.r };
+    const t0 = Math.atan2(seam.from.y - C.y, seam.from.x - C.x);
+    let t1 = Math.atan2(seam.to.y - C.y, seam.to.x - C.x);
+    if (seam.sweep) while (t1 <= t0) t1 += 2 * Math.PI;
+    else while (t1 >= t0) t1 -= 2 * Math.PI;
+    const pts = Array.from({ length: 101 }, (_, k) => {
+      const t = t0 + ((t1 - t0) * k) / 100;
+      return { x: C.x + RING.r * Math.cos(t), y: C.y + RING.r * Math.sin(t) };
+    });
+    expect(Math.min(...pts.map((q) => dist(q, mid))), 'it passes under the eye').toBeLessThan(0.1);
+    for (const q of pts) expect(dist(q, BUBBLE), 'inside the bubble').toBeLessThanOrEqual(BUBBLE.r + 0.005);
+    // the glyph clears it, by more than half its 1.5 px stroke at the smallest hat
+    const glyphR = Math.hypot(EYE_GLYPH_BOX.w, EYE_GLYPH_BOX.h) / 2;
+    for (const q of pts) expect(dist(q, EYE) - glyphR).toBeGreaterThan(HALF_STROKE_PX / MIN_PX_PER_UNIT);
   });
 
   it('with no eye (no Look on offer) the hat is the ring alone: one closed circle', () => {

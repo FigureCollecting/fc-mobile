@@ -174,6 +174,20 @@ async function shapeOf(page: Page) {
         points.push({ x: p.x, y: p.y, dh: Math.hypot(p.x - hc.x, p.y - hc.y), de: Math.hypot(p.x - ec.x, p.y - ec.y) });
       }
     }
+    // the seam (the references): the ring's arc under the eye, its own path
+    const seamPath = document.querySelector<SVGPathElement>('.nav-hat__seam');
+    const gc = { x: g.x + g.width / 2, y: g.y + g.height / 2 };
+    const seam: { x: number; y: number; dh: number; de: number; dg: number }[] = [];
+    if (seamPath) {
+      const m = seamPath.getScreenCTM()!;
+      const len = seamPath.getTotalLength();
+      for (let i = 0; i <= 60; i++) {
+        const p = seamPath.getPointAtLength((len * i) / 60).matrixTransform(m);
+        seam.push({ x: p.x, y: p.y, dh: Math.hypot(p.x - hc.x, p.y - hc.y), de: Math.hypot(p.x - ec.x, p.y - ec.y), dg: Math.hypot(p.x - gc.x, p.y - gc.y) });
+      }
+    }
+    const seamStroke = seamPath ? getComputedStyle(seamPath).stroke : '';
+    const outlineStroke = path ? getComputedStyle(path).stroke : '';
     const what = (x: number, y: number) => {
       const el = document.elementFromPoint(x, y);
       return el?.closest('[data-nav="eye"]') ? 'eye' : el?.closest('[data-nav="hat"]') ? 'hat' : el?.closest('[data-nav]') ? 'nav' : 'scene';
@@ -197,6 +211,9 @@ async function shapeOf(page: Page) {
       d,
       points,
       step,
+      seam,
+      seamStroke,
+      outlineStroke,
       probes: {
         centre: what(ec.x, ec.y),
         inside4: what(ec.x - u.x * (ec.r - 4), ec.y - u.y * (ec.r - 4)),
@@ -234,6 +251,20 @@ function expectFused(s: Awaited<ReturnType<typeof shapeOf>>, what: string) {
   // outline: the bubble's arc meets the ring's within 0.5 px)
   const jumps = s.points.map((p, i) => Math.hypot(p.x - s.points[(i + 1) % s.points.length].x, p.y - s.points[(i + 1) % s.points.length].y));
   expect(Math.max(...jumps), `${what}: no gap in the outline`).toBeLessThanOrEqual(s.step + 0.5);
+  // the seam (Ross 11-22, "like this image"): the ring's arc inside the bubble, in the ring's stroke, from one join of the
+  // outline to the other, passing straight under the glyph; the glyph clears it
+  expect(s.seam.length, `${what}: the seam is drawn`).toBe(61);
+  expect(s.seamStroke, `${what}: in the ring's stroke`).toBe(s.outlineStroke);
+  for (const q of s.seam) {
+    expect(Math.abs(q.dh - (s.hc.r - 0.9)), `${what}: the seam on the ring`).toBeLessThanOrEqual(0.5);
+    expect(q.de, `${what}: the seam inside the bubble`).toBeLessThanOrEqual(s.ec.r);
+    expect(q.dg - glyphR, `${what}: the glyph clears the seam`).toBeGreaterThan(0.75);
+  }
+  const joinGap = (q: { x: number; y: number }) => Math.min(...s.points.map((p) => Math.hypot(p.x - q.x, p.y - q.y)));
+  expect(joinGap(s.seam[0]), `${what}: the seam starts on the outline`).toBeLessThanOrEqual(s.step / 2 + 0.5);
+  expect(joinGap(s.seam[s.seam.length - 1]), `${what}: and ends on it`).toBeLessThanOrEqual(s.step / 2 + 0.5);
+  const under = { x: s.hc.x + ((gc.x - s.hc.x) * (s.hc.r - 0.9)) / Math.hypot(gc.x - s.hc.x, gc.y - s.hc.y), y: s.hc.y + ((gc.y - s.hc.y) * (s.hc.r - 0.9)) / Math.hypot(gc.x - s.hc.x, gc.y - s.hc.y) };
+  expect(Math.min(...s.seam.map((q) => Math.hypot(q.x - under.x, q.y - under.y))), `${what}: it passes straight under the glyph`).toBeLessThanOrEqual(1);
   // what takes a touch: the bubble is the eye's, over the ring inside it; the ring outside it the hat's; beyond it the scene's
   expect(s.probes, `${what}: hit-testing`).toMatchObject({ centre: 'eye', inside4: 'eye', ring4: 'hat', out8: 'scene' });
   expect(s.probes.ring4At, `${what}: the ring probe 4 px outside the bubble`).toBeCloseTo(s.ec.r + 4, 1);

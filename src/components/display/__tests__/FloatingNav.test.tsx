@@ -128,7 +128,9 @@ describe('the floating controls: what takes a touch, and how they look', () => {
     expect(rule('.floating-nav')).toContain(`--nav-teal: hsl(${NAV_TEAL} / ${NAV_OPACITY.look});`);
     // one fused outline, the bubble's arc with it: Look is teal on the whole of it (the hat is in Look exactly while the
     // eye is pressed or held)
-    expect(rule(".nav-hat[data-mode='look'] .nav-hat__outline")).toMatch(/^\s*stroke:\s*var\(--nav-teal\);\s*$/);
+    expect(rule(".nav-hat[data-mode='look'] .nav-hat__outline, .nav-hat[data-mode='look'] .nav-hat__seam")).toMatch(/^\s*stroke:\s*var\(--nav-teal\);\s*$/);
+    // the seam under the eye: the ring's own stroke, no fill
+    expect(rule('.nav-hat__seam')).toMatch(/^\s*fill:\s*none;\s*stroke:\s*var\(--nav-line\);\s*stroke-width:\s*1\.5px;\s*vector-effect:\s*non-scaling-stroke;\s*$/);
     expect(rule(".nav-eye[aria-pressed='true'], .nav-eye[data-held]")).toMatch(/^\s*color:\s*var\(--nav-teal\);\s*$/);
     expect(rule('.nav-hat__glyph')).toContain(`color: ${NAV_GLYPH};`);
     expect(NAV_GLYPH).not.toMatch(/#fff|white|100%\s*\//i);

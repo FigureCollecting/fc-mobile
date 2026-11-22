@@ -124,6 +124,8 @@ const styles = `
      the hat's box and out past it to the bubble; it takes no touch (the hat's circle and the eye's do) */
   .nav-hat__shell { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
   .nav-hat__outline { fill: var(--nav-fill); stroke: var(--nav-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+  /* the seam: the ring's arc under the eye, in the ring's own stroke (both references draw it) */
+  .nav-hat__seam { fill: none; stroke: var(--nav-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
   /* (5.5 px: where they were inside the 1.5 px border the ring was before it was the outline) */
   .nav-hat__arrow { position: absolute; pointer-events: none; }
   .nav-hat__arrow--0 { right: 5.5px; top: calc(50% - 8px); }
@@ -151,8 +153,8 @@ const styles = `
     color: ${NAV_GLYPH};
     pointer-events: none;
   }
-  /* NAV-EYE: Look's thin teal outline on the whole fused outline, the ring and the eye's bubble */
-  .nav-hat[data-mode='look'] .nav-hat__outline { stroke: var(--nav-teal); }
+  /* NAV-EYE: Look's thin teal outline on the whole fused outline, the ring and the eye's bubble, and the seam */
+  .nav-hat[data-mode='look'] .nav-hat__outline, .nav-hat[data-mode='look'] .nav-hat__seam { stroke: var(--nav-teal); }
   /* the eye: its hit circle is its bubble (navEyeShape's EYE), outside the ring at EYE_SLOT_DEG, over the ring where the
      bubble reaches into it; a share of the hat's box, as the outline is */
   .nav-eye {

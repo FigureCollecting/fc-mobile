@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { NavHat } from '../NavHat';
 import { EYE_SLOT_DEG, HAT_KNOB_PX, HAT_RING_PX } from '../navTuning';
-import { FUSED_PATH, RING_PATH } from '../navEyeShape';
+import { FUSED_PATH, RING_PATH, SEAM_PATH } from '../navEyeShape';
 import { JOG_DEAD_PX, JOG_FULL_PX, JOG_MAX_X, jogDetents, jogSpeed } from '../casePose';
 import type { JogTarget } from '../../../stores/jog';
 
@@ -48,6 +48,11 @@ describe('the hat: what it is', () => {
     render(<NavHat jog={jogOf({ look: { start: vi.fn(() => true), aim: vi.fn(), stop: vi.fn() } })} />);
     expect(outline()).toHaveLength(1);
     expect(outline()[0].getAttribute('d')).toBe(FUSED_PATH);
+    // the seam (the references): the ring's arc under the eye, its own path, drawn over the outline's fill
+    const seam = hat().querySelectorAll<SVGPathElement>('.nav-hat__shell .nav-hat__seam');
+    expect(seam).toHaveLength(1);
+    expect(seam[0].getAttribute('d')).toBe(SEAM_PATH);
+    expect(seam[0].previousElementSibling).toBe(outline()[0]);
     const shell = hat().querySelector('.nav-hat__shell')!;
     expect(shell.getAttribute('viewBox')).toBe('0 0 100 100');
     expect(shell.getAttribute('aria-hidden')).toBe('true');
@@ -59,6 +64,7 @@ describe('the hat: what it is', () => {
     render(<NavHat jog={jogOf()} />);
     expect(outline()).toHaveLength(1);
     expect(outline()[0].getAttribute('d')).toBe(RING_PATH);
+    expect(hat().querySelector('.nav-hat__seam'), 'no eye, no seam').toBeNull();
   });
 });
 

@@ -869,6 +869,227 @@ describe('useCollectionImages', () => {
     expect(result.current.size).toBe(0);
   });
 
+  // LISTLESS-RECHECK (PICS 11-22: the same figures stood as plates on two devices for a long time, the case view left open): a
+  // figure whose list came back empty (the spine had no display copy of it yet) was never asked about again until a new sync.
+  describe('a figure the sync found no image for (LISTLESS-RECHECK)', { timeout: 30_000 }, () => {
+    const MIN = 60_000;
+    const listed = (i: number, c: string) => ({ headId: headOf(i), images: [{ derivativeId: c.repeat(64), role: 'gallery', primary: true, url: url(c), width: 550, height: 800 }] });
+    type Rig = Awaited<ReturnType<typeof localRig>>;
+    /**
+     * Figure 0 listed from the first; figures 1.. listed once `derived` names them. Each call answers only the heads it asks
+     * about; `hold` makes a call wait until released, `failing` makes it fail.
+     */
+    const spine = (r: Rig) => {
+      const s = { derived: new Set<number>(), failing: false, hold: undefined as Promise<void> | undefined };
+      r.clients.getProductImages.mockImplementation(async (req: { headIds: string[] }, opts?: { signal?: AbortSignal }) => {
+        // a held call ends when released, or fails when its signal aborts, as a Connect call does
+        if (s.hold !== undefined) await Promise.race([s.hold, new Promise((_res, rej) => opts?.signal?.addEventListener('abort', () => rej(opts.signal!.reason)))]);
+        if (s.failing) throw new ConnectError('blip', Code.Unavailable);
+        const products = [listed(0, 'a'), ...[...s.derived].map((i) => listed(i, String.fromCharCode(97 + i)))];
+        return create(GetProductImagesResponseSchema, { products: products.filter((p) => req.headIds.includes(p.headId)) });
+      });
+      return s;
+    };
+    const idle = (client: QueryClient) =>
+      waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ['local', 'kept-images'], fetchStatus: 'idle', predicate: (q) => q.state.data !== undefined })).toHaveLength(1));
+    /** The case view open on `n` figures, its sync done (only figure 0 listed), and the clock held there. */
+    const open = async (n = 2) => {
+      const r = await localRig();
+      const s = spine(r);
+      await seedFigures(r, Array.from({ length: n }, (_, i) => ({ title: `F${i}` })));
+      const client = appClient();
+      const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+      await idle(client);
+      await settle();
+      const t0 = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+      restoreClock = () => clock.mockRestore();
+      /** The engine's pass `min` minutes after the sync. */
+      const passAt = async (min: number, trigger: 'poll' | 'visible' = 'poll') => {
+        clock.mockReturnValue(t0 + min * MIN);
+        r.clock.advance(MIN);
+        await r.engine.trigger(trigger);
+        await quiet();
+      };
+      const calls = () => r.clients.getProductImages.mock.calls.length;
+      const asked = (n: number) => (r.clients.getProductImages.mock.calls[n - 1]![0] as { headIds: string[] }).headIds;
+      return { r, s, client, view, passAt, calls, asked, clock };
+    };
+    let restoreClock = () => {};
+    afterEach(() => {
+      restoreClock();
+      restoreClock = () => {};
+      delete (document as unknown as { visibilityState?: unknown }).visibilityState;
+    });
+
+    it('is asked about again, alone, by the first pass ten minutes after the sync, and its photo shown; not before, and not again once listed', async () => {
+      const { s, view, passAt, calls, asked } = await open();
+      expect(calls()).toBe(1);
+      s.derived.add(1);
+      for (const min of [1, 5, 9]) {
+        await passAt(min);
+        expect(calls()).toBe(1);
+      }
+      expect(view.result.current.has(headOf(1))).toBe(false);
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+      expect(asked(2)).toEqual([headOf(1)]);
+      expect(view.result.current.get(headOf(0))?.url).toBe(url('a'));
+      expect(imagesComplete(view.result.current)).toBe(true);
+      // listed: nothing is asked about it again
+      for (const min of [30, 60, 120]) await passAt(min);
+      expect(calls()).toBe(2);
+    });
+
+    it('one still without an image is asked about again after a wait that doubles, at most an hour: 10, 30, 70, 130, 190 min', async () => {
+      const { passAt, calls, asked } = await open();
+      const seen: [number, number][] = [];
+      for (const min of [10, 29, 30, 69, 70, 129, 130, 189, 190]) {
+        await passAt(min);
+        seen.push([min, calls()]);
+      }
+      expect(seen).toEqual([
+        [10, 2],
+        [29, 2],
+        [30, 3],
+        [69, 3],
+        [70, 4],
+        [129, 4],
+        [130, 5],
+        [189, 5],
+        [190, 6],
+      ]);
+      expect(asked(6)).toEqual([headOf(1)]);
+    });
+
+    it('asks only about those still without an image: one listed since leaves them, one call for the rest', async () => {
+      const { s, view, passAt, calls, asked } = await open(3);
+      s.derived.add(1);
+      await passAt(10);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(asked(2)).toEqual([headOf(1), headOf(2)]);
+      s.derived.add(2);
+      await passAt(29);
+      expect(calls()).toBe(2);
+      await passAt(30);
+      await waitFor(() => expect(view.result.current.get(headOf(2))?.url).toBe(url('c')), { timeout: 3000 });
+      expect(asked(3)).toEqual([headOf(2)]);
+      expect(view.result.current.get(headOf(1))?.url).toBe(url('b'));
+      await passAt(200);
+      expect(calls()).toBe(3);
+    });
+
+    it('a hidden page asks nothing; the pass on its return asks, the wait being over', async () => {
+      const { s, view, passAt, calls, asked } = await open();
+      s.derived.add(1);
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      await passAt(11);
+      await passAt(40);
+      expect(calls()).toBe(1);
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      await passAt(41, 'visible');
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+      expect(asked(2)).toEqual([headOf(1)]);
+    });
+
+    it('asks nothing more while its call is under way; the photo shown once it answers', async () => {
+      const { s, view, passAt, calls } = await open();
+      s.derived.add(1);
+      let release!: () => void;
+      s.hold = new Promise<void>((res) => (release = res));
+      await passAt(11);
+      await waitFor(() => expect(calls()).toBe(2));
+      await passAt(12);
+      await passAt(25);
+      setFetchOrder([headOf(1)]);
+      await quiet();
+      expect(calls()).toBe(2);
+      s.hold = undefined;
+      release();
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+    });
+
+    it('the case view going away while its call is under way aborts the call and asks nothing more', async () => {
+      const { r, s, view, passAt, calls } = await open();
+      s.derived.add(1);
+      s.hold = new Promise<void>(() => {});
+      await passAt(11);
+      await waitFor(() => expect(calls()).toBe(2));
+      const call = r.clients.getProductImages.mock.calls[1]![1] as { signal: AbortSignal };
+      expect(call.signal.aborted).toBe(false);
+      view.unmount();
+      expect(call.signal.aborted).toBe(true);
+      s.hold = undefined;
+      await passAt(40);
+      expect(calls()).toBe(2);
+    });
+
+    it('a call that fails leaves the case as it was and is asked again a wait later, not at the next pass', async () => {
+      const { s, view, passAt, calls, asked } = await open();
+      s.derived.add(1);
+      s.failing = true;
+      await passAt(11);
+      expect(calls()).toBe(2);
+      expect(view.result.current.get(headOf(0))?.url).toBe(url('a'));
+      expect(view.result.current.has(headOf(1))).toBe(false);
+      expect(imagesComplete(view.result.current)).toBe(true);
+      s.failing = false;
+      await passAt(12);
+      await passAt(20);
+      expect(calls()).toBe(2);
+      await passAt(21);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(3);
+      expect(asked(3)).toEqual([headOf(1)]);
+    });
+
+    it('another document\'s sync holding the lock: it asks nothing, and the next pass after asks', async () => {
+      const uninstall = installFakeLocks();
+      try {
+        const { s, view, passAt, calls } = await open();
+        s.derived.add(1);
+        let answer!: () => void;
+        // another document's sync of the same figures, reading its lists
+        const list = await recallImages(headOf(0), storage);
+        const other = syncKeptImages([headOf(0), headOf(1)], async () => {
+          await new Promise<void>((res) => (answer = res));
+          return new Map([[headOf(0), list!.map((i) => ({ ...i, derivativeId: i.url.slice(-64), $typeName: 'fc.api.v1.ProductImage' }) as never)]]);
+        }, { storage, lockWaitMs: 60 * MIN });
+        await settle();
+        await passAt(11);
+        expect(calls()).toBe(1);
+        answer();
+        await other;
+        await passAt(12);
+        await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+        expect(calls()).toBe(2);
+      } finally {
+        uninstall();
+      }
+    });
+
+    it('a figure listed but whose image is refused: the photo comes with a later fill, its list not asked again', async () => {
+      let refusing = true;
+      storage = fakeCaches(async (req) => (refusing && req.url === url('b') ? new Response('', { status: 503 }) : new Response('img')));
+      vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
+      const { s, view, passAt, calls } = await open();
+      s.derived.add(1);
+      await passAt(11);
+      await waitFor(() => expect(storage.added.filter((q) => q.url === url('b'))).toHaveLength(1));
+      await waitFor(() => expect(imagesComplete(view.result.current)).toBe(false));
+      expect(view.result.current.has(headOf(1))).toBe(false);
+      refusing = false;
+      await passAt(13);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+    });
+  });
+
   // SC-IMGKEY (Ross 11-13, "everything seems to be reloading just about every time"): the server reached or lost was a new
   // answer, under a new key with nothing in it, so the case stood as plates at each launch and each flap of the link until its
   // sync showed what the device had kept all along; and each flap stopped the sync under way and asked the lists again.

@@ -25,6 +25,7 @@ import {
   fetchImageLists,
   fillKeptImages,
   keepChosenPhotos,
+  keepListless,
   keptImage,
   keptImages,
   primaryImage,
@@ -33,6 +34,7 @@ import {
   rememberImages,
   syncKeptImages,
   toCachedImages,
+  unlisted,
   withheldAddresses,
   withheldAmong,
   withheldKey,
@@ -459,6 +461,117 @@ describe('fillKeptImages (PHOTOS1)', () => {
     const storage = await leftUnfetched();
     vi.stubGlobal('caches', storage);
     expect(await fillKeptImages(['h2'])).toEqual({ added: 1, absent: 0, failed: 0 });
+  });
+});
+
+// LISTLESS-RECHECK (PICS 11-22): a kept figure whose list came back empty is asked about again, alone, while the case view stays open.
+describe('keepListless (LISTLESS-RECHECK)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const owned = (storage: ReturnType<typeof fakeCaches>) => [...(storage.stores.get(OWNED_MEDIA_CACHE)?.keys() ?? [])].sort();
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  /** A device whose last sync kept h1's list and image; h2 and h3 had none. */
+  const synced = async () => {
+    const storage = device();
+    await syncKeptImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })] }), { storage });
+    storage.added.length = 0;
+    return storage;
+  };
+  let uninstall: () => void = () => {};
+  afterEach(() => uninstall());
+
+  it('reads the lists of the heads still without a kept list, keeps those that now name an image and fetches it with its mask', async () => {
+    const storage = await synced();
+    const read = lists({ h2: [img('b', { primary: true, mask: mask('d') })], h3: [] });
+    const done = await keepListless(['h1', 'h2', 'h3'], read, { storage });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(['h2', 'h3']);
+    expect(done).toEqual({ listed: new Set(['h1', 'h2']), filled: { added: 2, absent: 0, failed: 0 } });
+    expect(owned(storage)).toEqual([url('a'), url('b'), url('d')].sort());
+    expect(await keptImage('h2', storage)).toMatchObject({ url: url('b'), maskUrl: url('d') });
+    expect(await recallImages('h3', storage)).toBeUndefined();
+  });
+
+  it('asks nothing when every head has a kept list, and fetches what those lists still miss', async () => {
+    const storage = await synced();
+    await rememberImages('h2', [{ url: url('b'), width: 1, height: 1, role: 'gallery', primary: true }], storage);
+    const read = lists({});
+    expect(await keepListless(['h2'], read, { storage })).toEqual({ listed: new Set(['h2']), filled: { added: 1, absent: 0, failed: 0 } });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('keeps nothing for a list with no image the client may keep, and fetches nothing', async () => {
+    const storage = await synced();
+    const off = create(ProductImageSchema, { derivativeId: hex('b'), role: 'gallery', primary: true, url: 'https://elsewhere.example/b', width: 1, height: 1 });
+    expect(await keepListless(['h2'], lists({ h2: [off] }), { storage })).toEqual({ listed: new Set(), filled: { added: 0, absent: 0, failed: 0 } });
+    expect(storage.added).toEqual([]);
+    expect(await recallImages('h2', storage)).toBeUndefined();
+  });
+
+  it('forgets a withheld address a fresh list carries again before it fetches it', async () => {
+    const storage = await synced();
+    await (await storage.open(WITHHELD_CACHE)).put(withheldKey(url('b')), new Response(null));
+    await keepListless(['h2'], lists({ h2: [img('b', { primary: true })] }), { storage });
+    expect(await withheldAddresses(storage)).toEqual(new Set());
+    expect(owned(storage)).toContain(url('b'));
+  });
+
+  it('a read that fails throws, keeping and fetching nothing', async () => {
+    const storage = await synced();
+    const read = vi.fn(async () => {
+      throw new Error('UNAVAILABLE');
+    });
+    await expect(keepListless(['h2'], read, { storage })).rejects.toThrow('UNAVAILABLE');
+    expect(await recallImages('h2', storage)).toBeUndefined();
+    expect(storage.added).toEqual([]);
+  });
+
+  it('its signal aborted while the lists are read: keeps and fetches nothing', async () => {
+    const storage = await synced();
+    const stop = new AbortController();
+    const read = vi.fn(async () => {
+      stop.abort();
+      return new Map([['h2', [img('b', { primary: true })]]]);
+    });
+    await expect(keepListless(['h2'], read, { storage, signal: stop.signal })).rejects.toThrow();
+    expect(await recallImages('h2', storage)).toBeUndefined();
+    expect(storage.added).toEqual([]);
+  });
+
+  it('runs only while no sync holds the lock: another document syncing, it asks nothing and answers undefined', async () => {
+    uninstall = installFakeLocks();
+    const storage = await synced();
+    let answer!: () => void;
+    const other = syncKeptImages(['h1'], async () => {
+      await new Promise<void>((res) => (answer = res));
+      return new Map([['h1', [img('a', { primary: true })]]]);
+    }, { storage });
+    await new Promise((res) => setTimeout(res, 10));
+    const read = lists({ h2: [img('b', { primary: true })] });
+    expect(await keepListless(['h2'], read, { storage })).toBeUndefined();
+    expect(read).not.toHaveBeenCalled();
+    answer();
+    await other;
+    expect(await keepListless(['h2'], read, { storage })).toEqual({ listed: new Set(['h2']), filled: { added: 1, absent: 0, failed: 0 } });
+  });
+
+  it('does nothing where the browser has no Cache API, and reads the browser\'s caches when given none', async () => {
+    const read = lists({ h2: [img('b', { primary: true })] });
+    expect(await keepListless(['h2'], read, { storage: undefined })).toEqual({ listed: new Set(), filled: { added: 0, absent: 0, failed: 0 } });
+    expect(read).not.toHaveBeenCalled();
+    const storage = await synced();
+    vi.stubGlobal('caches', storage);
+    expect(await keepListless(['h2'], read)).toEqual({ listed: new Set(['h2']), filled: { added: 1, absent: 0, failed: 0 } });
+  });
+
+  it('unlisted: the heads the device keeps no list for after a sync, one with no image it may keep among them, in the order given', async () => {
+    const storage = device();
+    const off = create(ProductImageSchema, { derivativeId: hex('c'), role: 'gallery', primary: true, url: 'https://elsewhere.example/c', width: 1, height: 1 });
+    await syncKeptImages(['h1', 'h2', 'h3'], lists({ h1: [img('a', { primary: true })], h3: [off] }), { storage });
+    expect(await unlisted(['h3', 'h1', 'h2'], storage)).toEqual(['h3', 'h2']);
+    expect(await unlisted(['h1'], storage)).toEqual([]);
+    expect(await unlisted(['h1'], undefined)).toEqual([]);
+    vi.stubGlobal('caches', storage);
+    expect(await unlisted(['h2'])).toEqual(['h2']);
   });
 });
 

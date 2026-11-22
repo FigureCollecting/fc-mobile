@@ -864,6 +864,66 @@ async function fill(
   return result;
 }
 
+/** LISTLESS-RECHECK: of these heads, those the device keeps no list for (a sync found no image it may keep), in the order given. */
+export async function unlisted(heads: readonly string[], storage: CacheStorage | undefined = browserCaches()): Promise<string[]> {
+  if (storage === undefined) return [];
+  const recorded = new Set((await (await storage.open(IMAGE_LISTS_CACHE)).keys()).map((k) => headOfKey(k.url)));
+  return heads.filter((h) => !recorded.has(h));
+}
+
+/** LISTLESS-RECHECK: what keepListless did: the heads that have a kept list now, and what its fill fetched for them. */
+export interface ListlessKept {
+  listed: ReadonlySet<string>;
+  filled: KeptImageFill;
+}
+
+/**
+ * LISTLESS-RECHECK (PICS 11-22: figures whose list came back empty stood as plates for as long as the case view stayed open,
+ * a later display copy never asked about): the lists of those of these heads the device still keeps no list for, read again
+ * (`fetchLists`, a call per 200 heads), each that now names an image the client may keep written as LOAD2 writes a figure with
+ * no kept list (it withholds and replaces nothing; an address it carries again is forgotten first), then the shown images of
+ * every head with a kept list now fetched as a fill fetches them. Under the fill's lock (OWNED_SYNC_LOCK if available): another
+ * document's sync holding it, it asks nothing and answers undefined. A read that fails, or its signal aborted before the
+ * writes, throws having written nothing.
+ */
+export async function keepListless(
+  heads: readonly string[],
+  fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
+  options: { storage?: CacheStorage | undefined; choices?: PhotoChoices; signal?: AbortSignal; first?: () => readonly string[] } = {},
+): Promise<ListlessKept | undefined> {
+  const storage = 'storage' in options ? options.storage : browserCaches();
+  if (storage === undefined) return { listed: new Set(), filled: { added: 0, absent: 0, failed: 0 } };
+  const locks = (navigator as { locks?: LockManager }).locks;
+  if (locks === undefined) return listAgain(heads, fetchLists, storage, options);
+  return locks.request(OWNED_SYNC_LOCK, { ifAvailable: true }, (lock) => (lock === null ? undefined : listAgain(heads, fetchLists, storage, options)));
+}
+
+async function listAgain(
+  heads: readonly string[],
+  fetchLists: (heads: readonly string[]) => Promise<Map<string, ProductImage[]>>,
+  storage: CacheStorage,
+  options: { choices?: PhotoChoices; signal?: AbortSignal; first?: () => readonly string[] },
+): Promise<ListlessKept> {
+  const ask = await unlisted([...new Set(heads)], storage);
+  const listed = new Set(heads.filter((h) => !ask.includes(h)));
+  if (ask.length > 0) {
+    const lists = await fetchLists(ask);
+    options.signal?.throwIfAborted();
+    const records = await storage.open(IMAGE_LISTS_CACHE);
+    const tomb = await storage.open(WITHHELD_CACHE);
+    const withheld = new Set((await tomb.keys()).map((k) => addressOfWithheldKey(k.url)));
+    for (const head of ask) {
+      const list = toCachedImages(lists.get(head) ?? []);
+      if (answerable(list, options.choices?.get(head)).length === 0) continue;
+      for (const u of addressesOf(list).filter((a) => withheld.has(a))) await tomb.delete(withheldKey(u));
+      await records.put(listKey(head), listOf(list));
+      listed.add(head);
+    }
+  }
+  const filled = listed.size === 0 ? { added: 0, absent: 0, failed: 0 } : await fill([...listed], storage, options);
+  return { listed, filled };
+}
+
 async function bringToKept(keptHeads: readonly string[], fetchLists: ListsReader, storage: CacheStorage, options: SyncOptions): Promise<KeptImageSync> {
   const result: KeptImageSync = { figures: 0, images: 0, added: 0, evicted: 0, failed: 0, absent: 0 };
   const heads = [...new Set(keptHeads)].slice(0, options.max ?? MAX_KEPT_FIGURES);

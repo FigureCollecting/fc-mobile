@@ -52,7 +52,7 @@ import { useQuery, useQueryClient, type QueryClient, type QueryKey, type QuerySt
 import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { localSession } from '../local/session';
 import { useAuthPhase, useSnapshot, type Snapshot } from '../local/useLocal';
-import { fetchImageLists, fillKeptImages, keepChosenPhotos, keptImage, keptImages, syncKeptImages, withheldAddresses, ABSENT_RECHECK_MS, MAX_KEPT_FIGURES, type CachedImage, type KeptImageFill } from '../media/keptImages';
+import { fetchImageLists, fillKeptImages, keepChosenPhotos, keepListless, keptImage, keptImages, syncKeptImages, unlisted, withheldAddresses, ABSENT_RECHECK_MS, MAX_KEPT_FIGURES, type CachedImage, type KeptImageFill } from '../media/keptImages';
 import { usePhotoChoices, type PhotoChoices } from '../media/photoChoice';
 import { answersFromKept, dropImageAnswers, duringOwnSync, hearKeptSyncs, tellKeptSync } from './imageAnswers';
 import { useOnlineStatus } from './useOnlineStatus';
@@ -113,8 +113,20 @@ const leftAfter = (done: KeptImageFill, failedAfterMs: number): number | undefin
 export const REFILL_AFTER_MS = 30_000;
 /** PHOTOS1: a new order starts a fill this long after the case view stops telling new ones (a walk tells one each step). */
 export const FILL_AFTER_ORDER_MS = 250;
-/** PHOTOS1: the fill under way in this document (one at a time). */
+/** PHOTOS1: the fill under way in this document (one at a time); LISTLESS-RECHECK's read of the lists takes the same place. */
 let filling: { stop: () => void; done: Promise<void> } | undefined;
+/**
+ * LISTLESS-RECHECK (PICS 11-22: figures whose list came back empty stood as plates for as long as the case view stayed open, on
+ * two devices, the display copy made meanwhile never asked about): the kept figures a sync that read the lists left with no
+ * kept list, asked about again (their lists alone, src/media/keptImages.ts keepListless) at the first visible pass
+ * LISTLESS_RECHECK_MS after it, then after a wait that doubles at each answer that lists none of them, at most
+ * LISTLESS_RECHECK_MAX_MS: so a figure with no image ever costs about a call an hour. A figure listed since leaves them; a read
+ * that fails is asked again a wait later, the wait not doubled.
+ */
+const listless = new WeakMap<ReadonlyMap<string, CachedImage>, { heads: readonly string[]; at: number; wait: number }>();
+export const LISTLESS_RECHECK_MS = 10 * 60_000;
+export const LISTLESS_RECHECK_MAX_MS = 60 * 60_000;
+const pageHidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
 /** FETCH-FIRST: the case view's heads, those it shows first: the sync or fill under way fetches in this order from its next fetch on. */
 export function setFetchOrder(heads: readonly string[]): void {
@@ -302,6 +314,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       let incomplete = false;
       let listsUnread = false;
       let left: number | undefined;
+      let listsKept = false;
       // PICK-SLOW (CHAL3: a pick during a sync ran again about a second later, having lost which figures changed): a run this
       // case view replaced (a pick, "Use default") drops the other answers as any sync does, but never stops or asks again the
       // run that replaced it, which answers next from its own sync
@@ -364,7 +377,10 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
           // under way runs on.
           // PHOTOS1: a display copy not made yet (404) is no image left unfetched: the case lays out at once
           incomplete = synced.failed > 0;
-          if (!signal.aborted) left = leftAfter(synced, 0);
+          if (!signal.aborted) {
+            left = leftAfter(synced, 0);
+            listsKept = true;
+          }
           tellKeptSync(client, signal.aborted || incomplete ? 'stopped' : 'synced');
         } catch (err) {
           // Failed or stopped after it read the lists (a write refused, its case view gone): told as
@@ -389,6 +405,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       if (incomplete) partial.add(answer);
       if (listsUnread) unread.add(answer);
       if (left !== undefined) leftover.set(answer, left);
+      const none = listsKept ? await unlisted(kept) : [];
+      if (none.length > 0) listless.set(answer, { heads: none, at: Date.now() + LISTLESS_RECHECK_MS, wait: LISTLESS_RECHECK_MS });
       return answer;
     },
     enabled,
@@ -425,6 +443,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         if (stop.signal.aborted) return;
         if (filled.failed > 0) partial.add(answer);
         if (again !== undefined) leftover.set(answer, again);
+        const owed = listless.get(data);
+        if (owed !== undefined) listless.set(answer, owed);
         client.setQueryData(queryKey, answer);
       } finally {
         shown.stop();
@@ -432,6 +452,47 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       }
     })();
     filling = { stop: () => stop.abort(), done: done.catch(() => undefined) };
+  };
+  /** LISTLESS-RECHECK: the kept figures the last sync left with no kept list asked about again, when due; whether it started. */
+  const startRecheck = (): boolean => {
+    const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
+    const data = state?.data;
+    if (filling !== undefined || !reachable || !signedIn || state?.fetchStatus !== 'idle' || data === undefined || pageHidden()) return false;
+    const owed = listless.get(data);
+    if (owed === undefined || owed.at > Date.now()) return false;
+    const stop = new AbortController();
+    const queryKey = key;
+    const kept = (heads ?? []).slice(0, MAX_KEPT_FIGURES);
+    const choices = allChoices;
+    const catalog = session!.clients.catalog;
+    const done = (async () => {
+      try {
+        const got = await keepListless(owed.heads, (h) => fetchImageLists(catalog, h, stop.signal), { signal: stop.signal, choices, first: () => fetchOrder });
+        // another document's sync holds the lock: the next pass asks again
+        if (got === undefined || stop.signal.aborted) return;
+        const left = owed.heads.filter((h) => !got.listed.has(h));
+        const wait = Math.min(2 * owed.wait, LISTLESS_RECHECK_MAX_MS);
+        const again = left.length === 0 ? undefined : { heads: left, at: Date.now() + wait, wait };
+        if (got.listed.size === 0) {
+          listless.set(data, again!);
+          return;
+        }
+        const answer = await keptImages(kept, undefined, choices);
+        if (stop.signal.aborted) return;
+        if (partial.has(data) || got.filled.failed > 0) partial.add(answer);
+        const refill = [leftover.get(data), leftAfter(got.filled, REFILL_AFTER_MS)].filter((at): at is number => at !== undefined);
+        if (refill.length > 0) leftover.set(answer, Math.min(...refill));
+        if (again !== undefined) listless.set(answer, again);
+        client.setQueryData(queryKey, answer);
+      } catch {
+        // the read failed: asked again a wait later, not at the next pass
+        if (!stop.signal.aborted) listless.set(data, { ...owed, at: Date.now() + owed.wait });
+      } finally {
+        filling = undefined;
+      }
+    })();
+    filling = { stop: () => stop.abort(), done };
+    return true;
   };
   const fillNow = useRef(startFill);
   fillNow.current = startFill;
@@ -512,7 +573,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
     seenPass.current = passedAt;
     const state = client.getQueryState<ReadonlyMap<string, CachedImage>>(key);
     if (state?.fetchStatus === 'idle' && state.data !== undefined && unread.has(state.data)) syncAgain(false);
-    else startFill();
+    else if (!startRecheck()) startFill();
   }, [passedAt]);
   return query.data ?? (signedIn ? LOADING : EMPTY);
 }

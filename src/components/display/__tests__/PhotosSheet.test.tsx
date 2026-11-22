@@ -216,7 +216,8 @@ describe('PhotosSheet', () => {
       photosOf.data = { photos: COLOURED, refreshFailed: false };
       open();
       fireEvent.error(tiles()[1]!.querySelector('img')!);
-      expect(stateOf(tiles()[1]!)).toBe('failed');
+      fireEvent.error(tiles()[2]!.querySelector('img')!);
+      expect(tiles().map(stateOf)).toEqual(['loading', 'failed', 'failed']);
       fireEvent.click(tiles()[1]!);
       // a fresh <img> for the same address, waiting in the photo's colour again
       expect(stateOf(tiles()[1]!)).toBe('loading');
@@ -226,9 +227,10 @@ describe('PhotosSheet', () => {
       fireEvent.load(tiles()[1]!.querySelector('img')!);
       expect(stateOf(tiles()[1]!)).toBe('loaded');
       expect(tiles()[1]!.getAttribute('aria-label')).toBe('Photo 2 of 3');
-      expect(screen.queryByText("Couldn't load")).toBeNull();
-      // the others are untouched by the retry
-      expect(tiles().map(stateOf)).toEqual(['loading', 'loaded', 'loading']);
+      // the others are untouched by the retry: the one still failed says so, alone
+      expect(tiles().map(stateOf)).toEqual(['loading', 'loaded', 'failed']);
+      expect(screen.getAllByText("Couldn't load")).toHaveLength(1);
+      expect(tiles()[2]!.getAttribute('aria-label')).toBe("Photo 3 of 3, couldn't load");
     });
 
     it('a failed tile tried again that fails again says so again; a tap on a tile that has not failed changes nothing about it', () => {

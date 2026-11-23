@@ -76,6 +76,18 @@ async function drag(page: Page, dy: number, holdMs = 0): Promise<void> {
   await settle(page, 500);
 }
 
+/** A right-button drag (a Look at once) from the frame's centre by (dx, dy). */
+async function look(page: Page, dx: number, dy: number): Promise<void> {
+  const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+  const x0 = f.x + f.width / 2;
+  const y0 = f.y + f.height / 2;
+  await page.mouse.move(x0, y0);
+  await page.mouse.down({ button: 'right' });
+  for (let i = 1; i <= 10; i++) await page.mouse.move(x0 + (dx * i) / 10, y0 + (dy * i) / 10);
+  await page.mouse.up({ button: 'right' });
+  await settle(page, 500);
+}
+
 /** MOVE drags one way (down raises the eye) until the eye stops: the room's top or bottom. */
 async function toEnd(page: Page, end: 'top' | 'bottom'): Promise<void> {
   const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
@@ -150,6 +162,22 @@ for (const size of SIZES) {
     await shows(page, testInfo, 'top-look-up-hat-up');
     await holdControl(page, 'depth', -40, 3000);
     await shows(page, testInfo, 'top-look-up-rail-forward');
+  });
+
+  test(`${at}: at the room's top diagonal Looks (yaw and pitch together) keep the wall in the frame, and so does the rail back after them`, async ({ page }, testInfo) => {
+    // CHALLENGE-1 B1: right drags from the frame's centre (the browser search's seq 34, as shares of the frame); on
+    // 0098a73 the sixth left the frame on the ceiling at yaw -28.7, and the rail back 3 s kept it there
+    test.setTimeout(120_000);
+    await open(page, size);
+    await toEnd(page, 'top');
+    const f = (await page.locator('.cabinet-scene__frame').boundingBox())!;
+    const steps = [[210, -317], [473, 323], [16, 186], [-713, 323], [30, 353], [690, 243]];
+    for (const [k, [dx, dy]] of steps.entries()) {
+      await look(page, (dx / 1536) * f.width, (dy / 730) * f.height);
+      await shows(page, testInfo, `top-diagonal-look-${k + 1}`);
+    }
+    await holdControl(page, 'depth', 40, 3000);
+    await shows(page, testInfo, 'top-diagonal-rail-back');
   });
 
   test(`${at}: at the room's bottom a Look down keeps the wall in the frame, and so does the rail after it`, async ({ page }, testInfo) => {

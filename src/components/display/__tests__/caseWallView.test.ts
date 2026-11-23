@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { PITCH_CAP_STEP, WALL_KEEP_FRAME, pitchCap, wallKept, wallShown } from '../caseWallView';
+import { PITCH_CAP_STEP, WALL_KEEP_FRAME, keepsWall, pitchCap, turnKept, wallAway, wallKept, wallShown } from '../caseWallView';
 import { PITCH, coneIn, lookWind, poseOf, turnBy, turnInside, withPose, type Pose, type YawCone } from '../casePose';
+import { sideOverhangMm } from '../cabinetProfile';
 import { freeSceneOf } from './freeDrivesScene';
 
 // NAV-EMPTY (Ross 11-22): whether the frame still holds the wall, how far a Look may turn before it does not, and that
@@ -174,5 +175,115 @@ describe('the pitch cap through a Look\'s limits (spansOf)', () => {
     expect(narrowed).toEqual({ soft: 10 * DEG, hard: 20 * DEG, pitch: capped.pitch });
     expect(coneIn(capped, { soft: 50 * DEG, hard: 60 * DEG })).toBe(capped);
     expect(coneIn(yaw, { soft: 10 * DEG, hard: 20 * DEG })).toEqual({ soft: 10 * DEG, hard: 20 * DEG });
+  });
+});
+
+/** At the room's top, turned up and round past where any front shows (CHALLENGE-1's browser seq 34 ended near it). */
+const BARE = { ...TOP, yaw: -30 * DEG, pitch: -28 * DEG };
+
+describe('wallAway: how far a frame that shows no front is turned from the wall', () => {
+  it('turning back down toward the cabinets makes it less; further up, or further round past the wall\'s end, more', () => {
+    expect(wallShown(cam(BARE), scene.wall)).toBe(false);
+    const away = wallAway(cam(BARE), scene.wall);
+    expect(away).toBeGreaterThan(0);
+    expect(wallAway(cam({ ...BARE, pitch: -20 * DEG }), scene.wall)).toBeLessThan(away);
+    expect(wallAway(cam({ ...BARE, pitch: -20 * DEG, yaw: -20 * DEG }), scene.wall)).toBeLessThan(away);
+    expect(wallAway(cam({ ...BARE, pitch: -35 * DEG }), scene.wall)).toBeGreaterThan(away);
+    expect(wallAway(cam({ ...BARE, yaw: -40 * DEG }), scene.wall)).toBeGreaterThan(away);
+  });
+
+  it('the least angle to any front\'s outline: as a dense walk round every front finds it, to a hundredth of a degree', () => {
+    const dense = (c: ReturnType<typeof cam>) => {
+      const ax = [Math.cos(c.pitch) * Math.sin(c.yaw ?? 0), -Math.sin(c.pitch), -Math.cos(c.pitch) * Math.cos(c.yaw ?? 0)];
+      let least = Math.PI;
+      for (const slot of scene.wall.cabinets) {
+        const feet = sideOverhangMm(slot.profile);
+        const [x0, x1, top] = [slot.leftMm - feet, slot.rightMm + feet, slot.profile.outer.heightMm];
+        const corners = [[x0, 0], [x1, 0], [x1, top], [x0, top], [x0, 0]];
+        for (let k = 0; k < 4; k++) {
+          for (let i = 0; i <= 2000; i++) {
+            const x = corners[k][0] + ((corners[k + 1][0] - corners[k][0]) * i) / 2000;
+            const y = corners[k][1] + ((corners[k + 1][1] - corners[k][1]) * i) / 2000;
+            const d = [x - c.x, y - c.y, -c.z];
+            least = Math.min(least, Math.acos((ax[0] * d[0] + ax[1] * d[1] + ax[2] * d[2]) / Math.hypot(d[0], d[1], d[2])));
+          }
+        }
+      }
+      return least;
+    };
+    for (const p of [BARE, { ...BARE, yaw: 10 * DEG }, { ...TOP, pitch: -40 * DEG }, { ...BOTTOM, pitch: 50 * DEG, yaw: 35 * DEG }, { yaw: 80 * DEG }, { ...TOP, z: 0 }]) {
+      const c = cam(p);
+      expect(wallShown(c, scene.wall)).toBe(false);
+      expect(Math.abs(wallAway(c, scene.wall) - dense(c))).toBeLessThan(0.01 * DEG);
+    }
+  });
+
+  it('0 where the axis meets a front (the framing)', () => {
+    expect(wallAway(scene.base, scene.wall)).toBe(0);
+  });
+
+  it('turned right round, the wall behind is more than a right angle away', () => {
+    expect(wallAway(cam({ yaw: Math.PI }), scene.wall)).toBeGreaterThan(Math.PI / 2);
+  });
+});
+
+describe('keepsWall: a turn from this frame holds the wall as well as it does', () => {
+  it('from a frame holding a front an eighth in: a turn that keeps one there passes; one that keeps it only at the edge does not', () => {
+    const ok = keepsWall(cam(TOP), scene.wall);
+    expect(ok(cam(TOP))).toBe(true);
+    expect(ok(cam({ ...TOP, pitch: -PITCH.upSoft }))).toBe(false);
+    let pitch = 0;
+    while (wallShown(cam({ ...TOP, pitch }), scene.wall, WALL_KEEP_FRAME)) pitch -= 0.5 * DEG;
+    expect(wallShown(cam({ ...TOP, pitch }), scene.wall)).toBe(true);
+    expect(ok(cam({ ...TOP, pitch }))).toBe(false);
+  });
+
+  it('from a frame with a front at its edge only: any front passes, none does not', () => {
+    let pitch = 0;
+    while (wallShown(cam({ ...TOP, pitch }), scene.wall, WALL_KEEP_FRAME)) pitch -= 0.5 * DEG;
+    const ok = keepsWall(cam({ ...TOP, pitch }), scene.wall);
+    expect(ok(cam(TOP))).toBe(true);
+    expect(ok(cam({ ...TOP, pitch }))).toBe(true);
+    expect(ok(cam({ ...TOP, pitch: -PITCH.upSoft }))).toBe(false);
+  });
+
+  it('from a frame that shows none: a turn no further from the wall passes, one further does not, one that brings a front in does', () => {
+    const ok = keepsWall(cam(BARE), scene.wall);
+    expect(ok(cam(BARE))).toBe(true);
+    expect(ok(cam({ ...BARE, pitch: -20 * DEG }))).toBe(true);
+    expect(ok(cam({ ...BARE, pitch: -35 * DEG }))).toBe(false);
+    expect(ok(cam({ ...BARE, yaw: -40 * DEG }))).toBe(false);
+    expect(ok(cam(TOP))).toBe(true);
+  });
+});
+
+describe('turnKept: a turn taken as far toward the one asked for as still passes', () => {
+  const from = { ...base, yaw: 0, pitch: 0 };
+  const asked = { ...from, yaw: -30 * DEG, pitch: -30 * DEG };
+
+  it('a turn that passes is itself', () => {
+    expect(turnKept(from, asked, () => true)).toBe(asked);
+  });
+
+  it('held on one axis, it goes on along the other: the pitch stops at its last passing angle, the yaw goes all the way', () => {
+    const ok = (p: Pose) => p.pitch >= -10 * DEG;
+    const got = turnKept(from, asked, ok);
+    expect(ok(got)).toBe(true);
+    expect(got.pitch).toBeLessThan(-10 * DEG + PITCH_CAP_STEP);
+    expect(got.yaw).toBe(asked.yaw);
+  });
+
+  it('held on both, each stops at its last passing angle', () => {
+    const ok = (p: Pose) => p.pitch >= -10 * DEG && p.yaw >= -20 * DEG;
+    const got = turnKept(from, asked, ok);
+    expect(ok(got)).toBe(true);
+    expect(got.pitch).toBeLessThan(-10 * DEG + PITCH_CAP_STEP);
+    expect(got.yaw).toBeLessThan(-20 * DEG + PITCH_CAP_STEP);
+  });
+
+  it('the asked turn\'s place, and where even the turn it comes from fails there, that turn', () => {
+    const moved = { ...asked, z: from.z - 100 };
+    expect(turnKept(from, moved, (p) => p.pitch === 0 && p.yaw === 0)).toEqual({ ...moved, yaw: 0, pitch: 0 });
+    expect(turnKept(from, moved, () => false)).toEqual({ ...moved, yaw: 0, pitch: 0 });
   });
 });

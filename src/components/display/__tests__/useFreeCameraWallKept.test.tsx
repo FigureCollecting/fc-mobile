@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
 import { frontShown } from '../caseCull';
 import { JOG_FULL_PX, PITCH, SPRING_MS, poseOf, withPose, type Pose } from '../casePose';
+import { wallAway } from '../caseWallView';
 import { useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
@@ -236,6 +237,88 @@ describe.each([
     const m = mount(freeSceneOf({ frame }));
     expect(m.shows({ ...poseOf(m.scene.base), pitch: -PITCH.upSoft })).toBe(true);
     expect(lookTo(m, -JOG_FULL_PX).pitch).toBe(-PITCH.upSoft);
+    m.unmount();
+  });
+});
+
+/** A scene Look (a right drag from the frame's centre by dx, dy), let go, and its ease back run. */
+function sceneLook(m: ReturnType<typeof mount>, id: number, dx: number, dy: number): Pose {
+  const { width, height } = m.scene.base.frame;
+  const c = { x: width / 2, y: height / 2 };
+  act(() => m.fc().press({ pointerId: id, clientX: c.x, clientY: c.y, button: 2 }, c));
+  act(() => m.fc().drag(id, { x: c.x + dx, y: c.y + dy }, Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'));
+  act(() => {
+    m.fc().release(id, true);
+  });
+  m.frames.tick(SPRING_MS);
+  m.frames.tick(16);
+  return m.pose();
+}
+
+describe.each([
+  ['1536x730', DESKTOP],
+  ['870x475', FOLD_OPEN],
+])('NAV-EMPTY at %s: a diagonal Look (yaw and pitch together) never turns the wall out of the frame', (_name, frame) => {
+  for (const [where, from, aim] of [
+    ['top, up and left', TOP, [-JOG_FULL_PX, -JOG_FULL_PX]],
+    ['top, up and right', TOP, [JOG_FULL_PX, -JOG_FULL_PX]],
+    ['bottom, down and left', { y: 300, z: TOP.z }, [-JOG_FULL_PX, JOG_FULL_PX]],
+  ] as const) {
+    it(`the hat's Look held at the room's ${where}, let go every 0.4 s for 4 s: each rests with a front an eighth in, and the yaw still turns`, () => {
+      const m = mount(freeSceneOf({ frame }));
+      m.at(from);
+      // (held, the view may stand in the rubber band past where it rests: CHALLENGE-1 N2, a known limit)
+      for (let k = 0; k < 10; k++) {
+        expect(m.fc().lookStart()).toBe(true);
+        m.fc().lookAim(aim[0], aim[1]);
+        m.run(HELD / 10);
+        const rest = m.stop('lookStop')!;
+        m.frames.tick(SPRING_MS);
+        expect(m.pose()).toEqual(rest);
+        expect(m.shows(), `let go ${k + 1}`).toBe(true);
+      }
+      expect(Math.abs(m.pose().yaw)).toBeGreaterThan(5 * DEG);
+      m.unmount();
+    });
+  }
+
+  it('a scene Look dragged to the frame\'s corner from the room\'s top rests with a front an eighth in', () => {
+    const m = mount(freeSceneOf({ frame }));
+    m.at(TOP);
+    const rest = sceneLook(m, 1, -0.45 * frame.width, 0.45 * frame.height);
+    expect(rest.pitch).toBeLessThan(0);
+    expect(m.shows()).toBe(true);
+    m.unmount();
+  });
+
+  it('from a frame that shows no front, a Look turns it no further from the wall, and one back toward it brings a front in', () => {
+    const m = mount(freeSceneOf({ frame }));
+    const bare = m.at({ ...TOP, yaw: -30 * DEG, pitch: -28 * DEG });
+    expect(m.atEdge()).toBe(false);
+    const away = wallAway(withPose(m.scene.base, bare), m.scene.wall);
+    // up and further left: the drag carries the world right and down
+    sceneLook(m, 1, 0.3 * frame.width, 0.3 * frame.height);
+    expect(wallAway(withPose(m.scene.base, m.pose()), m.scene.wall)).toBeLessThanOrEqual(away + 1e-9);
+    sceneLook(m, 2, -0.45 * frame.width, -0.45 * frame.height);
+    expect(m.atEdge()).toBe(true);
+    m.unmount();
+  });
+});
+
+describe.each([
+  ['desk top (fuzz seq 50)', DESKTOP, 2388.4, [[220, 13], [404, 26], [-501, 159], [664, 73], [244, 294], [-448, 212]]],
+  ['desk bottom (fuzz seq 17)', DESKTOP, 300, [[200, 18], [-510, -136], [-491, -333], [320, -97], [570, -360], [-406, -225]]],
+  ['open top (fuzz seq 50)', FOLD_OPEN, 2388.4, [[124, 8], [229, 17], [-284, 104], [376, 48], [138, 191], [-253, 138]]],
+  ['phone top (fuzz seq 34)', { width: 412, height: 915 }, 2388.4, [[56, -397], [127, 405], [4, 233], [-191, 405], [8, 442]]],
+] as const)('NAV-EMPTY LOOK-HOLE (CHALLENGE-1): scene Looks alone never leave a frame with no front, %s', (_name, frame, y, steps) => {
+  it('a front is in the frame after every Look', () => {
+    const m = mount(freeSceneOf({ frame }));
+    m.at({ y });
+    expect(m.atEdge()).toBe(true);
+    steps.forEach(([dx, dy], k) => {
+      sceneLook(m, k + 1, dx, dy);
+      expect(m.atEdge(), `after Look ${k + 1} (${dx}, ${dy})`).toBe(true);
+    });
     m.unmount();
   });
 });

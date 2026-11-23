@@ -13,7 +13,7 @@ import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
 import { DEPTH_STOP_MM, aheadMm, depthSpeed, dollyStep } from './caseDepth';
 import { capSpanMm, frameSpanMm, yawCapRad, type Box, type RoomSpan } from './caseFraming';
 import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
-import { pitchCap, wallKept, wallShown } from './caseWallView';
+import { keepsWall, pitchCap, turnKept, wallKept, wallShown } from './caseWallView';
 import {
   DRAG_WALK_GAIN_X,
   DRAG_WALK_GAIN_Y,
@@ -116,6 +116,8 @@ interface Gesture {
   readonly eased: boolean;
   /** NAV-LOOKDRIVE: a Look that took over that ease mid-way: the turn (turnRaw) that shows where it had got, added to the finger's. */
   over?: { dYaw: number; dPitch: number };
+  /** NAV-EMPTY: a Look's turn holds the wall as well as its start did (keepsWall); set when the drag becomes a Look. */
+  keeps?: (to: Camera) => boolean;
 }
 
 /**
@@ -134,6 +136,8 @@ interface Look {
   crossed: boolean;
   coneAt: number;
   stale: boolean;
+  /** NAV-EMPTY: a turn holds the wall as well as `start` did (keepsWall), worked out with the cone (rebase). */
+  keeps: (to: Camera) => boolean;
 }
 
 /** NAV-JOG: the hat (the bottom-centre button's jog) running: the thumb's offset, its last frame's time, and a MOVE's depth and cap. */
@@ -416,8 +420,12 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
         }
         look.last = now;
         const t = lookTurn(look);
-        pose = t.committed;
-        shown = t.shown;
+        // NAV-EMPTY: never to a turn that holds the wall less well than the Look's start (both axes), the turn asked
+        // for then wound back to the one kept, so the thumb stores nothing up past it
+        const kept = turnKept(pose, t.committed, (p) => look.keeps(withPose(s.base, p)));
+        if (kept !== t.committed) Object.assign(look, { dYaw: kept.yaw - look.start.yaw, dPitch: kept.pitch - look.start.pitch });
+        pose = kept;
+        shown = kept === t.committed ? t.shown : kept;
       }
       // NAV-DEPTH-2: then the depth, from where the hat left the eye; moved, the hat walks at the depth it is at now
       const depth = d.depth;
@@ -509,6 +517,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   /** NAV-LOOKDRIVE: the Look's cone worked out from the committed pose `at` (keep). `taken`: a drawn view taken over (lookStart). */
   const rebase = (s: FreeScene, look: Look, at: Pose, shown: Pose, now: number, taken = false) => {
     keep(look, at, shown, coneFrom(s, at), taken);
+    look.keeps = keepsWall(withPose(s.base, at), s.wall);
     look.coneAt = now;
     look.stale = false;
   };
@@ -672,6 +681,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
         g.mode = 'look';
         const ready = g.cone !== undefined && g.cone.start === g.start && g.cone.scene === s ? g.cone.limits : null;
         g.limits = ready ?? coneFrom(s, g.start);
+        g.keeps = keepsWall(camera, s.wall);
         if (mid) {
           g.over = turnRaw(g.start, mid.yaw, mid.pitch, g.limits);
           // still past the soft limit: this crossing's tick was the look's before
@@ -695,8 +705,11 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       const t = g.over
         ? turnBy(g.start, g.over.dYaw + (Math.atan(a0) - Math.atan(a1)), g.over.dPitch + (Math.atan(b1) - Math.atan(b0)), g.limits)
         : turn(g.start, a0, b0, a1, b1, g.limits);
-      g.committed = t.committed;
-      g.shown = t.shown;
+      // NAV-EMPTY: never to a turn that holds the wall less well than the Look's start (both axes): from the last turn
+      // kept, as far toward this one as still does, and drawn there (no band past a turn the wall stopped)
+      const keeps = g.keeps!;
+      g.committed = turnKept(g.committed, t.committed, (p) => keeps(withPose(base, p)));
+      g.shown = g.committed === t.committed ? t.shown : g.committed;
       if (t.past && !g.crossed) {
         g.crossed = true;
         hapticLight();
@@ -825,7 +838,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (gesture.current !== null || drives.current?.hat || drives.current?.look) return false;
     const d = beginDrives();
     spring.current = null;
-    const look: Look = { aim: { x: 0, y: 0 }, last: undefined, start: d.pose, limits: { soft: 0, hard: 0 }, dYaw: 0, dPitch: 0, crossed: false, coneAt: 0, stale: false };
+    const look: Look = { aim: { x: 0, y: 0 }, last: undefined, start: d.pose, limits: { soft: 0, hard: 0 }, dYaw: 0, dPitch: 0, crossed: false, coneAt: 0, stale: false, keeps: () => true };
     rebase(scene.current, look, d.pose, d.shown, performance.now(), true);
     // drawn past a soft limit already (the ease taken over): this crossing's tick was the look's before
     look.crossed = turnBy(look.start, look.dYaw, look.dPitch, look.limits).past;

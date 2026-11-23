@@ -257,13 +257,17 @@ function keepsOf(s: FreeScene, inset?: number): (from: Pose) => (to: Pose) => bo
 }
 
 /**
- * NAV-EMPTY: the turn a Look from `start` commits for the one asked for (`to`), from the last it committed (`from`):
- * its pitch kept to the wall at its own yaw (pitchKept: as well as that yaw at the start's pitch holds it), then yaw and
- * pitch together never from a frame that shows a front to one that shows none, nor, from a start that shows none,
- * further from the wall (turnKept, keepsWall at inset 0). `to` itself where it passes both.
+ * NAV-EMPTY: the turn a Look from `start` commits for the one asked for (`to`), from the last it committed (`from`).
+ * Where the start holds the wall as well as its yaw looking level does, the pitch is kept to the wall at the turn's own
+ * yaw: never holding it less well than that yaw looking level (pitchKept). The yaw stays the cone's (lookCone), so a
+ * turn round a wall's end goes as far as it always did. From a start that holds the wall less well than that (a
+ * swipe's, a fold's, a bare frame), yaw and pitch together never lose what the start shows, nor take a frame that shows
+ * no front further from the wall (turnKept, keepsWall at inset 0).
  */
 function lookKept(s: FreeScene, start: Pose, from: Pose, to: Pose): Pose {
-  return turnKept(from, pitchKept(start, to, keepsOf(s)), keepsOf(s, 0)(start));
+  const keeps = keepsOf(s);
+  if (keeps({ ...start, pitch: 0 })(start)) return pitchKept(0, to, keeps);
+  return turnKept(from, to, keepsOf(s, 0)(start));
 }
 
 /** NAV-EMPTY: what a Look draws for the committed turn `kept` where the cone asked for `t`: the band's view, kept's axes put in. */

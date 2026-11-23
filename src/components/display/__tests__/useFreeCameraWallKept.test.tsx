@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/preact';
 import { frontShown } from '../caseCull';
 import { JOG_FULL_PX, PITCH, SPRING_MS, poseOf, withPose, type Pose } from '../casePose';
 import { wallAway } from '../caseWallView';
-import { useFreeCamera, type FreeScene } from '../useFreeCamera';
+import { lookCone, useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
 // NAV-EMPTY (Ross 11-22: at the room's top or bottom, after a "zoom away", "everything just becomes the backcolor/empty
@@ -328,18 +328,40 @@ describe.each([
 });
 
 describe.each([
+  ['1536x730', DESKTOP],
+  ['870x475', FOLD_OPEN],
+  ['443x558', { width: 443, height: 558 }],
+])('NAV-EMPTY at %s: a level Look round is the cone\'s alone, as before', (_name, frame) => {
+  it('at the framing, from the wall\'s first cabinet, a Look round past the wall\'s end rests at the cone\'s soft limit', () => {
+    const m = mount(freeSceneOf({ frame }));
+    const start = m.at({ x: (m.scene.wall.cabinets[0].leftMm + m.scene.wall.cabinets[0].rightMm) / 2 });
+    const cone = lookCone(m.scene, start, null, () => {});
+    // from the frame's left edge to its right: the drag carries the world right, so the eye turns left past the end
+    const y = frame.height / 2;
+    act(() => m.fc().press({ pointerId: 1, clientX: 10, clientY: y, button: 2 }, { x: 10, y }));
+    act(() => m.fc().drag(1, { x: frame.width - 10, y }, 'x'));
+    act(() => {
+      m.fc().release(1, true);
+    });
+    m.frames.tick(SPRING_MS);
+    expect(m.pose().yaw).toBeCloseTo(-(cone.left ?? cone).soft, 9);
+    expect(m.pose().pitch).toBe(start.pitch);
+    m.unmount();
+  });
+});
+
+describe.each([
   ['desk top', DESKTOP, 2388.4, [[190, 352], [43, 134], [538, -122], [-183, 214]]],
   ['desk bottom', DESKTOP, 300, [[198, -247], [-109, -244]]],
   ['cover top', { width: 443, height: 558 }, 2388.4, [[55, -188], [176, 144], [-140, 183]]],
   ['phone bottom', { width: 412, height: 915 }, 300, [[52, -142], [-96, 304], [7, -161], [-163, -39], [-100, -220], [-67, -193]]],
-] as const)('NAV-EMPTY, %s: a Look up or down and round rests with a front an eighth in wherever the same turn round alone would hold one there', (_name, frame, y, steps) => {
+] as const)('NAV-EMPTY, %s: a Look up or down and round rests with a front an eighth in wherever its yaw looking level holds one there', (_name, frame, y, steps) => {
   it('after every Look', () => {
     const m = mount(freeSceneOf({ frame }));
     m.at({ y });
     steps.forEach(([dx, dy], k) => {
-      const before = m.pose();
       const rest = sceneLook(m, k + 1, dx, dy);
-      if (m.shows({ ...rest, pitch: before.pitch })) expect(m.shows(rest), `after Look ${k + 1} (${dx}, ${dy})`).toBe(true);
+      if (m.shows({ ...rest, pitch: 0 })) expect(m.shows(rest), `after Look ${k + 1} (${dx}, ${dy})`).toBe(true);
     });
     m.unmount();
   });

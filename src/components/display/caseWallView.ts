@@ -122,15 +122,15 @@ export function keepsWall(from: Camera, wall: WallLayout, inset = WALL_KEEP_FRAM
 
 /**
  * NAV-EMPTY: the turn a Look commits (`to`), its pitch kept to the wall at its own yaw: `to` where it holds the wall as
- * well (keepsWall) as its yaw at the Look's start pitch (`start`) does; else that yaw at the furthest pitch from the
- * start's toward `to`'s that does, halving to PITCH_CAP_STEP. The yaw is the cone's (lookCone): only the pitch, worked
- * out at the turned yaw every frame, is kept here, so a turn up and round never rests where the same turn round alone
- * would hold more of the wall. `keeps(from)`: keepsWall from the pose `from`, asked of a pose.
+ * well (keepsWall) as its yaw at the pitch `at` does (the Look's: level); else that yaw at the furthest pitch from `at`
+ * toward `to`'s that does, halving to PITCH_CAP_STEP. The yaw is the cone's (lookCone): only the pitch, worked out at
+ * the turned yaw every frame, is kept here, so the pitch never takes away the wall the same yaw at `at` holds.
+ * `keeps(from)`: keepsWall from the pose `from`, asked of a pose.
  */
-export function pitchKept(start: Pose, to: Pose, keeps: (from: Pose) => (to: Pose) => boolean): Pose {
-  const ok = keeps({ ...to, pitch: start.pitch });
+export function pitchKept(at: number, to: Pose, keeps: (from: Pose) => (to: Pose) => boolean): Pose {
+  const ok = keeps({ ...to, pitch: at });
   if (ok(to)) return to;
-  let last = start.pitch;
+  let last = at;
   let gone = to.pitch;
   while (Math.abs(gone - last) > PITCH_CAP_STEP) {
     const mid = (last + gone) / 2;

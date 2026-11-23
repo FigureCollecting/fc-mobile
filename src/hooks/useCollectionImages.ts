@@ -317,7 +317,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       let listsKept = false;
       // LISTLESS-RECHECK (CHAL1 SHOULD-1): an answer from what another document's sync kept (it read the lists) owes the
       // recheck as this one's own sync would, the wait so far carried over from the answer it replaces
-      const fromOther = reachable && answersFromKept(client, queryKey);
+      const fromOther = answersFromKept(client, queryKey);
       const owedBefore = fromOther ? listless.get(client.getQueryData<ReadonlyMap<string, CachedImage>>(queryKey) ?? EMPTY) : undefined;
       // PICK-SLOW (CHAL3: a pick during a sync ran again about a second later, having lost which figures changed): a run this
       // case view replaced (a pick, "Use default") drops the other answers as any sync does, but never stops or asks again the

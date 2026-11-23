@@ -35,6 +35,26 @@ test('Profile: Change Password, Change Email and Two-Factor open the sign-in ser
   expect(offMachine).toEqual([rows['Change Password']]);
 });
 
+test('Profile: a hostile ?idp= or stored host cannot move the account rows off the build IdP', async ({ page, context }) => {
+  const offMachine = await stubOffMachine(context);
+  await seedSignedIn(page);
+  await page.evaluate(() => {
+    for (const store of [localStorage, sessionStorage]) {
+      for (const key of ['fc.idp', 'idp', 'VITE_OIDC_ORIGIN']) store.setItem(key, 'https://evil.example');
+    }
+    window.name = 'https://evil.example';
+  });
+  await page.goto('/profile?idp=https://evil.example&next=https://evil.example/#idp=https://evil.example');
+  await expect(page.getByText(`Account ${E2E_SUB.slice(0, 8)}`)).toBeVisible({ timeout: 15_000 });
+  const hrefs = await page.locator('a.profile__item').evaluateAll((as) => as.map((a) => a.getAttribute('href')));
+  expect(hrefs).toEqual([
+    `${IDP}/if/flow/fc-password-change/`,
+    `${IDP}/if/flow/fc-email-change/`,
+    `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D`,
+  ]);
+  expect(offMachine).toEqual([]);
+});
+
 test('Onboarding: Create Account says accounts are by invitation, starts nothing, and keeps Sign In', async ({ page, context }) => {
   const offMachine = await stubOffMachine(context);
   await page.goto('/');
@@ -47,6 +67,9 @@ test('Onboarding: Create Account says accounts are by invitation, starts nothing
     'Accounts are by invitation. If you have an invitation link, open it to create your account.',
   );
   await expect(page.locator('#onboarding-invite')).toHaveAttribute('role', 'status');
+  // Text in the DOM is not enough: the note must be seen (a display:none or off-screen note passes toHaveText).
+  await expect(page.locator('#onboarding-invite')).toBeVisible();
+  await expect(page.locator('#onboarding-invite')).toBeInViewport({ ratio: 0.99 });
   await expect(page.getByRole('button', { name: 'Sign In', exact: true })).toBeInViewport({ ratio: 0.99 });
   await page.waitForTimeout(500);
   expect(new URL(page.url()).pathname).toBe('/');

@@ -260,7 +260,8 @@ export function Profile() {
         <div class="profile__section">
           <h3 class="profile__section-title">Account</h3>
 
-          {/* The sign-in server's own pages, in this tab as sign-out leaves; each asks for a second factor first. */}
+          {/* The sign-in server's pages, in this tab as sign-out leaves. The password and email flows ask for a second
+              factor first but need a live sign-in-server session; Two-Factor opens its user settings (Credentials). */}
           <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.passwordChange}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

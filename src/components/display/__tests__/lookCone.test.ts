@@ -20,7 +20,7 @@ const scene = { base, wall: WALL, fronts: frontsOf(WALL, HEADROOM) } as unknown 
 const realism = coneOf(base, WALL, scene.fronts);
 const opening = poseOf(base);
 
-const COST: SceneCost = { s: 0.25, drawn: [19, 20, 21], figuresDrawn: 30, figures: 1000, shadows: 256, mesh: 500, room: 0, faces: 6144 };
+const COST: SceneCost = { s: 0.25, meshS: 0.25, drawn: [19, 20, 21], figuresDrawn: 30, figures: 1000, shadows: 256, mesh: 500, room: 0, faces: 6144 };
 /** A projector costing `vp(yaw)` viewports, recording the cameras it was asked at and the camera each was held from. */
 function stub(vp: (yaw: number) => number) {
   const asked: { camera: Camera; held: Camera | undefined }[] = [];

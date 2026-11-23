@@ -31,11 +31,47 @@ export function figuresOn(wall: WallLayout, count: number): BudgetFigure[] {
   });
 }
 
+/** The Fold8's cover as the browser lays the case out on it: the camera's frame, inside its window. */
+export const COVER: Frame = { width: 443, height: 418 };
+export const COVER_PX = 443 * 558;
+/** Seven KLINGSBOs: every shelf inside them an open mesh shelf. */
+export const KLINGSBO_WALL = wallLayout(Array.from({ length: 7 }, () => IKEA_KLINGSBO));
+
+/**
+ * NAV-DOLLY: up to `count` figures of real sizes (45 to 110 mm wide, 90 to 250 mm tall, no taller than their shelf's
+ * clearance), packed 10 mm apart in three rows deep on every surface, the front row labelled; the same every run.
+ */
+export function realFiguresOn(wall: WallLayout, count: number): BudgetFigure[] {
+  let seed = 7;
+  const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+  const figures: BudgetFigure[] = [];
+  for (const [cab, slot] of wall.cabinets.entries()) {
+    const post = slot.profile.panels.sideMm;
+    const surfaces = slot.profile.surfaces;
+    for (const [i, surface] of surfaces.entries()) {
+      const clear = i + 1 < surfaces.length ? surfaces[i + 1].topMm - surface.topMm - 30 : 300;
+      for (let row = 0; row < 3; row++) {
+        for (let x = slot.leftMm + post + 5 + (row % 2) * 25; figures.length < count; ) {
+          const w = 45 + random() * 65;
+          if (x + w > slot.rightMm - post) break;
+          const h = Math.min(clear, 90 + random() * 160);
+          const plate = row === 0 ? { a: [x, surface.topMm, 10] as Vec3, u: [w, 0, 0] as Vec3, v: [0, -17.2, 0] as Vec3 } : null;
+          figures.push({ cab, x0: x, x1: x + w, y0: surface.topMm, y1: surface.topMm + h, z: -60 - row * 110, tapMm: w, plate });
+          x += w + 10;
+        }
+      }
+    }
+  }
+  return figures;
+}
+
 export interface SceneOpts {
   readonly wall?: WallLayout;
   readonly frame?: Frame;
   readonly focus?: number;
   readonly figures?: number;
+  /** The figures are realFiguresOn's, not the 17 x 90 mm stand-ins. */
+  readonly real?: boolean;
   /** The screen's px: what a viewport of the ceiling is (smaller: the budget binds sooner). */
   readonly viewportPx?: number;
 }
@@ -54,7 +90,7 @@ export function freeSceneOf(opts: SceneOpts = {}): FreeScene {
     z0: -Math.max(...wall.cabinets.map((c) => c.profile.outer.depthMm)),
     z1: Math.max(...wall.cabinets.map((c) => c.profile.footprint?.frontOverhangMm ?? 0)),
   };
-  const figures = figuresOn(wall, opts.figures ?? 0);
+  const figures = (opts.real ? realFiguresOn : figuresOn)(wall, opts.figures ?? 0);
   const roomW = room.x1 - room.x0;
   const roomD = room.zFront - room.zBack;
   const budget: BudgetScene = {

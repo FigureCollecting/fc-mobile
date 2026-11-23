@@ -7,7 +7,7 @@ import { SCENE_CEILING_VIEWPORTS, projector } from '../caseBudget';
 import { capSpanMm, frameSpanMm, type Box } from '../caseFraming';
 import { DRAWN_CABINETS_LIMIT } from '../caseCull';
 import { useFreeCamera, type FreeScene } from '../useFreeCamera';
-import { LONG_WALL, freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
+import { COVER, COVER_PX, KLINGSBO_WALL, LONG_WALL, freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
 // NAV-DEPTH-2 (Ross 11-13): the hat (the bottom-centre button's jog) and the depth rocker are two drives of one eye, held
 // at once: each frame the hat walks the eye, then the depth dollies it along its horizontal heading (dollyStep, through
@@ -19,6 +19,24 @@ vi.mock('../caseDepth', async (importOriginal) => {
   return { ...real, dollyStep: vi.fn(real.dollyStep) };
 });
 const dollyStep = vi.mocked(depth.dollyStep);
+/**
+ * NAV-DOLLY: the scene fits the ceiling at every depth (sceneFit), so the dolly's budget is a safety net. A budget
+ * marked `overFrom` (overAt, below) is projected as a scene nothing fits: its cost a viewport more every 100 mm the eye
+ * is nearer than that z.
+ */
+vi.mock('../caseBudget', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../caseBudget')>();
+  const projector: typeof real.projector = (budget) => {
+    const project = real.projector(budget);
+    const from = (budget as { overFrom?: number }).overFrom;
+    if (from === undefined) return project;
+    return (camera, unturned) => {
+      const at = project(camera, unturned);
+      return { ...at, vp: at.vp + Math.max(0, from - camera.z) / 100 };
+    };
+  };
+  return { ...real, projector };
+});
 vi.mock('../caseCamera', async (importOriginal) => {
   const real = await importOriginal<typeof import('../caseCamera')>();
   return { ...real, cssSceneTransform: vi.fn(real.cssSceneTransform) };
@@ -52,6 +70,9 @@ function mount(scene: FreeScene = freeSceneOf(), clock = false) {
   };
   return { ref, dom, frames, fc, pose, run, renders: () => renders, unmount: hook.unmount };
 }
+
+/** `scene`, its budget one nothing fits nearer than z = `from` (the mock above). */
+const overAt = (scene: FreeScene, from: number): FreeScene => ({ ...scene, budget: { ...scene.budget, overFrom: from } as FreeScene['budget'] });
 
 describe('NAV-DEPTH-2: the hat and the depth drive the eye at the same time', () => {
   it('hat and depth held 30 frames move both x and z; the hat alone moves x only, the depth alone z only', () => {
@@ -557,33 +578,92 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
     expect(scene.vp!(at)).not.toBe(project(camera).vp);
   });
 
-  it('held at r = 1 for 2 s over 622 figures: the cost never passes the ceiling and the eye never enters a cabinet\'s margin; the budget, not the room, stopped it', () => {
-    // a screen small enough that the walk in toward the shelves would pass the ceiling (it peaks near 3.7 viewports)
-    const scene = freeSceneOf({ figures: 622, viewportPx: 180_000 });
-    const project = projector(scene.budget);
-    const vpAt = (p: Pose) => project(withPose(scene.base, p)).vp;
+  describe('NAV-DOLLY (Ross 11-22): the scene coarsens to fit, so the budget never stops the walk in short of the shelves', () => {
     const grown = (b: Box, p: Pose) =>
       p.x > b.x0 - EYE_MARGIN_MM && p.x < b.x1 + EYE_MARGIN_MM && p.y > b.y0 - EYE_MARGIN_MM && p.y < b.y1 + EYE_MARGIN_MM && p.z > b.z0 - EYE_MARGIN_MM && p.z < b.z1 + EYE_MARGIN_MM;
-    const m = mount(scene);
-    expect(vpAt(m.pose())).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
-    m.fc().depthStart(1);
-    let worst = 0;
-    m.run(125, 16, () => {
-      const p = m.pose();
-      worst = Math.max(worst, vpAt(p));
-      for (const b of scene.boxes) expect(grown(b, p)).toBe(false);
+    const SCENES: Record<string, () => FreeScene> = {
+      '622 real figures on 7 KLINGSBOs, the cover': () => freeSceneOf({ wall: KLINGSBO_WALL, frame: COVER, viewportPx: COVER_PX, figures: 622, real: true }),
+      '622 stand-ins on the mixed wall, a small screen': () => freeSceneOf({ figures: 622, viewportPx: 180_000 }),
+    };
+    for (const [name, sceneOf] of Object.entries(SCENES)) {
+      for (const [ms, dy] of [
+        [16, 0],
+        [16, -100],
+        [16, -200],
+        [8, -200],
+        [50, -200],
+      ]) {
+        it(`${name}, held at r = 1 for 4 s of ${ms} ms frames, the eye ${dy} mm off the framing's height: it reaches the shelves' margin, the cost never over the ceiling`, () => {
+          const scene = sceneOf();
+          const project = projector(scene.budget);
+          const vpAt = (p: Pose) => project(withPose(scene.base, p)).vp;
+          const m = mount(scene);
+          const p0 = poseOf(scene.base);
+          m.fc().hold({ ...p0, y: p0.y + dy });
+          expect(vpAt(m.pose())).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+          m.fc().depthStart(1);
+          let worst = 0;
+          m.run(Math.ceil(4000 / ms), ms, () => {
+            const p = m.pose();
+            worst = Math.max(worst, vpAt(p));
+            for (const b of scene.boxes) expect(grown(b, p)).toBe(false);
+          });
+          expect(worst).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+          // the room (the furniture's margin), not the budget, stopped it: where a dolly with no budget ends
+          let free: Pose = { ...p0, y: p0.y + dy };
+          for (let i = 0; i < Math.ceil(4000 / ms); i++) free = depth.dolly(free, 1, ms, { space: scene.space, boxes: scene.boxes });
+          const margin = Math.max(...scene.boxes.map((b) => b.z1)) + EYE_MARGIN_MM;
+          expect(free.z).toBeCloseTo(margin, 6);
+          expect(m.pose().z).toBeCloseTo(margin, 6);
+          expect(m.dom.hostEl.dataset.dollyHeld).toBe('room');
+          // some 500 projections of 622 figures (Vitest's default is 5 s; under coverage on a loaded runner it took over 5 s)
+        }, 30_000);
+      }
+    }
+
+    it('data-dolly-held tells what the last depth frame met: ok while the eye moves, room at the shelves or the Classic cap, budget where the safety net holds; it stays after the lift', () => {
+      const m = mount(freeSceneOf({ figures: 622 }));
+      expect(m.dom.hostEl.dataset.dollyHeld).toBeUndefined();
+      m.fc().depthStart(1);
+      m.run(3);
+      expect(m.dom.hostEl.dataset.dollyHeld).toBe('ok');
+      m.run(250);
+      expect(m.dom.hostEl.dataset.dollyHeld).toBe('room');
+      // backing away it moves again
+      m.fc().depthRate(-1);
+      m.run(2);
+      expect(m.dom.hostEl.dataset.dollyHeld).toBe('ok');
+      m.fc().depthStop();
+      expect(m.dom.hostEl.dataset.dollyHeld).toBe('ok');
+      m.unmount();
+      // a scene nothing fits nearer than 1.4 m: the budget holds it, short of the shelves
+      const over = mount(overAt(freeSceneOf({ figures: 622 }), 1400));
+      over.fc().depthStart(1);
+      over.run(250);
+      expect(over.pose().z).toBeGreaterThan(1000);
+      expect(over.dom.hostEl.dataset.dollyHeld).toBe('budget');
+      over.fc().depthStop();
+      expect(over.dom.hostEl.dataset.dollyHeld).toBe('budget');
+      over.unmount();
+      // the Classic cap (the jog's ok) backing away on a long wall: the room's rules, not the budget
+      const long = freeSceneOf({ wall: LONG_WALL, focus: 20 });
+      const capped = mount(long);
+      capped.fc().hold({ ...poseOf(long.base), yaw: 25 * DEG });
+      capped.fc().depthStart(-1);
+      capped.run(625);
+      expect(capped.dom.hostEl.dataset.dollyHeld).toBe('room');
+      capped.unmount();
+      // the scene's host gone mid-drive (it unmounts between frames): the eye still moves, nothing is written
+      const gone = mount(freeSceneOf({ figures: 0 }));
+      gone.fc().depthStart(1);
+      gone.run(2);
+      const z = gone.pose().z;
+      gone.dom.host.current = null;
+      gone.fc().depthRate(-1);
+      gone.run(3);
+      expect(gone.pose().z).toBeGreaterThan(z);
+      expect(gone.dom.hostEl.dataset.dollyHeld).toBe('ok');
     });
-    expect(worst).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
-    // the budget held it there: 2 mm on (DEPTH_STOP_MM is 1) passes the ceiling, and the room would let it go on
-    const held = m.pose();
-    expect(vpAt({ ...held, z: held.z - 2 })).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
-    m.run(10);
-    expect(m.pose()).toEqual(held);
-    const free = depth.dolly(held, 1, 16, { space: scene.space, boxes: scene.boxes });
-    expect(free.z).toBeLessThan(held.z - 1);
-    let p = poseOf(scene.base);
-    for (let i = 0; i < 125; i++) p = depth.dolly(p, 1, 16, { space: scene.space, boxes: scene.boxes });
-    expect(p.z).toBeLessThan(m.pose().z - 300);
   });
 
   it('turned 25 deg and backing away 10 s on a wall longer than the case draws at once, the depth stops at the Classic cap (the jog\'s ok), where the room would let it go on', () => {
@@ -611,7 +691,7 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
 
   it('M05: the budget swapped mid-drive for a tighter one (a new render, a smaller screen): the dolly keeps to the new one, never the old projection', () => {
     const loose = freeSceneOf({ figures: 622 });
-    const tight = freeSceneOf({ figures: 622, viewportPx: 180_000 });
+    const tight = overAt(loose, 1400);
     const project = projector(tight.budget);
     const vpAt = (p: Pose) => project(withPose(tight.base, p)).vp;
     const m = mount(loose);
@@ -642,9 +722,9 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
   });
 
   describe('item 7: held still against a limit, the depth asks nothing more until the pose, the rate\'s sign or the scene changes', () => {
-    /** Depth at r = 1 over 622 figures on a small screen, 2 s: held at the ceiling. */
-    const atCeiling = (viewportPx = 180_000) => {
-      const m = mount(freeSceneOf({ figures: 622, viewportPx }));
+    /** Depth at r = 1 over 622 figures where nothing fits nearer than 1.4 m, 2 s: held at the ceiling. */
+    const atCeiling = () => {
+      const m = mount(overAt(freeSceneOf({ figures: 622 }), 1400));
       m.fc().depthStart(1);
       m.run(125);
       const held = m.pose();
@@ -703,8 +783,8 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
       expect(calls()).toBe(n + 1);
       expect(dollyStep.mock.calls[n][4]).toBeUndefined();
       expect(m.pose()).toEqual(held);
-      // a smaller screen: the eye stands over the new ceiling; frame by frame its cost never rises
-      const tight = freeSceneOf({ figures: 622, viewportPx: 120_000 });
+      // a heavier scene: the eye stands over the new ceiling; frame by frame its cost never rises
+      const tight = overAt(freeSceneOf({ figures: 622 }), 2200);
       const project = projector(tight.budget);
       const vpAt = (p: Pose) => project(withPose(tight.base, p)).vp;
       m.ref.current = tight;
@@ -717,9 +797,9 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
         last = v;
       });
       expect(calls()).toBeGreaterThan(before);
-      // a bigger screen: the eye goes on in
+      // a scene that fits: the eye goes on in
       const z = m.pose().z;
-      m.ref.current = freeSceneOf({ figures: 622, viewportPx: 400_000 });
+      m.ref.current = freeSceneOf({ figures: 622 });
       m.run(10);
       expect(m.pose().z).toBeLessThan(z);
     });
@@ -798,10 +878,10 @@ describe('NAV-DEPTH-2: the depth drive keeps to the GPU budget, carrying the cos
       const RATES = [1, 1, 1, 0.6, 0.3, -1, -0.5, 0.05, 2, 0.1 + 1e-9, 0.1 + 1e-7, Number.NaN, Infinity, -Infinity];
       const DTS = [16, 16, 16, 16, 16.6, 16.7, 8, 33, 0, -5, 3, 100, 120, 500, 1e6];
       const pool = [
-        freeSceneOf({ figures: 622, viewportPx: 180_000 }),
-        freeSceneOf({ figures: 622, viewportPx: 150_000 }),
-        freeSceneOf({ figures: 622, viewportPx: 260_000 }),
-        freeSceneOf({ figures: 622, frame: { width: 412, height: 780 }, viewportPx: 140_000 }),
+        overAt(freeSceneOf({ figures: 622 }), 1400),
+        overAt(freeSceneOf({ figures: 622 }), 1700),
+        overAt(freeSceneOf({ figures: 622 }), 900),
+        overAt(freeSceneOf({ figures: 622, frame: { width: 412, height: 780 } }), 1500),
         freeSceneOf({ wall: LONG_WALL, focus: 20, figures: 0 }),
       ];
       /** One seeded run; `never` clones the scene before every frame, so no hold is ever trusted (the reference). */

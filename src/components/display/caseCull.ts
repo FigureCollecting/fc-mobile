@@ -37,7 +37,7 @@ export const RECULL_SHARE = 0.25;
 /** Nothing nearer the camera than this (mm along its axis) is drawn. */
 export const NEAR_MM = 10;
 /** The coarsest px per mm a face is drawn at. */
-const TEXEL_SCALE_MIN = 1 / 64;
+export const TEXEL_SCALE_MIN = 1 / 64;
 /**
  * Ross 2026-10-12 (12:2xC): the most figures drawn at a time, with five cabinets drawn. G1 (close-out 2): with more
  * cabinets drawn (CF1 a) the cap scales with them (figureCap), so no cabinet the frame shows stands empty; this is

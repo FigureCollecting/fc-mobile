@@ -29,6 +29,14 @@ export const DEPTH_MIN_MM_S = 50;
 export const DEPTH_MAX_MM_S = 4000;
 /** How close (mm of travel) a dolly stopped by its `ok` or the budget finds the last place that passes. */
 export const DEPTH_STOP_MM = 1;
+/**
+ * NAV-DOLLY: a frame longer than this (ms) has its step checked along its way, at the end of each stretch of this long
+ * (a 60 Hz frame's: one check a frame there, as before, and no more checks a second on a slow phone). A stretch the
+ * `ok` or the budget refuses that a 60 Hz frame would have met is then met by a long frame too, which no longer steps
+ * over it: where the eye stops does not depend on the frame's length. The scene fits the ceiling at every depth
+ * (caseBudget's sceneFit), so the budget here is a safety net (a screen nothing fits).
+ */
+export const DEPTH_PATH_MS = 17;
 
 /** Where a dolly may take the eye: FreeScene's room and furniture, the jog's `ok`, and the projected cost. */
 export interface DollyScene {
@@ -39,6 +47,14 @@ export interface DollyScene {
   readonly ok?: (p: Vec3) => boolean;
   /** The scene's projected cost (Projector's vp, viewports) with the eye at p; absent, no budget. */
   readonly vp?: (p: Vec3) => number;
+}
+
+/** A dolly's frame: where the eye ends, the cost there (dollyStep), and what cut the step short. */
+export interface DollyStep {
+  readonly pose: Pose;
+  readonly vp: number | undefined;
+  /** NAV-DOLLY: what refused some of the step's way: the budget, or the jog's `ok`; null: neither (the room and the furniture only slide or stop the eye); absent where the frame asked for no move. */
+  readonly cut?: 'budget' | 'ok' | null;
 }
 
 /** The eye's horizontal heading, (sin yaw, 0, -cos yaw): the view's direction with its pitch dropped. */
@@ -105,7 +121,8 @@ export function aheadMm(pose: Pose, space: Box, boxes: readonly Box[], sign: 1 |
  * by depthSpeed of the room ahead (aheadMm), or for r < 0 the nearer of the room ahead and behind (backing away from a
  * display inches off starts slow, and backing into the room's bound eases in), slid through the room and the furniture
  * (slideEye with EYE_MARGIN_MM). A move `ok` refuses, or whose scene passes the ceiling (fitsCeiling of `vp`), stops at
- * the last place on it that passes, to DEPTH_STOP_MM, never trading the depth for a sideways move as capMove would;
+ * the last place on it that passes (its way checked every DEPTH_PATH_MS of the frame, not its end alone), to
+ * DEPTH_STOP_MM, never trading the depth for a sideways move as capMove would;
  * where even DEPTH_STOP_MM of it does not pass, the eye stays at once (held against the budget, a frame asks three
  * costs at most, not a search's). A start already over the ceiling (the budget narrowed: a look, a resize) moves only
  * where the cost does not rise, so it is never trapped. A pose with a non-number in it stays as it is.
@@ -117,7 +134,7 @@ export function aheadMm(pose: Pose, space: Box, boxes: readonly Box[], sign: 1 |
  * most. Else the cost returned is the cost where the eye ends (undefined without `vp`). A frame that moves nothing for
  * its time, rocker or pose hands v0 back as given.
  */
-export function dollyStep(pose: Pose, r: number, dtMs: number, scene: DollyScene, v0?: number): { pose: Pose; vp: number | undefined } {
+export function dollyStep(pose: Pose, r: number, dtMs: number, scene: DollyScene, v0?: number): DollyStep {
   const dt = Math.min(dtMs, JOG_MAX_STEP_MS);
   if (!(dt > 0) || ![pose.x, pose.y, pose.z, pose.yaw, pose.pitch].every(Number.isFinite)) return { pose, vp: v0 };
   const ahead = aheadMm(pose, scene.space, scene.boxes);
@@ -132,29 +149,39 @@ export function dollyStep(pose: Pose, r: number, dtMs: number, scene: DollyScene
   const over = start !== undefined && !fitsCeiling(start);
   // where ok holds and the cost fits (or, from over the ceiling, does not rise); `cost` is the last passing place's
   let cost = start;
-  const passes = (p: Vec3): boolean => {
-    if (ok !== undefined && !ok(p)) return false;
+  let cut: DollyStep['cut'] = null;
+  const passes =(p: Vec3): boolean => {
+    if (ok !== undefined && !ok(p)) {
+      cut = 'ok';
+      return false;
+    }
     if (vp === undefined) return true;
     const v = vp(p);
-    if (over ? !(v <= start!) : !fitsCeiling(v)) return false;
+    if (over ? !(v <= start!) : !fitsCeiling(v)) {
+      cut = 'budget';
+      return false;
+    }
     cost = v;
     return true;
   };
   const first = Math.min(1, DEPTH_STOP_MM / Math.abs(mm));
+  // NAV-DOLLY: the step's way is checked, not its end alone; from over the ceiling its end alone, as it was (never a trap)
+  const n = over ? 1 : Math.ceil(dt / DEPTH_PATH_MS);
   let lo = 0;
-  if (passes(at(1))) lo = 1;
-  else if (first < 1 && passes(at(first))) {
-    lo = first;
-    let hi = 1;
-    while ((hi - lo) * Math.abs(mm) > DEPTH_STOP_MM) {
+  let i = 1;
+  while (i <= n && passes(at(i / n))) lo = i++ / n;
+  if (i <= n) {
+    let hi = i / n;
+    if (lo === 0 && first < hi && passes(at(first))) lo = first;
+    while (lo > 0 && (hi - lo) * Math.abs(mm) > DEPTH_STOP_MM) {
       const mid = (lo + hi) / 2;
       if (passes(at(mid))) lo = mid;
       else hi = mid;
     }
   }
-  if (lo === 0) return { pose, vp: trusted ? vp(from) : cost };
+  if (lo === 0) return { pose, vp: trusted ? vp(from) : cost, cut };
   const [x, y, z] = at(lo);
-  return { pose: { ...pose, x, y, z }, vp: cost };
+  return { pose: { ...pose, x, y, z }, vp: cost, cut };
 }
 
 /** dollyStep's pose, for a caller with no cost to carry. */

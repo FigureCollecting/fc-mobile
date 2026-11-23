@@ -11,15 +11,15 @@ import { WHEEL_LINE_PX, ZOOM_MAX, ZOOM_UNDER, toPicture, toScreen, type Zoom } f
 // walks, and quick ways back to 1x. jsdom has no layout, so the frame's top-left is the client origin (its
 // bounding box is all zeros) and a client point is a frame point.
 
-/** Every render of the scene works out its figures' px per mm (figureScales) once: a count of its renders. */
+/** Every render of the scene works out the px per mm it is drawn at (sceneFit) once: a count of its renders. */
 const renders = vi.hoisted(() => vi.fn());
-vi.mock('../caseCull', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../caseCull')>();
+vi.mock('../caseBudget', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../caseBudget')>();
   return {
     ...real,
-    figureScales: (...args: Parameters<typeof real.figureScales>) => {
+    sceneFit: (...args: Parameters<typeof real.sceneFit>) => {
       renders();
-      return real.figureScales(...args);
+      return real.sceneFit(...args);
     },
   };
 });

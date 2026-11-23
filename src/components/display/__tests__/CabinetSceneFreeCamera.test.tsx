@@ -7,11 +7,11 @@ import { __clearAlphaMarginCache } from '../alphaMargin';
 import { AXIS_UNLOCK_PX, DRAG_WALK_GAIN_X, DRAG_WALK_GAIN_Y, EYE_MARGIN_MM, JOG_FRAMES_PER_S, JOG_FULL_PX, JOG_MAX_STEP_MS, JOG_MAX_X, LOOK_HOLD_MS, PITCH, jogSpeed, jogStep, move as movePose, yawLimits } from '../casePose';
 import { coneOf } from '../useFreeCamera';
 import { useJogStore } from '../../../stores/jog';
-import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
+import { CABINET_FACES_PX, CONTROLS_VIEWPORTS, MESH_BUDGET_VIEWPORTS, SCENE_CEILING_VIEWPORTS, SHADOW_PX } from '../caseBudget';
 import { wallLayout } from '../packCabinets';
 import { IKEA_KLINGSBO } from '../cabinetPresets';
 import { project } from '../caseCamera';
-import { DRAWN_CABINETS_LIMIT } from '../caseCull';
+import { DRAWN_CABINETS_LIMIT, texelScale } from '../caseCull';
 import { DEPTH_DEAD } from '../caseDepth';
 
 // NAV-1A, the Free camera, in the scene: MOVE and LOOK from one finger, the hold that arms Look without swallowing
@@ -722,9 +722,9 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
     up(1, { x: 290, y: 200 });
   }, HEAVY_MS);
 
-  it('(b) engaged: past the ceiling at the hard limit, the turn stops at the last yaw that fits and eases back to the band\'s soft limit', () => {
-    // read the costs (px, the same on any screen) on a screen where every yaw fits, so the search gets to the hard limit,
-    // then size the screen so the start fits and the hard limit right does not
+  it('NAV-DOLLY: where the hard limit at the eye\'s px per mm would pass the ceiling, the scene is drawn coarser there and the turn goes all the way (the camera is never stopped for the budget)', () => {
+    // read the costs (px, the same on any screen) on a screen where every yaw fits at the px per mm the eye asks, then
+    // size the screen so the start fits at it and the hard limit right does not
     const big = screenOf(4000, 4000);
     scene({}, { figures: WIDE });
     lookRight();
@@ -743,17 +743,21 @@ describe('the GPU budget under a turn (NAV-1A a+b, Ross 10-28)', () => {
       const most = lookRight();
       const b = budget();
       expect(b.start!.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
-      // a yaw to the right past the ceiling, where the search stopped
-      expect(b.asked.some(([yaw, vp]) => yaw > 0 && vp > SCENE_CEILING_VIEWPORTS)).toBe(true);
-      expect(b.right.fit).not.toBeNull();
-      expect(b.right.fit!).toBeLessThan(cone.hard);
-      expect(b.right.fit!).toBeGreaterThan(0);
-      // shown never past the last yaw that fits
-      expect(most / DEG).toBeLessThanOrEqual(b.right.fit! + 1e-6);
+      expect(total(b.start!.px)).toBe(startPx);
+      // every yaw asked fits, the hard limit too: projected as drawn there, coarser than the eye asks (fewer px than
+      // the big screen's, where it was drawn at that)
+      expect(b.asked.every(([, vp]) => vp <= SCENE_CEILING_VIEWPORTS)).toBe(true);
+      expect(b.right.fit).toBeNull();
+      expect(b.right.atHard!.vp).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+      expect(total(b.right.atHard!.px)).toBeLessThan(hardPx);
+      // the turn went to the cone's own hard limit
+      expect(most / DEG).toBeGreaterThan(cone.soft);
       up(1, { x: 0, y: 200 });
       tick(500);
-      // let go: eased back to the band's soft limit, the cone's band moved in to end at the fit
-      expect(pose().yaw / DEG).toBeCloseTo(Math.max(0, b.right.fit! - (cone.hard - cone.soft)), 1);
+      // let go: eased back to the cone's soft limit; the scene drawn there is within the ceiling
+      expect(pose().yaw / DEG).toBeCloseTo(cone.soft, 1);
+      const dom = domPx();
+      expect((dom.figures + dom.shadows + dom.mesh + dom.room + dom.faces) / (window.innerWidth * window.innerHeight) + CONTROLS_VIEWPORTS).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
     } finally {
       restore();
     }
@@ -1467,6 +1471,56 @@ describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth move
     frames(20);
     expect(pose()).toEqual(running);
   });
+
+  it('NAV-DOLLY: held forward on the cover, the eye reaches the shelves\' margin; all the way the scene is drawn within the ceiling, its mesh shelves (not its figures) drawn coarser to fit', () => {
+    const restore = screenOf(443, 558);
+    onTestFinished(restore);
+    scene();
+    const screenPx = 443 * 558;
+    const meshS = () => Number(host().dataset.meshPxPerMm);
+    // at the framing the mesh costs little: drawn at the scene's px per mm
+    expect(meshS()).toBe(pxPerMm());
+    // the cabinets' room, front to back (a level eye's px per mm asks nothing of its height)
+    const boxes = JSON.parse(host().dataset.wall!) as number[][];
+    const span = { y0: 0, y1: 2400, z0: Math.min(...boxes.map((b) => b[3])), z1: Math.max(...boxes.map((b) => b[4])) };
+    expect(pose().pitch).toBe(0);
+    const level = () => texelScale({ ...cam(), frame: { width: cam().width, height: cam().height } }, span);
+    // the eye 200 mm below the framing's height (a finger moving up lowers it): more of the shelves' tops in view
+    const y0 = pose().y;
+    for (let i = 0; i < 20 && pose().y > y0 - 200; i++) drag({ x: 200, y: 300 }, { x: 200, y: 280 });
+    tick(500);
+    expect(pose().y).toBeLessThanOrEqual(y0 - 200);
+    let coarser = 0;
+    let stops = 0;
+    for (let z = pose().z; ; ) {
+      // a stretch of the walk in, then let go: rendered where the eye stands
+      expect(press(1)).toBe(true);
+      frames(4);
+      lift();
+      tick();
+      const dom = domPx();
+      const s = pxPerMm();
+      // the figures' scene at the px per mm the eye asks, never coarser for the mesh's sake
+      expect(s, `scene at z ${pose().z}`).toBe(level());
+      const octaves = Math.log2(s / meshS());
+      expect(octaves).toBe(Math.round(octaves));
+      expect(octaves).toBeGreaterThanOrEqual(0);
+      if (octaves > 0) coarser++;
+      // every mesh shelf is drawn at the mesh's px per mm (its element's size and its pattern's)
+      const meshes = Array.from(host().querySelectorAll<HTMLElement>('.cabinet-scene__root .m-mesh'));
+      for (const el of meshes) expect(el.style.getPropertyValue('--s')).toBe(String(meshS()));
+      expect(dom.mesh, `mesh at z ${pose().z}`).toBeLessThanOrEqual(MESH_BUDGET_VIEWPORTS * screenPx + 1);
+      if (octaves > 0) expect(dom.mesh * 4, `an octave finer at z ${pose().z}`).toBeGreaterThan(MESH_BUDGET_VIEWPORTS * screenPx - 1);
+      expect((dom.figures + dom.shadows + dom.mesh + dom.room + dom.faces) / screenPx + CONTROLS_VIEWPORTS, `scene at z ${pose().z}`).toBeLessThanOrEqual(SCENE_CEILING_VIEWPORTS);
+      stops++;
+      if (pose().z === z) break;
+      z = pose().z;
+    }
+    expect(stops).toBeGreaterThan(5);
+    expect(coarser).toBeGreaterThan(0);
+    expect(pose().z).toBeCloseTo(span.z1 + EYE_MARGIN_MM, 6);
+    expect(host().dataset.dollyHeld).toBe('room');
+  }, HEAVY_MS);
 
   it('inside the dead zone the drive runs and moves nothing', () => {
     scene();

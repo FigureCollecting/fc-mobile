@@ -38,7 +38,7 @@ const hold = (page: Page, ms: number) =>
   );
 
 /** The case in Free camera (the default) at `size`; the prefs are seeded once a tab, so a reload keeps what the page saved. */
-async function openFree(page: Page, size: { width: number; height: number }) {
+async function openFree(page: Page, size: { width: number; height: number }, query = '/?layout=case&fx=40') {
   await page.addInitScript(() => {
     if (sessionStorage.getItem('seeded') === '1') return;
     sessionStorage.setItem('seeded', '1');
@@ -47,7 +47,7 @@ async function openFree(page: Page, size: { width: number; height: number }) {
     localStorage.setItem('fc-case-prefs', JSON.stringify({ view: 'wall', clearanceMm: 0 }));
   });
   await page.setViewportSize(size);
-  await page.goto('/?layout=case&fx=40');
+  await page.goto(query);
   await ready(page);
 }
 
@@ -65,6 +65,47 @@ async function ready(page: Page) {
 type Cam = { x: number; y: number; z: number; yaw: number; pitch: number };
 const cameraOf = async (page: Page) => JSON.parse((await page.locator('.cabinet-scene').getAttribute('data-camera'))!) as Cam;
 const rocker = depth;
+
+// NAV-DOLLY (Ross 11-22: "I hit the rack and stop... cannot move closer"): on the Fold8's cover, a dense wall of
+// KLINGSBOs and the eye below the framing's height, the walk in passed the GPU ceiling some 450 mm short of the doors
+// (the open mesh shelves alone cost 1.7 viewports there) and the Z rail stopped. The scene now coarsens to fit (its mesh
+// shelves first), so the rail takes the eye to the shelves' margin.
+for (const lowerMm of [0, 200]) {
+  test(`NAV-DOLLY fold8-cover, a dense wall, the eye ${lowerMm} mm below the framing's height: the Z rail at full reach takes the eye to the shelves' margin`, async ({ page }) => {
+    test.setTimeout(90_000);
+    const cover = CASE_VIEWPORTS.find((v) => v.name === 'fold8-cover')!;
+    await openFree(page, cover, '/?layout=case&fx=170&fxbranch=framed&fxwidth=narrow&labels=1');
+    const scene = page.locator('.cabinet-scene');
+    const f = await touchFingers(page);
+    const c0 = await cameraOf(page);
+    if (lowerMm > 0) {
+      // the hat, thumb down, until the eye is that much lower
+      const h = await centreOf(hat(page));
+      await f.down(1, h.x, h.y);
+      await f.to(1, h.x, h.y + JOG_FULL_PX / 2, 6);
+      await expect.poll(async () => (await cameraOf(page)).y, { intervals: [50], timeout: 20_000 }).toBeLessThanOrEqual(c0.y - lowerMm);
+      await f.up(1);
+      await settle(page);
+    }
+    const boxes = JSON.parse((await scene.getAttribute('data-wall'))!) as number[][];
+    // the fronts' margin: 100 mm (EYE_MARGIN_MM) off the cabinets' feet
+    const margin = Math.max(...boxes.map((b) => b[4])) + 100;
+    const at = await centreOf(rocker(page));
+    await f.down(2, at.x, at.y);
+    await f.to(2, at.x, at.y - DEPTH_FULL_PX, 6);
+    await expect.poll(async () => (await cameraOf(page)).z, { intervals: [100], timeout: 30_000 }).toBeLessThanOrEqual(margin + 1);
+    await hold(page, 300);
+    await expect(scene, 'the furniture, not the budget, holds it').toHaveAttribute('data-dolly-held', 'room');
+    await f.up(2);
+    await settle(page, 500);
+    const c1 = await cameraOf(page);
+    expect(c1.z).toBeGreaterThanOrEqual(margin);
+    expect(c1.z).toBeLessThanOrEqual(margin + 1);
+    // close in, the mesh shelves are drawn coarser than the figures' scene, never the other way
+    const [s, mesh] = [Number(await scene.getAttribute('data-px-per-mm')), Number(await scene.getAttribute('data-mesh-px-per-mm'))];
+    expect(mesh).toBeLessThanOrEqual(s);
+  });
+}
 
 for (const panel of PANELS) {
   test(`NAV-DEPTH-3 ${panel.name}: the Z rail left of the hat: up moves closer, down backs away, x kept; the lift stops it`, async ({ page }) => {

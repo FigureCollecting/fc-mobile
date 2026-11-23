@@ -17,6 +17,24 @@ vi.mock('../caseDepth', async (importOriginal) => {
   return { ...real, dollyStep: vi.fn(real.dollyStep) };
 });
 const dollyStep = vi.mocked(depth.dollyStep);
+/**
+ * NAV-DOLLY: the scene fits the ceiling at any turn (sceneFit), so a Look's budget is a safety net. A budget marked
+ * `overPast` is projected as a scene nothing fits turned further than that, each way.
+ */
+vi.mock('../caseBudget', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../caseBudget')>();
+  const projector: typeof real.projector = (budget) => {
+    const project = real.projector(budget);
+    const past = (budget as { overPast?: { left: number; right: number } }).overPast;
+    if (past === undefined) return project;
+    return (camera, unturned) => {
+      const at = project(camera, unturned);
+      const yaw = camera.yaw ?? 0;
+      return yaw > past.right || yaw < -past.left ? { ...at, vp: real.SCENE_CEILING_VIEWPORTS + 1 } : at;
+    };
+  };
+  return { ...real, projector };
+});
 vi.mock('../caseCamera', async (importOriginal) => {
   const real = await importOriginal<typeof import('../caseCamera')>();
   return { ...real, cssSceneTransform: vi.fn(real.cssSceneTransform) };
@@ -553,9 +571,10 @@ describe('(d) Look and depth together', () => {
 });
 
 describe('(e) a side the GPU budget tightened caps the hat\'s Look where it caps a scene Look', () => {
-  /** 622 figures on a screen small enough that, 400 mm in, a turn either way passes the ceiling within ten degrees. */
+  /** 622 figures, 400 mm in, on a scene nothing fits past a turn of 8 degrees right or 6 left (the mock above). */
   const tight = () => {
-    const scene = freeSceneOf({ figures: 622, viewportPx: 120_000 });
+    const plain = freeSceneOf({ figures: 622 });
+    const scene: FreeScene = { ...plain, budget: { ...plain.budget, overPast: { left: 6 * DEG, right: 8 * DEG } } as FreeScene['budget'] };
     const at = { ...poseOf(scene.base), z: poseOf(scene.base).z - 400 };
     const m = mount(scene);
     m.fc().hold(at);

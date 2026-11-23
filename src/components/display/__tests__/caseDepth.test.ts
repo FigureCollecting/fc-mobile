@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { DEPTH_DEAD, DEPTH_MAX_MM_S, DEPTH_MIN_MM_S, DEPTH_RATE_PER_S, DEPTH_STOP_MM, aheadMm, depthSpeed, dolly, dollyStep, heading, type DollyScene } from '../caseDepth';
+import { DEPTH_DEAD, DEPTH_MAX_MM_S, DEPTH_MIN_MM_S, DEPTH_PATH_MS, DEPTH_RATE_PER_S, DEPTH_STOP_MM, aheadMm, depthSpeed, dolly, dollyStep, heading, type DollyScene } from '../caseDepth';
 import { EYE_MARGIN_MM, JOG_MAX_STEP_MS, eyeSpace, withPose, type Pose } from '../casePose';
 import { lensFocalPx, type Camera, type Vec3 } from '../caseCamera';
 import { cabinetBox, capSpanMm, frameSpanMm, frontsOf, roomBox, type Box } from '../caseFraming';
@@ -35,6 +35,7 @@ const wall = wallLayout([IKEA_KLINGSBO, IKEA_DETOLF, OPEN_STEEL_RACK, IKEA_KLING
 const boxes = wall.cabinets.map((slot) => cabinetBox(slot, 300));
 const space = eyeSpace(roomBox(wall, ceiling), ceiling);
 const room: DollyScene = { space, boxes };
+const wall0 = wall.cabinets[0];
 
 describe('heading: the horizontal heading, never the pitched view', () => {
   it('is (sin yaw, 0, -cos yaw) whatever the pitch', () => {
@@ -524,6 +525,96 @@ describe('dolly: the eye forward and back along its heading', () => {
     expect(end.z).toBeLessThan(800 + DEPTH_STOP_MM);
     // and retreats from there freely
     expect(dolly(end, -1, FRAME_MS, { ...open, vp }).z).toBeGreaterThan(end.z);
+  });
+
+  it('NAV-DOLLY: a band over the ceiling stops the eye at the same place whatever the frame length; no frame steps over it', () => {
+    // 40 mm of the walk in over the ceiling, 600 to 640 mm off the fronts; at 16.7 ms a frame steps about 17 mm there, at
+    // 100 ms about 100 mm: longer than the band
+    const scene: DollyScene = {
+      space: { x0: -5000, x1: 5000, y0: 300, y1: 2400, z0: -400, z1: 6000 },
+      boxes: [{ x0: -2000, x1: 2000, y0: 0, y1: 1900, z0: -400, z1: 0 }],
+      vp: (q) => (q[2] > 600 && q[2] < 640 ? SCENE_CEILING_VIEWPORTS + 0.4 : 2.5),
+    };
+    const from: Pose = { x: 0, y: 1200, z: 700, yaw: 0, pitch: 0 };
+    for (const r of [0.5, 0.8, 1]) {
+      const ends = [8.33, 16.7, 33, 50, 100].map((dt) => {
+        let p = from;
+        let v: number | undefined;
+        for (let t = 0; t < 3000; t += dt) {
+          const step = dollyStep(p, r, dt, scene, v);
+          // no committed step crosses the band
+          expect(step.pose.z).toBeGreaterThanOrEqual(640);
+          p = step.pose;
+          v = step.vp;
+        }
+        return p.z;
+      });
+      for (const z of ends) {
+        expect(z).toBeLessThan(640 + DEPTH_STOP_MM);
+        expect(Math.abs(z - ends[0])).toBeLessThanOrEqual(DEPTH_STOP_MM);
+      }
+    }
+  });
+
+  it('NAV-DOLLY: a free frame asks one cost for each 60 Hz frame it stands for (16.7 ms: one; 100 ms: six), at the places those would end', () => {
+    expect(DEPTH_PATH_MS).toBe(17);
+    const asked: number[] = [];
+    const vp = (q: Vec3) => {
+      asked.push(q[2]);
+      return 1;
+    };
+    const far: Pose = { ...start, z: 5000 };
+    for (const [dt, n] of [
+      [8.33, 1],
+      [16, 1],
+      [16.7, 1],
+      [17, 1],
+      [33.4, 2],
+      [50, 3],
+      [100, 6],
+      [500, 6],
+    ]) {
+      asked.length = 0;
+      const mm = (DEPTH_MAX_MM_S * Math.min(dt, JOG_MAX_STEP_MS)) / 1000;
+      expect(dollyStep(far, 1, dt, { ...open, vp }, 1).pose.z).toBeCloseTo(far.z - mm, 6);
+      expect(asked).toHaveLength(n);
+      asked.forEach((z, i) => expect(z).toBeCloseTo(far.z - (mm * (i + 1)) / n, 6));
+    }
+    // a refusal part of the way: the eye ends within DEPTH_STOP_MM of it, from the last place that passed
+    const wall = (q: Vec3) => (q[2] < 4790 ? SCENE_CEILING_VIEWPORTS + 1 : 1);
+    const stopped = dollyStep(far, 1, 100, { ...open, vp: wall }, 1);
+    expect(stopped.pose.z).toBeGreaterThanOrEqual(4790);
+    expect(stopped.pose.z).toBeLessThan(4790 + DEPTH_STOP_MM);
+    expect(stopped.vp).toBe(1);
+    // and `ok` the same way
+    const kept = dollyStep(far, 1, 100, { ...open, ok: (q) => q[2] >= 4790 });
+    expect(kept.pose.z).toBeGreaterThanOrEqual(4790);
+    expect(kept.pose.z).toBeLessThan(4790 + DEPTH_STOP_MM);
+  });
+
+  it('NAV-DOLLY: tells what cut the step short: the budget, the jog\'s ok, or neither (a free step, the room and the furniture)', () => {
+    const far: Pose = { ...start, z: 5000 };
+    const flat = () => 1;
+    expect(dollyStep(far, 1, FRAME_MS, { ...open, vp: flat }).cut).toBeNull();
+    // the budget: part of the way, and where it holds the eye still
+    const wall = (q: Vec3) => (q[2] < 4990 ? SCENE_CEILING_VIEWPORTS + 1 : 1);
+    const part = dollyStep(far, 1, FRAME_MS, { ...open, vp: wall });
+    expect(part.pose.z).toBeLessThan(far.z);
+    expect(part.cut).toBe('budget');
+    const still = dollyStep({ ...far, z: 4990 }, 1, FRAME_MS, { ...open, vp: wall });
+    expect(still.pose.z).toBe(4990);
+    expect(still.cut).toBe('budget');
+    // the ok
+    expect(dollyStep(far, 1, FRAME_MS, { ...open, vp: flat, ok: (q) => q[2] >= 4990 }).cut).toBe('ok');
+    expect(dollyStep(far, 1, FRAME_MS, { ...open, ok: () => false }).cut).toBe('ok');
+    // the furniture's margin stops the eye with neither
+    const x = wall0.centerMm;
+    const atMargin: Pose = { ...start, x, z: boxes[0].z1 + EYE_MARGIN_MM };
+    const held = dollyStep(atMargin, 1, FRAME_MS, { ...room, vp: flat });
+    expect(held.pose.z).toBe(atMargin.z);
+    expect(held.cut).toBeNull();
+    // a frame that asks nothing says nothing
+    expect(dollyStep(far, 0, FRAME_MS, open).cut).toBeUndefined();
   });
 
   it('a start already past the budget moves only where the cost does not rise (never a trap)', () => {

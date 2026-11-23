@@ -55,7 +55,6 @@ import {
   figureCap,
   figureScales,
   figuresToDraw,
-  freeTexelScale,
   nearestCabinets,
   opaqueBoards,
   stickyWhole,
@@ -78,6 +77,7 @@ import { setPhotoFits } from './photoFit';
 import { UNZOOMED, ZOOM_DOUBLE_TAP, glideZoom, isZoomed, panZoom, pinchZoom, settleZoom, toPicture, wheelZoom, zoomAt, zoomTransform, type Point, type Zoom } from './caseZoom';
 import { JOG_MAX_X, LOOK_HOLD_MS, eyeSpace, poseOf, withPose, type Pose } from './casePose';
 import { cameraData, coneOf, useFreeCamera, type FreeScene } from './useFreeCamera';
+import { sceneFit, type BudgetFigure, type BudgetScene } from './caseBudget';
 import { offerJog } from '../../stores/jog';
 import { useBrokenImages } from '../../hooks/useBrokenImages';
 
@@ -154,6 +154,8 @@ interface Draw {
   readonly view: CullView;
   readonly rect: Rect;
   readonly s: number;
+  /** NAV-DOLLY: the px per mm the open mesh shelves are drawn at: `s`, or whole octaves under it (caseBudget's meshScale). */
+  readonly meshS: number;
 }
 
 const DrawContext = createContext<Draw | null>(null);
@@ -165,7 +167,7 @@ const times = (u: V3, k: number): V3 => [u[0] * k, u[1] * k, u[2] * k];
  * A face, cut to the part that draws in the frame and its margin (nothing when none does); a cut face's
  * background is laid on the whole face, its element a window onto it, so a gradient stays where it was.
  */
-function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid }) {
+function Quad({ a, u, v, cls, style, grid, mesh }: { a: V3; u: V3; v: V3; cls: string; style?: JSX.CSSProperties; grid?: TexelGrid; mesh?: boolean }) {
   // every face is drawn inside the scene, which provides what it draws
   const draw = useContext(DrawContext)!;
   const { s } = draw;
@@ -176,7 +178,11 @@ function Quad({ a, u, v, cls, style, grid }: { a: V3; u: V3; v: V3; cls: string;
   const ds = cut.s1 - cut.s0;
   const dt = cut.t1 - cut.t0;
   if (ds < 1 || dt < 1) face = [along(a, u, v, cut.s0, cut.t0), times(u, ds), times(v, dt)];
-  const q = quadStyle(...face, grid, s);
+  // NAV-DOLLY: a mesh shelf is drawn at the mesh's px per mm (its pattern's too: --s), its matrix stretching it to the scene's
+  const k = draw.meshS;
+  const own = mesh ? { u: Math.hypot(...face[1]) * k, v: Math.hypot(...face[2]) * k } : grid;
+  if (mesh) style = { ...style, '--s': String(k) };
+  const q = quadStyle(...face, own, s);
   if (!q) return null;
   if (ds < 1 || dt < 1) {
     const [pu, pv] = [parseFloat(q.width) / ds, parseFloat(q.height) / dt];
@@ -358,7 +364,7 @@ function Surfaces({ slot }: { slot: WallSlot }) {
         if (s.outsideDoor) {
           return (
             <Part key={i} cls="cab-shelf cab-shelf--open">
-              <Quad cls="m-mesh" a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
+              <Quad mesh cls="m-mesh" a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
               <Quad grid={FLAT_GRID} cls="m-steel f-front" a={[x0, s.topMm, 0]} u={[x1 - x0, 0, 0]} v={[0, -s.thicknessMm, 0]} />
             </Part>
           );
@@ -368,7 +374,7 @@ function Surfaces({ slot }: { slot: WallSlot }) {
             {s.material === 'glass' ? (
               <RimmedFace cls="m-glass-plate" rimCls="m-glass-rim" mm={GLASS_RIM_MM} a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
             ) : (
-              <Quad cls="m-mesh" a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
+              <Quad mesh cls="m-mesh" a={[ix0, s.topMm, -D + post]} u={[ix1 - ix0, 0, 0]} v={[0, 0, D - 2 * post]} />
             )}
             <Quad grid={FLAT_GRID} cls="m-steel f-front" a={[x0, s.topMm, 0]} u={[x1 - x0, 0, 0]} v={[0, -s.thicknessMm, 0]} />
           </Part>
@@ -1125,12 +1131,10 @@ export function CabinetScene({
       ),
     [wall],
   );
-  // NAV-1A (a), Ross 10-28: turned, the scene keeps the px per mm in force where the turn left yaw 0 (a cabinet beside
-  // the eye, a move or a pitch while turned never sharpens it); what the turned view itself would ask (its nearest point
-  // in view, over the wall and a cabinet's reach past its ends) is published beside it
-  const s = freeTexelScale(camera, span, fc.unturned(base.camera));
+  // what the turned view itself would ask (its nearest point in view, over the wall and a cabinet's reach past its
+  // ends), published beside the px per mm the scene is drawn at
   const asked = camera.yaw ? texelScale(camera, span, [wall.leftMm - 1000, wall.rightMm + 1000]) : null;
-  const draw: Draw = { view: cull, rect: cullRect(camera.frame), s };
+  const rect = cullRect(camera.frame);
 
   // --- pinch zoom (PINCH-1): a magnification over the camera's picture toward the point pinched, drawn as one
   // transform on the zoom layer; set on the layer as the fingers move (no render of the scene), never the camera
@@ -1485,7 +1489,7 @@ export function CabinetScene({
   });
   // G1: as many figures as the drawn cabinets hold (each its kind's most), so no cabinet the frame shows stands empty
   const figCap = figureCap(heldCounts, heldKinds, drawnCabs);
-  const { shown: showIdx, hidden } = figuresToDraw(cull, draw.rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]), figCap);
+  const { shown: showIdx, hidden } = figuresToDraw(cull, rect, inDrawnBoxes, new Set(drawnCabs), (cab) => opaqueBoards(wall.cabinets[cab]), figCap);
   const onShow = showIdx.map((i) => inDrawn[i]);
   // FETCH-FIRST: what it draws, then the rest as it stands them, told once per change of either
   const standing = useMemo(() => packed.cabinets.flatMap((c) => c.surfaces.flatMap((x) => x.items.map((p) => p.item.figure))), [packed]);
@@ -1506,8 +1510,44 @@ export function CabinetScene({
   // drawn at its figure's px per mm, out of the same budget
   const plates = onShow.map(({ draw: fig }) => {
     const p = labels ? plateOf(fig) : null;
-    return p && trimFace(cull, p.a, p.u, p.v, draw.rect) ? p : null;
+    return p && trimFace(cull, p.a, p.u, p.v, rect) ? p : null;
   });
+  // the room: its back wall from the floor to the ceiling the View card sets (CASE-FB1 item 3), its floor and ceiling
+  const room = roomBox(wall, ceilingMm);
+  const roomW = room.x1 - room.x0;
+  const roomD = room.zFront - room.zBack;
+  // NAV-1A (b): what a pose's cost is projected from: the figures as this render draws them, listed once and only when asked
+  let listed: BudgetFigure[] | undefined;
+  const budget: BudgetScene = {
+    span,
+    wall,
+    fronts,
+    cap: base.drawCap,
+    counts: heldCounts,
+    kinds: heldKinds,
+    boards: (cab) => opaqueBoards(wall.cabinets[cab]),
+    figures: () =>
+      (listed ??= draws.map(({ cab, draw: fig }) => {
+        const { art, aspect, margins } = drawing(fig.placed.item);
+        const g = figureGeometry(fig, art, aspect, margins);
+        return { ...figureLayerBox(fig, g, cab), tapMm: g.tapW, plate: labels ? plateOf(fig) : null };
+      })),
+    room: [
+      [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, -room.y1, 0]],
+      [[room.x0, 0, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
+      [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
+      [[room.x0, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
+      [[room.x1, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
+    ],
+    roomFacePx: ROOM_GRID.u * ROOM_GRID.v,
+    viewportPx: window.innerWidth * window.innerHeight,
+  };
+  // NAV-DOLLY (Ross 11-22): the px per mm the scene is drawn at is the one its projection fits the ceiling at (sceneFit:
+  // the mesh shelves coarser first, then the scene), from what the eye asks. NAV-1A (a), Ross 10-28: turned, that is the
+  // px per mm in force where the turn left yaw 0 (a cabinet beside the eye, a move or a pitch while turned never
+  // sharpens it)
+  const { s, meshS } = sceneFit(camera, budget, budget.figures(), fc.unturned(base.camera)).cost;
+  const draw: Draw = { view: cull, rect, s, meshS };
   // PINCH-1: Chrome rasters a layer under the perspective at the device pixel ratio per layer px, whatever the zoom
   // magnifies it by; so once a zoom settles the figures nearest the middle of the zoomed view are drawn at the zoom
   // times the scene's px per mm, out of the same budget (the rest coarser outward from it)
@@ -1548,10 +1588,6 @@ export function CabinetScene({
   }, [flagged]);
   useEffect(() => () => countOut.current?.(0), []);
 
-  // the room: its back wall from the floor to the ceiling the View card sets (CASE-FB1 item 3), its floor and ceiling
-  const room = roomBox(wall, ceilingMm);
-  const roomW = room.x1 - room.x0;
-  const roomD = room.zFront - room.zBack;
   // NAV-DEPTH-OCCL: the room's corners, which the root's transform puts the CSS z = 0 plane past (cssSceneTransform)
   const roomCorners = useMemo(() => boxCorners(room.x0, room.x1, 0, room.y1, room.zBack, room.zFront), [room.x0, room.x1, room.y1, room.zBack, room.zFront]);
   // the camera's frame is centred in the scene: on a wide panel, these px of the scene on each side are outside it
@@ -1571,31 +1607,7 @@ export function CabinetScene({
     lookHoldMs: lookHoldMs(),
     jogMax: jogMax(),
     reducedMotion: prefersReducedMotion(),
-    // NAV-1A (b): what a look projects the scene's cost from: the figures as this render draws them, listed only when asked
-    budget: {
-      span,
-      wall,
-      fronts,
-      cap: base.drawCap,
-      counts: heldCounts,
-      kinds: heldKinds,
-      boards: (cab) => opaqueBoards(wall.cabinets[cab]),
-      figures: () =>
-        draws.map(({ cab, draw: fig }) => {
-          const { art, aspect, margins } = drawing(fig.placed.item);
-          const g = figureGeometry(fig, art, aspect, margins);
-          return { ...figureLayerBox(fig, g, cab), tapMm: g.tapW, plate: labels ? plateOf(fig) : null };
-        }),
-      room: [
-        [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, -room.y1, 0]],
-        [[room.x0, 0, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
-        [[room.x0, room.y1, room.zBack], [roomW, 0, 0], [0, 0, roomD]],
-        [[room.x0, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
-        [[room.x1, room.y1, room.zBack], [0, 0, roomD], [0, -room.y1, 0]],
-      ],
-      roomFacePx: ROOM_GRID.u * ROOM_GRID.v,
-      viewportPx: window.innerWidth * window.innerHeight,
-    },
+    budget,
   };
   const cone = coneOf(camera, wall, fronts);
   useLayoutEffect(() => {
@@ -1622,6 +1634,7 @@ export function CabinetScene({
       data-cone={JSON.stringify({ soft: num((cone.soft * 180) / Math.PI), hard: num((cone.hard * 180) / Math.PI) })}
       data-room={JSON.stringify({ ceilingMm: num(room.y1), zBack: num(room.zBack) })}
       data-px-per-mm={String(s)}
+      data-mesh-px-per-mm={String(meshS)}
       data-turned-px-per-mm={asked === null ? undefined : String(asked)}
       data-cull-x={String(cull.camera.x)}
       data-cull-pan={String(cull.panPx)}

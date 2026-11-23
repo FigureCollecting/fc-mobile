@@ -3,15 +3,18 @@
  * stops short of the scene's ceiling where holding the sharpness the turn left yaw 0 at (freeTexelScale, a) is not
  * enough. Chrome gives every composited scene layer its own element px (e2e/case-free-camera's budget, read layer by
  * layer against the DOM: a figure its tap box at its px per mm, its contact shadow 16 x 16, a mesh shelf its trimmed area
- * at the scene's px per mm, the room's faces 64 x 256, every other face of a cabinet a few px, the scene's controls a little),
+ * at the mesh's px per mm, the room's faces 64 x 256, every other face of a cabinet a few px, the scene's controls a little),
  * so the projection is those, summed for what the cull at that pose would draw (the same pure rules the scene draws
- * by), over the screen. Pure maths, no DOM.
+ * by), over the screen. NAV-DOLLY (Ross 11-22): the projection also picks the px per mm the scene is drawn at there
+ * (sceneFit: coarser where what the eye asks would pass the ceiling), so the camera is not stopped for the budget.
+ * Pure maths, no DOM.
  */
 import type { Camera, Vec3 } from './caseCamera';
 import { frameCap, type RoomSpan } from './caseFraming';
 import {
   FIGURE_BUDGET_VIEWPORTS,
   GRADIENT_GRID,
+  TEXEL_SCALE_MIN,
   cullRect,
   figureCap,
   figureScales,
@@ -43,6 +46,12 @@ export const CONTROLS_VIEWPORTS = 0.3;
 export const CABINET_FACES_PX = 2048;
 /** A figure's contact shadow, on its gradient grid. */
 export const SHADOW_PX = GRADIENT_GRID.u * GRADIENT_GRID.v;
+/**
+ * NAV-DOLLY (Ross 11-22): the most the open mesh shelves may cost together, in viewports. Close in and below the
+ * framing's height the KLINGSBO's mesh shelves alone cost 1.7 viewports of the Fold8's cover at the scene's px per mm,
+ * which took the walk in over the ceiling 450 mm short of the doors; a flat pattern, they are drawn coarser first.
+ */
+export const MESH_BUDGET_VIEWPORTS = 0.6;
 
 /** A figure as the scene draws it: its layer box (figureLayerBox, the figures' budget), its tap box's width and its plate. */
 export interface BudgetFigure extends FigureBox {
@@ -74,7 +83,10 @@ export interface BudgetScene {
 
 /** What a pose's scene costs, element px by kind, and what it draws. */
 export interface SceneCost {
+  /** The px per mm the scene is drawn at there (sceneCost's fit). */
   readonly s: number;
+  /** The px per mm its open mesh shelves are drawn at: `s`, or whole octaves under it (meshScale). */
+  readonly meshS: number;
   readonly drawn: readonly number[];
   readonly figuresDrawn: number;
   readonly figures: number;
@@ -104,15 +116,35 @@ export function meshFaces(slot: WallSlot): [Vec3, Vec3, Vec3][] {
 
 /**
  * The element px of what the scene would draw with the camera at this pose, unzoomed and unswiped: the cull's cabinets
- * (frameCap's nearest), their figures (figuresToDraw, figureScales at the scene's px per mm, held from `unturned`, where
- * the turn left yaw 0: freeTexelScale), every figure's shadow, its plate where it draws, each side of a figure's or
- * plate's layer rounded up to whole px; the mesh shelves' trimmed area; the room's faces in view; CABINET_FACES_PX a
- * cabinet.
+ * (frameCap's nearest), their figures (figuresToDraw, figureScales at the scene's px per mm: sceneFit's, from what the
+ * eye asks, held from `unturned`, where the turn left yaw 0: freeTexelScale), every figure's shadow, its plate where it
+ * draws, each side of a figure's or plate's layer rounded up to whole px; the mesh shelves' trimmed area at their own px
+ * per mm (meshScale); the room's faces in view; CABINET_FACES_PX a cabinet.
  */
 export function sceneCost(camera: Camera, scene: BudgetScene, figures: readonly BudgetFigure[], unturned?: Camera): SceneCost {
+  return sceneFit(camera, scene, figures, unturned).cost;
+}
+
+/** A pose's projected cost: in viewports of the screen, its controls included, and its parts. */
+export interface Projected {
+  readonly vp: number;
+  readonly cost: SceneCost;
+}
+
+/** What the cull at a pose draws, whatever px per mm it is drawn at. */
+interface Culled {
+  readonly view: { readonly camera: Camera; readonly panPx: number };
+  readonly drawn: readonly number[];
+  readonly boxes: readonly (BudgetFigure & { readonly plateMm2: number })[];
+  readonly plates: readonly (BudgetFigure['plate'] | null)[];
+  /** The mesh shelves' trimmed area, mm2. */
+  readonly meshMm2: number;
+  readonly room: number;
+}
+
+function cullOf(camera: Camera, scene: BudgetScene, figures: readonly BudgetFigure[]): Culled {
   const view = { camera, panPx: 0 };
   const rect = cullRect(camera.frame);
-  const s = freeTexelScale(camera, scene.span, unturned);
   const drawn = nearestCabinets(view, scene.wall, [], frameCap(camera, scene.wall, scene.fronts, scene.cap));
   const set = new Set(drawn);
   const inDrawn = figures.filter((f) => set.has(f.cab));
@@ -122,35 +154,93 @@ export function sceneCost(camera: Camera, scene: BudgetScene, figures: readonly 
     return p && trimFace(view, p.a, p.u, p.v, rect) ? p : null;
   });
   const boxes = shown.map((i, n) => ({ ...inDrawn[i], plateMm2: plates[n] ? len(plates[n].u) * len(plates[n].v) : 0 }));
-  const scales = figureScales(view, boxes, s, FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height);
-  let figurePx = 0;
-  boxes.forEach((f, n) => {
-    const k = scales[n];
-    figurePx += Math.ceil(f.tapMm * k) * Math.ceil((f.y1 - f.y0) * k);
-    const p = plates[n];
-    if (p) figurePx += Math.ceil(len(p.u) * k) * Math.ceil(len(p.v) * k);
-  });
-  let mesh = 0;
+  let meshMm2 = 0;
   for (const i of drawn) {
     for (const [a, u, v] of meshFaces(scene.wall.cabinets[i])) {
       const cut = trimFace(view, a, u, v, rect);
-      if (cut) mesh += len(u) * (cut.s1 - cut.s0) * s * len(v) * (cut.t1 - cut.t0) * s;
+      if (cut) meshMm2 += len(u) * (cut.s1 - cut.s0) * len(v) * (cut.t1 - cut.t0);
     }
   }
   const room = scene.room.filter(([a, u, v]) => trimFace(view, a, u, v, rect) !== null).length * scene.roomFacePx;
-  return { s, drawn, figuresDrawn: shown.length, figures: figurePx, shadows: SHADOW_PX * shown.length, mesh, room, faces: CABINET_FACES_PX * drawn.length };
+  return { view, drawn, boxes, plates, meshMm2, room };
 }
 
-/** A pose's projected cost: in viewports of the screen, its controls included, and its parts. */
-export type Projector = (camera: Camera, unturned?: Camera) => { vp: number; cost: SceneCost };
+/** What `c` costs drawn at `s` px per mm: the mesh shelves at meshScale's, within their budget and what the rest leaves under the ceiling. */
+function costOf(c: Culled, scene: BudgetScene, s: number): Projected {
+  const { frame } = c.view.camera;
+  const scales = figureScales(c.view, c.boxes, s, FIGURE_BUDGET_VIEWPORTS * frame.width * frame.height);
+  let figures = 0;
+  c.boxes.forEach((f, n) => {
+    const k = scales[n];
+    figures += Math.ceil(f.tapMm * k) * Math.ceil((f.y1 - f.y0) * k);
+    const p = c.plates[n];
+    if (p) figures += Math.ceil(len(p.u) * k) * Math.ceil(len(p.v) * k);
+  });
+  const shadows = SHADOW_PX * c.boxes.length;
+  const faces = CABINET_FACES_PX * c.drawn.length;
+  const vpOf = (mesh: number) => (figures + shadows + mesh + c.room + faces) / scene.viewportPx + CONTROLS_VIEWPORTS;
+  const meshPx = (k: number) => c.meshMm2 * k * k;
+  const meshS = sized(scene) ? meshScale(s, (k) => meshPx(k) <= MESH_BUDGET_VIEWPORTS * scene.viewportPx && fitsCeiling(vpOf(meshPx(k)))) : s;
+  const mesh = meshPx(meshS);
+  return { vp: vpOf(mesh), cost: { s, meshS, drawn: c.drawn, figuresDrawn: c.boxes.length, figures, shadows, mesh, room: c.room, faces } };
+}
 
-/** The scene's cost at a pose (its px per mm held from `unturned`: sceneCost); the figures listed once. */
+/**
+ * NAV-DOLLY: the px per mm the mesh shelves are drawn at in a scene drawn at `s`: `s` where that `fits`, else whole
+ * octaves under it to the first that does (a figure's layer steps the same way: figureScales), never under the coarsest
+ * a face is drawn at.
+ */
+export function meshScale(s: number, fits: (k: number) => boolean): number {
+  let k = s;
+  while (!fits(k) && k / 2 >= TEXEL_SCALE_MIN) k /= 2;
+  return k;
+}
+
+/**
+ * NAV-DOLLY: the px per mm a scene asked for at `s` is drawn at: `s` where that `fits`, else the first quarter octave
+ * under it (texelScale's notches) that does; none, the coarsest a face is drawn at.
+ */
+export function fitScale(s: number, fits: (k: number) => boolean): number {
+  if (fits(s)) return s;
+  for (let q = Math.ceil(4 * Math.log2(s) - 1e-9) - 1; ; q--) {
+    const k = 2 ** (q / 4);
+    if (!(k > TEXEL_SCALE_MIN)) return TEXEL_SCALE_MIN;
+    if (fits(k)) return k;
+  }
+}
+
+/** The cost of the scene at this pose drawn at `s` px per mm, whether or not that fits the ceiling (sceneFit picks the `s`). */
+export function sceneCostAt(camera: Camera, scene: BudgetScene, figures: readonly BudgetFigure[], s: number): Projected {
+  return costOf(cullOf(camera, scene, figures), scene, s);
+}
+
+/**
+ * NAV-DOLLY (Ross 11-22): the scene at this pose as it is drawn, and what that costs. The scene coarsens to fit the
+ * ceiling, so the camera is never stopped for it: first its mesh shelves (meshScale: their own budget, and what the rest
+ * of the scene leaves under the ceiling), the figures as sharp as the eye asks; still over, the whole scene a quarter
+ * octave at a time (fitScale) from the px per mm the eye asks (freeTexelScale, held from `unturned`). The render draws
+ * at this `s` and `meshS` (CabinetScene), so the cost projected for a pose is the cost of the scene drawn there.
+ */
+export function sceneFit(camera: Camera, scene: BudgetScene, figures: readonly BudgetFigure[], unturned?: Camera): Projected {
+  const c = cullOf(camera, scene, figures);
+  let last: { s: number; at: Projected } | null = null;
+  const at = (s: number): Projected => {
+    if (last?.s !== s) last = { s, at: costOf(c, scene, s) };
+    return last.at;
+  };
+  return at(fitScale(freeTexelScale(camera, scene.span, unturned), (s) => !sized(scene) || fitsCeiling(at(s).vp)));
+}
+
+/** A window with no size yet (0 px) has no ceiling to fit: nothing is drawn coarser for it. */
+const sized = (scene: BudgetScene) => scene.viewportPx > 0;
+
+export type Projector = (camera: Camera, unturned?: Camera) => Projected;
+
+/** The scene's cost at a pose (its px per mm held from `unturned`: sceneFit); the figures listed once. */
 export function projector(scene: BudgetScene): Projector {
   let figures: readonly BudgetFigure[] | null = null;
   return (camera, unturned) => {
     figures ??= scene.figures();
-    const cost = sceneCost(camera, scene, figures, unturned);
-    const px = cost.figures + cost.shadows + cost.mesh + cost.room + cost.faces;
-    return { vp: px / scene.viewportPx + CONTROLS_VIEWPORTS, cost };
+    return sceneFit(camera, scene, figures, unturned);
   };
 }

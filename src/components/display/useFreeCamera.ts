@@ -372,6 +372,9 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
         st.dts.push(dt);
       } else d.stuck = { scene: s, pose, r: d.r, unturned: unturned.current, dts: [dt] };
     }
+    // NAV-DOLLY: what this frame met, for diagnosis: the budget (the safety net cut its step), the room (held still by
+    // the furniture, the room or the jog's rules) or neither
+    if (dom.host.current) dom.host.current.dataset.dollyHeld = step.cut === 'budget' ? 'budget' : d.stuck !== null ? 'room' : 'ok';
     return step.pose;
   };
 

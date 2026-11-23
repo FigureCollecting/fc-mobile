@@ -982,11 +982,12 @@ async function unfold(page: Page, panel: { width: number; height: number }) {
 }
 
 /**
- * NAV-1A (b): the sides of the dense walls where the held sharpness (a) alone would pass the ceiling on the way to the
- * hard yaw, so the safety net stops the turn; on every other side (a) is enough and the full turn is kept. Measured on
- * the Fold8's panels: re-culled at the hard yaw with (b) off, only this side passes 3 viewports. `${panel} ${wall} ${side}`.
+ * NAV-1A (b), NAV-DOLLY (Ross 11-22): the sides of the dense walls where the held sharpness (a) alone would pass the
+ * ceiling on the way to the hard yaw. The safety net stopped the turn there; now the scene is drawn coarser to fit
+ * (sceneFit) and the full turn is kept, as on every other side, where (a) is enough. Measured on the Fold8's panels:
+ * re-culled at the hard yaw at the opening's px per mm, only this side passes 3 viewports. `${panel} ${wall} ${side}`.
  */
-const B_ENGAGES = new Set<string>(['fold8-cover spike wall right']);
+const FIT_COARSENS = new Set<string>(['fold8-cover spike wall right']);
 
 for (const panel of FOLD8) {
   for (const wall of DENSE) {
@@ -1081,14 +1082,18 @@ for (const panel of FOLD8) {
         expect(row.cap).toBeLessThanOrEqual(20);
         expect(row.sceneViewports, `scene layers at yaw ${row.yaw}, viewports of pixels`).toBeLessThanOrEqual(3);
         expect(row.freshViewports, `scene layers re-culled at yaw ${row.yaw}, viewports of pixels`).toBeLessThanOrEqual(3);
-        // (a): turned, never sharper than the opening; what the turned view asks is published beside it
-        expect(row.s, `px per mm at yaw ${row.yaw}`).toBe(openingS);
+        // (a): turned, never sharper than the opening; what the turned view asks is published beside it. NAV-DOLLY: on
+        // the sides measured to need it the scene is coarser than the opening, to fit (no more than an octave)
+        if (FIT_COARSENS.has(`${panel.name} ${wall.name} ${row.side}`)) {
+          expect(row.s, `px per mm at yaw ${row.yaw}`).toBeLessThan(openingS);
+          expect(row.s, `px per mm at yaw ${row.yaw}`).toBeGreaterThanOrEqual(openingS / 2);
+        } else expect(row.s, `px per mm at yaw ${row.yaw}`).toBe(openingS);
         expect(row.asked, `asked at yaw ${row.yaw}`).toBeGreaterThan(0);
-        // (b): engaged only on the sides measured to need it; there the turn never passes the fit, and everywhere else
-        // the full turn is kept (past the soft limit toward the hard one)
-        expect(row.b, `(b) on the ${row.side}`).toBe(B_ENGAGES.has(`${panel.name} ${wall.name} ${row.side}`));
-        if (row.fit !== null) expect(Math.abs(row.yaw)).toBeLessThanOrEqual(row.fit + 0.01);
-        else expect(Math.abs(row.yaw)).toBeGreaterThanOrEqual(cone.soft - 0.01);
+        // (b): the budget stops no turn: every yaw asked fits, and the full turn is kept (past the soft limit toward
+        // the hard one)
+        expect(row.b, `(b) on the ${row.side}`).toBe(false);
+        expect(row.peak, `the most a yaw on the ${row.side} was projected to cost`).toBeLessThanOrEqual(3);
+        expect(Math.abs(row.yaw)).toBeGreaterThanOrEqual(cone.soft - 0.01);
       }
     });
 

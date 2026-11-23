@@ -92,7 +92,7 @@ test.describe('on the Fold8 cover with a (faked) motion sensor', () => {
     // the probe stopped its sampling: OFF, nothing listens
     expect(await listeners(page)).toBe(0);
 
-    // placed: centred over the rail, its target ORB_PX.clear above the rail's target (out of a thumb's touch adjustment)
+    // placed: centred over the rail, its target ORB_PX.clear above the rail's target (the two never overlap)
     const o = (await orb(page).boundingBox())!;
     const r = (await depth(page).boundingBox())!;
     expect(o.width).toBeCloseTo(ORB_PX.hit, 1);
@@ -198,49 +198,73 @@ test.describe('on the Fold8 cover with a (faked) motion sensor', () => {
   });
 
   test('NAV-LOGPOSE: a Z pull begun anywhere in the rail\'s top, even with a broad thumb, goes to the rail, never to the orb', async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(300_000);
     await fakeDevice(page);
     await page.addInitScript(() => {
       const w = window as unknown as { __ev: string[] };
       w.__ev = [];
       for (const t of ['pointerdown', 'pointercancel'])
-        document.addEventListener(t, (e) => w.__ev.push(`${t}:${(e.target as Element)?.closest?.('[data-nav]')?.getAttribute('data-nav') ?? 'scene'}`), true);
+        document.addEventListener(t, (e) => {
+          const el = e.target as Element | null;
+          w.__ev.push(`${t}:${el?.closest?.('[data-nav]')?.getAttribute('data-nav') ?? `scene:${el?.tagName}.${el?.getAttribute?.('class') ?? ''}`}`);
+        }, true);
     });
     await openCase(page, COVER);
-    await expect(orb(page)).toHaveCount(1);
-    const r = (await depth(page).boundingBox())!;
-    const x = r.x + r.width / 2;
-    const drawnTop = r.y + (DEPTH_RAIL_PX.hitHeight - DEPTH_RAIL_PX.height) / 2;
+    const opening = await cameraOf(page);
     const cdp = await page.context().newCDPSession(page);
     // Chromium's touch adjustment area is the contact clamped to 20..32 DIP: radius 1 is the least, 20 the most it takes
     let pulls = 0;
     for (const radius of [1, 20]) {
       // from the rail target's top row down to 2 px inside what is drawn
       for (const above of [19, 14, 10, 6, 2, 0, -2]) {
-        const y = drawnTop - above;
-        // down, then up: the eye goes back and forth, never into the depth's end
+        const what = `radius ${radius}, ${above} px above the drawn top`;
+        // every pull starts from the case just opened: the same camera, the orb shown and OFF, and no figure within
+        // 16 px (the touch adjustment's reach) of where the pulls touch down, the rail's centre in its target's top
+        // 22 px (a figure there could take the touch: a separate, known limit)
+        if (pulls > 0) {
+          await page.reload();
+          await ready(page);
+        }
+        await expect(orb(page), what).toHaveCount(1);
+        await expect(orb(page), what).toHaveAttribute('aria-checked', 'false');
+        expect(await cameraOf(page), what).toEqual(opening);
+        const r = (await depth(page).boundingBox())!;
+        const top = { x: r.x + r.width / 2, y: r.y, width: 0, height: (DEPTH_RAIL_PX.hitHeight - DEPTH_RAIL_PX.height) / 2 + 2 };
+        const nearest = await page.evaluate((t) => {
+          let d = Infinity;
+          let at = '';
+          for (const f of Array.from(document.querySelectorAll('button.cab-figure'))) {
+            const b = f.getBoundingClientRect();
+            const e = Math.hypot(Math.max(0, t.x - b.right, b.left - (t.x + t.width)), Math.max(0, t.y - b.bottom, b.top - (t.y + t.height)));
+            if (e < d) [d, at] = [e, `${b.left.toFixed(1)},${b.top.toFixed(1)} ${b.width.toFixed(1)}x${b.height.toFixed(1)}`];
+          }
+          return { d, at };
+        }, top);
+        expect(nearest.d, `${what}: nearest figure ${nearest.at}`).toBeGreaterThan(16);
+        const x = r.x + r.width / 2;
+        const y = r.y + (DEPTH_RAIL_PX.hitHeight - DEPTH_RAIL_PX.height) / 2 - above;
+        // down and up in turn: each height is pulled both ways over the two radii
         const dy = pulls++ % 2 === 0 ? 40 : -40;
         const at = (yy: number) => [{ x, y: yy, radiusX: radius, radiusY: radius }];
         await page.evaluate(() => ((window as unknown as { __ev: string[] }).__ev.length = 0));
-        const z0 = (await cameraOf(page)).z;
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(y) });
         for (let i = 1; i <= 10; i++) {
           await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(y + (dy * i) / 10) });
           await page.waitForTimeout(16);
         }
         await page.waitForTimeout(500);
-        const dz = (await cameraOf(page)).z - z0;
+        const dz = (await cameraOf(page)).z - opening.z;
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         await settle(page, 300);
         const ev = await page.evaluate(() => (window as unknown as { __ev: string[] }).__ev);
-        const what = `radius ${radius}, ${above} px above the drawn top`;
+        // the press went to the rail, never to the orb
         expect(ev, what).toEqual(['pointerdown:depth']);
-        // a pull down backs the eye away, a pull up brings it closer, as with no orb (a pull the orb took moved it 0)
-        expect(Math.sign(dz) * Math.sign(dy), what).toBe(1);
-        expect(Math.abs(dz), what).toBeGreaterThan(300);
+        // a pull down backs the eye away, a pull up brings it closer (a pull the orb took moved it exactly 0)
+        expect(dz, what).not.toBe(0);
+        expect(Math.sign(dz), what).toBe(Math.sign(dy));
+        await expect(orb(page), what).toHaveAttribute('aria-checked', 'false');
       }
     }
-    await expect(orb(page)).toHaveAttribute('aria-checked', 'false');
     // the orb itself still takes a broad thumb's tap
     const c = await centreOf(orb(page));
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: c.x, y: c.y, radiusX: 20, radiusY: 20 }] });

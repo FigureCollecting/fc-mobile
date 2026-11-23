@@ -260,9 +260,9 @@ export function Profile() {
         <div class="profile__section">
           <h3 class="profile__section-title">Account</h3>
 
-          {/* The sign-in server's user settings, in this tab as sign-out leaves: Change Password opens User details (the
-              password card), Two-Factor opens Credentials. Signed out there, it signs the visitor in and comes back. No
-              email row: its settings page has no email change yet. */}
+          {/* The sign-in server's pages, in this tab as sign-out leaves: Change Password runs fc's password flow (asks for
+              a second factor; needs a live sign-in-server session), Two-Factor opens its user settings (Credentials). No
+              email row: the sign-in server has no email change for it yet. */}
           <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.passwordChange}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

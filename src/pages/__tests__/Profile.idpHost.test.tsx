@@ -45,7 +45,7 @@ describe('Profile account rows', () => {
     const account = screen.getByRole('heading', { level: 3, name: 'Account' }).parentElement as HTMLElement;
     const hrefs = within(account).getAllByRole('link').map((a) => a.getAttribute('href'));
     expect(hrefs).toEqual([
-      'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D',
+      'https://auth.mindsignals1.com/if/flow/fc-password-change/',
       'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D',
     ]);
     for (const href of hrefs) expect(href).not.toMatch(/next|evil|page-sessions/);

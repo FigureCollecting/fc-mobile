@@ -8,16 +8,16 @@ import { E2E_SUB, seedSignedIn, stubOffMachine } from './signedIn';
  */
 
 const IDP = 'https://auth.mindsignals1.com';
-// Authentik's user settings page (/if/user/#/settings): the User details tab holds the password card, the Credentials
-// tab the MFA devices. Signed out, that page sends the visitor to sign in and back to the tab.
+// Change Password runs fc's own flow (current password, a second factor, then the new one), never the user settings'
+// password card (the stock flow, which asks for neither). Two-Factor opens the user settings' Credentials tab.
 const ROWS = {
-  'Change Password': `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D`,
+  'Change Password': `${IDP}/if/flow/fc-password-change/`,
   'Two-Factor Authentication': `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D`,
 };
 /** Long enough for a late read (a microtask, a timer) to have moved the rows if anything could. */
 const SETTLE_MS = 1500;
 
-test('Profile: Change Password and Two-Factor open the sign-in server user settings in this tab', async ({ page, context }) => {
+test('Profile: Change Password opens fc-password-change and Two-Factor the user settings, in this tab', async ({ page, context }) => {
   const offMachine = await stubOffMachine(context);
   await seedSignedIn(page);
   await page.goto('/profile');
@@ -37,7 +37,7 @@ test('Profile: Change Password and Two-Factor open the sign-in server user setti
   await page.getByRole('link', { name: 'Change Password', exact: true }).click();
   await page.waitForURL(ROWS['Change Password']);
   expect(context.pages()).toHaveLength(pages);
-  expect(offMachine).toEqual([`${IDP}/if/user/`]);
+  expect(offMachine).toEqual([ROWS['Change Password']]);
 });
 
 test('Profile: a hostile ?idp=, settings hash or stored host cannot move the account rows, even once settled', async ({ page, context }) => {
@@ -58,9 +58,18 @@ test('Profile: a hostile ?idp=, settings hash or stored host cannot move the acc
   for (const href of hrefs) expect(href).not.toMatch(/next|evil|page-sessions/);
   expect(offMachine).toEqual([]);
 
+  // The app's hostile query and hash must not ride along: the flow opens bare, with no next= and no hash.
+  await page.getByRole('link', { name: 'Change Password', exact: true }).click();
+  await page.waitForURL(ROWS['Change Password']);
+  expect(page.url()).toBe(ROWS['Change Password']);
+  expect(offMachine).toEqual([ROWS['Change Password']]);
+
+  await page.goBack();
+  await expect(page.getByText(`Account ${E2E_SUB.slice(0, 8)}`)).toBeVisible({ timeout: 15_000 });
   await page.getByRole('link', { name: 'Two-Factor Authentication', exact: true }).click();
   await page.waitForURL(ROWS['Two-Factor Authentication']);
-  expect(offMachine).toEqual([`${IDP}/if/user/`]);
+  expect(page.url()).toBe(ROWS['Two-Factor Authentication']);
+  expect(offMachine).toEqual([ROWS['Change Password'], `${IDP}/if/user/`]);
 });
 
 test('Onboarding: Create Account says accounts are by invitation, starts nothing, and keeps Sign In', async ({ page, context }) => {

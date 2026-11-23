@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { accountPages, configuredAccountPages, DEFAULT_IDP_ORIGIN } from '../config';
 
-// The sign-in server's own pages for changing the account, both in Authentik 2026.8.5's user settings
-// (/if/user/#/settings, web/src/user/Routes.ts:25-28): the User details tab holds the password card
-// (UserSettingsPage.ts:137-157, slot page-details), the Credentials tab the MFA devices (:186-212, slot page-credentials).
-// That page sends a signed-out visitor to sign in and back (web/src/common/users.ts:139-158, :186-187).
-const USER_DETAILS = 'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D';
+// Change Password runs fc's own flow (fc-infra nodes/fc-ha-01/authentik/blueprints/fc-flows.yaml slug
+// fc-password-change: current password, then a second factor, then the new password). Not the user settings' User
+// details tab: its password card runs the first password stage with a configure flow, the stock
+// default-password-change, which asks for neither. Two-Factor opens the user settings' Credentials tab
+// (Authentik 2026.8.5 web: UserSettingsPage.ts slot page-credentials).
+const PASSWORD_FLOW = 'https://auth.mindsignals1.com/if/flow/fc-password-change/';
 const CREDENTIALS = 'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D';
 
 const tabOf = (href: string) => {
@@ -14,23 +15,25 @@ const tabOf = (href: string) => {
 };
 
 describe('account pages on the sign-in server', () => {
-  it('opens the user settings on the production host: User details for the password, Credentials for two-factor', () => {
-    expect(accountPages()).toEqual({ passwordChange: USER_DETAILS, mfaDevices: CREDENTIALS });
+  it('opens fc-password-change for the password and the Credentials tab for two-factor, on the production host', () => {
+    expect(accountPages()).toEqual({ passwordChange: PASSWORD_FLOW, mfaDevices: CREDENTIALS });
     expect(accountPages(DEFAULT_IDP_ORIGIN)).toEqual(accountPages());
   });
 
-  it('carries each tab as the JSON Authentik reads after the route separator, and nothing else', () => {
-    expect(tabOf(accountPages().passwordChange)).toEqual({ route: '/settings', page: { page: 'page-details' }, rest: [] });
-    expect(tabOf(accountPages().mfaDevices)).toEqual({ route: '/settings', page: { page: 'page-credentials' }, rest: [] });
+  it('opens the password flow bare: no next=, no query, no hash, never the stock settings card', () => {
+    const url = new URL(accountPages().passwordChange);
+    expect(url.pathname).toBe('/if/flow/fc-password-change/');
+    expect(url.search).toBe('');
+    expect(url.hash).toBe('');
+    expect(accountPages().passwordChange).not.toMatch(/next=|\/if\/user\/|settings|default-password-change/);
   });
 
-  it('sends no next= and no flow link: Authentik brings a signed-out visitor back to the page itself', () => {
-    for (const href of Object.values(accountPages())) {
-      const url = new URL(href);
-      expect(url.pathname).toBe('/if/user/');
-      expect(url.search).toBe('');
-      expect(href).not.toMatch(/next=|\/if\/flow\//);
-    }
+  it('carries the two-factor tab as the JSON Authentik reads after the route separator, and nothing else', () => {
+    const url = new URL(accountPages().mfaDevices);
+    expect(url.pathname).toBe('/if/user/');
+    expect(url.search).toBe('');
+    expect(tabOf(accountPages().mfaDevices)).toEqual({ route: '/settings', page: { page: 'page-credentials' }, rest: [] });
+    expect(accountPages().mfaDevices).not.toMatch(/next=/);
   });
 
   it('offers no email change until the sign-in server has one on its settings page', () => {
@@ -38,9 +41,7 @@ describe('account pages on the sign-in server', () => {
   });
 
   it('follows the origin it is given, with or without trailing slashes', () => {
-    expect(accountPages('http://127.0.0.1:8481//').passwordChange).toBe(
-      'http://127.0.0.1:8481/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D',
-    );
+    expect(accountPages('http://127.0.0.1:8481//').passwordChange).toBe('http://127.0.0.1:8481/if/flow/fc-password-change/');
     expect(accountPages('http://127.0.0.1:8481').mfaDevices).toBe(
       'http://127.0.0.1:8481/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D',
     );

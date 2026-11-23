@@ -43,17 +43,18 @@ export interface AccountPages {
 }
 
 /**
- * Two tabs of Authentik's user settings (/if/user/#/settings), each named in the hash as JSON after the route's ";"
- * (Authentik 2026.8.5 web: user/Routes.ts, Tabs.ts and RouteMatch.ts getURLParams): User details holds the password
- * card (UserSettingsPage.ts slot page-details), Credentials the MFA devices (slot page-credentials). The page itself
- * sends a signed-out visitor to sign in and back (common/users.ts redirectToAuthFlow), so no next= is sent from here.
+ * Change Password is fc's own flow (fc-infra authentik/blueprints/fc-flows.yaml slug fc-password-change: current
+ * password, a second factor, then the new one), sent bare with no next=. Not the user settings' password card: that
+ * runs the first password stage with a configure flow, the stock default-password-change, which asks for neither.
+ * The flow needs a live sign-in-server session; without one it is a dead end (known limit). Two-Factor is the
+ * Credentials tab of Authentik's user settings, named in the hash as JSON after the route's ";" (Authentik 2026.8.5
+ * web: Tabs.ts and RouteMatch.ts getURLParams, UserSettingsPage.ts slot page-credentials).
  */
 export function accountPages(idpOrigin: string = DEFAULT_IDP_ORIGIN): AccountPages {
   const base = idpOrigin.replace(/\/+$/, '');
-  const settingsTab = (page: string) => `${base}/if/user/#/settings;${encodeURIComponent(JSON.stringify({ page }))}`;
   return {
-    passwordChange: settingsTab('page-details'),
-    mfaDevices: settingsTab('page-credentials'),
+    passwordChange: `${base}/if/flow/fc-password-change/`,
+    mfaDevices: `${base}/if/user/#/settings;${encodeURIComponent(JSON.stringify({ page: 'page-credentials' }))}`,
   };
 }
 

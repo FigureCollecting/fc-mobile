@@ -62,17 +62,28 @@ describe('Profile page', () => {
     expect(currentPath()).toBe('/review');
   });
 
-  it('opens the sign-in server for a password, email or second-factor change, in this tab', async () => {
+  it('opens the sign-in server user settings for a password or second-factor change, in this tab', async () => {
     await localRig();
     renderWithProviders(<Profile />, { initialPath: '/profile' });
     const account = screen.getByRole('heading', { level: 3, name: 'Account' }).parentElement as HTMLElement;
     const rows = within(account).getAllByRole('link');
     expect(rows.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
-      ['Change Password', 'https://auth.mindsignals1.com/if/flow/fc-password-change/'],
-      ['Change Email', 'https://auth.mindsignals1.com/if/flow/fc-email-change/'],
+      ['Change Password', 'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D'],
       ['Two-Factor Authentication', 'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D'],
     ]);
     for (const a of rows) expect(a).not.toHaveAttribute('target');
+    // The email change waits for the sign-in server to offer it on that page (its settings flow changes the name only).
+    expect(within(account).queryByText(/change email/i)).not.toBeInTheDocument();
+  });
+
+  it.each(['reauth-required', 'offline'] as const)('keeps the same rows while the session is %s: Authentik signs the visitor in itself', async (status) => {
+    await localRig({ status });
+    renderWithProviders(<Profile />, { initialPath: '/profile' });
+    const account = screen.getByRole('heading', { level: 3, name: 'Account' }).parentElement as HTMLElement;
+    expect(within(account).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
+      'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D',
+      'https://auth.mindsignals1.com/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D',
+    ]);
   });
 
   it('offers no account change to a guest', async () => {

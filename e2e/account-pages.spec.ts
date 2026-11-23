@@ -8,34 +8,39 @@ import { E2E_SUB, seedSignedIn, stubOffMachine } from './signedIn';
  */
 
 const IDP = 'https://auth.mindsignals1.com';
+// Authentik's user settings page (/if/user/#/settings): the User details tab holds the password card, the Credentials
+// tab the MFA devices. Signed out, that page sends the visitor to sign in and back to the tab.
+const ROWS = {
+  'Change Password': `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-details%22%7D`,
+  'Two-Factor Authentication': `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D`,
+};
+/** Long enough for a late read (a microtask, a timer) to have moved the rows if anything could. */
+const SETTLE_MS = 1500;
 
-test('Profile: Change Password, Change Email and Two-Factor open the sign-in server in this tab', async ({ page, context }) => {
+test('Profile: Change Password and Two-Factor open the sign-in server user settings in this tab', async ({ page, context }) => {
   const offMachine = await stubOffMachine(context);
   await seedSignedIn(page);
   await page.goto('/profile');
   await expect(page.getByText(`Account ${E2E_SUB.slice(0, 8)}`)).toBeVisible({ timeout: 15_000 });
 
-  const rows = {
-    'Change Password': `${IDP}/if/flow/fc-password-change/`,
-    'Change Email': `${IDP}/if/flow/fc-email-change/`,
-    'Two-Factor Authentication': `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D`,
-  };
-  for (const [name, href] of Object.entries(rows)) {
+  for (const [name, href] of Object.entries(ROWS)) {
     const row = page.getByRole('link', { name, exact: true });
     await expect(row).toBeVisible();
     await expect(row).toHaveAttribute('href', href);
     await expect(row).not.toHaveAttribute('target', /.+/);
   }
+  // The sign-in server's settings flow changes the name only, so the email row waits for a later unit.
+  await expect(page.getByText(/change email/i)).toHaveCount(0);
   expect(offMachine, 'nothing left the machine before a row was chosen').toEqual([]);
 
   const pages = context.pages().length;
   await page.getByRole('link', { name: 'Change Password', exact: true }).click();
-  await page.waitForURL(rows['Change Password']);
+  await page.waitForURL(ROWS['Change Password']);
   expect(context.pages()).toHaveLength(pages);
-  expect(offMachine).toEqual([rows['Change Password']]);
+  expect(offMachine).toEqual([`${IDP}/if/user/`]);
 });
 
-test('Profile: a hostile ?idp= or stored host cannot move the account rows off the build IdP', async ({ page, context }) => {
+test('Profile: a hostile ?idp=, settings hash or stored host cannot move the account rows, even once settled', async ({ page, context }) => {
   const offMachine = await stubOffMachine(context);
   await seedSignedIn(page);
   await page.evaluate(() => {
@@ -44,15 +49,18 @@ test('Profile: a hostile ?idp= or stored host cannot move the account rows off t
     }
     window.name = 'https://evil.example';
   });
-  await page.goto('/profile?idp=https://evil.example&next=https://evil.example/#idp=https://evil.example');
+  const evilTab = encodeURIComponent(JSON.stringify({ page: 'page-sessions', next: 'https://evil.example/' }));
+  await page.goto(`/profile?idp=https%253A%252F%252Fevil.example&next=%2F%5Cevil.example%2F#/settings;${evilTab}`);
   await expect(page.getByText(`Account ${E2E_SUB.slice(0, 8)}`)).toBeVisible({ timeout: 15_000 });
+  await page.waitForTimeout(SETTLE_MS);
   const hrefs = await page.locator('a.profile__item').evaluateAll((as) => as.map((a) => a.getAttribute('href')));
-  expect(hrefs).toEqual([
-    `${IDP}/if/flow/fc-password-change/`,
-    `${IDP}/if/flow/fc-email-change/`,
-    `${IDP}/if/user/#/settings;%7B%22page%22%3A%22page-credentials%22%7D`,
-  ]);
+  expect(hrefs).toEqual(Object.values(ROWS));
+  for (const href of hrefs) expect(href).not.toMatch(/next|evil|page-sessions/);
   expect(offMachine).toEqual([]);
+
+  await page.getByRole('link', { name: 'Two-Factor Authentication', exact: true }).click();
+  await page.waitForURL(ROWS['Two-Factor Authentication']);
+  expect(offMachine).toEqual([`${IDP}/if/user/`]);
 });
 
 test('Onboarding: Create Account says accounts are by invitation, starts nothing, and keeps Sign In', async ({ page, context }) => {
@@ -72,6 +80,20 @@ test('Onboarding: Create Account says accounts are by invitation, starts nothing
   await expect(page.locator('#onboarding-invite')).toBeInViewport({ ratio: 0.99 });
   await expect(page.getByRole('button', { name: 'Sign In', exact: true })).toBeInViewport({ ratio: 0.99 });
   await page.waitForTimeout(500);
+  // toBeVisible counts opacity 0 as visible and reads no colour: the note and its ancestors must be painted, in a
+  // colour that is not transparent.
+  const paint = await page.locator('#onboarding-invite').evaluate((el) => {
+    let opacity = 1;
+    for (let n: Element | null = el; n; n = n.parentElement) opacity *= Number(getComputedStyle(n).opacity);
+    const color = getComputedStyle(el).color;
+    const channels = color.match(/[\d.]+%?/g) ?? [];
+    // Alpha is the last number of rgba(...) or the one after "/" in the space-separated forms; otherwise opaque.
+    const last = color.startsWith('rgba(') || color.includes('/') ? channels[channels.length - 1]! : '1';
+    const alpha = last.endsWith('%') ? Number(last.slice(0, -1)) / 100 : Number(last);
+    return { opacity, color, alpha };
+  });
+  expect(paint.opacity, JSON.stringify(paint)).toBeGreaterThan(0.9);
+  expect(paint.alpha, JSON.stringify(paint)).toBeGreaterThan(0.9);
   expect(new URL(page.url()).pathname).toBe('/');
   expect(await page.evaluate(() => localStorage.getItem('onboarding_complete'))).toBeNull();
   expect(offMachine).toEqual([]);

@@ -39,21 +39,21 @@ export function configuredOidc(env: Readonly<Record<string, unknown>> = import.m
 /** The sign-in server's own pages for changing the signed-in account. */
 export interface AccountPages {
   passwordChange: string;
-  emailChange: string;
   mfaDevices: string;
 }
 
 /**
- * fc's self-service flows (fc-infra authentik/blueprints/fc-flows.yaml, slugs fc-password-change and fc-email-change),
- * and the MFA devices of Authentik's user settings: its Credentials tab, named in the hash as JSON after the route's
- * ";" (Authentik 2026.8.5 web: UserSettingsPage.ts slot page-credentials, Tabs.ts and RouteMatch.ts getURLParams).
+ * Two tabs of Authentik's user settings (/if/user/#/settings), each named in the hash as JSON after the route's ";"
+ * (Authentik 2026.8.5 web: user/Routes.ts, Tabs.ts and RouteMatch.ts getURLParams): User details holds the password
+ * card (UserSettingsPage.ts slot page-details), Credentials the MFA devices (slot page-credentials). The page itself
+ * sends a signed-out visitor to sign in and back (common/users.ts redirectToAuthFlow), so no next= is sent from here.
  */
 export function accountPages(idpOrigin: string = DEFAULT_IDP_ORIGIN): AccountPages {
   const base = idpOrigin.replace(/\/+$/, '');
+  const settingsTab = (page: string) => `${base}/if/user/#/settings;${encodeURIComponent(JSON.stringify({ page }))}`;
   return {
-    passwordChange: `${base}/if/flow/fc-password-change/`,
-    emailChange: `${base}/if/flow/fc-email-change/`,
-    mfaDevices: `${base}/if/user/#/settings;${encodeURIComponent(JSON.stringify({ page: 'page-credentials' }))}`,
+    passwordChange: settingsTab('page-details'),
+    mfaDevices: settingsTab('page-credentials'),
   };
 }
 

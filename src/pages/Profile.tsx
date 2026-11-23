@@ -260,8 +260,9 @@ export function Profile() {
         <div class="profile__section">
           <h3 class="profile__section-title">Account</h3>
 
-          {/* The sign-in server's pages, in this tab as sign-out leaves. The password and email flows ask for a second
-              factor first but need a live sign-in-server session; Two-Factor opens its user settings (Credentials). */}
+          {/* The sign-in server's user settings, in this tab as sign-out leaves: Change Password opens User details (the
+              password card), Two-Factor opens Credentials. Signed out there, it signs the visitor in and comes back. No
+              email row: its settings page has no email change yet. */}
           <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.passwordChange}>
             <div class="profile__item-left">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -269,17 +270,6 @@ export function Profile() {
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
               <span>Change Password</span>
-            </div>
-            <ChevronRight />
-          </a>
-
-          <a class="profile__item profile__item--action" href={ACCOUNT_PAGES.emailChange}>
-            <div class="profile__item-left">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="4" width="20" height="16" rx="2" />
-                <path d="M22 6l-10 7L2 6" />
-              </svg>
-              <span>Change Email</span>
             </div>
             <ChevronRight />
           </a>

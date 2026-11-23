@@ -328,6 +328,24 @@ describe.each([
 });
 
 describe.each([
+  ['desk top', DESKTOP, 2388.4, [[190, 352], [43, 134], [538, -122], [-183, 214]]],
+  ['desk bottom', DESKTOP, 300, [[198, -247], [-109, -244]]],
+  ['cover top', { width: 443, height: 558 }, 2388.4, [[55, -188], [176, 144], [-140, 183]]],
+  ['phone bottom', { width: 412, height: 915 }, 300, [[52, -142], [-96, 304], [7, -161], [-163, -39], [-100, -220], [-67, -193]]],
+] as const)('NAV-EMPTY, %s: a Look up or down and round rests with a front an eighth in wherever the same turn round alone would hold one there', (_name, frame, y, steps) => {
+  it('after every Look', () => {
+    const m = mount(freeSceneOf({ frame }));
+    m.at({ y });
+    steps.forEach(([dx, dy], k) => {
+      const before = m.pose();
+      const rest = sceneLook(m, k + 1, dx, dy);
+      if (m.shows({ ...rest, pitch: before.pitch })) expect(m.shows(rest), `after Look ${k + 1} (${dx}, ${dy})`).toBe(true);
+    });
+    m.unmount();
+  });
+});
+
+describe.each([
   ['desk top (fuzz seq 50)', DESKTOP, 2388.4, [[220, 13], [404, 26], [-501, 159], [664, 73], [244, 294], [-448, 212]]],
   ['desk bottom (fuzz seq 17)', DESKTOP, 300, [[200, 18], [-510, -136], [-491, -333], [320, -97], [570, -360], [-406, -225]]],
   ['open top (fuzz seq 50)', FOLD_OPEN, 2388.4, [[124, 8], [229, 17], [-284, 104], [376, 48], [138, 191], [-253, 138]]],

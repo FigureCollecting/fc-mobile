@@ -8,6 +8,10 @@ export const hat = (page: Page): Locator => page.locator('[data-nav="hat"]');
 export const depth = (page: Page): Locator => page.locator('[data-nav="depth"]');
 /** The Log-Pose orb above the Z rail: a tap turns tilt-to-look on or off (shown only where a sensor gives samples). */
 export const orb = (page: Page): Locator => page.locator('[data-nav="orb"]');
+/** NAV-EYE: the eye on the hat's upper-left shoulder: a tap latches the hat Move <-> Look (aria-pressed: Look). */
+export const eye = (page: Page): Locator => page.locator('[data-nav="eye"]');
+/** How many [data-nav] parts float with a Free camera case: the Z rail, the hat, and the eye on the hat (NAV-EYE). */
+export const NAV_PARTS = 3;
 /** Every floating control: what a scene screenshot masks, so its baseline is the scene's alone. */
 export const navControls = (page: Page): Locator => page.locator('[data-nav]');
 

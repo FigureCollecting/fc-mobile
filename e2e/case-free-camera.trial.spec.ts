@@ -2,11 +2,11 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchPinch } from './touch';
-import { hat } from './navControls';
+import { eye, hat } from './navControls';
 
 /**
  * NAV-1A: a recorded run of the Free camera (trial) for Ross, at the Fold8's four panels: a video of each and a PNG
- * after each step (open, move, raise, a held look, a look held past the limit, let go, Reset, the jog), in this test's output
+ * after each step (open, move, raise, a look with the eye and the hat, a look held past the limit, let go, Reset, the jog), in this test's output
  * folder. Recorded on request only, never in CI:
  *   NAV_TRIAL=1 npx playwright test e2e/case-free-camera.trial.spec.ts --project=chromium
  */
@@ -21,7 +21,7 @@ const FOLD8 = CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'));
 const settle = (page: Page, ms = 300) => page.evaluate((m) => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, m)))), ms);
 const frameBox = async (page: Page) => (await page.locator('.cabinet-scene__frame').boundingBox())!;
 
-/** One finger from `from` along `path` (24 moves 16 ms apart a leg), held still `holdMs` first (Look arms at 250). */
+/** One finger from `from` along `path` (24 moves 16 ms apart a leg), held still `holdMs` first. */
 async function finger(page: Page, from: { x: number; y: number }, path: { x: number; y: number }[], { holdMs = 0, lift = true } = {}) {
   const f = await touchDown(page, from.x, from.y);
   if (holdMs > 0) await page.waitForTimeout(holdMs);
@@ -34,7 +34,7 @@ async function finger(page: Page, from: { x: number; y: number }, path: { x: num
 }
 
 for (const panel of FOLD8) {
-  test(`recorded trial ${panel.name}: open, move, raise, look (hold), look past the limit, let go, Reset, jog`, async ({ page }, testInfo) => {
+  test(`recorded trial ${panel.name}: open, move, raise, look (the eye and the hat), look past the limit, let go, Reset, jog`, async ({ page }, testInfo) => {
     test.setTimeout(90_000);
     await page.addInitScript(() => {
       localStorage.setItem('onboarding_complete', '1');
@@ -59,14 +59,22 @@ for (const panel of FOLD8) {
     await shot('2-after-move');
     await finger(page, { x: f.x + f.width * 0.5, y: f.y + f.height * 0.2 }, [{ x: f.x + f.width * 0.5, y: f.y + f.height * 0.6 }]);
     await shot('3-after-raise');
-    await finger(page, { x: f.x + f.width * 0.5, y }, [{ x: f.x + f.width * 0.3, y: y - f.height * 0.15 }], { holdMs: 300 });
+    // NAVLOOK 1a: touch's Look is the hat's eye (a finger's hold on the scene no longer looks): a tap on it latches Look,
+    // and the hat turns the eye, faster the farther it is pushed
+    const e = (await eye(page).boundingBox())!;
+    await finger(page, { x: e.x + e.width / 2, y: e.y + e.height / 2 }, []);
+    const h = (await hat(page).boundingBox())!;
+    const hc = { x: h.x + h.width / 2, y: h.y + h.height / 2 };
+    await finger(page, hc, [{ x: hc.x + 24, y: hc.y - 16 }, { x: hc.x + 24, y: hc.y - 16 }]);
     await shot('4-after-look');
-    const held = await finger(page, { x: f.x + f.width - 3, y: f.y + f.height * 0.2 }, [{ x: f.x + 3, y: f.y + f.height * 0.2 }], { holdMs: 300, lift: false });
-    await settle(page, 200);
+    const held = await finger(page, hc, [{ x: hc.x - 64, y: hc.y }], { lift: false });
+    await page.waitForTimeout(3000);
     await shot('5-look-held-past-the-limit');
     await held.end();
     await page.waitForTimeout(400);
     await shot('6-let-go-eased-back');
+    // the eye again: Move
+    await finger(page, { x: e.x + e.width / 2, y: e.y + e.height / 2 }, []);
     // NAV-SCOPE (plan section 9): Reset view is zoom-only: a pinch shows it, and its tap clears the zoom, the eye unmoved
     await touchPinch(page, { x: f.x + f.width / 2 - 20, y }, { x: f.x + f.width / 2 + 20, y }, { x: f.x + f.width / 2 - 60, y }, { x: f.x + f.width / 2 + 60, y });
     await settle(page);

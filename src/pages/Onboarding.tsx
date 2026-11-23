@@ -6,8 +6,11 @@ import { PageDots } from '../components/ui/PageDots';
 import { Style } from '../styles/Style';
 
 interface OnboardingProps {
-  onComplete: (action: 'register' | 'login' | 'guest') => void;
+  onComplete: (action: 'login' | 'guest') => void;
 }
+
+const INVITE_NOTE_ID = 'onboarding-invite';
+const INVITE_NOTE = 'Accounts are by invitation. If you have an invitation link, open it to create your account.';
 
 const SCREENS = [
   {
@@ -55,6 +58,7 @@ const slideVariants = {
 export function Onboarding({ onComplete }: OnboardingProps) {
   const [page, setPage] = useState(0);
   const [direction, setDirection] = useState(0);
+  const [inviteNote, setInviteNote] = useState(false);
   const constraintsRef = useRef<HTMLDivElement>(null);
   const isLast = page === SCREENS.length - 1;
 
@@ -122,13 +126,20 @@ export function Onboarding({ onComplete }: OnboardingProps) {
             {/* CTA buttons on last screen */}
             {isLast && (
               <div class="onboarding__actions">
+                {/* The sign-in server has no sign-up: an account starts from its invitation link. */}
                 <button
                   class="onboarding__btn onboarding__btn--primary"
                   type="button"
-                  onClick={() => onComplete('register')}
+                  aria-expanded={inviteNote}
+                  aria-controls={INVITE_NOTE_ID}
+                  onClick={() => setInviteNote(true)}
                 >
                   Create Account
                 </button>
+                {/* In the page from the start, so a screen reader announces the note as it fills. */}
+                <p id={INVITE_NOTE_ID} class="onboarding__invite" role="status">
+                  {inviteNote ? INVITE_NOTE : null}
+                </p>
                 <button
                   class="onboarding__btn onboarding__btn--secondary"
                   type="button"
@@ -305,6 +316,18 @@ const styles = `
     justify-content: center;
     transition: all var(--transition-fast);
     -webkit-tap-highlight-color: transparent;
+  }
+
+  .onboarding__invite {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: var(--line-height-normal);
+  }
+
+  /* Empty, it takes no room: the margin cancels the gap the actions put after it. */
+  .onboarding__invite:empty {
+    margin-bottom: calc(-1 * var(--space-3));
   }
 
   .onboarding__btn--primary {

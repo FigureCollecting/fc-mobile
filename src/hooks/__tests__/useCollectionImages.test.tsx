@@ -1119,6 +1119,138 @@ describe('useCollectionImages', () => {
       await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
       expect(calls()).toBe(2);
     });
+
+    /** Another document's sync, past its read of the lists, telling this one (its tellKeptSync); resolves once this case view answered again from kept. */
+    const toldBySync = async (view: { result: { current: ReadonlyMap<string, unknown> } }, client: QueryClient) => {
+      const before = view.result.current;
+      const other = new BroadcastChannel('fc-owned-images');
+      other.postMessage('synced');
+      other.close();
+      await waitFor(() => expect(view.result.current).not.toBe(before), { timeout: 3000 });
+      await idle(client);
+      await settle();
+    };
+
+    it('CHAL1-P2: answered again from another document\'s sync, the case view still owes the recheck: asked at ten minutes', async () => {
+      const { s, view, client, passAt, calls, asked } = await open();
+      s.derived.add(1);
+      await toldBySync(view, client);
+      expect(calls()).toBe(1);
+      await passAt(9);
+      expect(calls()).toBe(1);
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+      expect(asked(2)).toEqual([headOf(1)]);
+    });
+
+    it('answered again from another document\'s sync, the wait so far carries over: not asked before it ends', async () => {
+      const { view, client, passAt, calls } = await open();
+      await passAt(10);
+      expect(calls()).toBe(2);
+      // the next is due at +30 (the wait doubled to 20 min)
+      await toldBySync(view, client);
+      await passAt(29);
+      expect(calls()).toBe(2);
+      await passAt(30);
+      expect(calls()).toBe(3);
+    });
+
+    it('a figure another document\'s sync left with no list (its list come back empty) is owed a recheck here too', async () => {
+      const { view, client, passAt, calls, asked } = await open(1);
+      // the sync here listed every figure: nothing owed
+      await passAt(11);
+      expect(calls()).toBe(1);
+      await rememberImages(headOf(0), [], storage);
+      await toldBySync(view, client);
+      expect(view.result.current.has(headOf(0))).toBe(false);
+      await passAt(20);
+      expect(calls()).toBe(1);
+      await passAt(22);
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+      expect(asked(2)).toEqual([headOf(0)]);
+    });
+
+    /** The case view open on two figures, figure 0's image answered `status` at the sync (404: its display copy not made yet); the clock held there. */
+    const openAbsent = async (status = 404) => {
+      const state = { absent: true };
+      storage = fakeCaches(async (req) => (state.absent && req.url === url('a') ? new Response('', { status }) : new Response('img')));
+      vi.stubGlobal('caches', storage);
+      vi.stubGlobal('fetch', storage.fetch);
+      const r = await localRig();
+      const s = spine(r);
+      await seedFigures(r, [{ title: 'F0' }, { title: 'F1' }]);
+      const client = appClient();
+      const view = renderHook(() => useCollectionImages(), { wrapper: queryWrapper(client) });
+      await waitFor(() => expect(storage.added.filter((q) => q.url === url('a'))).toHaveLength(1));
+      await idle(client);
+      await settle();
+      const t0 = Date.now();
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+      restoreClock = () => clock.mockRestore();
+      const passAt = async (min: number) => {
+        clock.mockReturnValue(t0 + min * MIN);
+        r.clock.advance(MIN);
+        await r.engine.trigger('poll');
+        await quiet();
+      };
+      return { state, s, view, passAt };
+    };
+
+    it('CHAL1-P3: the 404 recheck falling due with the listless one is still made by that same pass', async () => {
+      const { state, s, view, passAt } = await openAbsent();
+      state.absent = false;
+      s.derived.add(1);
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(storage.added.filter((q) => q.url === url('a'))).toHaveLength(2);
+    });
+
+    it('the 404 recheck due with a listless recheck that lists nothing is still made by that same pass', async () => {
+      const { state, view, passAt } = await openAbsent();
+      state.absent = false;
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+      expect(view.result.current.has(headOf(1))).toBe(false);
+    });
+
+    it('CHAL1-P7: a recheck that lists something keeps the 404 owed: asked again once due, after the recheck', async () => {
+      const { state, s, view, passAt } = await openAbsent();
+      s.derived.add(1);
+      // the listless recheck lands figure 1 while figure 0's copy is still not made
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      await settle();
+      expect(view.result.current.has(headOf(0))).toBe(false);
+      state.absent = false;
+      await passAt(22);
+      await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
+    });
+
+    it('CHAL1-P5: a sync that left an image unfetched stays incomplete through a recheck that lists another figure', async () => {
+      // the refused image keeps failing; only the recheck lands something
+      const { s, view, passAt } = await openAbsent(503);
+      expect(imagesComplete(view.result.current)).toBe(false);
+      s.derived.add(1);
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(view.result.current.has(headOf(0))).toBe(false);
+      expect(imagesComplete(view.result.current)).toBe(false);
+    });
+
+    it('CHAL1-P8: once listed, a figure leaves the owed set: later passes draw no new answer', async () => {
+      const { s, view, passAt, calls } = await open();
+      s.derived.add(1);
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      await settle();
+      const landed = view.result.current;
+      for (const min of [31, 71, 131]) await passAt(min);
+      expect(calls()).toBe(2);
+      expect(view.result.current).toBe(landed);
+    });
   });
 
   // SC-IMGKEY (Ross 11-13, "everything seems to be reloading just about every time"): the server reached or lost was a new

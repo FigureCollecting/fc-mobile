@@ -315,6 +315,10 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       let listsUnread = false;
       let left: number | undefined;
       let listsKept = false;
+      // LISTLESS-RECHECK (CHAL1 SHOULD-1): an answer from what another document's sync kept (it read the lists) owes the
+      // recheck as this one's own sync would, the wait so far carried over from the answer it replaces
+      const fromOther = reachable && answersFromKept(client, queryKey);
+      const owedBefore = fromOther ? listless.get(client.getQueryData<ReadonlyMap<string, CachedImage>>(queryKey) ?? EMPTY) : undefined;
       // PICK-SLOW (CHAL3: a pick during a sync ran again about a second later, having lost which figures changed): a run this
       // case view replaced (a pick, "Use default") drops the other answers as any sync does, but never stops or asks again the
       // run that replaced it, which answers next from its own sync
@@ -322,7 +326,7 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         const now = client.getQueryCache().find({ queryKey: asking.current, exact: true });
         return dropImageAnswers(client, queryKey, now?.state.fetchStatus === 'fetching' ? new Set([now.queryHash]) : undefined);
       };
-      if (reachable && !answersFromKept(client, queryKey)) {
+      if (reachable && !fromOther) {
         const was = onScreen.current;
         const shown = showKept(client, queryKey, signal, was);
         /** Each answer drawn, a figure whose chosen photo is still coming keeping its picture (standing). */
@@ -405,8 +409,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
       if (incomplete) partial.add(answer);
       if (listsUnread) unread.add(answer);
       if (left !== undefined) leftover.set(answer, left);
-      const none = listsKept ? await unlisted(kept) : [];
-      if (none.length > 0) listless.set(answer, { heads: none, at: Date.now() + LISTLESS_RECHECK_MS, wait: LISTLESS_RECHECK_MS });
+      const none = listsKept || fromOther ? await unlisted(kept) : [];
+      if (none.length > 0) listless.set(answer, { at: Date.now() + LISTLESS_RECHECK_MS, wait: LISTLESS_RECHECK_MS, ...owedBefore, heads: none });
       return answer;
     },
     enabled,
@@ -489,6 +493,8 @@ export function useCollectionImages(): ReadonlyMap<string, CachedImage> {
         if (!stop.signal.aborted) listless.set(data, { ...owed, at: Date.now() + owed.wait });
       } finally {
         filling = undefined;
+        // CHAL1 SHOULD-2: the pass it took still fills what is due (a 404 display copy asked again), as it would have
+        if (!stop.signal.aborted) fillNow.current();
       }
     })();
     filling = { stop: () => stop.abort(), done };

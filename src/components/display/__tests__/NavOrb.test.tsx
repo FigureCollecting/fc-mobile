@@ -96,7 +96,7 @@ describe('the orb where a sensor is: OFF by default, a tap toggles, the state sa
     expect(drive.fold).toHaveBeenCalledTimes(1);
   });
 
-  it('sits above the Z rail, centred on it; its target 48 px (drawn 34) begins 16 px above the rail\'s target, out of a thumb\'s touch adjustment', async () => {
+  it('sits above the Z rail, centred on it; its target 48 px (drawn 34) never overlaps the rail\'s target: it begins 4 px above it', async () => {
     probeTilt.mockResolvedValue('sensor');
     render(<FloatingNav />);
     offer(jogOf(tiltDrive()));
@@ -109,12 +109,12 @@ describe('the orb where a sensor is: OFF by default, a tap toggles, the state sa
     expect(rule).toContain(`calc(${ORB_PX.hit}px * var(--nav-k))`);
     expect(rule).toContain(`${NAV_EDGE_PX}px + ${(DEPTH_RAIL_PX.width - ORB_PX.hit) / 2}px * var(--nav-k)`);
     // the rail's target reaches (hitHeight + height) / 2 = 112 px above --nav-base; the orb's begins `clear` above that,
-    // unscaled: Chromium retargets a touch to a button up to 16 px (half its 32 DIP adjustment area) away
+    // unscaled. What keeps a rail push off the orb is that the two targets do not overlap; the 4 px is a small safety margin
     expect((DEPTH_RAIL_PX.hitHeight + DEPTH_RAIL_PX.height) / 2).toBe(112);
-    expect(rule).toContain('bottom: calc(var(--nav-base) + 112px * var(--nav-k) + 16px);');
+    expect(rule).toContain('bottom: calc(var(--nav-base) + 112px * var(--nav-k) + 4px);');
     expect(rule).toContain('pointer-events: auto');
     expect(rule).toContain('border-radius: 50%');
-    expect(ORB_PX).toEqual({ size: 34, hit: 48, clear: 16 });
+    expect(ORB_PX).toEqual({ size: 34, hit: 48, clear: 4 });
     // first in the left cluster's reading order, above the rail
     expect(Array.from(document.querySelectorAll<HTMLElement>('[data-nav]')).map((n) => n.dataset.nav)).toEqual(['orb', 'depth', 'hat']);
   });

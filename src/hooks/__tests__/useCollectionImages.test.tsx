@@ -1121,10 +1121,10 @@ describe('useCollectionImages', () => {
     });
 
     /** Another document's sync, past its read of the lists, telling this one (its tellKeptSync); resolves once this case view answered again from kept. */
-    const toldBySync = async (view: { result: { current: ReadonlyMap<string, unknown> } }, client: QueryClient) => {
+    const toldBySync = async (view: { result: { current: ReadonlyMap<string, unknown> } }, client: QueryClient, end: 'synced' | 'stopped' = 'synced') => {
       const before = view.result.current;
       const other = new BroadcastChannel('fc-owned-images');
-      other.postMessage('synced');
+      other.postMessage(end);
       other.close();
       await waitFor(() => expect(view.result.current).not.toBe(before), { timeout: 3000 });
       await idle(client);
@@ -1138,6 +1138,16 @@ describe('useCollectionImages', () => {
       expect(calls()).toBe(1);
       await passAt(9);
       expect(calls()).toBe(1);
+      await passAt(11);
+      await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
+      expect(calls()).toBe(2);
+      expect(asked(2)).toEqual([headOf(1)]);
+    });
+
+    it('answered again from another document\'s sync that stopped part way, the case view still owes the recheck', async () => {
+      const { s, view, client, passAt, calls, asked } = await open();
+      s.derived.add(1);
+      await toldBySync(view, client, 'stopped');
       await passAt(11);
       await waitFor(() => expect(view.result.current.get(headOf(1))?.url).toBe(url('b')), { timeout: 3000 });
       expect(calls()).toBe(2);
@@ -1214,6 +1224,19 @@ describe('useCollectionImages', () => {
       await passAt(11);
       await waitFor(() => expect(view.result.current.get(headOf(0))?.url).toBe(url('a')), { timeout: 3000 });
       expect(view.result.current.has(headOf(1))).toBe(false);
+    });
+
+    it('a recheck the case view going away aborts fills nothing after it, the 404 due or not', async () => {
+      const { state, s, view, passAt } = await openAbsent();
+      state.absent = false;
+      s.derived.add(1);
+      s.hold = new Promise<void>(() => {});
+      await passAt(11);
+      expect(storage.added.filter((q) => q.url === url('a'))).toHaveLength(1);
+      view.unmount();
+      await settle();
+      await quiet();
+      expect(storage.added.filter((q) => q.url === url('a'))).toHaveLength(1);
     });
 
     it('CHAL1-P7: a recheck that lists something keeps the 404 owed: asked again once due, after the recheck', async () => {

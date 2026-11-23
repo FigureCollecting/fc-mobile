@@ -247,6 +247,38 @@ test(`Go to over the shelving (the viewer): it closes the card, and the case fra
   expect(new URL(page.url()).searchParams.get('layout')).toBe('case');
 });
 
+// FIX4 (PR #146 CI): the card's history entry coming off drew the tiles again for a moment, the case mounting twice; Go to
+// landed on whichever mount was laid out first, and lost with it when that was the first (the case stood at the wall)
+test(`Go to over the shelving goes straight to the case: the tiles never come back on the way, the case mounts once: ${COVER.name}`, async ({ page }) => {
+  await openCollection(page, COVER, 'rows', '&fx=3');
+  const tile = (await page.locator('button.jrows__item').first().boundingBox())!;
+  await touchTap(page, tile.x + tile.width / 2, tile.y + tile.height / 2);
+  const sheet = page.locator('.figure-viewer-sheet');
+  await expect(sheet).toBeVisible();
+  await atRest(sheet);
+  // every case and tiles element the page adds from here on
+  await page.evaluate(() => {
+    const added = { scene: 0, tiles: 0 };
+    (window as unknown as { __added: typeof added }).__added = added;
+    new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of r.addedNodes) {
+          if (!(n instanceof Element)) continue;
+          if (n.matches('.cabinet-scene') || n.querySelector('.cabinet-scene')) added.scene++;
+          if (n.matches('.jrows') || n.querySelector('.jrows')) added.tiles++;
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await sheet.getByRole('button', { name: 'Go to' }).tap();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator('.cabinet-scene')).toHaveCount(1);
+  // the card's Back has landed (the address is the page's again) and nothing is still to come from it
+  await expect.poll(() => new URL(page.url()).searchParams.get('layout')).toBe('case');
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as unknown as { __added: unknown }).__added)).toEqual({ scene: 1, tiles: 0 });
+});
+
 test(`Go to beside the shelving (the pane, opened from the tiles): the card stays open, and the case frames its figure on its shelf: ${OPEN.name}`, async ({ page }) => {
   const opening = await wallOpening(page, OPEN);
   await openCollection(page, OPEN, 'rows', '&fx=3');

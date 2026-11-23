@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { NavHat } from '../NavHat';
 import { EYE_SLOT_DEG, HAT_KNOB_PX, HAT_RING_PX } from '../navTuning';
+import { FUSED_PATH, RING_PATH, SEAM_PATH } from '../navEyeShape';
 import { JOG_DEAD_PX, JOG_FULL_PX, JOG_MAX_X, jogDetents, jogSpeed } from '../casePose';
 import type { JogTarget } from '../../../stores/jog';
 
@@ -22,7 +23,7 @@ const knob = () => [hat().style.getPropertyValue('--hat-x'), hat().style.getProp
 afterEach(() => cleanup());
 
 describe('the hat: what it is', () => {
-  it('a named group with a knob, and no button: nothing to tap', () => {
+  it('a named group with a knob; with no Look on offer, no button: nothing to tap', () => {
     render(<NavHat jog={jogOf()} />);
     expect(screen.getByRole('group', { name: /move the camera/i })).toBe(hat());
     expect(hat().querySelector('.nav-hat__knob')).not.toBeNull();
@@ -30,17 +31,40 @@ describe('the hat: what it is', () => {
     expect(hat().hasAttribute('data-jog')).toBe(false);
   });
 
-  it('keeps a slot for the eye on its upper-left shoulder, empty and out of the way of every arrow', () => {
-    render(<NavHat jog={jogOf()} />);
-    const slot = hat().querySelector('[data-nav-slot="eye"]') as HTMLElement;
-    expect(slot).not.toBeNull();
-    expect(slot.childElementCount).toBe(0);
-    expect(slot.getAttribute('aria-hidden')).toBe('true');
+  it('NAV-EYE: with Look on offer, its one button is the eye, on the upper-left shoulder, out of the way of every arrow', () => {
+    render(<NavHat jog={jogOf({ look: { start: vi.fn(() => true), aim: vi.fn(), stop: vi.fn() } })} />);
+    const buttons = hat().querySelectorAll('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].dataset.nav).toBe('eye');
     expect(EYE_SLOT_DEG).toBe(135);
     // the four arrows sit on the axes: none within 30 degrees of the slot
     const ways = Array.from(hat().querySelectorAll<SVGElement>('.nav-hat__arrow')).map((a) => Number(a.dataset.deg));
     expect(ways.sort((a, b) => a - b)).toEqual([0, 90, 180, 270]);
     for (const deg of ways) expect(Math.abs(deg - EYE_SLOT_DEG)).toBeGreaterThanOrEqual(30);
+  });
+
+  it('NAV-EYE shape (Ross 11-22): the hat draws one fused outline, the ring and the eye\'s bubble; with no eye, the ring alone', () => {
+    const outline = () => hat().querySelectorAll<SVGPathElement>('.nav-hat__shell .nav-hat__outline');
+    render(<NavHat jog={jogOf({ look: { start: vi.fn(() => true), aim: vi.fn(), stop: vi.fn() } })} />);
+    expect(outline()).toHaveLength(1);
+    expect(outline()[0].getAttribute('d')).toBe(FUSED_PATH);
+    // the seam (the references): the ring's arc under the eye, its own path, drawn over the outline's fill
+    const seam = hat().querySelectorAll<SVGPathElement>('.nav-hat__shell .nav-hat__seam');
+    expect(seam).toHaveLength(1);
+    expect(seam[0].getAttribute('d')).toBe(SEAM_PATH);
+    expect(seam[0].previousElementSibling).toBe(outline()[0]);
+    const shell = hat().querySelector('.nav-hat__shell')!;
+    expect(shell.getAttribute('viewBox')).toBe('0 0 100 100');
+    expect(shell.getAttribute('aria-hidden')).toBe('true');
+    // drawn first, under the arrows, the knob and the eye
+    expect(hat().firstElementChild).toBe(shell);
+    // through the sheet, never a style attribute (the CSP)
+    expect(hat().querySelectorAll('[style]')).toHaveLength(0);
+    cleanup();
+    render(<NavHat jog={jogOf()} />);
+    expect(outline()).toHaveLength(1);
+    expect(outline()[0].getAttribute('d')).toBe(RING_PATH);
+    expect(hat().querySelector('.nav-hat__seam'), 'no eye, no seam').toBeNull();
   });
 });
 

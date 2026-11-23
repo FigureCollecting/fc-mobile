@@ -6,6 +6,10 @@ import type { Locator, Page } from '@playwright/test';
 export const hat = (page: Page): Locator => page.locator('[data-nav="hat"]');
 /** The left Z rail: hold and push up moves the Free camera closer, down backs it away. */
 export const depth = (page: Page): Locator => page.locator('[data-nav="depth"]');
+/** NAV-EYE: the eye on the hat's upper-left shoulder: a tap latches the hat Move <-> Look (aria-pressed: Look). */
+export const eye = (page: Page): Locator => page.locator('[data-nav="eye"]');
+/** How many [data-nav] parts float with a Free camera case: the Z rail, the hat, and the eye on the hat (NAV-EYE). */
+export const NAV_PARTS = 3;
 /** Every floating control: what a scene screenshot masks, so its baseline is the scene's alone. */
 export const navControls = (page: Page): Locator => page.locator('[data-nav]');
 

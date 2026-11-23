@@ -291,14 +291,16 @@ describe.each([
     m.unmount();
   });
 
-  it('from a frame that shows no front, a Look turns it no further from the wall, and one back toward it brings a front in', () => {
+  /** How far the frame at `p` is turned from the wall (wallAway). */
+  const away = (m: ReturnType<typeof mount>, p: Pose) => wallAway(withPose(m.scene.base, p), m.scene.wall);
+
+  it('from a frame that shows no front, a Look up and round turns it no further from the wall; one back toward it brings a front in', () => {
     const m = mount(freeSceneOf({ frame }));
     const bare = m.at({ ...TOP, yaw: -30 * DEG, pitch: -28 * DEG });
     expect(m.atEdge()).toBe(false);
-    const away = wallAway(withPose(m.scene.base, bare), m.scene.wall);
     // up and further left: the drag carries the world right and down
-    sceneLook(m, 1, 0.3 * frame.width, 0.3 * frame.height);
-    expect(wallAway(withPose(m.scene.base, m.pose()), m.scene.wall)).toBeLessThanOrEqual(away + 1e-9);
+    const rest = sceneLook(m, 1, 0.3 * frame.width, 0.3 * frame.height);
+    expect(away(m, rest)).toBeLessThanOrEqual(away(m, bare) + 1e-9);
     sceneLook(m, 2, -0.45 * frame.width, -0.45 * frame.height);
     expect(m.atEdge()).toBe(true);
     m.unmount();
@@ -308,13 +310,13 @@ describe.each([
     const m = mount(freeSceneOf({ frame }));
     const bare = m.at({ ...TOP, yaw: -30 * DEG, pitch: -28 * DEG });
     expect(m.atEdge()).toBe(false);
-    const away = wallAway(withPose(m.scene.base, bare), m.scene.wall);
     expect(m.fc().lookStart()).toBe(true);
     m.fc().lookAim(-JOG_FULL_PX, -JOG_FULL_PX);
-    m.run(60, () => expect(wallAway(withPose(m.scene.base, m.pose()), m.scene.wall)).toBeLessThanOrEqual(away + 1e-9));
+    m.run(60);
     const held = m.stop('lookStop')!;
     m.frames.tick(SPRING_MS);
     expect(m.pose()).toEqual(held);
+    expect(away(m, held)).toBeLessThanOrEqual(away(m, bare) + 1e-9);
     expect(m.fc().lookStart()).toBe(true);
     m.fc().lookAim(JOG_FULL_PX, JOG_FULL_PX);
     m.run(HELD);

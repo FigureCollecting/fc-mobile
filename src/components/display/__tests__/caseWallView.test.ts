@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PITCH_CAP_STEP, WALL_KEEP_FRAME, keepsWall, pitchCap, turnKept, wallAway, wallKept, wallShown } from '../caseWallView';
+import { PITCH_CAP_STEP, WALL_KEEP_FRAME, keepsWall, pitchCap, pitchKept, turnKept, wallAway, wallKept, wallShown } from '../caseWallView';
 import { PITCH, coneIn, lookWind, poseOf, turnBy, turnInside, withPose, type Pose, type YawCone } from '../casePose';
 import { sideOverhangMm } from '../cabinetProfile';
 import { freeSceneOf } from './freeDrivesScene';
@@ -238,6 +238,14 @@ describe('keepsWall: a turn from this frame holds the wall as well as it does', 
     expect(ok(cam({ ...TOP, pitch }))).toBe(false);
   });
 
+  it('asked no further in than inset 0, from a frame holding a front an eighth in: any front passes, none does not', () => {
+    let pitch = 0;
+    while (wallShown(cam({ ...TOP, pitch }), scene.wall, WALL_KEEP_FRAME)) pitch -= 0.5 * DEG;
+    const ok = keepsWall(cam(TOP), scene.wall, 0);
+    expect(ok(cam({ ...TOP, pitch }))).toBe(true);
+    expect(ok(cam({ ...TOP, pitch: -PITCH.upSoft }))).toBe(false);
+  });
+
   it('from a frame with a front at its edge only: any front passes, none does not', () => {
     let pitch = 0;
     while (wallShown(cam({ ...TOP, pitch }), scene.wall, WALL_KEEP_FRAME)) pitch -= 0.5 * DEG;
@@ -254,6 +262,54 @@ describe('keepsWall: a turn from this frame holds the wall as well as it does', 
     expect(ok(cam({ ...BARE, pitch: -35 * DEG }))).toBe(false);
     expect(ok(cam({ ...BARE, yaw: -40 * DEG }))).toBe(false);
     expect(ok(cam(TOP))).toBe(true);
+  });
+});
+
+describe('pitchKept: a Look\'s pitch kept to the wall at the turn\'s own yaw', () => {
+  const keeps = (from: Pose) => {
+    const ok = keepsWall(cam(from), scene.wall);
+    return (to: Pose) => ok(cam(to));
+  };
+  /** Level at the room's top. */
+  const start = { ...base, ...TOP };
+
+  it('a turn that holds the wall as well as its yaw at the start\'s pitch does is itself', () => {
+    const to = { ...start, yaw: -10 * DEG, pitch: -2 * DEG };
+    expect(pitchKept(start, to, keeps)).toBe(to);
+  });
+
+  it('at the room\'s top turned up and round (CHALLENGE-1\'s seq 34): the yaw stands, the pitch rests at the last that holds a front an eighth in at that yaw', () => {
+    const to = { ...start, yaw: -28.7 * DEG, pitch: -26.7 * DEG };
+    expect(wallShown(cam(to), scene.wall)).toBe(false);
+    expect(wallShown(cam({ ...to, pitch: start.pitch }), scene.wall, WALL_KEEP_FRAME)).toBe(true);
+    const got = pitchKept(start, to, keeps);
+    expect(got.yaw).toBe(to.yaw);
+    expect(wallShown(cam(got), scene.wall, WALL_KEEP_FRAME)).toBe(true);
+    expect(wallShown(cam({ ...got, pitch: got.pitch - PITCH_CAP_STEP }), scene.wall, WALL_KEEP_FRAME)).toBe(false);
+  });
+
+  it('a turn round alone is the cone\'s, never held here, even where it takes the wall out of the frame', () => {
+    const to = { ...start, yaw: 80 * DEG };
+    expect(wallShown(cam(to), scene.wall)).toBe(false);
+    expect(pitchKept(start, to, keeps)).toBe(to);
+  });
+
+  it('where the turn round alone shows no front, the pitch goes no further from the wall than that turn does', () => {
+    const to = { ...start, yaw: 80 * DEG, pitch: -30 * DEG };
+    const got = pitchKept(start, to, keeps);
+    expect(got.yaw).toBe(to.yaw);
+    expect(got.pitch).toBeGreaterThan(to.pitch + PITCH_CAP_STEP);
+    expect(wallAway(cam(got), scene.wall)).toBeLessThanOrEqual(wallAway(cam({ ...to, pitch: start.pitch }), scene.wall));
+  });
+
+  it('asks keepsWall from the turn\'s yaw at the start\'s pitch, at the turn\'s place', () => {
+    const seen: Pose[] = [];
+    const to = { ...start, z: start.z - 100, yaw: 0.2, pitch: -0.3 };
+    pitchKept(start, to, (from) => {
+      seen.push(from);
+      return () => true;
+    });
+    expect(seen).toEqual([{ ...to, pitch: start.pitch }]);
   });
 });
 

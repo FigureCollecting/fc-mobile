@@ -2,8 +2,9 @@
  * NAV-EMPTY (Ross 11-22: at the room's top or bottom, after a "zoom away", "everything just becomes the backcolor/empty
  * room until I switch to card view and back"): how much of the wall the Free camera's frame still holds, and how far a
  * Look may turn before it holds less. The drives (useFreeCamera's jogOk), the Look's cone (lookCone, into casePose's
- * spansOf) and every turn a Look commits, yaw and pitch together (keepsWall, turnKept), ask here, so none takes the wall
- * out of a frame that shows it, and a Look takes a frame that shows none no further from it. Pure maths, no DOM.
+ * spansOf) and every turn a Look commits (keepsWall: its pitch at that turn's yaw, pitchKept; then yaw and pitch
+ * together, turnKept) ask here, so none takes the wall out of a frame that shows it, and a Look takes a frame that shows
+ * none no further from it. Pure maths, no DOM.
  */
 import { sideOverhangMm } from './cabinetProfile';
 import { castRay, rayHitPlane, type Camera } from './caseCamera';
@@ -108,14 +109,35 @@ export function wallAway(camera: Camera, wall: WallLayout): number {
 
 /**
  * NAV-EMPTY, a Look's rule (the drives' jogOk's): whether a camera turned from `from` holds the wall as well as `from`
- * does. A front as far in as wallKept's; where `from` shows none, a front anywhere or an axis no further from the
- * fronts (wallAway), so a Look from a bare frame may bring the wall back and never takes it further off.
+ * does. A front as far in as wallKept's, but never asked further in than `inset` (0: a front anywhere in the frame);
+ * where `from` shows none, a front anywhere or an axis no further from the fronts (wallAway), so a Look from a bare
+ * frame may bring the wall back and never takes it further off.
  */
-export function keepsWall(from: Camera, wall: WallLayout): (to: Camera) => boolean {
+export function keepsWall(from: Camera, wall: WallLayout, inset = WALL_KEEP_FRAME): (to: Camera) => boolean {
   const kept = wallKept(from, wall);
-  if (kept !== undefined) return (to) => wallShown(to, wall, kept);
+  if (kept !== undefined) return (to) => wallShown(to, wall, Math.min(kept, inset));
   const away = wallAway(from, wall);
   return (to) => wallAway(to, wall) <= away || wallShown(to, wall);
+}
+
+/**
+ * NAV-EMPTY: the turn a Look commits (`to`), its pitch kept to the wall at its own yaw: `to` where it holds the wall as
+ * well (keepsWall) as its yaw at the Look's start pitch (`start`) does; else that yaw at the furthest pitch from the
+ * start's toward `to`'s that does, halving to PITCH_CAP_STEP. The yaw is the cone's (lookCone): only the pitch, worked
+ * out at the turned yaw every frame, is kept here, so a turn up and round never rests where the same turn round alone
+ * would hold more of the wall. `keeps(from)`: keepsWall from the pose `from`, asked of a pose.
+ */
+export function pitchKept(start: Pose, to: Pose, keeps: (from: Pose) => (to: Pose) => boolean): Pose {
+  const ok = keeps({ ...to, pitch: start.pitch });
+  if (ok(to)) return to;
+  let last = start.pitch;
+  let gone = to.pitch;
+  while (Math.abs(gone - last) > PITCH_CAP_STEP) {
+    const mid = (last + gone) / 2;
+    if (ok({ ...to, pitch: mid })) last = mid;
+    else gone = mid;
+  }
+  return { ...to, pitch: last };
 }
 
 /**

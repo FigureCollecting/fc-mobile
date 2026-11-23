@@ -3,7 +3,8 @@
  * The pose lives in a ref, not in Preact state: while a finger moves it, each animation frame writes the scene root's
  * transform and data-camera directly (the viewport keeps its perspective and never a translate), and the scene renders
  * only when the cull must change (stickyWhole) or a gesture ends. One finger drags MOVE the eye (truck and pedestal);
- * held still LOOK_HOLD_MS first, or a right or Shift+left mouse drag, they LOOK (yaw and pitch through the realism cone,
+ * a mouse held still LOOK_HOLD_MS first, or a right or Shift+left mouse drag, LOOKs (NAVLOOK 1a: a finger's hold no longer
+ * does; the hat's eye is touch's Look) (yaw and pitch through the realism cone,
  * eased back to its soft limit when let go). A still release is a tap, as today. NAV-2A: the stored swipe mode (the
  * old path's) has no say here. NAV-LOOKDRIVE: the hat can drive a Look too, by rate (lookStart, lookAim, lookStop): the
  * thumb's offset is an angular speed, through the same cone; and nothing begun while a look eases back makes the view jump.
@@ -87,6 +88,8 @@ export interface FreePress {
   readonly clientY: number;
   readonly button?: number;
   readonly shiftKey?: boolean;
+  /** 'touch': a finger, whose still hold arms no Look (NAVLOOK 1a: on touch the hat's eye is Look). */
+  readonly pointerType?: string;
 }
 
 interface Gesture {
@@ -588,7 +591,7 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     else host.dataset.gesture = mode;
   };
 
-  /** A finger down on the scene (not on a control, not zoomed, not a pinch): Look arms if it stays still LOOK_HOLD_MS. */
+  /** A press on the scene (not on a control, not zoomed, not a pinch): a mouse's arms Look if it stays still LOOK_HOLD_MS. */
   const press = useCallback((e: FreePress, at: Point) => {
     // NAV-JOG, NAV-DEPTH-2: while a drive moves the eye, a finger on the scene is no gesture of its own
     if (drives.current) return;
@@ -616,7 +619,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       span: Infinity,
       eased: spring.current !== null,
     };
-    if (!lookAtOnce) {
+    // NAVLOOK 1a (Ross 11-17): a finger's still hold no longer arms Look (the hat's eye is touch's Look); a mouse's still does
+    if (!lookAtOnce && e.pointerType !== 'touch') {
       g.timer = setTimeout(() => {
         g.timer = undefined;
         if (gesture.current !== g || g.mode !== null) return;

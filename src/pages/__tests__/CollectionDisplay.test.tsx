@@ -400,7 +400,7 @@ describe('Collection page (rebuilt display layer)', () => {
     const user = userEvent.setup();
     renderWithProviders(<Collection />, { initialPath: '/' });
     await screen.findByRole('button', { name: 'Figure 1' });
-    const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
+    const floating = () => document.body.querySelectorAll(':scope > .floating-nav > [data-nav]').length;
     await waitFor(() => expect(floating()).toBe(2));
     await user.click(screen.getByRole('button', { name: 'Case' }));
     expect(screen.queryByRole('menu')).toBeNull();
@@ -693,7 +693,7 @@ describe('MISFIT-CHIP-1: the do-not-fit chip on the case page, its list, and the
   // NAV-FLOAT (chal1 S4): the list lies over the case, so the floating controls go while it is open and come back after
   it('the floating hat and Z rail go while the list is open and come back when it closes', async () => {
     const { user } = await openCaseWithMisfits(16);
-    const floating = () => document.body.querySelectorAll(':scope > .floating-nav [data-nav]').length;
+    const floating = () => document.body.querySelectorAll(':scope > .floating-nav > [data-nav]').length;
     await waitFor(() => expect(floating()).toBe(2));
     await user.click(screen.getByRole('button', { name: '16 figures do not fit' }));
     await screen.findByRole('region', { name: 'Figures that do not fit' });

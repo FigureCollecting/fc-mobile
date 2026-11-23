@@ -1166,6 +1166,28 @@ describe('useCollectionImages', () => {
       expect(calls()).toBe(3);
     });
 
+    it('a sync of its own starts the wait again from ten minutes (only another document\'s carries it over)', async () => {
+      const { view, client, passAt, calls, asked } = await open();
+      await passAt(10);
+      expect(calls()).toBe(2);
+      // the next was due at +30 (the wait doubled to 20 min); a sync of this case view at +15 asks every list again
+      await passAt(15);
+      const before = view.result.current;
+      await act(() => {
+        void client.invalidateQueries({ queryKey: ['local', 'kept-images'] });
+      });
+      await waitFor(() => expect(view.result.current).not.toBe(before), { timeout: 3000 });
+      await idle(client);
+      await settle();
+      expect(calls()).toBe(3);
+      expect(asked(3)).toEqual([headOf(0), headOf(1)]);
+      await passAt(24);
+      expect(calls()).toBe(3);
+      await passAt(26);
+      expect(calls()).toBe(4);
+      expect(asked(4)).toEqual([headOf(1)]);
+    });
+
     it('a figure another document\'s sync left with no list (its list come back empty) is owed a recheck here too', async () => {
       const { view, client, passAt, calls, asked } = await open(1);
       // the sync here listed every figure: nothing owed

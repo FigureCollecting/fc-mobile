@@ -303,6 +303,26 @@ describe.each([
     expect(m.atEdge()).toBe(true);
     m.unmount();
   });
+
+  it('from a frame that shows no front, the hat\'s Look held up and left turns it no further from the wall, and held down and right brings a front in', () => {
+    const m = mount(freeSceneOf({ frame }));
+    const bare = m.at({ ...TOP, yaw: -30 * DEG, pitch: -28 * DEG });
+    expect(m.atEdge()).toBe(false);
+    const away = wallAway(withPose(m.scene.base, bare), m.scene.wall);
+    expect(m.fc().lookStart()).toBe(true);
+    m.fc().lookAim(-JOG_FULL_PX, -JOG_FULL_PX);
+    m.run(60, () => expect(wallAway(withPose(m.scene.base, m.pose()), m.scene.wall)).toBeLessThanOrEqual(away + 1e-9));
+    const held = m.stop('lookStop')!;
+    m.frames.tick(SPRING_MS);
+    expect(m.pose()).toEqual(held);
+    expect(m.fc().lookStart()).toBe(true);
+    m.fc().lookAim(JOG_FULL_PX, JOG_FULL_PX);
+    m.run(HELD);
+    m.stop('lookStop');
+    m.frames.tick(SPRING_MS);
+    expect(m.atEdge()).toBe(true);
+    m.unmount();
+  });
 });
 
 describe.each([

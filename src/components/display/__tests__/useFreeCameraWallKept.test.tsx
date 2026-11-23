@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/preact';
 import { frontShown } from '../caseCull';
 import { JOG_FULL_PX, PITCH, SPRING_MS, poseOf, withPose, type Pose } from '../casePose';
-import { wallAway } from '../caseWallView';
+import { pitchCap, wallAway } from '../caseWallView';
 import { lookCone, useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
@@ -332,6 +332,15 @@ describe.each([
   ['870x475', FOLD_OPEN],
   ['443x558', { width: 443, height: 558 }],
 ])('NAV-EMPTY at %s: a level Look round is the cone\'s alone, as before', (_name, frame) => {
+  it('the cone a Look takes from the room\'s top carries the pitch cap worked out there (its rubber band starts at it)', () => {
+    const m = mount(freeSceneOf({ frame }));
+    const start = m.at(TOP);
+    const cone = lookCone(m.scene, start, null, () => {});
+    expect(cone.pitch?.lo).toBeDefined();
+    expect(cone.pitch).toEqual(pitchCap(withPose(m.scene.base, start), m.scene.wall));
+    m.unmount();
+  });
+
   it('at the framing, from the wall\'s first cabinet, a Look round past the wall\'s end rests at the cone\'s soft limit', () => {
     const m = mount(freeSceneOf({ frame }));
     const start = m.at({ x: (m.scene.wall.cabinets[0].leftMm + m.scene.wall.cabinets[0].rightMm) / 2 });

@@ -150,7 +150,7 @@ export function dollyStep(pose: Pose, r: number, dtMs: number, scene: DollyScene
   // where ok holds and the cost fits (or, from over the ceiling, does not rise); `cost` is the last passing place's
   let cost = start;
   let cut: DollyStep['cut'] = null;
-  const passes =(p: Vec3): boolean => {
+  const passes = (p: Vec3): boolean => {
     if (ok !== undefined && !ok(p)) {
       cut = 'ok';
       return false;

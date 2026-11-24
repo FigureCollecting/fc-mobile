@@ -199,6 +199,35 @@ describe('DetailPane: the photos chip', () => {
     expect(shown()).toBe(rem.imageUrl);
   });
 
+  // DESK1: the sheet tries a failed tile again when it is picked; the pane's picture of it is tried again with it
+  it('a photo the pane failed to draw is tried again when it is picked again; one it drew is left as it is', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);
+    const shown = () => container.querySelector('.detail-pane__image') as HTMLImageElement | null;
+    const plate = () => container.querySelector('.detail-pane__placeholder');
+    await user.click(await screen.findByRole('button', { name: '5 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    const photoUrl = (c: string) => `https://images.figurecollecting.com/d/${c.repeat(64)}`;
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    fireEvent.error(shown()!);
+    await waitFor(() => expect(plate()).not.toBeNull());
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    expect(plate()).toBeNull();
+    expect(shown()?.getAttribute('src')).toBe(photoUrl('c'));
+    // drawn now: picked again, the same <img> stays (nothing asked again)
+    const img = shown();
+    await user.click(within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!);
+    expect(shown()).toBe(img);
+    // it fails again: the plate again; Next and back (a step onto it) tries it once more
+    fireEvent.error(shown()!);
+    await waitFor(() => expect(plate()).not.toBeNull());
+    await user.click(within(sheet).getByRole('button', { name: 'Next photo' }));
+    await user.click(within(sheet).getByRole('button', { name: 'Previous photo' }));
+    expect(plate()).toBeNull();
+    expect(shown()?.getAttribute('src')).toBe(photoUrl('c'));
+  });
+
   it('says nothing for a figure with one photo', async () => {
     fixturePhotos(1);
     renderWithProviders(<DetailPane figure={local} index={0} total={7} onClose={() => {}} />);

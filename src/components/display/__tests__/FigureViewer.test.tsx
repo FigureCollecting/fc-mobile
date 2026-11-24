@@ -633,6 +633,35 @@ describe('FigureViewer: the photos chip', () => {
     expect(slides[0].src).toBe((figures as { imageUrl: string }[])[0]!.imageUrl);
   });
 
+  // DESK1: the sheet tries a failed tile again when it is picked; the large picture of it is tried again with it. A re-aim at
+  // the address the slide already shows changes no state, so the slide that failed is refreshed here, and only that one.
+  it('a photo the large picture failed to draw is tried again when it is picked again; one it drew is not asked again', async () => {
+    fixturePhotos(5);
+    const user = userEvent.setup();
+    renderWithProviders(<FigureViewer figures={locals()} index={0} onClose={() => {}} />);
+    await waitFor(() => expect(instances[0]?.initialized).toBe(true));
+    const pswp = instances[0] as FakePswp & { currSlide?: { content: { isError: () => boolean } } };
+    let failed = false;
+    pswp.currSlide = { content: { isError: () => failed } };
+    await user.click(await screen.findByRole('button', { name: '5 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    const third = () => within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!;
+    await user.click(third());
+    expect(pswp.refreshSlideContent).toHaveBeenCalledTimes(1);
+    // drawn: picked again, nothing is asked again
+    await user.click(third());
+    expect(pswp.refreshSlideContent).toHaveBeenCalledTimes(1);
+    // the slide says it cannot be loaded: picked again, that slide is made again (a fresh <img>), once per pick
+    failed = true;
+    await user.click(third());
+    expect(pswp.refreshSlideContent).toHaveBeenCalledTimes(2);
+    expect(pswp.refreshSlideContent).toHaveBeenLastCalledWith(0);
+    expect(pswp.options.dataSource[0].src).toBe(`https://images.figurecollecting.com/d/${'c'.repeat(64)}`);
+    // a different photo picked while the slide has failed is refreshed once, by the rewrite, not twice
+    await user.click(within(sheet).getByRole('button', { name: 'Next photo' }));
+    expect(pswp.refreshSlideContent).toHaveBeenCalledTimes(3);
+  });
+
   it('says nothing for a figure with one photo, nor for one with no local item', async () => {
     fixturePhotos(1);
     const one = renderWithProviders(<FigureViewer figures={locals()} index={0} onClose={() => {}} />);

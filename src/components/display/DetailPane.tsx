@@ -38,6 +38,11 @@ export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }:
   const [aimed, setAimed] = useState<string | undefined>(undefined);
   const picture = aimed ?? figure.imageUrl;
   const imageUrl = images.broken(picture) ? undefined : picture;
+  // DESK1: a photo picked again after the pane failed to draw it is tried again, as its tile in the sheet is
+  const aim = (url: string | undefined) => {
+    if (url !== undefined) images.retry(url);
+    setAimed(url);
+  };
   const pane = useRef<HTMLElement>(null);
   const openCopies = useCopiesAction(figure);
   // GALLERY-1: the figure's photos, over the pane
@@ -75,7 +80,7 @@ export function DetailPane({ figure, index, total, onClose, goTo, goToBlocked }:
         <FigureDetailContent figure={figure} index={index} total={total} goTo={goTo && { go: () => goTo(figure), blocked: goToBlocked?.(figure) ?? null }} />
       </div>
 
-      <PhotosSheet key={figure._id} figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={setAimed} />
+      <PhotosSheet key={figure._id} figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={aim} />
 
       <Style css={`
         .detail-pane {

@@ -1,7 +1,7 @@
 import { useLocation } from 'wouter';
 import { hapticLight } from '../../utils/haptics';
 import { useChromeStore } from '../../stores/chrome';
-import { closeAdd, openAdd, useAddStore } from '../../stores/add';
+import { addAllowed, closeAdd, openAdd, useAddStore } from '../../stores/add';
 import { BottomSheet } from '../ui/BottomSheet';
 import { LEGACY_SCREENS_ENABLED } from '../../config/features';
 import { Style } from '../../styles/Style';
@@ -143,6 +143,8 @@ export function TabBar() {
   const hidden = useChromeStore((s) => s.hidden);
   const addOpen = useAddStore((s) => s.open);
   const inHeader = useAddStore((s) => s.inHeader > 0);
+  // SIGNED-OUT-ADD: signed out or still loading, no + and no sheet; the dock stays so no tab moves.
+  const allowed = addAllowed();
 
   return (
     <>
@@ -153,7 +155,7 @@ export function TabBar() {
       >
         {LEFT_TABS.map((t) => <Tab key={t.path} item={t} />)}
         <div class="tab-bar__dock" aria-hidden="false">
-          {!inHeader && (
+          {allowed && !inHeader && (
             <button
               class="tab-bar__add"
               type="button"
@@ -252,7 +254,7 @@ export function TabBar() {
           }
         `} />
       </nav>
-      <AddSheet open={addOpen} onClose={closeAdd} />
+      <AddSheet open={addOpen && allowed} onClose={closeAdd} />
     </>
   );
 }

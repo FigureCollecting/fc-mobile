@@ -24,6 +24,8 @@ import {
   WITHHELD_CACHE,
   fetchImageLists,
   fillKeptImages,
+  imageKept,
+  onImageKept,
   keepChosenPhotos,
   keptImage,
   keptImages,
@@ -64,6 +66,28 @@ describe('toCachedImages', () => {
       { url: url('a'), width: 600, height: 800, role: 'gallery', primary: true, maskUrl: url('f'), bottomMarginFrac: 0.08, contactBand: { centerXFrac: 0.5, widthFrac: 0.3 } },
       { url: url('b'), width: 600, height: 800, role: 'other', primary: false },
     ]);
+  });
+
+  it('DESK1: the colour is kept, and the thumbhash (as base64), for the placeholder while the image loads', () => {
+    const thumbhash = new Uint8Array([0x1b, 0x08, 0x0e, 0x0d, 0x80, 0x76, 0x88, 0x77, 0x7f, 0x88, 0x87, 0x78, 0x80, 0x87, 0x97, 0x08, 0x76, 0x79, 0x60, 0x07, 0x08]);
+    const [kept] = toCachedImages([img('a', { dominantColor: '#8a9bb0', thumbhash })]);
+    expect(kept).toEqual({ url: url('a'), width: 600, height: 800, role: 'gallery', primary: false, dominantColor: '#8a9bb0', thumbhash: 'GwgODYB2iHd/iId4gIeXCHZ5YAcI' });
+    expect(Uint8Array.from(atob(kept!.thumbhash!), (c) => c.charCodeAt(0))).toEqual(thumbhash);
+  });
+
+  it('DESK1: an unknown colour or thumbhash (empty) is left out, as is a colour that is not "#rrggbb" and a thumbhash too long to be one', () => {
+    const plain = { url: url('a'), width: 600, height: 800, role: 'gallery', primary: false };
+    expect(toCachedImages([img('a', { dominantColor: '', thumbhash: new Uint8Array() })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { dominantColor: 'red' })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { dominantColor: '#8a9bb0; background-image: url(https://elsewhere.example/x)' })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { dominantColor: '#8A9BB0' })])).toEqual([{ ...plain, dominantColor: '#8a9bb0' }]);
+    expect(toCachedImages([img('a', { thumbhash: new Uint8Array(65) })])).toEqual([plain]);
+    expect(toCachedImages([img('a', { thumbhash: new Uint8Array(64).fill(255) })])[0]!.thumbhash).toHaveLength(88);
+  });
+
+  it('DESK1: an image that carries no colour or thumbhash field at all (a list shaped before they were kept) is kept without them', () => {
+    const { dominantColor: _c, thumbhash: _t, ...bare } = img('a');
+    expect(toCachedImages([bare as ProductImage])).toEqual([{ url: url('a'), width: 600, height: 800, role: 'gallery', primary: false }]);
   });
 
   it('keeps a measured 0 as a measurement', () => {
@@ -356,6 +380,54 @@ describe('keepChosenPhotos (PICK-CASE-1)', () => {
     const storage = await synced();
     vi.stubGlobal('caches', storage);
     expect(await keepChosenPhotos(['h1'], choose('h1', 'b'))).toBe(1);
+  });
+});
+
+describe('onImageKept (DESK1: what stores an image\'s bytes says so, so a mask that failed to load is read again at once)', () => {
+  const lists = (m: Record<string, ProductImage[]>) => vi.fn(async (heads: readonly string[]) => new Map(heads.filter((h) => h in m).map((h) => [h, m[h]!])));
+  const mask = (c: string) => ({ maskId: hex(c), contentType: 'image/png', url: url(c) });
+  const H1 = { h1: [img('a', { primary: true, mask: mask('e') }), img('b')] };
+
+  it('a sync tells each address once its bytes are stored, the mask too; one the link refused or answered 404 is not told', async () => {
+    const storage = device(async (r) => (r.url === url('c') ? new Response('', { status: 503 }) : r.url === url('d') ? new Response('', { status: 404 }) : new Response('img')));
+    const kept: string[] = [];
+    const stored: boolean[] = [];
+    const off = onImageKept((address) => {
+      kept.push(address);
+      stored.push(storage.stores.get(OWNED_MEDIA_CACHE)?.has(address) === true);
+    });
+    await syncKeptImages(['h1', 'h2', 'h3'], lists({ ...H1, h2: [img('c', { primary: true })], h3: [img('d', { primary: true })] }), { storage });
+    expect(kept.sort()).toEqual([url('a'), url('e')]);
+    expect(stored, 'told after the bytes are stored, never before').toEqual([true, true]);
+    off();
+  });
+
+  it('a chosen photo kept from the copy the Photos sheet loaded is told too; a listener taken off hears nothing more', async () => {
+    const storage = device();
+    await syncKeptImages(['h1'], lists(H1), { storage });
+    const kept: string[] = [];
+    const off = onImageKept((address) => kept.push(address));
+    await (await storage.open(BROWSED_MEDIA_CACHE)).put(new Request(url('b')), new Response('img'));
+    storage.added.length = 0;
+    expect(await keepChosenPhotos(['h1'], new Map([['h1', url('b')]]), { storage })).toBe(1);
+    expect(storage.added, 'kept from the browsed copy: nothing downloaded').toEqual([]);
+    expect(kept).toEqual([url('b')]);
+    off();
+    imageKept(url('b'));
+    expect(kept).toEqual([url('b')]);
+  });
+
+  it('a listener that throws stops neither the others nor the sync: the image is still counted kept', async () => {
+    const storage = device();
+    const kept: string[] = [];
+    const offBad = onImageKept(() => {
+      throw new Error('a listener broke');
+    });
+    const off = onImageKept((address) => kept.push(address));
+    expect(await syncKeptImages(['h1'], lists(H1), { storage })).toMatchObject({ added: 2, failed: 0 });
+    expect(kept.sort()).toEqual([url('a'), url('e')]);
+    offBad();
+    off();
   });
 });
 
@@ -789,6 +861,12 @@ describe('rememberImages / recallImages', () => {
     expect(await recallImages('h2', storage)).toBeUndefined();
     await rememberImages('h1', [], storage);
     expect(await recallImages('h1', storage)).toBeUndefined();
+  });
+
+  it('DESK1: the kept list gives the colour and thumbhash back (the Photos tab out of reach shows them)', async () => {
+    const storage = device();
+    await rememberImages('h1', toCachedImages([img('a', { primary: true, dominantColor: '#8a9bb0', thumbhash: new Uint8Array([1, 2, 3]) })]), storage);
+    expect((await recallImages('h1', storage))![0]).toMatchObject({ dominantColor: '#8a9bb0', thumbhash: 'AQID' });
   });
 
   it('reads nothing from a record it cannot parse', async () => {

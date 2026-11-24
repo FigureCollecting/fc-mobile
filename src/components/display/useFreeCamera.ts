@@ -343,8 +343,32 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   /** A look let go past its soft limit easing back (spec 1.5) over SPRING_MS from t0, the lift (a late first frame catches up). */
   const spring = useRef<{ from: Pose; to: Pose; t0: number } | null>(null);
   const raf = useRef<number | undefined>(undefined);
+  /**
+   * NAV-LOGPOSE: the tilt's offset (radians, as the pose's: yaw + right, pitch + down) on the view at rest, composed at
+   * output only (write, camera); the cone it goes through, worked out once per pose at rest; and whether a fold since the
+   * source's last sample left the source's neutral stale (its next sample is refused once: it takes a new neutral).
+   */
+  const tilt = useRef<{ yaw: number; pitch: number; cone: { start: Pose; scene: FreeScene; limits: YawCone } | null; stale: boolean }>({
+    yaw: 0,
+    pitch: 0,
+    cone: null,
+    stale: false,
+  });
 
   const cameraOf = (pose: Pose | null): Camera => (pose === null ? scene.current.base : withPose(scene.current.base, pose));
+  /** NAV-LOGPOSE: the tilt's offset on `pose` through the cone a Look from it has (the rubber band past soft included). */
+  const tiltTurn = (pose: Pose) => {
+    const t = tilt.current;
+    const s = scene.current;
+    if (t.cone === null || t.cone.scene !== s || !samePose(t.cone.start, pose)) t.cone = { start: pose, scene: s, limits: coneFrom(s, pose) };
+    return turnBy(pose, t.yaw, t.pitch, t.cone.limits);
+  };
+  /** NAV-LOGPOSE: `camera` with the tilt's offset composed on it (itself while there is none, or no host to publish a cone on). */
+  const tilted = (camera: Camera): Camera => {
+    const t = tilt.current;
+    if ((t.yaw === 0 && t.pitch === 0) || !dom.host.current) return camera;
+    return withPose(camera, tiltTurn(poseOf(camera)).shown);
+  };
   /** `pose` aimed where the spring has it now: a look let go easing back (the pose itself when none runs). */
   const eased = (pose: Pose, now?: number): Pose => {
     const sp = spring.current;
@@ -365,10 +389,14 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     return held.current;
   };
 
-  /** Write the camera to the DOM: the root's transform, data-camera; ask for a render when the cull must change. */
-  const write = (camera: Camera) => {
+  /**
+   * Write the camera to the DOM: the root's transform, data-camera; ask for a render when the cull must change.
+   * NAV-LOGPOSE: the tilt's offset is composed here, on whatever is written.
+   */
+  const write = (drawnCamera: Camera) => {
     const { host, root } = dom;
     if (!host.current || !root.current) return;
+    const camera = tilted(drawnCamera);
     root.current.style.transform = cssSceneTransform(camera, scene.current.s, scene.current.reach);
     host.current.dataset.camera = cameraData(camera);
     host.current.dataset.cameraX = String(num(camera.x));
@@ -552,6 +580,50 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (raf.current === undefined) raf.current = requestAnimationFrame(loop);
   };
   /**
+   * NAV-LOGPOSE: the tilt's offset folded into the held pose, the view kept as drawn: a turn shown past its soft limit
+   * eases back to it as a look let go does (at once under reduced motion). The source takes a new neutral (stale).
+   * Returns the pose now held, or null when there was no offset. Called at rest only: the offset is only ever set then,
+   * and every start folds it first.
+   */
+  const foldTilt = (): Pose | null => {
+    const t = tilt.current;
+    t.stale = true;
+    if (t.yaw === 0 && t.pitch === 0) return null;
+    const r = dom.host.current ? tiltTurn(held.current ?? poseOf(scene.current.base)) : null;
+    t.yaw = 0;
+    t.pitch = 0;
+    t.cone = null;
+    if (r === null) return null;
+    held.current = r.committed;
+    if (r.past) {
+      if (scene.current.reducedMotion) write(cameraOf(r.committed));
+      else {
+        spring.current = { from: r.shown, to: r.committed, t0: performance.now() };
+        schedule();
+      }
+    }
+    return r.committed;
+  };
+  /**
+   * NAV-LOGPOSE: the tilt's offset now (radians, as the pose's), on the view at rest, written at once when it changed.
+   * Refused (false) while a finger, a drive or a look easing back has the view, and once after a fold: the source then
+   * takes the device's orientation now as its neutral, so the view never jumps when the offset comes back.
+   */
+  const tiltSet = useCallback((yaw: number, pitch: number): boolean => {
+    const t = tilt.current;
+    if (t.stale || gesture.current !== null || drives.current !== null || spring.current !== null) {
+      t.stale = false;
+      return false;
+    }
+    if (yaw === t.yaw && pitch === t.pitch) return true;
+    t.yaw = yaw;
+    t.pitch = pitch;
+    write(cameraOf(held.current));
+    return true;
+  }, []);
+  /** NAV-LOGPOSE: Off, Recenter, a hidden page: the offset folded into the held pose (foldTilt). */
+  const tiltFold = useCallback((): Pose | null => foldTilt(), []);
+  /**
    * NAV-LOOKDRIVE: the hat's Look stops: a turn shown past its soft limit eases back to it (spec 1.5) as a scene look
    * let go does, at once under reduced motion.
    */
@@ -638,6 +710,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     if (drives.current) return;
     const prev = gesture.current;
     if (prev?.timer !== undefined) clearTimeout(prev.timer);
+    // NAV-LOGPOSE: the finger takes the view as drawn, the tilt's offset folded in
+    foldTilt();
     const s = scene.current;
     const lookAtOnce = e.button === 2 || (e.button === 0 && e.shiftKey === true);
     const start = drawn() ?? poseOf(s.base);
@@ -807,6 +881,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
 
   const beginDrives = (): Drives => {
     if (drives.current) return drives.current;
+    // NAV-LOGPOSE: the first drive (the hat's jog or Look, the depth) takes the view as drawn, the tilt's offset folded in
+    foldTilt();
     const pose = held.current ?? poseOf(scene.current.base);
     // NAV-LOOKDRIVE: a look easing back goes on easing under the drive (the loop), drawn from where it is: no jump
     const d: Drives = { pose, shown: drawn() ?? pose, hat: null, look: null, depth: null };
@@ -925,7 +1001,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     /** The camera drawn now (the framing's when no pose is held). */
     camera: (base: Camera): Camera => {
       const pose = drawn();
-      return pose === null ? base : withPose(base, pose);
+      // NAV-LOGPOSE: with the tilt's offset composed, as write() draws it
+      return tilted(pose === null ? base : withPose(base, pose));
     },
     /** A gesture or a drive moves the pose, or a look let go eases back. */
     live: (): boolean => gesture.current?.mode != null || drives.current !== null || spring.current !== null,
@@ -933,10 +1010,11 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     held: (): Pose | null => held.current,
     /** NAV-1A (a): the camera where the turn left yaw 0 (freeTexelScale holds a turned scene's px per mm from it). */
     unturned: (base: Camera): Camera | undefined => (unturned.current === null ? undefined : withPose(base, unturned.current)),
-    /** Hold this pose (null: go back to the framing); any spring stops. */
+    /** Hold this pose (null: go back to the framing); any spring stops. NAV-LOGPOSE: the tilt's offset is dropped. */
     hold: (pose: Pose | null) => {
       spring.current = null;
       held.current = pose;
+      tilt.current = { yaw: 0, pitch: 0, cone: null, stale: true };
     },
     press,
     drag,
@@ -950,6 +1028,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     depthStart,
     depthRate,
     depthStop,
+    tiltSet,
+    tiltFold,
     /** Write the drawn pose to the DOM again (after a render, which may have rewritten it). */
     sync: () => {
       const pose = drawn();

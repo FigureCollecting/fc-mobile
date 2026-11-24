@@ -12,7 +12,9 @@ import { touchTap } from './touch';
  * page route here answers with a synthetic picture; the pick is kept in localStorage for the fixtures' own user.
  */
 
-test.use({ hasTouch: true, isMobile: true });
+// DESK1: the app's service worker would fetch the photos itself, round the page route below, and every one would fail (no
+// address off localhost): the tiles then say "couldn't load". Blocked, as in photos-find.shots.spec.ts, so the photos load.
+test.use({ hasTouch: true, isMobile: true, serviceWorkers: 'block' });
 
 test.beforeEach(({}, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium', 'runs in the chromium project');
@@ -98,6 +100,7 @@ for (const size of FOLD8) {
     const tiles = sheet.getByRole('button', { name: /^Photo \d/ });
     await expect(tiles).toHaveCount(3);
     await expect(tiles.nth(0)).toHaveAttribute('aria-label', 'Photo 1 of 3, the default, in use');
+    await expect(tiles.nth(0)).toHaveAttribute('data-state', 'loaded');
     for (let i = 0; i < 3; i++) {
       const t = (await tiles.nth(i).boundingBox())!;
       expect(Math.min(t.width, t.height), `photo ${i + 1} is a target a finger takes`).toBeGreaterThanOrEqual(44);

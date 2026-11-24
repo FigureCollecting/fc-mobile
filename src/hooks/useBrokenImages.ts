@@ -8,11 +8,14 @@ export interface BrokenImages {
   broken(src: string | undefined): boolean;
   /** An <img>'s onError for this address. */
   failed(src: string): void;
+  /** DESK1: forget that this address failed, so the next <img> for it is tried again. */
+  retry(src: string): void;
 }
 
 export function useBrokenImages(): BrokenImages {
   const [seen, setSeen] = useState<ReadonlySet<string>>(() => new Set());
   const failed = useCallback((src: string) => setSeen((s) => (s.has(src) ? s : new Set([...s, src]))), []);
+  const retry = useCallback((src: string) => setSeen((s) => (s.has(src) ? new Set([...s].filter((x) => x !== src)) : s)), []);
   const broken = useCallback((src: string | undefined) => src !== undefined && seen.has(src), [seen]);
-  return { broken, failed };
+  return { broken, failed, retry };
 }

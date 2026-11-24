@@ -44,11 +44,11 @@ function AppInner() {
   const appUp = useRef(false);
 
   const handleOnboardingComplete = useCallback(
-    (action: 'register' | 'login' | 'guest') => {
+    (action: 'login' | 'guest') => {
       localStorage.setItem(ONBOARDING_KEY, '1');
       setShowOnboarding(false);
       setLocation('/');
-      // Authentik's own pages create the account or sign in; the collection is where it lands.
+      // Authentik's own pages sign in (accounts start from an invitation link); the collection is where it lands.
       if (action !== 'guest') void import('./auth').then((m) => m.getAuthSession().signIn('/').catch(() => undefined));
     },
     [setLocation],

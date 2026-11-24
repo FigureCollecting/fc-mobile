@@ -25,6 +25,20 @@ export interface LocalSession {
 
 export const localSession = signal<LocalSession | undefined>(undefined);
 
+export type AuthPhase = 'loading' | 'signed-out' | 'signed-in';
+
+/**
+ * The session's phase (useAuthPhase is this in a render); signed-in: a user's local data can be shown (offline, sign in
+ * to sync and reload required included). Read in a render or an effect, it subscribes to the session and its status.
+ */
+export function authPhase(): AuthPhase {
+  const session = localSession.value;
+  if (session === undefined) return 'loading';
+  const status = session.status.value;
+  if (status === 'loading') return 'loading';
+  return status === 'signed-out' ? 'signed-out' : 'signed-in';
+}
+
 export class NotSignedInError extends Error {
   constructor() {
     super('not signed in: there is no local store to write to');

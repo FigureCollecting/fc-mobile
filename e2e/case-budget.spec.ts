@@ -633,21 +633,20 @@ for (const size of CASE_VIEWPORTS.filter((v) => v.name.startsWith('fold8'))) {
     // a wall long enough for the walk (CF1 a: a wide panel's page holds a dozen cabinets)
     await page.goto('/?layout=case&fx=170&lookhold=1000');
     await page.waitForSelector('button.cab-figure');
+    // the splash takes every pointer event until it goes (2.5 s from first paint); a swipe under it walks nothing
+    await expect(page.locator('#pre-splash')).toHaveCount(0, { timeout: 30_000 });
     const host = page.locator('.cabinet-scene');
     // (the step keys' presses walked well into the wall first; two long swipes do now, so a swipe back never reaches its start)
-    const steps: [string, () => Promise<void>][] = [
-      ['swipe -400', () => swipe(page, -400)],
-      ['swipe -400', () => swipe(page, -400)],
-      ['swipe -150', () => swipe(page, -150)],
-      ['swipe -400', () => swipe(page, -400)],
-      ['swipe 200', () => swipe(page, 200)],
-      ['swipe -400', () => swipe(page, -400)],
-      ['swipe 400', () => swipe(page, 400)],
-    ];
-    for (const [k, [name, step]] of steps.entries()) {
-      await step();
+    const cameraX = async () => Number(await host.getAttribute('data-camera-x'));
+    let x = await cameraX();
+    for (const [k, dx] of [-400, -400, -150, -400, 200, -400, 400].entries()) {
+      const at = `step ${k} swipe ${dx}`;
+      await swipe(page, dx);
+      // every swipe walks: one lost would change the walk (all four in lost, the swipe back walked past the wall's start)
+      const from = x;
+      await expect.poll(cameraX, { message: `${at}: the camera walked ${dx < 0 ? 'on' : 'back'} from ${from}` })[dx < 0 ? 'toBeGreaterThan' : 'toBeLessThan'](from);
       await page.waitForTimeout(200);
-      const at = `step ${k} ${name}`;
+      x = await cameraX();
       const placed = await host.evaluate((h) => {
         const f = h.getBoundingClientRect();
         const left = (sel: string) => h.querySelector(sel)!.getBoundingClientRect().left - f.left;

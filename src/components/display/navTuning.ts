@@ -46,6 +46,29 @@ export const NAV_TEAL = '172 55% 50%';
 /** The Z rail (px): what is drawn, the larger box that takes the thumb, the knob, and how far the knob shows full reach. */
 export const DEPTH_RAIL_PX = { width: 28, height: 92, hitWidth: 56, hitHeight: 132, knob: 24, travel: 34 } as const;
 
+/**
+ * NAV-LOGPOSE: the Log-Pose orb (px): what is drawn, the round target that takes the thumb, and the clear space between
+ * that target and the Z rail's target below it (handoff: smaller than the sextant concepts, visibly detached). `clear`
+ * is Chromium's touch adjustment reach: a touch is retargeted to a button within half its 32 DIP adjustment area, so
+ * with less a push begun in the rail's top would go to the orb (measured: with a figure under the orb, 4 px lost touches
+ * begun up to 10 px inside the rail's target; 16 px lost none).
+ */
+export const ORB_PX = { size: 34, hit: 48, clear: 16 } as const;
+/**
+ * NAV-LOGPOSE (Ross's reference, ross-1122/logpose-orb.png): the orb's colours (HSL triples): its dark translucent dial,
+ * the thin teal outer ring (quiet OFF, brighter with a soft glow ON) and the teal pivot, and the needle's muted red half
+ * (never vivid, never gold) and its pale grey half.
+ */
+export const ORB_GLOBE = '200 30% 12%';
+export const ORB_TEAL = '172 55% 50%';
+export const ORB_RED = '355 45% 42%';
+export const ORB_PALE = '205 15% 82%';
+/**
+ * NAV-LOGPOSE: the needle: where it rests (degrees clockwise from straight up: the reference's diagonal), degrees of
+ * needle a degree of yaw, and px of lift a degree of pitch.
+ */
+export const ORB_NEEDLE = { restDeg: 45, turnPerDeg: 6, liftPxPerDeg: 0.375 } as const;
+
 /** Each control's drawn edge, in from the safe area's side (px). */
 export const NAV_EDGE_PX = 20;
 /** Each control's drawn bottom, above the case's pull-up tabs (px). */

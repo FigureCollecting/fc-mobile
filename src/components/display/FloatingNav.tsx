@@ -16,7 +16,8 @@ import { Style } from '../../styles/Style';
 import { CASE_TABS_HEIGHT_PX } from './CaseTabs';
 import { NavDepth } from './NavDepth';
 import { NavHat } from './NavHat';
-import { DEPTH_RAIL_PX, EYE_SLOT_DEG, EYE_SLOT_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY } from './navTuning';
+import { EYE, EYE_GLYPH_BOX, EYE_HIT } from './navEyeShape';
+import { DEPTH_RAIL_PX, HAT_KNOB_PX, HAT_RING_PX, NAV_BLUE, NAV_CHIP_GAP_PX, NAV_EDGE_PX, NAV_GLYPH, NAV_LIFT_PX, NAV_MOUSE_SCALE, NAV_OPACITY, NAV_TEAL } from './navTuning';
 
 interface FloatingNavProps {
   /** The column the case is drawn in: the controls keep inside its left and right edges. Absent: the window's. */
@@ -77,8 +78,10 @@ const rail = DEPTH_RAIL_PX;
 /** The rail's larger target reaches this far (px) round what is drawn: at its sides, and above and below. */
 const RAIL_PAD_X = (rail.hitWidth - rail.width) / 2;
 const RAIL_PAD_Y = (rail.hitHeight - rail.height) / 2;
-/** The eye's slot, centred on the ring at EYE_SLOT_DEG: its centre as a share of the hat's box. */
-const EYE_AT = { x: 50 + 50 * Math.cos((EYE_SLOT_DEG * Math.PI) / 180), y: 50 - 50 * Math.sin((EYE_SLOT_DEG * Math.PI) / 180) };
+/** A length in the hat's box (navEyeShape: 100 units across) as a share of it. */
+const pct = (units: number) => `${units.toFixed(3)}%`;
+/** A length in the hat's units as a share of the eye's box (its bubble, 2 * EYE.r across). */
+const eyePct = (units: number) => pct((100 * units) / (2 * EYE.r));
 
 const styles = `
   :root {
@@ -98,6 +101,7 @@ const styles = `
     --nav-line: ${hsl(NAV_OPACITY.line)};
     --nav-knob: ${hsl(NAV_OPACITY.knob)};
     --nav-active: ${hsl(NAV_OPACITY.active)};
+    --nav-teal: hsl(${NAV_TEAL} / ${NAV_OPACITY.look});
   }
   /* will-change: each control is a compositing layer of its own, the size of its box; without it Chromium squashed the
      hat, the rail and the pull-up tabs into one layer the width of the screen, from the rail's top down to the tab bar */
@@ -111,8 +115,6 @@ const styles = `
     height: var(--hat-size);
     box-sizing: border-box;
     border-radius: 50%;
-    background: var(--nav-fill);
-    border: 1.5px solid var(--nav-line);
     color: var(--nav-knob);
     pointer-events: auto;
     touch-action: none;
@@ -120,11 +122,18 @@ const styles = `
     -webkit-user-select: none;
     -webkit-touch-callout: none;
   }
+  /* NAV-EYE shape (Ross 11-22): the hat's fill and ring are one outline with the eye's bubble (navEyeShape), drawn over
+     the hat's box and out past it to the bubble; it takes no touch (the hat's circle and the eye's do) */
+  .nav-hat__shell { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+  .nav-hat__outline { fill: var(--nav-fill); stroke: var(--nav-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+  /* the seam: the ring's arc under the eye, in the ring's own stroke (both references draw it) */
+  .nav-hat__seam { fill: none; stroke: var(--nav-line); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+  /* (5.5 px: where they were inside the 1.5 px border the ring was before it was the outline) */
   .nav-hat__arrow { position: absolute; pointer-events: none; }
-  .nav-hat__arrow--0 { right: 4px; top: calc(50% - 8px); }
-  .nav-hat__arrow--90 { top: 4px; left: calc(50% - 8px); }
-  .nav-hat__arrow--180 { left: 4px; top: calc(50% - 8px); }
-  .nav-hat__arrow--270 { bottom: 4px; left: calc(50% - 8px); }
+  .nav-hat__arrow--0 { right: 5.5px; top: calc(50% - 8px); }
+  .nav-hat__arrow--90 { top: 5.5px; left: calc(50% - 8px); }
+  .nav-hat__arrow--180 { left: 5.5px; top: calc(50% - 8px); }
+  .nav-hat__arrow--270 { bottom: 5.5px; left: calc(50% - 8px); }
   .nav-hat__knob {
     position: absolute;
     left: calc(50% - ${HAT_KNOB_PX / 2}px * var(--nav-k));
@@ -137,14 +146,57 @@ const styles = `
     transform: translate(calc(var(--hat-x, 0) * var(--hat-reach)), calc(var(--hat-y, 0) * var(--hat-reach)));
   }
   .nav-hat[data-jogging] .nav-hat__knob { background: var(--nav-active); }
-  .nav-hat__eye-slot {
+  /* the knob's glyph (a cross for Move, a turning arrow for Look): dark on the knob, never white */
+  .nav-hat__glyph {
     position: absolute;
-    left: calc(${EYE_AT.x.toFixed(3)}% - ${EYE_SLOT_PX / 2}px);
-    top: calc(${EYE_AT.y.toFixed(3)}% - ${EYE_SLOT_PX / 2}px);
-    width: ${EYE_SLOT_PX}px;
-    height: ${EYE_SLOT_PX}px;
+    inset: 22%;
+    width: 56%;
+    height: 56%;
+    color: ${NAV_GLYPH};
     pointer-events: none;
   }
+  /* NAV-EYE: Look's thin teal outline on the whole fused outline, the ring and the eye's bubble, and the seam */
+  .nav-hat[data-mode='look'] .nav-hat__outline, .nav-hat[data-mode='look'] .nav-hat__seam { stroke: var(--nav-teal); }
+  /* the eye: its box is its bubble (navEyeShape's EYE), outside the ring at EYE_SLOT_DEG; a share of the hat's box, as
+     the outline is. It takes no touch itself: its ::before does */
+  .nav-eye {
+    position: absolute;
+    z-index: 1;
+    left: ${pct(EYE.x - EYE.r)};
+    top: ${pct(EYE.y - EYE.r)};
+    width: ${pct(2 * EYE.r)};
+    height: ${pct(2 * EYE.r)};
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--nav-knob);
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    touch-action: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* chal2 SHOULD-1 (ruling 11-22): the eye's hit area (navEyeShape's EYE_HIT), drawn nowhere: the bubble outside the ring
+     (inside it, the seam's other side, is the hat's), padded outward into the scene; a share of the eye's box */
+  .nav-eye::before {
+    content: '';
+    position: absolute;
+    left: ${eyePct(EYE_HIT.box.x - (EYE.x - EYE.r))};
+    top: ${eyePct(EYE_HIT.box.y - (EYE.y - EYE.r))};
+    width: ${eyePct(EYE_HIT.box.w)};
+    height: ${eyePct(EYE_HIT.box.h)};
+    clip-path: ${EYE_HIT.clip};
+    pointer-events: auto;
+    touch-action: none;
+    cursor: pointer;
+  }
+  /* the glyph, centred in the bubble, wholly outside the ring */
+  .nav-eye__glyph { position: relative; width: ${pct((100 * EYE_GLYPH_BOX.w) / (2 * EYE.r))}; height: ${pct((100 * EYE_GLYPH_BOX.h) / (2 * EYE.r))}; pointer-events: none; }
+  .nav-eye[aria-pressed='true'], .nav-eye[data-held] { color: var(--nav-teal); }
+  .nav-eye:focus-visible { outline: 2px solid var(--nav-active); outline-offset: 1px; }
   .nav-depth {
     position: fixed;
     z-index: 98;

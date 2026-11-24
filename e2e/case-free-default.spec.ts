@@ -1,13 +1,13 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
-import { touchDown } from './touch';
-import { hat } from './navControls';
+import { touchDown, touchTap } from './touch';
+import { eye, hat } from './navControls';
 import { JOG_FULL_PX } from '../src/components/display/casePose';
 
 /**
  * NAV-2A (NAVDEF a, Ross 10-31): Free camera is the case's default on every device, and the header's swipe button (the
- * camera icon) goes with it: one finger moves, a hold looks, the jog is always on and a tap on it is the menu. A swipe
+ * camera icon) goes with it: one finger moves, the jog is always on and a tap on it is the menu. A swipe
  * mode stored before changes nothing in Free camera. NAV-GRAD: it is the only camera; the View card has no box for it,
  * and a device that stored it off opens in it all the same. At the Fold8's four panels under a real finger (Chromium's
  * touch pipeline), and on a desktop with a mouse and a keyboard.
@@ -137,7 +137,7 @@ for (const panel of FOLD8) {
 
   // NAV-GRAD: the device that turned Free camera off before (Ross's own Fold8 may have) opens in the Free camera all the
   // same, every gesture of it working; what it stored is read past, and dropped the next time the case stores anything
-  test(`NAV-GRAD: a device that stored Free camera off (and Pan the wall): the Free camera, its hold-Look and its jog; the next write drops the field: ${panel.name}`, async ({ page }) => {
+  test(`NAV-GRAD: a device that stored Free camera off (and Pan the wall): the Free camera, its Look (the hat's eye) and its jog; the next write drops the field: ${panel.name}`, async ({ page }) => {
     await openCase(page, panel, { freeCamera: false, swipe: 'pan', view: 'wall' });
     const scene = page.locator('.cabinet-scene');
     await expect(scene).toHaveAttribute('data-free-camera', '1');
@@ -152,17 +152,18 @@ for (const panel of FOLD8) {
     const moved = await cameraOf(page);
     expect(moved.x, 'the drag walked the eye').toBeGreaterThan(start.x);
     expect([moved.yaw ?? 0, moved.pitch], 'and never turned it').toEqual([0, 0]);
-    // a finger held still, then dragged, turns it where it stands
-    const f = await frameBox(page);
-    const finger = await touchDown(page, f.x + f.width / 2, f.y + f.height / 2);
-    await page.waitForTimeout(300);
-    // waited for, not timed: the hold's timer fires late on a loaded host
-    await expect(scene, 'Look armed').toHaveAttribute('data-gesture', 'look', { timeout: 10_000 });
-    await finger.to(f.x + f.width / 2 - 80, f.y + f.height / 2, 8, 16);
-    await finger.end();
+    // NAVLOOK 1a: touch's Look is the hat's eye: a tap on it, then a thumb on the hat turns the eye where it stands
+    const e = (await eye(page).boundingBox())!;
+    await touchTap(page, e.x + e.width / 2, e.y + e.height / 2);
+    await expect(eye(page)).toHaveAttribute('aria-pressed', 'true');
+    const h = (await hat(page).boundingBox())!;
+    const thumb = await touchDown(page, h.x + h.width / 2, h.y + h.height / 2);
+    await thumb.to(h.x + h.width / 2 - JOG_FULL_PX / 2, h.y + h.height / 2, 6, 16);
+    await page.waitForTimeout(500);
+    await thumb.end();
     await settle(page);
     const turned = await cameraOf(page);
-    expect(turned.yaw ?? 0, 'the held drag turned the eye').not.toBe(0);
+    expect(turned.yaw ?? 0, 'the hat in Look turned the eye').not.toBe(0);
     expect(turned.x, 'where it stood').toBe(moved.x);
     // nothing written yet: the stored field is still there, only read past
     expect((await storedPrefs(page)).freeCamera).toBe(false);

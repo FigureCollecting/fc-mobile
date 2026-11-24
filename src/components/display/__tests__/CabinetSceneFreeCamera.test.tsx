@@ -1619,6 +1619,78 @@ describe('the depth rocker\'s drive (NAV-DEPTH-3): the offered jog\'s depth move
     expect(held).toEqual(scales());
   });
 
+  // CHALLENGE-1 S1: a finger resting after an approach, wobbling a pixel every 200 ms, re-sizes no figure layer
+  it('LOD-HOLD: a resting finger\'s 1 px wobble (LOOK on the fixture, MOVE on a varied collection) re-sizes no figure', () => {
+    const varied = Array.from({ length: 120 }, (_, i) => ({ _id: `v${i}`, name: `F${i}`, dimensions: { heightMm: 120 + ((i * 37) % 211), widthMm: 60 + ((i * 53) % 141) } }) as Figure);
+    for (const [button, figures] of [
+      [2, FIGURES],
+      [0, varied],
+    ] as const) {
+      const { unmount } = scene({}, { figures });
+      press(1);
+      frames(60);
+      lift();
+      frames(1);
+      down(1, { x: 220, y: 200 }, { button });
+      for (let i = 1; i <= 10; i++) {
+        move(1, { x: 220 + 6 * i, y: 200 });
+        tick(16);
+      }
+      frames(20);
+      const before = cam();
+      let changed = 0;
+      let s = scales();
+      for (let k = 0; k < 25; k++) {
+        move(1, { x: 280 + ((k + 1) % 2), y: 200 });
+        frames(12);
+        const now = scales();
+        if (JSON.stringify(now) !== JSON.stringify(s)) changed++;
+        s = now;
+      }
+      expect(cam()).not.toEqual(before);
+      expect(changed).toBe(0);
+      up(1, { x: 280, y: 200 });
+      unmount();
+    }
+  });
+
+  // LOD-STEP (Ross 11-24): on a long approach the figures sharpen on the way in, before the rocker rests; the room's
+  // faces keep their px per mm till then (a step-up re-rasters the figures only)
+  it('LOD-STEP: the rocker held on a long approach sharpens the figures on the way in; the room waits for the rest', () => {
+    scene();
+    const far = sharpest();
+    const root = () => Number((document.querySelector('.cabinet-scene__root') as HTMLElement).style.getPropertyValue('--s'));
+    const room = root();
+    press(1);
+    const seen: { z: number; figures: number; room: number }[] = [];
+    for (let i = 0; i < 60; i++) {
+      frames(1);
+      seen.push({ z: pose().z, figures: sharpest(), room: root() });
+    }
+    // still closing in when the figures were sharpened, the room still at the opening's
+    const stepped = seen.findIndex((f) => f.figures >= 1.5 * far);
+    expect(stepped).toBeGreaterThan(0);
+    expect(seen[stepped + 1].z).toBeLessThan(seen[stepped].z);
+    expect(seen.slice(0, 59).every((f) => f.room === room)).toBe(true);
+    act(() => depth().rate(0));
+    frames(10);
+    expect(sharpest()).toBeCloseTo(Math.SQRT1_2, 6);
+    expect(root()).toBeCloseTo(Math.SQRT1_2, 6);
+    cleanup();
+
+    // the same approach lifted in the frame that asks a step-up (one render for both): the lift's render is a full one
+    scene();
+    press(1);
+    frames(stepped);
+    act(() => {
+      vi.advanceTimersByTime(16);
+      depth().stop();
+    });
+    expect(host().dataset.gesture).toBeUndefined();
+    expect(root()).toBeGreaterThan(room);
+    expect(root()).toBe(sharpest());
+  });
+
   it('a stop with no depth drive running (after the hat alone) changes nothing', () => {
     scene();
     const before = pose();

@@ -1138,7 +1138,10 @@ export function CabinetScene({
   // NAV-1A (a), Ross 10-28: turned, the scene keeps the px per mm in force where the turn left yaw 0 (a cabinet beside
   // the eye, a move or a pitch while turned never sharpens it); what the turned view itself would ask (its nearest point
   // in view, over the wall and a cabinet's reach past its ends) is published beside it
-  const s = freeTexelScale(camera, span, fc.unturned(base.camera));
+  const need = freeTexelScale(camera, span, fc.unturned(base.camera));
+  // LOD-STEP (Ross 11-24): a held approach's step-up draws the figures at the eye's px per mm and keeps the room's
+  // (its faces re-rastered at the rest render, not at every step)
+  const s = moving && fc.stepping() ? freeScene.current!.s : need;
   const asked = camera.yaw ? texelScale(camera, span, [wall.leftMm - 1000, wall.rightMm + 1000]) : null;
   const draw: Draw = { view: cull, rect: cullRect(camera.frame), s };
 
@@ -1526,11 +1529,12 @@ export function CabinetScene({
   // PINCH-1: Chrome rasters a layer under the perspective at the device pixel ratio per layer px, whatever the zoom
   // magnifies it by; so once a zoom settles the figures nearest the middle of the zoomed view are drawn at the zoom
   // times the scene's px per mm, out of the same budget (the rest coarser outward from it). LOD-HOLD: nearest the centre
-  // of the frame drawn now, not of the sticky cull's (a held control's rest render draws them as its lift would)
+  // of the frame drawn now, not of the sticky cull's (a held control's rest render draws them as its lift would).
+  // LOD-STEP: at the eye's px per mm (`need`), which is the scene's but in a step-up's render (the room's kept)
   const scales = figureScales(
     { camera, panPx: 0 },
     showIdx.map((i, n) => ({ ...inDrawnBoxes[i], plateMm2: plates[n] ? plates[n].u[0] * LABEL_HEIGHT_MM : 0 })),
-    s * sharp.k,
+    need * sharp.k,
     FIGURE_BUDGET_VIEWPORTS * camera.frame.width * camera.frame.height,
     zoomedAt,
   );
@@ -1577,6 +1581,7 @@ export function CabinetScene({
   freeScene.current = {
     base: base.camera,
     s,
+    figureS: need,
     wall,
     fronts,
     drawn: drawnCabs,

@@ -5,8 +5,8 @@ import * as camera from '../caseCamera';
 import { EYE_MARGIN_MM, JOG_FULL_PX, poseOf, withPose, type Pose } from '../casePose';
 import { SCENE_CEILING_VIEWPORTS, projector } from '../caseBudget';
 import { capSpanMm, frameSpanMm, type Box } from '../caseFraming';
-import { DRAWN_CABINETS_LIMIT, type CullView } from '../caseCull';
-import { REST_RENDER_MS, useFreeCamera, type FreeScene } from '../useFreeCamera';
+import { DRAWN_CABINETS_LIMIT, freeTexelScale, type CullView } from '../caseCull';
+import { REST_RENDER_MS, REST_SLOP, STEP_RATIO, STEP_RENDER_MS, restShiftPx, useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { LONG_WALL, freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
 // NAV-DEPTH-2 (Ross 11-13): the hat (the bottom-centre button's jog) and the depth rocker are two drives of one eye, held
@@ -903,20 +903,32 @@ describe('LOD-HOLD: a held control at rest asks for one render', () => {
     vi.useRealTimers();
   });
 
-  /** The hook as CabinetScene drives it: each render keeps the cull at the drawn camera, builds a new scene and syncs. */
-  function mountScene(scene: FreeScene = freeSceneOf()) {
+  /**
+   * The hook as CabinetScene drives it: each render keeps the cull at the drawn camera, builds a new scene and syncs.
+   * `scaled`: the new scene's px per mm as CabinetScene works it out too (the eye's own, freeTexelScale; a step-up's
+   * render keeps the room's and draws the figures at the eye's), with every render's kind kept in `kinds`.
+   */
+  function mountScene(scene: FreeScene = freeSceneOf(), scaled = false) {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const frames = handFrames(1000, true);
     const dom = freeDom();
     const ref = { current: scene };
     const culled: { current: CullView | null } = { current: { camera: ref.current.base, panPx: 0 } };
     let renders = 0;
+    const kinds: { at: number; figuresOnly: boolean; s: number; figureS: number }[] = [];
     const hook = renderHook(() =>
       useFreeCamera(ref, dom, culled, () => {
         renders++;
         const fc = hook.result.current;
-        culled.current = { camera: fc.camera(ref.current.base), panPx: 0 };
-        ref.current = { ...ref.current };
+        const camera = fc.camera(ref.current.base);
+        culled.current = { camera, panPx: 0 };
+        if (scaled) {
+          const need = freeTexelScale(camera, ref.current.budget.span, fc.unturned(ref.current.base));
+          const figuresOnly = fc.live() && fc.stepping();
+          const s = figuresOnly ? ref.current.s : need;
+          ref.current = { ...ref.current, s, figureS: figuresOnly ? Math.max(need, s) : s };
+          kinds.push({ at: performance.now(), figuresOnly, s, figureS: ref.current.figureS! });
+        } else ref.current = { ...ref.current };
         fc.sync();
       }),
     );
@@ -930,26 +942,29 @@ describe('LOD-HOLD: a held control at rest asks for one render', () => {
       }
     };
     const wait = (ms: number) => vi.advanceTimersByTime(ms);
-    return { dom, fc, pose, run, wait, renders: () => renders, unmount: hook.unmount };
+    return { ref, dom, fc, pose, run, wait, renders: () => renders, kinds, unmount: hook.unmount };
   }
 
-  it('the depth: moving, no render; at rest one after REST_RENDER_MS and none after; pushed and rested, one more; the lift its own', () => {
-    const m = mountScene();
+  it('the depth: moving, step-ups only; at rest one full render after REST_RENDER_MS and none after; pushed and rested, one more; the lift its own', () => {
+    const m = mountScene(freeSceneOf(), true);
+    const full = () => m.kinds.filter((k) => !k.figuresOnly).length;
     m.fc().depthStart(1);
     m.run(60);
-    // a straight approach keeps the cull: nothing renders while the eye moves
-    expect(m.renders()).toBe(0);
+    // a straight approach keeps the cull: only its step-ups (LOD-STEP) render while the eye moves
+    const n0 = m.renders();
+    expect(full()).toBe(0);
     const z = m.pose().z;
     m.fc().depthRate(0);
     m.run(1);
     expect(m.pose().z).toBe(z);
     m.wait(REST_RENDER_MS - 17);
-    expect(m.renders()).toBe(0);
+    expect(m.renders()).toBe(n0);
     m.wait(1);
-    expect(m.renders()).toBe(1);
+    expect(m.renders()).toBe(n0 + 1);
+    expect(full()).toBe(1);
     // held still 2 s: no storm (the render's own sync writes the same pose)
     m.run(125);
-    expect(m.renders()).toBe(1);
+    expect(m.renders()).toBe(n0 + 1);
     expect(m.dom.hostEl.dataset.gesture).toBe('depth');
     // the drive goes on from the new scene
     m.fc().depthRate(1);
@@ -957,11 +972,13 @@ describe('LOD-HOLD: a held control at rest asks for one render', () => {
     expect(m.pose().z).toBeLessThan(z);
     m.fc().depthRate(0);
     m.run(125);
-    expect(m.renders()).toBe(2);
+    expect(full()).toBe(2);
+    const n1 = m.renders();
     act(() => void m.fc().depthStop());
-    expect(m.renders()).toBe(3);
+    expect(m.renders()).toBe(n1 + 1);
+    expect(full()).toBe(3);
     m.run(125);
-    expect(m.renders()).toBe(3);
+    expect(m.renders()).toBe(n1 + 1);
   });
 
   it('the hat: at rest one render, none more while held; the lift adds only its own', () => {
@@ -1033,6 +1050,7 @@ describe('LOD-HOLD: a held control at rest asks for one render', () => {
     cancelled.run(1);
     const c0 = cancelled.renders();
     act(() => void cancelled.fc().release(5, false));
+    expect(vi.getTimerCount()).toBe(0);
     cancelled.wait(2000);
     expect(cancelled.renders()).toBe(c0 + 1);
     cancelled.unmount();
@@ -1042,6 +1060,7 @@ describe('LOD-HOLD: a held control at rest asks for one render', () => {
     blurred.run(10);
     act(() => void window.dispatchEvent(new Event('blur')));
     expect(blurred.renders()).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
     blurred.wait(2000);
     expect(blurred.renders()).toBe(1);
     blurred.unmount();
@@ -1063,6 +1082,191 @@ describe('LOD-HOLD: a held control at rest asks for one render', () => {
     replaced.wait(REST_RENDER_MS);
     expect(replaced.fc().live()).toBe(false);
     expect(replaced.renders()).toBe(p0);
+  });
+
+  // the timer itself is cleared, not only refused by the live check when it runs: a control pressed at once after a lift
+  // is held (the check would pass), so a timer left over from the lift would render again with the eye unmoved
+  it('a lift clears the rest timer: the hat pressed at once after the depth or a MOVE lifts and held centred renders nothing', () => {
+    const depth = mountScene();
+    depth.fc().depthStart(1);
+    depth.run(20);
+    act(() => void depth.fc().depthStop());
+    // no timer left behind (the rest check at the lift's own pose would refuse it, but none is due at all)
+    expect(vi.getTimerCount()).toBe(0);
+    const d0 = depth.renders();
+    depth.fc().jogStart();
+    depth.fc().jogAim(0, 0);
+    depth.run(60);
+    expect(depth.dom.hostEl.dataset.gesture).toBe('jog');
+    expect(depth.renders()).toBe(d0);
+    depth.unmount();
+
+    const moved = mountScene();
+    act(() => moved.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+    act(() => moved.fc().drag(5, { x: 300, y: 200 }, 'x'));
+    moved.run(1);
+    act(() => void moved.fc().release(5, true));
+    expect(vi.getTimerCount()).toBe(0);
+    const m0 = moved.renders();
+    moved.fc().jogStart();
+    moved.fc().jogAim(0, 0);
+    moved.run(60);
+    expect(moved.renders()).toBe(m0);
+  });
+
+  it('gone mid-drag, the finger still down: the timer is cleared, no render is asked after the unmount', () => {
+    const m = mountScene();
+    act(() => m.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button: 0 }, { x: 400, y: 200 }));
+    act(() => m.fc().drag(5, { x: 300, y: 200 }, 'x'));
+    m.run(1);
+    const r0 = m.renders();
+    m.unmount();
+    m.wait(2000);
+    expect(m.renders()).toBe(r0);
+  });
+
+  // CHALLENGE-1 S1: a finger resting on the glass still reports a pixel now and then; past the rest render, a wobble that
+  // leaves the picture where it was drawn (and the px per mm the eye needs the same) asks for nothing
+  it('a resting finger\'s 1 px wobble every 200 ms for 5 s, MOVE or LOOK: nothing renders past the rest render; a real move does', () => {
+    for (const button of [0, 2]) {
+      const m = mountScene();
+      act(() => m.fc().press({ pointerId: 5, clientX: 400, clientY: 200, button }, { x: 400, y: 200 }));
+      for (const x of [380, 340, 300]) {
+        act(() => m.fc().drag(5, { x, y: 200 }, 'x'));
+        m.run(1);
+      }
+      expect(m.dom.hostEl.dataset.gesture).toBe(button ? 'look' : 'move');
+      m.run(20);
+      const r0 = m.renders();
+      const p0 = m.pose();
+      let stirred = 0;
+      for (let k = 0; k < 25; k++) {
+        act(() => m.fc().drag(5, { x: 300 + ((k + 1) % 2), y: 200 }, 'x'));
+        m.run(1);
+        if (JSON.stringify(m.pose()) !== JSON.stringify(p0)) stirred++;
+        m.run(11);
+      }
+      // the wobble moved the eye (or its aim): it is no same-pose stir
+      expect(stirred).toBeGreaterThan(10);
+      m.run(20);
+      expect(m.renders()).toBe(r0);
+      act(() => m.fc().drag(5, { x: 270, y: 200 }, 'x'));
+      m.run(20);
+      expect(m.renders()).toBe(r0 + 1);
+      m.unmount();
+    }
+  });
+
+  it('a small push that rests inside the slop renders nothing, unless it crossed into a finer quarter octave', () => {
+    const s0 = freeSceneOf();
+    const { span } = s0.budget;
+    const c = s0.base;
+    // level, the nearest the room is its front (z1); the depth at which the next finer quarter octave begins
+    expect(c.pitch).toBe(0);
+    const k = Math.ceil(4 * Math.log2(c.focalPx / (c.z - span.z1)));
+    const edge = span.z1 + c.focalPx / 2 ** (k / 4);
+    for (const [ahead, crossed] of [
+      [6, false],
+      [1, true],
+    ] as const) {
+      const scene = { ...s0, base: { ...c, z: edge + ahead } };
+      const m = mountScene(scene);
+      // the scene's first render drew at the framing
+      m.fc().sync();
+      const p0 = m.pose();
+      m.fc().depthStart(0.2);
+      for (let i = 0; i < 200 && m.pose().z > p0.z - 3; i++) m.run(1);
+      m.fc().depthRate(0);
+      m.run(1);
+      const p1 = m.pose();
+      expect(p0.z - p1.z).toBeGreaterThanOrEqual(3);
+      expect(restShiftPx(p0, p1, c)).toBeLessThan(REST_SLOP * Math.min(c.frame.width, c.frame.height));
+      const need = (p: Pose) => freeTexelScale(withPose(c, p), span);
+      expect(need(p1) !== need(p0)).toBe(crossed);
+      m.wait(REST_RENDER_MS);
+      expect(m.renders()).toBe(crossed ? 1 : 0);
+      m.unmount();
+    }
+  });
+
+  // LOD-STEP (Ross 11-24): on a long approach the figures sharpen on the way in, not only once the control rests: a
+  // render each time the eye needs the figures 1.5x (STEP_RATIO) or more as sharp as they are drawn, at most every
+  // STEP_RENDER_MS; it draws the figures at the eye's px per mm and leaves the room's (no re-raster of every face)
+  it('LOD-STEP: the rocker held on a long approach: figure-only step-ups on the way in, throttled, then one full rest render', () => {
+    const m = mountScene(freeSceneOf(), true);
+    const s0 = m.ref.current.s;
+    m.fc().depthStart(1);
+    m.run(60);
+    const steps = m.kinds.filter((k) => k.figuresOnly);
+    expect(m.kinds.length).toBe(steps.length);
+    expect(steps.length).toBeGreaterThanOrEqual(2);
+    let drawn = s0;
+    let last = -Infinity;
+    for (const k of steps) {
+      // the room keeps its px per mm; the figures at the eye's, 1.5x or more what they were drawn at
+      expect(k.s).toBe(s0);
+      expect(k.figureS).toBeGreaterThanOrEqual(STEP_RATIO * drawn);
+      expect(k.at - last).toBeGreaterThanOrEqual(STEP_RENDER_MS);
+      drawn = k.figureS;
+      last = k.at;
+    }
+    // the eye's need now is under 1.5x the last step's: no more step-ups while it closes the rest of the way
+    const n = m.renders();
+    m.fc().depthRate(0);
+    m.run(1);
+    m.wait(REST_RENDER_MS);
+    expect(m.renders()).toBe(n + 1);
+    const rest = m.kinds[m.kinds.length - 1];
+    expect(rest.figuresOnly).toBe(false);
+    expect(rest.s).toBeGreaterThan(drawn / STEP_RATIO);
+    expect(rest.s).toBe(rest.figureS);
+    m.run(125);
+    expect(m.renders()).toBe(n + 1);
+    act(() => void m.fc().depthStop());
+    expect(m.kinds[m.kinds.length - 1].figuresOnly).toBe(false);
+  });
+
+  it('LOD-STEP: the rocker rested a frame after a step-up: the rest render still draws the room at the eye\'s px per mm', () => {
+    const m = mountScene(freeSceneOf(), true);
+    m.fc().depthStart(1);
+    for (let i = 0; i < 120 && m.kinds.length === 0; i++) m.run(1);
+    expect(m.kinds.map((k) => k.figuresOnly)).toEqual([true]);
+    m.fc().depthRate(0);
+    m.run(1);
+    m.wait(REST_RENDER_MS);
+    expect(m.kinds.map((k) => k.figuresOnly)).toEqual([true, false]);
+    expect(m.ref.current.s).toBe(freeTexelScale(m.fc().camera(m.ref.current.base), m.ref.current.budget.span));
+    expect(m.ref.current.s).toBeGreaterThan(m.kinds[0].s);
+  });
+
+  it('LOD-STEP: a scene whose renders never catch the figures up (still drawn coarse) is asked at most every STEP_RENDER_MS', () => {
+    // the plain harness keeps the scene's px per mm: every frame of the approach needs the figures 1.5x as sharp or more
+    const m = mountScene();
+    const at: number[] = [];
+    m.fc().depthStart(1);
+    for (let i = 0; i < 60; i++) {
+      const n = m.renders();
+      m.run(1);
+      if (m.renders() > n) at.push(performance.now());
+    }
+    expect(at.length).toBe(Math.floor((at[at.length - 1] - at[0]) / STEP_RENDER_MS) + 1);
+    expect(at.length).toBeGreaterThanOrEqual(3);
+    at.slice(1).forEach((t, i) => expect(t - at[i]).toBeGreaterThanOrEqual(STEP_RENDER_MS));
+    at.slice(1).forEach((t, i) => expect(t - at[i]).toBeLessThan(STEP_RENDER_MS + 17));
+  });
+
+  it('LOD-STEP: the hat walking along the wall at one depth, or pulled back, never steps up', () => {
+    const along = mountScene(freeSceneOf({ wall: LONG_WALL }), true);
+    along.fc().jogStart();
+    along.fc().jogAim(JOG_FULL_PX, 0);
+    along.run(120);
+    expect(along.kinds.filter((k) => k.figuresOnly)).toEqual([]);
+    along.unmount();
+
+    const back = mountScene(freeSceneOf(), true);
+    back.fc().depthStart(-1);
+    back.run(60);
+    expect(back.kinds.filter((k) => k.figuresOnly)).toEqual([]);
   });
 
   it('a look let go easing back with nothing held is no held control: only the lift and the ease end render', () => {

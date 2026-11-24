@@ -13,7 +13,7 @@ import { useCallback, useEffect, useRef } from 'preact/hooks';
 import { cssSceneTransform, type Camera, type Vec3 } from './caseCamera';
 import { DEPTH_STOP_MM, aheadMm, depthSpeed, dollyStep } from './caseDepth';
 import { capSpanMm, frameSpanMm, yawCapRad, type Box, type RoomSpan } from './caseFraming';
-import { DRAWN_CABINETS_LIMIT, stickyWhole, type CullView } from './caseCull';
+import { DRAWN_CABINETS_LIMIT, freeTexelScale, stickyWhole, type CullView } from './caseCull';
 import {
   DRAG_WALK_GAIN_X,
   DRAG_WALK_GAIN_Y,
@@ -53,6 +53,8 @@ export interface FreeScene {
   readonly base: Camera;
   /** The px per mm the scene's DOM is drawn at (texelScale): the root's transform is written at it. */
   readonly s: number;
+  /** LOD-STEP: the px per mm its sharpest figures are drawn at (absent: `s`); a held approach's step-up raises it alone. */
+  readonly figureS?: number;
   readonly wall: WallLayout;
   readonly fronts: RoomSpan;
   /** The cabinets (wall indexes) the last render drew: a move re-culls once the frame shows a front not among them. */
@@ -182,8 +184,29 @@ const STUCK_DTS = 4;
 
 /** LOD-HOLD: how long a held control leaves the drawn pose unchanged before the scene renders at it (its rest render). */
 export const REST_RENDER_MS = 150;
+/** LOD-STEP: how much sharper than they are drawn the eye must need the figures before a held approach renders them again. */
+export const STEP_RATIO = 1.5;
+/** LOD-STEP: the least time between two of those renders. */
+export const STEP_RENDER_MS = 300;
+/**
+ * LOD-HOLD (CHALLENGE-1 S1): a held control resting this close to where the scene last rendered (a share of the frame's
+ * shorter side, restShiftPx) at the px per mm it rendered at asks for no rest render: a resting finger still reports a
+ * pixel now and then (2 px and more of the picture with the swipe's gain), and that render would re-size layers for nothing.
+ */
+export const REST_SLOP = 0.02;
 
 const samePose = (a: Pose, b: Pose) => a.x === b.x && a.y === b.y && a.z === b.z && a.yaw === b.yaw && a.pitch === b.pitch;
+
+/**
+ * LOD-HOLD: about how far (frame px) the picture at `b` stands from the one at `a`, through `camera`'s lens: the fronts'
+ * plane slid, grown at the frame's corner by a dolly, and turned. Conservative: nothing drawn is nearer than the fronts.
+ */
+export function restShiftPx(a: Pose, b: Pose, camera: Camera): number {
+  const depth = Math.max(1, Math.min(a.z, b.z));
+  const corner = Math.hypot(camera.frame.width, camera.frame.height) / 2;
+  const slid = (Math.hypot(b.x - a.x, b.y - a.y) * camera.focalPx + Math.abs(b.z - a.z) * corner) / depth;
+  return slid + (Math.abs(b.yaw - a.yaw) + Math.abs(b.pitch - a.pitch)) * camera.focalPx;
+}
 
 /**
  * NAV-DEPTH-2: the drives of one pose, the hat and the depth, either or both held at once: each frame the hat walks it
@@ -309,6 +332,10 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   const halted = useRef<{ readonly pose: Pose; readonly hat: boolean; readonly depth: boolean } | null>(null);
   /** LOD-HOLD: the rest render's timer, and the pose a held control last drew (armed only by a new one). */
   const rest = useRef<{ timer: ReturnType<typeof setTimeout>; pose: Pose } | null>(null);
+  /** LOD-HOLD: the pose the scene last rendered at in full (sync; a step-up's render is the figures' only); null: none yet. */
+  const rendered = useRef<Pose | null>(null);
+  /** LOD-STEP: when the last step-up was asked (a frame's time), and whether the render asked for is one still to come. */
+  const step = useRef<{ at: number; only: boolean }>({ at: -Infinity, only: false });
   /** A look let go past its soft limit easing back (spec 1.5) over SPRING_MS from t0, the lift (a late first frame catches up). */
   const spring = useRef<{ from: Pose; to: Pose; t0: number } | null>(null);
   const raf = useRef<number | undefined>(undefined);
@@ -370,14 +397,38 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     host.current.dataset.camera = cameraData(camera);
     host.current.dataset.cameraX = String(num(camera.x));
     const next: CullView = { camera, panPx: 0 };
-    if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) !== culled.current) onRender();
+    if (stickyWhole(culled.current, next, scene.current.wall, scene.current.drawn) === culled.current) return false;
+    onRender();
+    return true;
+  };
+  /** The px per mm the scene needs at `pose`, as CabinetScene works it out (freeTexelScale, the tilt composed). */
+  const needOf = (pose: Pose) => {
+    const s = scene.current;
+    return freeTexelScale(tilted(cameraOf(pose)), s.budget.span, unturned.current === null ? undefined : withPose(s.base, unturned.current));
+  };
+
+  /**
+   * LOD-STEP (Ross 11-24): a held control drew `pose` at `now` (a frame's time). On an approach the eye needs the figures
+   * sharper than they are drawn long before it rests; once it needs them STEP_RATIO as sharp or more, the scene renders
+   * the figures at the eye's px per mm (stepping: the room's faces keep theirs till the rest render), at most every
+   * STEP_RENDER_MS. A walk at one depth, a pull back or a turn (its px per mm held, NAV-1A a) never asks one.
+   */
+  const stepUp = (pose: Pose, now: number) => {
+    const st = step.current;
+    if (now - st.at < STEP_RENDER_MS) return;
+    const s = scene.current;
+    if (needOf(pose) < STEP_RATIO * (s.figureS ?? s.s)) return;
+    st.at = now;
+    st.only = true;
+    onRender();
   };
 
   /**
    * LOD-HOLD (Ross 11-22): a held control drew `pose`. Once it has drawn no other for REST_RENDER_MS, the scene renders
    * at it (the figure layers at the px per mm where the eye stands, as the lift draws them), the control still held.
    * Armed only where a gesture or a drive draws a new pose, never in write: a render's sync (or a tilt) rewrites the
-   * pose it holds, and arming there would render again and again.
+   * pose it holds, and arming there would render again and again. A rest within REST_SLOP of the pose the scene last
+   * rendered at in full, needing the px per mm it rendered at, renders nothing (CHALLENGE-1 S1).
    */
   const restArm = (pose: Pose) => {
     const r = rest.current;
@@ -386,7 +437,11 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     rest.current = {
       pose,
       timer: setTimeout(() => {
-        if (gesture.current?.mode || drives.current) onRender();
+        if (!(gesture.current?.mode || drives.current)) return;
+        const at = rendered.current;
+        const camera = scene.current.base;
+        const slop = REST_SLOP * Math.min(camera.frame.width, camera.frame.height);
+        if (at === null || restShiftPx(at, pose, camera) >= slop || needOf(at) !== needOf(pose)) onRender();
       }, REST_RENDER_MS),
     };
   };
@@ -517,7 +572,8 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
       d.pose = pose;
       if (!samePose(draw, d.shown)) {
         d.shown = draw;
-        write(cameraOf(draw));
+        // (a re-cull's render draws the figures at the eye's px per mm already)
+        if (!write(cameraOf(draw))) stepUp(draw, now);
         restArm(draw);
       }
       raf.current = requestAnimationFrame(loop);
@@ -1023,9 +1079,14 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
     depthStop,
     tiltSet,
     tiltFold,
+    /** LOD-STEP: the render asked for is a held approach's step-up: the figures at the eye's px per mm, the room's kept. */
+    stepping: (): boolean => step.current.only,
     /** Write the drawn pose to the DOM again (after a render, which may have rewritten it). */
     sync: () => {
       const pose = drawn();
+      // LOD-HOLD: the pose a full render drew at (a step-up's left the room as it was)
+      if (!step.current.only) rendered.current = pose ?? poseOf(scene.current.base);
+      step.current.only = false;
       if (pose !== null) write(cameraOf(pose));
     },
   };

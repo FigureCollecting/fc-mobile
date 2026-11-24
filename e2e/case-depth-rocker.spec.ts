@@ -225,6 +225,42 @@ for (const panel of PANELS) {
     console.log(`lod-hold ${measured}`);
   });
 
+  // LOD-STEP (Ross 11-24): on a long approach the figures sharpen on the way in, before the rail rests; the room's faces
+  // keep their px per mm till the rest render (a step-up re-rasters the figures only)
+  test(`LOD-STEP ${panel.name}: a long approach sharpens the figures while the eye still closes in`, async ({ page }) => {
+    await openFree(page, panel);
+    // every frame: the eye's z, the sharpest figure's px per mm and the room's
+    await page.evaluate(() => {
+      const w = window as unknown as { __seen: { z: number; figures: number; room: number }[] };
+      w.__seen = [];
+      const scene = document.querySelector<HTMLElement>('.cabinet-scene')!;
+      const root = document.querySelector<HTMLElement>('.cabinet-scene__root')!;
+      const on = () => {
+        const figures = Math.max(...Array.from(scene.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => Number(b.style.getPropertyValue('--s'))));
+        w.__seen.push({ z: JSON.parse(scene.dataset.camera!).z, figures, room: Number(root.style.getPropertyValue('--s')) });
+        requestAnimationFrame(on);
+      };
+      requestAnimationFrame(on);
+    });
+    const at = await centreOf(rocker(page));
+    const f = await touchFingers(page);
+    await f.down(1, at.x, at.y);
+    await f.to(1, at.x, at.y - DEPTH_FULL_PX / 2, 6);
+    // a loaded runner's long frames move the eye less a frame (JOG_MAX_STEP_MS): held till the figures are sharper, then
+    // on a little (the near stop is far past where they first need 1.5x)
+    await page.waitForFunction(() => {
+      const seen = (window as unknown as { __seen: { figures: number }[] }).__seen;
+      return seen.some((s) => s.figures >= 1.5 * seen[0].figures);
+    }, undefined, { timeout: 20_000 });
+    await hold(page, 400);
+    await f.up(1);
+    const seen = await page.evaluate(() => (window as unknown as { __seen: { z: number; figures: number; room: number }[] }).__seen);
+    const { figures: far, room } = seen[0];
+    const stepped = seen.findIndex((s) => s.figures >= 1.5 * far && s.room === room);
+    expect(stepped, 'sharper figures, the room as it was').toBeGreaterThan(0);
+    expect(Math.min(...seen.slice(stepped + 1).map((s) => s.z)), 'the eye still closing in').toBeLessThan(seen[stepped].z);
+  });
+
   // chal1 NOTE-1 (ruled a fix): the capture released mid-push and the finger lifted off the rocker: no lift reaches it, so
   // the lost capture springs it back and stops the drive
   test(`NAV-DEPTH-3 ${panel.name}: the capture lost mid-push stops the drive; the lift elsewhere leaves nothing moving`, async ({ page }) => {

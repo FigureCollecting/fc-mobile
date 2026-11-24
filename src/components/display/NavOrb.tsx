@@ -148,8 +148,7 @@ const rail = DEPTH_RAIL_PX;
 const orb = ORB_PX;
 /**
  * The orb's round target, centred over the rail's drawn centre, its bottom `clear` above the top of the rail's target
- * (the drawn rail and its pad), so the two targets never overlap. `clear` is a small safety margin, not scaled with
- * --nav-k.
+ * (the drawn rail and its pad). The clearance is not scaled with --nav-k: the touch adjustment's reach is fixed.
  */
 const LEFT = (rail.width - orb.hit) / 2;
 const RAIL_TARGET_TOP = (rail.hitHeight + rail.height) / 2;

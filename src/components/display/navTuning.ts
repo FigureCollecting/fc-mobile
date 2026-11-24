@@ -47,12 +47,13 @@ export const NAV_TEAL = '172 55% 50%';
 export const DEPTH_RAIL_PX = { width: 28, height: 92, hitWidth: 56, hitHeight: 132, knob: 24, travel: 34 } as const;
 
 /**
- * NAV-LOGPOSE: the Log-Pose orb (px): what is drawn, the round target that takes the thumb, and the gap between that
- * target and the Z rail's target below it (handoff: smaller than the sextant concepts, visibly detached). The two
- * targets must not overlap: where they did, Chromium's touch adjustment gave a push begun in the rail's top to the orb
- * (a button, so a tap candidate; the rail is not one). Removing the overlap is the fix; `clear` is a small safety margin.
+ * NAV-LOGPOSE: the Log-Pose orb (px): what is drawn, the round target that takes the thumb, and the clear space between
+ * that target and the Z rail's target below it (handoff: smaller than the sextant concepts, visibly detached). `clear`
+ * is Chromium's touch adjustment reach: a touch is retargeted to a button within half its 32 DIP adjustment area, so
+ * with less a push begun in the rail's top would go to the orb (measured: with a figure under the orb, 4 px lost touches
+ * begun up to 10 px inside the rail's target; 16 px lost none).
  */
-export const ORB_PX = { size: 34, hit: 48, clear: 4 } as const;
+export const ORB_PX = { size: 34, hit: 48, clear: 16 } as const;
 /**
  * NAV-LOGPOSE (Ross's reference, ross-1122/logpose-orb.png): the orb's colours (HSL triples): its dark translucent dial,
  * the thin teal outer ring (quiet OFF, brighter with a soft glow ON) and the teal pivot, and the needle's muted red half

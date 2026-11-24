@@ -273,6 +273,93 @@ test.describe('on the Fold8 cover with a (faked) motion sensor', () => {
   });
 });
 
+/**
+ * The close camera (CHALLENGE-3 SHOULD-1): walked closer until a large figure lies under the orb and the rail's top,
+ * then back, 21 camera states. In each, touch-downs down the rail target's centre column, rows 0..14 of its target, at
+ * radius 10, 16 and 20: none may go to the orb. A figure may take one (develop's rail is no tap candidate: a known,
+ * separate limit); anything else fails. With the orb's target nearer the rail's than the touch adjustment's reach,
+ * Chromium gives these touches to the orb.
+ */
+for (const size of [COVER, ...['android', 'fold8-cover-sideways'].map((n) => CASE_VIEWPORTS.find((v) => v.name === n)!)]) {
+  test.describe(`close camera, ${size.name}`, () => {
+    test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
+
+    test(`NAV-LOGPOSE: with a figure under the orb, no touch-down in the rail's top goes to the orb (${size.name})`, async ({ page }) => {
+      test.setTimeout(600_000);
+      await fakeDevice(page);
+      await page.addInitScript(() => {
+        const w = window as unknown as { __pd: string[] };
+        w.__pd = [];
+        document.addEventListener('pointerdown', (e) => {
+          const el = e.target as Element | null;
+          const nav = el?.closest?.('[data-nav]')?.getAttribute('data-nav');
+          w.__pd.push(nav ?? (el?.closest?.('button.cab-figure') ? 'figure' : `scene:${el?.tagName}.${el?.getAttribute?.('class') ?? ''}`));
+        }, true);
+      });
+      await openCase(page, size);
+      await expect(orb(page)).toHaveCount(1);
+      await expect(orb(page)).toHaveAttribute('aria-checked', 'false');
+      const cdp = await page.context().newCDPSession(page);
+      const taken = () => page.evaluate(() => (window as unknown as { __pd: string[] }).__pd.splice(0));
+      const r = (await depth(page).boundingBox())!;
+      const o = (await orb(page).boundingBox())!;
+      const x = r.x + r.width / 2;
+      const pull = async (y: number, dy: number, radius: number) => {
+        await taken();
+        const z0 = (await cameraOf(page)).z;
+        const at = (yy: number) => [{ x, y: yy, radiusX: radius, radiusY: radius }];
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(y) });
+        for (let i = 1; i <= 10; i++) {
+          await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at(y + (dy * i) / 10) });
+          await page.waitForTimeout(16);
+        }
+        await page.waitForTimeout(350);
+        const dz = (await cameraOf(page)).z - z0;
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await settle(page, 200);
+        return { who: await taken(), dz };
+      };
+      const figureOverOrb = () =>
+        page.evaluate((b) => Array.from(document.querySelectorAll('button.cab-figure')).some((f) => {
+          const e = f.getBoundingClientRect();
+          return e.left < b.x + b.width && e.right > b.x && e.top < b.y + b.height && e.bottom > b.y;
+        }), o);
+      // closer x8, then back x12, each pull begun at the rail's middle with a fine point: always the rail's
+      const plan = [...Array(8).fill(-40), ...Array(12).fill(40)];
+      const wrong: string[] = [];
+      const tally: Record<string, number> = {};
+      let covered = 0;
+      let broad = '';
+      for (let k = 0; k <= plan.length; k++) {
+        if (k > 0) expect((await pull(r.y + r.height / 2, plan[k - 1], 1)).who, `walk pull ${k}`).toEqual(['depth']);
+        const over = await figureOverOrb();
+        if (over) covered++;
+        for (const radius of [10, 16, 20]) {
+          for (let row = 0; row <= 14; row++) {
+            await taken();
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: r.y + row, radiusX: radius, radiusY: radius }] });
+            await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+            const who = (await taken()).join('|');
+            tally[who] = (tally[who] ?? 0) + 1;
+            if (who !== 'depth' && who !== 'figure') wrong.push(`state ${k}${over ? ' (figure over the orb)' : ''} r${radius} row ${row}: ${who || 'nothing'}`);
+          }
+        }
+        // once, with a figure over the orb: a broad thumb's 40 px push from row 4, backing away (never clamped here)
+        if (over && !broad) {
+          const p = await pull(r.y + 4, 40, 20);
+          broad = `state ${k}: ${p.who.join('|')} dz ${p.dz.toFixed(1)}`;
+          if (p.who.join('|') === 'depth' ? p.dz <= 0 : p.who.join('|') !== 'figure') wrong.push(`broad push ${broad}`);
+        }
+        await expect(orb(page), `state ${k}`).toHaveAttribute('aria-checked', 'false');
+      }
+      console.log(`NAV-LOGPOSE close camera ${size.name}: clear ${ORB_PX.clear}, ${covered} of 21 states with a figure over the orb, broad push ${broad}, tally ${JSON.stringify(tally)}`);
+      // the precondition: the walk reached the close camera this test is about
+      expect(covered, 'states with a figure over the orb').toBeGreaterThan(0);
+      expect(wrong, `touch-downs in the rail's top that went to the orb (or nowhere): ${wrong.length}`).toEqual([]);
+    });
+  });
+}
+
 test.describe('on the desktop (no motion sensor)', () => {
   test('NAV-LOGPOSE (a, i): no orb once the probe has looked, the hat and the Z rail as ever; no location or absolute orientation in the bundle', async ({ page }) => {
     test.setTimeout(60_000);

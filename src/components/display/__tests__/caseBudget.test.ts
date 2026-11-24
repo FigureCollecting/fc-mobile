@@ -23,7 +23,7 @@ import {
 } from '../caseBudget';
 import { EYE_MARGIN_MM, poseOf, withPose } from '../casePose';
 import type { FreeScene } from '../useFreeCamera';
-import { COVER, COVER_PX, KLINGSBO_WALL, freeSceneOf } from './freeDrivesScene';
+import { COVER, COVER_PX, KLINGSBO_WALL, ROSS_WALL, freeSceneOf } from './freeDrivesScene';
 
 // NAV-1A (b), Ross 10-28: what the Free camera's scene would cost the GPU at a pose, before it is drawn there: each
 // composited layer's own element px (a figure's tap box and plate at its px per mm, its 16 x 16 shadow, a mesh shelf's
@@ -354,12 +354,25 @@ describe('NAV-DOLLY: the scene fits the ceiling at every depth of the walk in', 
     expect(sceneCostAt(camera, scene.budget, scene.budget.figures(), cost.s).vp).toBe(vp);
   });
 
-  it('a screen nothing fits (its controls and room alone are over): the coarsest scene, its cost told as it is', () => {
+  it('a screen nothing fits (its controls and room alone are over): the scene as sharp as the eye asks, the mesh at its own budget, its cost told as it is (the dolly holds the eye)', () => {
     const scene = freeSceneOf({ wall: KLINGSBO_WALL, figures: 622, real: true, frame: COVER, viewportPx: 20_000 });
     const { vp, cost } = projector(scene.budget)(scene.base);
-    expect(cost.s).toBe(1 / 64);
-    expect(cost.meshS).toBe(1 / 64);
+    expect(cost.s).toBe(freeTexelScale(scene.base, scene.budget.span));
+    expect(cost.mesh).toBeLessThanOrEqual(MESH_BUDGET_VIEWPORTS * scene.budget.viewportPx);
+    // the first whole octave within the mesh's budget, not the coarsest: an octave finer is over it
+    expect(cost.meshS).toBeGreaterThan(1 / 64);
+    expect(cost.mesh * 4).toBeGreaterThan(MESH_BUDGET_VIEWPORTS * scene.budget.viewportPx);
     expect(vp).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
+    expect(sceneCostAt(scene.base, scene.budget, scene.budget.figures(), cost.s).vp).toBe(vp);
+  });
+
+  it('a split screen of many small figures nothing fits: not drawn soft to stay over the ceiling anyway', () => {
+    // the challenger's P3, on the mixed wall: 1190 small figures, the cover split (a 443 x 140 frame in 443 x 280)
+    const scene = freeSceneOf({ wall: ROSS_WALL, figures: 1190, frame: { width: 443, height: 140 }, viewportPx: 443 * 280 });
+    const level = freeTexelScale(scene.base, scene.budget.span);
+    const { vp, cost } = projector(scene.budget)(scene.base);
+    expect(vp).toBeGreaterThan(SCENE_CEILING_VIEWPORTS);
+    expect(cost.s).toBe(level);
   });
 
   it('property: any eye before the shelves (off the framing sideways, up or down, turned or not) on any of the Fold8\'s screens fits the ceiling, the scene never sharper than the eye asks, the mesh never sharper than the scene', () => {
@@ -419,7 +432,7 @@ describe('NAV-DOLLY: the scene fits the ceiling at every depth of the walk in', 
 });
 
 describe('NAV-DOLLY: fitScale and meshScale', () => {
-  it('fitScale: the px per mm itself where it fits; else the first quarter octave under it that does; none, the coarsest', () => {
+  it('fitScale: the px per mm itself where it fits; else the first quarter octave under it that does; none, the px per mm itself', () => {
     expect(fitScale(0.5, () => true)).toBe(0.5);
     const asked: number[] = [];
     const s = fitScale(1, (k) => {
@@ -430,7 +443,19 @@ describe('NAV-DOLLY: fitScale and meshScale', () => {
     expect(asked).toEqual([1, 2 ** (-1 / 4), 2 ** (-2 / 4), 2 ** (-3 / 4)]);
     // on the quarter-octave grid whatever it was given (a held px per mm between notches)
     expect(fitScale(0.9, (k) => k < 0.9)).toBe(2 ** (-1 / 4));
-    expect(fitScale(1, () => false)).toBe(1 / 64);
+    // none fits down to the coarsest a face is drawn at: drawn at what was asked (softer would buy nothing)
+    const tried: number[] = [];
+    expect(
+      fitScale(1, (k) => {
+        tried.push(k);
+        return false;
+      }),
+    ).toBe(1);
+    expect(tried.at(-1)).toBe(1 / 64);
+    expect(tried.at(-2)! / 2 ** 0.25).toBeCloseTo(1 / 64, 12);
+    // the coarsest itself where only it fits
+    expect(fitScale(1, (k) => k <= 1 / 64)).toBe(1 / 64);
+    expect(fitScale(0.9, () => false)).toBe(0.9);
     expect(fitScale(1 / 64, () => false)).toBe(1 / 64);
   });
 

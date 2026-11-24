@@ -180,7 +180,13 @@ function costOf(c: Culled, scene: BudgetScene, s: number): Projected {
   const faces = CABINET_FACES_PX * c.drawn.length;
   const vpOf = (mesh: number) => (figures + shadows + mesh + c.room + faces) / scene.viewportPx + CONTROLS_VIEWPORTS;
   const meshPx = (k: number) => c.meshMm2 * k * k;
-  const meshS = sized(scene) ? meshScale(s, (k) => meshPx(k) <= MESH_BUDGET_VIEWPORTS * scene.viewportPx && fitsCeiling(vpOf(meshPx(k)))) : s;
+  const inBudget = (k: number) => meshPx(k) <= MESH_BUDGET_VIEWPORTS * scene.viewportPx;
+  let meshS = s;
+  if (sized(scene)) {
+    meshS = meshScale(s, (k) => inBudget(k) && fitsCeiling(vpOf(meshPx(k))));
+    // over the ceiling even at its coarsest: the mesh at its own budget alone, not drawn softer for nothing
+    if (!fitsCeiling(vpOf(meshPx(meshS)))) meshS = meshScale(s, inBudget);
+  }
   const mesh = meshPx(meshS);
   return { vp: vpOf(mesh), cost: { s, meshS, drawn: c.drawn, figuresDrawn: c.boxes.length, figures, shadows, mesh, room: c.room, faces } };
 }
@@ -198,14 +204,15 @@ export function meshScale(s: number, fits: (k: number) => boolean): number {
 
 /**
  * NAV-DOLLY: the px per mm a scene asked for at `s` is drawn at: `s` where that `fits`, else the first quarter octave
- * under it (texelScale's notches) that does; none, the coarsest a face is drawn at.
+ * under it (texelScale's notches, down to the coarsest a face is drawn at) that does; none, `s` itself: a scene over
+ * the ceiling at every notch is not drawn softer for nothing (the dolly's budget holds the eye there).
  */
 export function fitScale(s: number, fits: (k: number) => boolean): number {
   if (fits(s)) return s;
   for (let q = Math.ceil(4 * Math.log2(s) - 1e-9) - 1; ; q--) {
-    const k = 2 ** (q / 4);
-    if (!(k > TEXEL_SCALE_MIN)) return TEXEL_SCALE_MIN;
+    const k = Math.max(TEXEL_SCALE_MIN, 2 ** (q / 4));
     if (fits(k)) return k;
+    if (!(k > TEXEL_SCALE_MIN)) return s;
   }
 }
 
@@ -218,7 +225,8 @@ export function sceneCostAt(camera: Camera, scene: BudgetScene, figures: readonl
  * NAV-DOLLY (Ross 11-22): the scene at this pose as it is drawn, and what that costs. The scene coarsens to fit the
  * ceiling, so the camera is never stopped for it: first its mesh shelves (meshScale: their own budget, and what the rest
  * of the scene leaves under the ceiling), the figures as sharp as the eye asks; still over, the whole scene a quarter
- * octave at a time (fitScale) from the px per mm the eye asks (freeTexelScale, held from `unturned`). The render draws
+ * octave at a time (fitScale) from the px per mm the eye asks (freeTexelScale, held from `unturned`). A pose nothing
+ * fits is drawn as the eye asks (its mesh at its own budget) and its cost told as it is: dollyStep holds the eye. The render draws
  * at this `s` and `meshS` (CabinetScene), so the cost projected for a pose is the cost of the scene drawn there.
  */
 export function sceneFit(camera: Camera, scene: BudgetScene, figures: readonly BudgetFigure[], unturned?: Camera): Projected {

@@ -627,14 +627,19 @@ describe('dolly: the eye forward and back along its heading', () => {
   });
 
   it('NAV-DOLLY: a long frame from over the ceiling checks its end alone: a costlier stretch on its way never traps it', () => {
-    // over everywhere: 3.5 at the start, a bump (3.9) 20 to 60 mm along a 100 ms step, 3.4 (less than the start) after
+    // over everywhere: 3.5 at the start, a bump (3.9) over the first 10 to 60 % of a 100 ms step's way (where a 60 Hz
+    // frame's checks fall), 3.4 (less than the start) after
     const from: Pose = { ...start, z: 1500 };
+    const free = dollyStep(from, 1, 100, open);
+    const way = from.z - free.pose.z;
+    expect(way).toBeGreaterThan(100);
     const vp = (q: Vec3) => {
       const travelled = from.z - q[2];
-      return travelled < 20 ? 3.5 : travelled < 60 ? 3.9 : 3.4;
+      return travelled < 0.1 * way ? 3.5 : travelled < 0.6 * way ? 3.9 : 3.4;
     };
-    const free = dollyStep(from, 1, 100, open);
-    expect(from.z - free.pose.z).toBeGreaterThan(60);
+    // a path check would meet the bump
+    expect(Math.ceil(100 / DEPTH_PATH_MS)).toBeGreaterThan(1);
+    expect(vp([0, 0, from.z - way / Math.ceil(100 / DEPTH_PATH_MS)])).toBe(3.9);
     for (const v0 of [3.5, undefined]) {
       const step = dollyStep(from, 1, 100, { ...open, vp }, v0);
       expect(step.pose.z).toBeCloseTo(free.pose.z, 6);

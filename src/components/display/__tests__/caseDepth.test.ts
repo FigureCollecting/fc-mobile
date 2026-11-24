@@ -626,6 +626,23 @@ describe('dolly: the eye forward and back along its heading', () => {
     expect(back.z).toBeGreaterThan(p.z);
   });
 
+  it('NAV-DOLLY: a long frame from over the ceiling checks its end alone: a costlier stretch on its way never traps it', () => {
+    // over everywhere: 3.5 at the start, a bump (3.9) 20 to 60 mm along a 100 ms step, 3.4 (less than the start) after
+    const from: Pose = { ...start, z: 1500 };
+    const vp = (q: Vec3) => {
+      const travelled = from.z - q[2];
+      return travelled < 20 ? 3.5 : travelled < 60 ? 3.9 : 3.4;
+    };
+    const free = dollyStep(from, 1, 100, open);
+    expect(from.z - free.pose.z).toBeGreaterThan(60);
+    for (const v0 of [3.5, undefined]) {
+      const step = dollyStep(from, 1, 100, { ...open, vp }, v0);
+      expect(step.pose.z).toBeCloseTo(free.pose.z, 6);
+      expect(step.vp).toBe(3.4);
+      expect(step.cut).toBeNull();
+    }
+  });
+
   it('a search that ends on a failing probe hands back the cost where the eye ends, not the probe', () => {
     // the challenger's shrunk frame (round 3): no v0, a wavy cost near the ceiling, one reverse frame that searches;
     // at 2.698 under the ceiling (its search ends on a passing probe), and the scene a step heavier (3.398, over the

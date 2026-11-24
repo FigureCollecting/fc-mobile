@@ -1430,6 +1430,11 @@ export function CabinetScene({
         aim: fc.lookAim,
         stop: () => settle(fc.lookStop()),
       },
+      // NAV-LOGPOSE: the orb's fine Look; its fold leaves the focus where the eye now aims, as a drive's lift
+      tilt: {
+        set: fc.tiltSet,
+        fold: () => settle(fc.tiltFold()),
+      },
     });
   }, []);
 

@@ -26,6 +26,19 @@ export interface JogTarget {
    * it. A press drives the jog or this, never both. Absent, the jog offers no Look.
    */
   readonly look?: LookDrive;
+  /** NAV-LOGPOSE: the Log-Pose orb's fine Look of the same camera (useFreeCamera's tiltSet, tiltFold). Absent, no orb. */
+  readonly tilt?: TiltDrive;
+}
+
+/**
+ * NAV-LOGPOSE: what the orb drives: the device's tilt as an offset on the view at rest (radians, as the pose's: yaw +
+ * right, pitch + down), composed at the camera's output only; false: not applied (a finger, a drive or an ease has the
+ * view, or a fold since), and the source takes its neutral again. fold: Off, Recenter, a hidden page: the view kept as
+ * drawn, the offset folded into the pose held.
+ */
+export interface TiltDrive {
+  set(yaw: number, pitch: number): boolean;
+  fold(): void;
 }
 
 /** NAV-LOOKDRIVE: what the hat drives in Look mode (JogTarget's look): start, aim and stop as the jog's own. */

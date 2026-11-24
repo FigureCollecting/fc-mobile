@@ -1029,6 +1029,43 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
       retry.stop();
     });
 
+    it('a retry that fails again tells no view (its list keeps the same map and does not render again: no wall re-pack); one that decodes still does', async () => {
+      vi.useFakeTimers();
+      // fails its first read, 6 retries and one call's read; decodes at its 7th retry
+      const started = failing(ALPHA_UNDECODED_RETRIES);
+      const retry = retryUndecoded(() => [A, B]);
+      let renders = 0;
+      const { result } = renderHook(() => {
+        renders++;
+        return useAlphaMarginsOf([A, B]);
+      });
+      await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+      expect(started).toEqual([A, B]);
+      const failedMap = result.current;
+      const rendersAfterFirstReads = renders;
+      // every retry but the last fails again: the reads run, the views hear nothing
+      let waited = ALPHA_LANDING_BATCH_MS + EFFECTS_MS;
+      for (let n = 0; n < ALPHA_UNDECODED_RETRIES - 2; n++) waited += backoff(n);
+      await vi.advanceTimersByTimeAsync(waited + 2 * EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES - 2);
+      expect(result.current, 'the same map: nothing to re-lay out').toBe(failedMap);
+      expect(renders, 'no render for a read that changed nothing').toBe(rendersAfterFirstReads);
+      expect(alphaDrawsNothing(A)).toBe(true);
+      // a call (the link back) that fails again: nothing told either
+      rereadUndecoded([A]);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES - 1);
+      expect(result.current).toBe(failedMap);
+      expect(renders).toBe(rendersAfterFirstReads);
+      // the next read decodes: its list learns its margins
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MAX_MS + 2 * EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES);
+      expect(result.current).not.toBe(failedMap);
+      expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+      expect(alphaDrawsNothing(A)).toBe(false);
+      retry.stop();
+    });
+
     it('now() while a retry waits starts the waits over: one read at once, the next a first backoff later, none from the old wait', async () => {
       vi.useFakeTimers();
       const started = failing(Infinity);

@@ -567,12 +567,16 @@ export function alphaPictureLoaded(imageUrl: string): void {
 
 /**
  * A picture whose last read never decoded it, read again (readInTurn, `first` and `retry` as there), the views showing it
- * told what that read gives. Its views gone before its turn: nothing kept, and it is read again when next asked.
+ * told what that read gives. Its views gone before its turn: nothing kept, and it is read again when next asked. A read
+ * that never decodes it again is kept (its watch hears of it and waits its next backoff) but tells no view: nothing
+ * changed, and each telling re-lays out the wall.
  */
 function readAgain(imageUrl: string, first: boolean, retry = false): void {
   void readInTurn(imageUrl, first, retry).then((read) => {
     if (!read) return;
+    const unchanged = read === UNDECODED && undecoded.has(imageUrl);
     keep(imageUrl, read);
+    if (unchanged) return;
     for (const tell of rereadViews) tell(imageUrl, read);
   });
 }

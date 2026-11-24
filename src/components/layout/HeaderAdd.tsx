@@ -4,11 +4,14 @@
  */
 import { useLayoutEffect } from 'preact/hooks';
 import { hapticLight } from '../../utils/haptics';
-import { hostAddInHeader, openAdd } from '../../stores/add';
+import { addAllowed, hostAddInHeader, openAdd } from '../../stores/add';
 import { Style } from '../../styles/Style';
 
 export function HeaderAdd() {
-  useLayoutEffect(() => hostAddInHeader(), []);
+  // SIGNED-OUT-ADD: none for a visitor with no account (stores/add addAllowed); hosting only while it shows.
+  const allowed = addAllowed();
+  useLayoutEffect(() => (allowed ? hostAddInHeader() : undefined), [allowed]);
+  if (!allowed) return null;
   return (
     <button
       class="header-add"

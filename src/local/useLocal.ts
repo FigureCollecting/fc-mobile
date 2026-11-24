@@ -6,17 +6,13 @@ import type { FacetRecord, ProductRecord, SyncMeta } from '../storage/records';
 import type { UserStore } from '../storage/userStore';
 import { buildView, type CollectionView, type LocalView } from '../sync/occurrences';
 import { buildFigures, type FigureInputs, type LocalFigure } from './figures';
-import { localSession } from './session';
+import { authPhase, localSession, type AuthPhase } from './session';
 
-export type AuthPhase = 'loading' | 'signed-out' | 'signed-in';
+export type { AuthPhase };
 
 /** signed-in: a user's local data can be shown (offline, sign in to sync and reload required included). */
 export function useAuthPhase(): AuthPhase {
-  const session = localSession.value;
-  if (session === undefined) return 'loading';
-  const status = session.status.value;
-  if (status === 'loading') return 'loading';
-  return status === 'signed-out' ? 'signed-out' : 'signed-in';
+  return authPhase();
 }
 
 export interface Snapshot extends FigureInputs {

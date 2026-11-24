@@ -348,7 +348,13 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
    * output only (write, camera); the cone it goes through, worked out once per pose at rest; and whether a fold since the
    * source's last sample left the source's neutral stale (its next sample is refused once: it takes a new neutral).
    */
-  const tilt = useRef<{ yaw: number; pitch: number; cone: { start: Pose; scene: FreeScene; limits: YawCone } | null; stale: boolean }>({
+  const tilt = useRef<{
+    yaw: number;
+    pitch: number;
+    /** `last`: the turn worked out for the last offset asked on this pose (a write and the render ask the same one). */
+    cone: { start: Pose; scene: FreeScene; limits: YawCone; last: { yaw: number; pitch: number; turn: { committed: Pose; shown: Pose; past: boolean } } | null } | null;
+    stale: boolean;
+  }>({
     yaw: 0,
     pitch: 0,
     cone: null,
@@ -356,12 +362,21 @@ export function useFreeCamera(scene: { current: FreeScene }, dom: FreeDom, culle
   });
 
   const cameraOf = (pose: Pose | null): Camera => (pose === null ? scene.current.base : withPose(scene.current.base, pose));
-  /** NAV-LOGPOSE: the tilt's offset on `pose` through the cone a Look from it has (the rubber band past soft included). */
+  /**
+   * NAV-LOGPOSE: the tilt's offset on `pose` through the cone a Look from it has (the rubber band past soft included).
+   * NAV-EMPTY: and, as the other Looks, never to a turn that loses the wall (lookKept from `pose`), drawn there (keptShown).
+   */
   const tiltTurn = (pose: Pose) => {
     const t = tilt.current;
     const s = scene.current;
-    if (t.cone === null || t.cone.scene !== s || !samePose(t.cone.start, pose)) t.cone = { start: pose, scene: s, limits: coneFrom(s, pose) };
-    return turnBy(pose, t.yaw, t.pitch, t.cone.limits);
+    if (t.cone === null || t.cone.scene !== s || !samePose(t.cone.start, pose)) t.cone = { start: pose, scene: s, limits: coneFrom(s, pose), last: null };
+    const c = t.cone;
+    if (c.last === null || c.last.yaw !== t.yaw || c.last.pitch !== t.pitch) {
+      const r = turnBy(pose, t.yaw, t.pitch, c.limits);
+      const committed = lookKept(s, pose, pose, r.committed);
+      c.last = { yaw: t.yaw, pitch: t.pitch, turn: { committed, shown: keptShown(r, committed), past: r.past } };
+    }
+    return c.last.turn;
   };
   /** NAV-LOGPOSE: `camera` with the tilt's offset composed on it (itself while there is none, or no host to publish a cone on). */
   const tilted = (camera: Camera): Camera => {

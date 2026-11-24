@@ -3,6 +3,8 @@ import { renderHook, act } from '@testing-library/preact';
 import { frontShown } from '../caseCull';
 import { JOG_FULL_PX, PITCH, SPRING_MS, poseOf, withPose, type Pose } from '../casePose';
 import { pitchCap, wallAway } from '../caseWallView';
+import { IKEA_DETOLF, IKEA_KLINGSBO } from '../cabinetPresets';
+import { wallLayout } from '../packCabinets';
 import { lookCone, useFreeCamera, type FreeScene } from '../useFreeCamera';
 import { freeDom, freeSceneOf, handFrames } from './freeDrivesScene';
 
@@ -392,4 +394,76 @@ describe.each([
     });
     m.unmount();
   });
+});
+
+const PAIR_WALL = wallLayout([IKEA_DETOLF, IKEA_DETOLF]);
+const ONE_WALL = wallLayout([IKEA_KLINGSBO]);
+const COVER = { width: 443, height: 558 };
+/** The orb's tilt at the source's caps (NAV-LOGPOSE): 12 deg round, 8 deg up or down. */
+const TILT_YAW = 12 * DEG;
+const TILT_PITCH = 8 * DEG;
+/** The same pose to 1e-9 (a tilt held where its fold then rests, not in the band past it). */
+const samePose = (a: Pose, b: Pose) => (['x', 'y', 'z', 'yaw', 'pitch'] as const).every((k) => Math.abs(a[k] - b[k]) < 1e-9);
+
+describe.each([
+  ['a pair of cabinets at 870x475', PAIR_WALL, FOLD_OPEN],
+  ['one cabinet at 870x475', ONE_WALL, FOLD_OPEN],
+  ['a pair of cabinets at 443x558', PAIR_WALL, COVER],
+  ['the 6-cabinet wall at 443x558', undefined, COVER],
+] as const)('NAV-EMPTY (CHALLENGE r0-1124 B1), %s: the orb\'s tilt, held and folded, keeps the wall as the other Looks do', (_name, wall, frame) => {
+  for (const [end, y, up] of [
+    ['top', TOP.y, -1],
+    ['bottom', 300, 1],
+  ] as const) {
+    for (const side of [-1, 1]) {
+      it(`at the room's ${end}, tilted ${side < 0 ? 'left' : 'right'} toward the ${end === 'top' ? 'ceiling' : 'floor'} and folded 5 times, then the rail back 3 s: a front in every frame where its yaw looking level has one`, () => {
+        const m = mount(freeSceneOf({ wall, frame }));
+        m.at({ y });
+        expect(m.atEdge()).toBe(true);
+        /** Where the yaw drawn looking level holds a front, the frame drawn does too (the yaw cone itself is N3's). */
+        const kept = (what: string, p: Pose = m.pose()) => {
+          if (m.atEdge({ ...p, pitch: 0 })) expect(m.atEdge(p), `${what}: yaw ${p.yaw / DEG}, pitch ${p.pitch / DEG}`).toBe(true);
+        };
+        expect(m.fc().tiltSet(0, 0)).toBe(false); // hold(): a new neutral
+        for (let k = 0; k < 5; k++) {
+          expect(m.fc().tiltSet(side * TILT_YAW, up * TILT_PITCH)).toBe(true);
+          const held = m.pose();
+          act(() => {
+            m.fc().tiltFold();
+          });
+          m.frames.tick(SPRING_MS);
+          m.frames.tick(16);
+          expect(m.fc().tiltSet(0, 0)).toBe(false);
+          kept(`tilt ${k + 1} folded`);
+          // held where it rests (not in the band past it: CHALLENGE-1 N2, a known limit for every Look), it drew a front
+          if (samePose(held, m.pose())) kept(`tilt ${k + 1} held`, held);
+        }
+        expect(m.fc().depthStart(-1)).toBe(true);
+        m.run(188, () => kept('rail back'));
+        m.stop('depthStop');
+        m.unmount();
+      });
+    }
+  }
+});
+
+describe.each([
+  ['1536x730', DESKTOP],
+  ['870x475', FOLD_OPEN],
+])('NAV-EMPTY (CHALLENGE r0-1124 S1) at %s: a small Look from a frame pitched off the wall moves about as far as asked, no jump', (_name, frame) => {
+  for (const startPitch of [-30, -20]) {
+    it(`from the room's top pitched ${startPitch} degrees (no front, though its yaw looking level has one): 12 px away from the wall stays put, 12 px toward it turns under 2 degrees`, () => {
+      const m = mount(freeSceneOf({ frame }));
+      const start = m.at({ ...TOP, pitch: startPitch * DEG });
+      expect(m.atEdge()).toBe(false);
+      expect(m.atEdge({ ...start, pitch: 0 })).toBe(true);
+      // a drag grabs the scene: 12 px down looks up (away), 12 px up looks down (toward)
+      const away = sceneLook(m, 1, 12, 12);
+      expect(Math.abs(away.pitch - start.pitch)).toBeLessThan(0.5 * DEG);
+      const toward = sceneLook(m, 2, 0, -12);
+      expect(toward.pitch).toBeGreaterThan(away.pitch);
+      expect(toward.pitch - away.pitch).toBeLessThan(2 * DEG);
+      m.unmount();
+    });
+  }
 });

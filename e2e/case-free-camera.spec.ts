@@ -3,7 +3,8 @@ import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { CASE_VIEWPORTS, FOLD8_DPR } from './caseViewports';
 import { touchDown, touchPinch } from './touch';
-import { hat, navControls } from './navControls';
+import { NAV_PARTS, hat, navControls } from './navControls';
+import { lookDown } from './sceneLook';
 import { watchPull } from './pullWatch';
 import { decodePng } from './paintCheck';
 import { project, type Camera, type Vec3 } from '../src/components/display/caseCamera';
@@ -16,8 +17,9 @@ import { CONTROLS_VIEWPORTS } from '../src/components/display/caseBudget';
  * NAV-1A, the Free camera (trial), in Chromium at the Fold8's four panels, fixture mode, the KLINGSBO wall. The browser
  * draws the turned camera where `project` says (a post's front face against its projected corners); the pose moves only
  * with a finger (a log of every data-camera write against the finger); the realism cone and its ease back; the Classic
- * cap and the GPU budget held at the hard yaw; no hole where a wall box is; Look's hold through Chromium's own touch
- * pipeline (CDP touches); Next from where you look; Reset; a fold keeping the pose; a desktop's right and Shift drags.
+ * cap and the GPU budget held at the hard yaw; no hole where a wall box is; a finger's hold through Chromium's own touch
+ * pipeline (CDP touches: since NAVLOOK 1a it is a tap or a walk, never a Look; the scene's Look here is the mouse's right
+ * drag); Next from where you look; Reset; a fold keeping the pose; a desktop's right and Shift drags.
  */
 
 test.use({ hasTouch: true, isMobile: true, deviceScaleFactor: FOLD8_DPR });
@@ -161,16 +163,22 @@ for (const holdMs of [270, 440]) {
   });
 }
 
-test('hold: 300 ms still, then a 30 px drag turns the eye and opens nothing; the ring shows while held', async ({ page }) => {
+// NAVLOOK 1a (Ross 11-17): a finger's still hold no longer arms Look (the hat's eye is touch's Look: case-nav-eye); a
+// mouse's still left press still does
+test('hold: a mouse held 300 ms still, then dragged 30 px, turns the eye and opens nothing; the ring shows while held', async ({ page }) => {
   await openFree(page, COVER);
   const before = await cameraOf(page);
   const at = await figureInFrame(page);
-  const finger = await touchDown(page, at.x, at.y);
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
   await page.waitForTimeout(300);
   await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-gesture', 'look');
   await expect(page.locator('.cabinet-scene__look-ring[data-on]')).toBeVisible();
-  await finger.to(at.x + 30, at.y, 6, 16);
-  await finger.end();
+  for (let i = 1; i <= 6; i++) {
+    await page.mouse.move(at.x + i * 5, at.y);
+    await page.waitForTimeout(16);
+  }
+  await page.mouse.up();
   await settle(page);
   const after = await cameraOf(page);
   expect(after.yaw, 'turned').not.toBe(before.yaw ?? 0);
@@ -433,10 +441,9 @@ test('Reset: none after a 2,000 mm walk, none after a 15 deg look; there once pi
   await page.waitForTimeout(500);
   const reset = page.locator('.cabinet-scene__reset');
   await expect(reset).toHaveCount(0);
-  // a 15 deg look with a held finger (right of centre: the finger moves left to turn right)
+  // a 15 deg look, the scene's own (right of centre: the pointer moves left to turn right)
   const c = await cameraOf(page);
-  const finger = await touchDown(page, f.x + f.width / 2, f.y + f.height / 2);
-  await page.waitForTimeout(300);
+  const finger = await lookDown(page, f.x + f.width / 2, f.y + f.height / 2);
   await finger.to(f.x + f.width / 2 - c.focalPx * Math.tan(15 * DEG), f.y + f.height / 2, 8, 16);
   await finger.end();
   await settle(page, 600);
@@ -483,9 +490,8 @@ test('a fold or an unfold keeps x, y, z, yaw and pitch (spec 6.6)', async ({ pag
   await openFree(page, COVER);
   const f = await frameBox(page);
   await fingerDrag(page, { x: f.x + f.width * 0.8, y: f.y + f.height / 2 }, { x: f.x + f.width * 0.3, y: f.y + f.height / 2 });
-  // Shift-free hold to look
-  const finger = await touchDown(page, f.x + f.width / 2, f.y + f.height / 2);
-  await page.waitForTimeout(300);
+  // the scene's own Look (a right drag: NAVLOOK 1a took the finger's hold)
+  const finger = await lookDown(page, f.x + f.width / 2, f.y + f.height / 2);
   await finger.to(f.x + f.width / 2 - 60, f.y + f.height / 2 + 20, 8, 16);
   await finger.end();
   await settle(page, 400);
@@ -617,11 +623,11 @@ async function startPoseLog(page: Page) {
 const poseLog = (page: Page) => page.evaluate(() => (window as unknown as { __poseLog: PoseLog }).__poseLog);
 
 /**
- * A held finger: down, still `holdMs` and then until Look has armed (data-gesture=look), then along `path`, 16 ms a step.
- * The arm is waited for, not timed: its timer (LOOK_HOLD_MS, or the page's lookhold) fires late under load, and a sweep
- * that starts first is a walk, which never shows Reset.
+ * The scene's own Look along `path`, 16 ms a step: NAVLOOK 1a took the finger's still hold away (the hat's eye is touch's
+ * Look), so it is the mouse's right drag (sceneLook), which turns from its first move; that it is a Look (data-gesture
+ * look), never a walk, is checked once the first leg is under way.
  */
-async function holdAndSweep(page: Page, from: { x: number; y: number }, path: { x: number; y: number }[], { holdMs = 300, lift = true } = {}) {
+async function holdAndSweep(page: Page, from: { x: number; y: number }, path: { x: number; y: number }[], { lift = true } = {}) {
   // the press must land on the picture: no control, no sheet or viewer over it (its zoom is recorded with it)
   const at = await page.evaluate(({ x, y }) => {
     const el = document.elementFromPoint(x, y);
@@ -629,10 +635,11 @@ async function holdAndSweep(page: Page, from: { x: number; y: number }, path: { 
     return { x, y, onPicture: el !== null && host.contains(el) && el.closest('[data-scene-ui]') === null, el: el && `${el.tagName}.${el.className}`, zoom: host.getAttribute('data-zoom') };
   }, from);
   expect(at.onPicture, `the hold lands on the picture: ${JSON.stringify(at)}`).toBe(true);
-  const finger = await touchDown(page, from.x, from.y);
-  await page.waitForTimeout(holdMs);
-  await expect(page.locator('.cabinet-scene'), `Look armed before the sweep (the hold at ${JSON.stringify(at)})`).toHaveAttribute('data-gesture', 'look', { timeout: 10_000 });
-  for (const p of path) await finger.to(p.x, p.y, 24, 16);
+  const finger = await lookDown(page, from.x, from.y);
+  for (const [i, p] of path.entries()) {
+    await finger.to(p.x, p.y, 24, 16);
+    if (i === 0) await expect(page.locator('.cabinet-scene'), `a Look, never a walk (the press at ${JSON.stringify(at)})`).toHaveAttribute('data-gesture', 'look');
+  }
   await page.waitForTimeout(50);
   if (lift) await finger.end();
   return finger;
@@ -640,9 +647,9 @@ async function holdAndSweep(page: Page, from: { x: number; y: number }, path: { 
 
 /**
  * NAV-SCOPE (plan section 9): Reset view is zoom-only and never moves the eye, so a look is undone the way a user undoes
- * it: a held finger from the frame's centre, looked back by the yaw and pitch the eye stands at. look() turns by
- * atan(a0) - atan(a1) from a press at the centre (a0 = 0), so a finger at f tan(yaw) right of it (and f tan(pitch) below
- * it: a finger moving up looks up) turns the eye straight; each pass is held inside the frame, so a wide turn takes two
+ * it: the scene's Look (holdAndSweep) from the frame's centre, looked back by the yaw and pitch the eye stands at. look()
+ * turns by atan(a0) - atan(a1) from a press at the centre (a0 = 0), so a pointer at f tan(yaw) right of it (and f tan(pitch)
+ * below it: a pointer moving up looks up) turns the eye straight; each pass is held inside the frame, so a wide turn takes two
  * or three.
  */
 async function lookStraight(page: Page) {
@@ -655,8 +662,7 @@ async function lookStraight(page: Page) {
     const dx = Math.max(-0.45 * f.width, Math.min(0.45 * f.width, c.focalPx * Math.tan(c.yaw ?? 0)));
     const dy = Math.max(-0.45 * f.height, Math.min(0.45 * f.height, c.focalPx * Math.tan(c.pitch)));
     await settle(page, 400);
-    // held past the longest Look arm any spec here sets (?lookhold=1000)
-    await holdAndSweep(page, centre, [{ x: centre.x + dx, y: centre.y + dy }], { holdMs: 1100 });
+    await holdAndSweep(page, centre, [{ x: centre.x + dx, y: centre.y + dy }]);
     await settle(page, 300);
   }
   const straight = await cameraOf(page);
@@ -745,7 +751,7 @@ for (const panel of FOLD8) {
     expect(swipes).toBeLessThan(160);
     const walkEnd = (await poseLog(page)).writes.length;
 
-    // a look to each side's hard limit and back, the finger held (Look armed by the hold). 30 px in from the frame's
+    // a look to each side's hard limit and back, the scene's own Look (holdAndSweep: a right drag). 30 px in from the frame's
     // edges: within a few px of them Chromium sometimes sends a touch to the root (<html>), not the scene the point is on
     // (measured after a jog: 10-13 % of touches 3 px in, none 30 px in), and the jog leaves the eye anywhere along the
     // wall. A sweep from 30 px in still turns 61-78 deg one way, past every panel's hard limit (24-45 deg)
@@ -1116,7 +1122,7 @@ for (const panel of FOLD8) {
       };
       for (const dir of ['right', 'left'] as const) {
         const [from, to] = dir === 'right' ? [f.x + f.width - 3, f.x + 3] : [f.x + 3, f.x + f.width - 3];
-        await holdAndSweep(page, { x: from, y }, [{ x: to, y }], { holdMs: 1100 });
+        await holdAndSweep(page, { x: from, y }, [{ x: to, y }]);
         await settle(page, 500);
         const turned = Number((((await cameraOf(page)).yaw ?? 0) / DEG).toFixed(2));
         // turned right, a finger moving right walks the eye toward the fronts (and mirrored)
@@ -1135,7 +1141,7 @@ for (const panel of FOLD8) {
         ['look right and up', f.x + f.width - 3, f.y + f.height - 3, f.x + 3, f.y + 3],
         ['look left and down', f.x + 3, f.y + 3, f.x + f.width - 3, f.y + f.height - 3],
       ] as const) {
-        const finger = await holdAndSweep(page, { x: x0, y: y0 }, [{ x: x1, y: y1 }], { lift: false, holdMs: 1100 });
+        const finger = await holdAndSweep(page, { x: x0, y: y0 }, [{ x: x1, y: y1 }], { lift: false });
         await settle(page, 400);
         await record(what, await freshAt(page, panel));
         await finger.end();
@@ -1235,7 +1241,7 @@ for (const panel of FOLD8) {
         expect(await cameraOf(page), 'reopened at the opening').toEqual(open);
         await watchBlank();
         const [x0, x1] = dir === 'right' ? [f.x + f.width - 3, f.x + 3] : [f.x + 3, f.x + f.width - 3];
-        await holdAndSweep(page, { x: x0, y }, [{ x: x1, y }], { holdMs: 1100 });
+        await holdAndSweep(page, { x: x0, y }, [{ x: x1, y }]);
         await settle(page, 500);
         from = await cameraOf(page);
         // turned right, the jog left walks the eye toward the fronts (and mirrored)
@@ -1291,7 +1297,7 @@ test.describe('baselines: the Free camera opening (level), the wall, the four pa
       });
       await expect(page.locator('.cabinet-scene')).toHaveAttribute('data-free-camera', '1');
       // NAV-FLOAT: the floating controls lie over the scene's box: masked, so these baselines are the scene's alone
-      await expect(navControls(page)).toHaveCount(2);
+      await expect(navControls(page)).toHaveCount(NAV_PARTS);
       await expect(page.locator('.cabinet-scene')).toHaveScreenshot(`free-camera-${view}-${panel.name}.png`, { ...SHOT, mask: [navControls(page)] });
     });
   }

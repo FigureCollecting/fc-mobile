@@ -65,8 +65,31 @@ describe('Onboarding page', () => {
     expect(dots.length).toBeGreaterThanOrEqual(4);
     await user.click(dots[3]);
     expect(await screen.findByRole('button', { name: /create account/i })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /create account/i }));
-    expect(onComplete).toHaveBeenCalledWith('register');
+  });
+
+  it('answers Create Account with the invitation note and the Sign In it offers, starting nothing', async () => {
+    const user = userEvent.setup();
+    const onComplete = vi.fn();
+    renderWithProviders(<Onboarding onComplete={onComplete} />, { initialPath: '/' });
+    await user.click(screen.getAllByRole('tab')[3]!);
+    const create = await screen.findByRole('button', { name: /create account/i });
+    expect(create).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(/accounts are by invitation/i)).not.toBeInTheDocument();
+
+    await user.click(create);
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(create).toHaveAttribute('aria-expanded', 'true');
+    const note = screen.getByRole('status');
+    expect(note).toHaveTextContent('Accounts are by invitation. If you have an invitation link, open it to create your account.');
+    expect(create.getAttribute('aria-controls')).toBe(note.id);
+
+    // A second tap keeps the note: it is an answer, not a toggle that could hide it again.
+    await user.click(create);
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /^sign in$/i }));
+    expect(onComplete).toHaveBeenCalledWith('login');
   });
 
   it('routes to login when Sign In is chosen on the last screen', async () => {
@@ -89,24 +112,37 @@ describe('Onboarding page', () => {
     expect(onComplete).toHaveBeenCalledWith('guest');
   });
 
-  it('is not shown once completed, and its sign-in and create-account choices start the Authentik sign-in', async () => {
+  it('is not shown once completed, and its Sign In starts the Authentik sign-in', async () => {
     localStorage.setItem('onboarding_complete', '1');
     const first = renderWithProviders(<App />, { initialPath: '/' });
     expect(screen.queryByText(/your collection, anywhere/i)).not.toBeInTheDocument();
     first.unmount();
 
-    for (const choice of [/^sign in$/i, /create account/i]) {
-      localStorage.removeItem('onboarding_complete');
-      auth.signIn.mockClear();
-      const user = userEvent.setup();
-      const view = renderWithProviders(<App />, { initialPath: '/discover' });
-      await user.click(screen.getAllByRole('tab')[3]!);
-      await user.click(await screen.findByRole('button', { name: choice }));
-      await waitFor(() => expect(auth.signIn).toHaveBeenCalledWith('/'));
-      expect(view.currentPath()).toBe('/');
-      expect(localStorage.getItem('onboarding_complete')).toBe('1');
-      view.unmount();
-    }
+    localStorage.removeItem('onboarding_complete');
+    auth.signIn.mockClear();
+    const user = userEvent.setup();
+    const view = renderWithProviders(<App />, { initialPath: '/discover' });
+    await user.click(screen.getAllByRole('tab')[3]!);
+    await user.click(await screen.findByRole('button', { name: /^sign in$/i }));
+    await waitFor(() => expect(auth.signIn).toHaveBeenCalledWith('/'));
+    expect(view.currentPath()).toBe('/');
+    expect(localStorage.getItem('onboarding_complete')).toBe('1');
+    view.unmount();
+  });
+
+  it('starts no sign-in from Create Account, where Authentik has no sign-up, and stays on the onboarding', async () => {
+    localStorage.removeItem('onboarding_complete');
+    auth.signIn.mockClear();
+    const user = userEvent.setup();
+    const view = renderWithProviders(<App />, { initialPath: '/discover' });
+    await user.click(screen.getAllByRole('tab')[3]!);
+    await user.click(await screen.findByRole('button', { name: /create account/i }));
+    expect(await screen.findByText(/accounts are by invitation/i)).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(auth.signIn).not.toHaveBeenCalled();
+    expect(localStorage.getItem('onboarding_complete')).toBeNull();
+    expect(view.currentPath()).toBe('/discover');
+    view.unmount();
   });
 
   describe('claims', () => {

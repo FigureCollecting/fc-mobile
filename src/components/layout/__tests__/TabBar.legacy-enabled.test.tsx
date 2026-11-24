@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, onTestFinished } from 'vitest';
 import { screen } from '@testing-library/preact';
 import userEvent from '@testing-library/user-event';
 
@@ -16,9 +16,16 @@ vi.mock('../../../api/client', () => ({
 
 import { TabBar } from '../TabBar';
 import { renderWithProviders } from '../../../test/testUtils';
+import { localSession } from '../../../local/session';
+import { stubSessionStatus } from '../../../test/sessionStatus';
 
 describe('TabBar (LEGACY_SCREENS_ENABLED=true)', () => {
   it('shows Sync from MFC in the Add sheet', async () => {
+    // Add is for account holders (SIGNED-OUT-ADD).
+    stubSessionStatus('signed-in');
+    onTestFinished(() => {
+      localSession.value = undefined;
+    });
     const user = userEvent.setup();
     const { currentPath } = renderWithProviders(<TabBar />);
     await user.click(screen.getByRole('button', { name: /add figures/i }));

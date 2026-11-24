@@ -228,11 +228,20 @@ let overdue = 0;
  * their re-reads never hold every turn.
  */
 let rereading = 0;
-/** A read waiting for a turn: `go` starts it, saying whether it counts as a re-read. */
+/**
+ * DESK1: a watch's retries in flight (retryUndecoded), re-reads too: at most
+ * ALPHA_READS_AT_ONCE - 1, so however many masks fail, their retries never
+ * hold every turn, and while only retries are read a new picture's first
+ * read starts at once.
+ */
+let retrying = 0;
+/** A read waiting for a turn: `go` starts it, saying whether it counts as a re-read and as a retry. */
 interface Waiting {
-  go: (again: boolean) => void;
+  go: (again: boolean, retry: boolean) => void;
   /** A re-read: it starts only while fewer than ALPHA_READS_AT_ONCE re-reads are in flight. */
   again: boolean;
+  /** A watch's retry: it starts only while fewer than ALPHA_READS_AT_ONCE - 1 retries are in flight. */
+  retry: boolean;
 }
 /**
  * Reads waiting for a turn: those sent at once by their picture loading,
@@ -247,13 +256,22 @@ const queued: Waiting[] = [];
  */
 const outOfTime: (() => void)[] = [];
 
-/** The read at the front of the line starts, unless it is a re-read and re-reads fill their room: whether it started. */
+/** Whether a read waiting may start now: not a re-read or a retry while those fill their room. */
+function mayStart(next: Waiting): boolean {
+  return !((next.again && rereading >= ALPHA_READS_AT_ONCE) || (next.retry && retrying >= ALPHA_READS_AT_ONCE - 1));
+}
+
+/**
+ * The first read in line that may start, starts (DESK1: a retry held for its room holds back none behind it, so a
+ * picture whose read ran out of time is read again at its backoff, however many retries wait): whether one started.
+ */
 function startNext(): boolean {
-  const next = queued[0];
-  if (!next || (next.again && rereading >= ALPHA_READS_AT_ONCE)) return false;
-  queued.shift();
+  const at = queued.findIndex(mayStart);
+  if (at < 0) return false;
+  const [next] = queued.splice(at, 1);
   if (next.again) rereading++;
-  next.go(next.again);
+  if (next.retry) retrying++;
+  next.go(next.again, next.retry);
   return true;
 }
 
@@ -262,7 +280,7 @@ function passTurn(): void {
   if (!startNext()) reading--;
 }
 
-/** A read joins the line, a re-read ends or a load sends one at once: the read at the front starts if a turn is free. */
+/** A read joins the line, a re-read ends or a load sends one at once: the first in line that may start does, if a turn is free. */
 function startOnFreeTurn(): void {
   if (reading < ALPHA_READS_AT_ONCE && startNext()) reading++;
 }
@@ -297,20 +315,32 @@ interface Reader {
    * One load, one read again.
    */
   retryUndecoded: boolean;
+  /** DESK1: read again on its own (retryUndecoded): it waits in line as a re-read, behind every first read. */
+  retry: boolean;
 }
 const readers = new Map<string, Reader>();
+/**
+ * DESK1: how many of a picture's watch retries ran out of time: its next retry starts from that deadline (twice the time
+ * each), so a mask alive on a slow link is still read in time. Once a read decodes it, it is never read again.
+ */
+const retriesOutOfTime = new Map<string, number>();
 
 /**
  * Run one read when a turn is free (`first`: sent at once by its picture
  * loading, at the front of the line; else a first read goes ahead of the
- * re-reads waiting, a re-read behind them all). A finished read hands its
+ * re-reads waiting, a re-read behind them all: a read again after one ran
+ * out of time, or a watch's retry). A finished read hands its
  * turn to the next one that may start; one out of time hands it on too,
  * while fewer than ALPHA_READS_AT_ONCE others are overdue, else when one of
  * them ends.
  */
 async function inTurn<T>(read: () => Promise<T>, reader: Reader, first: boolean): Promise<T> {
-  const again = await new Promise<boolean>((go) => {
-    const waiting: Waiting = { go, again: reader.timedOut > 0 && !first };
+  const [again, retry] = await new Promise<[boolean, boolean]>((go) => {
+    const waiting: Waiting = {
+      go: (asAgain, asRetry) => go([asAgain, asRetry]),
+      again: (reader.timedOut > 0 || reader.retry) && !first,
+      retry: reader.retry && !first,
+    };
     if (first) queued.unshift(waiting);
     else if (waiting.again) queued.push(waiting);
     else {
@@ -318,8 +348,9 @@ async function inTurn<T>(read: () => Promise<T>, reader: Reader, first: boolean)
       queued.splice(rereads < 0 ? queued.length : rereads, 0, waiting);
     }
     reader.hurry = () => {
-      // sent at once by its picture loading (a cache hit then): no longer held back as a re-read
+      // sent at once by its picture loading (a cache hit then): no longer held back as a re-read or a retry
       waiting.again = false;
+      waiting.retry = false;
       const at = queued.indexOf(waiting);
       if (at > 0) queued.unshift(...queued.splice(at, 1));
       startOnFreeTurn();
@@ -343,6 +374,7 @@ async function inTurn<T>(read: () => Promise<T>, reader: Reader, first: boolean)
   } finally {
     clearTimeout(timer);
     if (again) rereading--;
+    if (retry) retrying--;
     if (late) {
       overdue--;
       outOfTime.shift()?.();
@@ -364,13 +396,16 @@ export function __clearAlphaMarginCache(): void {
   reading = 0;
   overdue = 0;
   rereading = 0;
+  retrying = 0;
   queued.length = 0;
   outOfTime.length = 0;
   wantedBy.clear();
   readers.clear();
+  retriesOutOfTime.clear();
   undecoded.clear();
   loadedUnread.clear();
   drawsNothing.clear();
+  undecodedWatches.clear();
 }
 
 /**
@@ -458,11 +493,20 @@ async function readAlpha(imageUrl: string, deadlineMs: number): Promise<AlphaRea
  * (alphaPictureLoaded) sends it to the front at once instead. Once it has
  * loaded, a read that never decodes the picture (the one its load sends, one
  * in flight as it loads, or any later) failed to fetch it: it is read again
- * at once (`first`: from the start), once per load.
+ * at once (`first`: from the start), once per load. `retry`: a watch's
+ * retry (retryUndecoded), in line as a re-read; one that runs out of time
+ * (its picture not loaded meanwhile) ends there as a read that never decoded
+ * it, so the watch's bound counts it, and its next retry gets twice the time
+ * (retriesOutOfTime).
  */
-async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | undefined> {
+async function readInTurn(imageUrl: string, first = false, retry = false): Promise<AlphaRead | undefined> {
   // `first`: sent by its own picture loading, whose read again it carries, as does a load before any read landed
-  const reader: Reader = { timedOut: 0, loaded: false, retryUndecoded: first || loadedUnread.has(imageUrl) };
+  const reader: Reader = {
+    timedOut: retry ? (retriesOutOfTime.get(imageUrl) ?? 0) : 0,
+    loaded: false,
+    retryUndecoded: first || loadedUnread.has(imageUrl),
+    retry,
+  };
   readers.set(imageUrl, reader);
   for (;;) {
     const deadlineMs = Math.min(ALPHA_READ_DEADLINE_MS * 2 ** reader.timedOut, ALPHA_READ_DEADLINE_MAX_MS);
@@ -476,6 +520,11 @@ async function readInTurn(imageUrl: string, first = false): Promise<AlphaRead | 
     if (read !== null) {
       readers.delete(imageUrl);
       return read;
+    }
+    if (reader.retry && !reader.loaded) {
+      retriesOutOfTime.set(imageUrl, reader.timedOut + 1);
+      readers.delete(imageUrl);
+      return UNDECODED;
     }
     reader.timedOut++;
     first = reader.loaded;
@@ -517,13 +566,17 @@ export function alphaPictureLoaded(imageUrl: string): void {
 }
 
 /**
- * A picture whose last read never decoded it, read again (readInTurn, `first` as there), the views showing it told what
- * that read gives. Its views gone before its turn: nothing kept, and it is read again when next asked.
+ * A picture whose last read never decoded it, read again (readInTurn, `first` and `retry` as there), the views showing it
+ * told what that read gives. Its views gone before its turn: nothing kept, and it is read again when next asked. A read
+ * that never decodes it again is kept (its watch hears of it and waits its next backoff) but tells no view: nothing
+ * changed, and each telling re-lays out the wall.
  */
-function readAgain(imageUrl: string, first: boolean): void {
-  void readInTurn(imageUrl, first).then((read) => {
+function readAgain(imageUrl: string, first: boolean, retry = false): void {
+  void readInTurn(imageUrl, first, retry).then((read) => {
     if (!read) return;
+    const unchanged = read === UNDECODED && undecoded.has(imageUrl);
     keep(imageUrl, read);
+    if (unchanged) return;
     for (const tell of rereadViews) tell(imageUrl, read);
   });
 }
@@ -540,6 +593,68 @@ export function rereadUndecoded(urls: readonly string[]): void {
   for (const url of urls) if (undecoded.has(url) && !readers.has(url)) readAgain(url, false);
 }
 
+/**
+ * DESK1: how long a watched picture whose read never decoded it waits before it is read again on its own (retryUndecoded):
+ * this, doubling each time, up to ALPHA_UNDECODED_RETRY_MAX_MS, and ALPHA_UNDECODED_RETRIES times at most (2, 4, 8, 16, 32
+ * and then 60 s: about four minutes in all). So a link that fails for a while costs a mask a few reads, and a dead one
+ * (a mask the image host refuses) nine in all each time the case opens, never a loop.
+ */
+export const ALPHA_UNDECODED_RETRY_MS = 2000;
+export const ALPHA_UNDECODED_RETRY_MAX_MS = 60_000;
+export const ALPHA_UNDECODED_RETRIES = 8;
+/** What each watch does when a read of a picture never decoded it (retryUndecoded). */
+const undecodedWatches = new Set<(imageUrl: string) => void>();
+
+/**
+ * DESK1 (Ross 11-21: figures stood as boxed photos on the desktop until the case was opened again): a masked figure's CSS mask
+ * has no load event, so a mask whose read never decoded it (a 404, a failed fetch, offline) was read again only when
+ * something else happened (rereadUndecoded's callers), and a figure whose mask failed once stood framed for the session.
+ * While watched, each of `urls()` (asked anew each time) whose read never decodes it is read again on its own after a backoff
+ * (ALPHA_UNDECODED_RETRY_MS), in line as a re-read behind every first read, at most ALPHA_READS_AT_ONCE - 1 at once (so
+ * retries never hold every turn), and the views showing it learn what the read gives; one that failed before the watch
+ * began too. Bounded: ALPHA_UNDECODED_RETRIES reads a picture, one at a time, each wait twice
+ * the last; none while the browser says it is offline (that read could only fail: the link coming back is the caller's
+ * `now`), and none for a picture no view shows. `now()` reads every one of them again at once (rereadUndecoded) and gives
+ * each its retries anew; `stop()` ends the watch and its waits.
+ */
+export function retryUndecoded(urls: () => readonly string[]): { now: () => void; stop: () => void } {
+  const tries = new Map<string, number>();
+  const waits = new Map<string, ReturnType<typeof setTimeout>>();
+  const failed = (url: string) => {
+    const tried = tries.get(url) ?? 0;
+    if (waits.has(url) || tried >= ALPHA_UNDECODED_RETRIES || !urls().includes(url)) return;
+    waits.set(
+      url,
+      setTimeout(
+        () => {
+          waits.delete(url);
+          if (navigator.onLine === false) return;
+          tries.set(url, tried + 1);
+          if (undecoded.has(url) && !readers.has(url)) readAgain(url, false, true);
+        },
+        Math.min(ALPHA_UNDECODED_RETRY_MS * 2 ** tried, ALPHA_UNDECODED_RETRY_MAX_MS),
+      ),
+    );
+  };
+  const forget = () => {
+    for (const wait of waits.values()) clearTimeout(wait);
+    waits.clear();
+    tries.clear();
+  };
+  undecodedWatches.add(failed);
+  for (const url of urls()) if (undecoded.has(url)) failed(url);
+  return {
+    now: () => {
+      forget();
+      rereadUndecoded(urls());
+    },
+    stop: () => {
+      undecodedWatches.delete(failed);
+      forget();
+    },
+  };
+}
+
 /** What a read of a picture gives, kept by its URL. */
 function keep(imageUrl: string, read: AlphaRead): void {
   marginCache.set(imageUrl, read.margins);
@@ -550,6 +665,7 @@ function keep(imageUrl: string, read: AlphaRead): void {
   else undecoded.delete(imageUrl);
   if (read === UNDECODED || read.mask?.drawn === 0) drawsNothing.add(imageUrl);
   else drawsNothing.delete(imageUrl);
+  if (read === UNDECODED) for (const failed of [...undecodedWatches]) failed(imageUrl);
 }
 
 /**

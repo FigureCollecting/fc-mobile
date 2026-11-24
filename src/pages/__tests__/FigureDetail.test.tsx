@@ -479,6 +479,27 @@ describe('FigureDetail: its photos', () => {
     expect(shown()).toBe(`${D}/${'a'.repeat(64)}`);
   });
 
+  // DESK1: the sheet tries a failed tile again when it is picked; the page's picture of it is tried again with it
+  it('a photo the page failed to draw is tried again when it is picked again; one it drew is left as it is', async () => {
+    await openWith(4);
+    const user = userEvent.setup();
+    const shown = () => screen.queryByRole('img', { name: 'Hatsune Miku: Deep Sea Girl' });
+    const plate = () => document.querySelector('.figure-detail__plate');
+    await user.click(await screen.findByRole('button', { name: '4 photos' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Photos' });
+    const third = () => within(sheet).getAllByRole('button', { name: /^Photo \d/ })[2]!;
+    await user.click(third());
+    fireEvent.error(shown()!);
+    await waitFor(() => expect(plate()).not.toBeNull());
+    await user.click(third());
+    expect(plate()).toBeNull();
+    expect(shown()?.getAttribute('src')).toBe(`${D}/${'c'.repeat(64)}`);
+    // drawn now: picked again, the same <img> stays (nothing asked again)
+    const img = shown();
+    await user.click(third());
+    expect(shown()).toBe(img);
+  });
+
   it('one photo: nothing on the picture, and Photos is still there', async () => {
     await openWith(1);
     await act(async () => {

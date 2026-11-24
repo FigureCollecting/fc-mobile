@@ -25,6 +25,10 @@ import {
   ALPHA_MASK_MAX_CELLS,
   alphaDrawsNothing,
   rereadUndecoded,
+  retryUndecoded,
+  ALPHA_UNDECODED_RETRY_MS,
+  ALPHA_UNDECODED_RETRY_MAX_MS,
+  ALPHA_UNDECODED_RETRIES,
 } from '../alphaMargin';
 import type { AlphaBuffer, AlphaMargins, AlphaMask } from '../alphaMargin';
 
@@ -946,6 +950,539 @@ describe('useAlphaMarginsOf: each picture of a list known as soon as it is read,
     await vi.advanceTimersByTimeAsync(EFFECTS_MS);
     expect(started).toEqual([A, A]);
     expect(marginsOf(again.result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+  });
+
+  describe('retryUndecoded (DESK1: a mask that failed to read is read again on its own)', () => {
+    /** Reads of the pictures, in the order they start; A never decodes for its first `fails` reads, B always decodes. */
+    function failing(fails: number) {
+      const started: string[] = [];
+      mockPictures(pictures(), (src) => {
+        started.push(src);
+        return src === A && fails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+      });
+      return started;
+    }
+    /** How long the n-th retry (from 0) waits after the read before it. */
+    const backoff = (n: number) => Math.min(ALPHA_UNDECODED_RETRY_MS * 2 ** n, ALPHA_UNDECODED_RETRY_MAX_MS);
+
+    it('a mask whose read never decoded is read again on its own after the backoff', async () => {
+      vi.useFakeTimers();
+      const started = failing(1);
+      const retry = retryUndecoded(() => [A, B]);
+      const { result } = renderHook(() => useAlphaMarginsOf([A, B]));
+      await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+      expect(started).toEqual([A, B]);
+      expect(alphaDrawsNothing(A)).toBe(true);
+      // not before its backoff: no tight loop
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS - ALPHA_LANDING_BATCH_MS - EFFECTS_MS - 1);
+      expect(started).toEqual([A, B]);
+      // at its backoff, with no call, load or event: read again, and its list learns its margins
+      await vi.advanceTimersByTimeAsync(1 + 2 * EFFECTS_MS);
+      expect(started).toEqual([A, B, A]);
+      expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+      expect(alphaDrawsNothing(A)).toBe(false);
+      // read now: never read again
+      await vi.advanceTimersByTimeAsync(20 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toEqual([A, B, A]);
+      retry.stop();
+    });
+
+    it('a mask that failed before it was watched (the case opened again) is read again after the backoff too', async () => {
+      vi.useFakeTimers();
+      const started = failing(1);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toEqual([A]);
+      const retry = retryUndecoded(() => [A]);
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS - 1);
+      expect(started).toEqual([A]);
+      await vi.advanceTimersByTimeAsync(1 + EFFECTS_MS);
+      expect(started).toEqual([A, A]);
+      retry.stop();
+    });
+
+    it('a dead mask is read a bounded number of times, each wait twice the last up to the ceiling, then never again of itself; now() reads it at once and gives it its retries anew', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(1);
+      for (let n = 0; n < ALPHA_UNDECODED_RETRIES; n++) {
+        // (the clock stands EFFECTS_MS past each read here)
+        await vi.advanceTimersByTimeAsync(backoff(n) - 2 * EFFECTS_MS);
+        expect(started, `retry ${n} not before its backoff`).toHaveLength(1 + n);
+        await vi.advanceTimersByTimeAsync(2 * EFFECTS_MS);
+        expect(started, `retry ${n} at its backoff`).toHaveLength(2 + n);
+      }
+      expect(backoff(ALPHA_UNDECODED_RETRIES - 1), 'the waits reach their ceiling').toBe(ALPHA_UNDECODED_RETRY_MAX_MS);
+      // out of retries: a dead link costs no more, however long the case stays open
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toHaveLength(1 + ALPHA_UNDECODED_RETRIES);
+      expect(alphaDrawsNothing(A)).toBe(true);
+      // the link back, the app shown again, a sync ended (now): one read at once, and the retries again
+      retry.now();
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES);
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toHaveLength(2 + 2 * ALPHA_UNDECODED_RETRIES);
+      retry.stop();
+    });
+
+    it('a retry that fails again tells no view (its list keeps the same map and does not render again: no wall re-pack); one that decodes still does', async () => {
+      vi.useFakeTimers();
+      // fails its first read, 6 retries and one call's read; decodes at its 7th retry
+      const started = failing(ALPHA_UNDECODED_RETRIES);
+      const retry = retryUndecoded(() => [A, B]);
+      let renders = 0;
+      const { result } = renderHook(() => {
+        renders++;
+        return useAlphaMarginsOf([A, B]);
+      });
+      await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+      expect(started).toEqual([A, B]);
+      const failedMap = result.current;
+      const rendersAfterFirstReads = renders;
+      // every retry but the last fails again: the reads run, the views hear nothing
+      let waited = ALPHA_LANDING_BATCH_MS + EFFECTS_MS;
+      for (let n = 0; n < ALPHA_UNDECODED_RETRIES - 2; n++) waited += backoff(n);
+      await vi.advanceTimersByTimeAsync(waited + 2 * EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES - 2);
+      expect(result.current, 'the same map: nothing to re-lay out').toBe(failedMap);
+      expect(renders, 'no render for a read that changed nothing').toBe(rendersAfterFirstReads);
+      expect(alphaDrawsNothing(A)).toBe(true);
+      // a call (the link back) that fails again: nothing told either
+      rereadUndecoded([A]);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES - 1);
+      expect(result.current).toBe(failedMap);
+      expect(renders).toBe(rendersAfterFirstReads);
+      // the next read decodes: its list learns its margins
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MAX_MS + 2 * EFFECTS_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES);
+      expect(result.current).not.toBe(failedMap);
+      expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+      expect(alphaDrawsNothing(A)).toBe(false);
+      retry.stop();
+    });
+
+    it('now() while a retry waits starts the waits over: one read at once, the next a first backoff later, none from the old wait', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS / 2);
+      retry.now();
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(2);
+      // when the old wait would have ended: nothing
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS / 2);
+      expect(started).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS / 2 + EFFECTS_MS);
+      expect(started).toHaveLength(3);
+      retry.stop();
+    });
+
+    it('stopped (the case closed), a waiting retry never reads; a picture the watch does not name is never read again', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const named = retryUndecoded(() => [B]);
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A, B]));
+      await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+      expect(started).toEqual([A, B]);
+      retry.stop();
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started, 'A failed, but only B is watched now').toEqual([A, B]);
+      named.stop();
+      // stopped watches hear of no later failure
+      rereadUndecoded([A]);
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toEqual([A, B, A]);
+    });
+
+    it('offline, a retry at its backoff reads nothing and its waits end there; the link coming back (now()) reads it and gives it all its retries', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toHaveLength(1);
+      onLine.mockReturnValue(true);
+      retry.now();
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toHaveLength(2 + ALPHA_UNDECODED_RETRIES);
+      retry.stop();
+    });
+
+    it('offline at its backoff spends no try: back online with no event, its next failed read (its load) waits a first backoff again', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS);
+      expect(started).toHaveLength(1);
+      // the link is back, and no online event comes; its bytes are stored (its load) and that read fails, and its read again
+      onLine.mockReturnValue(true);
+      alphaPictureLoaded(A);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS);
+      expect(started, 'the first backoff, not the second').toHaveLength(4);
+      retry.stop();
+    });
+
+    it('a mask no view shows any more at its backoff is not read, and its retries end there', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const retry = retryUndecoded(() => [A]);
+      const shown = renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      shown.unmount();
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started).toHaveLength(1);
+      retry.stop();
+    });
+
+    it('many dead masks: each is read once a backoff, so the reads are the masks times the retries and no more', async () => {
+      vi.useFakeTimers();
+      const masks = Array.from({ length: 21 }, (_, i) => `https://example.com/m${i}.png`);
+      let reads = 0;
+      mockPictures({}, () => {
+        reads++;
+        return Promise.reject(neverDecoded());
+      });
+      const retry = retryUndecoded(() => masks);
+      renderHook(() => useAlphaMarginsOf(masks));
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(reads).toBe(masks.length * (1 + ALPHA_UNDECODED_RETRIES));
+      retry.stop();
+    });
+
+    it('the schedule, in plain numbers (the bound the PR states): a dead mask is read at 2, 4, 8, 16, 32, 60, 60 and 60 s after the read before, 9 reads in all', async () => {
+      vi.useFakeTimers();
+      const at: number[] = [];
+      mockPictures({}, () => {
+        at.push(Date.now());
+        return Promise.reject(neverDecoded());
+      });
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(100 * 60_000);
+      expect(at.slice(1).map((t, i) => t - at[i])).toEqual([2000, 4000, 8000, 16_000, 32_000, 60_000, 60_000, 60_000]);
+      expect(at).toHaveLength(9);
+      retry.stop();
+    });
+
+    it('at its backoff, a mask read meanwhile is not read again: one that decoded reads nothing more; one whose read is still in flight starts no second read', async () => {
+      vi.useFakeTimers();
+      const started: string[] = [];
+      let aFails = 1;
+      let land: (() => void) | undefined;
+      mockPictures(pictures(), (src) => {
+        started.push(src);
+        if (src === A) return aFails-- > 0 ? Promise.reject(neverDecoded()) : Promise.resolve();
+        // B: its first read fails at once, its next is held in flight until the test lands it (failing)
+        if (started.filter((s) => s === B).length === 1) return Promise.reject(neverDecoded());
+        return new Promise<void>((_, fail) => {
+          land = () => fail(neverDecoded());
+        });
+      });
+      const retry = retryUndecoded(() => [A, B]);
+      renderHook(() => useAlphaMarginsOf([A, B]));
+      await vi.advanceTimersByTimeAsync(ALPHA_LANDING_BATCH_MS + EFFECTS_MS);
+      expect(started).toEqual([A, B]);
+      // both loaded (alphaPictureLoaded) halfway through their waits: A decodes, B's read stays in flight
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS / 2);
+      alphaPictureLoaded(A);
+      alphaPictureLoaded(B);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toEqual([A, B, A, B]);
+      expect(alphaDrawsNothing(A)).toBe(false);
+      // their backoffs pass: no read of either
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS);
+      expect(started).toEqual([A, B, A, B]);
+      // B's read fails as it lands: its load's read again at once (one load, one read again), then its retries go on
+      land!();
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toEqual([A, B, A, B, B]);
+      land!();
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      await vi.advanceTimersByTimeAsync(2 * ALPHA_UNDECODED_RETRY_MS);
+      expect(started.filter((s) => s === A), 'A never again').toHaveLength(2);
+      expect(started.filter((s) => s === B).length).toBeGreaterThan(3);
+      retry.stop();
+    });
+
+    it('a retry waiting in line whose picture loads (the image sync stored it) goes at once, in the turn the retries leave free', async () => {
+      vi.useFakeTimers();
+      const masks = Array.from({ length: 12 }, (_, i) => `https://example.com/q${i}.png`);
+      const LAST = masks[11];
+      let stored = false;
+      const order: string[] = [];
+      mockPictures({ [LAST]: bufferWithPixels(4, 4, [[1, 1]]) }, (src) => {
+        order.push(src);
+        if (src === LAST && stored) return Promise.resolve();
+        return new Promise<void>((_, fail) => setTimeout(() => fail(neverDecoded()), 1000));
+      });
+      const retry = retryUndecoded(() => masks);
+      renderHook(() => useAlphaMarginsOf(masks));
+      // first reads 4 a second to 3 s; the retries of the last four queue at 5 s, behind the retries in flight
+      await vi.advanceTimersByTimeAsync(5200);
+      const n = order.length;
+      stored = true;
+      alphaPictureLoaded(LAST);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(order.slice(n)).toEqual([LAST]);
+      expect(alphaDrawsNothing(LAST)).toBe(false);
+      retry.stop();
+    });
+
+    it('a second failure while a retry waits (its picture loading, or a call, read it and failed) sets no second wait: once stopped, nothing reads', async () => {
+      vi.useFakeTimers();
+      const started = failing(Infinity);
+      const retry = retryUndecoded(() => [A]);
+      const view = renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      expect(started).toHaveLength(1);
+      // halfway through its first wait the image sync stores it (alphaPictureLoaded) and a call reads it: both fail
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS / 2);
+      alphaPictureLoaded(A);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      rereadUndecoded([A]);
+      await vi.advanceTimersByTimeAsync(EFFECTS_MS);
+      // the first read, the load's read and its read again at once (alphaPictureLoaded), the call's read
+      expect(started).toHaveLength(4);
+      // the case closes (stop) while another view still shows A
+      retry.stop();
+      await vi.advanceTimersByTimeAsync(100 * ALPHA_UNDECODED_RETRY_MAX_MS);
+      expect(started, 'no read from a stopped watch').toHaveLength(4);
+      expect(vi.getTimerCount(), 'no wait left').toBe(0);
+      view.unmount();
+    });
+
+    it(`a retry waits in line as a re-read and leaves a turn free: a new picture's first read starts at once, ahead of every retry waiting; retries hold ${ALPHA_READS_AT_ONCE - 1} of the ${ALPHA_READS_AT_ONCE} turns at most`, async () => {
+      vi.useFakeTimers();
+      const masks = Array.from({ length: 40 }, (_, i) => `https://example.com/m${i}.png`);
+      const NEW = 'https://example.com/new.png';
+      const FAIL_MS = 500;
+      const starts: { src: string; at: number }[] = [];
+      let inFlight = 0;
+      let most = 0;
+      let mostLater = 0;
+      let later = false;
+      mockPictures({ [NEW]: bufferWithPixels(4, 4, [[1, 1]]) }, (src) => {
+        starts.push({ src, at: Date.now() });
+        if (src === NEW) return Promise.resolve();
+        most = Math.max(most, ++inFlight);
+        if (later) mostLater = Math.max(mostLater, inFlight);
+        return new Promise<void>((_, fail) =>
+          setTimeout(() => {
+            inFlight--;
+            fail(neverDecoded());
+          }, FAIL_MS),
+        );
+      });
+      const retry = retryUndecoded(() => masks);
+      const { rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: masks } });
+      // the first reads take 40 x 500 ms / 4 = 5 s; by 6 s the retries of the masks that failed first wait in line
+      await vi.advanceTimersByTimeAsync(5000);
+      later = true;
+      await vi.advanceTimersByTimeAsync(1000);
+      const newAt = Date.now();
+      rerender({ urls: [...masks, NEW] });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const newStart = starts.find((s) => s.src === NEW)!.at;
+      expect(starts.filter((s) => s.at > newAt && s.at < newStart), 'no retry goes ahead of it').toEqual([]);
+      expect(newStart - newAt, 'it waits for no retry').toBe(0);
+      expect(most, 'the first reads: every turn').toBe(ALPHA_READS_AT_ONCE);
+      expect(mostLater, 'the retries: all turns but one').toBe(ALPHA_READS_AT_ONCE - 1);
+      retry.stop();
+    });
+
+    it('a picture whose read ran out of time is read again at its own backoff, never held behind retries waiting for their room', async () => {
+      vi.useFakeTimers();
+      const dead = Array.from({ length: 30 }, (_, i) => `https://example.com/d${i}.png`);
+      const SLOW = 'https://example.com/slow.png';
+      const seen = new Map<string, number>();
+      const slowStarts: number[] = [];
+      const t0 = Date.now();
+      mockPictures({ [SLOW]: bufferWithPixels(4, 4, [[1, 1]]) }, (src) => {
+        const n = (seen.get(src) ?? 0) + 1;
+        seen.set(src, n);
+        if (src === SLOW) {
+          slowStarts.push(Date.now() - t0);
+          return n === 1 ? new Promise<void>(() => {}) : Promise.resolve();
+        }
+        // a dead mask: its first read fails at once, each retry after 3 s, so retries wait in line for their room
+        return n === 1 ? Promise.reject(neverDecoded()) : new Promise<void>((_, fail) => setTimeout(() => fail(neverDecoded()), 3000));
+      });
+      const retry = retryUndecoded(() => dead);
+      renderHook(() => useAlphaMarginsOf([...dead, SLOW]));
+      await vi.advanceTimersByTimeAsync(60_000);
+      // its first read abandoned at its deadline, its backoff waited out: read again then, with turns free for re-reads
+      expect(slowStarts[1]).toBe(ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS);
+      expect(alphaDrawsNothing(SLOW)).toBe(false);
+      retry.stop();
+    });
+
+    it(`a retry that runs out of time ends as a failed read: a mask whose reads stall after its first failure is read ${1 + ALPHA_UNDECODED_RETRIES} times in all, however long it is shown`, async () => {
+      vi.useFakeTimers();
+      const at: number[] = [];
+      mockPictures({}, () => {
+        at.push(Date.now());
+        return at.length === 1 ? Promise.reject(neverDecoded()) : new Promise<void>(() => {});
+      });
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(at).toHaveLength(1 + ALPHA_UNDECODED_RETRIES);
+      // each retry given twice the time of the last that ran out (8, 16, then 32 s at most), then its backoff
+      const deadline = (n: number) => Math.min(ALPHA_READ_DEADLINE_MS * 2 ** n, ALPHA_READ_DEADLINE_MAX_MS);
+      expect(at.slice(2).map((t, i) => t - at[i + 1])).toEqual(Array.from({ length: ALPHA_UNDECODED_RETRIES - 1 }, (_, i) => deadline(i) + backoff(i + 1)));
+      retry.stop();
+    });
+
+    for (const slowMs of [12_000, 20_000]) {
+      it(`a mask alive on a slow link (each read after its first failure takes ${slowMs} ms) is still drawn: each retry gets the longer time`, async () => {
+        vi.useFakeTimers();
+        let reads = 0;
+        mockPictures(pictures(), () => {
+          reads++;
+          return reads === 1 ? Promise.reject(neverDecoded()) : new Promise<void>((ok) => setTimeout(ok, slowMs));
+        });
+        const retry = retryUndecoded(() => [A]);
+        const { result } = renderHook(() => useAlphaMarginsOf([A]));
+        await vi.advanceTimersByTimeAsync(10 * 60_000);
+        expect(alphaDrawsNothing(A)).toBe(false);
+        expect(marginsOf(result.current.get(A))).toEqual([0.2, 0.1, 0.1, 0.2]);
+        // the first read, then retries given 8, 16, then 32 s: the 12 s mask lands on the second retry, the 20 s one on the third
+        expect(reads).toBe(slowMs === 12_000 ? 3 : 4);
+        retry.stop();
+      });
+    }
+
+    it('a retry in flight whose picture loads meanwhile (the image sync stored it), running out of time, is read again at once, not left to the backoff', async () => {
+      vi.useFakeTimers();
+      const at: number[] = [];
+      let stored = false;
+      mockPictures(pictures(), () => {
+        at.push(Date.now());
+        if (at.length === 1) return Promise.reject(neverDecoded());
+        return stored ? Promise.resolve() : new Promise<void>(() => {});
+      });
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS + 1000);
+      stored = true;
+      alphaPictureLoaded(A);
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS);
+      expect(at.map((t) => t - at[0])).toEqual([0, ALPHA_UNDECODED_RETRY_MS, ALPHA_UNDECODED_RETRY_MS + ALPHA_READ_DEADLINE_MS]);
+      expect(alphaDrawsNothing(A)).toBe(false);
+      retry.stop();
+    });
+
+    it('only a retry gets the longer time its mask needed: a read again from now() (the link back) starts from the first deadline', async () => {
+      vi.useFakeTimers();
+      const at: number[] = [];
+      mockPictures({}, () => {
+        at.push(Date.now());
+        return at.length === 1 ? Promise.reject(neverDecoded()) : new Promise<void>(() => {});
+      });
+      const retry = retryUndecoded(() => [A]);
+      renderHook(() => useAlphaMarginsOf([A]));
+      // retries at 2 s (8 s deadline) and 14 s (16 s deadline) run out of time; now() during the next wait
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect(at.map((t) => t - at[0])).toEqual([0, 2000, 14_000]);
+      retry.now();
+      await vi.advanceTimersByTimeAsync(ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS);
+      expect(at.slice(3).map((t) => t - at[0])).toEqual([35_000, 35_000 + ALPHA_READ_DEADLINE_MS + ALPHA_READ_BACKOFF_MS]);
+      retry.stop();
+    });
+
+    it('a retry waiting for a turn, its room free, still goes behind a new picture that came later: the first turn freed is the new picture\'s', async () => {
+      vi.useFakeTimers();
+      const photos = ['https://example.com/p0.png', 'https://example.com/p1.png', 'https://example.com/p2.png', 'https://example.com/p3.png'];
+      const NEW = 'https://example.com/new.png';
+      const starts: { src: string; at: number }[] = [];
+      const t0 = Date.now();
+      mockPictures({ [NEW]: bufferWithPixels(4, 4, [[1, 1]]) }, (src) => {
+        starts.push({ src, at: Date.now() - t0 });
+        if (src === A) return Promise.reject(neverDecoded());
+        if (src === NEW) return Promise.resolve();
+        // the photos hold every turn: p0 lands at 2.5 s, the others stall
+        return src === photos[0] ? new Promise<void>((ok) => setTimeout(ok, 1000)) : new Promise<void>(() => {});
+      });
+      const retry = retryUndecoded(() => [A]);
+      const { rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: [A] } });
+      await vi.advanceTimersByTimeAsync(1500);
+      rerender({ urls: [A, ...photos] });
+      // A's retry is due at 2 s, with every turn taken; the new picture comes at 2.1 s
+      await vi.advanceTimersByTimeAsync(600);
+      rerender({ urls: [A, ...photos, NEW] });
+      await vi.advanceTimersByTimeAsync(400 + EFFECTS_MS);
+      // p0's turn goes to the new picture, which lands at once and hands it on to the retry
+      expect(starts.filter((s) => s.at > 1500 && !photos.includes(s.src))).toEqual([{ src: NEW, at: 2500 }, { src: A, at: 2500 }]);
+      retry.stop();
+    });
+
+    it(`the retry room counts retries only: ${ALPHA_READS_AT_ONCE - 1} re-reads of stalled photos in flight hold back no retry`, async () => {
+      vi.useFakeTimers();
+      const slow = ['https://example.com/s0.png', 'https://example.com/s1.png', 'https://example.com/s2.png'];
+      const dStarts: number[] = [];
+      mockPictures({}, (src) => {
+        if (src !== A) return new Promise<void>(() => {}); // the photos stall: abandoned at 8 s, re-read from 9.5 s
+        dStarts.push(Date.now());
+        return Promise.reject(neverDecoded());
+      });
+      const retry = retryUndecoded(() => [A]);
+      const { rerender } = renderHook(({ urls }) => useAlphaMarginsOf(urls), { initialProps: { urls: slow } });
+      await vi.advanceTimersByTimeAsync(10_000);
+      rerender({ urls: [...slow, A] });
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS + EFFECTS_MS);
+      expect(dStarts).toHaveLength(2);
+      expect(dStarts[1] - dStarts[0], 'its first backoff').toBe(ALPHA_UNDECODED_RETRY_MS);
+      retry.stop();
+    });
+
+    it('a retry in flight whose picture the image sync stores, failing as it lands, goes again at once, though the retries left fill their room', async () => {
+      vi.useFakeTimers();
+      const others = ['https://example.com/o1.png', 'https://example.com/o2.png', 'https://example.com/o3.png'];
+      const seen = new Map<string, number>();
+      const aStarts: number[] = [];
+      let failA: (() => void) | undefined;
+      let stored = false;
+      mockPictures(pictures(), (src) => {
+        const n = (seen.get(src) ?? 0) + 1;
+        seen.set(src, n);
+        if (n === 1) return Promise.reject(neverDecoded());
+        if (src !== A) return new Promise<void>(() => {}); // the other retries stall: they hold the retry room
+        aStarts.push(Date.now());
+        if (stored) return Promise.resolve();
+        return new Promise<void>((_, fail) => {
+          failA = () => fail(neverDecoded());
+        });
+      });
+      const retry = retryUndecoded(() => [A, ...others]);
+      renderHook(() => useAlphaMarginsOf([A, ...others]));
+      // every first read fails at once; at 2 s A, o1 and o2 retry (the room is full) and o3 waits in line
+      await vi.advanceTimersByTimeAsync(ALPHA_UNDECODED_RETRY_MS + EFFECTS_MS);
+      expect(aStarts).toHaveLength(1);
+      stored = true;
+      alphaPictureLoaded(A);
+      // A's retry fails as it lands: o3 takes its place in the retry room, and A goes again at once all the same
+      failA!();
+      const failedAt = Date.now();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(aStarts).toEqual([aStarts[0], failedAt]);
+      expect(alphaDrawsNothing(A)).toBe(false);
+      expect(seen.get(others[2]), 'o3 retried').toBe(2);
+      retry.stop();
+    });
   });
 
   it('a list with a new picture keeps what it knows: only the new one is unknown, until it is read', async () => {

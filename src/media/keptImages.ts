@@ -549,6 +549,29 @@ function joined(chunks: readonly Uint8Array[]): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+const keptListeners = new Set<(address: string) => void>();
+/**
+ * DESK1: `heard` is told the address of each image whose bytes this document stores in the owned cache (a sync, a fill, a
+ * chosen photo), once they are stored, until what this returns is called. The case view reads a mask that failed to load
+ * again then (CabinetScene): a CSS mask has no load event of its own.
+ */
+export function onImageKept(heard: (address: string) => void): () => void {
+  keptListeners.add(heard);
+  return () => {
+    keptListeners.delete(heard);
+  };
+}
+/** DESK1: the bytes at `address` are stored now: each listener hears it (onImageKept). One that throws stops nothing. */
+export function imageKept(address: string): void {
+  for (const heard of [...keptListeners]) {
+    try {
+      heard(address);
+    } catch {
+      // a listener's own failure: the image is kept all the same
+    }
+  }
+}
+
 /**
  * One image into the owned cache, fetched as the sync fetches each: CORS, no credentials, past the HTTP cache, and kept only
  * when the answer is ok with a body, once all of it arrived. Aborted when `signal` aborts, or when it has received nothing
@@ -583,6 +606,7 @@ async function fetchKept(media: Cache, address: string, signal: AbortSignal | un
     // All of it arrived: a slow write here is not a stalled link.
     clearTimeout(quiet);
     await media.put(request, new Response(joined(chunks), { status: res.status, statusText: res.statusText, headers: res.headers }));
+    imageKept(address);
   } finally {
     clearTimeout(quiet);
     signal?.removeEventListener('abort', stop);
@@ -636,8 +660,10 @@ export async function keepChosenPhotos(
       if ((await media.match(address, IGNORE_VARY)) !== undefined || (await tomb.match(withheldKey(address))) !== undefined) continue;
       try {
         const loaded = await browsed.match(address, IGNORE_VARY);
-        if (loaded?.ok === true) await media.put(new Request(address, { mode: 'cors', credentials: 'omit' }), loaded);
-        else await fetchKept(media, address, options.signal);
+        if (loaded?.ok === true) {
+          await media.put(new Request(address, { mode: 'cors', credentials: 'omit' }), loaded);
+          imageKept(address);
+        } else await fetchKept(media, address, options.signal);
         keptHere += 1;
       } catch {
         // not kept now: the sync fetches it, and a mask's photo with it (refused, lost or stalled), so no cut-out is answered

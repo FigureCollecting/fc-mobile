@@ -69,6 +69,12 @@ function onPop() {
   top.close();
 }
 
+// Added as this module loads, before the app first renders: ahead of the router's popstate listeners (wouter adds them as
+// the app mounts, and a window runs its listeners in the order added), so the address is restored before the router reads
+// it. Read first, the router drew the page the overlay was opened over for a moment (FIX4: Go to from the cover viewer
+// drew the tiles again and mounted the case twice, the first mount's Go to lost with it).
+window.addEventListener('popstate', onPop);
+
 export function useBackToClose(onClose: () => void): void {
   const latest = useRef(onClose);
   latest.current = onClose;
@@ -82,7 +88,6 @@ export function useBackToClose(onClose: () => void): void {
   // as it commits, not a frame later: a Back right after it opens is already its own
   useLayoutEffect(() => {
     if (!listening) {
-      window.addEventListener('popstate', onPop);
       document.addEventListener('keydown', onKey);
       listening = true;
     }

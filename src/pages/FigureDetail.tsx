@@ -80,6 +80,11 @@ export function FigureDetail() {
   // PHOTOS-FIND-1 item 6: the photo picked there is the page's picture until the sheet closes
   const [aimed, setAimed] = useState<string | undefined>(undefined);
   const picture = aimed ?? image.data?.url;
+  // DESK1: a photo picked again after the page failed to draw it is tried again, as its tile in the sheet is
+  const aim = (url: string | undefined) => {
+    if (url !== undefined) images.retry(url);
+    setAimed(url);
+  };
   const [moving, setMoving] = useState<string[] | null>(null);
   const [disposing, setDisposing] = useState<string[] | null>(null);
   // Each opening of the disposal sheet is a fresh form: one copy's buyer and price never carry to the next.
@@ -280,7 +285,7 @@ export function FigureDetail() {
         </button>
       </div>
 
-      <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={setAimed} />
+      <PhotosSheet figure={figure} open={photosOpen} onClose={() => setPhotosOpen(false)} onAim={aim} />
 
       <EditFigureSheet open={editOpen} onClose={() => setEditOpen(false)} figure={figure} onSave={handleEditSave} isSaving={updateMutation.isPending} />
 

@@ -495,8 +495,11 @@ export function fixturePhotos(count = getFixturePhotoCount()): CachedImage[] {
     { url: hex('c'), width: 500, height: 800, role: 'gallery', primary: false, maskUrl: hex('e') },
   ];
   const more = Array.from(MORE_PHOTOS, (c): CachedImage => ({ url: hex(c), width: 600, height: 800, role: 'gallery', primary: false }));
-  return [...first, ...more].slice(0, count);
+  // DESK1: each with a colour of its own (the coordinator's dominant_color), which its Photos tile shows while it loads
+  return [...first, ...more].slice(0, count).map((photo, i) => ({ ...photo, dominantColor: FIXTURE_PHOTO_COLOURS[i]! }));
 }
+/** DESK1: one muted colour a fixture photo, fourteen in all (getFixturePhotoCount's most). */
+const FIXTURE_PHOTO_COLOURS = ['#8a9bb0', '#7a5c6e', '#4f6f64', '#a0845c', '#5c6fa0', '#8c5c5c', '#5c8c8a', '#75608f', '#8f8a60', '#607d8f', '#8f6075', '#6b8f60', '#8f7460', '#60718f'];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

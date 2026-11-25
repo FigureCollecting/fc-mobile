@@ -231,13 +231,13 @@ for (const panel of PANELS) {
     await openFree(page, panel);
     // every frame: the eye's z, the sharpest figure's px per mm and the room's
     await page.evaluate(() => {
-      const w = window as unknown as { __seen: { z: number; figures: number; room: number }[] };
+      const w = window as unknown as { __seen: { t: number; z: number; figures: number; room: number }[] };
       w.__seen = [];
       const scene = document.querySelector<HTMLElement>('.cabinet-scene')!;
       const root = document.querySelector<HTMLElement>('.cabinet-scene__root')!;
-      const on = () => {
+      const on = (t: number) => {
         const figures = Math.max(...Array.from(scene.querySelectorAll<HTMLElement>('button.cab-figure')).map((b) => Number(b.style.getPropertyValue('--s'))));
-        w.__seen.push({ z: JSON.parse(scene.dataset.camera!).z, figures, room: Number(root.style.getPropertyValue('--s')) });
+        w.__seen.push({ t, z: JSON.parse(scene.dataset.camera!).z, figures, room: Number(root.style.getPropertyValue('--s')) });
         requestAnimationFrame(on);
       };
       requestAnimationFrame(on);
@@ -246,17 +246,23 @@ for (const panel of PANELS) {
     const f = await touchFingers(page);
     await f.down(1, at.x, at.y);
     await f.to(1, at.x, at.y - DEPTH_FULL_PX / 2, 6);
-    // a loaded runner's long frames move the eye less a frame (JOG_MAX_STEP_MS): held till the figures are sharper, then
-    // on a little (the near stop is far past where they first need 1.5x)
+    // A step-up re-rasters the figures only, so the figures' px per mm pulls 1.5x ahead of the room's. A full render on
+    // the way in (a re-cull, or a loaded runner's frame over REST_RENDER_MS letting the rest timer fire) sharpens both and
+    // keeps their ratio, so the ratio is the step-up's mark, not the figures' --s alone. Held till it shows (a loaded
+    // runner's long frames move the eye less a frame, JOG_MAX_STEP_MS), then on a little: the near stop is far past it.
     await page.waitForFunction(() => {
-      const seen = (window as unknown as { __seen: { figures: number }[] }).__seen;
-      return seen.some((s) => s.figures >= 1.5 * seen[0].figures);
-    }, undefined, { timeout: 20_000 });
+      const seen = (window as unknown as { __seen: { figures: number; room: number }[] }).__seen;
+      return seen.some((s) => s.figures / s.room >= 1.5 * (seen[0].figures / seen[0].room));
+    }, undefined, { timeout: 20_000 }).catch(() => undefined);
     await hold(page, 400);
     await f.up(1);
-    const seen = await page.evaluate(() => (window as unknown as { __seen: { z: number; figures: number; room: number }[] }).__seen);
-    const { figures: far, room } = seen[0];
-    const stepped = seen.findIndex((s) => s.figures >= 1.5 * far && s.room === room);
+    const seen = await page.evaluate(() => (window as unknown as { __seen: { t: number; z: number; figures: number; room: number }[] }).__seen);
+    const ahead = seen[0].figures / seen[0].room;
+    const stepped = seen.findIndex((s) => s.figures / s.room >= 1.5 * ahead);
+    // what changed and when, for a failure's reading: frame time, z, figures, room, and the longest frame
+    const changes = seen.filter((s, i) => i === 0 || s.figures !== seen[i - 1].figures || s.room !== seen[i - 1].room);
+    const longest = Math.max(...seen.slice(1).map((s, i) => s.t - seen[i].t));
+    console.log(`lod-step ${panel.name} longest frame ${longest.toFixed(1)} ms; ${changes.map((s) => `${(s.t - seen[0].t).toFixed(0)}ms z${s.z.toFixed(0)} f${s.figures.toFixed(3)} r${s.room.toFixed(3)}`).join(' | ')}`);
     expect(stepped, 'sharper figures, the room as it was').toBeGreaterThan(0);
     expect(Math.min(...seen.slice(stepped + 1).map((s) => s.z)), 'the eye still closing in').toBeLessThan(seen[stepped].z);
   });
